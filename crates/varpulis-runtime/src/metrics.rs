@@ -1,0 +1,181 @@
+//! Prometheus metrics for Varpulis
+
+use prometheus::{
+    Counter, CounterVec, Gauge, GaugeVec, Histogram, HistogramOpts, HistogramVec, Opts, Registry,
+};
+use std::sync::Arc;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
+use tracing::{error, info};
+
+/// Metrics collection for Varpulis engine
+#[derive(Clone)]
+pub struct Metrics {
+    registry: Arc<Registry>,
+    pub events_total: CounterVec,
+    pub events_processed: CounterVec,
+    pub alerts_total: CounterVec,
+    pub processing_latency: HistogramVec,
+    pub stream_queue_size: GaugeVec,
+    pub active_streams: Gauge,
+}
+
+impl Metrics {
+    pub fn new() -> Self {
+        let registry = Registry::new();
+
+        let events_total = CounterVec::new(
+            Opts::new("varpulis_events_total", "Total events received"),
+            &["event_type"],
+        )
+        .unwrap();
+
+        let events_processed = CounterVec::new(
+            Opts::new("varpulis_events_processed", "Events processed by stream"),
+            &["stream"],
+        )
+        .unwrap();
+
+        let alerts_total = CounterVec::new(
+            Opts::new("varpulis_alerts_total", "Total alerts generated"),
+            &["alert_type", "severity"],
+        )
+        .unwrap();
+
+        let processing_latency = HistogramVec::new(
+            HistogramOpts::new(
+                "varpulis_processing_latency_seconds",
+                "Event processing latency",
+            )
+            .buckets(vec![0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0]),
+            &["stream"],
+        )
+        .unwrap();
+
+        let stream_queue_size = GaugeVec::new(
+            Opts::new("varpulis_stream_queue_size", "Stream queue size"),
+            &["stream"],
+        )
+        .unwrap();
+
+        let active_streams = Gauge::new(
+            "varpulis_active_streams",
+            "Number of active streams",
+        )
+        .unwrap();
+
+        registry.register(Box::new(events_total.clone())).unwrap();
+        registry.register(Box::new(events_processed.clone())).unwrap();
+        registry.register(Box::new(alerts_total.clone())).unwrap();
+        registry.register(Box::new(processing_latency.clone())).unwrap();
+        registry.register(Box::new(stream_queue_size.clone())).unwrap();
+        registry.register(Box::new(active_streams.clone())).unwrap();
+
+        Self {
+            registry: Arc::new(registry),
+            events_total,
+            events_processed,
+            alerts_total,
+            processing_latency,
+            stream_queue_size,
+            active_streams,
+        }
+    }
+
+    /// Record an incoming event
+    pub fn record_event(&self, event_type: &str) {
+        self.events_total.with_label_values(&[event_type]).inc();
+    }
+
+    /// Record event processing
+    pub fn record_processing(&self, stream: &str, latency_secs: f64) {
+        self.events_processed.with_label_values(&[stream]).inc();
+        self.processing_latency
+            .with_label_values(&[stream])
+            .observe(latency_secs);
+    }
+
+    /// Record an alert
+    pub fn record_alert(&self, alert_type: &str, severity: &str) {
+        self.alerts_total
+            .with_label_values(&[alert_type, severity])
+            .inc();
+    }
+
+    /// Set stream count
+    pub fn set_stream_count(&self, count: usize) {
+        self.active_streams.set(count as f64);
+    }
+
+    /// Get Prometheus text output
+    pub fn gather(&self) -> String {
+        use prometheus::Encoder;
+        let encoder = prometheus::TextEncoder::new();
+        let metric_families = self.registry.gather();
+        let mut buffer = Vec::new();
+        encoder.encode(&metric_families, &mut buffer).unwrap();
+        String::from_utf8(buffer).unwrap()
+    }
+}
+
+impl Default for Metrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// HTTP server for Prometheus metrics endpoint
+pub struct MetricsServer {
+    metrics: Metrics,
+    addr: String,
+}
+
+impl MetricsServer {
+    pub fn new(metrics: Metrics, addr: impl Into<String>) -> Self {
+        Self {
+            metrics,
+            addr: addr.into(),
+        }
+    }
+
+    /// Run the metrics HTTP server
+    pub async fn run(&self) -> anyhow::Result<()> {
+        let listener = TcpListener::bind(&self.addr).await?;
+        info!("Metrics server listening on http://{}/metrics", self.addr);
+
+        loop {
+            let (mut socket, addr) = listener.accept().await?;
+
+            let metrics_output = self.metrics.gather();
+
+            // Simple HTTP response
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\n\r\n{}",
+                metrics_output.len(),
+                metrics_output
+            );
+
+            if let Err(e) = socket.write_all(response.as_bytes()).await {
+                error!("Failed to write response: {}", e);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_metrics() {
+        let metrics = Metrics::new();
+        metrics.record_event("TestEvent");
+        metrics.record_processing("test_stream", 0.001);
+        metrics.record_alert("test_alert", "warning");
+        metrics.set_stream_count(5);
+
+        let output = metrics.gather();
+        assert!(output.contains("varpulis_events_total"));
+        assert!(output.contains("varpulis_alerts_total"));
+    }
+}

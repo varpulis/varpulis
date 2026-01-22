@@ -1,41 +1,41 @@
 # Varpulis Documentation
 
-> **Varpulis** - Moteur de streaming analytics nouvelle génération
+> **Varpulis** - Next-generation streaming analytics engine
 > 
-> *Nommé d'après le dieu slave du vent, compagnon du tonnerre*
+> *Named after the Slavic wind spirit, companion of thunder*
 
-## Structure de la documentation
+## Documentation Structure
 
-### 📋 Spécifications
-- [`spec/overview.md`](spec/overview.md) - Vue d'ensemble et vision du projet
-- [`spec/roadmap.md`](spec/roadmap.md) - Roadmap et phases de développement
-- [`spec/benchmarks.md`](spec/benchmarks.md) - Objectifs de performance
+### 📋 Specifications
+- [`spec/overview.md`](spec/overview.md) - Project overview and vision
+- [`spec/roadmap.md`](spec/roadmap.md) - Roadmap and development phases
+- [`spec/benchmarks.md`](spec/benchmarks.md) - Performance objectives
 
 ### 🏗️ Architecture
-- [`architecture/system.md`](architecture/system.md) - Architecture système globale
-- [`architecture/attention-engine.md`](architecture/attention-engine.md) - Moteur d'attention déterministe
-- [`architecture/state-management.md`](architecture/state-management.md) - Gestion de l'état et checkpointing
-- [`architecture/parallelism.md`](architecture/parallelism.md) - Parallélisation et supervision
-- [`architecture/observability.md`](architecture/observability.md) - Métriques, traces et logs
+- [`architecture/system.md`](architecture/system.md) - System architecture overview
+- [`architecture/attention-engine.md`](architecture/attention-engine.md) - Deterministic attention engine
+- [`architecture/state-management.md`](architecture/state-management.md) - State management and checkpointing
+- [`architecture/parallelism.md`](architecture/parallelism.md) - Parallelization and supervision
+- [`architecture/observability.md`](architecture/observability.md) - Metrics, traces and logs
 
-### 📝 Langage VarpulisQL
-- [`language/overview.md`](language/overview.md) - Philosophie et design du langage
-- [`language/syntax.md`](language/syntax.md) - Syntaxe complète
-- [`language/types.md`](language/types.md) - Système de types
-- [`language/keywords.md`](language/keywords.md) - Mots-clés réservés
-- [`language/operators.md`](language/operators.md) - Opérateurs
-- [`language/builtins.md`](language/builtins.md) - Fonctions built-in
-- [`language/grammar.md`](language/grammar.md) - Grammaire formelle (LALRPOP)
+### 📝 VarpulisQL Language
+- [`language/overview.md`](language/overview.md) - Language philosophy and design
+- [`language/syntax.md`](language/syntax.md) - Complete syntax
+- [`language/types.md`](language/types.md) - Type system
+- [`language/keywords.md`](language/keywords.md) - Reserved keywords
+- [`language/operators.md`](language/operators.md) - Operators
+- [`language/builtins.md`](language/builtins.md) - Built-in functions
+- [`language/grammar.md`](language/grammar.md) - Formal grammar (LALRPOP)
 
-### 📚 Exemples
-- [`examples/`](../examples/) - Exemples d'utilisation
+### 📚 Examples
+- [`examples/`](../examples/) - Usage examples
 
-## Liens rapides
+## Quick Links
 
-- [GitHub Organisation](https://github.com/varpulis)
-- [Glossaire](spec/glossary.md)
+- [GitHub Organization](https://github.com/varpulis)
+- [Glossary](spec/glossary.md)
 
 ---
 
 **Version**: 0.1  
-**Licence**: Apache 2.0 / MIT (à définir)
+**License**: Apache 2.0 / MIT (TBD)

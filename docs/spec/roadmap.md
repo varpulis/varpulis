@@ -1,58 +1,69 @@
-# Roadmap de développement
+# Development Roadmap
 
-## Phase 1 : Core Engine (3-4 mois)
+## Phase 1: Core Engine (3-4 months) ✅ COMPLETED
 
-- [ ] Parser VarpulisQL (LALRPOP)
-- [ ] Compilateur VarpulisQL → IR
-- [ ] Execution engine basique (single-threaded)
-- [ ] Hypertree pattern matcher
-- [ ] Agrégations simples (sum, avg, count, min, max)
-- [ ] Backends: in-memory state
-- [ ] Sources: Kafka, fichiers
+- [x] VarpulisQL Parser (recursive descent)
+- [x] VarpulisQL → AST compilation
+- [x] Basic execution engine (single-threaded)
+- [x] Simple aggregations (sum, avg, count, min, max)
+- [x] Backends: in-memory state
+- [x] HVAC building simulator demo
 
-### Livrables Phase 1
-- CLI `varpulis` fonctionnel
-- Démo "hello world" avec agrégation simple
-- Documentation de base
+### Phase 1 Deliverables
+- Functional `varpulis` CLI
+- "Hello world" demo with simple aggregation
+- Basic documentation
 
-## Phase 2 : Attention & Parallélisation (2-3 mois)
+## Phase 2: Parser→Runtime & Sinks (Current)
+
+- [ ] Connect parser to runtime execution
+- [ ] File sink (JSON lines)
+- [ ] HTTP webhook sink
+- [ ] Kafka sink
+- [ ] Prometheus metrics endpoint
+
+### Phase 2 Deliverables
+- End-to-end execution of VarpulisQL programs
+- Multiple output destinations
+
+## Phase 3: Attention & Pattern Detection (2-3 months)
 
 - [ ] Embedding engine (rule-based)
-- [ ] Attention mechanism déterministe
-- [ ] Parallélisation déclarative
-- [ ] Supervision et restart automatique
+- [ ] Deterministic attention mechanism
+- [ ] HVAC degradation detection demo
+- [ ] Declarative parallelization
+- [ ] Automatic supervision and restart
 - [ ] State backend: RocksDB
 
-### Livrables Phase 2
-- Détection de patterns complexes via attention
-- Scaling horizontal sur multi-cores
+### Phase 3 Deliverables
+- Complex pattern detection via attention
+- Horizontal scaling on multi-cores
 
-## Phase 3 : Observabilité & Production (2 mois)
+## Phase 4: Observability & Production (2 months)
 
-- [ ] Métriques Prometheus
-- [ ] Tracing OpenTelemetry
+- [ ] OpenTelemetry tracing
 - [ ] Checkpointing (S3, local)
-- [ ] CLI avancé et tooling
-- [ ] Documentation complète
+- [ ] Advanced CLI and tooling
+- [ ] Complete documentation
 
-### Livrables Phase 3
-- Prêt pour production
-- Dashboard de monitoring
+### Phase 4 Deliverables
+- Production ready
+- Monitoring dashboard
 
-## Phase 4 : Fonctionnalités avancées (3-4 mois)
+## Phase 5: Advanced Features (3-4 months)
 
-- [ ] Learned embeddings (modèles pré-entraînés)
-- [ ] GPU support pour attention (optionnel)
+- [ ] Learned embeddings (pre-trained models)
+- [ ] GPU support for attention (optional)
 - [ ] Distributed mode (multi-nodes)
-- [ ] Web UI pour monitoring
-- [ ] Hot reload de configurations
-- [ ] Connecteurs additionnels (Pulsar, Redis Streams, etc.)
+- [ ] Web UI for monitoring
+- [ ] Hot reload of configurations
+- [ ] Additional connectors (Pulsar, Redis Streams, etc.)
 
-## Timeline estimée
+## Estimated Timeline
 
 ```
-2026 Q1: Phase 1 (Core)
-2026 Q2: Phase 2 (Attention)
-2026 Q3: Phase 3 (Production)
-2026 Q4: Phase 4 (Avancé)
+2026 Q1: Phase 1 (Core) ✅ + Phase 2 (Sinks)
+2026 Q2: Phase 3 (Attention)
+2026 Q3: Phase 4 (Production)
+2026 Q4: Phase 5 (Advanced)
 ```

@@ -2,13 +2,17 @@
 //!
 //! This crate provides the runtime for executing VarpulisQL programs.
 
+pub mod aggregation;
 pub mod engine;
 pub mod event;
+pub mod metrics;
+pub mod sink;
+pub mod simulator;
 pub mod stream;
 pub mod window;
-pub mod aggregation;
-pub mod simulator;
 
 pub use engine::Engine;
 pub use event::Event;
+pub use metrics::Metrics;
+pub use sink::{ConsoleSink, FileSink, HttpSink, MultiSink, Sink};
 pub use stream::Stream;

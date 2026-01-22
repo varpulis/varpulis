@@ -1,51 +1,51 @@
-# Varpulis - Vue d'ensemble
+# Varpulis - Overview
 
 ## Vision
 
-Varpulis est un moteur de streaming analytics nouvelle génération combinant :
-- La syntaxe intuitive d'Apama (EPL)
-- L'efficacité des hypertrees pour la détection de patterns
-- Les capacités des architectures transformer (attention mechanisms) de manière **déterministe**
-- Une approche unifiée simplifiant radicalement le développement par rapport à Apama
+Varpulis is a next-generation streaming analytics engine combining:
+- Apama's intuitive syntax (EPL)
+- Hypertree efficiency for pattern detection
+- Transformer architecture capabilities (attention mechanisms) in a **deterministic** way
+- A unified approach that radically simplifies development compared to Apama
 
-## Nom du projet
+## Project Name
 
-**Varpulis** - Dans la mythologie slave, Varpulis est l'esprit/compagnon du dieu du tonnerre, associé aux vents violents et aux tempêtes. Ce nom évoque :
-- **Vitesse** : Les vents rapides qui transportent les événements
-- **Puissance** : La force des tempêtes pour traiter des millions d'événements
-- **Flux** : Le mouvement continu des streams de données
+**Varpulis** - In Slavic mythology, Varpulis is the spirit/companion of the thunder god, associated with violent winds and storms. This name evokes:
+- **Speed**: Fast winds carrying events
+- **Power**: Storm force to process millions of events
+- **Flow**: Continuous movement of data streams
 
-## Langage cible
+## Target Language
 
-**Rust** - choisi pour :
-- Performance native (requis pour CEP haute fréquence)
-- Sécurité mémoire sans garbage collector
-- Excellent écosystème async (`tokio`, `async-std`)
-- Support SIMD et optimisations bas niveau
-- Facilité de déploiement (binaire statique)
+**Rust** - chosen for:
+- Native performance (required for high-frequency CEP)
+- Memory safety without garbage collector
+- Excellent async ecosystem (`tokio`, `async-std`)
+- SIMD support and low-level optimizations
+- Easy deployment (static binary)
 
-## Différenciateurs clés vs Apama
+## Key Differentiators vs Apama
 
-| Caractéristique | Apama | Varpulis |
-|----------------|-------|----------|
-| **Agrégation multi-streams** | ❌ Impossible directement | ✅ Native |
-| **Parallélisation** | `spawn` complexe et risqué | Déclarative et supervisée |
-| **Listeners vs Streams** | Séparés et complexes | Unifiés dans un concept unique |
-| **Debugging** | Difficile | Observabilité intégrée |
-| **Pattern detection** | Hypertrees uniquement | Hypertrees + Attention |
-| **Latence** | < 1ms possible | Configurable (< 1ms à < 100ms) |
+| Feature | Apama | Varpulis |
+|---------|-------|----------|
+| **Multi-stream aggregation** | ❌ Not directly possible | ✅ Native |
+| **Parallelization** | Complex and risky `spawn` | Declarative and supervised |
+| **Listeners vs Streams** | Separate and complex | Unified in a single concept |
+| **Debugging** | Difficult | Built-in observability |
+| **Pattern detection** | Hypertrees only | Hypertrees + Attention |
+| **Latency** | < 1ms possible | Configurable (< 1ms to < 100ms) |
 
-## Composants principaux
+## Main Components
 
-1. **Compiler** - Compilation VarpulisQL → IR optimisé
-2. **Runtime Engine** - Exécution des graphes de traitement
-3. **Pattern Matcher** - Détection de patterns via hypertrees
-4. **Attention Engine** - Corrélation déterministe entre événements
-5. **State Manager** - Gestion de l'état (in-memory / RocksDB)
-6. **Observability Layer** - Métriques, traces, logs
+1. **Compiler** - VarpulisQL → Optimized IR compilation
+2. **Runtime Engine** - Processing graph execution
+3. **Pattern Matcher** - Pattern detection via hypertrees
+4. **Attention Engine** - Deterministic correlation between events
+5. **State Manager** - State management (in-memory / RocksDB)
+6. **Observability Layer** - Metrics, traces, logs
 
-## Voir aussi
+## See Also
 
-- [Architecture système](../architecture/system.md)
-- [Langage VarpulisQL](../language/overview.md)
+- [System Architecture](../architecture/system.md)
+- [VarpulisQL Language](../language/overview.md)
 - [Roadmap](roadmap.md)

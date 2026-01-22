@@ -16,3 +16,6 @@ tracing = { workspace = true }
 chrono = { workspace = true }
 indexmap = { workspace = true }
 rand = { workspace = true }
+prometheus = { workspace = true }
+async-trait = "0.1"
+reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }

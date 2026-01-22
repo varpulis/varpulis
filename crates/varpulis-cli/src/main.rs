@@ -9,7 +9,8 @@ use tracing_subscriber::FmtSubscriber;
 
 use varpulis_parser::parse;
 use varpulis_runtime::engine::{Alert, Engine};
-use varpulis_runtime::simulator::{create_default_simulator, SimulatorConfig, Simulator};
+use varpulis_runtime::metrics::{Metrics, MetricsServer};
+use varpulis_runtime::simulator::{SimulatorConfig, Simulator};
 
 #[derive(Parser)]
 #[command(name = "varpulis")]
@@ -53,6 +54,14 @@ enum Commands {
         /// Enable degradation simulation
         #[arg(long)]
         degradation: bool,
+
+        /// Enable Prometheus metrics endpoint
+        #[arg(long)]
+        metrics: bool,
+
+        /// Metrics endpoint port
+        #[arg(long, default_value = "9090")]
+        metrics_port: u16,
     },
 
     /// Check syntax of a VarpulisQL file
@@ -90,8 +99,8 @@ async fn main() -> Result<()> {
             parse_and_show(&source)?;
         }
 
-        Commands::Demo { duration, anomalies, degradation } => {
-            run_demo(duration, anomalies, degradation).await?;
+        Commands::Demo { duration, anomalies, degradation, metrics, metrics_port } => {
+            run_demo(duration, anomalies, degradation, metrics, metrics_port).await?;
         }
 
         Commands::Check { file } => {
@@ -167,12 +176,15 @@ fn check_syntax(source: &str) -> Result<()> {
     Ok(())
 }
 
-async fn run_demo(duration_secs: u64, anomalies: bool, degradation: bool) -> Result<()> {
+async fn run_demo(duration_secs: u64, anomalies: bool, degradation: bool, enable_metrics: bool, metrics_port: u16) -> Result<()> {
     println!("🏢 Varpulis HVAC Building Demo");
     println!("================================");
     println!("Duration: {} seconds", duration_secs);
     println!("Anomalies: {}", if anomalies { "enabled" } else { "disabled" });
     println!("Degradation: {}", if degradation { "enabled" } else { "disabled" });
+    if enable_metrics {
+        println!("Metrics: http://127.0.0.1:{}/metrics", metrics_port);
+    }
     println!();
 
     // Create event channel
@@ -201,8 +213,29 @@ async fn run_demo(duration_secs: u64, anomalies: bool, degradation: bool) -> Res
     "#;
 
     let program = parse(demo_program).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
+    
+    // Create prometheus metrics if enabled
+    let prom_metrics = if enable_metrics {
+        Some(Metrics::new())
+    } else {
+        None
+    };
+
     let mut engine = Engine::new(alert_tx);
+    if let Some(ref m) = prom_metrics {
+        engine = engine.with_metrics(m.clone());
+    }
     engine.load(&program).map_err(|e| anyhow::anyhow!(e))?;
+
+    // Spawn metrics server if enabled
+    if let Some(ref metrics) = prom_metrics {
+        let server = MetricsServer::new(metrics.clone(), format!("127.0.0.1:{}", metrics_port));
+        tokio::spawn(async move {
+            if let Err(e) = server.run().await {
+                tracing::error!("Metrics server error: {}", e);
+            }
+        });
+    }
 
     // Spawn simulator
     let simulator_handle = tokio::spawn(async move {

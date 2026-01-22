@@ -1,11 +1,12 @@
-# Cas d'usage MVP : Supervision HVAC Bâtiment
+# MVP Use Case: HVAC Building Supervision
 
-## Contexte
+## Business Context
 
-Supervision d'un bâtiment intelligent avec :
-- Système HVAC (Heating, Ventilation, Air Conditioning)
-- Capteurs de température, humidité, pression
-- Détection d'anomalies et prédiction de pannes
+A smart building equipped with IoT sensors to monitor:
+- **Temperature** by zone (offices, server room, reception)
+- **Humidity** by zone
+- **HVAC equipment status** (AHU, air conditioning)
+- **Energy consumption**
 
 ## Architecture du bâtiment simulé
 

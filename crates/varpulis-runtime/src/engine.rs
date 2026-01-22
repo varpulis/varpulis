@@ -4,15 +4,18 @@ use crate::aggregation::{AggResult, Aggregator, Avg, Count, Max, Min, Sum};
 use crate::event::Event;
 use crate::window::{SlidingWindow, TumblingWindow};
 use chrono::Duration;
+use crate::metrics::Metrics;
 use indexmap::IndexMap;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::time::Instant;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 use varpulis_core::ast::{Program, Stmt, StreamOp, StreamSource};
 use varpulis_core::Value;
 
 /// Alert emitted by the engine
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Alert {
     pub alert_type: String,
     pub severity: String,
@@ -31,6 +34,8 @@ pub struct Engine {
     /// Metrics
     events_processed: u64,
     alerts_generated: u64,
+    /// Prometheus metrics
+    metrics: Option<Metrics>,
 }
 
 /// Runtime stream definition
@@ -69,7 +74,14 @@ impl Engine {
             alert_tx,
             events_processed: 0,
             alerts_generated: 0,
+            metrics: None,
         }
+    }
+
+    /// Enable Prometheus metrics
+    pub fn with_metrics(mut self, metrics: Metrics) -> Self {
+        self.metrics = Some(metrics);
+        self
     }
 
     /// Load a program into the engine
