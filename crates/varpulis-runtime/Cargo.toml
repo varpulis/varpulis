@@ -1,0 +1,18 @@
+[package]
+name = "varpulis-runtime"
+version.workspace = true
+edition.workspace = true
+description = "Runtime execution engine for Varpulis"
+
+[dependencies]
+varpulis-core = { path = "../varpulis-core" }
+varpulis-parser = { path = "../varpulis-parser" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+indexmap = { workspace = true }
+rand = { workspace = true }

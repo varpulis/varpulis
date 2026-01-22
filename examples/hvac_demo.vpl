@@ -1,0 +1,48 @@
+# Varpulis HVAC Building Demo
+# Supervision d'un bâtiment intelligent
+
+# === Stream Definitions ===
+
+# Raw streams from event sources
+stream Temperatures from TemperatureReading
+stream Humidity from HumidityReading
+stream HVAC from HVACStatus
+
+# Aggregation by zone - 5 minute tumbling window
+stream ZoneTemperatures = Temperatures
+    .partition_by(zone)
+    .window(5m)
+    .aggregate(
+        zone: first(zone),
+        avg_temp: avg(value),
+        min_temp: min(value),
+        max_temp: max(value),
+        count: count()
+    )
+
+# Temperature anomaly detection
+stream TemperatureAnomaly = ZoneTemperatures
+    .where(avg_temp < 16.0 or avg_temp > 28.0)
+    .emit(
+        alert_type: "temperature_anomaly",
+        severity: "warning"
+    )
+
+# Server room critical alert (stricter thresholds)
+stream ServerRoomAlert = Temperatures
+    .where(zone == "zone_b")
+    .where(value < 16.0 or value > 22.0)
+    .emit(
+        alert_type: "server_room_critical",
+        severity: "critical"
+    )
+
+# HVAC efficiency monitoring - sliding window
+stream HVACEfficiency = HVAC
+    .window(15m, sliding: 5m)
+    .aggregate(
+        unit: first(unit_id),
+        avg_power: avg(power_consumption),
+        avg_pressure: avg(compressor_pressure),
+        readings: count()
+    )

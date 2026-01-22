@@ -1,0 +1,14 @@
+[package]
+name = "varpulis-parser"
+version.workspace = true
+edition.workspace = true
+description = "Parser for VarpulisQL language"
+build = "build.rs"
+
+[dependencies]
+varpulis-core = { path = "../varpulis-core" }
+logos = { workspace = true }
+thiserror = { workspace = true }
+
+[build-dependencies]
+lalrpop = "0.20"

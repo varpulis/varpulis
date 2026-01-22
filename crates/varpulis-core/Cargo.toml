@@ -1,0 +1,12 @@
+[package]
+name = "varpulis-core"
+version.workspace = true
+edition.workspace = true
+description = "Core types and AST for VarpulisQL"
+
+[dependencies]
+serde = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+indexmap = { workspace = true }
+smallvec = { workspace = true }

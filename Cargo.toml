@@ -1,0 +1,59 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/varpulis-core",
+    "crates/varpulis-parser",
+    "crates/varpulis-runtime",
+    "crates/varpulis-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Varpulis Contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/varpulis/varpulis"
+description = "A modern streaming analytics engine with attention-based pattern detection"
+
+[workspace.dependencies]
+# Parsing
+lalrpop-util = "0.20"
+logos = "0.14"
+
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Logging & tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# CLI
+clap = { version = "4.4", features = ["derive"] }
+
+# Collections
+indexmap = { version = "2.1", features = ["serde"] }
+smallvec = "1.11"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Metrics
+prometheus = "0.13"
+
+# Random
+rand = "0.8"
+
+# Testing
+pretty_assertions = "1.4"
+
+[profile.release]
+lto = true
+codegen-units = 1

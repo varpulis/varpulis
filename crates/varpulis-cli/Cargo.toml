@@ -1,0 +1,20 @@
+[package]
+name = "varpulis-cli"
+version.workspace = true
+edition.workspace = true
+description = "CLI for Varpulis streaming analytics engine"
+
+[[bin]]
+name = "varpulis"
+path = "src/main.rs"
+
+[dependencies]
+varpulis-core = { path = "../varpulis-core" }
+varpulis-parser = { path = "../varpulis-parser" }
+varpulis-runtime = { path = "../varpulis-runtime" }
+tokio = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde_json = { workspace = true }
