@@ -331,3 +331,139 @@ async fn test_sequence_with_string_match() {
     
     assert_eq!(alerts.len(), 1, "Should match error-ack sequence");
 }
+
+// =============================================================================
+// Regression Tests - Alert Channel Bug (channel closed)
+// =============================================================================
+
+/// Regression test: Ensure alert channel remains open during event processing
+/// Bug: When loading via WebSocket, alert_tx receiver was dropped immediately
+/// Fix: Use shared alert_tx from ServerState
+#[tokio::test]
+async fn test_regression_alert_channel_stays_open() {
+    let (tx, mut rx) = mpsc::channel::<Alert>(100);
+    
+    let program = parse(r#"
+        stream Test = Event as e
+            .emit(status: "received", id: e.id)
+    "#).expect("Failed to parse");
+    
+    let mut engine = Engine::new(tx);
+    engine.load(&program).expect("Failed to load");
+    
+    // Process multiple events - alerts should all be received
+    for i in 1..=5 {
+        let mut event = varpulis_runtime::event::Event::new("Event");
+        event.data.insert("id".to_string(), varpulis_core::Value::Int(i));
+        engine.process(event).await.expect("Failed to process");
+    }
+    
+    // All 5 alerts should be received (channel not closed)
+    let mut count = 0;
+    while let Ok(_) = rx.try_recv() {
+        count += 1;
+    }
+    
+    assert_eq!(count, 5, "All alerts should be received - channel must stay open");
+}
+
+/// Regression test: Alerts work correctly after multiple load operations
+/// This simulates reloading a program (like VSCode reload)
+#[tokio::test]
+async fn test_regression_alerts_after_reload() {
+    let (tx, mut rx) = mpsc::channel::<Alert>(100);
+    
+    // First load
+    let program1 = parse(r#"
+        stream Test1 = Event as e
+            .emit(status: "test1")
+    "#).expect("Failed to parse");
+    
+    let mut engine = Engine::new(tx.clone());
+    engine.load(&program1).expect("Failed to load");
+    
+    let event1 = varpulis_runtime::event::Event::new("Event");
+    engine.process(event1).await.expect("Failed to process");
+    
+    // Second load (simulates VSCode reload with same tx)
+    let program2 = parse(r#"
+        stream Test2 = Event as e
+            .emit(status: "test2")
+    "#).expect("Failed to parse");
+    
+    let mut engine2 = Engine::new(tx);
+    engine2.load(&program2).expect("Failed to load");
+    
+    let event2 = varpulis_runtime::event::Event::new("Event");
+    engine2.process(event2).await.expect("Failed to process");
+    
+    // Both alerts should be received
+    let mut count = 0;
+    while let Ok(_) = rx.try_recv() {
+        count += 1;
+    }
+    
+    assert_eq!(count, 2, "Alerts from both engines should be received");
+}
+
+// =============================================================================
+// Regression Tests - Event Injection
+// =============================================================================
+
+/// Regression test: Events with various field types are processed correctly
+/// Bug: json_to_value conversion was missing some types
+#[tokio::test]
+async fn test_regression_event_field_types() {
+    use varpulis_runtime::event::Event;
+    use varpulis_core::Value;
+    
+    let (tx, mut rx) = mpsc::channel::<Alert>(100);
+    
+    let program = parse(r#"
+        stream Test = Data as d
+            .emit(received: true)
+    "#).expect("Failed to parse");
+    
+    let mut engine = Engine::new(tx);
+    engine.load(&program).expect("Failed to load");
+    
+    // Create event with various field types (simulates JSON injection)
+    let mut event = Event::new("Data");
+    event.data.insert("string_field".to_string(), Value::Str("hello".to_string()));
+    event.data.insert("int_field".to_string(), Value::Int(42));
+    event.data.insert("float_field".to_string(), Value::Float(3.14));
+    event.data.insert("bool_field".to_string(), Value::Bool(true));
+    event.data.insert("null_field".to_string(), Value::Null);
+    
+    engine.process(event).await.expect("Failed to process event with various types");
+    
+    assert!(rx.try_recv().is_ok(), "Event with various field types should trigger alert");
+}
+
+/// Regression test: Rapid event injection doesn't cause channel issues
+#[tokio::test]
+async fn test_regression_rapid_event_injection() {
+    let (tx, mut rx) = mpsc::channel::<Alert>(1000);
+    
+    let program = parse(r#"
+        stream Counter = Tick as t
+            .emit(count: t.n)
+    "#).expect("Failed to parse");
+    
+    let mut engine = Engine::new(tx);
+    engine.load(&program).expect("Failed to load");
+    
+    // Rapid injection of 100 events
+    for i in 0..100 {
+        let mut event = varpulis_runtime::event::Event::new("Tick");
+        event.data.insert("n".to_string(), varpulis_core::Value::Int(i));
+        engine.process(event).await.expect("Rapid injection should not fail");
+    }
+    
+    let mut count = 0;
+    while let Ok(_) = rx.try_recv() {
+        count += 1;
+    }
+    
+    assert_eq!(count, 100, "All 100 rapid events should produce alerts");
+}
