@@ -1,10 +1,13 @@
 //! Integration tests for event simulation scenarios
 //!
 //! Tests validate complete workflows: parse program + inject events + verify alerts
+//!
+//! REGRESSION: These tests ensure the alert channel remains open during event processing.
 
 use tokio::sync::mpsc;
 use varpulis_parser::parse;
 use varpulis_runtime::engine::{Alert, Engine};
+use varpulis_runtime::event::Event;
 use varpulis_runtime::event_file::EventFileParser;
 
 /// Helper to run a scenario and collect alerts
@@ -466,4 +469,33 @@ async fn test_regression_rapid_event_injection() {
     }
     
     assert_eq!(count, 100, "All 100 rapid events should produce alerts");
+}
+
+/// Regression test: Alert channel works with sequence patterns
+#[tokio::test]
+async fn test_regression_sequence_alert_channel() {
+    let (tx, mut rx) = mpsc::channel::<Alert>(100);
+    
+    let program = parse(r#"
+        stream AlertTest = A as a -> B .emit(status: "matched")
+    "#).expect("Failed to parse");
+    
+    let mut engine = Engine::new(tx);
+    engine.load(&program).expect("Failed to load");
+    
+    // Process first pair
+    engine.process(Event::new("A")).await.expect("Process A1 failed");
+    engine.process(Event::new("B")).await.expect("Process B1 failed");
+    
+    // Verify first alert
+    let alert1 = rx.try_recv();
+    assert!(alert1.is_ok(), "First alert should be received");
+    
+    // Process second pair - channel should still be open
+    engine.process(Event::new("A")).await.expect("Process A2 failed");
+    engine.process(Event::new("B")).await.expect("Process B2 failed");
+    
+    // Verify second alert - this would fail if channel was closed
+    let alert2 = rx.try_recv();
+    assert!(alert2.is_ok(), "Second alert should be received - channel must stay open");
 }
