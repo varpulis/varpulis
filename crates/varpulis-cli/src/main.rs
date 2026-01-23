@@ -649,8 +649,8 @@ async fn handle_ws_message(msg: WsMessage, state: &Arc<RwLock<ServerState>>) -> 
                     match parse(&source) {
                         Ok(program) => {
                             let mut state = state.write().await;
-                            let (alert_tx, _) = mpsc::channel::<Alert>(100);
-                            let mut engine = Engine::new(alert_tx);
+                            let engine_alert_tx = state.alert_tx.clone();
+                            let mut engine = Engine::new(engine_alert_tx);
                             
                             match engine.load(&program) {
                                 Ok(()) => {
