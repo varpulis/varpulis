@@ -168,6 +168,49 @@ impl AggregateFunc for Last {
     }
 }
 
+/// Exponential Moving Average aggregation
+/// EMA = price * k + EMA(previous) * (1 - k)
+/// where k = 2 / (n + 1)
+pub struct Ema {
+    pub period: usize,
+}
+
+impl Ema {
+    pub fn new(period: usize) -> Self {
+        Self { period: period.max(1) }
+    }
+}
+
+impl AggregateFunc for Ema {
+    fn name(&self) -> &str {
+        "ema"
+    }
+
+    fn apply(&self, events: &[Event], field: Option<&str>) -> Value {
+        let field = field.unwrap_or("value");
+        let values: Vec<f64> = events
+            .iter()
+            .filter_map(|e| e.get_float(field))
+            .collect();
+
+        if values.is_empty() {
+            return Value::Null;
+        }
+
+        let k = 2.0 / (self.period as f64 + 1.0);
+        
+        // Start with first value as initial EMA
+        let mut ema = values[0];
+        
+        // Calculate EMA for each subsequent value
+        for value in values.iter().skip(1) {
+            ema = value * k + ema * (1.0 - k);
+        }
+
+        Value::Float(ema)
+    }
+}
+
 /// Aggregator that can apply multiple aggregations
 pub struct Aggregator {
     aggregations: Vec<(String, Box<dyn AggregateFunc>, Option<String>)>,
@@ -253,5 +296,42 @@ mod tests {
         assert_eq!(result.get("count"), Some(&Value::Int(3)));
         assert_eq!(result.get("sum"), Some(&Value::Float(60.0)));
         assert_eq!(result.get("avg"), Some(&Value::Float(20.0)));
+    }
+
+    #[test]
+    fn test_first_last() {
+        let events = make_events();
+        assert_eq!(First.apply(&events, Some("value")), Value::Float(10.0));
+        assert_eq!(Last.apply(&events, Some("value")), Value::Float(30.0));
+    }
+
+    #[test]
+    fn test_stddev() {
+        let events = make_events();
+        let result = StdDev.apply(&events, Some("value"));
+        if let Value::Float(v) = result {
+            assert!((v - 10.0).abs() < 0.01); // stddev of [10, 20, 30] = 10
+        } else {
+            panic!("Expected float");
+        }
+    }
+
+    #[test]
+    fn test_ema() {
+        let events = vec![
+            Event::new("Test").with_field("value", 100.0),
+            Event::new("Test").with_field("value", 110.0),
+            Event::new("Test").with_field("value", 120.0),
+            Event::new("Test").with_field("value", 130.0),
+            Event::new("Test").with_field("value", 140.0),
+        ];
+        let ema = Ema::new(3);
+        let result = ema.apply(&events, Some("value"));
+        if let Value::Float(v) = result {
+            // EMA(3) with k = 0.5: should be weighted towards recent values
+            assert!(v > 120.0 && v < 140.0);
+        } else {
+            panic!("Expected float");
+        }
     }
 }

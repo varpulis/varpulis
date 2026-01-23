@@ -1,6 +1,6 @@
 //! Main execution engine for Varpulis
 
-use crate::aggregation::{AggResult, Aggregator, Avg, Count, Max, Min, Sum};
+use crate::aggregation::{AggResult, Aggregator, Avg, Count, Ema, First, Last, Max, Min, StdDev, Sum};
 use crate::event::Event;
 use crate::window::{SlidingWindow, TumblingWindow};
 use chrono::Duration;
@@ -200,16 +200,27 @@ impl Engine {
                             }
                         };
                         
+                        // Extract period for EMA if provided as second argument
+                        let ema_period = match &item.expr {
+                            varpulis_core::ast::Expr::Call { args, .. } => {
+                                args.get(1).and_then(|a| match a {
+                                    varpulis_core::ast::Arg::Positional(varpulis_core::ast::Expr::Int(n)) => Some(*n as usize),
+                                    _ => None,
+                                }).unwrap_or(12) // Default EMA period
+                            }
+                            _ => 12,
+                        };
+                        
                         let func: Box<dyn crate::aggregation::AggregateFunc> = match func_name.as_str() {
                             "count" => Box::new(Count),
                             "sum" => Box::new(Sum),
                             "avg" => Box::new(Avg),
                             "min" => Box::new(Min),
                             "max" => Box::new(Max),
-                            "last" => Box::new(Max), // TODO: implement Last
-                            "first" => Box::new(Min), // TODO: implement First
-                            "stddev" => Box::new(Avg), // TODO: implement StdDev
-                            "ema" => Box::new(Avg), // TODO: implement EMA properly
+                            "last" => Box::new(Last),
+                            "first" => Box::new(First),
+                            "stddev" => Box::new(StdDev),
+                            "ema" => Box::new(Ema::new(ema_period)),
                             _ => {
                                 warn!("Unknown aggregation function: {}", func_name);
                                 continue;
