@@ -282,12 +282,12 @@ impl<'source> Parser<'source> {
         let name = self.parse_identifier()?;
         
         // Handle optional alias: `EventType as alias`
-        // For now, we just skip the alias (it will be used by the first followed-by)
         if self.match_token(&Token::As) {
-            let _alias = self.parse_identifier()?;
+            let alias = self.parse_identifier()?;
+            Ok(StreamSource::IdentWithAlias { name, alias })
+        } else {
+            Ok(StreamSource::Ident(name))
         }
-        
-        Ok(StreamSource::Ident(name))
     }
 
     fn parse_inline_stream_list(&mut self) -> ParseResult<Vec<InlineStreamDecl>> {

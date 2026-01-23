@@ -83,8 +83,10 @@ pub enum Stmt {
 /// Stream source
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum StreamSource {
-    /// Reference to existing stream
+    /// Reference to existing stream with optional alias
     Ident(String),
+    /// Event type with optional alias: `EventType as alias`
+    IdentWithAlias { name: String, alias: String },
     /// From event type: `from EventType`
     From(String),
     /// Merge multiple streams

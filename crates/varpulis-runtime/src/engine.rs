@@ -133,6 +133,14 @@ impl Engine {
                     .push(name.to_string());
                 RuntimeSource::Stream(stream_name.clone())
             }
+            StreamSource::IdentWithAlias { name: event_type, .. } => {
+                // Register for the event type (alias is handled in sequence)
+                self.event_sources
+                    .entry(event_type.clone())
+                    .or_default()
+                    .push(name.to_string());
+                RuntimeSource::EventType(event_type.clone())
+            }
             StreamSource::Join(clauses) => {
                 let sources: Vec<String> = clauses.iter().map(|c| c.source.clone()).collect();
                 info!("Registering join stream {} from sources: {:?}", name, sources);
@@ -177,16 +185,17 @@ impl Engine {
         // Check if we have any FollowedBy operations - if so, add source as first step
         let has_sequence = ops.iter().any(|op| matches!(op, StreamOp::FollowedBy(_)));
         if has_sequence {
-            let source_event_type = match source {
-                StreamSource::Ident(name) => name.clone(),
-                StreamSource::From(name) => name.clone(),
+            let (source_event_type, source_alias) = match source {
+                StreamSource::Ident(name) => (name.clone(), None),
+                StreamSource::IdentWithAlias { name, alias } => (name.clone(), Some(alias.clone())),
+                StreamSource::From(name) => (name.clone(), None),
                 _ => return Err("Sequences require a single event type source".to_string()),
             };
             // First step is the source event type
             sequence_steps.push(SequenceStep {
                 event_type: source_event_type,
                 filter: None,
-                alias: None, // Will be set if source has 'as alias'
+                alias: source_alias,
                 timeout: None,
                 match_all: false,
             });
@@ -195,9 +204,12 @@ impl Engine {
         for op in ops {
             match op {
                 StreamOp::FollowedBy(clause) => {
+                    let filter = clause.filter.as_ref().map(|expr| {
+                        Self::compile_sequence_filter(expr.clone())
+                    });
                     let step = SequenceStep {
                         event_type: clause.event_type.clone(),
-                        filter: None, // TODO: compile filter expression
+                        filter,
                         alias: clause.alias.clone(),
                         timeout: current_timeout.take(),
                         match_all: clause.match_all,
@@ -292,6 +304,135 @@ impl Engine {
         };
 
         Ok((runtime_ops, sequence_tracker, sequence_event_types))
+    }
+
+    /// Compile a sequence filter expression into a runtime closure
+    fn compile_sequence_filter(expr: varpulis_core::ast::Expr) -> Box<dyn Fn(&Event, &SequenceContext) -> bool + Send + Sync> {
+        use varpulis_core::ast::{BinOp, Expr};
+        
+        Box::new(move |event: &Event, ctx: &SequenceContext| {
+            Self::eval_filter_expr(&expr, event, ctx)
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        })
+    }
+
+    /// Evaluate a filter expression at runtime
+    fn eval_filter_expr(expr: &varpulis_core::ast::Expr, event: &Event, ctx: &SequenceContext) -> Option<Value> {
+        use varpulis_core::ast::{BinOp, Expr};
+        
+        match expr {
+            Expr::Ident(name) => {
+                // First check current event, then context
+                event.get(name).cloned()
+            }
+            Expr::Int(n) => Some(Value::Int(*n)),
+            Expr::Float(f) => Some(Value::Float(*f)),
+            Expr::Str(s) => Some(Value::Str(s.clone())),
+            Expr::Bool(b) => Some(Value::Bool(*b)),
+            Expr::Member { expr: object, member } => {
+                // Handle alias.field access (e.g., order.id)
+                if let Expr::Ident(alias) = object.as_ref() {
+                    if let Some(captured) = ctx.get(alias.as_str()) {
+                        return captured.get(member).cloned();
+                    }
+                }
+                None
+            }
+            Expr::Binary { op, left, right } => {
+                let left_val = Self::eval_filter_expr(left, event, ctx)?;
+                let right_val = Self::eval_filter_expr(right, event, ctx)?;
+                
+                match op {
+                    BinOp::Eq => Some(Value::Bool(left_val == right_val)),
+                    BinOp::NotEq => Some(Value::Bool(left_val != right_val)),
+                    BinOp::Lt => {
+                        match (&left_val, &right_val) {
+                            (Value::Int(a), Value::Int(b)) => Some(Value::Bool(a < b)),
+                            (Value::Float(a), Value::Float(b)) => Some(Value::Bool(a < b)),
+                            (Value::Int(a), Value::Float(b)) => Some(Value::Bool((*a as f64) < *b)),
+                            (Value::Float(a), Value::Int(b)) => Some(Value::Bool(*a < (*b as f64))),
+                            _ => None,
+                        }
+                    }
+                    BinOp::Le => {
+                        match (&left_val, &right_val) {
+                            (Value::Int(a), Value::Int(b)) => Some(Value::Bool(a <= b)),
+                            (Value::Float(a), Value::Float(b)) => Some(Value::Bool(a <= b)),
+                            (Value::Int(a), Value::Float(b)) => Some(Value::Bool((*a as f64) <= *b)),
+                            (Value::Float(a), Value::Int(b)) => Some(Value::Bool(*a <= (*b as f64))),
+                            _ => None,
+                        }
+                    }
+                    BinOp::Gt => {
+                        match (&left_val, &right_val) {
+                            (Value::Int(a), Value::Int(b)) => Some(Value::Bool(a > b)),
+                            (Value::Float(a), Value::Float(b)) => Some(Value::Bool(a > b)),
+                            (Value::Int(a), Value::Float(b)) => Some(Value::Bool((*a as f64) > *b)),
+                            (Value::Float(a), Value::Int(b)) => Some(Value::Bool(*a > (*b as f64))),
+                            _ => None,
+                        }
+                    }
+                    BinOp::Ge => {
+                        match (&left_val, &right_val) {
+                            (Value::Int(a), Value::Int(b)) => Some(Value::Bool(a >= b)),
+                            (Value::Float(a), Value::Float(b)) => Some(Value::Bool(a >= b)),
+                            (Value::Int(a), Value::Float(b)) => Some(Value::Bool((*a as f64) >= *b)),
+                            (Value::Float(a), Value::Int(b)) => Some(Value::Bool(*a >= (*b as f64))),
+                            _ => None,
+                        }
+                    }
+                    BinOp::And => {
+                        let a = left_val.as_bool()?;
+                        let b = right_val.as_bool()?;
+                        Some(Value::Bool(a && b))
+                    }
+                    BinOp::Or => {
+                        let a = left_val.as_bool()?;
+                        let b = right_val.as_bool()?;
+                        Some(Value::Bool(a || b))
+                    }
+                    BinOp::Add => {
+                        match (&left_val, &right_val) {
+                            (Value::Int(a), Value::Int(b)) => Some(Value::Int(a + b)),
+                            (Value::Float(a), Value::Float(b)) => Some(Value::Float(a + b)),
+                            (Value::Int(a), Value::Float(b)) => Some(Value::Float(*a as f64 + b)),
+                            (Value::Float(a), Value::Int(b)) => Some(Value::Float(a + *b as f64)),
+                            _ => None,
+                        }
+                    }
+                    BinOp::Sub => {
+                        match (&left_val, &right_val) {
+                            (Value::Int(a), Value::Int(b)) => Some(Value::Int(a - b)),
+                            (Value::Float(a), Value::Float(b)) => Some(Value::Float(a - b)),
+                            (Value::Int(a), Value::Float(b)) => Some(Value::Float(*a as f64 - b)),
+                            (Value::Float(a), Value::Int(b)) => Some(Value::Float(a - *b as f64)),
+                            _ => None,
+                        }
+                    }
+                    BinOp::Mul => {
+                        match (&left_val, &right_val) {
+                            (Value::Int(a), Value::Int(b)) => Some(Value::Int(a * b)),
+                            (Value::Float(a), Value::Float(b)) => Some(Value::Float(a * b)),
+                            (Value::Int(a), Value::Float(b)) => Some(Value::Float(*a as f64 * b)),
+                            (Value::Float(a), Value::Int(b)) => Some(Value::Float(a * *b as f64)),
+                            _ => None,
+                        }
+                    }
+                    BinOp::Div => {
+                        match (&left_val, &right_val) {
+                            (Value::Int(a), Value::Int(b)) if *b != 0 => Some(Value::Int(a / b)),
+                            (Value::Float(a), Value::Float(b)) if *b != 0.0 => Some(Value::Float(a / b)),
+                            (Value::Int(a), Value::Float(b)) if *b != 0.0 => Some(Value::Float(*a as f64 / b)),
+                            (Value::Float(a), Value::Int(b)) if *b != 0 => Some(Value::Float(a / *b as f64)),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
     }
 
     /// Compile an aggregate expression into an AggregateFunc
@@ -612,6 +753,33 @@ mod tests {
         // Now send B after A - should match
         engine.process(Event::new("B")).await.unwrap();
         assert!(rx.try_recv().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_engine_sequence_with_filter() {
+        let source = r#"
+            stream OrderPaymentMatch = Order as order
+                -> Payment where order_id == order.id as payment
+                .emit(status: "matched")
+        "#;
+
+        let program = parse_program(source);
+        let (tx, mut rx) = mpsc::channel(100);
+        let mut engine = Engine::new(tx);
+        engine.load(&program).unwrap();
+
+        // Order 1
+        engine.process(Event::new("Order").with_field("id", 1i64)).await.unwrap();
+        assert!(rx.try_recv().is_err());
+
+        // Payment for wrong order - should NOT match
+        engine.process(Event::new("Payment").with_field("order_id", 999i64)).await.unwrap();
+        assert!(rx.try_recv().is_err());
+
+        // Payment for correct order - should match
+        engine.process(Event::new("Payment").with_field("order_id", 1i64)).await.unwrap();
+        let alert = rx.try_recv().expect("Should have alert");
+        assert_eq!(alert.data.get("status"), Some(&Value::Str("matched".to_string())));
     }
 
     #[tokio::test]
