@@ -238,6 +238,49 @@ impl<'source> Parser<'source> {
     }
 
     /// Parse .not(EventType where condition)
+    fn parse_fork_clause(&mut self) -> ParseResult<StreamOp> {
+        self.consume(&Token::LParen, "(")?;
+        let mut paths = Vec::new();
+        
+        loop {
+            if self.check(&Token::RParen) {
+                break;
+            }
+            
+            // Parse: path_name: -> EventType where cond .within(timeout)
+            let name = self.parse_identifier()?;
+            self.consume(&Token::Colon, ":")?;
+            
+            // Parse the sequence of operations for this path
+            let mut ops = Vec::new();
+            
+            // Must start with ->
+            if self.match_token(&Token::Arrow) {
+                ops.push(self.parse_followed_by()?);
+            }
+            
+            // Continue parsing operations until comma or rparen
+            while self.check(&Token::Dot) && !self.check(&Token::RParen) {
+                if self.is_stream_op_after_dot() {
+                    self.advance(); // consume dot
+                    let op = self.parse_stream_op()?;
+                    ops.push(op);
+                } else {
+                    break;
+                }
+            }
+            
+            paths.push(ForkPath { name, ops });
+            
+            if !self.match_token(&Token::Comma) {
+                break;
+            }
+        }
+        
+        self.consume(&Token::RParen, ")")?;
+        Ok(StreamOp::Fork(paths))
+    }
+
     fn parse_not_clause(&mut self) -> ParseResult<StreamOp> {
         self.consume(&Token::LParen, "(")?;
         
@@ -594,6 +637,34 @@ impl<'source> Parser<'source> {
             }
             "not" => {
                 self.parse_not_clause()
+            }
+            "fork" => {
+                self.parse_fork_clause()
+            }
+            "any" => {
+                self.consume(&Token::LParen, "(")?;
+                let count = if !self.check(&Token::RParen) {
+                    if let Token::Integer(n) = self.current.token {
+                        self.advance();
+                        Some(n as usize)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                self.consume(&Token::RParen, ")")?;
+                Ok(StreamOp::Any(count))
+            }
+            "all" => {
+                self.consume(&Token::LParen, "(")?;
+                self.consume(&Token::RParen, ")")?;
+                Ok(StreamOp::All)
+            }
+            "first" => {
+                self.consume(&Token::LParen, "(")?;
+                self.consume(&Token::RParen, ")")?;
+                Ok(StreamOp::First)
             }
             _ => Err(ParseError::Custom {
                 span: self.prev_span(),
@@ -2239,6 +2310,29 @@ mod tests {
             }
             // First FollowedBy should exist
             assert!(matches!(ops[0], StreamOp::FollowedBy(_)));
+        } else {
+            panic!("Expected StreamDecl");
+        }
+    }
+
+    #[test]
+    fn test_parse_fork_construct() {
+        let source = r#"
+            stream MultiPath = Order as order
+                .fork(
+                    payment: -> Payment where order_id == order.id .within(30m),
+                    shipping: -> Shipping where order_id == order.id .within(2h)
+                )
+                .any()
+                .emit(status: "completed")
+        "#;
+        let program = parse(source).expect("Failed to parse");
+        assert_eq!(program.statements.len(), 1);
+        
+        if let Stmt::StreamDecl { ops, .. } = &program.statements[0].node {
+            // Should have Fork, Any, Emit
+            assert!(ops.iter().any(|op| matches!(op, StreamOp::Fork(_))));
+            assert!(ops.iter().any(|op| matches!(op, StreamOp::Any(_))));
         } else {
             panic!("Expected StreamDecl");
         }

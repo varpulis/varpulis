@@ -188,6 +188,23 @@ pub enum StreamOp {
     Within(Expr),
     /// Negation: `.not(EventType where condition)`
     Not(FollowedByClause),
+    /// Fork into multiple parallel paths: `.fork(path1: ..., path2: ...)`
+    Fork(Vec<ForkPath>),
+    /// Wait for any path to complete: `.any()` or `.any(n)` for at least n
+    Any(Option<usize>),
+    /// Wait for all paths to complete: `.all()`
+    All,
+    /// Wait for first path to complete: `.first()`
+    First,
+}
+
+/// A path in a fork construct
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ForkPath {
+    /// Name of the path
+    pub name: String,
+    /// Sequence of operations for this path
+    pub ops: Vec<StreamOp>,
 }
 
 /// Followed-by clause for temporal sequences
