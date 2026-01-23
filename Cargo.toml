@@ -51,6 +51,11 @@ prometheus = "0.13"
 # Random
 rand = "0.8"
 
+# Web/WebSocket
+warp = "0.3"
+tokio-tungstenite = "0.21"
+futures-util = "0.3"
+
 # Testing
 pretty_assertions = "1.4"
 
