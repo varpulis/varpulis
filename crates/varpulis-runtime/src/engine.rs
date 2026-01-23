@@ -2,6 +2,7 @@
 
 use crate::aggregation::{AggBinOp, AggResult, Aggregator, Avg, Count, Ema, ExprAggregate, First, Last, Max, Min, StdDev, Sum};
 use crate::event::Event;
+use crate::sequence::{SequenceContext, SequenceStep, SequenceTracker};
 use crate::window::{SlidingWindow, TumblingWindow};
 use chrono::Duration;
 use crate::metrics::Metrics;
@@ -43,6 +44,8 @@ struct StreamDefinition {
     name: String,
     source: RuntimeSource,
     operations: Vec<RuntimeOp>,
+    /// Sequence tracker for followed-by operations
+    sequence_tracker: Option<SequenceTracker>,
 }
 
 enum RuntimeSource {
@@ -56,6 +59,8 @@ enum RuntimeOp {
     Window(WindowType),
     Aggregate(Aggregator),
     Emit(EmitConfig),
+    /// Sequence operation - index into sequence_tracker steps
+    Sequence,
 }
 
 enum WindowType {
@@ -109,6 +114,9 @@ impl Engine {
         source: &StreamSource,
         ops: &[StreamOp],
     ) -> Result<(), String> {
+        // Check if we have sequence operations and build tracker
+        let (runtime_ops, sequence_tracker, sequence_event_types) = self.compile_ops_with_sequences(source, ops)?;
+
         let runtime_source = match source {
             StreamSource::From(event_type) => {
                 self.event_sources
@@ -118,6 +126,11 @@ impl Engine {
                 RuntimeSource::EventType(event_type.clone())
             }
             StreamSource::Ident(stream_name) => {
+                // Register for the stream source event type
+                self.event_sources
+                    .entry(stream_name.clone())
+                    .or_default()
+                    .push(name.to_string());
                 RuntimeSource::Stream(stream_name.clone())
             }
             StreamSource::Join(clauses) => {
@@ -128,11 +141,17 @@ impl Engine {
             StreamSource::Merge(decls) => {
                 let sources: Vec<String> = decls.iter().map(|d| d.source.clone()).collect();
                 info!("Registering merge stream {} from sources: {:?}", name, sources);
-                RuntimeSource::Join(sources) // Treat merge similarly to join for now
+                RuntimeSource::Join(sources)
             }
         };
 
-        let runtime_ops = self.compile_ops(ops)?;
+        // Register for all event types in sequence (avoid duplicates)
+        for event_type in sequence_event_types {
+            let streams = self.event_sources.entry(event_type).or_default();
+            if !streams.contains(&name.to_string()) {
+                streams.push(name.to_string());
+            }
+        }
 
         self.streams.insert(
             name.to_string(),
@@ -140,6 +159,7 @@ impl Engine {
                 name: name.to_string(),
                 source: runtime_source,
                 operations: runtime_ops,
+                sequence_tracker,
             },
         );
 
@@ -147,10 +167,67 @@ impl Engine {
         Ok(())
     }
 
-    fn compile_ops(&self, ops: &[StreamOp]) -> Result<Vec<RuntimeOp>, String> {
+    fn compile_ops_with_sequences(&self, source: &StreamSource, ops: &[StreamOp]) -> Result<(Vec<RuntimeOp>, Option<SequenceTracker>, Vec<String>), String> {
         let mut runtime_ops = Vec::new();
+        let mut sequence_steps: Vec<SequenceStep> = Vec::new();
+        let mut sequence_event_types: Vec<String> = Vec::new();
+        let mut match_all_first = false;
+        let mut current_timeout: Option<std::time::Duration> = None;
+
+        // Check if we have any FollowedBy operations - if so, add source as first step
+        let has_sequence = ops.iter().any(|op| matches!(op, StreamOp::FollowedBy(_)));
+        if has_sequence {
+            let source_event_type = match source {
+                StreamSource::Ident(name) => name.clone(),
+                StreamSource::From(name) => name.clone(),
+                _ => return Err("Sequences require a single event type source".to_string()),
+            };
+            // First step is the source event type
+            sequence_steps.push(SequenceStep {
+                event_type: source_event_type,
+                filter: None,
+                alias: None, // Will be set if source has 'as alias'
+                timeout: None,
+                match_all: false,
+            });
+        }
 
         for op in ops {
+            match op {
+                StreamOp::FollowedBy(clause) => {
+                    let step = SequenceStep {
+                        event_type: clause.event_type.clone(),
+                        filter: None, // TODO: compile filter expression
+                        alias: clause.alias.clone(),
+                        timeout: current_timeout.take(),
+                        match_all: clause.match_all,
+                    };
+                    if sequence_steps.len() == 1 {
+                        // First FollowedBy, check if source should be match_all
+                        match_all_first = clause.match_all;
+                    }
+                    sequence_event_types.push(clause.event_type.clone());
+                    sequence_steps.push(step);
+                    continue;
+                }
+                StreamOp::Within(expr) => {
+                    // Parse duration from expression
+                    let duration_ns = match expr {
+                        varpulis_core::ast::Expr::Duration(ns) => *ns,
+                        _ => 300_000_000_000u64, // 5 minutes default
+                    };
+                    current_timeout = Some(std::time::Duration::from_nanos(duration_ns));
+                    continue;
+                }
+                StreamOp::Not(_clause) => {
+                    // TODO: implement negation
+                    warn!("Not clause not yet implemented in runtime");
+                    continue;
+                }
+                _ => {}
+            }
+
+            // Handle non-sequence operations
             match op {
                 StreamOp::Window(args) => {
                     // Parse duration from expression
@@ -205,7 +282,16 @@ impl Engine {
             }
         }
 
-        Ok(runtime_ops)
+        // Build sequence tracker if we have sequence steps (more than just the source)
+        let sequence_tracker = if sequence_steps.len() > 1 {
+            // Add Sequence operation marker at the beginning
+            runtime_ops.insert(0, RuntimeOp::Sequence);
+            Some(SequenceTracker::new(sequence_steps, match_all_first))
+        } else {
+            None
+        };
+
+        Ok((runtime_ops, sequence_tracker, sequence_event_types))
     }
 
     /// Compile an aggregate expression into an AggregateFunc
@@ -372,6 +458,31 @@ impl Engine {
                         alerts.push(alert);
                     }
                 }
+                RuntimeOp::Sequence => {
+                    // Process events through sequence tracker
+                    if let Some(ref mut tracker) = stream.sequence_tracker {
+                        let mut sequence_results = Vec::new();
+                        for event in &current_events {
+                            let completed = tracker.process(event);
+                            for ctx in completed {
+                                // Create synthetic event from completed sequence
+                                let mut seq_event = Event::new("SequenceMatch");
+                                seq_event.data.insert("stream".to_string(), Value::Str(stream.name.clone()));
+                                // Add captured events to the result
+                                for (alias, captured) in &ctx.captured {
+                                    for (k, v) in &captured.data {
+                                        seq_event.data.insert(format!("{}_{}", alias, k), v.clone());
+                                    }
+                                }
+                                sequence_results.push(seq_event);
+                            }
+                        }
+                        if sequence_results.is_empty() {
+                            return Ok(alerts);
+                        }
+                        current_events = sequence_results;
+                    }
+                }
             }
         }
 
@@ -393,4 +504,142 @@ pub struct EngineMetrics {
     pub events_processed: u64,
     pub alerts_generated: u64,
     pub streams_count: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::sync::mpsc;
+
+    fn parse_program(source: &str) -> Program {
+        varpulis_parser::parse(source).expect("Failed to parse")
+    }
+
+    #[tokio::test]
+    async fn test_engine_simple_sequence() {
+        let source = r#"
+            stream OrderPayment = Order
+                -> Payment as payment
+                .emit(status: "matched")
+        "#;
+
+        let program = parse_program(source);
+        let (tx, mut rx) = mpsc::channel(100);
+        let mut engine = Engine::new(tx);
+        engine.load(&program).unwrap();
+
+        // Send Order event
+        let order = Event::new("Order").with_field("id", 1i64);
+        engine.process(order).await.unwrap();
+
+        // No alert yet - waiting for Payment
+        assert!(rx.try_recv().is_err());
+
+        // Send Payment event
+        let payment = Event::new("Payment").with_field("order_id", 1i64);
+        engine.process(payment).await.unwrap();
+
+        // Should get alert now
+        let alert = rx.try_recv().expect("Should have alert");
+        assert_eq!(alert.alert_type, "stream_output");
+    }
+
+    #[tokio::test]
+    async fn test_engine_sequence_with_alias() {
+        let source = r#"
+            stream TwoTicks = StockTick as first
+                -> StockTick as second
+                .emit(result: "two_ticks")
+        "#;
+
+        let program = parse_program(source);
+        let (tx, mut rx) = mpsc::channel(100);
+        let mut engine = Engine::new(tx);
+        engine.load(&program).unwrap();
+
+        // First tick
+        let tick1 = Event::new("StockTick").with_field("price", 100.0);
+        engine.process(tick1).await.unwrap();
+        assert!(rx.try_recv().is_err());
+
+        // Second tick - completes sequence
+        let tick2 = Event::new("StockTick").with_field("price", 101.0);
+        engine.process(tick2).await.unwrap();
+
+        let alert = rx.try_recv().expect("Should have alert");
+        assert_eq!(alert.data.get("result"), Some(&Value::Str("two_ticks".to_string())));
+    }
+
+    #[tokio::test]
+    async fn test_engine_sequence_three_steps() {
+        let source = r#"
+            stream ABC = A as a -> B as b -> C as c
+                .emit(status: "complete")
+        "#;
+
+        let program = parse_program(source);
+        let (tx, mut rx) = mpsc::channel(100);
+        let mut engine = Engine::new(tx);
+        engine.load(&program).unwrap();
+
+        engine.process(Event::new("A")).await.unwrap();
+        assert!(rx.try_recv().is_err());
+
+        engine.process(Event::new("B")).await.unwrap();
+        assert!(rx.try_recv().is_err());
+
+        engine.process(Event::new("C")).await.unwrap();
+        let alert = rx.try_recv().expect("Should have alert");
+        assert_eq!(alert.data.get("status"), Some(&Value::Str("complete".to_string())));
+    }
+
+    #[tokio::test]
+    async fn test_engine_sequence_wrong_order() {
+        let source = r#"
+            stream AB = A -> B .emit(done: "yes")
+        "#;
+
+        let program = parse_program(source);
+        let (tx, mut rx) = mpsc::channel(100);
+        let mut engine = Engine::new(tx);
+        engine.load(&program).unwrap();
+
+        // Send B before A - should not match
+        engine.process(Event::new("B")).await.unwrap();
+        engine.process(Event::new("A")).await.unwrap();
+        assert!(rx.try_recv().is_err());
+
+        // Now send B after A - should match
+        engine.process(Event::new("B")).await.unwrap();
+        assert!(rx.try_recv().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_engine_match_all_sequence() {
+        // Note: 'all' in source position requires parser/AST changes
+        // For now, test match_all in FollowedBy position
+        let source = r#"
+            stream AllTicks = News as news
+                -> all Tick as tick
+                .emit(matched: "yes")
+        "#;
+
+        let program = parse_program(source);
+        let (tx, mut rx) = mpsc::channel(100);
+        let mut engine = Engine::new(tx);
+        engine.load(&program).unwrap();
+
+        // One news event starts correlation
+        engine.process(Event::new("News").with_field("id", 1i64)).await.unwrap();
+        assert!(rx.try_recv().is_err());
+
+        // Multiple ticks should each complete (match_all on second step)
+        engine.process(Event::new("Tick").with_field("price", 100.0)).await.unwrap();
+        assert!(rx.try_recv().is_ok());
+
+        // Correlation should still be active for more ticks
+        // (match_all means it stays active)
+        engine.process(Event::new("Tick").with_field("price", 101.0)).await.unwrap();
+        assert!(rx.try_recv().is_ok());
+    }
 }

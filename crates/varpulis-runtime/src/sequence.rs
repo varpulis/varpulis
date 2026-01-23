@@ -127,14 +127,18 @@ impl SequenceTracker {
     pub fn process(&mut self, event: &Event) -> Vec<SequenceContext> {
         let mut completed = Vec::new();
 
+        // Track how many correlations existed before starting new ones
+        let existing_count = self.active.len();
+
         // First, check if this event starts a new correlation
         if self.should_start_new(event) {
             self.start_correlation(event);
         }
 
-        // Then, advance existing correlations
+        // Then, advance existing correlations (NOT newly started ones)
+        // This prevents the same event from matching multiple steps
         let mut i = 0;
-        while i < self.active.len() {
+        while i < existing_count.min(self.active.len()) {
             // Remove timed out correlations
             if self.active[i].is_timed_out() {
                 self.active.remove(i);
@@ -159,6 +163,7 @@ impl SequenceTracker {
             if matches {
                 let step = &self.steps[step_idx];
                 let alias = step.alias.clone();
+                let step_match_all = step.match_all;
 
                 self.active[i].advance(event.clone(), alias.as_deref());
 
@@ -172,8 +177,16 @@ impl SequenceTracker {
 
                 // Check if sequence is complete
                 if self.active[i].current_step >= self.steps.len() {
-                    completed.push(self.active.remove(i).context);
-                    continue;
+                    if step_match_all {
+                        // match_all: emit result but keep correlation active for more matches
+                        completed.push(self.active[i].context.clone());
+                        // Reset to previous step to match more events of this type
+                        self.active[i].current_step = step_idx;
+                    } else {
+                        // Normal: remove completed correlation
+                        completed.push(self.active.remove(i).context);
+                        continue;
+                    }
                 }
             }
 
