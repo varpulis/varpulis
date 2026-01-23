@@ -1,0 +1,10 @@
+# Order-Payment Sequence Pattern
+# Detects when an Order is followed by a Payment for the same order
+
+stream OrderPaymentMatch = Order as order
+    -> Payment where order_id == order.id as payment
+    .emit(
+        status: "payment_received",
+        order_id: order.id,
+        amount: payment.amount
+    )

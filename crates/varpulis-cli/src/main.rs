@@ -15,6 +15,7 @@ use warp::Filter;
 
 use varpulis_parser::parse;
 use varpulis_runtime::engine::{Alert, Engine};
+use varpulis_runtime::event_file::{EventFileParser, EventFilePlayer};
 use varpulis_runtime::metrics::{Metrics, MetricsServer};
 use varpulis_runtime::simulator::{SimulatorConfig, Simulator};
 
@@ -90,6 +91,25 @@ enum Commands {
         #[arg(long, default_value = "9090")]
         metrics_port: u16,
     },
+
+    /// Simulate events from an event file (.evt)
+    Simulate {
+        /// Path to the VarpulisQL program (.vpl)
+        #[arg(short, long)]
+        program: PathBuf,
+
+        /// Path to the event file (.evt)
+        #[arg(short, long)]
+        events: PathBuf,
+
+        /// Run without timing delays (immediate mode)
+        #[arg(long)]
+        immediate: bool,
+
+        /// Verbose output (show each event)
+        #[arg(short, long)]
+        verbose: bool,
+    },
 }
 
 #[tokio::main]
@@ -131,6 +151,10 @@ async fn main() -> Result<()> {
 
         Commands::Server { port, metrics, metrics_port } => {
             run_server(port, metrics, metrics_port).await?;
+        }
+
+        Commands::Simulate { program, events, immediate, verbose } => {
+            run_simulation(&program, &events, immediate, verbose).await?;
         }
     }
 
@@ -198,6 +222,118 @@ fn check_syntax(source: &str) -> Result<()> {
             std::process::exit(1);
         }
     }
+    Ok(())
+}
+
+async fn run_simulation(program_path: &PathBuf, events_path: &PathBuf, immediate: bool, verbose: bool) -> Result<()> {
+    println!("🎬 Varpulis Event Simulation");
+    println!("============================");
+    println!("Program: {}", program_path.display());
+    println!("Events:  {}", events_path.display());
+    println!("Mode:    {}", if immediate { "immediate" } else { "timed" });
+    println!();
+
+    // Load and parse program
+    let program_source = std::fs::read_to_string(program_path)?;
+    let program = parse(&program_source).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
+    info!("Loaded program with {} statements", program.statements.len());
+
+    // Load and parse events
+    let events_source = std::fs::read_to_string(events_path)?;
+    let events = EventFileParser::parse(&events_source)
+        .map_err(|e| anyhow::anyhow!("Event file error: {}", e))?;
+    info!("Loaded {} events from file", events.len());
+
+    // Create alert channel
+    let (alert_tx, mut alert_rx) = mpsc::channel::<Alert>(100);
+
+    // Create and load engine
+    let mut engine = Engine::new(alert_tx);
+    engine.load(&program).map_err(|e| anyhow::anyhow!("Load error: {}", e))?;
+    
+    let metrics = engine.metrics();
+    println!("✅ Program loaded: {} streams", metrics.streams_count);
+    println!();
+
+    // Collect alerts
+    let alerts = Arc::new(RwLock::new(Vec::<Alert>::new()));
+    let alerts_clone = alerts.clone();
+    
+    tokio::spawn(async move {
+        while let Some(alert) = alert_rx.recv().await {
+            println!("📢 ALERT: {} - {}", alert.alert_type, alert.message);
+            for (k, v) in &alert.data {
+                println!("   {}: {}", k, v);
+            }
+            alerts_clone.write().await.push(alert);
+        }
+    });
+
+    println!("🚀 Starting simulation...\n");
+    let start = std::time::Instant::now();
+
+    // Process events
+    if immediate {
+        // Immediate mode - no timing
+        for (i, timed_event) in events.iter().enumerate() {
+            if verbose {
+                println!("  [{:3}] {} {{ ... }}", i + 1, timed_event.event.event_type);
+            }
+            engine.process(timed_event.event.clone()).await
+                .map_err(|e| anyhow::anyhow!("Process error: {}", e))?;
+        }
+    } else {
+        // Timed mode - respect BATCH delays
+        let (event_tx, mut event_rx) = mpsc::channel(100);
+        let player = EventFilePlayer::new(events.clone(), event_tx);
+        
+        // Spawn player
+        let player_handle = tokio::spawn(async move {
+            player.play().await
+        });
+
+        // Process events as they come
+        let mut count = 0;
+        while let Some(event) = event_rx.recv().await {
+            count += 1;
+            if verbose {
+                println!("  [{:3}] @{:>6}ms {} {{ ... }}", 
+                    count, 
+                    start.elapsed().as_millis(),
+                    event.event_type
+                );
+            }
+            engine.process(event).await
+                .map_err(|e| anyhow::anyhow!("Process error: {}", e))?;
+        }
+
+        player_handle.await?
+            .map_err(|e| anyhow::anyhow!("Player error: {}", e))?;
+    }
+
+    // Wait a bit for any pending alerts
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // Summary
+    let elapsed = start.elapsed();
+    let final_metrics = engine.metrics();
+    let alerts_count = alerts.read().await.len();
+
+    println!("\n📊 Simulation Complete");
+    println!("======================");
+    println!("Duration:         {:?}", elapsed);
+    println!("Events processed: {}", final_metrics.events_processed);
+    println!("Alerts generated: {}", alerts_count);
+    println!("Event rate:       {:.1} events/sec", 
+        final_metrics.events_processed as f64 / elapsed.as_secs_f64());
+
+    if alerts_count > 0 {
+        println!("\n📢 Alerts Summary:");
+        for alert in alerts.read().await.iter() {
+            println!("  - {}: {}", alert.alert_type, alert.message);
+        }
+    }
+
     Ok(())
 }
 
