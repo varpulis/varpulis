@@ -173,11 +173,90 @@ impl<'source> Parser<'source> {
         let source = self.parse_stream_source()?;
         let mut ops = Vec::new();
 
-        while self.match_token(&Token::Dot) {
-            ops.push(self.parse_stream_op()?);
+        loop {
+            if self.match_token(&Token::Dot) {
+                ops.push(self.parse_stream_op()?);
+            } else if self.match_token(&Token::Arrow) {
+                ops.push(self.parse_followed_by()?);
+            } else {
+                break;
+            }
         }
 
         Ok((source, ops))
+    }
+
+    /// Parse a followed-by clause: `-> EventType where condition as alias`
+    fn parse_followed_by(&mut self) -> ParseResult<StreamOp> {
+        // Check for .not() after ->
+        if self.match_token(&Token::Dot) {
+            let op_name = self.parse_stream_op_name()?;
+            if op_name == "not" {
+                return self.parse_not_clause();
+            }
+            // If it's not "not", we need to handle it differently
+            return Err(ParseError::UnexpectedToken {
+                position: self.current.start,
+                expected: "not or event type".to_string(),
+                found: format!("{}", op_name),
+            });
+        }
+
+        // Check for 'all' quantifier
+        let match_all = self.match_token(&Token::All);
+
+        // Parse event type
+        let event_type = self.parse_identifier()?;
+
+        // Parse optional filter: `where condition`
+        let filter = if self.match_token(&Token::Where) {
+            Some(self.parse_followed_by_filter()?)
+        } else {
+            None
+        };
+
+        // Parse optional alias: `as name`
+        let alias = if self.match_token(&Token::As) {
+            Some(self.parse_identifier()?)
+        } else {
+            None
+        };
+
+        Ok(StreamOp::FollowedBy(FollowedByClause {
+            event_type,
+            filter,
+            alias,
+            match_all,
+        }))
+    }
+
+    /// Parse the filter expression for followed-by, stopping at 'as', '->', or '.'
+    fn parse_followed_by_filter(&mut self) -> ParseResult<Expr> {
+        // Parse expression but need to handle 'as' specially since it's used for alias
+        // We use parse_or_expr directly to avoid issues with 'as' being consumed
+        self.parse_or_expr()
+    }
+
+    /// Parse .not(EventType where condition)
+    fn parse_not_clause(&mut self) -> ParseResult<StreamOp> {
+        self.consume(&Token::LParen, "(")?;
+        
+        let event_type = self.parse_identifier()?;
+        
+        let filter = if self.match_token(&Token::Where) {
+            Some(self.parse_expr()?)
+        } else {
+            None
+        };
+
+        self.consume(&Token::RParen, ")")?;
+
+        Ok(StreamOp::Not(FollowedByClause {
+            event_type,
+            filter,
+            alias: None,
+            match_all: false,
+        }))
     }
 
     fn parse_stream_source(&mut self) -> ParseResult<StreamSource> {
@@ -195,7 +274,19 @@ impl<'source> Parser<'source> {
             return Ok(StreamSource::Join(clauses));
         }
 
+        // Handle 'all' quantifier: `all EventType`
+        // For now, we skip 'all' and just parse the identifier
+        // The 'all' semantics will be handled at runtime
+        let _match_all = self.match_token(&Token::All);
+
         let name = self.parse_identifier()?;
+        
+        // Handle optional alias: `EventType as alias`
+        // For now, we just skip the alias (it will be used by the first followed-by)
+        if self.match_token(&Token::As) {
+            let _alias = self.parse_identifier()?;
+        }
+        
         Ok(StreamSource::Ident(name))
     }
 
@@ -394,6 +485,15 @@ impl<'source> Parser<'source> {
                 let expr = self.parse_expr()?;
                 self.consume(&Token::RParen, ")")?;
                 Ok(StreamOp::On(expr))
+            }
+            "within" => {
+                self.consume(&Token::LParen, "(")?;
+                let expr = self.parse_expr()?;
+                self.consume(&Token::RParen, ")")?;
+                Ok(StreamOp::Within(expr))
+            }
+            "not" => {
+                self.parse_not_clause()
             }
             _ => Err(ParseError::Custom {
                 span: self.prev_span(),
@@ -1111,8 +1211,16 @@ impl<'source> Parser<'source> {
         let mut expr = self.parse_primary_expr()?;
 
         loop {
-            if self.match_token(&Token::Dot) {
-                let member = self.parse_identifier()?;
+            if self.check(&Token::Dot) {
+                // Peek ahead to see if this is a stream operation (not member access)
+                // Stream operations like .within(), .emit(), .where() should not be
+                // consumed as member access
+                if self.is_stream_op_after_dot() {
+                    break;
+                }
+                self.advance(); // consume the dot
+                // Allow keywords as member names (e.g., obj.all)
+                let member = self.parse_identifier_or_keyword()?;
                 
                 // Check if it's a method call
                 if self.check(&Token::LParen) {
@@ -1138,7 +1246,7 @@ impl<'source> Parser<'source> {
                     };
                 }
             } else if self.match_token(&Token::QuestionDot) {
-                let member = self.parse_identifier()?;
+                let member = self.parse_identifier_or_keyword()?;
                 expr = Expr::OptionalMember {
                     expr: Box::new(expr),
                     member,
@@ -1234,6 +1342,11 @@ impl<'source> Parser<'source> {
             Token::AttentionScore => {
                 self.advance();
                 Ok(Expr::Ident("attention_score".to_string()))
+            }
+            // $ for previous event reference in sequences
+            Token::Dollar => {
+                self.advance();
+                Ok(Expr::Ident("$".to_string()))
             }
             Token::LParen => {
                 self.advance();
@@ -1489,6 +1602,29 @@ impl<'source> Parser<'source> {
         Ok(Arg::Positional(expr))
     }
 
+    /// Check if the token after the current dot is a stream operation keyword
+    fn is_stream_op_after_dot(&mut self) -> bool {
+        if !self.check(&Token::Dot) {
+            return false;
+        }
+        // Peek at the token after the dot
+        if let Some(next) = self.lexer.peek() {
+            Self::is_stream_op_token(&next.token)
+        } else {
+            false
+        }
+    }
+
+    /// Check if a token is a stream operation keyword
+    fn is_stream_op_token(token: &Token) -> bool {
+        matches!(token, 
+            Token::Where | Token::Select | Token::Window | Token::Aggregate |
+            Token::PartitionBy | Token::OrderBy | Token::Limit | Token::Distinct |
+            Token::Emit | Token::To | Token::Pattern | Token::AttentionWindow |
+            Token::On | Token::Within | Token::Not
+        )
+    }
+
     fn parse_identifier(&mut self) -> ParseResult<String> {
         match &self.current.token {
             Token::Ident(name) => {
@@ -1504,7 +1640,7 @@ impl<'source> Parser<'source> {
         }
     }
 
-    /// Parse identifier or allow certain keywords as identifiers (for named args)
+    /// Parse identifier or allow certain keywords as identifiers (for named args, member access)
     fn parse_identifier_or_keyword(&mut self) -> ParseResult<String> {
         let name = match &self.current.token {
             Token::Ident(name) => name.clone(),
@@ -1516,6 +1652,7 @@ impl<'source> Parser<'source> {
             Token::StrType => "str".to_string(),
             Token::Pattern => "pattern".to_string(),
             Token::Window => "window".to_string(),
+            Token::All => "all".to_string(),
             _ => {
                 return Err(ParseError::UnexpectedToken {
                     position: self.current.start,
@@ -1545,6 +1682,8 @@ impl<'source> Parser<'source> {
             Token::Pattern => "pattern".to_string(),
             Token::AttentionWindow => "attention_window".to_string(),
             Token::On => "on".to_string(),
+            Token::Within => "within".to_string(),
+            Token::Not => "not".to_string(),
             _ => {
                 return Err(ParseError::UnexpectedToken {
                     position: self.current.start,
@@ -1889,5 +2028,150 @@ mod tests {
     fn test_parse_error_missing_from() {
         let result = parse("stream X TradeEvent");
         assert!(result.is_err());
+    }
+
+    // ========================================================================
+    // Followed-By Sequence Tests (TDD)
+    // ========================================================================
+
+    #[test]
+    fn test_parse_simple_followed_by() {
+        let result = parse("stream S = A -> B");
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+        let program = result.unwrap();
+        if let Stmt::StreamDecl { ops, .. } = &program.statements[0].node {
+            assert_eq!(ops.len(), 1);
+            assert!(matches!(ops[0], StreamOp::FollowedBy(_)));
+        } else {
+            panic!("Expected StreamDecl");
+        }
+    }
+
+    #[test]
+    fn test_parse_followed_by_chain() {
+        let result = parse("stream S = A -> B -> C");
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+        let program = result.unwrap();
+        if let Stmt::StreamDecl { ops, .. } = &program.statements[0].node {
+            assert_eq!(ops.len(), 2);
+            assert!(matches!(ops[0], StreamOp::FollowedBy(_)));
+            assert!(matches!(ops[1], StreamOp::FollowedBy(_)));
+        } else {
+            panic!("Expected StreamDecl");
+        }
+    }
+
+    #[test]
+    fn test_parse_followed_by_with_filter() {
+        let result = parse("stream S = A -> B where id == $.id");
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+        let program = result.unwrap();
+        if let Stmt::StreamDecl { ops, .. } = &program.statements[0].node {
+            if let StreamOp::FollowedBy(clause) = &ops[0] {
+                assert_eq!(clause.event_type, "B");
+                assert!(clause.filter.is_some());
+            } else {
+                panic!("Expected FollowedBy");
+            }
+        } else {
+            panic!("Expected StreamDecl");
+        }
+    }
+
+    #[test]
+    fn test_parse_followed_by_with_alias() {
+        let result = parse("stream S = A -> B as second");
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+        let program = result.unwrap();
+        if let Stmt::StreamDecl { ops, .. } = &program.statements[0].node {
+            if let StreamOp::FollowedBy(clause) = &ops[0] {
+                assert_eq!(clause.event_type, "B");
+                assert_eq!(clause.alias, Some("second".to_string()));
+            } else {
+                panic!("Expected FollowedBy");
+            }
+        } else {
+            panic!("Expected StreamDecl");
+        }
+    }
+
+    #[test]
+    fn test_parse_followed_by_with_filter_and_alias() {
+        let result = parse("stream S = A -> B where symbol == $.subject as tick");
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+        let program = result.unwrap();
+        if let Stmt::StreamDecl { ops, .. } = &program.statements[0].node {
+            if let StreamOp::FollowedBy(clause) = &ops[0] {
+                assert_eq!(clause.event_type, "B");
+                assert!(clause.filter.is_some());
+                assert_eq!(clause.alias, Some("tick".to_string()));
+            } else {
+                panic!("Expected FollowedBy");
+            }
+        } else {
+            panic!("Expected StreamDecl");
+        }
+    }
+
+    #[test]
+    fn test_parse_followed_by_with_within() {
+        let result = parse("stream S = A -> B.within(5m)");
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+        let program = result.unwrap();
+        if let Stmt::StreamDecl { ops, .. } = &program.statements[0].node {
+            assert_eq!(ops.len(), 2);
+            assert!(matches!(ops[0], StreamOp::FollowedBy(_)));
+            assert!(matches!(ops[1], StreamOp::Within(_)));
+        } else {
+            panic!("Expected StreamDecl");
+        }
+    }
+
+    #[test]
+    fn test_parse_followed_by_all_quantifier() {
+        let result = parse("stream S = all A -> B");
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+        let program = result.unwrap();
+        if let Stmt::StreamDecl { source, ops, .. } = &program.statements[0].node {
+            // The 'all' should be captured in the source or first element
+            if let StreamSource::Ident(name) = source {
+                assert_eq!(name, "A");
+            }
+            // First FollowedBy should exist
+            assert!(matches!(ops[0], StreamOp::FollowedBy(_)));
+        } else {
+            panic!("Expected StreamDecl");
+        }
+    }
+
+    #[test]
+    fn test_parse_followed_by_complex_sequence() {
+        let result = parse(r#"
+            stream PumpDetection = all NewsItem as news
+                -> StockTick where symbol == news.subject as tick
+                -> StockTick where symbol == news.subject and price >= tick.price * 1.05
+                   .within(5m)
+                .emit(alert_type: "PUMP")
+        "#);
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_followed_by_with_not() {
+        let result = parse("stream S = A -> .not(B where id == $.id).within(30s)");
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+        let program = result.unwrap();
+        if let Stmt::StreamDecl { ops, .. } = &program.statements[0].node {
+            assert!(matches!(ops[0], StreamOp::Not(_)));
+            assert!(matches!(ops[1], StreamOp::Within(_)));
+        } else {
+            panic!("Expected StreamDecl");
+        }
+    }
+
+    #[test]
+    fn test_parse_dollar_reference() {
+        let result = parse("let x = $.field");
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
     }
 }

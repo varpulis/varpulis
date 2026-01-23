@@ -152,6 +152,25 @@ pub enum StreamOp {
     Collect,
     /// Join condition: `.on(expr)`
     On(Expr),
+    /// Followed-by sequence: `-> EventType where condition as alias`
+    FollowedBy(FollowedByClause),
+    /// Timeout constraint: `.within(duration)`
+    Within(Expr),
+    /// Negation: `.not(EventType where condition)`
+    Not(FollowedByClause),
+}
+
+/// Followed-by clause for temporal sequences
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FollowedByClause {
+    /// Event type to match
+    pub event_type: String,
+    /// Optional filter condition
+    pub filter: Option<Expr>,
+    /// Optional alias for captured event
+    pub alias: Option<String>,
+    /// Whether to match all events (true) or just one (false)
+    pub match_all: bool,
 }
 
 /// Select item in projection

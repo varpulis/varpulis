@@ -76,6 +76,10 @@ pub enum Token {
     To,
     #[token("on")]
     On,
+    #[token("all")]
+    All,
+    #[token("within")]
+    Within,
 
     #[token("pattern")]
     Pattern,
@@ -194,6 +198,8 @@ pub enum Token {
     DotDot,
     #[token("..=")]
     DotDotEq,
+    #[token("$")]
+    Dollar,
 
     // === Delimiters ===
     #[token("(")]
@@ -283,6 +289,8 @@ impl fmt::Display for Token {
             Token::Emit => write!(f, "emit"),
             Token::To => write!(f, "to"),
             Token::On => write!(f, "on"),
+            Token::All => write!(f, "all"),
+            Token::Within => write!(f, "within"),
             Token::Pattern => write!(f, "pattern"),
             Token::AttentionWindow => write!(f, "attention_window"),
             Token::AttentionScore => write!(f, "attention_score"),
@@ -336,6 +344,7 @@ impl fmt::Display for Token {
             Token::Arrow => write!(f, "->"),
             Token::DotDot => write!(f, ".."),
             Token::DotDotEq => write!(f, "..="),
+            Token::Dollar => write!(f, "$"),
             Token::LParen => write!(f, "("),
             Token::RParen => write!(f, ")"),
             Token::LBracket => write!(f, "["),
