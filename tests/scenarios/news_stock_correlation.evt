@@ -1,0 +1,34 @@
+# News-Stock Correlation Test
+# Tests: NewsItem -> StockTick where symbol == news.subject -> StockTick (price spike)
+#
+# Simulates: News event followed by stock activity and potential pump detection
+
+# Breaking news about AAPL
+NewsItem { id: 1, subject: "AAPL", headline: "Apple announces new product", sentiment: 0.8 }
+
+# Initial stock tick for AAPL (baseline)
+BATCH 10
+StockTick { symbol: "AAPL", price: 150.0, volume: 10000 }
+
+# Price starts rising
+BATCH 50
+StockTick { symbol: "AAPL", price: 152.5, volume: 15000 }
+
+# Price spike (> 5% increase) - should trigger pump detection
+BATCH 100
+StockTick { symbol: "AAPL", price: 158.0, volume: 25000 }
+
+# Unrelated stock activity (should not correlate with AAPL news)
+BATCH 120
+StockTick { symbol: "GOOG", price: 2800.0, volume: 5000 }
+
+# Another news item
+BATCH 200
+NewsItem { id: 2, subject: "GOOG", headline: "Google cloud revenue up", sentiment: 0.6 }
+
+BATCH 250
+StockTick { symbol: "GOOG", price: 2820.0, volume: 8000 }
+
+# GOOG price spike
+BATCH 300
+StockTick { symbol: "GOOG", price: 2950.0, volume: 12000 }

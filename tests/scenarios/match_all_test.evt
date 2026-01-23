@@ -1,0 +1,24 @@
+# Match All Test
+# Tests: all NewsItem -> Tick (one Tick matches ALL pending news correlations)
+#
+# Expected: When multiple NewsItems arrive, one Tick should complete ALL correlations
+
+# Multiple news items arrive
+NewsItem { id: 1, topic: "tech", headline: "Tech rally expected" }
+
+BATCH 10
+NewsItem { id: 2, topic: "finance", headline: "Fed rate decision" }
+
+BATCH 20
+NewsItem { id: 3, topic: "energy", headline: "Oil prices stable" }
+
+# One market tick arrives - should complete ALL three correlations
+BATCH 50
+Tick { market: "NYSE", index: 4500.0, volume: 1000000 }
+
+# More news after first tick
+BATCH 100
+NewsItem { id: 4, topic: "crypto", headline: "Bitcoin breaks resistance" }
+
+BATCH 150
+Tick { market: "NYSE", index: 4510.0, volume: 1200000 }

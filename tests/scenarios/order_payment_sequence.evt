@@ -1,0 +1,26 @@
+# Order-Payment Sequence Test
+# Tests the basic -> operator: Order -> Payment
+#
+# Expected behavior:
+# - Order 1 followed by Payment within 100ms -> MATCH
+# - Order 2 with delayed Payment (timeout scenario)
+# - Order 3 with immediate Payment -> MATCH
+
+# Order 1: Should match with payment at 50ms
+Order { id: 1, symbol: "AAPL", quantity: 100, customer: "Alice" }
+
+BATCH 50
+Payment { order_id: 1, amount: 15000.0, method: "card" }
+
+# Order 2: Payment comes much later (may timeout if within(100ms) is set)
+BATCH 100
+Order { id: 2, symbol: "GOOG", quantity: 50, customer: "Bob" }
+
+# Order 3: Immediate payment
+BATCH 150
+Order { id: 3, symbol: "MSFT", quantity: 200, customer: "Charlie" }
+Payment { order_id: 3, amount: 40000.0, method: "wire" }
+
+# Late payment for Order 2 (should timeout if within < 400ms)
+BATCH 500
+Payment { order_id: 2, amount: 7500.0, method: "card" }

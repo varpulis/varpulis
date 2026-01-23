@@ -1,0 +1,40 @@
+# Three-Step Sequence Test
+# Tests: A -> B -> C sequence pattern
+#
+# Expected: Only complete sequences (A followed by B followed by C) should match
+
+# Complete sequence 1: A -> B -> C
+A { id: 1, value: "first" }
+
+BATCH 20
+B { id: 1, ref_a: 1, value: "middle" }
+
+BATCH 40
+C { id: 1, ref_b: 1, value: "last" }
+
+# Incomplete sequence: A -> B (no C)
+BATCH 100
+A { id: 2, value: "second" }
+
+BATCH 120
+B { id: 2, ref_a: 2, value: "middle2" }
+
+# Out of order: C arrives before B
+BATCH 200
+A { id: 3, value: "third" }
+
+BATCH 220
+C { id: 3, ref_b: 3, value: "wrong_order" }
+
+BATCH 240
+B { id: 3, ref_a: 3, value: "too_late" }
+
+# Complete sequence 2
+BATCH 300
+A { id: 4, value: "fourth" }
+
+BATCH 320
+B { id: 4, ref_a: 4, value: "middle4" }
+
+BATCH 340
+C { id: 4, ref_b: 4, value: "last4" }

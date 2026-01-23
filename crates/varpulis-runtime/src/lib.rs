@@ -5,6 +5,7 @@
 pub mod aggregation;
 pub mod engine;
 pub mod event;
+pub mod event_file;
 pub mod metrics;
 pub mod sequence;
 pub mod sink;

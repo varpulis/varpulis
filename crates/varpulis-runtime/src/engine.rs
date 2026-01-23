@@ -855,6 +855,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_engine_with_event_file() {
+        use crate::event_file::EventFileParser;
+
+        // Parse event file content
+        let source = r#"
+            # Order-Payment sequence test
+            Order { id: 1, symbol: "AAPL" }
+            
+            BATCH 10
+            Payment { order_id: 1, amount: 15000.0 }
+        "#;
+
+        let events = EventFileParser::parse(source).expect("Failed to parse");
+        assert_eq!(events.len(), 2);
+
+        // Setup engine with sequence pattern
+        let program_source = r#"
+            stream OrderPayment = Order as order
+                -> Payment where order_id == order.id as payment
+                .emit(status: "matched", order_id: order.id)
+        "#;
+
+        let program = parse_program(program_source);
+        let (tx, mut rx) = mpsc::channel(100);
+        let mut engine = Engine::new(tx);
+        engine.load(&program).unwrap();
+
+        // Send events from parsed file
+        for timed_event in events {
+            engine.process(timed_event.event).await.unwrap();
+        }
+
+        // Should have received alert
+        let alert = rx.try_recv().expect("Should have alert");
+        assert_eq!(alert.data.get("status"), Some(&Value::Str("matched".to_string())));
+    }
+
+    #[tokio::test]
     async fn test_engine_sequence_with_not() {
         // Test .not() - detect absence of event
         // This tests the parsing; full negation semantics require timeout handling
