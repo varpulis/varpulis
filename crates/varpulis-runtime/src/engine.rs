@@ -48,6 +48,7 @@ struct StreamDefinition {
 enum RuntimeSource {
     EventType(String),
     Stream(String),
+    Join(Vec<String>),
 }
 
 enum RuntimeOp {
@@ -119,8 +120,15 @@ impl Engine {
             StreamSource::Ident(stream_name) => {
                 RuntimeSource::Stream(stream_name.clone())
             }
-            _ => {
-                return Err(format!("Unsupported source type for stream {}", name));
+            StreamSource::Join(clauses) => {
+                let sources: Vec<String> = clauses.iter().map(|c| c.source.clone()).collect();
+                info!("Registering join stream {} from sources: {:?}", name, sources);
+                RuntimeSource::Join(sources)
+            }
+            StreamSource::Merge(decls) => {
+                let sources: Vec<String> = decls.iter().map(|d| d.source.clone()).collect();
+                info!("Registering merge stream {} from sources: {:?}", name, sources);
+                RuntimeSource::Join(sources) // Treat merge similarly to join for now
             }
         };
 
@@ -201,6 +209,7 @@ impl Engine {
                             "last" => Box::new(Max), // TODO: implement Last
                             "first" => Box::new(Min), // TODO: implement First
                             "stddev" => Box::new(Avg), // TODO: implement StdDev
+                            "ema" => Box::new(Avg), // TODO: implement EMA properly
                             _ => {
                                 warn!("Unknown aggregation function: {}", func_name);
                                 continue;
