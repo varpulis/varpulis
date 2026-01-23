@@ -815,6 +815,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_engine_sequence_with_not() {
+        // Test .not() - detect absence of event
+        // This tests the parsing; full negation semantics require timeout handling
+        let source = r#"
+            stream MissingPayment = Order as order
+                -> Payment where order_id == order.id as payment
+                .not(Cancellation where order_id == order.id)
+                .emit(status: "payment_received")
+        "#;
+
+        let program = parse_program(source);
+        let (tx, mut rx) = mpsc::channel(100);
+        let mut engine = Engine::new(tx);
+        engine.load(&program).unwrap();
+
+        // Order and Payment without Cancellation
+        engine.process(Event::new("Order").with_field("id", 1i64)).await.unwrap();
+        engine.process(Event::new("Payment").with_field("order_id", 1i64)).await.unwrap();
+        
+        // Should get alert since no cancellation occurred
+        let alert = rx.try_recv().expect("Should have alert");
+        assert_eq!(alert.data.get("status"), Some(&Value::Str("payment_received".to_string())));
+    }
+
+    #[tokio::test]
     async fn test_engine_all_in_source() {
         // Test 'all' in source position - starts multiple correlations
         let source = r#"
