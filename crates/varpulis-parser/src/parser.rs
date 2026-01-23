@@ -572,6 +572,26 @@ impl<'source> Parser<'source> {
                 self.consume(&Token::RParen, ")")?;
                 Ok(StreamOp::Tap(args))
             }
+            "print" => {
+                self.consume(&Token::LParen, "(")?;
+                let exprs = if !self.check(&Token::RParen) {
+                    self.parse_expr_list()?
+                } else {
+                    Vec::new()
+                };
+                self.consume(&Token::RParen, ")")?;
+                Ok(StreamOp::Print(exprs))
+            }
+            "log" => {
+                self.consume(&Token::LParen, "(")?;
+                let args = if !self.check(&Token::RParen) {
+                    self.parse_named_arg_list()?
+                } else {
+                    Vec::new()
+                };
+                self.consume(&Token::RParen, ")")?;
+                Ok(StreamOp::Log(args))
+            }
             "emit" => {
                 self.consume(&Token::LParen, "(")?;
                 let args = if !self.check(&Token::RParen) {
@@ -758,6 +778,14 @@ impl<'source> Parser<'source> {
             args.push(self.parse_named_arg()?);
         }
         Ok(args)
+    }
+
+    fn parse_expr_list(&mut self) -> ParseResult<Vec<Expr>> {
+        let mut exprs = vec![self.parse_expr()?];
+        while self.match_token(&Token::Comma) {
+            exprs.push(self.parse_expr()?);
+        }
+        Ok(exprs)
     }
 
     fn parse_named_arg(&mut self) -> ParseResult<NamedArg> {
