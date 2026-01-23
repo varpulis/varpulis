@@ -6,6 +6,7 @@ pub mod aggregation;
 pub mod engine;
 pub mod event;
 pub mod metrics;
+pub mod sequence;
 pub mod sink;
 pub mod simulator;
 pub mod stream;
