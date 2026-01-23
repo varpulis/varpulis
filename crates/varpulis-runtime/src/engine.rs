@@ -783,6 +783,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_engine_sequence_with_timeout() {
+        // Test that .within() timeout is parsed and stored
+        let source = r#"
+            stream QuickResponse = Request as req
+                -> Response as resp
+                .within(5s)
+                .emit(status: "fast")
+        "#;
+
+        let program = parse_program(source);
+        let (tx, mut rx) = mpsc::channel(100);
+        let mut engine = Engine::new(tx);
+        engine.load(&program).unwrap();
+
+        // Request starts correlation
+        engine.process(Event::new("Request").with_field("id", 1i64)).await.unwrap();
+        assert!(rx.try_recv().is_err());
+
+        // Response within timeout should match
+        engine.process(Event::new("Response").with_field("id", 1i64)).await.unwrap();
+        let alert = rx.try_recv().expect("Should have alert");
+        assert_eq!(alert.data.get("status"), Some(&Value::Str("fast".to_string())));
+    }
+
+    #[tokio::test]
     async fn test_engine_match_all_sequence() {
         // Note: 'all' in source position requires parser/AST changes
         // For now, test match_all in FollowedBy position
