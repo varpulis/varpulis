@@ -2631,4 +2631,209 @@ mod tests {
         let result = parse("stream S = Source..where(x > 0)");
         assert!(result.is_err());
     }
+
+    // ========================================================================
+    // Declaration Coverage Tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_const_decl() {
+        let result = parse("const MAX_VALUE = 100");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_const_with_type() {
+        let result = parse("const PI: float = 3.14159");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_let_with_type() {
+        let result = parse("let x: int = 42");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_var_decl() {
+        let result = parse("var counter = 0");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_fn_decl() {
+        let result = parse("fn add(a: int, b: int) -> int: a + b");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_fn_no_params() {
+        let result = parse("fn get_value() -> int: 42");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_fn_no_return_type() {
+        let result = parse("fn do_something(x: int): x");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_type_decl() {
+        let result = parse("type Price = float");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    // ========================================================================
+    // Control Flow Coverage Tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_if_else() {
+        let result = parse("if x > 0: let y = 1 else: let y = -1");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_if_elif_else() {
+        let result = parse("if x > 0: let y = 1 elif x == 0: let y = 0 else: let y = -1");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_for_loop() {
+        let result = parse("for i in items: let x = i");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_while_loop() {
+        let result = parse("while running: let x = 1");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_return_stmt() {
+        let result = parse("return x + 1");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_break_stmt() {
+        let result = parse("break");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_continue_stmt() {
+        let result = parse("continue");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    // ========================================================================
+    // Expression Coverage Tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_complex_arithmetic() {
+        let result = parse("let x = (a + b) * (c - d) / e");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_deeply_nested_expr() {
+        let result = parse("let x = ((a + b) * c) + ((d - e) / f)");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_mixed_comparisons() {
+        let result = parse("let x = a > b and c <= d or e != f");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_bitwise_not() {
+        let result = parse("let x = ~a");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_optional_chain() {
+        let result = parse("let x = a?.b?.c");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_null_coalesce() {
+        let result = parse("let x = a ?? default_value");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_lambda_expr() {
+        let result = parse("let f = x => x * 2");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    // ========================================================================
+    // Additional Stream Tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_complex_where_clause() {
+        let result = parse("stream S = Source.where(price > 100 and volume >= 1000)");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_select_with_expressions() {
+        let result = parse("stream S = Source.select(total: price * quantity, avg: sum / count)");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    // ========================================================================
+    // Stream Advanced Tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_sequence_with_timeout() {
+        let result = parse(r#"
+            stream S = sequence(
+                a: EventA,
+                b: EventB .within(5m)
+            ).emit(status: "done")
+        "#);
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_stream_on_clause() {
+        let result = parse("stream S = join(A, B).on(A.id == B.id).window(1m)");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_stream_limit() {
+        let result = parse("stream S = Source.limit(100)");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_stream_distinct() {
+        let result = parse("stream S = Source.distinct()");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_in_operator() {
+        let result = parse("let valid = x in [1, 2, 3]");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_is_null() {
+        let result = parse("let check = x is null");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
 }
