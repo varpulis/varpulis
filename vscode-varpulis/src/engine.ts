@@ -229,7 +229,7 @@ export class VarpulisEngine {
                 this.handleMessage(data);
             });
 
-            this.ws.on('error', (error) => {
+            this.ws.on('error', (error: Error) => {
                 this.outputChannel.appendLine(`[ws] Error: ${error.message}`);
                 reject(error);
             });
