@@ -16,7 +16,7 @@ event MarketTick:
     volume: int
     bid: float
     ask: float
-    timestamp: timestamp
+    ts: timestamp
 
 event OHLCV:
     symbol: string
@@ -26,7 +26,7 @@ event OHLCV:
     close: float
     volume: int
     timeframe: string  # "1m", "5m", "15m", "1h", "4h", "1d"
-    timestamp: timestamp
+    ts: timestamp
 
 # =============================================================================
 # Base Streams
@@ -51,7 +51,7 @@ stream SMA20 = Candles
     .aggregate(
         symbol: last(symbol),
         sma_20: avg(close),
-        timestamp: last(timestamp)
+        ts: last(ts)
     )
 
 # Simple Moving Average - 50 periods
@@ -62,7 +62,7 @@ stream SMA50 = Candles
     .aggregate(
         symbol: last(symbol),
         sma_50: avg(close),
-        timestamp: last(timestamp)
+        ts: last(ts)
     )
 
 # Exponential Moving Average - 12 periods (for MACD)
@@ -73,7 +73,7 @@ stream EMA12 = Candles
     .aggregate(
         symbol: last(symbol),
         ema_12: ema(close, 12),
-        timestamp: last(timestamp)
+        ts: last(ts)
     )
 
 # Exponential Moving Average - 26 periods (for MACD)
@@ -84,7 +84,7 @@ stream EMA26 = Candles
     .aggregate(
         symbol: last(symbol),
         ema_26: ema(close, 26),
-        timestamp: last(timestamp)
+        ts: last(ts)
     )
 
 # =============================================================================
@@ -97,7 +97,7 @@ stream MACD = join(EMA12, EMA26)
     .select(
         symbol: EMA12.symbol,
         macd_line: EMA12.ema_12 - EMA26.ema_26,
-        timestamp: EMA12.timestamp
+        ts: EMA12.ts
     )
 
 # MACD Signal Line (9-period EMA of MACD)
@@ -109,7 +109,7 @@ stream MACDSignal = MACD
         macd_line: last(macd_line),
         signal_line: ema(macd_line, 9),
         histogram: last(macd_line) - ema(macd_line, 9),
-        timestamp: last(timestamp)
+        ts: last(ts)
     )
 
 # =============================================================================
@@ -125,7 +125,7 @@ stream PriceChanges = Candles
         change: last(close) - first(close),
         gain: if last(close) > first(close) then last(close) - first(close) else 0,
         loss: if last(close) < first(close) then first(close) - last(close) else 0,
-        timestamp: last(timestamp)
+        ts: last(ts)
     )
 
 stream RSI = PriceChanges
@@ -135,12 +135,12 @@ stream RSI = PriceChanges
         symbol: last(symbol),
         avg_gain: avg(gain),
         avg_loss: avg(loss),
-        timestamp: last(timestamp)
+        ts: last(ts)
     )
     .select(
         symbol,
         rsi: 100 - (100 / (1 + avg_gain / max(avg_loss, 0.0001))),
-        timestamp
+        ts
     )
 
 # =============================================================================
@@ -156,7 +156,7 @@ stream BollingerBands = Candles
         close: last(close),
         sma: avg(close),
         std_dev: stddev(close),
-        timestamp: last(timestamp)
+        ts: last(ts)
     )
     .select(
         symbol,
@@ -166,7 +166,7 @@ stream BollingerBands = Candles
         lower_band: sma - 2 * std_dev,
         bandwidth: (sma + 2 * std_dev - (sma - 2 * std_dev)) / sma * 100,
         percent_b: (close - (sma - 2 * std_dev)) / ((sma + 2 * std_dev) - (sma - 2 * std_dev)),
-        timestamp
+        ts
     )
 
 # =============================================================================
@@ -181,9 +181,9 @@ stream TechnicalAnalysis = join(
     MACDSignal
 )
 .on(
-    SMA20.symbol == SMA50.symbol,
-    SMA50.symbol == RSI.symbol,
-    RSI.symbol == BollingerBands.symbol,
+    SMA20.symbol == SMA50.symbol and
+    SMA50.symbol == RSI.symbol and
+    RSI.symbol == BollingerBands.symbol and
     BollingerBands.symbol == MACDSignal.symbol
 )
 .window(1m)
@@ -199,7 +199,7 @@ stream TechnicalAnalysis = join(
     macd: MACDSignal.macd_line,
     macd_signal: MACDSignal.signal_line,
     macd_histogram: MACDSignal.histogram,
-    timestamp: SMA20.timestamp
+    ts: SMA20.ts
 )
 
 # =============================================================================
@@ -401,16 +401,12 @@ stream AnomalousActivity = Ticks
         embedding: "rule_based"
     )
     .pattern(
-        pump_detection: events =>
+        pump_detection: events => {
             let price_change = (last(events).price - first(events).price) / first(events).price
             let volume_spike = avg(events.volume) > 3 * baseline_volume(events[0].symbol)
-            let correlation = events
-                .sliding_pairs()
-                .map((e1, e2) => attention_score(e1, e2))
-                .filter(score => score > 0.9)
-                .count()
-            
+            let correlation = events.sliding_pairs().map((e1, e2) => attention_score(e1, e2)).filter(score => score > 0.9).count()
             price_change > 0.05 and volume_spike and correlation > 10
+        }
     )
     .emit(
         signal_type: "PUMP_DETECTED",
@@ -438,7 +434,7 @@ stream AllSignals = merge(
     StrongSellSignal,
     AnomalousActivity
 )
-.tap(metrics: counter: "trading_signals_total", labels: [signal_type, direction])
+.tap(counter: "trading_signals_total", labels: [signal_type, direction])
 .emit()
 .to([
     "kafka://trading-signals",

@@ -208,18 +208,27 @@ impl<'source> Parser<'source> {
     }
 
     fn parse_inline_stream(&mut self) -> ParseResult<InlineStreamDecl> {
-        self.consume(&Token::Stream, "stream")?;
-        let name = self.parse_identifier()?;
-        self.consume(&Token::From, "from")?;
-        let source = self.parse_identifier()?;
+        // Support both syntaxes:
+        // 1. merge(stream X from Y, ...) - full syntax
+        // 2. merge(X, Y, Z) - simplified syntax with existing stream names
+        if self.check(&Token::Stream) {
+            self.consume(&Token::Stream, "stream")?;
+            let name = self.parse_identifier()?;
+            self.consume(&Token::From, "from")?;
+            let source = self.parse_identifier()?;
 
-        let filter = if self.match_token(&Token::Where) {
-            Some(self.parse_expr()?)
+            let filter = if self.match_token(&Token::Where) {
+                Some(self.parse_expr()?)
+            } else {
+                None
+            };
+
+            Ok(InlineStreamDecl { name, source, filter })
         } else {
-            None
-        };
-
-        Ok(InlineStreamDecl { name, source, filter })
+            // Simplified syntax: just a stream name reference
+            let name = self.parse_identifier()?;
+            Ok(InlineStreamDecl { name: name.clone(), source: name, filter: None })
+        }
     }
 
     fn parse_join_clause_list(&mut self) -> ParseResult<Vec<JoinClause>> {
@@ -231,18 +240,27 @@ impl<'source> Parser<'source> {
     }
 
     fn parse_join_clause(&mut self) -> ParseResult<JoinClause> {
-        self.consume(&Token::Stream, "stream")?;
-        let name = self.parse_identifier()?;
-        self.consume(&Token::From, "from")?;
-        let source = self.parse_identifier()?;
+        // Support both syntaxes:
+        // 1. join(stream X from Y, stream Z from W) - full syntax
+        // 2. join(X, Y, Z) - simplified syntax with existing stream names
+        if self.check(&Token::Stream) {
+            self.consume(&Token::Stream, "stream")?;
+            let name = self.parse_identifier()?;
+            self.consume(&Token::From, "from")?;
+            let source = self.parse_identifier()?;
 
-        let on = if self.match_token(&Token::On) {
-            Some(self.parse_expr()?)
+            let on = if self.match_token(&Token::On) {
+                Some(self.parse_expr()?)
+            } else {
+                None
+            };
+
+            Ok(JoinClause { name, source, on })
         } else {
-            None
-        };
-
-        Ok(JoinClause { name, source, on })
+            // Simplified syntax: just a stream name reference
+            let name = self.parse_identifier()?;
+            Ok(JoinClause { name: name.clone(), source: name, on: None })
+        }
     }
 
     fn parse_stream_op(&mut self) -> ParseResult<StreamOp> {
@@ -371,6 +389,12 @@ impl<'source> Parser<'source> {
                 self.consume(&Token::RParen, ")")?;
                 Ok(StreamOp::Collect)
             }
+            "on" => {
+                self.consume(&Token::LParen, "(")?;
+                let expr = self.parse_expr()?;
+                self.consume(&Token::RParen, ")")?;
+                Ok(StreamOp::On(expr))
+            }
             _ => Err(ParseError::Custom {
                 span: self.prev_span(),
                 message: format!("Unknown stream operation: {}", ident),
@@ -426,15 +450,9 @@ impl<'source> Parser<'source> {
     fn parse_agg_item(&mut self) -> ParseResult<AggItem> {
         let alias = self.parse_identifier()?;
         self.consume(&Token::Colon, ":")?;
-        let func = self.parse_identifier()?;
-        self.consume(&Token::LParen, "(")?;
-        let arg = if !self.check(&Token::RParen) {
-            Some(self.parse_expr()?)
-        } else {
-            None
-        };
-        self.consume(&Token::RParen, ")")?;
-        Ok(AggItem { alias, func, arg })
+        // Parse a full expression (supports both simple func(arg) and complex expressions like sum(x) / 4)
+        let expr = self.parse_expr()?;
+        Ok(AggItem { alias, expr })
     }
 
     fn parse_order_list(&mut self) -> ParseResult<Vec<OrderItem>> {
@@ -472,7 +490,7 @@ impl<'source> Parser<'source> {
     }
 
     fn parse_named_arg(&mut self) -> ParseResult<NamedArg> {
-        let name = self.parse_identifier()?;
+        let name = self.parse_identifier_or_keyword()?;
         self.consume(&Token::Colon, ":")?;
         let value = self.parse_expr()?;
         Ok(NamedArg { name, value })
@@ -874,6 +892,99 @@ impl<'source> Parser<'source> {
         self.parse_or_expr()
     }
 
+    /// Continue parsing binary expression given an already-parsed left side
+    fn continue_binary_expr(&mut self, left: Expr) -> ParseResult<Expr> {
+        self.continue_or_expr(left)
+    }
+
+    fn continue_or_expr(&mut self, mut left: Expr) -> ParseResult<Expr> {
+        // First continue with and-level and below
+        left = self.continue_and_expr(left)?;
+        while self.match_token(&Token::Or) {
+            let right = self.parse_and_expr()?;
+            left = Expr::Binary {
+                op: BinOp::Or,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
+    }
+
+    fn continue_and_expr(&mut self, mut left: Expr) -> ParseResult<Expr> {
+        left = self.continue_comparison_expr(left)?;
+        while self.match_token(&Token::And) {
+            let right = self.parse_not_expr()?;
+            left = Expr::Binary {
+                op: BinOp::And,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
+    }
+
+    fn continue_comparison_expr(&mut self, left: Expr) -> ParseResult<Expr> {
+        let mut left = self.continue_additive_expr(left)?;
+        let op = match &self.current.token {
+            Token::EqEq => Some(BinOp::Eq),
+            Token::NotEq => Some(BinOp::NotEq),
+            Token::Lt => Some(BinOp::Lt),
+            Token::Le => Some(BinOp::Le),
+            Token::Gt => Some(BinOp::Gt),
+            Token::Ge => Some(BinOp::Ge),
+            _ => None,
+        };
+        if let Some(op) = op {
+            self.advance();
+            let right = self.parse_additive_expr()?;
+            left = Expr::Binary {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
+    }
+
+    fn continue_additive_expr(&mut self, mut left: Expr) -> ParseResult<Expr> {
+        left = self.continue_multiplicative_expr(left)?;
+        loop {
+            let op = match &self.current.token {
+                Token::Plus => BinOp::Add,
+                Token::Minus => BinOp::Sub,
+                _ => break,
+            };
+            self.advance();
+            let right = self.parse_multiplicative_expr()?;
+            left = Expr::Binary {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
+    }
+
+    fn continue_multiplicative_expr(&mut self, mut left: Expr) -> ParseResult<Expr> {
+        loop {
+            let op = match &self.current.token {
+                Token::Star => BinOp::Mul,
+                Token::Slash => BinOp::Div,
+                Token::Percent => BinOp::Mod,
+                _ => break,
+            };
+            self.advance();
+            let right = self.parse_unary_expr()?;
+            left = Expr::Binary {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
+    }
+
     fn parse_or_expr(&mut self) -> ParseResult<Expr> {
         let mut left = self.parse_and_expr()?;
         while self.match_token(&Token::Or) {
@@ -1119,44 +1230,59 @@ impl<'source> Parser<'source> {
                 self.advance();
                 Ok(Expr::Ident(name))
             }
+            // Allow certain keywords as function names in expressions
+            Token::AttentionScore => {
+                self.advance();
+                Ok(Expr::Ident("attention_score".to_string()))
+            }
             Token::LParen => {
                 self.advance();
                 
-                // Check for lambda with multiple params
+                // Check for lambda with multiple params: (a, b) => expr
                 if let Token::Ident(_) = &self.current.token {
-                    let first_param = self.parse_identifier()?;
+                    let first_ident = self.parse_identifier()?;
                     
                     if self.match_token(&Token::Comma) {
-                        // Multiple params lambda
-                        let mut params = vec![first_param];
-                        params.push(self.parse_identifier()?);
-                        while self.match_token(&Token::Comma) {
+                        // Check if next token is also identifier (lambda params)
+                        if let Token::Ident(_) = &self.current.token {
+                            // Multiple params lambda
+                            let mut params = vec![first_ident];
                             params.push(self.parse_identifier()?);
+                            while self.match_token(&Token::Comma) {
+                                if let Token::Ident(_) = &self.current.token {
+                                    params.push(self.parse_identifier()?);
+                                } else {
+                                    break;
+                                }
+                            }
+                            self.consume(&Token::RParen, ")")?;
+                            self.consume(&Token::FatArrow, "=>")?;
+                            let body = self.parse_expr()?;
+                            return Ok(Expr::Lambda {
+                                params,
+                                body: Box::new(body),
+                            });
                         }
-                        self.consume(&Token::RParen, ")")?;
-                        self.consume(&Token::FatArrow, "=>")?;
-                        let body = self.parse_expr()?;
-                        return Ok(Expr::Lambda {
-                            params,
-                            body: Box::new(body),
-                        });
+                        // Not a lambda - it's an expression like (a, b) which is invalid
+                        // or a tuple which we don't support - fall through to error
                     } else if self.match_token(&Token::RParen) {
-                        // Single param lambda or function call
+                        // Single param lambda: (x) => expr, or just grouped ident (x)
                         if self.match_token(&Token::FatArrow) {
                             let body = self.parse_expr()?;
                             return Ok(Expr::Lambda {
-                                params: vec![first_param],
+                                params: vec![first_ident],
                                 body: Box::new(body),
                             });
                         }
                         // It was just (ident)
-                        return Ok(Expr::Ident(first_param));
+                        return Ok(Expr::Ident(first_ident));
                     } else {
-                        // It's a grouped expression starting with identifier
-                        // Reparse as expression... this is tricky
-                        // For MVP, treat as identifier
+                        // It's a grouped expression starting with identifier: (x + y)
+                        // Continue parsing using the identifier as left side of binary expr
+                        let left = Expr::Ident(first_ident);
+                        let expr = self.continue_binary_expr(left)?;
                         self.consume(&Token::RParen, ")")?;
-                        return Ok(Expr::Ident(first_param));
+                        return Ok(expr);
                     }
                 }
                 
@@ -1178,8 +1304,41 @@ impl<'source> Parser<'source> {
             }
             Token::LBrace => {
                 self.advance();
-                let mut entries = Vec::new();
-                if !self.check(&Token::RBrace) {
+                
+                // Check if this is a block expression (starts with let/var) or a map literal
+                if self.check(&Token::Let) || self.check(&Token::Var) {
+                    // Block expression: { let a = 1; let b = 2; a + b }
+                    let mut stmts = Vec::new();
+                    
+                    while self.check(&Token::Let) || self.check(&Token::Var) {
+                        let is_mutable = self.check(&Token::Var);
+                        self.advance(); // consume let/var
+                        let name = self.parse_identifier()?;
+                        let ty = if self.match_token(&Token::Colon) {
+                            Some(self.parse_type()?)
+                        } else {
+                            None
+                        };
+                        self.consume(&Token::Eq, "=")?;
+                        let value = self.parse_expr()?;
+                        stmts.push((name, ty, value, is_mutable));
+                    }
+                    
+                    // The final expression
+                    let result = self.parse_expr()?;
+                    self.consume(&Token::RBrace, "}")?;
+                    
+                    Ok(Expr::Block {
+                        stmts,
+                        result: Box::new(result),
+                    })
+                } else if self.check(&Token::RBrace) {
+                    // Empty map
+                    self.advance();
+                    Ok(Expr::Map(Vec::new()))
+                } else {
+                    // Map literal: { "key": value, ... }
+                    let mut entries = Vec::new();
                     let key = match &self.current.token {
                         Token::String(s) => {
                             let s = s.clone();
@@ -1219,9 +1378,9 @@ impl<'source> Parser<'source> {
                         let value = self.parse_expr()?;
                         entries.push((key, value));
                     }
+                    self.consume(&Token::RBrace, "}")?;
+                    Ok(Expr::Map(entries))
                 }
-                self.consume(&Token::RBrace, "}")?;
-                Ok(Expr::Map(entries))
             }
             Token::If => {
                 self.advance();
@@ -1253,23 +1412,14 @@ impl<'source> Parser<'source> {
     }
 
     fn parse_arg(&mut self) -> ParseResult<Arg> {
-        // Check for named argument
-        if let Token::Ident(name) = &self.current.token {
-            let name = name.clone();
-            let saved_pos = self.current.start;
-            self.advance();
-            
-            if self.match_token(&Token::Colon) {
-                let value = self.parse_expr()?;
-                return Ok(Arg::Named(name, value));
-            } else {
-                // It was a positional argument that's an identifier
-                // We need to handle this - for now return as expression
-                // We already consumed the identifier, so reconstruct
-                return Ok(Arg::Positional(Expr::Ident(name)));
-            }
+        // Check for named argument (identifier followed by colon, but not ::)
+        if let Token::Ident(_) = &self.current.token {
+            // Peek ahead to check for named arg pattern: ident ':'
+            // But we need to be careful - just parse the whole expression
+            // and check if it's a named arg pattern
         }
         
+        // Parse as a full expression
         let expr = self.parse_expr()?;
         Ok(Arg::Positional(expr))
     }
@@ -1289,6 +1439,30 @@ impl<'source> Parser<'source> {
         }
     }
 
+    /// Parse identifier or allow certain keywords as identifiers (for named args)
+    fn parse_identifier_or_keyword(&mut self) -> ParseResult<String> {
+        let name = match &self.current.token {
+            Token::Ident(name) => name.clone(),
+            Token::DurationType => "duration".to_string(),
+            Token::TimestampType => "timestamp".to_string(),
+            Token::IntType => "int".to_string(),
+            Token::FloatType => "float".to_string(),
+            Token::BoolType => "bool".to_string(),
+            Token::StrType => "str".to_string(),
+            Token::Pattern => "pattern".to_string(),
+            Token::Window => "window".to_string(),
+            _ => {
+                return Err(ParseError::UnexpectedToken {
+                    position: self.current.start,
+                    expected: "identifier".to_string(),
+                    found: format!("{}", self.current.token),
+                });
+            }
+        };
+        self.advance();
+        Ok(name)
+    }
+
     /// Parse a stream operation name - can be a keyword or identifier
     fn parse_stream_op_name(&mut self) -> ParseResult<String> {
         let name = match &self.current.token {
@@ -1305,6 +1479,7 @@ impl<'source> Parser<'source> {
             Token::To => "to".to_string(),
             Token::Pattern => "pattern".to_string(),
             Token::AttentionWindow => "attention_window".to_string(),
+            Token::On => "on".to_string(),
             _ => {
                 return Err(ParseError::UnexpectedToken {
                     position: self.current.start,
@@ -1358,6 +1533,10 @@ fn parse_timestamp(s: &str) -> i64 {
 mod tests {
     use super::*;
 
+    // ========================================================================
+    // Basic Stream Tests
+    // ========================================================================
+
     #[test]
     fn test_parse_stream_from() {
         let result = parse("stream Trades from TradeEvent");
@@ -1373,10 +1552,102 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_stream_with_window() {
+        let result = parse("stream Windowed = Source.window(5m)");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_stream_with_aggregate() {
+        let result = parse("stream Agg = Source.window(5m).aggregate(total: sum(value), count: count())");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_stream_partition_by() {
+        let result = parse("stream Partitioned = Source.partition_by(zone)");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_stream_select() {
+        let result = parse("stream Selected = Source.select(id: id, value: price * 2)");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_stream_emit() {
+        let result = parse("stream Alerts = Source.where(value > 100).emit(alert_type: \"high\", severity: \"warning\")");
+        assert!(result.is_ok());
+    }
+
+    // ========================================================================
+    // Join Tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_join_simple() {
+        let result = parse("stream Joined = join(StreamA, StreamB).window(1m)");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_join_with_on() {
+        let result = parse("stream Joined = join(A, B).on(A.id == B.id).window(1m)");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_join_with_select() {
+        let result = parse(r#"
+            stream Joined = join(A, B)
+                .on(A.id == B.id)
+                .window(1m)
+                .select(
+                    id: A.id,
+                    val_a: A.value,
+                    val_b: B.value
+                )
+        "#);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_join_multiple_streams() {
+        let result = parse("stream Multi = join(A, B, C).window(1m)");
+        assert!(result.is_ok());
+    }
+
+    // ========================================================================
+    // Event Declaration Tests
+    // ========================================================================
+
+    #[test]
     fn test_parse_event_decl() {
         let result = parse("event Trade: symbol: str price: float volume: int");
         assert!(result.is_ok());
     }
+
+    #[test]
+    fn test_parse_event_with_timestamp() {
+        let result = parse("event Reading: sensor_id: str value: float ts: timestamp");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_multiple_events() {
+        let result = parse(r#"
+            event A: id: str
+            event B: id: str value: float
+        "#);
+        assert!(result.is_ok());
+        let program = result.unwrap();
+        assert_eq!(program.statements.len(), 2);
+    }
+
+    // ========================================================================
+    // Expression Tests
+    // ========================================================================
 
     #[test]
     fn test_parse_let() {
@@ -1400,5 +1671,146 @@ mod tests {
     fn test_parse_map() {
         let result = parse(r#"let m = {"key": "value"}"#);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_binary_expr() {
+        let result = parse("let x = a + b * c - d / e");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_comparison_expr() {
+        let result = parse("let x = a > b and c <= d or e == f");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_function_call_with_expr() {
+        let result = parse("let x = abs(value - 22)");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_nested_function_calls() {
+        let result = parse("let x = max(abs(a - b), abs(c - d))");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_member_access() {
+        let result = parse("let x = obj.field.subfield");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_if_expr() {
+        let result = parse("let x = if a > b then a else b");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_complex_if_expr() {
+        let result = parse("let x = if a > 0 then a * 2 else if a < 0 then a * -1 else 0");
+        assert!(result.is_ok());
+    }
+
+    // ========================================================================
+    // Attention Window Tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_attention_window() {
+        let result = parse(r#"
+            stream AttentionStream = Source
+                .attention_window(duration: 1h, heads: 4, embedding: "rule_based")
+        "#);
+        assert!(result.is_ok());
+    }
+
+    // ========================================================================
+    // Pattern Tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_pattern_simple() {
+        let result = parse(r#"
+            stream PatternStream = Source
+                .pattern(my_pattern: events => events.count() > 10)
+        "#);
+        assert!(result.is_ok());
+    }
+
+    // ========================================================================
+    // Block Expression Tests (let in expressions)
+    // ========================================================================
+
+    #[test]
+    fn test_parse_block_expr() {
+        let result = parse(r#"
+            let result = {
+                let a = 1
+                let b = 2
+                a + b
+            }
+        "#);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_pattern_with_let() {
+        let result = parse(r#"
+            stream DegradationAlert = Source
+                .pattern(
+                    degradation: events => {
+                        let values = events.map(e => e.value)
+                        let trend = linear_slope(values)
+                        trend < -0.1
+                    }
+                )
+        "#);
+        assert!(result.is_ok());
+    }
+
+    // ========================================================================
+    // Complex Stream Pipeline Tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_complex_pipeline() {
+        let result = parse(r#"
+            stream Result = Source
+                .where(value > 0)
+                .partition_by(zone)
+                .window(5m)
+                .aggregate(
+                    zone: last(zone),
+                    avg_value: avg(value),
+                    max_value: max(value),
+                    count: count()
+                )
+                .where(avg_value > 10)
+                .emit(
+                    alert_type: "threshold",
+                    severity: "warning"
+                )
+        "#);
+        assert!(result.is_ok());
+    }
+
+    // ========================================================================
+    // Error Cases
+    // ========================================================================
+
+    #[test]
+    fn test_parse_error_unclosed_paren() {
+        let result = parse("stream X = Source.where(a > b");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_error_missing_from() {
+        let result = parse("stream X TradeEvent");
+        assert!(result.is_err());
     }
 }

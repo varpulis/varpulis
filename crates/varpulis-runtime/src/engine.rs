@@ -171,18 +171,42 @@ impl Engine {
                 StreamOp::Aggregate(items) => {
                     let mut aggregator = Aggregator::new();
                     for item in items {
-                        let func: Box<dyn crate::aggregation::AggregateFunc> = match item.func.as_str() {
+                        // Extract function name and argument from the expression
+                        // Supports patterns like: func(arg) or func()
+                        let (func_name, arg_expr) = match &item.expr {
+                            varpulis_core::ast::Expr::Call { func, args } => {
+                                let name = match func.as_ref() {
+                                    varpulis_core::ast::Expr::Ident(s) => s.clone(),
+                                    _ => continue,
+                                };
+                                let arg = args.first().and_then(|a| match a {
+                                    varpulis_core::ast::Arg::Positional(e) => Some(e.clone()),
+                                    _ => None,
+                                });
+                                (name, arg)
+                            }
+                            // For complex expressions, store as-is (runtime will evaluate)
+                            _ => {
+                                warn!("Complex aggregate expression not yet supported: {:?}", item.expr);
+                                continue;
+                            }
+                        };
+                        
+                        let func: Box<dyn crate::aggregation::AggregateFunc> = match func_name.as_str() {
                             "count" => Box::new(Count),
                             "sum" => Box::new(Sum),
                             "avg" => Box::new(Avg),
                             "min" => Box::new(Min),
                             "max" => Box::new(Max),
+                            "last" => Box::new(Max), // TODO: implement Last
+                            "first" => Box::new(Min), // TODO: implement First
+                            "stddev" => Box::new(Avg), // TODO: implement StdDev
                             _ => {
-                                warn!("Unknown aggregation function: {}", item.func);
+                                warn!("Unknown aggregation function: {}", func_name);
                                 continue;
                             }
                         };
-                        let field = item.arg.as_ref().and_then(|e| match e {
+                        let field = arg_expr.as_ref().and_then(|e| match e {
                             varpulis_core::ast::Expr::Ident(s) => Some(s.clone()),
                             _ => None,
                         });

@@ -150,6 +150,8 @@ pub enum StreamOp {
     OnError(Expr),
     /// Collect results: `.collect()`
     Collect,
+    /// Join condition: `.on(expr)`
+    On(Expr),
 }
 
 /// Select item in projection
@@ -165,8 +167,7 @@ pub enum SelectItem {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AggItem {
     pub alias: String,
-    pub func: String,
-    pub arg: Option<Expr>,
+    pub expr: Expr,
 }
 
 /// Order item
@@ -285,6 +286,12 @@ pub enum Expr {
         start: Box<Expr>,
         end: Box<Expr>,
         inclusive: bool,
+    },
+
+    // Block expression: `{ let a = 1; let b = 2; a + b }`
+    Block {
+        stmts: Vec<(String, Option<Type>, Expr, bool)>, // (name, type, value, is_mutable)
+        result: Box<Expr>,
     },
 }
 
