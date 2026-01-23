@@ -1,0 +1,456 @@
+import * as vscode from 'vscode';
+import { VarpulisEngine } from './engine';
+import { AlertsTreeProvider } from './views/alerts';
+import { EventsTreeProvider } from './views/events';
+import { MetricsTreeProvider } from './views/metrics';
+import { StreamsTreeProvider } from './views/streams';
+
+let engine: VarpulisEngine | undefined;
+let outputChannel: vscode.OutputChannel;
+let statusBarItem: vscode.StatusBarItem;
+
+export function activate(context: vscode.ExtensionContext) {
+    console.log('Varpulis extension activated');
+
+    // Create output channel
+    outputChannel = vscode.window.createOutputChannel('Varpulis');
+
+    // Create status bar item
+    statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+    statusBarItem.text = '$(circle-outline) Varpulis';
+    statusBarItem.tooltip = 'Varpulis Engine Status';
+    statusBarItem.command = 'varpulis.showStatus';
+    statusBarItem.show();
+    context.subscriptions.push(statusBarItem);
+
+    // Create tree view providers
+    const streamsProvider = new StreamsTreeProvider();
+    const eventsProvider = new EventsTreeProvider();
+    const alertsProvider = new AlertsTreeProvider();
+    const metricsProvider = new MetricsTreeProvider();
+
+    // Register tree views
+    vscode.window.registerTreeDataProvider('varpulis.streams', streamsProvider);
+    vscode.window.registerTreeDataProvider('varpulis.events', eventsProvider);
+    vscode.window.registerTreeDataProvider('varpulis.alerts', alertsProvider);
+    vscode.window.registerTreeDataProvider('varpulis.metrics', metricsProvider);
+
+    // Register commands
+    context.subscriptions.push(
+        vscode.commands.registerCommand('varpulis.startEngine', () => startEngine(streamsProvider, eventsProvider, alertsProvider, metricsProvider)),
+        vscode.commands.registerCommand('varpulis.stopEngine', stopEngine),
+        vscode.commands.registerCommand('varpulis.runFile', runCurrentFile),
+        vscode.commands.registerCommand('varpulis.checkSyntax', checkSyntax),
+        vscode.commands.registerCommand('varpulis.showMetrics', showMetrics),
+        vscode.commands.registerCommand('varpulis.showStreams', () => streamsProvider.refresh()),
+        vscode.commands.registerCommand('varpulis.injectEvent', injectEvent),
+        vscode.commands.registerCommand('varpulis.showStatus', showStatus)
+    );
+
+    // Register diagnostics
+    const diagnosticCollection = vscode.languages.createDiagnosticCollection('varpulis');
+    context.subscriptions.push(diagnosticCollection);
+
+    // Register document change listener for live validation
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeTextDocument(event => {
+            if (event.document.languageId === 'varpulis') {
+                validateDocument(event.document, diagnosticCollection);
+            }
+        })
+    );
+
+    // Register document open listener
+    context.subscriptions.push(
+        vscode.workspace.onDidOpenTextDocument(document => {
+            if (document.languageId === 'varpulis') {
+                validateDocument(document, diagnosticCollection);
+            }
+        })
+    );
+
+    // Register completion provider
+    context.subscriptions.push(
+        vscode.languages.registerCompletionItemProvider('varpulis', {
+            provideCompletionItems: provideCompletionItems
+        }, '.', '(')
+    );
+
+    // Register hover provider
+    context.subscriptions.push(
+        vscode.languages.registerHoverProvider('varpulis', {
+            provideHover: provideHover
+        })
+    );
+
+    // Auto-start engine if configured
+    const config = vscode.workspace.getConfiguration('varpulis');
+    if (config.get('autoStart')) {
+        startEngine(streamsProvider, eventsProvider, alertsProvider, metricsProvider);
+    }
+
+    outputChannel.appendLine('Varpulis extension ready');
+}
+
+export function deactivate() {
+    if (engine) {
+        engine.stop();
+    }
+}
+
+async function startEngine(
+    streamsProvider: StreamsTreeProvider,
+    eventsProvider: EventsTreeProvider,
+    alertsProvider: AlertsTreeProvider,
+    metricsProvider: MetricsTreeProvider
+) {
+    if (engine && engine.isRunning()) {
+        vscode.window.showInformationMessage('Varpulis engine is already running');
+        return;
+    }
+
+    const config = vscode.workspace.getConfiguration('varpulis');
+    const enginePath = config.get<string>('enginePath') || 'varpulis';
+    const port = config.get<number>('enginePort') || 9000;
+
+    try {
+        engine = new VarpulisEngine(enginePath, port, outputChannel);
+        
+        // Set up event handlers
+        engine.onStreamUpdate(streams => streamsProvider.update(streams));
+        engine.onEvent(event => eventsProvider.addEvent(event));
+        engine.onAlert(alert => alertsProvider.addAlert(alert));
+        engine.onMetrics(metrics => metricsProvider.update(metrics));
+        
+        await engine.start();
+        
+        statusBarItem.text = '$(circle-filled) Varpulis';
+        statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+        
+        vscode.window.showInformationMessage('Varpulis engine started');
+        outputChannel.appendLine('Engine started on port ' + port);
+    } catch (error) {
+        vscode.window.showErrorMessage(`Failed to start Varpulis engine: ${error}`);
+        outputChannel.appendLine(`Error: ${error}`);
+    }
+}
+
+async function stopEngine() {
+    if (!engine || !engine.isRunning()) {
+        vscode.window.showInformationMessage('Varpulis engine is not running');
+        return;
+    }
+
+    try {
+        await engine.stop();
+        statusBarItem.text = '$(circle-outline) Varpulis';
+        statusBarItem.backgroundColor = undefined;
+        vscode.window.showInformationMessage('Varpulis engine stopped');
+        outputChannel.appendLine('Engine stopped');
+    } catch (error) {
+        vscode.window.showErrorMessage(`Failed to stop Varpulis engine: ${error}`);
+    }
+}
+
+async function runCurrentFile() {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || editor.document.languageId !== 'varpulis') {
+        vscode.window.showErrorMessage('No VarpulisQL file is open');
+        return;
+    }
+
+    const document = editor.document;
+    
+    // Save the file first
+    await document.save();
+
+    if (!engine || !engine.isRunning()) {
+        const start = await vscode.window.showQuickPick(['Yes', 'No'], {
+            placeHolder: 'Varpulis engine is not running. Start it?'
+        });
+        if (start === 'Yes') {
+            await vscode.commands.executeCommand('varpulis.startEngine');
+        } else {
+            return;
+        }
+    }
+
+    try {
+        outputChannel.appendLine(`Running: ${document.fileName}`);
+        outputChannel.show();
+        
+        const result = await engine!.loadFile(document.fileName);
+        
+        if (result.success) {
+            vscode.window.showInformationMessage(`Loaded ${result.streamsLoaded} streams`);
+            outputChannel.appendLine(`Success: Loaded ${result.streamsLoaded} streams`);
+        } else {
+            vscode.window.showErrorMessage(`Failed to load: ${result.error}`);
+            outputChannel.appendLine(`Error: ${result.error}`);
+        }
+    } catch (error) {
+        vscode.window.showErrorMessage(`Error running file: ${error}`);
+        outputChannel.appendLine(`Error: ${error}`);
+    }
+}
+
+async function checkSyntax() {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || editor.document.languageId !== 'varpulis') {
+        vscode.window.showErrorMessage('No VarpulisQL file is open');
+        return;
+    }
+
+    const document = editor.document;
+    const config = vscode.workspace.getConfiguration('varpulis');
+    const enginePath = config.get<string>('enginePath') || 'varpulis';
+
+    try {
+        const { exec } = require('child_process');
+        const util = require('util');
+        const execPromise = util.promisify(exec);
+
+        await document.save();
+        
+        const { stdout, stderr } = await execPromise(`${enginePath} check "${document.fileName}"`);
+        
+        if (stderr) {
+            vscode.window.showErrorMessage(`Syntax error: ${stderr}`);
+            outputChannel.appendLine(`Syntax error: ${stderr}`);
+        } else {
+            vscode.window.showInformationMessage('Syntax OK ✓');
+            outputChannel.appendLine(`Syntax check passed: ${document.fileName}`);
+        }
+    } catch (error: any) {
+        vscode.window.showErrorMessage(`Syntax error: ${error.message}`);
+        outputChannel.appendLine(`Syntax error: ${error.message}`);
+    }
+}
+
+async function showMetrics() {
+    const config = vscode.workspace.getConfiguration('varpulis');
+    const metricsPort = config.get<number>('metricsPort') || 9090;
+    const metricsUrl = `http://localhost:${metricsPort}/metrics`;
+
+    // Open in browser or show in panel
+    const choice = await vscode.window.showQuickPick(
+        ['Open in Browser', 'Show in Panel'],
+        { placeHolder: 'How would you like to view metrics?' }
+    );
+
+    if (choice === 'Open in Browser') {
+        vscode.env.openExternal(vscode.Uri.parse(metricsUrl));
+    } else if (choice === 'Show in Panel') {
+        // Create webview panel
+        const panel = vscode.window.createWebviewPanel(
+            'varpulisMetrics',
+            'Varpulis Metrics',
+            vscode.ViewColumn.Beside,
+            { enableScripts: true }
+        );
+        
+        panel.webview.html = getMetricsHtml(metricsUrl);
+    }
+}
+
+async function injectEvent() {
+    if (!engine || !engine.isRunning()) {
+        vscode.window.showErrorMessage('Varpulis engine is not running');
+        return;
+    }
+
+    // Get event type
+    const eventType = await vscode.window.showInputBox({
+        prompt: 'Enter event type (e.g., TemperatureReading)',
+        placeHolder: 'EventType'
+    });
+
+    if (!eventType) {
+        return;
+    }
+
+    // Get event data as JSON
+    const eventData = await vscode.window.showInputBox({
+        prompt: 'Enter event data as JSON',
+        placeHolder: '{"sensor_id": "s1", "value": 22.5}'
+    });
+
+    if (!eventData) {
+        return;
+    }
+
+    try {
+        const data = JSON.parse(eventData);
+        await engine.injectEvent(eventType, data);
+        vscode.window.showInformationMessage(`Injected ${eventType} event`);
+        outputChannel.appendLine(`Injected event: ${eventType} - ${eventData}`);
+    } catch (error) {
+        vscode.window.showErrorMessage(`Failed to inject event: ${error}`);
+    }
+}
+
+function showStatus() {
+    if (!engine) {
+        vscode.window.showInformationMessage('Varpulis engine: Not initialized');
+        return;
+    }
+
+    const status = engine.getStatus();
+    const message = `Varpulis Engine
+Status: ${status.running ? 'Running' : 'Stopped'}
+Streams: ${status.activeStreams}
+Events processed: ${status.eventsProcessed}
+Alerts generated: ${status.alertsGenerated}`;
+
+    vscode.window.showInformationMessage(message);
+}
+
+function validateDocument(document: vscode.TextDocument, diagnostics: vscode.DiagnosticCollection) {
+    const text = document.getText();
+    const problems: vscode.Diagnostic[] = [];
+
+    // Basic validation rules
+    const lines = text.split('\n');
+    
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        
+        // Check for common issues
+        if (line.includes('strean ')) {
+            const index = line.indexOf('strean ');
+            problems.push(new vscode.Diagnostic(
+                new vscode.Range(i, index, i, index + 6),
+                'Did you mean "stream"?',
+                vscode.DiagnosticSeverity.Error
+            ));
+        }
+        
+        // Check for unclosed strings
+        const doubleQuotes = (line.match(/"/g) || []).length;
+        if (doubleQuotes % 2 !== 0 && !line.trim().startsWith('#')) {
+            problems.push(new vscode.Diagnostic(
+                new vscode.Range(i, 0, i, line.length),
+                'Unclosed string',
+                vscode.DiagnosticSeverity.Error
+            ));
+        }
+    }
+
+    diagnostics.set(document.uri, problems);
+}
+
+function provideCompletionItems(
+    document: vscode.TextDocument,
+    position: vscode.Position
+): vscode.CompletionItem[] {
+    const linePrefix = document.lineAt(position).text.substring(0, position.character);
+    const items: vscode.CompletionItem[] = [];
+
+    // After a dot, suggest stream operations
+    if (linePrefix.endsWith('.')) {
+        const streamOps = [
+            { label: 'where', detail: 'Filter events', insertText: 'where($1)' },
+            { label: 'select', detail: 'Project fields', insertText: 'select(\n    $1\n)' },
+            { label: 'aggregate', detail: 'Aggregate values', insertText: 'aggregate(\n    $1\n)' },
+            { label: 'window', detail: 'Temporal window', insertText: 'window($1)' },
+            { label: 'partition_by', detail: 'Partition stream', insertText: 'partition_by($1)' },
+            { label: 'emit', detail: 'Emit to sink', insertText: 'emit(\n    $1\n)' },
+            { label: 'attention_window', detail: 'Attention-based window', insertText: 'attention_window(\n    duration: $1,\n    heads: 4,\n    embedding: "rule_based"\n)' },
+            { label: 'pattern', detail: 'Pattern matching', insertText: 'pattern(\n    $1: events => $2\n)' },
+            { label: 'to', detail: 'Output destination', insertText: 'to("$1")' },
+        ];
+
+        for (const op of streamOps) {
+            const item = new vscode.CompletionItem(op.label, vscode.CompletionItemKind.Method);
+            item.detail = op.detail;
+            item.insertText = new vscode.SnippetString(op.insertText);
+            items.push(item);
+        }
+    }
+
+    // Suggest keywords
+    const keywords = ['stream', 'event', 'from', 'let', 'const', 'fn', 'config', 'if', 'else', 'for', 'while', 'match'];
+    for (const kw of keywords) {
+        if (linePrefix.trim() === '' || kw.startsWith(linePrefix.trim())) {
+            const item = new vscode.CompletionItem(kw, vscode.CompletionItemKind.Keyword);
+            items.push(item);
+        }
+    }
+
+    // Suggest aggregation functions
+    if (linePrefix.includes('aggregate') || linePrefix.includes('select')) {
+        const aggFuncs = ['sum', 'avg', 'count', 'min', 'max', 'first', 'last', 'stddev', 'variance'];
+        for (const fn of aggFuncs) {
+            const item = new vscode.CompletionItem(fn, vscode.CompletionItemKind.Function);
+            item.insertText = new vscode.SnippetString(`${fn}($1)`);
+            items.push(item);
+        }
+    }
+
+    return items;
+}
+
+function provideHover(
+    document: vscode.TextDocument,
+    position: vscode.Position
+): vscode.Hover | undefined {
+    const range = document.getWordRangeAtPosition(position);
+    if (!range) {
+        return undefined;
+    }
+
+    const word = document.getText(range);
+    
+    const docs: { [key: string]: string } = {
+        'stream': '**stream** - Declares a new event stream\n\n```varpulis\nstream Name from EventType\nstream Name = OtherStream.where(...)\n```',
+        'event': '**event** - Declares an event type\n\n```varpulis\nevent MyEvent:\n    field1: string\n    field2: float\n```',
+        'where': '**.where(condition)** - Filters events based on a condition\n\n```varpulis\n.where(value > 10)\n.where(status == "active" and count > 0)\n```',
+        'window': '**.window(duration)** - Creates a temporal window\n\n```varpulis\n.window(5m)              # Tumbling window\n.window(5m, sliding: 1m) # Sliding window\n```',
+        'aggregate': '**.aggregate(...)** - Aggregates values in a window\n\n```varpulis\n.aggregate(\n    total: sum(value),\n    average: avg(value),\n    count: count()\n)\n```',
+        'attention_window': '**.attention_window(...)** - Creates an attention-based window for pattern detection\n\n```varpulis\n.attention_window(\n    duration: 30m,\n    heads: 4,\n    embedding: "rule_based"\n)\n```',
+        'pattern': '**.pattern(...)** - Defines a pattern to detect\n\n```varpulis\n.pattern(\n    my_pattern: events =>\n        events.filter(...).count() > threshold\n)\n```',
+        'attention_score': '**attention_score(e1, e2)** - Computes the attention score between two events (0.0 - 1.0)',
+        'emit': '**.emit(...)** - Emits an alert or output event\n\n```varpulis\n.emit(\n    alert_type: "anomaly",\n    severity: "warning"\n)\n```',
+    };
+
+    if (docs[word]) {
+        return new vscode.Hover(new vscode.MarkdownString(docs[word]));
+    }
+
+    return undefined;
+}
+
+function getMetricsHtml(metricsUrl: string): string {
+    return `<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: var(--vscode-font-family); padding: 10px; }
+        pre { background: var(--vscode-editor-background); padding: 10px; overflow: auto; }
+        .refresh { margin-bottom: 10px; }
+        button { padding: 5px 10px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <div class="refresh">
+        <button onclick="refresh()">Refresh</button>
+        <span id="lastUpdate"></span>
+    </div>
+    <pre id="metrics">Loading...</pre>
+    <script>
+        async function refresh() {
+            try {
+                const response = await fetch('${metricsUrl}');
+                const text = await response.text();
+                document.getElementById('metrics').textContent = text;
+                document.getElementById('lastUpdate').textContent = 'Last update: ' + new Date().toLocaleTimeString();
+            } catch (error) {
+                document.getElementById('metrics').textContent = 'Error: ' + error.message;
+            }
+        }
+        refresh();
+        setInterval(refresh, 5000);
+    </script>
+</body>
+</html>`;
+}

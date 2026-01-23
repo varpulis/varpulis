@@ -1,0 +1,84 @@
+{
+    "comments": {
+        "lineComment": "#",
+        "blockComment": [
+            "/*",
+            "*/"
+        ]
+    },
+    "brackets": [
+        [
+            "{",
+            "}"
+        ],
+        [
+            "[",
+            "]"
+        ],
+        [
+            "(",
+            ")"
+        ]
+    ],
+    "autoClosingPairs": [
+        {
+            "open": "{",
+            "close": "}"
+        },
+        {
+            "open": "[",
+            "close": "]"
+        },
+        {
+            "open": "(",
+            "close": ")"
+        },
+        {
+            "open": "\"",
+            "close": "\"",
+            "notIn": [
+                "string"
+            ]
+        },
+        {
+            "open": "'",
+            "close": "'",
+            "notIn": [
+                "string"
+            ]
+        }
+    ],
+    "surroundingPairs": [
+        [
+            "{",
+            "}"
+        ],
+        [
+            "[",
+            "]"
+        ],
+        [
+            "(",
+            ")"
+        ],
+        [
+            "\"",
+            "\""
+        ],
+        [
+            "'",
+            "'"
+        ]
+    ],
+    "folding": {
+        "markers": {
+            "start": "^\\s*#\\s*region\\b",
+            "end": "^\\s*#\\s*endregion\\b"
+        }
+    },
+    "indentationRules": {
+        "increaseIndentPattern": "^\\s*(stream|event|config|fn|if|elif|else|for|while|match|pattern|attention_window|supervision|observability).*:\\s*$",
+        "decreaseIndentPattern": "^\\s*(elif|else)\\b"
+    },
+    "wordPattern": "(-?\\d*\\.\\d\\w*)|([^\\`\\~\\!\\@\\#\\%\\^\\&\\*\\(\\)\\-\\=\\+\\[\\{\\]\\}\\\\\\|\\;\\:\\'\\\"\\,\\.\\<\\>\\/\\?\\s]+)"
+}

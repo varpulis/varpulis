@@ -1,4 +1,8 @@
-# MVP Use Case: HVAC Building Supervision
+# Use Case: HVAC Building Supervision
+
+## Overview
+
+Smart building supervision with real-time monitoring, anomaly detection, and **attention-based predictive maintenance** for HVAC equipment.
 
 ## Business Context
 
@@ -8,16 +12,24 @@ A smart building equipped with IoT sensors to monitor:
 - **HVAC equipment status** (AHU, air conditioning)
 - **Energy consumption**
 
-## Architecture du bâtiment simulé
+### Objectives
+
+1. **Temperature anomaly detection** (overheating, under-cooling)
+2. **Temperature/HVAC correlation** (is the equipment responding correctly?)
+3. **Predictive maintenance** using attention-based degradation detection
+4. **Comfort scoring** by zone
+5. **Energy optimization**
+
+## Building Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    BÂTIMENT ALPHA                       │
+│                    ALPHA BUILDING                        │
 ├─────────────────────────────────────────────────────────┤
 │                                                         │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐     │
 │  │   Zone A    │  │   Zone B    │  │   Zone C    │     │
-│  │  (Bureaux)  │  │  (Serveurs) │  │  (Accueil)  │     │
+│  │  (Offices)  │  │(Server Room)│  │ (Reception) │     │
 │  │             │  │             │  │             │     │
 │  │ T: 21-23°C  │  │ T: 18-20°C  │  │ T: 20-24°C  │     │
 │  │ H: 40-60%   │  │ H: 45-55%   │  │ H: 40-60%   │     │
@@ -26,230 +38,129 @@ A smart building equipped with IoT sensors to monitor:
 │         └────────────────┼────────────────┘             │
 │                          │                              │
 │                   ┌──────▼──────┐                       │
-│                   │  CTA/HVAC   │                       │
-│                   │  Centrale   │                       │
+│                   │    HVAC     │                       │
+│                   │   Central   │                       │
 │                   └─────────────┘                       │
 └─────────────────────────────────────────────────────────┘
 ```
 
-## Événements du domaine
+## Alert Types
 
-### TemperatureReading
-Lecture de température d'un capteur.
-
-```varpulis
-event TemperatureReading:
-    sensor_id: str          # "zone_a_temp_01"
-    zone: str               # "zone_a", "zone_b", "zone_c"
-    value: float            # Température en °C
-    timestamp: timestamp
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      HVAC ALERTS                            │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ENVIRONMENTAL                                              │
+│  ├── TEMPERATURE_ANOMALY    - Out of range temperature     │
+│  ├── SERVER_ROOM_CRITICAL   - Critical server room temp    │
+│  └── HUMIDITY_ANOMALY       - Out of range humidity        │
+│                                                             │
+│  EQUIPMENT                                                  │
+│  ├── HVAC_POWER_SPIKE       - Unusual power consumption    │
+│  ├── COMPRESSOR_DEGRADATION - Progressive wear detected    │
+│  ├── REFRIGERANT_LEAK       - Possible leak detected       │
+│  └── FAN_MOTOR_DEGRADATION  - Fan motor issues             │
+│                                                             │
+│  MAINTENANCE                                                │
+│  ├── MAINTENANCE_REMINDER   - Runtime-based reminder       │
+│  └── LOW_HEALTH_SCORE       - Overall health below 70%     │
+│                                                             │
+│  ENERGY                                                     │
+│  └── ENERGY_ANOMALY         - Unusual energy consumption   │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-### HumidityReading
-Lecture d'humidité relative.
+## Attention-Based Degradation Detection
+
+The key innovation in this example is using the **attention mechanism** to detect progressive equipment degradation that simple threshold-based rules would miss.
+
+### Compressor Degradation Pattern
 
 ```varpulis
-event HumidityReading:
-    sensor_id: str
-    zone: str
-    value: float            # Humidité en %
-    timestamp: timestamp
-```
-
-### HVACStatus
-État du système HVAC.
-
-```varpulis
-event HVACStatus:
-    unit_id: str            # "cta_main", "cta_backup"
-    mode: str               # "heating", "cooling", "ventilation", "off"
-    power_consumption: float # kW
-    fan_speed: int          # RPM
-    compressor_pressure: float
-    timestamp: timestamp
-```
-
-### EnergyReading
-Consommation électrique.
-
-```varpulis
-event EnergyReading:
-    meter_id: str
-    zone: str
-    power_kw: float
-    timestamp: timestamp
-```
-
-## Streams et patterns à détecter
-
-### 1. Monitoring de base par zone
-
-```varpulis
-# Agrégation des températures par zone
-stream ZoneTemperatures = TemperatureReading
-    .partition_by(zone)
-    .window(5m, sliding: 1m)
-    .aggregate(
-        zone: first(zone),
-        avg_temp: avg(value),
-        min_temp: min(value),
-        max_temp: max(value),
-        readings_count: count()
-    )
-```
-
-### 2. Détection d'anomalies de température
-
-```varpulis
-# Seuils par zone
-const TEMP_THRESHOLDS = {
-    "zone_a": { "min": 19.0, "max": 25.0 },
-    "zone_b": { "min": 16.0, "max": 22.0 },  # Salle serveurs, plus strict
-    "zone_c": { "min": 18.0, "max": 26.0 }
-}
-
-stream TemperatureAnomaly = ZoneTemperatures
-    .where(
-        avg_temp < TEMP_THRESHOLDS[zone].min or
-        avg_temp > TEMP_THRESHOLDS[zone].max
-    )
-    .emit(
-        alert_type: "temperature_anomaly",
-        severity: if zone == "zone_b" then "critical" else "warning",
-        zone: zone,
-        current_temp: avg_temp,
-        threshold_min: TEMP_THRESHOLDS[zone].min,
-        threshold_max: TEMP_THRESHOLDS[zone].max,
-        timestamp: now()
-    )
-```
-
-### 3. Corrélation température/consommation HVAC
-
-```varpulis
-# Jointure température + consommation HVAC
-stream TempEnergyCorrelation = join(
-    stream Temps from ZoneTemperatures,
-    stream HVAC from HVACStatus
-        on true  # Jointure temporelle pure
-)
-.window(15m)
-.aggregate(
-    avg_temp: avg(Temps.avg_temp),
-    avg_power: avg(HVAC.power_consumption),
-    efficiency: avg(Temps.avg_temp) / avg(HVAC.power_consumption)
-)
-```
-
-### 4. Détection de dégradation HVAC (pattern complexe)
-
-```varpulis
-# Utilise l'attention pour détecter des corrélations anormales
-stream HVACDegradation = HVACStatus
-    .attention_window(
-        duration: 30m,
-        heads: 4,
-        embedding: "rule_based"
-    )
+stream CompressorDegradation = HVAC
+    .partition_by(unit_id)
+    .attention_window(duration: 1h, heads: 4, embedding: "rule_based")
     .pattern(
         degradation: events =>
-            # Tendance à la hausse de la consommation
-            let power_trend = events
-                .map(e => e.power_consumption)
-                .linear_trend()
+            # Calculate trends
+            let pressure_trend = linear_regression_slope(events.map(e => e.compressor_pressure))
+            let power_trend = linear_regression_slope(events.map(e => e.power_consumption))
             
-            # Tendance à la baisse de l'efficacité (pression compresseur)
-            let pressure_trend = events
-                .map(e => e.compressor_pressure)
-                .linear_trend()
-            
-            # Corrélation anormale entre événements récents
-            let recent = events.tail(10)
-            let correlations = recent
-                .pairs()
+            # Calculate attention scores for correlation
+            let attention_scores = events.sliding_pairs()
                 .map((e1, e2) => attention_score(e1, e2))
-                .filter(score => score > 0.9)
             
-            # Pattern de dégradation: conso monte + pression baisse + haute corrélation
-            power_trend > 0.05 and pressure_trend < -0.02 and correlations.len() > 5
-    )
-    .emit(
-        alert_type: "hvac_degradation",
-        severity: "high",
-        unit_id: unit_id,
-        message: "Dégradation détectée - maintenance recommandée",
-        predicted_failure_days: estimate_ttf(events),
-        timestamp: now()
+            # Pattern: high correlation + declining pressure + increasing power
+            let high_correlation = attention_scores.filter(s => s > 0.8).count() > events.len() * 0.7
+            
+            high_correlation and pressure_trend < -0.01 and power_trend > 0.05
     )
 ```
 
-### 5. Confort multi-zones
+### Why Attention Works
+
+| Traditional Rule-Based | Attention-Based |
+|------------------------|-----------------|
+| Fixed thresholds | Learns normal patterns |
+| Misses gradual drift | Detects progressive changes |
+| High false positives | Correlates multiple signals |
+| Per-metric analysis | Holistic event comparison |
+
+## Health Score Calculation
+
+Each HVAC unit gets a real-time health score (0-100):
 
 ```varpulis
-# Fusion de tous les capteurs pour score de confort global
-stream ComfortScore = merge(
-    stream Temp from TemperatureReading,
-    stream Humidity from HumidityReading
-)
-.partition_by(zone)
-.window(10m)
-.aggregate(
-    zone: first(zone),
-    avg_temp: avg(if type == "temperature" then value else null),
-    avg_humidity: avg(if type == "humidity" then value else null),
-    comfort_score: compute_pmv(avg_temp, avg_humidity)  # Predicted Mean Vote
-)
-.where(comfort_score < -1.0 or comfort_score > 1.0)  # Inconfort
-.emit(
-    alert_type: "comfort_issue",
-    zone: zone,
-    score: comfort_score,
-    recommendation: if comfort_score < -1.0 then "increase_heating" else "increase_cooling"
-)
+health_score = 100
+    - (if avg_power > 5.0 then 10 else 0)           # Power consumption penalty
+    - (if pressure out of range then 15 else 0)     # Pressure penalty
+    - (if refrigerant_temp > 50 then 20 else 0)     # Temperature penalty
+    - (if runtime_hours > 5000 then 10 else 0)      # Age penalty
 ```
 
-## Configuration MVP
+## Example Output
 
-```varpulis
-config:
-    mode: "balanced"
-    
-    sources:
-        - type: "simulator"
-          name: "hvac_sim"
-          events_per_second: 100
-          zones: ["zone_a", "zone_b", "zone_c"]
-    
-    sinks:
-        - type: "console"
-          name: "alerts"
-          filter: "alert_type != null"
-        
-        - type: "file"
-          name: "metrics"
-          path: "./output/metrics.jsonl"
-    
-    state:
-        backend: "in_memory"
-    
-    observability:
-        metrics:
-            enabled: true
-            endpoint: "0.0.0.0:9090"
+```json
+{
+  "alert_type": "COMPRESSOR_DEGRADATION",
+  "severity": "warning",
+  "unit_id": "hvac_unit_01",
+  "zone": "server_room",
+  "confidence": 0.75,
+  "recommendation": "Schedule preventive maintenance - compressor showing signs of wear",
+  "reason": "Progressive decline in compressor pressure with increasing power consumption",
+  "timestamp": "2026-01-23T01:20:00Z"
+}
 ```
 
-## Données de simulation
+## Running the Example
 
-Pour le MVP, on simule :
-1. **Fonctionnement normal** : Températures stables dans les seuils
-2. **Anomalie ponctuelle** : Pic de température zone B (salle serveurs)
-3. **Dégradation progressive** : Consommation HVAC qui augmente sur 30min
-4. **Corrélation inter-zones** : Problème zone A qui affecte zone B
+```bash
+# Check syntax
+varpulis check examples/hvac_demo.vpl
 
-## Métriques de succès MVP
+# Run demo with built-in simulator
+varpulis demo --duration 60 --anomalies --degradation --metrics
 
-- [ ] Parser VarpulisQL fonctionnel pour les exemples ci-dessus
-- [ ] Exécution des streams de base (window, aggregate)
-- [ ] Détection de l'anomalie de température
-- [ ] Au moins un pattern avec attention_score simulé
-- [ ] Émission des alertes vers console
+# Run with custom data source
+varpulis run examples/hvac_demo.vpl \
+  --source kafka://building-sensors \
+  --sink kafka://hvac-alerts
+```
+
+## Metrics Exposed
+
+| Metric | Description |
+|--------|-------------|
+| `hvac_alerts_total{type,severity,zone}` | Alert counter |
+| `hvac_health_score{unit_id}` | Current health score |
+| `hvac_comfort_index{zone}` | Comfort index per zone |
+| `hvac_energy_kw{zone}` | Energy consumption |
+
+## See Also
+
+- [Financial Markets Example](financial-markets.md)
+- [Attention Engine Architecture](../architecture/attention-engine.md)
+- [VarpulisQL Syntax](../language/syntax.md)

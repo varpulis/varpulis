@@ -1,48 +1,397 @@
 # Varpulis HVAC Building Demo
-# Supervision d'un bâtiment intelligent
+# Smart Building Supervision with Attention-based Degradation Detection
+#
+# This example demonstrates:
+# - Real-time temperature/humidity monitoring
+# - HVAC equipment efficiency tracking
+# - Attention-based progressive degradation detection
+# - Predictive maintenance alerts
 
-# === Stream Definitions ===
+# =============================================================================
+# Event Definitions
+# =============================================================================
 
-# Raw streams from event sources
+event TemperatureReading:
+    sensor_id: string
+    zone: string
+    value: float
+    unit: string  # "celsius" or "fahrenheit"
+    timestamp: timestamp
+
+event HumidityReading:
+    sensor_id: string
+    zone: string
+    value: float  # percentage 0-100
+    timestamp: timestamp
+
+event HVACStatus:
+    unit_id: string
+    zone: string
+    mode: string  # "heating", "cooling", "ventilation", "off"
+    power_consumption: float  # kW
+    compressor_pressure: float  # bar
+    refrigerant_temp: float  # celsius
+    fan_speed: int  # RPM
+    runtime_hours: int
+    timestamp: timestamp
+
+event EnergyMeter:
+    meter_id: string
+    zone: string
+    power_kw: float
+    cumulative_kwh: float
+    timestamp: timestamp
+
+# =============================================================================
+# Base Streams
+# =============================================================================
+
 stream Temperatures from TemperatureReading
 stream Humidity from HumidityReading
 stream HVAC from HVACStatus
+stream Energy from EnergyMeter
 
-# Aggregation by zone - 5 minute tumbling window
+# =============================================================================
+# Zone Aggregations
+# =============================================================================
+
+# Temperature aggregation by zone - 5 minute tumbling window
 stream ZoneTemperatures = Temperatures
     .partition_by(zone)
     .window(5m)
     .aggregate(
-        zone: first(zone),
+        zone: last(zone),
         avg_temp: avg(value),
         min_temp: min(value),
         max_temp: max(value),
+        std_temp: stddev(value),
         count: count()
     )
+
+# Humidity aggregation by zone
+stream ZoneHumidity = Humidity
+    .partition_by(zone)
+    .window(5m)
+    .aggregate(
+        zone: last(zone),
+        avg_humidity: avg(value),
+        min_humidity: min(value),
+        max_humidity: max(value),
+        count: count()
+    )
+
+# Combined comfort index
+stream ComfortIndex = join(ZoneTemperatures, ZoneHumidity)
+    .on(ZoneTemperatures.zone == ZoneHumidity.zone)
+    .window(1m)
+    .select(
+        zone: ZoneTemperatures.zone,
+        temperature: ZoneTemperatures.avg_temp,
+        humidity: ZoneHumidity.avg_humidity,
+        # Simplified comfort index (ideal: temp 20-24°C, humidity 40-60%)
+        comfort_score: 100 - abs(ZoneTemperatures.avg_temp - 22) * 5 - abs(ZoneHumidity.avg_humidity - 50) * 0.5,
+        timestamp: ZoneTemperatures.timestamp
+    )
+
+# =============================================================================
+# Basic Anomaly Detection
+# =============================================================================
 
 # Temperature anomaly detection
 stream TemperatureAnomaly = ZoneTemperatures
     .where(avg_temp < 16.0 or avg_temp > 28.0)
     .emit(
-        alert_type: "temperature_anomaly",
-        severity: "warning"
+        alert_type: "TEMPERATURE_ANOMALY",
+        severity: "warning",
+        zone: zone,
+        temperature: avg_temp,
+        reason: if avg_temp < 16.0 then "Temperature too low" else "Temperature too high"
     )
 
 # Server room critical alert (stricter thresholds)
 stream ServerRoomAlert = Temperatures
-    .where(zone == "zone_b")
-    .where(value < 16.0 or value > 22.0)
+    .where(zone == "server_room")
+    .where(value < 18.0 or value > 24.0)
     .emit(
-        alert_type: "server_room_critical",
-        severity: "critical"
+        alert_type: "SERVER_ROOM_CRITICAL",
+        severity: "critical",
+        zone: zone,
+        temperature: value,
+        reason: "Server room temperature outside safe range (18-24°C)"
     )
 
-# HVAC efficiency monitoring - sliding window
-stream HVACEfficiency = HVAC
+# Humidity anomaly
+stream HumidityAnomaly = ZoneHumidity
+    .where(avg_humidity < 30.0 or avg_humidity > 70.0)
+    .emit(
+        alert_type: "HUMIDITY_ANOMALY",
+        severity: "warning",
+        zone: zone,
+        humidity: avg_humidity,
+        reason: if avg_humidity < 30.0 then "Air too dry" else "Air too humid"
+    )
+
+# =============================================================================
+# HVAC Efficiency Monitoring
+# =============================================================================
+
+# HVAC metrics - sliding window
+stream HVACMetrics = HVAC
+    .partition_by(unit_id)
     .window(15m, sliding: 5m)
     .aggregate(
-        unit: first(unit_id),
+        unit_id: last(unit_id),
+        zone: last(zone),
         avg_power: avg(power_consumption),
+        max_power: max(power_consumption),
         avg_pressure: avg(compressor_pressure),
+        avg_refrigerant_temp: avg(refrigerant_temp),
+        avg_fan_speed: avg(fan_speed),
+        runtime_hours: last(runtime_hours),
         readings: count()
     )
+
+# Power spike detection
+stream PowerSpike = HVACMetrics
+    .where(max_power > avg_power * 1.5)
+    .emit(
+        alert_type: "HVAC_POWER_SPIKE",
+        severity: "warning",
+        unit_id: unit_id,
+        zone: zone,
+        avg_power: avg_power,
+        max_power: max_power,
+        reason: "Unusual power consumption spike detected"
+    )
+
+# =============================================================================
+# ATTENTION-BASED DEGRADATION DETECTION
+# =============================================================================
+
+# Compressor degradation detection using attention
+# Looks for progressive performance decline patterns
+stream CompressorDegradation = HVAC
+    .partition_by(unit_id)
+    .attention_window(
+        duration: 1h,
+        heads: 4,
+        embedding: "rule_based"
+    )
+    .pattern(
+        degradation: events =>
+            # Calculate trend in compressor pressure
+            let pressures = events.map(e => e.compressor_pressure)
+            let pressure_trend = linear_regression_slope(pressures)
+            
+            # Calculate trend in power consumption
+            let powers = events.map(e => e.power_consumption)
+            let power_trend = linear_regression_slope(powers)
+            
+            # Calculate attention scores between events
+            let attention_scores = events
+                .sliding_pairs()
+                .map((e1, e2) => attention_score(e1, e2))
+            
+            # High correlation + declining pressure + increasing power = degradation
+            let high_correlation = attention_scores.filter(s => s > 0.8).count() > events.len() * 0.7
+            let pressure_declining = pressure_trend < -0.01
+            let power_increasing = power_trend > 0.05
+            
+            high_correlation and pressure_declining and power_increasing
+    )
+    .emit(
+        alert_type: "COMPRESSOR_DEGRADATION",
+        severity: "warning",
+        unit_id: last(unit_id),
+        zone: last(zone),
+        confidence: 0.75,
+        recommendation: "Schedule preventive maintenance - compressor showing signs of wear",
+        reason: "Progressive decline in compressor pressure with increasing power consumption"
+    )
+
+# Refrigerant leak detection using attention
+stream RefrigerantLeak = HVAC
+    .partition_by(unit_id)
+    .attention_window(
+        duration: 30m,
+        heads: 4,
+        embedding: "rule_based"
+    )
+    .pattern(
+        leak_pattern: events =>
+            # Refrigerant temperature rising abnormally
+            let temps = events.map(e => e.refrigerant_temp)
+            let temp_trend = linear_regression_slope(temps)
+            
+            # Compressor working harder (higher pressure)
+            let pressures = events.map(e => e.compressor_pressure)
+            let pressure_elevated = avg(pressures) > baseline_pressure(events[0].unit_id) * 1.15
+            
+            # Attention pattern: similar abnormal readings
+            let anomaly_correlation = events
+                .filter(e => e.refrigerant_temp > 45)  # Above normal
+                .sliding_pairs()
+                .map((e1, e2) => attention_score(e1, e2))
+                .filter(s => s > 0.85)
+                .count()
+            
+            temp_trend > 0.1 and pressure_elevated and anomaly_correlation > 5
+    )
+    .emit(
+        alert_type: "REFRIGERANT_LEAK_SUSPECTED",
+        severity: "critical",
+        unit_id: last(unit_id),
+        zone: last(zone),
+        confidence: 0.8,
+        recommendation: "Immediate inspection required - possible refrigerant leak",
+        reason: "Rising refrigerant temperature with elevated compressor pressure"
+    )
+
+# Fan motor degradation
+stream FanDegradation = HVAC
+    .partition_by(unit_id)
+    .attention_window(
+        duration: 2h,
+        heads: 4,
+        embedding: "rule_based"
+    )
+    .pattern(
+        fan_issue: events =>
+            # Fan speed variance increasing (unstable motor)
+            let speeds = events.map(e => e.fan_speed)
+            let speed_variance = variance(speeds)
+            let baseline_variance = 50  # Normal variance
+            
+            # Power consumption for fan increasing
+            let power_trend = linear_regression_slope(events.map(e => e.power_consumption))
+            
+            speed_variance > baseline_variance * 2 and power_trend > 0.02
+    )
+    .emit(
+        alert_type: "FAN_MOTOR_DEGRADATION",
+        severity: "warning",
+        unit_id: last(unit_id),
+        zone: last(zone),
+        confidence: 0.7,
+        recommendation: "Check fan motor bearings and balance",
+        reason: "Increased fan speed variance with rising power consumption"
+    )
+
+# =============================================================================
+# PREDICTIVE MAINTENANCE
+# =============================================================================
+
+# Runtime-based maintenance reminder
+stream MaintenanceReminder = HVACMetrics
+    .where(runtime_hours > 2000 and runtime_hours % 500 < 10)  # Every 500 hours after 2000
+    .emit(
+        alert_type: "MAINTENANCE_REMINDER",
+        severity: "info",
+        unit_id: unit_id,
+        zone: zone,
+        runtime_hours: runtime_hours,
+        recommendation: "Scheduled maintenance recommended based on runtime hours"
+    )
+
+# Combined health score
+stream HVACHealthScore = HVACMetrics
+    .select(
+        unit_id,
+        zone,
+        # Health score based on metrics (100 = perfect)
+        health_score: 100
+            - (if avg_power > 5.0 then 10 else 0)
+            - (if avg_pressure < 2.0 or avg_pressure > 4.0 then 15 else 0)
+            - (if avg_refrigerant_temp > 50 then 20 else 0)
+            - (if runtime_hours > 5000 then 10 else 0),
+        timestamp: now()
+    )
+
+# Health score alert
+stream HealthScoreAlert = HVACHealthScore
+    .where(health_score < 70)
+    .emit(
+        alert_type: "LOW_HEALTH_SCORE",
+        severity: if health_score < 50 then "critical" else "warning",
+        unit_id: unit_id,
+        zone: zone,
+        health_score: health_score,
+        recommendation: "HVAC unit requires attention - health score below threshold"
+    )
+
+# =============================================================================
+# ENERGY OPTIMIZATION
+# =============================================================================
+
+# Energy consumption by zone
+stream ZoneEnergy = Energy
+    .partition_by(zone)
+    .window(1h, sliding: 15m)
+    .aggregate(
+        zone: last(zone),
+        avg_power_kw: avg(power_kw),
+        max_power_kw: max(power_kw),
+        total_kwh: sum(power_kw) / 4,  # Approximate kWh from 15min readings
+        readings: count()
+    )
+
+# Energy anomaly (unusual consumption)
+stream EnergyAnomaly = ZoneEnergy
+    .where(avg_power_kw > baseline_energy(zone) * 1.3)
+    .emit(
+        alert_type: "ENERGY_ANOMALY",
+        severity: "warning",
+        zone: zone,
+        power_kw: avg_power_kw,
+        reason: "Energy consumption 30% above baseline"
+    )
+
+# =============================================================================
+# AGGREGATE ALL ALERTS
+# =============================================================================
+
+stream AllAlerts = merge(
+    TemperatureAnomaly,
+    ServerRoomAlert,
+    HumidityAnomaly,
+    PowerSpike,
+    CompressorDegradation,
+    RefrigerantLeak,
+    FanDegradation,
+    MaintenanceReminder,
+    HealthScoreAlert,
+    EnergyAnomaly
+)
+.tap(metrics: 
+    counter: "hvac_alerts_total",
+    labels: [alert_type, severity, zone]
+)
+.emit()
+.to([
+    "kafka://hvac-alerts",
+    "http://building-management.local/api/alerts"
+])
+
+# =============================================================================
+# CONFIGURATION
+# =============================================================================
+
+config:
+    mode: "balanced"
+    
+    state:
+        backend: "rocksdb"
+        path: "/var/lib/varpulis/hvac"
+    
+    checkpoint:
+        enabled: true
+        interval: 5m
+        location: "s3://varpulis-checkpoints/hvac/"
+    
+    observability:
+        metrics:
+            enabled: true
+            endpoint: "0.0.0.0:9090"
+        tracing:
+            enabled: true
+            sample_rate: 0.05

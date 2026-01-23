@@ -1,0 +1,191 @@
+{
+    "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+    "name": "VarpulisQL",
+    "scopeName": "source.varpulis",
+    "patterns": [
+        {
+            "include": "#comments"
+        },
+        {
+            "include": "#strings"
+        },
+        {
+            "include": "#numbers"
+        },
+        {
+            "include": "#keywords"
+        },
+        {
+            "include": "#types"
+        },
+        {
+            "include": "#functions"
+        },
+        {
+            "include": "#operators"
+        },
+        {
+            "include": "#stream-operations"
+        },
+        {
+            "include": "#identifiers"
+        }
+    ],
+    "repository": {
+        "comments": {
+            "patterns": [
+                {
+                    "name": "comment.line.number-sign.varpulis",
+                    "match": "#.*$"
+                },
+                {
+                    "name": "comment.block.varpulis",
+                    "begin": "/\\*",
+                    "end": "\\*/"
+                }
+            ]
+        },
+        "strings": {
+            "patterns": [
+                {
+                    "name": "string.quoted.double.varpulis",
+                    "begin": "\"",
+                    "end": "\"",
+                    "patterns": [
+                        {
+                            "name": "constant.character.escape.varpulis",
+                            "match": "\\\\."
+                        }
+                    ]
+                },
+                {
+                    "name": "string.quoted.single.varpulis",
+                    "begin": "'",
+                    "end": "'",
+                    "patterns": [
+                        {
+                            "name": "constant.character.escape.varpulis",
+                            "match": "\\\\."
+                        }
+                    ]
+                }
+            ]
+        },
+        "numbers": {
+            "patterns": [
+                {
+                    "name": "constant.numeric.float.varpulis",
+                    "match": "\\b\\d+\\.\\d+([eE][+-]?\\d+)?\\b"
+                },
+                {
+                    "name": "constant.numeric.integer.varpulis",
+                    "match": "\\b\\d+\\b"
+                },
+                {
+                    "name": "constant.numeric.duration.varpulis",
+                    "match": "\\b\\d+(ms|s|m|h|d)\\b"
+                }
+            ]
+        },
+        "keywords": {
+            "patterns": [
+                {
+                    "name": "keyword.control.varpulis",
+                    "match": "\\b(if|elif|else|then|match|for|while|in|break|continue|return)\\b"
+                },
+                {
+                    "name": "keyword.declaration.stream.varpulis",
+                    "match": "\\b(stream|event|from)\\b"
+                },
+                {
+                    "name": "keyword.declaration.varpulis",
+                    "match": "\\b(let|var|const|fn|config)\\b"
+                },
+                {
+                    "name": "keyword.operator.logical.varpulis",
+                    "match": "\\b(and|or|not)\\b"
+                },
+                {
+                    "name": "constant.language.boolean.varpulis",
+                    "match": "\\b(true|false|null)\\b"
+                }
+            ]
+        },
+        "types": {
+            "patterns": [
+                {
+                    "name": "storage.type.varpulis",
+                    "match": "\\b(string|str|int|float|bool|timestamp|duration|list|map|any)\\b"
+                },
+                {
+                    "name": "entity.name.type.varpulis",
+                    "match": "\\b[A-Z][a-zA-Z0-9_]*\\b"
+                }
+            ]
+        },
+        "functions": {
+            "patterns": [
+                {
+                    "name": "support.function.builtin.aggregation.varpulis",
+                    "match": "\\b(sum|avg|count|min|max|stddev|variance|first|last|collect|distinct)\\b"
+                },
+                {
+                    "name": "support.function.builtin.window.varpulis",
+                    "match": "\\b(window|sliding|tumbling|session_window|attention_window)\\b"
+                },
+                {
+                    "name": "support.function.builtin.varpulis",
+                    "match": "\\b(now|uuid|abs|sqrt|pow|log|exp|floor|ceil|round|len|map|filter|reduce|flatten|zip|enumerate|range|sort|reverse|join|split|trim|upper|lower|contains|starts_with|ends_with|replace|substring|parse_json|to_json|parse_timestamp|format_timestamp)\\b"
+                },
+                {
+                    "name": "support.function.attention.varpulis",
+                    "match": "\\b(attention_score|embedding|linear_regression_slope|baseline_pressure|baseline_energy|baseline_volume|ema)\\b"
+                },
+                {
+                    "name": "entity.name.function.varpulis",
+                    "match": "\\b([a-z_][a-zA-Z0-9_]*)\\s*(?=\\()"
+                }
+            ]
+        },
+        "stream-operations": {
+            "patterns": [
+                {
+                    "name": "keyword.operator.stream.varpulis",
+                    "match": "\\.(where|select|aggregate|partition_by|order_by|limit|distinct|emit|to|tap|pattern|window|attention_window|concurrent|process|on_error|collect|merge|join|on)\\b"
+                }
+            ]
+        },
+        "operators": {
+            "patterns": [
+                {
+                    "name": "keyword.operator.comparison.varpulis",
+                    "match": "(==|!=|<=|>=|<|>)"
+                },
+                {
+                    "name": "keyword.operator.arithmetic.varpulis",
+                    "match": "(\\+|-|\\*|/|%|\\^)"
+                },
+                {
+                    "name": "keyword.operator.assignment.varpulis",
+                    "match": "(=|\\+=|-=|\\*=|/=)"
+                },
+                {
+                    "name": "keyword.operator.arrow.varpulis",
+                    "match": "(=>|->)"
+                },
+                {
+                    "name": "keyword.operator.range.varpulis",
+                    "match": "\\.\\."
+                }
+            ]
+        },
+        "identifiers": {
+            "patterns": [
+                {
+                    "name": "variable.other.varpulis",
+                    "match": "\\b[a-z_][a-zA-Z0-9_]*\\b"
+                }
+            ]
+        }
+    }
+}

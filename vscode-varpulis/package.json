@@ -1,0 +1,222 @@
+{
+  "name": "varpulis",
+  "displayName": "Varpulis",
+  "description": "VarpulisQL language support - syntax highlighting, execution, and debugging for Varpulis CEP engine",
+  "version": "0.1.0",
+  "publisher": "varpulis",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/varpulis/varpulis"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Debuggers",
+    "Linters"
+  ],
+  "keywords": [
+    "varpulis",
+    "varpulisql",
+    "cep",
+    "streaming",
+    "event processing"
+  ],
+  "icon": "icons/varpulis-icon.png",
+  "activationEvents": [
+    "onLanguage:varpulis",
+    "onCommand:varpulis.startEngine",
+    "onCommand:varpulis.runFile"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "varpulis",
+        "aliases": ["VarpulisQL", "varpulis"],
+        "extensions": [".vpl", ".varpulis"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "varpulis",
+        "scopeName": "source.varpulis",
+        "path": "./syntaxes/varpulis.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "varpulis.startEngine",
+        "title": "Varpulis: Start Engine",
+        "icon": "$(play)"
+      },
+      {
+        "command": "varpulis.stopEngine",
+        "title": "Varpulis: Stop Engine",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "varpulis.runFile",
+        "title": "Varpulis: Run Current File",
+        "icon": "$(run)"
+      },
+      {
+        "command": "varpulis.checkSyntax",
+        "title": "Varpulis: Check Syntax",
+        "icon": "$(check)"
+      },
+      {
+        "command": "varpulis.showMetrics",
+        "title": "Varpulis: Show Metrics",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "varpulis.showStreams",
+        "title": "Varpulis: Show Active Streams",
+        "icon": "$(list-tree)"
+      },
+      {
+        "command": "varpulis.injectEvent",
+        "title": "Varpulis: Inject Test Event",
+        "icon": "$(add)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "varpulis.runFile",
+          "when": "resourceLangId == varpulis",
+          "group": "navigation"
+        },
+        {
+          "command": "varpulis.checkSyntax",
+          "when": "resourceLangId == varpulis",
+          "group": "navigation"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "varpulis.runFile",
+          "when": "resourceLangId == varpulis",
+          "group": "varpulis@1"
+        },
+        {
+          "command": "varpulis.checkSyntax",
+          "when": "resourceLangId == varpulis",
+          "group": "varpulis@2"
+        },
+        {
+          "command": "varpulis.injectEvent",
+          "when": "resourceLangId == varpulis",
+          "group": "varpulis@3"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "varpulis.runFile",
+        "key": "ctrl+shift+r",
+        "mac": "cmd+shift+r",
+        "when": "resourceLangId == varpulis"
+      },
+      {
+        "command": "varpulis.checkSyntax",
+        "key": "ctrl+shift+c",
+        "mac": "cmd+shift+c",
+        "when": "resourceLangId == varpulis"
+      }
+    ],
+    "configuration": {
+      "title": "Varpulis",
+      "properties": {
+        "varpulis.enginePath": {
+          "type": "string",
+          "default": "varpulis",
+          "description": "Path to the Varpulis CLI executable"
+        },
+        "varpulis.engineHost": {
+          "type": "string",
+          "default": "localhost",
+          "description": "Varpulis engine host for remote connection"
+        },
+        "varpulis.enginePort": {
+          "type": "number",
+          "default": 9000,
+          "description": "Varpulis engine port"
+        },
+        "varpulis.metricsPort": {
+          "type": "number",
+          "default": 9090,
+          "description": "Prometheus metrics port"
+        },
+        "varpulis.autoStart": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically start Varpulis engine when opening a .vpl file"
+        },
+        "varpulis.liveReload": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically reload streams when file changes"
+        },
+        "varpulis.showInlineMetrics": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show inline metrics (events/sec) next to stream definitions"
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "varpulis",
+          "title": "Varpulis",
+          "icon": "icons/varpulis-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "varpulis": [
+        {
+          "id": "varpulis.streams",
+          "name": "Active Streams"
+        },
+        {
+          "id": "varpulis.events",
+          "name": "Recent Events"
+        },
+        {
+          "id": "varpulis.alerts",
+          "name": "Alerts"
+        },
+        {
+          "id": "varpulis.metrics",
+          "name": "Metrics"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "eslint": "^8.54.0",
+    "typescript": "^5.3.0",
+    "@vscode/vsce": "^2.22.0"
+  },
+  "dependencies": {
+    "ws": "^8.14.0"
+  }
+}
