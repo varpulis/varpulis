@@ -41,7 +41,7 @@ Queue for messages that could not be processed.
 Vector representation of an event in a fixed-dimension space.
 
 ### EPL (Event Processing Language)
-Event processing language, generic term (used notably by Apama).
+Event processing language, generic term (used notably by Apama/Cumulocity).
 
 ### Event
 Immutable record representing a timestamped fact.

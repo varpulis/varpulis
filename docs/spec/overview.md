@@ -56,7 +56,7 @@ Varpulis is a next-generation streaming analytics engine combining:
 | **Footprint** | Heavy (JVM cluster) | Lightweight (single binary) |
 | **Use case** | Batch-first | Stream-first |
 
-### vs Apama (Software AG)
+### vs Apama (Cumulocity)
 
 | Feature | Apama | Varpulis |
 |---------|-------|----------|
