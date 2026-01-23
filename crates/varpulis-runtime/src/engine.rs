@@ -59,8 +59,22 @@ enum RuntimeOp {
     Window(WindowType),
     Aggregate(Aggregator),
     Emit(EmitConfig),
+    /// Print to stdout
+    Print(PrintConfig),
+    /// Log with level
+    Log(LogConfig),
     /// Sequence operation - index into sequence_tracker steps
     Sequence,
+}
+
+struct PrintConfig {
+    exprs: Vec<varpulis_core::ast::Expr>,
+}
+
+struct LogConfig {
+    level: String,
+    message: Option<String>,
+    data_field: Option<String>,
 }
 
 enum WindowType {
@@ -334,6 +348,37 @@ impl Engine {
                         })
                         .collect();
                     runtime_ops.push(RuntimeOp::Emit(EmitConfig { fields }));
+                }
+                StreamOp::Print(exprs) => {
+                    runtime_ops.push(RuntimeOp::Print(PrintConfig { exprs: exprs.clone() }));
+                }
+                StreamOp::Log(args) => {
+                    let mut level = "info".to_string();
+                    let mut message = None;
+                    let mut data_field = None;
+                    
+                    for arg in args {
+                        match arg.name.as_str() {
+                            "level" => {
+                                if let varpulis_core::ast::Expr::Str(s) = &arg.value {
+                                    level = s.clone();
+                                }
+                            }
+                            "message" => {
+                                if let varpulis_core::ast::Expr::Str(s) = &arg.value {
+                                    message = Some(s.clone());
+                                }
+                            }
+                            "data" => {
+                                if let varpulis_core::ast::Expr::Ident(s) = &arg.value {
+                                    data_field = Some(s.clone());
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    
+                    runtime_ops.push(RuntimeOp::Log(LogConfig { level, message, data_field }));
                 }
                 _ => {
                     debug!("Skipping operation: {:?}", op);
@@ -644,6 +689,40 @@ impl Engine {
                             data: alert_data,
                         };
                         alerts.push(alert);
+                    }
+                }
+                RuntimeOp::Print(config) => {
+                    for event in &current_events {
+                        let mut parts = Vec::new();
+                        for expr in &config.exprs {
+                            let value = Self::eval_filter_expr(expr, event, &SequenceContext::new())
+                                .unwrap_or(Value::Null);
+                            parts.push(format!("{}", value));
+                        }
+                        let output = if parts.is_empty() {
+                            format!("[{}] {}: {:?}", stream.name, event.event_type, event.data)
+                        } else {
+                            parts.join(" ")
+                        };
+                        println!("[PRINT] {}", output);
+                    }
+                }
+                RuntimeOp::Log(config) => {
+                    for event in &current_events {
+                        let msg = config.message.clone().unwrap_or_else(|| event.event_type.clone());
+                        let data = if let Some(ref field) = config.data_field {
+                            event.get(field).map(|v| format!("{}", v)).unwrap_or_default()
+                        } else {
+                            format!("{:?}", event.data)
+                        };
+                        
+                        match config.level.as_str() {
+                            "error" => tracing::error!(stream = %stream.name, message = %msg, data = %data, "Stream log"),
+                            "warn" | "warning" => tracing::warn!(stream = %stream.name, message = %msg, data = %data, "Stream log"),
+                            "debug" => tracing::debug!(stream = %stream.name, message = %msg, data = %data, "Stream log"),
+                            "trace" => tracing::trace!(stream = %stream.name, message = %msg, data = %data, "Stream log"),
+                            _ => tracing::info!(stream = %stream.name, message = %msg, data = %data, "Stream log"),
+                        }
                     }
                 }
                 RuntimeOp::Sequence => {

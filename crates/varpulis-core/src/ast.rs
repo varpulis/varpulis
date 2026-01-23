@@ -164,6 +164,10 @@ pub enum StreamOp {
     Filter(Expr),
     /// Tap for observability: `.tap(...)`
     Tap(Vec<NamedArg>),
+    /// Print to console: `.print(...)` or `.print("message", expr)`
+    Print(Vec<Expr>),
+    /// Log with level: `.log(level: "info", message: "...", data: expr)`
+    Log(Vec<NamedArg>),
     /// Emit to sink: `.emit(...)`
     Emit(Vec<NamedArg>),
     /// Send to destination: `.to(target)`
