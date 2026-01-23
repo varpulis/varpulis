@@ -290,11 +290,177 @@ impl Sink for MultiSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::NamedTempFile;
+
+    // ==========================================================================
+    // ConsoleSink Tests
+    // ==========================================================================
 
     #[tokio::test]
     async fn test_console_sink() {
         let sink = ConsoleSink::new("test");
         let event = Event::new("TestEvent").with_field("value", 42i64);
         assert!(sink.send(&event).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_console_sink_name() {
+        let sink = ConsoleSink::new("my_console");
+        assert_eq!(sink.name(), "my_console");
+    }
+
+    #[tokio::test]
+    async fn test_console_sink_compact() {
+        let sink = ConsoleSink::new("test").compact();
+        assert!(!sink.pretty);
+        let event = Event::new("TestEvent").with_field("value", 42i64);
+        assert!(sink.send(&event).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_console_sink_alert() {
+        let sink = ConsoleSink::new("test");
+        let alert = Alert {
+            alert_type: "test_alert".to_string(),
+            severity: "warning".to_string(),
+            message: "Test message".to_string(),
+            data: IndexMap::new(),
+        };
+        assert!(sink.send_alert(&alert).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_console_sink_flush_close() {
+        let sink = ConsoleSink::new("test");
+        assert!(sink.flush().await.is_ok());
+        assert!(sink.close().await.is_ok());
+    }
+
+    // ==========================================================================
+    // FileSink Tests
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_file_sink() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let sink = FileSink::new("test_file", temp_file.path()).unwrap();
+        
+        let event = Event::new("TestEvent").with_field("value", 42i64);
+        assert!(sink.send(&event).await.is_ok());
+        
+        assert!(sink.flush().await.is_ok());
+        assert!(sink.close().await.is_ok());
+        
+        // Verify file contains the event
+        let contents = std::fs::read_to_string(temp_file.path()).unwrap();
+        assert!(contents.contains("TestEvent"));
+    }
+
+    #[tokio::test]
+    async fn test_file_sink_name() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let sink = FileSink::new("my_file", temp_file.path()).unwrap();
+        assert_eq!(sink.name(), "my_file");
+    }
+
+    #[tokio::test]
+    async fn test_file_sink_alert() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let sink = FileSink::new("test_file", temp_file.path()).unwrap();
+        
+        let mut data = IndexMap::new();
+        data.insert("key".to_string(), Value::Str("value".to_string()));
+        
+        let alert = Alert {
+            alert_type: "test_alert".to_string(),
+            severity: "critical".to_string(),
+            message: "Critical issue".to_string(),
+            data,
+        };
+        assert!(sink.send_alert(&alert).await.is_ok());
+        assert!(sink.flush().await.is_ok());
+        
+        let contents = std::fs::read_to_string(temp_file.path()).unwrap();
+        assert!(contents.contains("test_alert"));
+    }
+
+    // ==========================================================================
+    // HttpSink Tests (no actual network calls)
+    // ==========================================================================
+
+    #[test]
+    fn test_http_sink_new() {
+        let sink = HttpSink::new("http_test", "http://localhost:8080/webhook");
+        assert_eq!(sink.name(), "http_test");
+        assert_eq!(sink.url, "http://localhost:8080/webhook");
+    }
+
+    #[test]
+    fn test_http_sink_with_header() {
+        let sink = HttpSink::new("http_test", "http://localhost:8080")
+            .with_header("Authorization", "Bearer token123")
+            .with_header("X-Custom", "value");
+        
+        assert_eq!(sink.headers.len(), 2);
+        assert_eq!(sink.headers.get("Authorization"), Some(&"Bearer token123".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_http_sink_flush_close() {
+        let sink = HttpSink::new("http_test", "http://localhost:8080");
+        assert!(sink.flush().await.is_ok());
+        assert!(sink.close().await.is_ok());
+    }
+
+    // ==========================================================================
+    // MultiSink Tests
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_multi_sink_empty() {
+        let sink = MultiSink::new("multi");
+        assert_eq!(sink.name(), "multi");
+        
+        let event = Event::new("Test");
+        assert!(sink.send(&event).await.is_ok());
+        assert!(sink.flush().await.is_ok());
+        assert!(sink.close().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_multi_sink_with_console() {
+        let multi = MultiSink::new("multi")
+            .add(Box::new(ConsoleSink::new("console1")))
+            .add(Box::new(ConsoleSink::new("console2")));
+        
+        let event = Event::new("Test").with_field("x", 1i64);
+        assert!(multi.send(&event).await.is_ok());
+        
+        let alert = Alert {
+            alert_type: "test".to_string(),
+            severity: "info".to_string(),
+            message: "msg".to_string(),
+            data: IndexMap::new(),
+        };
+        assert!(multi.send_alert(&alert).await.is_ok());
+        
+        assert!(multi.flush().await.is_ok());
+        assert!(multi.close().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_multi_sink_with_file() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let file_sink = FileSink::new("file", temp_file.path()).unwrap();
+        
+        let multi = MultiSink::new("multi")
+            .add(Box::new(file_sink));
+        
+        let event = Event::new("MultiEvent").with_field("val", 100i64);
+        assert!(multi.send(&event).await.is_ok());
+        assert!(multi.flush().await.is_ok());
+        
+        let contents = std::fs::read_to_string(temp_file.path()).unwrap();
+        assert!(contents.contains("MultiEvent"));
     }
 }

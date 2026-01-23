@@ -481,4 +481,233 @@ mod tests {
         assert_eq!(events[3].event.event_type, "Payment");
         assert_eq!(events[3].time_offset_ms, 5000);
     }
+
+    // ==========================================================================
+    // Value Parsing Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_parse_boolean_values() {
+        let source = r#"
+            Flags { active: true, disabled: false }
+        "#;
+        
+        let events = EventFileParser::parse(source).unwrap();
+        assert_eq!(events[0].event.get("active"), Some(&Value::Bool(true)));
+        assert_eq!(events[0].event.get("disabled"), Some(&Value::Bool(false)));
+    }
+
+    #[test]
+    fn test_parse_null_values() {
+        let source = r#"
+            Data { value: null, other: nil }
+        "#;
+        
+        let events = EventFileParser::parse(source).unwrap();
+        assert_eq!(events[0].event.get("value"), Some(&Value::Null));
+        assert_eq!(events[0].event.get("other"), Some(&Value::Null));
+    }
+
+    #[test]
+    fn test_parse_escape_sequences() {
+        let source = r#"
+            Message { text: "Hello\nWorld", path: "C:\\Users\\test" }
+        "#;
+        
+        let events = EventFileParser::parse(source).unwrap();
+        let text = events[0].event.get("text").unwrap();
+        if let Value::Str(s) = text {
+            assert!(s.contains('\n'));
+        }
+    }
+
+    #[test]
+    fn test_parse_single_quoted_string() {
+        let source = r#"
+            Event { name: 'single quoted' }
+        "#;
+        
+        let events = EventFileParser::parse(source).unwrap();
+        assert_eq!(events[0].event.get("name"), Some(&Value::Str("single quoted".to_string())));
+    }
+
+    #[test]
+    fn test_parse_unquoted_identifier() {
+        let source = r#"
+            Event { status: active, mode: processing }
+        "#;
+        
+        let events = EventFileParser::parse(source).unwrap();
+        assert_eq!(events[0].event.get("status"), Some(&Value::Str("active".to_string())));
+        assert_eq!(events[0].event.get("mode"), Some(&Value::Str("processing".to_string())));
+    }
+
+    #[test]
+    fn test_parse_negative_numbers() {
+        let source = r#"
+            Data { temp: -15, delta: -3.14 }
+        "#;
+        
+        let events = EventFileParser::parse(source).unwrap();
+        assert_eq!(events[0].event.get("temp"), Some(&Value::Int(-15)));
+        assert_eq!(events[0].event.get("delta"), Some(&Value::Float(-3.14)));
+    }
+
+    #[test]
+    fn test_parse_nested_array() {
+        let source = r#"
+            Complex { matrix: [[1, 2], [3, 4]] }
+        "#;
+        
+        let events = EventFileParser::parse(source).unwrap();
+        let matrix = events[0].event.get("matrix").unwrap();
+        if let Value::Array(arr) = matrix {
+            assert_eq!(arr.len(), 2);
+        } else {
+            panic!("Expected array");
+        }
+    }
+
+    // ==========================================================================
+    // Error Handling Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_parse_invalid_event_format() {
+        let source = "InvalidEvent";
+        let result = EventFileParser::parse(source);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_invalid_field_format() {
+        let source = "Event { invalid_no_colon }";
+        let result = EventFileParser::parse(source);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_invalid_batch_time() {
+        let source = r#"
+            BATCH not_a_number
+            Event { x: 1 }
+        "#;
+        let result = EventFileParser::parse(source);
+        assert!(result.is_err());
+    }
+
+    // ==========================================================================
+    // Edge Cases
+    // ==========================================================================
+
+    #[test]
+    fn test_parse_empty_content() {
+        let source = "";
+        let events = EventFileParser::parse(source).unwrap();
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_parse_only_comments() {
+        let source = r#"
+            # Comment 1
+            // Comment 2
+            # Comment 3
+        "#;
+        let events = EventFileParser::parse(source).unwrap();
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_parse_empty_braces() {
+        let source = "EmptyEvent { }";
+        let events = EventFileParser::parse(source).unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(events[0].event.data.is_empty());
+    }
+
+    #[test]
+    fn test_parse_semicolon_terminated() {
+        let source = "Event { x: 1 };";
+        let events = EventFileParser::parse(source).unwrap();
+        assert_eq!(events.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_whitespace_handling() {
+        let source = "  Event  {  x  :  1  ,  y  :  2  }  ";
+        let events = EventFileParser::parse(source).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event.get("x"), Some(&Value::Int(1)));
+        assert_eq!(events[0].event.get("y"), Some(&Value::Int(2)));
+    }
+
+    // ==========================================================================
+    // EventFilePlayer Tests
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_player_immediate() {
+        let events = vec![
+            TimedEvent {
+                event: Event::new("A").with_field("id", 1i64),
+                time_offset_ms: 0,
+            },
+            TimedEvent {
+                event: Event::new("B").with_field("id", 2i64),
+                time_offset_ms: 100,
+            },
+        ];
+        
+        let (tx, mut rx) = mpsc::channel(10);
+        let player = EventFilePlayer::new(events, tx);
+        
+        let count = player.play_immediate().await.unwrap();
+        assert_eq!(count, 2);
+        
+        let e1 = rx.recv().await.unwrap();
+        assert_eq!(e1.event_type, "A");
+        
+        let e2 = rx.recv().await.unwrap();
+        assert_eq!(e2.event_type, "B");
+    }
+
+    #[tokio::test]
+    async fn test_player_with_batches() {
+        let events = vec![
+            TimedEvent {
+                event: Event::new("First"),
+                time_offset_ms: 0,
+            },
+            TimedEvent {
+                event: Event::new("Second"),
+                time_offset_ms: 0,
+            },
+            TimedEvent {
+                event: Event::new("Third"),
+                time_offset_ms: 10, // 10ms later
+            },
+        ];
+        
+        let (tx, mut rx) = mpsc::channel(10);
+        let player = EventFilePlayer::new(events, tx);
+        
+        let count = player.play().await.unwrap();
+        assert_eq!(count, 3);
+        
+        // All events should have been sent
+        assert!(rx.recv().await.is_some());
+        assert!(rx.recv().await.is_some());
+        assert!(rx.recv().await.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_player_empty() {
+        let events = vec![];
+        let (tx, _rx) = mpsc::channel(10);
+        let player = EventFilePlayer::new(events, tx);
+        
+        let count = player.play_immediate().await.unwrap();
+        assert_eq!(count, 0);
+    }
 }

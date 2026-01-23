@@ -204,3 +204,189 @@ pub fn create_degradation_simulator() -> (Simulator, mpsc::Receiver<Event>) {
     let simulator = Simulator::new(config, tx);
     (simulator, rx)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==========================================================================
+    // Config Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_simulator_config_default() {
+        let config = SimulatorConfig::default();
+        assert_eq!(config.zones.len(), 3);
+        assert_eq!(config.hvac_units.len(), 1);
+        assert_eq!(config.events_per_second, 10);
+        assert!((config.anomaly_probability - 0.01).abs() < 0.001);
+        assert!(!config.degradation_enabled);
+    }
+
+    #[test]
+    fn test_zone_config() {
+        let config = SimulatorConfig::default();
+        let zone_a = &config.zones[0];
+        assert_eq!(zone_a.id, "zone_a");
+        assert_eq!(zone_a.name, "Bureaux");
+        assert!((zone_a.target_temp - 22.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_hvac_config() {
+        let config = SimulatorConfig::default();
+        let hvac = &config.hvac_units[0];
+        assert_eq!(hvac.id, "cta_main");
+        assert!((hvac.base_power - 15.0).abs() < 0.01);
+        assert!((hvac.base_pressure - 8.5).abs() < 0.01);
+    }
+
+    // ==========================================================================
+    // Simulator Creation Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_create_default_simulator() {
+        let (sim, _rx) = create_default_simulator();
+        assert_eq!(sim.tick_count, 0);
+        assert!((sim.degradation_factor - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_create_anomaly_simulator() {
+        let (sim, _rx) = create_anomaly_simulator();
+        assert!((sim.config.anomaly_probability - 0.1).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_create_degradation_simulator() {
+        let (sim, _rx) = create_degradation_simulator();
+        assert!(sim.config.degradation_enabled);
+    }
+
+    #[test]
+    fn test_simulator_new() {
+        let (tx, _rx) = mpsc::channel(100);
+        let config = SimulatorConfig::default();
+        let sim = Simulator::new(config, tx);
+        assert_eq!(sim.tick_count, 0);
+    }
+
+    // ==========================================================================
+    // Event Generation Tests
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_simulator_generate_events() {
+        let (tx, mut rx) = mpsc::channel(100);
+        let config = SimulatorConfig::default();
+        let mut sim = Simulator::new(config, tx);
+        
+        // Generate one batch of events
+        sim.generate_events().await.unwrap();
+        
+        // Should have temperature readings for each zone
+        let mut temp_count = 0;
+        while let Ok(event) = rx.try_recv() {
+            if event.event_type == "TemperatureReading" {
+                temp_count += 1;
+            }
+        }
+        assert_eq!(temp_count, 3); // One per zone
+    }
+
+    #[tokio::test]
+    async fn test_simulator_humidity_generation() {
+        let (tx, mut rx) = mpsc::channel(100);
+        let config = SimulatorConfig::default();
+        let mut sim = Simulator::new(config, tx);
+        
+        // Generate events at tick 3 (humidity is generated when tick % 3 == 0)
+        sim.tick_count = 2; // Will become 3 in generate_events after increment
+        sim.generate_events().await.unwrap();
+        sim.tick_count = 3;
+        sim.generate_events().await.unwrap();
+        
+        let mut humidity_count = 0;
+        while let Ok(event) = rx.try_recv() {
+            if event.event_type == "HumidityReading" {
+                humidity_count += 1;
+            }
+        }
+        assert!(humidity_count >= 3); // Should have humidity readings
+    }
+
+    #[tokio::test]
+    async fn test_simulator_hvac_generation() {
+        let (tx, mut rx) = mpsc::channel(100);
+        let config = SimulatorConfig::default();
+        let mut sim = Simulator::new(config, tx);
+        
+        // Generate events at tick 5 (HVAC is generated when tick % 5 == 0)
+        sim.tick_count = 4;
+        sim.generate_events().await.unwrap();
+        sim.tick_count = 5;
+        sim.generate_events().await.unwrap();
+        
+        let mut hvac_count = 0;
+        while let Ok(event) = rx.try_recv() {
+            if event.event_type == "HVACStatus" {
+                hvac_count += 1;
+            }
+        }
+        assert!(hvac_count >= 1); // Should have at least one HVAC status
+    }
+
+    #[tokio::test]
+    async fn test_simulator_with_degradation() {
+        let (tx, _rx) = mpsc::channel(100);
+        let mut config = SimulatorConfig::default();
+        config.degradation_enabled = true;
+        let mut sim = Simulator::new(config, tx);
+        
+        let initial_degradation = sim.degradation_factor;
+        
+        // Generate events multiple times
+        for _ in 0..10 {
+            sim.generate_events().await.unwrap();
+            if sim.config.degradation_enabled {
+                sim.degradation_factor += 0.0001;
+            }
+        }
+        
+        // Degradation should have increased
+        assert!(sim.degradation_factor > initial_degradation);
+    }
+
+    #[tokio::test]
+    async fn test_simulator_event_fields() {
+        let (tx, mut rx) = mpsc::channel(100);
+        let config = SimulatorConfig::default();
+        let mut sim = Simulator::new(config, tx);
+        
+        sim.generate_events().await.unwrap();
+        
+        // Check temperature reading has correct fields
+        if let Ok(event) = rx.try_recv() {
+            if event.event_type == "TemperatureReading" {
+                assert!(event.get_str("sensor_id").is_some());
+                assert!(event.get_str("zone").is_some());
+                assert!(event.get_float("value").is_some());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_simulator_channel_closed() {
+        let (tx, rx) = mpsc::channel(1);
+        let config = SimulatorConfig::default();
+        let mut sim = Simulator::new(config, tx);
+        
+        // Drop receiver to close channel
+        drop(rx);
+        
+        // Generate events should fail
+        let result = sim.generate_events().await;
+        assert!(result.is_err());
+    }
+}

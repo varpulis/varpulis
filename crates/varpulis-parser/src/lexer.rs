@@ -514,4 +514,214 @@ mod tests {
             Token::Eof,
         ]);
     }
+
+    // ==========================================================================
+    // Additional Coverage Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_more_keywords() {
+        let tokens: Vec<_> = tokenize("if else elif then match for while break continue return")
+            .into_iter().map(|t| t.token).collect();
+        assert!(tokens.contains(&Token::If));
+        assert!(tokens.contains(&Token::Else));
+        assert!(tokens.contains(&Token::Match));
+        assert!(tokens.contains(&Token::For));
+        assert!(tokens.contains(&Token::While));
+        assert!(tokens.contains(&Token::Break));
+        assert!(tokens.contains(&Token::Return));
+    }
+
+    #[test]
+    fn test_stream_keywords() {
+        let tokens: Vec<_> = tokenize("where select join merge window aggregate emit")
+            .into_iter().map(|t| t.token).collect();
+        assert!(tokens.contains(&Token::Where));
+        assert!(tokens.contains(&Token::Select));
+        assert!(tokens.contains(&Token::Join));
+        assert!(tokens.contains(&Token::Merge));
+        assert!(tokens.contains(&Token::Window));
+        assert!(tokens.contains(&Token::Aggregate));
+        assert!(tokens.contains(&Token::Emit));
+    }
+
+    #[test]
+    fn test_more_operators() {
+        let tokens: Vec<_> = tokenize("% ** < > & | ^ ~ << >> = += -= *= /= %=")
+            .into_iter().map(|t| t.token).collect();
+        assert!(tokens.contains(&Token::Percent));
+        assert!(tokens.contains(&Token::DoubleStar));
+        assert!(tokens.contains(&Token::Lt));
+        assert!(tokens.contains(&Token::Gt));
+        assert!(tokens.contains(&Token::Amp));
+        assert!(tokens.contains(&Token::Pipe));
+        assert!(tokens.contains(&Token::Caret));
+        assert!(tokens.contains(&Token::Tilde));
+        assert!(tokens.contains(&Token::Eq));
+        assert!(tokens.contains(&Token::PlusEq));
+    }
+
+    #[test]
+    fn test_delimiters() {
+        let tokens: Vec<_> = tokenize("( ) [ ] { } , : ? @")
+            .into_iter().map(|t| t.token).collect();
+        assert!(tokens.contains(&Token::LParen));
+        assert!(tokens.contains(&Token::RParen));
+        assert!(tokens.contains(&Token::LBracket));
+        assert!(tokens.contains(&Token::RBracket));
+        assert!(tokens.contains(&Token::LBrace));
+        assert!(tokens.contains(&Token::RBrace));
+        assert!(tokens.contains(&Token::Comma));
+        assert!(tokens.contains(&Token::Colon));
+        assert!(tokens.contains(&Token::Question));
+        assert!(tokens.contains(&Token::At));
+    }
+
+    #[test]
+    fn test_special_operators() {
+        let tokens: Vec<_> = tokenize(". ?. ?? => -> .. ..= $")
+            .into_iter().map(|t| t.token).collect();
+        assert!(tokens.contains(&Token::Dot));
+        assert!(tokens.contains(&Token::QuestionDot));
+        assert!(tokens.contains(&Token::QuestionQuestion));
+        assert!(tokens.contains(&Token::FatArrow));
+        assert!(tokens.contains(&Token::Arrow));
+        assert!(tokens.contains(&Token::DotDot));
+        assert!(tokens.contains(&Token::DotDotEq));
+        assert!(tokens.contains(&Token::Dollar));
+    }
+
+    #[test]
+    fn test_type_keywords() {
+        let tokens: Vec<_> = tokenize("int float bool str timestamp duration Stream")
+            .into_iter().map(|t| t.token).collect();
+        assert!(tokens.contains(&Token::IntType));
+        assert!(tokens.contains(&Token::FloatType));
+        assert!(tokens.contains(&Token::BoolType));
+        assert!(tokens.contains(&Token::StrType));
+        assert!(tokens.contains(&Token::TimestampType));
+        assert!(tokens.contains(&Token::DurationType));
+        assert!(tokens.contains(&Token::StreamType));
+    }
+
+    #[test]
+    fn test_logical_keywords() {
+        let tokens: Vec<_> = tokenize("and or not in is as")
+            .into_iter().map(|t| t.token).collect();
+        assert!(tokens.contains(&Token::And));
+        assert!(tokens.contains(&Token::Or));
+        assert!(tokens.contains(&Token::Not));
+        assert!(tokens.contains(&Token::In));
+        assert!(tokens.contains(&Token::Is));
+        assert!(tokens.contains(&Token::As));
+    }
+
+    #[test]
+    fn test_duration_variants() {
+        let tokens: Vec<_> = tokenize("100ms 5s 10m 2h 1d")
+            .into_iter().map(|t| t.token).collect();
+        assert!(matches!(&tokens[0], Token::Duration(s) if s == "100ms"));
+        assert!(matches!(&tokens[1], Token::Duration(s) if s == "5s"));
+        assert!(matches!(&tokens[2], Token::Duration(s) if s == "10m"));
+        assert!(matches!(&tokens[3], Token::Duration(s) if s == "2h"));
+        assert!(matches!(&tokens[4], Token::Duration(s) if s == "1d"));
+    }
+
+    #[test]
+    fn test_string_escapes() {
+        let tokens: Vec<_> = tokenize(r#""hello\nworld" "tab\there""#)
+            .into_iter().map(|t| t.token).collect();
+        assert!(matches!(&tokens[0], Token::String(_)));
+        assert!(matches!(&tokens[1], Token::String(_)));
+    }
+
+    #[test]
+    fn test_lexer_peek() {
+        let mut lexer = Lexer::new("a b c");
+        assert_eq!(lexer.peek().unwrap().token, Token::Ident("a".to_string()));
+        assert_eq!(lexer.peek().unwrap().token, Token::Ident("a".to_string())); // Still 'a'
+        assert_eq!(lexer.next().unwrap().token, Token::Ident("a".to_string()));
+        assert_eq!(lexer.peek().unwrap().token, Token::Ident("b".to_string()));
+    }
+
+    #[test]
+    fn test_lexer_empty() {
+        let tokens: Vec<_> = tokenize("").into_iter().map(|t| t.token).collect();
+        assert_eq!(tokens, vec![Token::Eof]);
+    }
+
+    #[test]
+    fn test_token_display() {
+        assert_eq!(format!("{}", Token::Stream), "stream");
+        assert_eq!(format!("{}", Token::Plus), "+");
+        assert_eq!(format!("{}", Token::Integer(42)), "42");
+        assert_eq!(format!("{}", Token::Float(3.14)), "3.14");
+        assert_eq!(format!("{}", Token::String("test".to_string())), "\"test\"");
+        assert_eq!(format!("{}", Token::Ident("foo".to_string())), "foo");
+        assert_eq!(format!("{}", Token::Eof), "EOF");
+    }
+
+    #[test]
+    fn test_more_token_display() {
+        assert_eq!(format!("{}", Token::Event), "event");
+        assert_eq!(format!("{}", Token::Type), "type");
+        assert_eq!(format!("{}", Token::Config), "config");
+        assert_eq!(format!("{}", Token::Elif), "elif");
+        assert_eq!(format!("{}", Token::Then), "then");
+        assert_eq!(format!("{}", Token::Continue), "continue");
+        assert_eq!(format!("{}", Token::PartitionBy), "partition_by");
+        assert_eq!(format!("{}", Token::OrderBy), "order_by");
+        assert_eq!(format!("{}", Token::Limit), "limit");
+        assert_eq!(format!("{}", Token::Distinct), "distinct");
+        assert_eq!(format!("{}", Token::To), "to");
+        assert_eq!(format!("{}", Token::On), "on");
+        assert_eq!(format!("{}", Token::All), "all");
+        assert_eq!(format!("{}", Token::Within), "within");
+        assert_eq!(format!("{}", Token::Pattern), "pattern");
+        assert_eq!(format!("{}", Token::AttentionWindow), "attention_window");
+        assert_eq!(format!("{}", Token::AttentionScore), "attention_score");
+        assert_eq!(format!("{}", Token::False), "false");
+        assert_eq!(format!("{}", Token::Extends), "extends");
+        assert_eq!(format!("{}", Token::Import), "import");
+        assert_eq!(format!("{}", Token::Export), "export");
+    }
+
+    #[test]
+    fn test_remaining_token_display() {
+        assert_eq!(format!("{}", Token::Shl), "<<");
+        assert_eq!(format!("{}", Token::Shr), ">>");
+        assert_eq!(format!("{}", Token::MinusEq), "-=");
+        assert_eq!(format!("{}", Token::StarEq), "*=");
+        assert_eq!(format!("{}", Token::SlashEq), "/=");
+        assert_eq!(format!("{}", Token::PercentEq), "%=");
+        assert_eq!(format!("{}", Token::LBrace), "{");
+        assert_eq!(format!("{}", Token::RBrace), "}");
+        assert_eq!(format!("{}", Token::Duration("5m".to_string())), "5m");
+        assert_eq!(format!("{}", Token::Timestamp("2024-01-01".to_string())), "2024-01-01");
+    }
+
+    #[test]
+    fn test_spanned_token_positions() {
+        let tokens: Vec<_> = tokenize("ab cd").into_iter().collect();
+        assert_eq!(tokens[0].start, 0);
+        assert_eq!(tokens[0].end, 2);
+        assert_eq!(tokens[1].start, 3);
+        assert_eq!(tokens[1].end, 5);
+    }
+
+    #[test]
+    fn test_special_chars_in_code() {
+        let tokens: Vec<_> = tokenize("a.b.c[0]").into_iter().map(|t| t.token).collect();
+        assert!(tokens.contains(&Token::Dot));
+        assert!(tokens.contains(&Token::LBracket));
+        assert!(tokens.contains(&Token::RBracket));
+    }
+
+    #[test]
+    fn test_negative_number() {
+        let tokens: Vec<_> = tokenize("-42 -3.14").into_iter().map(|t| t.token).collect();
+        assert!(tokens.contains(&Token::Minus));
+        assert!(tokens.contains(&Token::Integer(42)));
+        assert!(tokens.contains(&Token::Float(3.14)));
+    }
 }

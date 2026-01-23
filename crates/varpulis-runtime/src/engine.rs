@@ -969,4 +969,452 @@ mod tests {
         engine.process(Event::new("Tick").with_field("price", 101.0)).await.unwrap();
         assert!(rx.try_recv().is_ok());
     }
+
+    // ==========================================================================
+    // Builder and Configuration Tests
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_engine_with_metrics() {
+        let (tx, _rx) = mpsc::channel(100);
+        let metrics = crate::metrics::Metrics::new();
+        let engine = Engine::new(tx).with_metrics(metrics);
+        assert!(engine.metrics.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_engine_metrics() {
+        let (tx, mut rx) = mpsc::channel(100);
+        let mut engine = Engine::new(tx);
+        
+        let source = r#"
+            stream Simple = A -> B .emit(done: "yes")
+        "#;
+        let program = parse_program(source);
+        engine.load(&program).unwrap();
+        
+        // Process some events
+        engine.process(Event::new("A")).await.unwrap();
+        engine.process(Event::new("B")).await.unwrap();
+        let _ = rx.try_recv();
+        
+        let metrics = engine.metrics();
+        assert_eq!(metrics.events_processed, 2);
+        assert!(metrics.alerts_generated >= 1);
+        assert_eq!(metrics.streams_count, 1);
+    }
+
+    #[tokio::test]
+    async fn test_engine_single_event_emit() {
+        // Test single event stream with emit
+        let source = r#"
+            stream S = Order as o -> Confirm .emit(status: "confirmed")
+        "#;
+        
+        let program = parse_program(source);
+        let (tx, mut rx) = mpsc::channel(100);
+        let mut engine = Engine::new(tx);
+        engine.load(&program).unwrap();
+        
+        engine.process(Event::new("Order").with_field("id", 1i64)).await.unwrap();
+        assert!(rx.try_recv().is_err()); // Need Confirm
+        engine.process(Event::new("Confirm")).await.unwrap();
+        assert!(rx.try_recv().is_ok());
+    }
+
+    // ==========================================================================
+    // Filter Expression Tests - Arithmetic Operations
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_engine_filter_arithmetic_add() {
+        let source = r#"
+            stream Test = A as a
+                -> B where value == a.base + 10 as b
+                .emit(status: "matched")
+        "#;
+        
+        let program = parse_program(source);
+        let (tx, mut rx) = mpsc::channel(100);
+        let mut engine = Engine::new(tx);
+        engine.load(&program).unwrap();
+        
+        engine.process(Event::new("A").with_field("base", 5i64)).await.unwrap();
+        engine.process(Event::new("B").with_field("value", 15i64)).await.unwrap();
+        assert!(rx.try_recv().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_engine_filter_arithmetic_sub() {
+        let source = r#"
+            stream Test = A as a
+                -> B where value == a.base - 3 as b
+                .emit(status: "matched")
+        "#;
+        
+        let program = parse_program(source);
+        let (tx, mut rx) = mpsc::channel(100);
+        let mut engine = Engine::new(tx);
+        engine.load(&program).unwrap();
+        
+        engine.process(Event::new("A").with_field("base", 10i64)).await.unwrap();
+        engine.process(Event::new("B").with_field("value", 7i64)).await.unwrap();
+        assert!(rx.try_recv().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_engine_filter_arithmetic_mul() {
+        let source = r#"
+            stream Test = A as a
+                -> B where value == a.base * 2 as b
+                .emit(status: "matched")
+        "#;
+        
+        let program = parse_program(source);
+        let (tx, mut rx) = mpsc::channel(100);
+        let mut engine = Engine::new(tx);
+        engine.load(&program).unwrap();
+        
+        engine.process(Event::new("A").with_field("base", 5i64)).await.unwrap();
+        engine.process(Event::new("B").with_field("value", 10i64)).await.unwrap();
+        assert!(rx.try_recv().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_engine_filter_arithmetic_div() {
+        let source = r#"
+            stream Test = A as a
+                -> B where value == a.base / 2 as b
+                .emit(status: "matched")
+        "#;
+        
+        let program = parse_program(source);
+        let (tx, mut rx) = mpsc::channel(100);
+        let mut engine = Engine::new(tx);
+        engine.load(&program).unwrap();
+        
+        engine.process(Event::new("A").with_field("base", 10i64)).await.unwrap();
+        engine.process(Event::new("B").with_field("value", 5i64)).await.unwrap();
+        assert!(rx.try_recv().is_ok());
+    }
+
+    // ==========================================================================
+    // Filter Expression Tests - Comparison Operations
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_engine_filter_comparison_lt() {
+        let source = r#"
+            stream Test = A as a
+                -> B where value < a.threshold as b
+                .emit(status: "below")
+        "#;
+        
+        let program = parse_program(source);
+        let (tx, mut rx) = mpsc::channel(100);
+        let mut engine = Engine::new(tx);
+        engine.load(&program).unwrap();
+        
+        engine.process(Event::new("A").with_field("threshold", 100i64)).await.unwrap();
+        engine.process(Event::new("B").with_field("value", 50i64)).await.unwrap();
+        assert!(rx.try_recv().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_engine_filter_comparison_le() {
+        let source = r#"
+            stream Test = A as a
+                -> B where value <= a.threshold as b
+                .emit(status: "at_or_below")
+        "#;
+        
+        let program = parse_program(source);
+        let (tx, mut rx) = mpsc::channel(100);
+        let mut engine = Engine::new(tx);
+        engine.load(&program).unwrap();
+        
+        engine.process(Event::new("A").with_field("threshold", 100i64)).await.unwrap();
+        engine.process(Event::new("B").with_field("value", 100i64)).await.unwrap();
+        assert!(rx.try_recv().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_engine_filter_comparison_gt() {
+        let source = r#"
+            stream Test = A as a
+                -> B where value > a.threshold as b
+                .emit(status: "above")
+        "#;
+        
+        let program = parse_program(source);
+        let (tx, mut rx) = mpsc::channel(100);
+        let mut engine = Engine::new(tx);
+        engine.load(&program).unwrap();
+        
+        engine.process(Event::new("A").with_field("threshold", 50i64)).await.unwrap();
+        engine.process(Event::new("B").with_field("value", 100i64)).await.unwrap();
+        assert!(rx.try_recv().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_engine_filter_comparison_ge() {
+        let source = r#"
+            stream Test = A as a
+                -> B where value >= a.threshold as b
+                .emit(status: "at_or_above")
+        "#;
+        
+        let program = parse_program(source);
+        let (tx, mut rx) = mpsc::channel(100);
+        let mut engine = Engine::new(tx);
+        engine.load(&program).unwrap();
+        
+        engine.process(Event::new("A").with_field("threshold", 100i64)).await.unwrap();
+        engine.process(Event::new("B").with_field("value", 100i64)).await.unwrap();
+        assert!(rx.try_recv().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_engine_filter_comparison_neq() {
+        let source = r#"
+            stream Test = A as a
+                -> B where value != a.exclude as b
+                .emit(status: "different")
+        "#;
+        
+        let program = parse_program(source);
+        let (tx, mut rx) = mpsc::channel(100);
+        let mut engine = Engine::new(tx);
+        engine.load(&program).unwrap();
+        
+        engine.process(Event::new("A").with_field("exclude", 42i64)).await.unwrap();
+        engine.process(Event::new("B").with_field("value", 100i64)).await.unwrap();
+        assert!(rx.try_recv().is_ok());
+    }
+
+    // ==========================================================================
+    // Filter Expression Tests - Logical Operations
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_engine_filter_logical_and() {
+        let source = r#"
+            stream Test = A as a
+                -> B where value > 10 and value < 100 as b
+                .emit(status: "in_range")
+        "#;
+        
+        let program = parse_program(source);
+        let (tx, mut rx) = mpsc::channel(100);
+        let mut engine = Engine::new(tx);
+        engine.load(&program).unwrap();
+        
+        engine.process(Event::new("A")).await.unwrap();
+        engine.process(Event::new("B").with_field("value", 50i64)).await.unwrap();
+        assert!(rx.try_recv().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_engine_filter_logical_or() {
+        let source = r#"
+            stream Test = A as a
+                -> B where status == "active" or priority > 5 as b
+                .emit(result: "matched")
+        "#;
+        
+        let program = parse_program(source);
+        let (tx, mut rx) = mpsc::channel(100);
+        let mut engine = Engine::new(tx);
+        engine.load(&program).unwrap();
+        
+        engine.process(Event::new("A")).await.unwrap();
+        // priority > 5 is true (priority=10)
+        engine.process(Event::new("B").with_field("status", "inactive").with_field("priority", 10i64)).await.unwrap();
+        assert!(rx.try_recv().is_ok());
+    }
+
+    // ==========================================================================
+    // Filter Expression Tests - Float/Mixed Type Operations
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_engine_filter_float_comparison() {
+        let source = r#"
+            stream Test = A as a
+                -> B where price > a.min_price as b
+                .emit(status: "above_min")
+        "#;
+        
+        let program = parse_program(source);
+        let (tx, mut rx) = mpsc::channel(100);
+        let mut engine = Engine::new(tx);
+        engine.load(&program).unwrap();
+        
+        engine.process(Event::new("A").with_field("min_price", 99.99f64)).await.unwrap();
+        engine.process(Event::new("B").with_field("price", 100.0f64)).await.unwrap();
+        assert!(rx.try_recv().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_engine_filter_int_float_mixed() {
+        let source = r#"
+            stream Test = A as a
+                -> B where value > a.threshold as b
+                .emit(status: "above")
+        "#;
+        
+        let program = parse_program(source);
+        let (tx, mut rx) = mpsc::channel(100);
+        let mut engine = Engine::new(tx);
+        engine.load(&program).unwrap();
+        
+        // int threshold, float value
+        engine.process(Event::new("A").with_field("threshold", 50i64)).await.unwrap();
+        engine.process(Event::new("B").with_field("value", 75.5f64)).await.unwrap();
+        assert!(rx.try_recv().is_ok());
+    }
+
+    // ==========================================================================
+    // Literal Value Tests
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_engine_filter_literal_int() {
+        let source = r#"
+            stream Test = A as a
+                -> B where value == 42 as b
+                .emit(status: "found")
+        "#;
+        
+        let program = parse_program(source);
+        let (tx, mut rx) = mpsc::channel(100);
+        let mut engine = Engine::new(tx);
+        engine.load(&program).unwrap();
+        
+        engine.process(Event::new("A")).await.unwrap();
+        engine.process(Event::new("B").with_field("value", 42i64)).await.unwrap();
+        assert!(rx.try_recv().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_engine_filter_literal_string() {
+        let source = r#"
+            stream Test = A as a
+                -> B where status == "active" as b
+                .emit(result: "ok")
+        "#;
+        
+        let program = parse_program(source);
+        let (tx, mut rx) = mpsc::channel(100);
+        let mut engine = Engine::new(tx);
+        engine.load(&program).unwrap();
+        
+        engine.process(Event::new("A")).await.unwrap();
+        engine.process(Event::new("B").with_field("status", "active")).await.unwrap();
+        assert!(rx.try_recv().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_engine_filter_literal_float() {
+        let source = r#"
+            stream Test = A as a
+                -> B where price == 99.99 as b
+                .emit(status: "exact")
+        "#;
+        
+        let program = parse_program(source);
+        let (tx, mut rx) = mpsc::channel(100);
+        let mut engine = Engine::new(tx);
+        engine.load(&program).unwrap();
+        
+        engine.process(Event::new("A")).await.unwrap();
+        engine.process(Event::new("B").with_field("price", 99.99f64)).await.unwrap();
+        assert!(rx.try_recv().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_engine_filter_literal_bool() {
+        let source = r#"
+            stream Test = A as a
+                -> B where active == true as b
+                .emit(status: "active")
+        "#;
+        
+        let program = parse_program(source);
+        let (tx, mut rx) = mpsc::channel(100);
+        let mut engine = Engine::new(tx);
+        engine.load(&program).unwrap();
+        
+        engine.process(Event::new("A")).await.unwrap();
+        engine.process(Event::new("B").with_field("active", true)).await.unwrap();
+        assert!(rx.try_recv().is_ok());
+    }
+
+    // ==========================================================================
+    // Edge Cases and Error Handling
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_engine_unmatched_event_type() {
+        let source = r#"
+            stream AB = A -> B .emit(done: "yes")
+        "#;
+        
+        let program = parse_program(source);
+        let (tx, mut rx) = mpsc::channel(100);
+        let mut engine = Engine::new(tx);
+        engine.load(&program).unwrap();
+        
+        // Send unrelated events
+        engine.process(Event::new("X")).await.unwrap();
+        engine.process(Event::new("Y")).await.unwrap();
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn test_engine_rapid_events() {
+        // Test processing many events rapidly
+        let source = r#"
+            stream Rapid = A -> B .emit(done: "yes")
+        "#;
+        
+        let program = parse_program(source);
+        let (tx, mut rx) = mpsc::channel(1000);
+        let mut engine = Engine::new(tx);
+        engine.load(&program).unwrap();
+        
+        // Process 100 A-B pairs
+        for i in 0..100 {
+            engine.process(Event::new("A").with_field("id", i as i64)).await.unwrap();
+            engine.process(Event::new("B").with_field("id", i as i64)).await.unwrap();
+        }
+        
+        // Should have 100 alerts
+        let mut count = 0;
+        while rx.try_recv().is_ok() {
+            count += 1;
+        }
+        assert_eq!(count, 100);
+    }
+
+    #[tokio::test]
+    async fn test_engine_div_by_zero() {
+        // Division by zero should not crash, just not match
+        let source = r#"
+            stream Test = A as a
+                -> B where value == a.x / a.y as b
+                .emit(status: "computed")
+        "#;
+        
+        let program = parse_program(source);
+        let (tx, mut rx) = mpsc::channel(100);
+        let mut engine = Engine::new(tx);
+        engine.load(&program).unwrap();
+        
+        // y=0 causes division by zero
+        engine.process(Event::new("A").with_field("x", 10i64).with_field("y", 0i64)).await.unwrap();
+        engine.process(Event::new("B").with_field("value", 0i64)).await.unwrap();
+        // Should not match because division by zero returns None
+        assert!(rx.try_recv().is_err());
+    }
 }
