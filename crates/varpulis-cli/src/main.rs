@@ -15,6 +15,7 @@ use warp::Filter;
 
 use varpulis_parser::parse;
 use varpulis_runtime::engine::{Alert, Engine};
+use varpulis_runtime::event::Event;
 use varpulis_runtime::event_file::{EventFileParser, EventFilePlayer};
 use varpulis_runtime::metrics::{Metrics, MetricsServer};
 use varpulis_runtime::simulator::{SimulatorConfig, Simulator};
@@ -483,6 +484,7 @@ enum WsMessage {
     Event { id: String, event_type: String, timestamp: String, data: serde_json::Value },
     Alert { id: String, alert_type: String, severity: String, message: String, timestamp: String, data: serde_json::Value },
     Metrics { events_processed: u64, alerts_generated: u64, active_streams: usize, uptime: f64, memory_usage: u64, cpu_usage: f64 },
+    EventInjected { event_type: String, success: bool },
     Error { message: String },
 }
 
@@ -708,9 +710,33 @@ async fn handle_ws_message(msg: WsMessage, state: &Arc<RwLock<ServerState>>) -> 
         }
 
         WsMessage::InjectEvent { event_type, data } => {
-            // TODO: implement event injection
-            WsMessage::Error {
-                message: format!("Event injection not yet implemented: {}", event_type),
+            let mut state = state.write().await;
+            if let Some(ref mut engine) = state.engine {
+                // Create event from injected data
+                let mut event = Event::new(&event_type);
+                
+                // Convert JSON data to event fields
+                if let Some(obj) = data.as_object() {
+                    for (key, value) in obj {
+                        let v = json_to_value(value);
+                        event.data.insert(key.clone(), v);
+                    }
+                }
+                
+                // Process the event
+                match engine.process(event).await {
+                    Ok(()) => WsMessage::EventInjected { 
+                        event_type: event_type.clone(),
+                        success: true,
+                    },
+                    Err(e) => WsMessage::Error {
+                        message: format!("Failed to process event: {}", e),
+                    }
+                }
+            } else {
+                WsMessage::Error {
+                    message: "No engine loaded. Load a .vpl file first.".to_string(),
+                }
             }
         }
 
@@ -724,4 +750,33 @@ fn uuid_simple() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let duration = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
     format!("{:x}{:x}", duration.as_secs(), duration.subsec_nanos())
+}
+
+/// Convert a serde_json::Value to varpulis_core::Value
+fn json_to_value(json: &serde_json::Value) -> varpulis_core::Value {
+    use varpulis_core::Value;
+    match json {
+        serde_json::Value::Null => Value::Null,
+        serde_json::Value::Bool(b) => Value::Bool(*b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Value::Int(i)
+            } else if let Some(f) = n.as_f64() {
+                Value::Float(f)
+            } else {
+                Value::Null
+            }
+        }
+        serde_json::Value::String(s) => Value::Str(s.clone()),
+        serde_json::Value::Array(arr) => {
+            Value::Array(arr.iter().map(json_to_value).collect())
+        }
+        serde_json::Value::Object(obj) => {
+            let map = obj
+                .iter()
+                .map(|(k, v)| (k.clone(), json_to_value(v)))
+                .collect();
+            Value::Map(map)
+        }
+    }
 }
