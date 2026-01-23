@@ -417,4 +417,253 @@ mod tests {
             panic!("Expected float");
         }
     }
+
+    // ==========================================================================
+    // Edge Case Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_count_empty() {
+        let events: Vec<Event> = vec![];
+        assert_eq!(Count.apply(&events, None), Value::Int(0));
+    }
+
+    #[test]
+    fn test_sum_empty() {
+        let events: Vec<Event> = vec![];
+        assert_eq!(Sum.apply(&events, Some("value")), Value::Float(0.0));
+    }
+
+    #[test]
+    fn test_avg_empty() {
+        let events: Vec<Event> = vec![];
+        assert_eq!(Avg.apply(&events, Some("value")), Value::Null);
+    }
+
+    #[test]
+    fn test_min_empty() {
+        let events: Vec<Event> = vec![];
+        assert_eq!(Min.apply(&events, Some("value")), Value::Null);
+    }
+
+    #[test]
+    fn test_max_empty() {
+        let events: Vec<Event> = vec![];
+        assert_eq!(Max.apply(&events, Some("value")), Value::Null);
+    }
+
+    #[test]
+    fn test_first_empty() {
+        let events: Vec<Event> = vec![];
+        assert_eq!(First.apply(&events, Some("value")), Value::Null);
+    }
+
+    #[test]
+    fn test_last_empty() {
+        let events: Vec<Event> = vec![];
+        assert_eq!(Last.apply(&events, Some("value")), Value::Null);
+    }
+
+    #[test]
+    fn test_stddev_single_value() {
+        let events = vec![Event::new("Test").with_field("value", 42.0)];
+        assert_eq!(StdDev.apply(&events, Some("value")), Value::Null);
+    }
+
+    #[test]
+    fn test_ema_empty() {
+        let events: Vec<Event> = vec![];
+        assert_eq!(Ema::new(3).apply(&events, Some("value")), Value::Null);
+    }
+
+    #[test]
+    fn test_ema_single_value() {
+        let events = vec![Event::new("Test").with_field("value", 100.0)];
+        assert_eq!(Ema::new(3).apply(&events, Some("value")), Value::Float(100.0));
+    }
+
+    #[test]
+    fn test_ema_period_zero_becomes_one() {
+        let ema = Ema::new(0);
+        assert_eq!(ema.period, 1);
+    }
+
+    #[test]
+    fn test_missing_field() {
+        let events = vec![Event::new("Test").with_field("other", 10.0)];
+        assert_eq!(Sum.apply(&events, Some("value")), Value::Float(0.0));
+        assert_eq!(Avg.apply(&events, Some("value")), Value::Null);
+    }
+
+    #[test]
+    fn test_default_field() {
+        let events = vec![Event::new("Test").with_field("value", 25.0)];
+        // When field is None, default is "value"
+        assert_eq!(Sum.apply(&events, None), Value::Float(25.0));
+        assert_eq!(Avg.apply(&events, None), Value::Float(25.0));
+    }
+
+    // ==========================================================================
+    // ExprAggregate Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_expr_aggregate_add() {
+        let events = make_events(); // sum = 60
+        let expr = ExprAggregate::new(
+            Box::new(Sum),
+            Some("value".to_string()),
+            AggBinOp::Add,
+            Box::new(Count),
+            None,
+        );
+        // 60.0 + 3 = 63.0
+        assert_eq!(expr.apply(&events, None), Value::Float(63.0));
+    }
+
+    #[test]
+    fn test_expr_aggregate_sub() {
+        let events = make_events();
+        let expr = ExprAggregate::new(
+            Box::new(Max),
+            Some("value".to_string()),
+            AggBinOp::Sub,
+            Box::new(Min),
+            Some("value".to_string()),
+        );
+        // 30.0 - 10.0 = 20.0
+        assert_eq!(expr.apply(&events, None), Value::Float(20.0));
+    }
+
+    #[test]
+    fn test_expr_aggregate_mul() {
+        let events = vec![
+            Event::new("Test").with_field("value", 5.0),
+            Event::new("Test").with_field("value", 5.0),
+        ];
+        let expr = ExprAggregate::new(
+            Box::new(Avg),
+            Some("value".to_string()),
+            AggBinOp::Mul,
+            Box::new(Count),
+            None,
+        );
+        // 5.0 * 2 = 10.0
+        assert_eq!(expr.apply(&events, None), Value::Float(10.0));
+    }
+
+    #[test]
+    fn test_expr_aggregate_div() {
+        let events = make_events();
+        let expr = ExprAggregate::new(
+            Box::new(Sum),
+            Some("value".to_string()),
+            AggBinOp::Div,
+            Box::new(Count),
+            None,
+        );
+        // 60.0 / 3 = 20.0
+        assert_eq!(expr.apply(&events, None), Value::Float(20.0));
+    }
+
+    #[test]
+    fn test_expr_aggregate_div_by_zero_float() {
+        let events: Vec<Event> = vec![];
+        let expr = ExprAggregate::new(
+            Box::new(Sum),
+            Some("value".to_string()),
+            AggBinOp::Div,
+            Box::new(Sum),
+            Some("value".to_string()),
+        );
+        // 0.0 / 0.0 = NaN
+        if let Value::Float(v) = expr.apply(&events, None) {
+            assert!(v.is_nan());
+        } else {
+            panic!("Expected float NaN");
+        }
+    }
+
+    #[test]
+    fn test_expr_aggregate_int_operations() {
+        let events = vec![
+            Event::new("Test").with_field("count", 10i64),
+            Event::new("Test").with_field("count", 20i64),
+        ];
+        // This tests that Count returns Int
+        let expr = ExprAggregate::new(
+            Box::new(Count),
+            None,
+            AggBinOp::Mul,
+            Box::new(Count),
+            None,
+        );
+        // 2 * 2 = 4
+        assert_eq!(expr.apply(&events, None), Value::Int(4));
+    }
+
+    // ==========================================================================
+    // Aggregator Builder Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_aggregator_empty() {
+        let events = make_events();
+        let aggregator = Aggregator::new();
+        let result = aggregator.apply(&events);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_aggregator_default() {
+        let aggregator = Aggregator::default();
+        assert!(aggregator.aggregations.is_empty());
+    }
+
+    #[test]
+    fn test_aggregator_chain() {
+        let events = make_events();
+        let aggregator = Aggregator::new()
+            .add("min_val", Box::new(Min), Some("value".to_string()))
+            .add("max_val", Box::new(Max), Some("value".to_string()))
+            .add("range", Box::new(ExprAggregate::new(
+                Box::new(Max),
+                Some("value".to_string()),
+                AggBinOp::Sub,
+                Box::new(Min),
+                Some("value".to_string()),
+            )), None);
+
+        let result = aggregator.apply(&events);
+        assert_eq!(result.get("min_val"), Some(&Value::Float(10.0)));
+        assert_eq!(result.get("max_val"), Some(&Value::Float(30.0)));
+        assert_eq!(result.get("range"), Some(&Value::Float(20.0)));
+    }
+
+    // ==========================================================================
+    // Name Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_aggregate_names() {
+        assert_eq!(Count.name(), "count");
+        assert_eq!(Sum.name(), "sum");
+        assert_eq!(Avg.name(), "avg");
+        assert_eq!(Min.name(), "min");
+        assert_eq!(Max.name(), "max");
+        assert_eq!(StdDev.name(), "stddev");
+        assert_eq!(First.name(), "first");
+        assert_eq!(Last.name(), "last");
+        assert_eq!(Ema::new(5).name(), "ema");
+    }
+
+    #[test]
+    fn test_expr_aggregate_name() {
+        let expr = ExprAggregate::new(
+            Box::new(Sum), None,
+            AggBinOp::Add,
+            Box::new(Count), None,
+        );
+        assert_eq!(expr.name(), "expr");
+    }
 }

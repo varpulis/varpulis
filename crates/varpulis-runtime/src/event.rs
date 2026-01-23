@@ -112,3 +112,200 @@ impl From<HVACStatus> for Event {
             .with_field("compressor_pressure", s.compressor_pressure)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    // ==========================================================================
+    // Event Construction Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_event_new() {
+        let event = Event::new("TestEvent");
+        assert_eq!(event.event_type, "TestEvent");
+        assert!(event.data.is_empty());
+    }
+
+    #[test]
+    fn test_event_new_from_string() {
+        let event = Event::new("TestEvent".to_string());
+        assert_eq!(event.event_type, "TestEvent");
+    }
+
+    #[test]
+    fn test_event_with_timestamp() {
+        let ts = Utc.with_ymd_and_hms(2025, 1, 15, 10, 30, 0).unwrap();
+        let event = Event::new("Test").with_timestamp(ts);
+        assert_eq!(event.timestamp, ts);
+    }
+
+    #[test]
+    fn test_event_with_field() {
+        let event = Event::new("Test")
+            .with_field("name", "value")
+            .with_field("count", 42i64);
+        
+        assert_eq!(event.data.len(), 2);
+        assert_eq!(event.get("name"), Some(&Value::Str("value".to_string())));
+        assert_eq!(event.get("count"), Some(&Value::Int(42)));
+    }
+
+    #[test]
+    fn test_event_with_multiple_fields() {
+        let event = Event::new("Order")
+            .with_field("id", 123i64)
+            .with_field("customer", "Alice")
+            .with_field("total", 99.99f64)
+            .with_field("premium", true);
+        
+        assert_eq!(event.data.len(), 4);
+    }
+
+    // ==========================================================================
+    // Field Access Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_event_get() {
+        let event = Event::new("Test").with_field("key", "value");
+        assert_eq!(event.get("key"), Some(&Value::Str("value".to_string())));
+        assert_eq!(event.get("missing"), None);
+    }
+
+    #[test]
+    fn test_event_get_float() {
+        let event = Event::new("Test")
+            .with_field("price", 19.99f64)
+            .with_field("quantity", 5i64);
+        
+        assert_eq!(event.get_float("price"), Some(19.99));
+        assert_eq!(event.get_float("quantity"), Some(5.0)); // int converts to float
+        assert_eq!(event.get_float("missing"), None);
+    }
+
+    #[test]
+    fn test_event_get_int() {
+        let event = Event::new("Test")
+            .with_field("count", 42i64)
+            .with_field("ratio", 3.7f64);
+        
+        assert_eq!(event.get_int("count"), Some(42));
+        assert_eq!(event.get_int("ratio"), Some(3)); // float truncates to int
+        assert_eq!(event.get_int("missing"), None);
+    }
+
+    #[test]
+    fn test_event_get_str() {
+        let event = Event::new("Test").with_field("name", "Alice");
+        assert_eq!(event.get_str("name"), Some("Alice"));
+        assert_eq!(event.get_str("missing"), None);
+    }
+
+    #[test]
+    fn test_event_get_str_from_non_string() {
+        let event = Event::new("Test").with_field("count", 42i64);
+        assert_eq!(event.get_str("count"), None);
+    }
+
+    // ==========================================================================
+    // From Trait Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_temperature_reading_to_event() {
+        let ts = Utc::now();
+        let reading = TemperatureReading {
+            sensor_id: "sensor1".to_string(),
+            zone: "zone_a".to_string(),
+            value: 22.5,
+            timestamp: ts,
+        };
+        
+        let event: Event = reading.into();
+        assert_eq!(event.event_type, "TemperatureReading");
+        assert_eq!(event.get_str("sensor_id"), Some("sensor1"));
+        assert_eq!(event.get_str("zone"), Some("zone_a"));
+        assert_eq!(event.get_float("value"), Some(22.5));
+        assert_eq!(event.timestamp, ts);
+    }
+
+    #[test]
+    fn test_humidity_reading_to_event() {
+        let ts = Utc::now();
+        let reading = HumidityReading {
+            sensor_id: "humid1".to_string(),
+            zone: "zone_b".to_string(),
+            value: 65.0,
+            timestamp: ts,
+        };
+        
+        let event: Event = reading.into();
+        assert_eq!(event.event_type, "HumidityReading");
+        assert_eq!(event.get_str("sensor_id"), Some("humid1"));
+        assert_eq!(event.get_float("value"), Some(65.0));
+    }
+
+    #[test]
+    fn test_hvac_status_to_event() {
+        let ts = Utc::now();
+        let status = HVACStatus {
+            unit_id: "hvac1".to_string(),
+            mode: "cooling".to_string(),
+            power_consumption: 1500.0,
+            fan_speed: 3,
+            compressor_pressure: 2.5,
+            timestamp: ts,
+        };
+        
+        let event: Event = status.into();
+        assert_eq!(event.event_type, "HVACStatus");
+        assert_eq!(event.get_str("unit_id"), Some("hvac1"));
+        assert_eq!(event.get_str("mode"), Some("cooling"));
+        assert_eq!(event.get_float("power_consumption"), Some(1500.0));
+        assert_eq!(event.get_int("fan_speed"), Some(3));
+        assert_eq!(event.get_float("compressor_pressure"), Some(2.5));
+    }
+
+    // ==========================================================================
+    // Edge Cases
+    // ==========================================================================
+
+    #[test]
+    fn test_event_overwrite_field() {
+        let event = Event::new("Test")
+            .with_field("key", "first")
+            .with_field("key", "second");
+        
+        assert_eq!(event.get_str("key"), Some("second"));
+        assert_eq!(event.data.len(), 1);
+    }
+
+    #[test]
+    fn test_event_empty_string_field() {
+        let event = Event::new("Test").with_field("name", "");
+        assert_eq!(event.get_str("name"), Some(""));
+    }
+
+    #[test]
+    fn test_event_negative_values() {
+        let event = Event::new("Test")
+            .with_field("negative_int", -42i64)
+            .with_field("negative_float", -3.14f64);
+        
+        assert_eq!(event.get_int("negative_int"), Some(-42));
+        assert_eq!(event.get_float("negative_float"), Some(-3.14));
+    }
+
+    #[test]
+    fn test_event_zero_values() {
+        let event = Event::new("Test")
+            .with_field("zero_int", 0i64)
+            .with_field("zero_float", 0.0f64);
+        
+        assert_eq!(event.get_int("zero_int"), Some(0));
+        assert_eq!(event.get_float("zero_float"), Some(0.0));
+    }
+}
