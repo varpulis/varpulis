@@ -402,8 +402,12 @@ stream AnomalousActivity = Ticks
     )
     .pattern(
         pump_detection: events => {
-            let price_change = (last(events).price - first(events).price) / first(events).price
-            let volume_spike = avg(events.volume) > 3 * baseline_volume(events[0].symbol)
+            let last_price = last(events).price
+            let first_price = first(events).price
+            let price_change = last_price - first_price / first_price
+            let avg_volume = avg(events.volume)
+            let base_vol = baseline_volume(events[0].symbol)
+            let volume_spike = avg_volume > 3 * base_vol
             let correlation = events.sliding_pairs().map((e1, e2) => attention_score(e1, e2)).filter(score => score > 0.9).count()
             price_change > 0.05 and volume_spike and correlation > 10
         }
@@ -447,15 +451,9 @@ stream AllSignals = merge(
 
 config:
     mode: "low_latency"
-    
-    state:
-        backend: "rocksdb"
-        path: "/var/lib/varpulis/financial"
-    
-    observability:
-        metrics:
-            enabled: true
-            endpoint: "0.0.0.0:9090"
-        tracing:
-            enabled: true
-            sample_rate: 0.1
+    state_backend: "rocksdb"
+    state_path: "/var/lib/varpulis/financial"
+    metrics_enabled: true
+    metrics_endpoint: "0.0.0.0:9090"
+    tracing_enabled: true
+    tracing_sample_rate: 0.1
