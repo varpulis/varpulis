@@ -35,8 +35,14 @@
     "languages": [
       {
         "id": "varpulis",
-        "aliases": ["VarpulisQL", "varpulis"],
-        "extensions": [".vpl", ".varpulis"],
+        "aliases": [
+          "VarpulisQL",
+          "varpulis"
+        ],
+        "extensions": [
+          ".vpl",
+          ".varpulis"
+        ],
         "configuration": "./language-configuration.json"
       }
     ],
@@ -82,6 +88,11 @@
         "command": "varpulis.injectEvent",
         "title": "Varpulis: Inject Test Event",
         "icon": "$(add)"
+      },
+      {
+        "command": "varpulis.injectEventFile",
+        "title": "Varpulis: Inject Event File (.evt)",
+        "icon": "$(file-code)"
       }
     ],
     "menus": {

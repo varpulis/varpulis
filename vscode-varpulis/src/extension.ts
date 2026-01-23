@@ -44,6 +44,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('varpulis.showMetrics', showMetrics),
         vscode.commands.registerCommand('varpulis.showStreams', () => streamsProvider.refresh()),
         vscode.commands.registerCommand('varpulis.injectEvent', injectEvent),
+        vscode.commands.registerCommand('varpulis.injectEventFile', injectEventFile),
         vscode.commands.registerCommand('varpulis.showStatus', showStatus)
     );
 
@@ -286,6 +287,80 @@ async function injectEvent() {
         outputChannel.appendLine(`Injected event: ${eventType} - ${eventData}`);
     } catch (error) {
         vscode.window.showErrorMessage(`Failed to inject event: ${error}`);
+    }
+}
+
+async function injectEventFile() {
+    if (!engine || !engine.isRunning()) {
+        vscode.window.showErrorMessage('Varpulis engine is not running');
+        return;
+    }
+
+    // Let user pick an .evt file
+    const files = await vscode.window.showOpenDialog({
+        canSelectFiles: true,
+        canSelectMany: false,
+        filters: { 'Event Files': ['evt'], 'All Files': ['*'] },
+        title: 'Select Event File (.evt)'
+    });
+
+    if (!files || files.length === 0) {
+        return;
+    }
+
+    const filePath = files[0].fsPath;
+
+    // Ask for mode
+    const mode = await vscode.window.showQuickPick(
+        [
+            { label: 'Timed', description: 'Respect BATCH timing delays', value: false },
+            { label: 'Immediate', description: 'Send all events immediately', value: true }
+        ],
+        { placeHolder: 'Select injection mode' }
+    );
+
+    if (!mode) {
+        return;
+    }
+
+    try {
+        outputChannel.appendLine(`Injecting events from: ${filePath}`);
+        outputChannel.appendLine(`Mode: ${mode.label}`);
+        outputChannel.show();
+
+        // Show progress
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: 'Injecting events',
+            cancellable: false
+        }, async (progress) => {
+            const result = await engine!.injectEventFile(
+                filePath,
+                mode.value,
+                (current, total, eventType) => {
+                    const pct = Math.round((current / total) * 100);
+                    progress.report({ 
+                        message: `${current}/${total} - ${eventType}`,
+                        increment: (1 / total) * 100
+                    });
+                    outputChannel.appendLine(`  [${current}/${total}] ${eventType}`);
+                }
+            );
+
+            if (result.errors.length > 0) {
+                vscode.window.showWarningMessage(
+                    `Injected ${result.sent} events with ${result.errors.length} errors`
+                );
+                result.errors.forEach(e => outputChannel.appendLine(`  Error: ${e}`));
+            } else {
+                vscode.window.showInformationMessage(`Successfully injected ${result.sent} events`);
+            }
+
+            outputChannel.appendLine(`Injection complete: ${result.sent} events sent`);
+        });
+    } catch (error) {
+        vscode.window.showErrorMessage(`Failed to inject event file: ${error}`);
+        outputChannel.appendLine(`Error: ${error}`);
     }
 }
 
