@@ -267,6 +267,15 @@ impl<'source> Parser<'source> {
             return Ok(StreamSource::Merge(streams));
         }
 
+        // sequence(alias1: Event1, alias2: Event2 where cond, ...)
+        if self.check_ident("sequence") {
+            self.advance();
+            self.consume(&Token::LParen, "(")?;
+            let decl = self.parse_sequence_decl()?;
+            self.consume(&Token::RParen, ")")?;
+            return Ok(StreamSource::Sequence(decl));
+        }
+
         if self.match_token(&Token::Join) {
             self.consume(&Token::LParen, "(")?;
             let clauses = self.parse_join_clause_list()?;
@@ -293,6 +302,92 @@ impl<'source> Parser<'source> {
         } else {
             Ok(StreamSource::Ident(name))
         }
+    }
+
+    /// Check if current token is a specific identifier
+    fn check_ident(&self, name: &str) -> bool {
+        matches!(&self.current.token, Token::Ident(s) if s == name)
+    }
+
+    /// Parse sequence declaration: alias1: Event1, alias2: Event2 where cond, ...
+    fn parse_sequence_decl(&mut self) -> ParseResult<SequenceDecl> {
+        let mut steps = Vec::new();
+        let mut match_all = false;
+        let mut timeout = None;
+
+        // Check for optional mode: "all" or "one"
+        if self.check_ident("mode") {
+            self.advance();
+            self.consume(&Token::Colon, ":")?;
+            if let Token::String(mode) = self.current.token.clone() {
+                match_all = mode == "all";
+                self.advance();
+            }
+            if self.check(&Token::Comma) {
+                self.advance();
+            }
+        }
+
+        // Check for optional timeout
+        if self.check_ident("timeout") {
+            self.advance();
+            self.consume(&Token::Colon, ":")?;
+            timeout = Some(Box::new(self.parse_expr()?));
+            if self.check(&Token::Comma) {
+                self.advance();
+            }
+        }
+
+        // Parse steps
+        loop {
+            if self.check(&Token::RParen) {
+                break;
+            }
+
+            // Parse: alias: EventType where condition .within(timeout)
+            let alias = self.parse_identifier()?;
+            self.consume(&Token::Colon, ":")?;
+            let event_type = self.parse_identifier()?;
+
+            let filter = if self.match_token(&Token::Where) {
+                Some(self.parse_or_expr()?)
+            } else {
+                None
+            };
+
+            let step_timeout = if self.check(&Token::Dot) && self.is_stream_op_after_dot() {
+                // Check for .within()
+                self.advance(); // consume dot
+                if self.check_ident("within") || matches!(self.current.token, Token::Within) {
+                    self.advance();
+                    self.consume(&Token::LParen, "(")?;
+                    let t = self.parse_expr()?;
+                    self.consume(&Token::RParen, ")")?;
+                    Some(Box::new(t))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            steps.push(SequenceStepDecl {
+                alias,
+                event_type,
+                filter,
+                timeout: step_timeout,
+            });
+
+            if !self.match_token(&Token::Comma) {
+                break;
+            }
+        }
+
+        Ok(SequenceDecl {
+            match_all,
+            timeout,
+            steps,
+        })
     }
 
     fn parse_inline_stream_list(&mut self) -> ParseResult<Vec<InlineStreamDecl>> {
@@ -2144,6 +2239,32 @@ mod tests {
             }
             // First FollowedBy should exist
             assert!(matches!(ops[0], StreamOp::FollowedBy(_)));
+        } else {
+            panic!("Expected StreamDecl");
+        }
+    }
+
+    #[test]
+    fn test_parse_sequence_construct() {
+        let source = r#"
+            stream Correlation = sequence(
+                news: NewsItem,
+                tick: StockTick where symbol == news.subject,
+                pump: StockTick where price >= tick.price * 1.05
+            )
+            .emit(status: "detected")
+        "#;
+        let program = parse(source).expect("Failed to parse");
+        assert_eq!(program.statements.len(), 1);
+        
+        if let Stmt::StreamDecl { source, .. } = &program.statements[0].node {
+            assert!(matches!(source, StreamSource::Sequence(_)));
+            if let StreamSource::Sequence(decl) = source {
+                assert_eq!(decl.steps.len(), 3);
+                assert_eq!(decl.steps[0].alias, "news");
+                assert_eq!(decl.steps[1].alias, "tick");
+                assert_eq!(decl.steps[2].alias, "pump");
+            }
         } else {
             panic!("Expected StreamDecl");
         }

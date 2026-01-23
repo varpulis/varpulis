@@ -95,6 +95,32 @@ pub enum StreamSource {
     Merge(Vec<InlineStreamDecl>),
     /// Join multiple streams
     Join(Vec<JoinClause>),
+    /// Sequence construct: `sequence(step1: Event1, step2: Event2 where cond, ...)`
+    Sequence(SequenceDecl),
+}
+
+/// Sequence declaration for temporal event correlation
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SequenceDecl {
+    /// Whether to match all first events or just one
+    pub match_all: bool,
+    /// Global timeout for the sequence
+    pub timeout: Option<Box<Expr>>,
+    /// Named steps in the sequence
+    pub steps: Vec<SequenceStepDecl>,
+}
+
+/// A single step in a sequence declaration
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SequenceStepDecl {
+    /// Alias for the captured event
+    pub alias: String,
+    /// Event type to match
+    pub event_type: String,
+    /// Optional filter condition
+    pub filter: Option<Expr>,
+    /// Optional timeout for this step
+    pub timeout: Option<Box<Expr>>,
 }
 
 /// Inline stream declaration used in merge/join

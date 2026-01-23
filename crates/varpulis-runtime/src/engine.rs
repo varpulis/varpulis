@@ -149,6 +149,20 @@ impl Engine {
                     .push(name.to_string());
                 RuntimeSource::EventType(event_type.clone())
             }
+            StreamSource::Sequence(decl) => {
+                // Register for all event types in the sequence
+                for step in &decl.steps {
+                    self.event_sources
+                        .entry(step.event_type.clone())
+                        .or_default()
+                        .push(name.to_string());
+                }
+                // Use first event type as the primary source
+                let first_type = decl.steps.first()
+                    .map(|s| s.event_type.clone())
+                    .unwrap_or_default();
+                RuntimeSource::EventType(first_type)
+            }
             StreamSource::Join(clauses) => {
                 let sources: Vec<String> = clauses.iter().map(|c| c.source.clone()).collect();
                 info!("Registering join stream {} from sources: {:?}", name, sources);
@@ -190,14 +204,40 @@ impl Engine {
         let mut match_all_first = false;
         let mut current_timeout: Option<std::time::Duration> = None;
 
+        // Handle sequence() construct - converts SequenceDecl to SequenceSteps
+        if let StreamSource::Sequence(decl) = source {
+            match_all_first = decl.match_all;
+            for step in &decl.steps {
+                let filter = step.filter.as_ref().map(|expr| {
+                    Self::compile_sequence_filter(expr.clone())
+                });
+                let timeout = step.timeout.as_ref().and_then(|expr| {
+                    if let varpulis_core::ast::Expr::Duration(ns) = expr.as_ref() {
+                        Some(std::time::Duration::from_nanos(*ns))
+                    } else {
+                        None
+                    }
+                });
+                sequence_steps.push(SequenceStep {
+                    event_type: step.event_type.clone(),
+                    filter,
+                    alias: Some(step.alias.clone()),
+                    timeout,
+                    match_all: false,
+                });
+                sequence_event_types.push(step.event_type.clone());
+            }
+        }
+
         // Check if we have any FollowedBy operations - if so, add source as first step
-        let has_sequence = ops.iter().any(|op| matches!(op, StreamOp::FollowedBy(_)));
-        if has_sequence {
+        let has_followed_by = ops.iter().any(|op| matches!(op, StreamOp::FollowedBy(_)));
+        if has_followed_by && sequence_steps.is_empty() {
             let (source_event_type, source_alias, source_match_all) = match source {
                 StreamSource::Ident(name) => (name.clone(), None, false),
                 StreamSource::IdentWithAlias { name, alias } => (name.clone(), Some(alias.clone()), false),
                 StreamSource::AllWithAlias { name, alias } => (name.clone(), alias.clone(), true),
                 StreamSource::From(name) => (name.clone(), None, false),
+                StreamSource::Sequence(_) => return Err("Sequence source already handled".to_string()),
                 _ => return Err("Sequences require a single event type source".to_string()),
             };
             match_all_first = source_match_all;
