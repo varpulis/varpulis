@@ -1,129 +1,134 @@
-# Glossaire
+# Glossary
 
 ## A
 
-### Agrégation
-Opération de réduction sur une collection d'événements (sum, avg, count, etc.).
+### Aggregation
+Reduction operation on a collection of events (sum, avg, count, etc.).
 
 ### Attention (mechanism)
-Mécanisme de corrélation pondérée entre événements, inspiré des architectures transformer, utilisé de manière déterministe dans Varpulis.
+Weighted correlation mechanism between events, inspired by transformer architectures, used deterministically in Varpulis.
 
 ### ANN (Approximate Nearest Neighbors)
-Algorithme d'indexation pour trouver rapidement les vecteurs les plus similaires.
+Indexing algorithm to quickly find the most similar vectors.
 
 ## B
 
 ### Backpressure
-Mécanisme de contrôle de flux quand un consommateur est plus lent que le producteur.
+Flow control mechanism when a consumer is slower than the producer.
 
 ## C
 
 ### CEP (Complex Event Processing)
-Traitement d'événements complexes - détection de patterns dans des flux d'événements en temps réel.
+Complex event processing - pattern detection in real-time event streams.
 
 ### Checkpoint
-Snapshot de l'état du système permettant la recovery après crash.
+System state snapshot enabling recovery after crash.
 
 ### Circuit Breaker
-Pattern de résilience qui "ouvre le circuit" après plusieurs échecs pour éviter la surcharge.
+Resilience pattern that "opens the circuit" after multiple failures to avoid overload.
 
 ## D
 
 ### DAG (Directed Acyclic Graph)
-Graphe orienté sans cycle, utilisé pour représenter le plan d'exécution.
+Directed graph without cycles, used to represent the execution plan.
 
 ### DLQ (Dead Letter Queue)
-File d'attente pour les messages qui n'ont pas pu être traités.
+Queue for messages that could not be processed.
 
 ## E
 
 ### Embedding
-Représentation vectorielle d'un événement dans un espace de dimension fixe.
+Vector representation of an event in a fixed-dimension space.
 
 ### EPL (Event Processing Language)
-Langage de traitement d'événements, terme générique (utilisé notamment par Apama).
+Event processing language, generic term (used notably by Apama).
 
 ### Event
-Enregistrement immuable représentant un fait horodaté.
+Immutable record representing a timestamped fact.
 
 ## F
 
-### Fenêtre (Window)
-Mécanisme pour borner les calculs sur des streams infinis.
-- **Tumbling**: Fenêtres non-chevauchantes
-- **Sliding**: Fenêtres chevauchantes
-- **Session**: Fenêtres basées sur l'inactivité
+### Flink
+Apache Flink - distributed stream processing framework. See [comparison](overview.md#vs-apache-flink).
 
 ## H
 
 ### HNSW (Hierarchical Navigable Small World)
-Algorithme d'indexation pour la recherche de plus proches voisins.
+Indexing algorithm for nearest neighbor search.
 
 ### Hypertree
-Structure de données optimisée pour le pattern matching sur des événements.
+Data structure optimized for pattern matching on events.
 
 ## I
 
 ### IR (Intermediate Representation)
-Représentation intermédiaire du code entre le parsing et l'exécution.
+Intermediate code representation between parsing and execution.
+
+## K
+
+### Kafka Streams
+Stream processing library for Apache Kafka. See [comparison](overview.md#vs-kafka-streams).
 
 ## L
 
 ### LALRPOP
-Générateur de parseur LR(1) pour Rust.
+LR(1) parser generator for Rust.
 
-### Latence
-Temps écoulé entre la réception d'un événement et la production du résultat.
+### Latency
+Time elapsed between receiving an event and producing the result.
 
 ## O
 
 ### OTLP (OpenTelemetry Protocol)
-Protocole standard pour l'envoi de traces, métriques et logs.
+Standard protocol for sending traces, metrics, and logs.
 
 ## P
 
 ### Partition
-Division logique d'un stream pour permettre le traitement parallèle.
+Logical division of a stream to enable parallel processing.
 
 ### Pattern
-Règle de détection définissant une séquence ou combinaison d'événements à identifier.
+Detection rule defining a sequence or combination of events to identify.
 
 ## R
 
 ### RocksDB
-Base de données clé-valeur embarquée, utilisée pour la persistance de l'état.
+Embedded key-value database, used for state persistence.
 
 ## S
 
 ### Sink
-Destination finale des événements traités (Kafka, HTTP, fichier, etc.).
+Final destination of processed events (Kafka, HTTP, file, etc.).
 
 ### Source
-Origine des événements (Kafka, fichier, HTTP, etc.).
+Origin of events (Kafka, file, HTTP, etc.).
 
 ### Stream
-Séquence potentiellement infinie d'événements typés.
+Potentially infinite sequence of typed events.
 
 ## T
 
 ### Throughput
-Nombre d'événements traités par unité de temps.
+Number of events processed per unit of time.
 
 ### Tumbling Window
-Fenêtre temporelle fixe sans chevauchement.
+Fixed temporal window without overlap.
 
 ## V
 
 ### VarpulisQL
-Le langage de requêtes et de définition de streams de Varpulis.
+The query and stream definition language of Varpulis.
 
 ### Varpulis
-Moteur de streaming analytics. Nommé d'après le dieu slave du vent.
+Streaming analytics engine. Named after the Slavic wind spirit.
 
 ## W
 
 ### Watermark
-Marqueur temporel indiquant que tous les événements antérieurs ont été reçus.
+Temporal marker indicating that all prior events have been received.
 
 ### Window
-Voir Fenêtre.
+Mechanism to bound computations on infinite streams.
+- **Tumbling**: Non-overlapping windows
+- **Sliding**: Overlapping windows
+- **Session**: Inactivity-based windows

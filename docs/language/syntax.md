@@ -1,20 +1,20 @@
-# Syntaxe VarpulisQL
+# VarpulisQL Syntax
 
-## Commentaires
+## Comments
 
 ```varpulis
-# Commentaire sur une ligne
+# Single line comment
 
 /* 
-   Commentaire
-   multi-lignes
+   Multi-line
+   comment
 */
 ```
 
-## Déclaration de variables
+## Variable Declaration
 
 ```varpulis
-# Immutable (recommandé)
+# Immutable (recommended)
 let name = "value"
 let count: int = 42
 
@@ -22,36 +22,36 @@ let count: int = 42
 var counter = 0
 counter += 1
 
-# Constante globale
+# Global constant
 const MAX_RETRIES = 3
 const API_URL = "https://api.example.com"
 ```
 
-## Déclaration de streams
+## Stream Declaration
 
-### Stream simple
+### Simple Stream
 
 ```varpulis
-# Depuis une source d'événements
+# From an event source
 stream Trades from TradeEvent
 
-# Avec alias
+# With alias
 stream T = Trades
 ```
 
-### Stream avec filtrage
+### Stream with Filtering
 
 ```varpulis
 stream HighValueTrades = Trades
     .where(price > 10000)
 
-# Conditions multiples
+# Multiple conditions
 stream FilteredTrades = Trades
     .where(price > 1000 and volume > 100)
     .where(exchange == "NYSE" or exchange == "NASDAQ")
 ```
 
-### Stream avec projection
+### Stream with Projection
 
 ```varpulis
 stream SimpleTrades = Trades
@@ -62,10 +62,10 @@ stream SimpleTrades = Trades
     )
 ```
 
-### Stream avec fenêtre temporelle
+### Stream with Temporal Window
 
 ```varpulis
-# Fenêtre tumbling (5 minutes)
+# Tumbling window (5 minutes)
 stream WindowedTrades = Trades
     .window(5m)
     .aggregate(
@@ -73,13 +73,13 @@ stream WindowedTrades = Trades
         avg_price: avg(price)
     )
 
-# Fenêtre sliding (5 min, slide 1 min)
+# Sliding window (5 min, slide 1 min)
 stream SlidingMetrics = Trades
     .window(5m, sliding: 1m)
     .aggregate(sum(volume))
 ```
 
-## Agrégation multi-streams
+## Multi-stream Aggregation
 
 ```varpulis
 stream BuildingMetrics = merge(
@@ -96,7 +96,7 @@ stream BuildingMetrics = merge(
 )
 ```
 
-## Jointures
+## Joins
 
 ```varpulis
 stream EnrichedOrders = join(
@@ -143,7 +143,7 @@ stream FraudDetection = Trades
     )
 ```
 
-## Parallélisation
+## Parallelization
 
 ```varpulis
 stream OrderProcessing = Orders
@@ -169,7 +169,7 @@ stream OrderProcessing = Orders
     .collect()
 ```
 
-## Fonctions
+## Functions
 
 ```varpulis
 fn calculate_total(price: float, quantity: int) -> float:
@@ -178,12 +178,12 @@ fn calculate_total(price: float, quantity: int) -> float:
 fn is_valid_order(order: OrderEvent) -> bool:
     return order.quantity > 0 and order.price > 0
 
-# Fonction inline (lambda)
+# Inline function (lambda)
 let double = x => x * 2
 let add = (a, b) => a + b
 ```
 
-## Structures de contrôle
+## Control Structures
 
 ### Conditions
 
@@ -195,11 +195,11 @@ elif price > 100:
 else:
     category = "low"
 
-# Expression ternaire
+# Ternary expression
 let status = if active then "enabled" else "disabled"
 ```
 
-### Pattern matching
+### Pattern Matching
 
 ```varpulis
 match event.type:
@@ -209,7 +209,7 @@ match event.type:
     _ => log_unknown(event)
 ```
 
-### Boucles
+### Loops
 
 ```varpulis
 for item in items:
@@ -252,7 +252,7 @@ config:
             endpoint: "localhost:4317"
 ```
 
-## Émission vers sinks
+## Emission to Sinks
 
 ```varpulis
 stream Alerts = DetectedPatterns
@@ -263,7 +263,7 @@ stream Alerts = DetectedPatterns
     )
     .to("kafka://alerts-topic")
 
-# Ou vers plusieurs destinations
+# Or to multiple destinations
 stream Output = Processed
     .tap(log: "output", sample: 0.01)
     .emit()

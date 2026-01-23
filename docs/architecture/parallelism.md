@@ -1,6 +1,6 @@
-# Parallélisation et supervision
+# Parallelization and Supervision
 
-## Modèle de parallélisation
+## Parallelization Model
 
 ```
                     ┌─────────────┐
@@ -23,14 +23,14 @@
                     └─────────────┘
 ```
 
-## Parallélisation déclarative
+## Declarative Parallelization
 
 ```varpulis
 stream OrderProcessing = Orders
-    .partition_by(customer_id)  # Isolation automatique
+    .partition_by(customer_id)  # Automatic isolation
     .concurrent(
         max_workers: 8,
-        strategy: "consistent_hash",  # ou "round_robin"
+        strategy: "consistent_hash",  # or "round_robin"
         supervision:
             restart: "always"
             max_restarts: 3
@@ -49,24 +49,24 @@ stream OrderProcessing = Orders
     .collect()  # Remerge les résultats
 ```
 
-## Stratégies de partitionnement
+## Partitioning Strategies
 
-| Stratégie | Description | Usage |
-|-----------|-------------|-------|
-| **consistent_hash** | Hash stable de la clé | Garantie d'ordre par clé |
-| **round_robin** | Distribution égale | Load balancing |
-| **broadcast** | Envoi à tous les workers | Enrichissement, référentiels |
+| Strategy | Description | Use Case |
+|----------|-------------|----------|
+| **consistent_hash** | Stable key hashing | Order guarantee per key |
+| **round_robin** | Equal distribution | Load balancing |
+| **broadcast** | Send to all workers | Enrichment, reference data |
 
-## Supervision automatique
+## Automatic Supervision
 
 ### Configuration
 
 ```varpulis
 supervision:
-    # Stratégie de restart
-    restart_policy: "always"  # ou "on_failure", "never"
+    # Restart strategy
+    restart_policy: "always"  # or "on_failure", "never"
     
-    # Backoff exponentiel
+    # Exponential backoff
     backoff:
         initial: 1s
         max: 1m
@@ -85,23 +85,23 @@ supervision:
         timeout: 1s
 ```
 
-### Politiques de restart
+### Restart Policies
 
-| Politique | Comportement |
-|-----------|-------------|
-| **always** | Redémarre toujours après échec |
-| **on_failure** | Redémarre uniquement sur erreur |
-| **never** | Ne redémarre jamais |
+| Policy | Behavior |
+|--------|----------|
+| **always** | Always restart after failure |
+| **on_failure** | Restart only on error |
+| **never** | Never restart |
 
 ### Circuit Breaker
 
-États:
-1. **Closed**: Fonctionnement normal
-2. **Open**: Circuit ouvert après N échecs, rejette les requêtes
-3. **Half-Open**: Test de quelques requêtes pour vérifier la recovery
+States:
+1. **Closed**: Normal operation
+2. **Open**: Circuit open after N failures, rejects requests
+3. **Half-Open**: Test a few requests to verify recovery
 
-## Garanties d'ordre
+## Order Guarantees
 
-- **Par partition**: Ordre strict garanti
-- **Global**: Ordre approximatif via watermarks
-- **Exactement une fois**: Combinaison checkpointing + idempotence
+- **Per partition**: Strict order guaranteed
+- **Global**: Approximate order via watermarks
+- **Exactly once**: Checkpointing + idempotence combination

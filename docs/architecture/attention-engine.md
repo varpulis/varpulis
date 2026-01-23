@@ -1,15 +1,15 @@
 # Attention Engine
 
-## Principe
+## Principle
 
-Contrairement aux LLMs probabilistes, l'attention dans Varpulis est **déterministe** :
-- Les scores d'attention sont calculés de manière reproductible
-- Pas de génération, seulement de la corrélation
-- Les embeddings peuvent être rule-based ou appris offline
+Unlike probabilistic LLMs, attention in Varpulis is **deterministic**:
+- Attention scores are computed reproducibly
+- No generation, only correlation
+- Embeddings can be rule-based or learned offline
 
 ## Embeddings
 
-### Rule-based (par défaut)
+### Rule-based (default)
 
 ```varpulis
 embedding_config:
@@ -36,22 +36,22 @@ embedding_config:
           weight: 0.2
 ```
 
-### Learned embeddings (mode avancé)
+### Learned embeddings (advanced mode)
 
 ```varpulis
 embedding_config:
     type: "learned"
     model_path: "models/event_embeddings.safetensors"
     
-    # Le modèle a été entraîné offline sur des données historiques
-    # et génère des embeddings déterministes
-    freeze: true  # Pas de fine-tuning en production
+    # Model trained offline on historical data
+    # generates deterministic embeddings
+    freeze: true  # No fine-tuning in production
     
-    # Fallback si modèle non disponible
+    # Fallback if model unavailable
     fallback: "rule_based"
 ```
 
-## Calcul d'attention déterministe
+## Deterministic attention computation
 
 ```rust
 fn compute_attention(
@@ -66,7 +66,7 @@ fn compute_attention(
         .map(|e_hist| {
             let emb_hist = embedding_engine.embed(e_hist);
             
-            // Multi-head attention déterministe
+            // Deterministic multi-head attention
             let scores: Vec<f32> = (0..config.num_heads)
                 .map(|head| {
                     let q = project(emb_current, head, "query");
@@ -75,7 +75,7 @@ fn compute_attention(
                 })
                 .collect();
             
-            // Agrégation des heads
+            // Head aggregation
             let final_score = scores.iter().sum::<f32>() / config.num_heads;
             
             (e_hist.id, final_score)
@@ -84,9 +84,9 @@ fn compute_attention(
 }
 ```
 
-## Optimisations
+## Optimizations
 
-### Cache des embeddings
+### Embedding cache
 
 ```rust
 struct EmbeddingCache {
@@ -95,13 +95,13 @@ struct EmbeddingCache {
 }
 ```
 
-### Indexation ANN (Approximate Nearest Neighbors)
+### ANN Indexing (Approximate Nearest Neighbors)
 
 ```rust
 struct AttentionIndex {
-    // Index HNSW pour recherche rapide des événements similaires
+    // HNSW index for fast similar event search
     hnsw: HnswIndex<f32>,
-    // Seuil de similarité minimum
+    // Minimum similarity threshold
     threshold: f32
 }
 ```
@@ -111,9 +111,9 @@ struct AttentionIndex {
 ```varpulis
 attention:
     enabled: true
-    compute: "cpu"      # ou "gpu" si disponible
-    precision: "float32" # ou "float16"
-    batch_size: 1000    # pour mode throughput
-    num_heads: 4        # nombre de heads d'attention
-    dim: 128            # dimension des embeddings
+    compute: "cpu"      # or "gpu" if available
+    precision: "float32" # or "float16"
+    batch_size: 1000    # for throughput mode
+    num_heads: 4        # number of attention heads
+    dim: 128            # embedding dimension
 ```

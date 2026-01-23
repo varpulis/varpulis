@@ -1,18 +1,18 @@
-# Gestion de l'état
+# State Management
 
-## Backends supportés
+## Supported Backends
 
 ### In-Memory
 
 ```varpulis
 state:
     backend: "in_memory"
-    capacity: 1000000      # nombre max d'entrées
+    capacity: 1000000      # max entries
     eviction: "lru"        # lru, lfu, fifo
 ```
 
-**Avantages**: Latence minimale, simplicité  
-**Inconvénients**: Perte de données au redémarrage, limité par la RAM
+**Advantages**: Minimal latency, simplicity  
+**Disadvantages**: Data loss on restart, limited by RAM
 
 ### RocksDB
 
@@ -24,8 +24,8 @@ state:
     block_cache_size: 134217728  # 128 MB
 ```
 
-**Avantages**: Persistance, gestion de volumes importants  
-**Inconvénients**: Latence légèrement supérieure
+**Advantages**: Persistence, handles large volumes  
+**Disadvantages**: Slightly higher latency
 
 ## Checkpointing
 
@@ -37,7 +37,7 @@ checkpoint:
     interval: 10s
     
     strategy:
-        type: "incremental"  # ou "full"
+        type: "incremental"  # or "full"
         compression: "zstd"
         location: "s3://varpulis-checkpoints/prod/"
     
@@ -46,23 +46,23 @@ checkpoint:
         max_age: 7d
 ```
 
-### Types de checkpoints
+### Checkpoint Types
 
-| Type | Description | Usage |
-|------|-------------|-------|
-| **Full** | Snapshot complet de l'état | Recovery après crash majeur |
-| **Incremental** | Seuls les deltas depuis le dernier checkpoint | Recovery rapide, moins d'I/O |
+| Type | Description | Use Case |
+|------|-------------|----------|
+| **Full** | Complete state snapshot | Recovery after major crash |
+| **Incremental** | Only deltas since last checkpoint | Fast recovery, less I/O |
 
-### Processus de recovery
+### Recovery Process
 
-1. Identification du dernier checkpoint valide
-2. Restauration de l'état depuis le checkpoint
-3. Replay des événements depuis le dernier offset Kafka
-4. Reprise du traitement normal
+1. Identify last valid checkpoint
+2. Restore state from checkpoint
+3. Replay events from last Kafka offset
+4. Resume normal processing
 
-## Fenêtres temporelles
+## Temporal Windows
 
-### Types de fenêtres
+### Window Types
 
 ```varpulis
 # Tumbling window (non-overlapping)
@@ -81,11 +81,11 @@ stream Sessions = Events
     .aggregate(collect())
 ```
 
-### Gestion de la mémoire
+### Memory Management
 
-- Éviction automatique des données hors fenêtre
-- Watermarks pour gérer les événements tardifs
-- Configuration du délai de grâce (late events)
+- Automatic eviction of out-of-window data
+- Watermarks to handle late events
+- Grace period configuration (late events)
 
 ```varpulis
 window:

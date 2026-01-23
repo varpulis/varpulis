@@ -285,6 +285,6 @@ config_map      ::= config_entry (',' config_entry)*
 config_entry    ::= (STRING | IDENTIFIER) ':' config_value
 ```
 
-## Voir aussi
+## See Also
 
-- [Implémentation LALRPOP](../../grammar/varpulis.lalrpop)
+- [LALRPOP Implementation](../../grammar/varpulis.lalrpop)

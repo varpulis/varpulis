@@ -1,10 +1,10 @@
-# Architecture système
+# System Architecture
 
-## Vue d'ensemble
+## Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                   Varpulis Runtime Engine                    │
+│                   Varpulis Runtime Engine                   │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
@@ -21,7 +21,7 @@
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
 │  │   Ingestion  │  │    Pattern   │  │   Attention  │       │
 │  │    Layer     │──│    Matcher   │──│    Engine    │       │
-│  │              │  │  (Hypertrees)│  │(Déterministe)│       │
+│  │              │  │  (Hypertrees)│  │(Deterministic)│      │
 │  └──────────────┘  └──────────────┘  └──────────────┘       │
 │                                                             │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
@@ -37,7 +37,7 @@
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## Flow de traitement
+## Processing Flow
 
 ```
 Event Sources → Ingestion → Embedding → Pattern Matching → Aggregation → Sink
@@ -46,50 +46,50 @@ Event Sources → Ingestion → Embedding → Pattern Matching → Aggregation �
                              Scores       Structures
 ```
 
-## Composants
+## Components
 
 ### Compiler
 - Parse VarpulisQL via LALRPOP
-- Génère une IR (Intermediate Representation)
-- Optimisations statiques
+- Generates IR (Intermediate Representation)
+- Static optimizations
 
 ### Execution Graph
-- DAG (Directed Acyclic Graph) des opérations
-- Scheduling intelligent
-- Fusion d'opérateurs quand possible
+- DAG (Directed Acyclic Graph) of operations
+- Intelligent scheduling
+- Operator fusion when possible
 
 ### Ingestion Layer
-- Connecteurs sources (Kafka, fichiers, HTTP, etc.)
-- Désérialisation (JSON, Avro, Protobuf)
-- Validation de schéma
+- Source connectors (Kafka, files, HTTP, etc.)
+- Deserialization (JSON, Avro, Protobuf)
+- Schema validation
 
 ### Pattern Matcher
-- Structures hypertree pour matching efficace
-- Support patterns temporels
-- Détection de séquences
+- Hypertree structures for efficient matching
+- Temporal pattern support
+- Sequence detection
 
 ### Attention Engine
-- Voir [attention-engine.md](attention-engine.md)
+- See [attention-engine.md](attention-engine.md)
 
 ### Embedding Engine
-- Génération de vecteurs pour les événements
-- Mode rule-based ou learned
+- Vector generation for events
+- Rule-based or learned mode
 
 ### State Manager
-- Voir [state-management.md](state-management.md)
+- See [state-management.md](state-management.md)
 
 ### Aggregation Engine
-- Fonctions d'agrégation (sum, avg, count, min, max, stddev, etc.)
-- Fenêtres temporelles (tumbling, sliding, session)
-- Groupement par clé
+- Aggregation functions (sum, avg, count, min, max, stddev, etc.)
+- Temporal windows (tumbling, sliding, session)
+- Key-based grouping
 
 ### Parallelism Manager
-- Voir [parallelism.md](parallelism.md)
+- See [parallelism.md](parallelism.md)
 
 ### Observability Layer
-- Voir [observability.md](observability.md)
+- See [observability.md](observability.md)
 
 ### Checkpoint Manager
-- Snapshots de l'état
-- Recovery après crash
-- Support S3, local filesystem
+- State snapshots
+- Crash recovery
+- S3, local filesystem support

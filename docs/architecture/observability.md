@@ -23,7 +23,7 @@ varpulis_pattern_matches_total{pattern="FraudDetection"}
 varpulis_attention_computation_seconds{stream="FraudDetection"}
 ```
 
-## Configuration métriques
+## Metrics Configuration
 
 ```varpulis
 observability:
@@ -36,17 +36,17 @@ observability:
 
 ## Distributed Tracing
 
-### Spans automatiques
+### Automatic Spans
 
-Les spans sont automatiquement créés pour :
-- Ingestion d'événements
+Spans are automatically created for:
+- Event ingestion
 - Embedding calculation
 - Pattern matching
 - Attention computation
 - Aggregation
-- Emission vers sinks
+- Emission to sinks
 
-### Configuration OpenTelemetry
+### OpenTelemetry Configuration
 
 ```varpulis
 observability:
@@ -57,7 +57,7 @@ observability:
         service_name: "varpulis-engine"
         sample_rate: 0.01  # 1% sampling
         
-        # Propagation de contexte
+        # Context propagation
         propagation: ["tracecontext", "baggage"]
 ```
 
@@ -69,8 +69,8 @@ observability:
 observability:
     logging:
         level: "info"  # trace, debug, info, warn, error
-        format: "json" # ou "text"
-        output: "stdout"  # ou fichier
+        format: "json" # or "text"
+        output: "stdout"  # or file
 ```
 
 ### Structured logging
@@ -87,7 +87,7 @@ observability:
 }
 ```
 
-## Instrumentation dans le code VarpulisQL
+## Instrumentation in VarpulisQL Code
 
 ```varpulis
 stream ProcessedTrades = RawTrades
@@ -106,13 +106,13 @@ stream ProcessedTrades = RawTrades
     .emit()
 ```
 
-## Dashboard recommandé
+## Recommended Dashboard
 
-### Grafana panels suggérés
+### Suggested Grafana Panels
 
-1. **Throughput**: Events/sec par stream
-2. **Latency heatmap**: Distribution des latences
-3. **Error rate**: Taux d'erreur par stream
-4. **Queue depth**: Profondeur des queues (backpressure)
-5. **Pattern matches**: Matches/sec par pattern
+1. **Throughput**: Events/sec per stream
+2. **Latency heatmap**: Latency distribution
+3. **Error rate**: Error rate per stream
+4. **Queue depth**: Queue depth (backpressure)
+5. **Pattern matches**: Matches/sec per pattern
 6. **Resource usage**: CPU, Memory, Disk I/O

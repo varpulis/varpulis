@@ -1,21 +1,21 @@
-# VarpulisQL - Vue d'ensemble
+# VarpulisQL - Overview
 
-## Philosophie de design
+## Design Philosophy
 
-- **Tout est un Stream** : Pas de distinction artificielle listeners/streams
-- **Déclaratif** : L'utilisateur décrit QUOI, pas COMMENT
-- **Composable** : Les opérations s'enchaînent naturellement
-- **Type-safe** : Détection d'erreurs à la compilation
-- **Observable** : Métriques et traces intégrées
-- **Pythonique** : Syntaxe inspirée de Python (indentation optionnelle, clarté)
+- **Everything is a Stream**: No artificial distinction between listeners/streams
+- **Declarative**: User describes WHAT, not HOW
+- **Composable**: Operations chain naturally
+- **Type-safe**: Error detection at compile time
+- **Observable**: Built-in metrics and traces
+- **Pythonic**: Python-inspired syntax (optional indentation, clarity)
 
-## Exemple rapide
+## Quick Example
 
 ```varpulis
-# Définition d'un stream simple
+# Simple stream definition
 stream Trades from TradeEvent
 
-# Filtrage et agrégation
+# Filtering and aggregation
 stream HighValueTrades = Trades
     .where(price > 10000)
     .window(5m)
@@ -24,7 +24,7 @@ stream HighValueTrades = Trades
         count: count()
     )
 
-# Pattern detection avec attention
+# Pattern detection with attention
 stream FraudAlert = Trades
     .attention_window(30s, heads: 4)
     .pattern(
@@ -38,38 +38,38 @@ stream FraudAlert = Trades
     )
 ```
 
-## Différences avec Python
+## Differences from Python
 
 | Aspect | Python | VarpulisQL |
 |--------|--------|------------|
-| **Paradigme** | Impératif/OO | Déclaratif/Stream |
-| **Typage** | Dynamique | Statique avec inférence |
-| **Indentation** | Obligatoire | Optionnelle (préférée) |
-| **Async** | `async/await` | Implicite (tout est async) |
-| **Null** | `None` | `null` avec types optionnels |
+| **Paradigm** | Imperative/OO | Declarative/Stream |
+| **Typing** | Dynamic | Static with inference |
+| **Indentation** | Required | Optional (preferred) |
+| **Async** | `async/await` | Implicit (everything is async) |
+| **Null** | `None` | `null` with optional types |
 
-## Concepts clés
+## Key Concepts
 
 ### Streams
-Un stream est une séquence potentiellement infinie d'événements typés.
+A stream is a potentially infinite sequence of typed events.
 
 ### Events
-Un événement est un enregistrement immuable avec un timestamp.
+An event is an immutable record with a timestamp.
 
 ### Windows
-Fenêtres temporelles pour borner les calculs sur les streams.
+Temporal windows to bound computations on streams.
 
 ### Patterns
-Règles de détection sur des séquences d'événements.
+Detection rules on event sequences.
 
 ### Aggregations
-Fonctions de réduction sur les fenêtres (sum, avg, count, etc.).
+Reduction functions on windows (sum, avg, count, etc.).
 
-## Voir aussi
+## See Also
 
-- [Syntaxe complète](syntax.md)
-- [Système de types](types.md)
-- [Mots-clés réservés](keywords.md)
-- [Opérateurs](operators.md)
-- [Fonctions built-in](builtins.md)
-- [Grammaire formelle](grammar.md)
+- [Complete Syntax](syntax.md)
+- [Type System](types.md)
+- [Reserved Keywords](keywords.md)
+- [Operators](operators.md)
+- [Built-in Functions](builtins.md)
+- [Formal Grammar](grammar.md)

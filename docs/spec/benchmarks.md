@@ -1,8 +1,8 @@
-# Objectifs de performance
+# Performance Objectives
 
-## Latence (mode low_latency)
+## Latency (low_latency mode)
 
-| Percentile | Objectif |
+| Percentile | Target |
 |------------|----------|
 | p50 | < 500 µs |
 | p95 | < 2 ms |
@@ -10,43 +10,43 @@
 
 ## Throughput (mode throughput)
 
-| Scénario | Objectif |
+| Scenario | Target |
 |----------|----------|
-| Events simples | > 1M events/sec (single node) |
-| Avec attention | > 100K events/sec |
-| Avec agrégations complexes | > 500K events/sec |
+| Simple events | > 1M events/sec (single node) |
+| With attention | > 100K events/sec |
+| With complex aggregations | > 500K events/sec |
 
-## Comparaison vs Apama (indicatif)
+## Comparison vs Apama (indicative)
 
-| Métrique | Apama | Varpulis (cible) |
-|----------|-------|------------------|
-| Latence | Référence | Similaire en mode low_latency |
-| Throughput | Référence | 2-3x supérieur grâce à Rust |
-| Memory footprint | Référence | -40% |
+| Metric | Apama | Varpulis (target) |
+|--------|-------|-------------------|
+| Latency | Reference | Similar in low_latency mode |
+| Throughput | Reference | 2-3x higher thanks to Rust |
+| Memory footprint | Reference | -40% |
 
-## Modes de performance
+## Performance Modes
 
-### Mode `low_latency`
-- Priorité à la latence minimale
+### `low_latency` Mode
+- Priority on minimal latency
 - Batch size = 1
-- Pas de buffering
-- Idéal pour: trading, alerting temps réel
+- No buffering
+- Ideal for: trading, real-time alerting
 
-### Mode `throughput`
-- Priorité au débit maximal
-- Batching agressif
-- Buffering optimisé
-- Idéal pour: analytics, agrégations massives
+### `throughput` Mode
+- Priority on maximum throughput
+- Aggressive batching
+- Optimized buffering
+- Ideal for: analytics, massive aggregations
 
-### Mode `balanced`
-- Compromis latence/throughput
-- Configuration par défaut
-- Idéal pour: cas d'usage généraux
+### `balanced` Mode
+- Latency/throughput compromise
+- Default configuration
+- Ideal for: general use cases
 
-## Benchmarks à implémenter
+## Benchmarks to Implement
 
-1. **Latency benchmark**: Mesure p50/p95/p99 sur événements simples
-2. **Throughput benchmark**: Events/sec maximum soutenu
-3. **Memory benchmark**: Consommation mémoire sous charge
-4. **Pattern matching benchmark**: Complexité des patterns vs performance
-5. **Attention benchmark**: Impact du nombre de heads sur la latence
+1. **Latency benchmark**: Measure p50/p95/p99 on simple events
+2. **Throughput benchmark**: Maximum sustained events/sec
+3. **Memory benchmark**: Memory consumption under load
+4. **Pattern matching benchmark**: Pattern complexity vs performance
+5. **Attention benchmark**: Impact of head count on latency
