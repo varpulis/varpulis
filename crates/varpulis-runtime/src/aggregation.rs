@@ -175,6 +175,89 @@ pub struct Ema {
     pub period: usize,
 }
 
+/// Binary operation for expression aggregates
+#[derive(Debug, Clone, Copy)]
+pub enum AggBinOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+}
+
+/// Expression-based aggregate that combines two aggregates with an operator
+pub struct ExprAggregate {
+    pub left: Box<dyn AggregateFunc>,
+    pub left_field: Option<String>,
+    pub op: AggBinOp,
+    pub right: Box<dyn AggregateFunc>,
+    pub right_field: Option<String>,
+}
+
+impl ExprAggregate {
+    pub fn new(
+        left: Box<dyn AggregateFunc>,
+        left_field: Option<String>,
+        op: AggBinOp,
+        right: Box<dyn AggregateFunc>,
+        right_field: Option<String>,
+    ) -> Self {
+        Self { left, left_field, op, right, right_field }
+    }
+}
+
+impl AggregateFunc for ExprAggregate {
+    fn name(&self) -> &str {
+        "expr"
+    }
+
+    fn apply(&self, events: &[Event], _field: Option<&str>) -> Value {
+        let left_val = self.left.apply(events, self.left_field.as_deref());
+        let right_val = self.right.apply(events, self.right_field.as_deref());
+
+        match (left_val, right_val) {
+            (Value::Float(l), Value::Float(r)) => {
+                let result = match self.op {
+                    AggBinOp::Add => l + r,
+                    AggBinOp::Sub => l - r,
+                    AggBinOp::Mul => l * r,
+                    AggBinOp::Div => if r != 0.0 { l / r } else { f64::NAN },
+                };
+                Value::Float(result)
+            }
+            (Value::Int(l), Value::Int(r)) => {
+                let result = match self.op {
+                    AggBinOp::Add => l + r,
+                    AggBinOp::Sub => l - r,
+                    AggBinOp::Mul => l * r,
+                    AggBinOp::Div => if r != 0 { l / r } else { 0 },
+                };
+                Value::Int(result)
+            }
+            (Value::Int(l), Value::Float(r)) => {
+                let l = l as f64;
+                let result = match self.op {
+                    AggBinOp::Add => l + r,
+                    AggBinOp::Sub => l - r,
+                    AggBinOp::Mul => l * r,
+                    AggBinOp::Div => if r != 0.0 { l / r } else { f64::NAN },
+                };
+                Value::Float(result)
+            }
+            (Value::Float(l), Value::Int(r)) => {
+                let r = r as f64;
+                let result = match self.op {
+                    AggBinOp::Add => l + r,
+                    AggBinOp::Sub => l - r,
+                    AggBinOp::Mul => l * r,
+                    AggBinOp::Div => if r != 0.0 { l / r } else { f64::NAN },
+                };
+                Value::Float(result)
+            }
+            _ => Value::Null,
+        }
+    }
+}
+
 impl Ema {
     pub fn new(period: usize) -> Self {
         Self { period: period.max(1) }

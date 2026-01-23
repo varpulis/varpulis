@@ -1,6 +1,6 @@
 //! Main execution engine for Varpulis
 
-use crate::aggregation::{AggResult, Aggregator, Avg, Count, Ema, First, Last, Max, Min, StdDev, Sum};
+use crate::aggregation::{AggBinOp, AggResult, Aggregator, Avg, Count, Ema, ExprAggregate, First, Last, Max, Min, StdDev, Sum};
 use crate::event::Event;
 use crate::window::{SlidingWindow, TumblingWindow};
 use chrono::Duration;
@@ -179,58 +179,9 @@ impl Engine {
                 StreamOp::Aggregate(items) => {
                     let mut aggregator = Aggregator::new();
                     for item in items {
-                        // Extract function name and argument from the expression
-                        // Supports patterns like: func(arg) or func()
-                        let (func_name, arg_expr) = match &item.expr {
-                            varpulis_core::ast::Expr::Call { func, args } => {
-                                let name = match func.as_ref() {
-                                    varpulis_core::ast::Expr::Ident(s) => s.clone(),
-                                    _ => continue,
-                                };
-                                let arg = args.first().and_then(|a| match a {
-                                    varpulis_core::ast::Arg::Positional(e) => Some(e.clone()),
-                                    _ => None,
-                                });
-                                (name, arg)
-                            }
-                            // For complex expressions, store as-is (runtime will evaluate)
-                            _ => {
-                                warn!("Complex aggregate expression not yet supported: {:?}", item.expr);
-                                continue;
-                            }
-                        };
-                        
-                        // Extract period for EMA if provided as second argument
-                        let ema_period = match &item.expr {
-                            varpulis_core::ast::Expr::Call { args, .. } => {
-                                args.get(1).and_then(|a| match a {
-                                    varpulis_core::ast::Arg::Positional(varpulis_core::ast::Expr::Int(n)) => Some(*n as usize),
-                                    _ => None,
-                                }).unwrap_or(12) // Default EMA period
-                            }
-                            _ => 12,
-                        };
-                        
-                        let func: Box<dyn crate::aggregation::AggregateFunc> = match func_name.as_str() {
-                            "count" => Box::new(Count),
-                            "sum" => Box::new(Sum),
-                            "avg" => Box::new(Avg),
-                            "min" => Box::new(Min),
-                            "max" => Box::new(Max),
-                            "last" => Box::new(Last),
-                            "first" => Box::new(First),
-                            "stddev" => Box::new(StdDev),
-                            "ema" => Box::new(Ema::new(ema_period)),
-                            _ => {
-                                warn!("Unknown aggregation function: {}", func_name);
-                                continue;
-                            }
-                        };
-                        let field = arg_expr.as_ref().and_then(|e| match e {
-                            varpulis_core::ast::Expr::Ident(s) => Some(s.clone()),
-                            _ => None,
-                        });
-                        aggregator = aggregator.add(item.alias.clone(), func, field);
+                        if let Some((func, field)) = Self::compile_agg_expr(&item.expr) {
+                            aggregator = aggregator.add(item.alias.clone(), func, field);
+                        }
                     }
                     runtime_ops.push(RuntimeOp::Aggregate(aggregator));
                 }
@@ -255,6 +206,82 @@ impl Engine {
         }
 
         Ok(runtime_ops)
+    }
+
+    /// Compile an aggregate expression into an AggregateFunc
+    fn compile_agg_expr(expr: &varpulis_core::ast::Expr) -> Option<(Box<dyn crate::aggregation::AggregateFunc>, Option<String>)> {
+        use varpulis_core::ast::{Arg, BinOp, Expr};
+        
+        match expr {
+            // Simple function call: func(field) or func(field, param)
+            Expr::Call { func, args } => {
+                let func_name = match func.as_ref() {
+                    Expr::Ident(s) => s.clone(),
+                    _ => return None,
+                };
+                
+                let field = args.first().and_then(|a| match a {
+                    Arg::Positional(Expr::Ident(s)) => Some(s.clone()),
+                    _ => None,
+                });
+                
+                // Extract period for EMA
+                let period = args.get(1).and_then(|a| match a {
+                    Arg::Positional(Expr::Int(n)) => Some(*n as usize),
+                    _ => None,
+                }).unwrap_or(12);
+                
+                let agg_func: Box<dyn crate::aggregation::AggregateFunc> = match func_name.as_str() {
+                    "count" => Box::new(Count),
+                    "sum" => Box::new(Sum),
+                    "avg" => Box::new(Avg),
+                    "min" => Box::new(Min),
+                    "max" => Box::new(Max),
+                    "last" => Box::new(Last),
+                    "first" => Box::new(First),
+                    "stddev" => Box::new(StdDev),
+                    "ema" => Box::new(Ema::new(period)),
+                    _ => {
+                        warn!("Unknown aggregation function: {}", func_name);
+                        return None;
+                    }
+                };
+                
+                Some((agg_func, field))
+            }
+            
+            // Binary expression: left op right (e.g., last(x) - ema(x, 9))
+            Expr::Binary { op, left, right } => {
+                let agg_op = match op {
+                    BinOp::Add => AggBinOp::Add,
+                    BinOp::Sub => AggBinOp::Sub,
+                    BinOp::Mul => AggBinOp::Mul,
+                    BinOp::Div => AggBinOp::Div,
+                    _ => {
+                        warn!("Unsupported binary operator in aggregate: {:?}", op);
+                        return None;
+                    }
+                };
+                
+                let (left_func, left_field) = Self::compile_agg_expr(left)?;
+                let (right_func, right_field) = Self::compile_agg_expr(right)?;
+                
+                let expr_agg = ExprAggregate::new(
+                    left_func,
+                    left_field,
+                    agg_op,
+                    right_func,
+                    right_field,
+                );
+                
+                Some((Box::new(expr_agg), None))
+            }
+            
+            _ => {
+                warn!("Unsupported aggregate expression: {:?}", expr);
+                None
+            }
+        }
     }
 
     /// Process an incoming event
