@@ -141,6 +141,14 @@ impl Engine {
                     .push(name.to_string());
                 RuntimeSource::EventType(event_type.clone())
             }
+            StreamSource::AllWithAlias { name: event_type, .. } => {
+                // Register for the event type (all + alias handled in sequence)
+                self.event_sources
+                    .entry(event_type.clone())
+                    .or_default()
+                    .push(name.to_string());
+                RuntimeSource::EventType(event_type.clone())
+            }
             StreamSource::Join(clauses) => {
                 let sources: Vec<String> = clauses.iter().map(|c| c.source.clone()).collect();
                 info!("Registering join stream {} from sources: {:?}", name, sources);
@@ -185,12 +193,14 @@ impl Engine {
         // Check if we have any FollowedBy operations - if so, add source as first step
         let has_sequence = ops.iter().any(|op| matches!(op, StreamOp::FollowedBy(_)));
         if has_sequence {
-            let (source_event_type, source_alias) = match source {
-                StreamSource::Ident(name) => (name.clone(), None),
-                StreamSource::IdentWithAlias { name, alias } => (name.clone(), Some(alias.clone())),
-                StreamSource::From(name) => (name.clone(), None),
+            let (source_event_type, source_alias, source_match_all) = match source {
+                StreamSource::Ident(name) => (name.clone(), None, false),
+                StreamSource::IdentWithAlias { name, alias } => (name.clone(), Some(alias.clone()), false),
+                StreamSource::AllWithAlias { name, alias } => (name.clone(), alias.clone(), true),
+                StreamSource::From(name) => (name.clone(), None, false),
                 _ => return Err("Sequences require a single event type source".to_string()),
             };
+            match_all_first = source_match_all;
             // First step is the source event type
             sequence_steps.push(SequenceStep {
                 event_type: source_event_type,
@@ -214,10 +224,7 @@ impl Engine {
                         timeout: current_timeout.take(),
                         match_all: clause.match_all,
                     };
-                    if sequence_steps.len() == 1 {
-                        // First FollowedBy, check if source should be match_all
-                        match_all_first = clause.match_all;
-                    }
+                    // Note: match_all_first is set from source (AllWithAlias), not from FollowedBy
                     sequence_event_types.push(clause.event_type.clone());
                     sequence_steps.push(step);
                     continue;
@@ -808,9 +815,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_engine_all_in_source() {
+        // Test 'all' in source position - starts multiple correlations
+        let source = r#"
+            stream AllNews = all News as news
+                -> Tick as tick
+                .emit(matched: "yes")
+        "#;
+
+        let program = parse_program(source);
+        let (tx, mut rx) = mpsc::channel(100);
+        let mut engine = Engine::new(tx);
+        engine.load(&program).unwrap();
+
+        // Multiple News events should each start a correlation
+        engine.process(Event::new("News").with_field("id", 1i64)).await.unwrap();
+        engine.process(Event::new("News").with_field("id", 2i64)).await.unwrap();
+        assert!(rx.try_recv().is_err()); // No alerts yet
+
+        // One Tick should complete BOTH correlations
+        engine.process(Event::new("Tick").with_field("price", 100.0)).await.unwrap();
+        assert!(rx.try_recv().is_ok()); // First match
+        assert!(rx.try_recv().is_ok()); // Second match
+    }
+
+    #[tokio::test]
     async fn test_engine_match_all_sequence() {
-        // Note: 'all' in source position requires parser/AST changes
-        // For now, test match_all in FollowedBy position
+        // Test match_all in FollowedBy position
         let source = r#"
             stream AllTicks = News as news
                 -> all Tick as tick

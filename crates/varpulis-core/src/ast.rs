@@ -87,6 +87,8 @@ pub enum StreamSource {
     Ident(String),
     /// Event type with optional alias: `EventType as alias`
     IdentWithAlias { name: String, alias: String },
+    /// Event type with all quantifier and optional alias: `all EventType as alias`
+    AllWithAlias { name: String, alias: Option<String> },
     /// From event type: `from EventType`
     From(String),
     /// Merge multiple streams

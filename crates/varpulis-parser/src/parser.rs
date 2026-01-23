@@ -274,16 +274,21 @@ impl<'source> Parser<'source> {
             return Ok(StreamSource::Join(clauses));
         }
 
-        // Handle 'all' quantifier: `all EventType`
-        // For now, we skip 'all' and just parse the identifier
-        // The 'all' semantics will be handled at runtime
-        let _match_all = self.match_token(&Token::All);
+        // Handle 'all' quantifier: `all EventType as alias`
+        let match_all = self.match_token(&Token::All);
 
         let name = self.parse_identifier()?;
         
         // Handle optional alias: `EventType as alias`
-        if self.match_token(&Token::As) {
-            let alias = self.parse_identifier()?;
+        let alias = if self.match_token(&Token::As) {
+            Some(self.parse_identifier()?)
+        } else {
+            None
+        };
+
+        if match_all {
+            Ok(StreamSource::AllWithAlias { name, alias })
+        } else if let Some(alias) = alias {
             Ok(StreamSource::IdentWithAlias { name, alias })
         } else {
             Ok(StreamSource::Ident(name))
