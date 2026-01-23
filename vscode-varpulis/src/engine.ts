@@ -537,6 +537,18 @@ export class VarpulisEngine {
                     this.metricsHandlers.forEach(h => h(this.metrics));
                     break;
 
+                case 'load_result':
+                    // Handled by loadFile's dedicated listener
+                    break;
+
+                case 'event_injected':
+                    // Silent acknowledgment - event was processed
+                    break;
+
+                case 'error':
+                    this.outputChannel.appendLine(`[engine] Error: ${message.message}`);
+                    break;
+
                 default:
                     this.outputChannel.appendLine(`[ws] Unknown message type: ${message.type}`);
             }
