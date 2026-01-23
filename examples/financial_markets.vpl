@@ -417,6 +417,54 @@ stream AnomalousActivity = Ticks
     )
 
 # =============================================================================
+# Temporal Sequence Patterns (using -> operator)
+# =============================================================================
+
+# News-Driven Price Movement Detection
+# Detect when a news event is followed by significant price movement
+stream NewsDrivenMove = NewsEvent as news
+    -> MarketTick where symbol == news.symbol and price > news.pre_price * 1.02 as spike
+    .within(5m)
+    .emit(
+        signal_type: "NEWS_DRIVEN_SPIKE",
+        symbol: news.symbol,
+        news_headline: news.headline,
+        price_change: (spike.price - news.pre_price) / news.pre_price,
+        reaction_time: spike.ts - news.ts
+    )
+
+# Pump and Dump Detection Sequence
+# Detect rapid price increase followed by volume spike and then price drop
+stream PumpAndDump = MarketTick as pump_start
+    -> MarketTick where symbol == pump_start.symbol and price >= pump_start.price * 1.10 as peak
+    .within(30m)
+    -> MarketTick where symbol == pump_start.symbol and price <= peak.price * 0.85 as dump
+    .within(1h)
+    .emit(
+        signal_type: "PUMP_AND_DUMP",
+        direction: "ALERT",
+        symbol: pump_start.symbol,
+        pump_gain: (peak.price - pump_start.price) / pump_start.price,
+        dump_loss: (dump.price - peak.price) / peak.price,
+        confidence: 0.9
+    )
+
+# Order Fill Sequence (for execution quality analysis)
+stream OrderExecution = OrderSubmit as order
+    -> OrderAck where order_id == order.id as ack
+    .within(100ms)
+    -> OrderFill where order_id == order.id as fill
+    .within(1s)
+    .emit(
+        signal_type: "ORDER_EXECUTED",
+        order_id: order.id,
+        symbol: order.symbol,
+        ack_latency: ack.ts - order.ts,
+        fill_latency: fill.ts - order.ts,
+        slippage: fill.price - order.limit_price
+    )
+
+# =============================================================================
 # Aggregate All Signals
 # =============================================================================
 
