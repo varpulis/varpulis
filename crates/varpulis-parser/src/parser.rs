@@ -1238,33 +1238,44 @@ impl<'source> Parser<'source> {
             Token::LParen => {
                 self.advance();
                 
-                // Check for lambda with multiple params: (a, b) => expr
+                // Check for multi-param lambda: (a, b) => expr
+                // We need to look ahead to see if this is a lambda parameter list
                 if let Token::Ident(_) = &self.current.token {
+                    // Save position to potentially backtrack
+                    let saved_pos = self.current.start;
                     let first_ident = self.parse_identifier()?;
                     
-                    if self.match_token(&Token::Comma) {
-                        // Check if next token is also identifier (lambda params)
-                        if let Token::Ident(_) = &self.current.token {
-                            // Multiple params lambda
-                            let mut params = vec![first_ident];
-                            params.push(self.parse_identifier()?);
-                            while self.match_token(&Token::Comma) {
-                                if let Token::Ident(_) = &self.current.token {
-                                    params.push(self.parse_identifier()?);
-                                } else {
-                                    break;
-                                }
+                    // Check for multi-param lambda: (a, b) => ...
+                    if self.check(&Token::Comma) {
+                        // Peek ahead to see if all items are identifiers followed by )
+                        // For simplicity, try to parse as lambda params
+                        let mut params = vec![first_ident.clone()];
+                        let mut is_lambda = true;
+                        
+                        while self.match_token(&Token::Comma) {
+                            if let Token::Ident(_) = &self.current.token {
+                                params.push(self.parse_identifier()?);
+                            } else {
+                                is_lambda = false;
+                                break;
                             }
-                            self.consume(&Token::RParen, ")")?;
-                            self.consume(&Token::FatArrow, "=>")?;
-                            let body = self.parse_expr()?;
-                            return Ok(Expr::Lambda {
-                                params,
-                                body: Box::new(body),
-                            });
                         }
-                        // Not a lambda - it's an expression like (a, b) which is invalid
-                        // or a tuple which we don't support - fall through to error
+                        
+                        if is_lambda && self.match_token(&Token::RParen) {
+                            if self.match_token(&Token::FatArrow) {
+                                let body = self.parse_expr()?;
+                                return Ok(Expr::Lambda {
+                                    params,
+                                    body: Box::new(body),
+                                });
+                            }
+                        }
+                        // Not a valid lambda - this is a parse error for tuples
+                        return Err(ParseError::UnexpectedToken {
+                            position: self.current.start,
+                            expected: "=> for lambda".to_string(),
+                            found: format!("{}", self.current.token),
+                        });
                     } else if self.match_token(&Token::RParen) {
                         // Single param lambda: (x) => expr, or just grouped ident (x)
                         if self.match_token(&Token::FatArrow) {
@@ -1274,18 +1285,72 @@ impl<'source> Parser<'source> {
                                 body: Box::new(body),
                             });
                         }
-                        // It was just (ident)
+                        // It was just (ident) - return the identifier
                         return Ok(Expr::Ident(first_ident));
                     } else {
-                        // It's a grouped expression starting with identifier: (x + y)
-                        // Continue parsing using the identifier as left side of binary expr
-                        let left = Expr::Ident(first_ident);
-                        let expr = self.continue_binary_expr(left)?;
+                        // It's a grouped expression starting with identifier
+                        // Could be (x + y), (func(a).b), etc.
+                        // Build the initial expression and continue with postfix/binary
+                        let mut expr = Expr::Ident(first_ident);
+                        
+                        // Handle postfix operations (function calls, member access)
+                        loop {
+                            if self.match_token(&Token::Dot) {
+                                let member = self.parse_identifier()?;
+                                if self.check(&Token::LParen) {
+                                    // Method call
+                                    self.advance();
+                                    let args = if !self.check(&Token::RParen) {
+                                        self.parse_arg_list()?
+                                    } else {
+                                        Vec::new()
+                                    };
+                                    self.consume(&Token::RParen, ")")?;
+                                    expr = Expr::Call {
+                                        func: Box::new(Expr::Member {
+                                            expr: Box::new(expr),
+                                            member,
+                                        }),
+                                        args,
+                                    };
+                                } else {
+                                    expr = Expr::Member {
+                                        expr: Box::new(expr),
+                                        member,
+                                    };
+                                }
+                            } else if self.match_token(&Token::LParen) {
+                                // Function call
+                                let args = if !self.check(&Token::RParen) {
+                                    self.parse_arg_list()?
+                                } else {
+                                    Vec::new()
+                                };
+                                self.consume(&Token::RParen, ")")?;
+                                expr = Expr::Call {
+                                    func: Box::new(expr),
+                                    args,
+                                };
+                            } else if self.match_token(&Token::LBracket) {
+                                let index = self.parse_expr()?;
+                                self.consume(&Token::RBracket, "]")?;
+                                expr = Expr::Index {
+                                    expr: Box::new(expr),
+                                    index: Box::new(index),
+                                };
+                            } else {
+                                break;
+                            }
+                        }
+                        
+                        // Now continue with binary operators
+                        let expr = self.continue_binary_expr(expr)?;
                         self.consume(&Token::RParen, ")")?;
                         return Ok(expr);
                     }
                 }
                 
+                // Not starting with identifier - parse full expression
                 let expr = self.parse_expr()?;
                 self.consume(&Token::RParen, ")")?;
                 Ok(expr)
@@ -1700,6 +1765,18 @@ mod tests {
     #[test]
     fn test_parse_member_access() {
         let result = parse("let x = obj.field.subfield");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_complex_parenthesized_expr() {
+        let result = parse("let x = (last(events).price - first(events).price) / first(events).price");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_function_call_with_member_access() {
+        let result = parse("let x = avg(events.volume) > 3 * baseline_volume(events[0].symbol)");
         assert!(result.is_ok());
     }
 

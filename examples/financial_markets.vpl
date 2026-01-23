@@ -402,12 +402,8 @@ stream AnomalousActivity = Ticks
     )
     .pattern(
         pump_detection: events => {
-            let last_price = last(events).price
-            let first_price = first(events).price
-            let price_change = last_price - first_price / first_price
-            let avg_volume = avg(events.volume)
-            let base_vol = baseline_volume(events[0].symbol)
-            let volume_spike = avg_volume > 3 * base_vol
+            let price_change = (last(events).price - first(events).price) / first(events).price
+            let volume_spike = avg(events.volume) > 3 * baseline_volume(events[0].symbol)
             let correlation = events.sliding_pairs().map((e1, e2) => attention_score(e1, e2)).filter(score => score > 0.9).count()
             price_change > 0.05 and volume_spike and correlation > 10
         }
