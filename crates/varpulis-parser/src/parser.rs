@@ -2394,4 +2394,241 @@ mod tests {
         let result = parse("let x = $.field");
         assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
     }
+
+    // ========================================================================
+    // Additional Coverage Tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_nested_binary_expr() {
+        let result = parse("let x = (a + b) * (c - d)");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_comparison_operators() {
+        assert!(parse("let x = a < b").is_ok());
+        assert!(parse("let x = a <= b").is_ok());
+        assert!(parse("let x = a > b").is_ok());
+        assert!(parse("let x = a >= b").is_ok());
+        assert!(parse("let x = a == b").is_ok());
+        assert!(parse("let x = a != b").is_ok());
+    }
+
+    #[test]
+    fn test_parse_logical_operators() {
+        assert!(parse("let x = a and b").is_ok());
+        assert!(parse("let x = a or b").is_ok());
+        assert!(parse("let x = not a").is_ok());
+    }
+
+    #[test]
+    fn test_parse_unary_minus() {
+        let result = parse("let x = -5");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_array_literal() {
+        let result = parse("let arr = [1, 2, 3]");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_array_access() {
+        let result = parse("let x = arr[0]");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_member_access_chain() {
+        let result = parse("let x = a.b.c.d");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_function_call() {
+        let result = parse("let x = max(a, b)");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_function_call_no_args() {
+        let result = parse("let x = now()");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_duration_literals() {
+        assert!(parse("let d = 100ms").is_ok());
+        assert!(parse("let d = 5s").is_ok());
+        assert!(parse("let d = 10m").is_ok());
+        assert!(parse("let d = 2h").is_ok());
+        assert!(parse("let d = 1d").is_ok());
+    }
+
+    #[test]
+    fn test_parse_string_escape() {
+        let result = parse(r#"let s = "hello\nworld""#);
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_sliding_window() {
+        let result = parse("stream S = Source.window(5m, sliding: 1m)");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_window_with_partition() {
+        let result = parse("stream S = Source.partition_by(zone).window(5m)");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_aggregate_functions() {
+        let result = parse("stream S = Source.window(1m).aggregate(
+            total: sum(value),
+            average: avg(value),
+            minimum: min(value),
+            maximum: max(value),
+            cnt: count(),
+            std: stddev(value),
+            first_val: first(value),
+            last_val: last(value)
+        )");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_merge() {
+        let result = parse("stream S = merge(StreamA, StreamB)");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_complex_filter() {
+        let result = parse("stream S = Source.where(price > 100 and (status == \"active\" or priority >= 5))");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_boolean_literal() {
+        assert!(parse("let t = true").is_ok());
+        assert!(parse("let f = false").is_ok());
+    }
+
+    #[test]
+    fn test_parse_null_literal() {
+        let result = parse("let n = null");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_float_literal() {
+        assert!(parse("let x = 3.14").is_ok());
+        assert!(parse("let x = 0.5").is_ok());
+        assert!(parse("let x = 100.0").is_ok());
+    }
+
+    #[test]
+    fn test_parse_integer_literal() {
+        assert!(parse("let x = 0").is_ok());
+        assert!(parse("let x = 42").is_ok());
+        assert!(parse("let x = 1000000").is_ok());
+    }
+
+    #[test]
+    fn test_parse_source_alias() {
+        let result = parse("stream S = Event as e -> Other .emit(x: e.id)");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_chained_operations() {
+        let result = parse("stream S = Source.where(x > 0).select(y: x * 2).emit(z: y)");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_empty_emit() {
+        let result = parse("stream S = A -> B .emit()");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_multiple_within() {
+        let result = parse("stream S = A -> B.within(1m) -> C.within(2m)");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_ema_aggregate() {
+        let result = parse("stream S = Source.window(1h).aggregate(ema_val: ema(price, 12))");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_arithmetic_in_filter() {
+        let result = parse("stream S = A -> B where value == a.base + 10 * 2");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_modulo_operator() {
+        let result = parse("let x = a % b");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_division() {
+        let result = parse("let x = a / b");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_all_in_followed_by() {
+        let result = parse("stream S = A -> all B as b .emit(x: \"matched\")");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_nested_member_access_in_filter() {
+        let result = parse("stream S = A as a -> B where data.nested.field == a.other.value");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    // ========================================================================
+    // Error Cases
+    // ========================================================================
+
+    #[test]
+    fn test_parse_error_unclosed_paren_nested() {
+        let result = parse("let x = ((a + b)");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_error_unclosed_bracket_array() {
+        let result = parse("let arr = [1, 2, 3");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_error_missing_rhs() {
+        let result = parse("let x = a +");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_error_stream_no_name() {
+        let result = parse("stream = Source");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_error_consecutive_dots() {
+        let result = parse("stream S = Source..where(x > 0)");
+        assert!(result.is_err());
+    }
 }

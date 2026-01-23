@@ -178,4 +178,49 @@ mod tests {
         assert!(output.contains("varpulis_events_total"));
         assert!(output.contains("varpulis_alerts_total"));
     }
+
+    #[test]
+    fn test_metrics_default() {
+        let metrics = Metrics::default();
+        metrics.record_event("Test");
+        let output = metrics.gather();
+        assert!(output.contains("varpulis_events_total"));
+    }
+
+    #[test]
+    fn test_metrics_multiple_events() {
+        let metrics = Metrics::new();
+        for i in 0..10 {
+            metrics.record_event(&format!("Event{}", i));
+        }
+        let output = metrics.gather();
+        assert!(output.contains("varpulis_events_total"));
+    }
+
+    #[test]
+    fn test_metrics_multiple_alerts() {
+        let metrics = Metrics::new();
+        metrics.record_alert("critical", "high");
+        metrics.record_alert("warning", "medium");
+        metrics.record_alert("info", "low");
+        let output = metrics.gather();
+        assert!(output.contains("varpulis_alerts_total"));
+    }
+
+    #[test]
+    fn test_metrics_processing_histogram() {
+        let metrics = Metrics::new();
+        metrics.record_processing("stream1", 0.001);
+        metrics.record_processing("stream1", 0.002);
+        metrics.record_processing("stream2", 0.005);
+        let output = metrics.gather();
+        assert!(output.contains("varpulis_processing_latency_seconds"));
+    }
+
+    #[test]
+    fn test_metrics_server_new() {
+        let metrics = Metrics::new();
+        let server = MetricsServer::new(metrics, "127.0.0.1:0");
+        assert_eq!(server.addr, "127.0.0.1:0");
+    }
 }
