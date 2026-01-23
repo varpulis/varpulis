@@ -1,0 +1,465 @@
+# Financial Markets - Technical Analysis & Pattern Detection
+# Varpulis CEP Engine Example
+#
+# This example demonstrates real-time trading signals using:
+# - Technical indicators (SMA, EMA, RSI, Bollinger Bands, MACD)
+# - Pattern detection with attention mechanism
+# - Multi-timeframe analysis
+
+# =============================================================================
+# Event Definitions
+# =============================================================================
+
+event MarketTick:
+    symbol: string
+    price: float
+    volume: int
+    bid: float
+    ask: float
+    timestamp: timestamp
+
+event OHLCV:
+    symbol: string
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+    timeframe: string  # "1m", "5m", "15m", "1h", "4h", "1d"
+    timestamp: timestamp
+
+# =============================================================================
+# Base Streams
+# =============================================================================
+
+stream Ticks from MarketTick
+stream Candles from OHLCV
+
+# Filter by symbol
+stream BTCTicks = Ticks.where(symbol == "BTC/USD")
+stream ETHTicks = Ticks.where(symbol == "ETH/USD")
+
+# =============================================================================
+# Moving Averages (SMA & EMA)
+# =============================================================================
+
+# Simple Moving Average - 20 periods
+stream SMA20 = Candles
+    .where(timeframe == "1h")
+    .partition_by(symbol)
+    .window(20, count_based: true)
+    .aggregate(
+        symbol: last(symbol),
+        sma_20: avg(close),
+        timestamp: last(timestamp)
+    )
+
+# Simple Moving Average - 50 periods
+stream SMA50 = Candles
+    .where(timeframe == "1h")
+    .partition_by(symbol)
+    .window(50, count_based: true)
+    .aggregate(
+        symbol: last(symbol),
+        sma_50: avg(close),
+        timestamp: last(timestamp)
+    )
+
+# Exponential Moving Average - 12 periods (for MACD)
+stream EMA12 = Candles
+    .where(timeframe == "1h")
+    .partition_by(symbol)
+    .window(12, count_based: true)
+    .aggregate(
+        symbol: last(symbol),
+        ema_12: ema(close, 12),
+        timestamp: last(timestamp)
+    )
+
+# Exponential Moving Average - 26 periods (for MACD)
+stream EMA26 = Candles
+    .where(timeframe == "1h")
+    .partition_by(symbol)
+    .window(26, count_based: true)
+    .aggregate(
+        symbol: last(symbol),
+        ema_26: ema(close, 26),
+        timestamp: last(timestamp)
+    )
+
+# =============================================================================
+# MACD (Moving Average Convergence Divergence)
+# =============================================================================
+
+stream MACD = join(EMA12, EMA26)
+    .on(EMA12.symbol == EMA26.symbol)
+    .window(1m)
+    .select(
+        symbol: EMA12.symbol,
+        macd_line: EMA12.ema_12 - EMA26.ema_26,
+        timestamp: EMA12.timestamp
+    )
+
+# MACD Signal Line (9-period EMA of MACD)
+stream MACDSignal = MACD
+    .partition_by(symbol)
+    .window(9, count_based: true)
+    .aggregate(
+        symbol: last(symbol),
+        macd_line: last(macd_line),
+        signal_line: ema(macd_line, 9),
+        histogram: last(macd_line) - ema(macd_line, 9),
+        timestamp: last(timestamp)
+    )
+
+# =============================================================================
+# RSI (Relative Strength Index)
+# =============================================================================
+
+stream PriceChanges = Candles
+    .where(timeframe == "1h")
+    .partition_by(symbol)
+    .window(2, count_based: true)
+    .select(
+        symbol: last(symbol),
+        change: last(close) - first(close),
+        gain: if last(close) > first(close) then last(close) - first(close) else 0,
+        loss: if last(close) < first(close) then first(close) - last(close) else 0,
+        timestamp: last(timestamp)
+    )
+
+stream RSI = PriceChanges
+    .partition_by(symbol)
+    .window(14, count_based: true)
+    .aggregate(
+        symbol: last(symbol),
+        avg_gain: avg(gain),
+        avg_loss: avg(loss),
+        timestamp: last(timestamp)
+    )
+    .select(
+        symbol,
+        rsi: 100 - (100 / (1 + avg_gain / max(avg_loss, 0.0001))),
+        timestamp
+    )
+
+# =============================================================================
+# Bollinger Bands
+# =============================================================================
+
+stream BollingerBands = Candles
+    .where(timeframe == "1h")
+    .partition_by(symbol)
+    .window(20, count_based: true)
+    .aggregate(
+        symbol: last(symbol),
+        close: last(close),
+        sma: avg(close),
+        std_dev: stddev(close),
+        timestamp: last(timestamp)
+    )
+    .select(
+        symbol,
+        close,
+        middle_band: sma,
+        upper_band: sma + 2 * std_dev,
+        lower_band: sma - 2 * std_dev,
+        bandwidth: (sma + 2 * std_dev - (sma - 2 * std_dev)) / sma * 100,
+        percent_b: (close - (sma - 2 * std_dev)) / ((sma + 2 * std_dev) - (sma - 2 * std_dev)),
+        timestamp
+    )
+
+# =============================================================================
+# Combined Technical Indicators
+# =============================================================================
+
+stream TechnicalAnalysis = join(
+    SMA20,
+    SMA50,
+    RSI,
+    BollingerBands,
+    MACDSignal
+)
+.on(
+    SMA20.symbol == SMA50.symbol,
+    SMA50.symbol == RSI.symbol,
+    RSI.symbol == BollingerBands.symbol,
+    BollingerBands.symbol == MACDSignal.symbol
+)
+.window(1m)
+.select(
+    symbol: SMA20.symbol,
+    price: BollingerBands.close,
+    sma_20: SMA20.sma_20,
+    sma_50: SMA50.sma_50,
+    rsi: RSI.rsi,
+    bb_upper: BollingerBands.upper_band,
+    bb_lower: BollingerBands.lower_band,
+    bb_percent_b: BollingerBands.percent_b,
+    macd: MACDSignal.macd_line,
+    macd_signal: MACDSignal.signal_line,
+    macd_histogram: MACDSignal.histogram,
+    timestamp: SMA20.timestamp
+)
+
+# =============================================================================
+# Trading Signals
+# =============================================================================
+
+# Golden Cross (SMA20 crosses above SMA50) - Bullish
+stream GoldenCross = TechnicalAnalysis
+    .partition_by(symbol)
+    .window(2, count_based: true)
+    .where(
+        first(sma_20) < first(sma_50) and
+        last(sma_20) > last(sma_50)
+    )
+    .emit(
+        signal_type: "GOLDEN_CROSS",
+        direction: "BUY",
+        symbol: last(symbol),
+        price: last(price),
+        confidence: 0.7,
+        reason: "SMA20 crossed above SMA50 - bullish trend reversal"
+    )
+
+# Death Cross (SMA20 crosses below SMA50) - Bearish
+stream DeathCross = TechnicalAnalysis
+    .partition_by(symbol)
+    .window(2, count_based: true)
+    .where(
+        first(sma_20) > first(sma_50) and
+        last(sma_20) < last(sma_50)
+    )
+    .emit(
+        signal_type: "DEATH_CROSS",
+        direction: "SELL",
+        symbol: last(symbol),
+        price: last(price),
+        confidence: 0.7,
+        reason: "SMA20 crossed below SMA50 - bearish trend reversal"
+    )
+
+# RSI Oversold (RSI < 30) - Potential Buy
+stream RSIOversold = TechnicalAnalysis
+    .where(rsi < 30)
+    .emit(
+        signal_type: "RSI_OVERSOLD",
+        direction: "BUY",
+        symbol: symbol,
+        price: price,
+        rsi: rsi,
+        confidence: 0.6,
+        reason: "RSI below 30 - asset may be oversold"
+    )
+
+# RSI Overbought (RSI > 70) - Potential Sell
+stream RSIOverbought = TechnicalAnalysis
+    .where(rsi > 70)
+    .emit(
+        signal_type: "RSI_OVERBOUGHT",
+        direction: "SELL",
+        symbol: symbol,
+        price: price,
+        rsi: rsi,
+        confidence: 0.6,
+        reason: "RSI above 70 - asset may be overbought"
+    )
+
+# Bollinger Band Squeeze (Low volatility, potential breakout)
+stream BBSqueeze = BollingerBands
+    .where(bandwidth < 5)
+    .emit(
+        signal_type: "BB_SQUEEZE",
+        direction: "WATCH",
+        symbol: symbol,
+        price: close,
+        bandwidth: bandwidth,
+        confidence: 0.5,
+        reason: "Bollinger Bands squeeze - expect volatility breakout"
+    )
+
+# Bollinger Band Breakout (Price above upper band)
+stream BBBreakoutUp = BollingerBands
+    .where(close > upper_band)
+    .emit(
+        signal_type: "BB_BREAKOUT_UP",
+        direction: "BUY",
+        symbol: symbol,
+        price: close,
+        upper_band: upper_band,
+        confidence: 0.65,
+        reason: "Price broke above upper Bollinger Band"
+    )
+
+# Bollinger Band Breakdown (Price below lower band)
+stream BBBreakoutDown = BollingerBands
+    .where(close < lower_band)
+    .emit(
+        signal_type: "BB_BREAKOUT_DOWN",
+        direction: "SELL",
+        symbol: symbol,
+        price: close,
+        lower_band: lower_band,
+        confidence: 0.65,
+        reason: "Price broke below lower Bollinger Band"
+    )
+
+# MACD Bullish Crossover
+stream MACDBullish = MACDSignal
+    .partition_by(symbol)
+    .window(2, count_based: true)
+    .where(
+        first(macd_line) < first(signal_line) and
+        last(macd_line) > last(signal_line)
+    )
+    .emit(
+        signal_type: "MACD_BULLISH",
+        direction: "BUY",
+        symbol: last(symbol),
+        macd: last(macd_line),
+        signal: last(signal_line),
+        confidence: 0.65,
+        reason: "MACD crossed above signal line"
+    )
+
+# MACD Bearish Crossover
+stream MACDBearish = MACDSignal
+    .partition_by(symbol)
+    .window(2, count_based: true)
+    .where(
+        first(macd_line) > first(signal_line) and
+        last(macd_line) < last(signal_line)
+    )
+    .emit(
+        signal_type: "MACD_BEARISH",
+        direction: "SELL",
+        symbol: last(symbol),
+        macd: last(macd_line),
+        signal: last(signal_line),
+        confidence: 0.65,
+        reason: "MACD crossed below signal line"
+    )
+
+# =============================================================================
+# Multi-Signal Confluence (Higher confidence)
+# =============================================================================
+
+stream StrongBuySignal = TechnicalAnalysis
+    .where(
+        rsi < 35 and
+        bb_percent_b < 0.2 and
+        macd_histogram > 0 and
+        sma_20 > sma_50
+    )
+    .emit(
+        signal_type: "STRONG_BUY",
+        direction: "BUY",
+        symbol: symbol,
+        price: price,
+        confidence: 0.85,
+        indicators: {
+            rsi: rsi,
+            bb_percent_b: bb_percent_b,
+            macd_histogram: macd_histogram,
+            trend: "bullish"
+        },
+        reason: "Multiple bullish indicators aligned: RSI oversold, price near lower BB, positive MACD histogram, uptrend"
+    )
+
+stream StrongSellSignal = TechnicalAnalysis
+    .where(
+        rsi > 65 and
+        bb_percent_b > 0.8 and
+        macd_histogram < 0 and
+        sma_20 < sma_50
+    )
+    .emit(
+        signal_type: "STRONG_SELL",
+        direction: "SELL",
+        symbol: symbol,
+        price: price,
+        confidence: 0.85,
+        indicators: {
+            rsi: rsi,
+            bb_percent_b: bb_percent_b,
+            macd_histogram: macd_histogram,
+            trend: "bearish"
+        },
+        reason: "Multiple bearish indicators aligned: RSI overbought, price near upper BB, negative MACD histogram, downtrend"
+    )
+
+# =============================================================================
+# Pattern Detection with Attention (Advanced)
+# =============================================================================
+
+stream AnomalousActivity = Ticks
+    .partition_by(symbol)
+    .attention_window(
+        duration: 5m,
+        heads: 4,
+        embedding: "rule_based"
+    )
+    .pattern(
+        pump_detection: events =>
+            let price_change = (last(events).price - first(events).price) / first(events).price
+            let volume_spike = avg(events.volume) > 3 * baseline_volume(events[0].symbol)
+            let correlation = events
+                .sliding_pairs()
+                .map((e1, e2) => attention_score(e1, e2))
+                .filter(score => score > 0.9)
+                .count()
+            
+            price_change > 0.05 and volume_spike and correlation > 10
+    )
+    .emit(
+        signal_type: "PUMP_DETECTED",
+        direction: "CAUTION",
+        symbol: symbol,
+        confidence: 0.75,
+        reason: "Unusual price and volume activity detected - possible pump"
+    )
+
+# =============================================================================
+# Aggregate All Signals
+# =============================================================================
+
+stream AllSignals = merge(
+    GoldenCross,
+    DeathCross,
+    RSIOversold,
+    RSIOverbought,
+    BBSqueeze,
+    BBBreakoutUp,
+    BBBreakoutDown,
+    MACDBullish,
+    MACDBearish,
+    StrongBuySignal,
+    StrongSellSignal,
+    AnomalousActivity
+)
+.tap(metrics: counter: "trading_signals_total", labels: [signal_type, direction])
+.emit()
+.to([
+    "kafka://trading-signals",
+    "http://webhook.trading-bot.local/signals"
+])
+
+# =============================================================================
+# Configuration
+# =============================================================================
+
+config:
+    mode: "low_latency"
+    
+    state:
+        backend: "rocksdb"
+        path: "/var/lib/varpulis/financial"
+    
+    observability:
+        metrics:
+            enabled: true
+            endpoint: "0.0.0.0:9090"
+        tracing:
+            enabled: true
+            sample_rate: 0.1

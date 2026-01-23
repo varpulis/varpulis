@@ -28,7 +28,8 @@
 - [`language/grammar.md`](language/grammar.md) - Formal grammar (LALRPOP)
 
 ### 📚 Examples
-- [`examples/`](../examples/) - Usage examples
+- [`examples/hvac-building.md`](examples/hvac-building.md) - HVAC building supervision (IoT/Smart Building)
+- [`examples/financial-markets.md`](examples/financial-markets.md) - Financial markets technical analysis (Trading)
 
 ## Quick Links
 

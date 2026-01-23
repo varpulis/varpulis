@@ -1,0 +1,191 @@
+# Use Case: Financial Markets - Technical Analysis
+
+## Overview
+
+Real-time trading signal generation using classic technical indicators and pattern detection with attention mechanisms.
+
+## Target Market
+
+- **Crypto trading** (BTC, ETH, altcoins)
+- **Forex** (currency pairs)
+- **Equities** (stocks, ETFs)
+- **Commodities** (gold, oil, etc.)
+
+## Technical Indicators Implemented
+
+### Trend Indicators
+
+| Indicator | Description | Signal |
+|-----------|-------------|--------|
+| **SMA (Simple Moving Average)** | Average price over N periods | Trend direction |
+| **EMA (Exponential Moving Average)** | Weighted average favoring recent prices | Faster trend detection |
+| **Golden Cross** | SMA20 crosses above SMA50 | Bullish reversal |
+| **Death Cross** | SMA20 crosses below SMA50 | Bearish reversal |
+
+### Momentum Indicators
+
+| Indicator | Description | Signal |
+|-----------|-------------|--------|
+| **RSI (Relative Strength Index)** | Measures speed/change of price movements | Overbought (>70) / Oversold (<30) |
+| **MACD** | Difference between EMA12 and EMA26 | Trend momentum and crossovers |
+| **MACD Histogram** | MACD - Signal line | Momentum strength |
+
+### Volatility Indicators
+
+| Indicator | Description | Signal |
+|-----------|-------------|--------|
+| **Bollinger Bands** | SMA ± 2 standard deviations | Volatility and breakouts |
+| **Bandwidth** | Band width as % of middle band | Squeeze detection |
+| **%B** | Price position within bands | Overbought/oversold within bands |
+
+## Signal Types
+
+### Individual Signals
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    TRADING SIGNALS                          │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  TREND SIGNALS                                              │
+│  ├── GOLDEN_CROSS (BUY)   - Bullish trend reversal         │
+│  └── DEATH_CROSS (SELL)   - Bearish trend reversal         │
+│                                                             │
+│  MOMENTUM SIGNALS                                           │
+│  ├── RSI_OVERSOLD (BUY)   - RSI < 30                       │
+│  ├── RSI_OVERBOUGHT (SELL)- RSI > 70                       │
+│  ├── MACD_BULLISH (BUY)   - MACD crosses above signal      │
+│  └── MACD_BEARISH (SELL)  - MACD crosses below signal      │
+│                                                             │
+│  VOLATILITY SIGNALS                                         │
+│  ├── BB_SQUEEZE (WATCH)   - Low volatility, expect breakout│
+│  ├── BB_BREAKOUT_UP (BUY) - Price > upper band             │
+│  └── BB_BREAKOUT_DOWN (SELL) - Price < lower band          │
+│                                                             │
+│  CONFLUENCE SIGNALS (HIGH CONFIDENCE)                       │
+│  ├── STRONG_BUY           - Multiple bullish indicators    │
+│  └── STRONG_SELL          - Multiple bearish indicators    │
+│                                                             │
+│  ATTENTION-BASED                                            │
+│  └── PUMP_DETECTED        - Anomalous price/volume activity│
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Confluence Signals
+
+The most powerful signals come from **indicator confluence** - when multiple indicators align:
+
+**Strong Buy Conditions:**
+- RSI < 35 (oversold but not extreme)
+- %B < 0.2 (price near lower Bollinger Band)
+- MACD histogram > 0 (positive momentum)
+- SMA20 > SMA50 (uptrend)
+
+**Strong Sell Conditions:**
+- RSI > 65 (overbought but not extreme)
+- %B > 0.8 (price near upper Bollinger Band)
+- MACD histogram < 0 (negative momentum)
+- SMA20 < SMA50 (downtrend)
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    DATA SOURCES                             │
+├─────────────────────────────────────────────────────────────┤
+│  Exchange APIs    │   Market Data Feeds   │   Historical   │
+│  (Binance, Kraken)│   (Bloomberg, Reuters)│   (Backfill)   │
+└────────┬──────────┴──────────┬────────────┴───────┬────────┘
+         │                     │                    │
+         └──────────────────┬──┴────────────────────┘
+                            │
+                    ┌───────▼───────┐
+                    │    Varpulis   │
+                    │  CEP Engine   │
+                    └───────┬───────┘
+                            │
+         ┌──────────────────┼──────────────────┐
+         │                  │                  │
+    ┌────▼────┐       ┌─────▼────┐      ┌─────▼────┐
+    │Indicator│       │ Pattern  │      │Attention │
+    │ Streams │       │ Matcher  │      │ Engine   │
+    │(SMA,RSI)│       │(Crosses) │      │ (Pumps)  │
+    └────┬────┘       └─────┬────┘      └─────┬────┘
+         │                  │                  │
+         └──────────────────┼──────────────────┘
+                            │
+                    ┌───────▼───────┐
+                    │    Signals    │
+                    │   Aggregator  │
+                    └───────┬───────┘
+                            │
+         ┌──────────────────┼──────────────────┐
+         │                  │                  │
+    ┌────▼────┐       ┌─────▼────┐      ┌─────▼────┐
+    │  Kafka  │       │ Webhook  │      │Dashboard │
+    │ Topic   │       │Trading Bot│      │  Alerts │
+    └─────────┘       └──────────┘      └──────────┘
+```
+
+## Example Output
+
+```json
+{
+  "signal_type": "STRONG_BUY",
+  "direction": "BUY",
+  "symbol": "BTC/USD",
+  "price": 42150.00,
+  "confidence": 0.85,
+  "indicators": {
+    "rsi": 32.5,
+    "bb_percent_b": 0.15,
+    "macd_histogram": 125.3,
+    "trend": "bullish"
+  },
+  "reason": "Multiple bullish indicators aligned: RSI oversold, price near lower BB, positive MACD histogram, uptrend",
+  "timestamp": "2026-01-23T01:15:00Z"
+}
+```
+
+## Comparison with Traditional Solutions
+
+| Aspect | Traditional (Python/Java) | Varpulis |
+|--------|---------------------------|----------|
+| **Latency** | 10-100ms | < 1ms |
+| **Code complexity** | 500+ lines | ~400 lines (declarative) |
+| **Multi-indicator join** | Manual state management | Native stream joins |
+| **Pattern detection** | Custom implementation | Built-in + Attention |
+| **Scaling** | Manual threading | Declarative parallelization |
+| **Observability** | Add-on libraries | Built-in metrics |
+
+## Risk Disclaimer
+
+⚠️ **This example is for educational purposes only.**
+
+- Technical indicators are lagging and not predictive
+- Past performance does not guarantee future results
+- Always use proper risk management
+- Never invest more than you can afford to lose
+- This is not financial advice
+
+## Running the Example
+
+```bash
+# Parse and validate
+varpulis check examples/financial_markets.vpl
+
+# Run with simulated market data
+varpulis run examples/financial_markets.vpl --source mock
+
+# Run with live data (requires exchange API keys)
+varpulis run examples/financial_markets.vpl \
+  --source kafka://market-ticks \
+  --sink kafka://trading-signals
+```
+
+## See Also
+
+- [VarpulisQL Syntax](../language/syntax.md)
+- [Attention Engine](../architecture/attention-engine.md)
+- [HVAC Building Example](hvac-building.md)
