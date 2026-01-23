@@ -1,6 +1,6 @@
 import { ChildProcess, spawn } from 'child_process';
 import * as vscode from 'vscode';
-import * as WebSocket from 'ws';
+import WebSocket from 'ws';
 
 export interface StreamInfo {
     name: string;
@@ -218,23 +218,24 @@ export class VarpulisEngine {
     private async connectWebSocket(): Promise<void> {
         return new Promise((resolve, reject) => {
             const wsUrl = `ws://localhost:${this.port}/ws`;
-            this.ws = new WebSocket(wsUrl);
+            const ws = new WebSocket(wsUrl);
+            this.ws = ws;
 
-            this.ws.on('open', () => {
+            ws.on('open', () => {
                 this.outputChannel.appendLine(`[ws] Connected to ${wsUrl}`);
                 resolve();
             });
 
-            this.ws.on('message', (data: WebSocket.Data) => {
+            ws.on('message', (data: WebSocket.RawData) => {
                 this.handleMessage(data);
             });
 
-            this.ws.on('error', (error: Error) => {
+            ws.on('error', (error: Error) => {
                 this.outputChannel.appendLine(`[ws] Error: ${error.message}`);
                 reject(error);
             });
 
-            this.ws.on('close', () => {
+            ws.on('close', () => {
                 this.outputChannel.appendLine('[ws] Connection closed');
             });
         });
@@ -247,7 +248,7 @@ export class VarpulisEngine {
         }
     }
 
-    private handleMessage(data: WebSocket.Data): void {
+    private handleMessage(data: WebSocket.RawData): void {
         try {
             const message = JSON.parse(data.toString());
 
