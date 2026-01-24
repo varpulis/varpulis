@@ -1,10 +1,69 @@
 # Order-Payment Sequence Pattern
 # Detects when an Order is followed by a Payment for the same order
+# Demonstrates: functions, print, log, and sequence patterns
+
+# =============================================================================
+# User-Defined Functions
+# =============================================================================
+
+# Check if an order amount qualifies for priority processing
+fn is_priority_order(amount: float) -> bool:
+    amount >= 1000.0
+
+# Calculate processing fee based on amount
+fn calculate_fee(amount: float) -> float:
+    amount * 0.02
+
+# Determine payment status label
+fn get_status_label(amount: float) -> str:
+    "payment_received"
+
+# =============================================================================
+# Main Stream with Logging and Debugging
+# =============================================================================
 
 stream OrderPaymentMatch = Order as order
+    .print("New order received:", id, "amount:", amount)
+    .log(level: "info", message: "Order processing started")
     -> Payment where order_id == order.id as payment
+    .print("Payment matched for order:", order_id, "amount:", amount)
+    .log(level: "info", message: "Payment matched successfully")
+    .within(5m)
     .emit(
-        status: "payment_received",
+        status: get_status_label(payment.amount),
         order_id: order.id,
-        amount: payment.amount
+        amount: payment.amount,
+        fee: calculate_fee(payment.amount),
+        priority: is_priority_order(order.amount)
+    )
+
+# =============================================================================
+# Priority Orders Stream (high-value orders)
+# =============================================================================
+
+stream PriorityOrders = Order as order
+    .where(is_priority_order(amount))
+    .print("Priority order detected:", id, "amount:", amount)
+    .log(level: "warn", message: "High-value order requires attention")
+    .emit(
+        order_id: order.id,
+        amount: order.amount,
+        priority: "high"
+    )
+
+# =============================================================================
+# Unpaid Orders (timeout detection)
+# =============================================================================
+
+stream UnpaidOrders = Order as order
+    .log(level: "debug", message: "Tracking order for payment")
+    -> Payment where order_id == order.id
+    .within(10m)
+    .not(Payment where order_id == order.id)
+    .print("Order unpaid after timeout:", id)
+    .log(level: "error", message: "Payment timeout - escalating")
+    .emit(
+        status: "payment_timeout",
+        order_id: order.id,
+        amount: order.amount
     )
