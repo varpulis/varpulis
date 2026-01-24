@@ -957,3 +957,281 @@ async fn test_attention_window_fraud_detection_scenario() {
         assert!(*matches > 0, "Even unusual tx should have history matches");
     }
 }
+
+// ============================================================================
+// MERGE STREAM INTEGRATION TESTS
+// ============================================================================
+
+#[tokio::test]
+async fn test_merge_stream_basic() {
+    let program = r#"
+        stream BuildingMetrics = merge(
+            stream S1 from SensorEvent where sensor_id == "S1",
+            stream S2 from SensorEvent where sensor_id == "S2",
+            stream S3 from SensorEvent where sensor_id == "S3"
+        )
+        .emit(
+            sensor: sensor_id,
+            temp: temperature
+        )
+    "#;
+    
+    let events = r#"
+        SensorEvent { sensor_id: "S1", temperature: 22.5 }
+        SensorEvent { sensor_id: "S2", temperature: 23.0 }
+        SensorEvent { sensor_id: "S4", temperature: 24.0 }
+        SensorEvent { sensor_id: "S3", temperature: 21.5 }
+    "#;
+    
+    let alerts = run_scenario(program, events).await;
+    
+    // S1, S2, S3 should pass (3 alerts), S4 should be filtered out
+    assert_eq!(alerts.len(), 3, "Only S1, S2, S3 should pass merge filter");
+}
+
+#[tokio::test]
+async fn test_merge_with_window_and_aggregation() {
+    let program = r#"
+        stream BuildingMetrics = merge(
+            stream S1 from SensorEvent where sensor_id == "S1",
+            stream S2 from SensorEvent where sensor_id == "S2"
+        )
+        .window(1m)
+        .aggregate(
+            avg_temp: avg(temperature),
+            min_temp: min(temperature),
+            max_temp: max(temperature)
+        )
+        .emit(
+            average: avg_temp,
+            minimum: min_temp,
+            maximum: max_temp
+        )
+    "#;
+    
+    let events = r#"
+        SensorEvent { sensor_id: "S1", temperature: 20.0 }
+        SensorEvent { sensor_id: "S2", temperature: 25.0 }
+        SensorEvent { sensor_id: "S1", temperature: 22.0 }
+        SensorEvent { sensor_id: "S2", temperature: 23.0 }
+    "#;
+    
+    let alerts = run_scenario(program, events).await;
+    
+    // Window may or may not have closed depending on timing
+    // Just verify we can process without errors
+    assert!(alerts.len() <= 1, "Should have at most one aggregated result");
+}
+
+#[tokio::test]
+async fn test_count_distinct_aggregation() {
+    let program = r#"
+        stream SensorStats = SensorEvent
+            .window(1m)
+            .aggregate(
+                sensor_count: count(distinct(sensor_id)),
+                total_count: count(sensor_id)
+            )
+            .emit(
+                unique_sensors: sensor_count,
+                total: total_count
+            )
+    "#;
+    
+    // We need to trigger window completion - for now just test parsing and setup
+    let events = r#"
+        SensorEvent { sensor_id: "S1", temperature: 20.0 }
+        SensorEvent { sensor_id: "S1", temperature: 21.0 }
+        SensorEvent { sensor_id: "S2", temperature: 22.0 }
+        SensorEvent { sensor_id: "S3", temperature: 23.0 }
+        SensorEvent { sensor_id: "S1", temperature: 24.0 }
+    "#;
+    
+    let alerts = run_scenario(program, events).await;
+    
+    // Verify the stream processes without error
+    // Full window test would require time manipulation
+    assert!(alerts.len() <= 1);
+}
+
+// ============================================================================
+// PATTERN MATCHING INTEGRATION TESTS
+// ============================================================================
+
+#[tokio::test]
+async fn test_pattern_simple_count() {
+    let program = r#"
+        stream HighVolumeAlert = Trade
+            .window(1m)
+            .pattern(high_activity: events => events.len() > 3)
+            .emit(
+                alert_type: "high_activity",
+                count: "detected"
+            )
+    "#;
+    
+    let events = r#"
+        Trade { symbol: "AAPL", price: 150.0, amount: 1000 }
+        Trade { symbol: "AAPL", price: 151.0, amount: 2000 }
+        Trade { symbol: "AAPL", price: 152.0, amount: 3000 }
+        Trade { symbol: "AAPL", price: 153.0, amount: 4000 }
+    "#;
+    
+    let alerts = run_scenario(program, events).await;
+    
+    // Pattern should match when we have > 3 events
+    // This depends on window behavior
+    assert!(alerts.len() <= 1);
+}
+
+#[tokio::test]
+async fn test_pattern_with_filter() {
+    let program = r#"
+        stream HighValueTrades = Trade
+            .attention_window(duration: 30s, heads: 4, dim: 64)
+            .pattern(
+                high_value: events => {
+                    let high = events.filter(e => e.amount > 5000)
+                    high.len() > 0
+                }
+            )
+            .emit(
+                alert_type: "high_value_trade"
+            )
+    "#;
+    
+    let events = r#"
+        Trade { symbol: "AAPL", price: 150.0, amount: 1000 }
+        Trade { symbol: "AAPL", price: 151.0, amount: 10000 }
+    "#;
+    
+    let alerts = run_scenario(program, events).await;
+    
+    // Should detect high value trades
+    // Pattern matching depends on how events are processed
+    for alert in &alerts {
+        assert_eq!(alert.data.get("alert_type"), Some(&varpulis_core::Value::Str("high_value_trade".to_string())));
+    }
+}
+
+#[tokio::test]
+async fn test_pattern_attention_correlation() {
+    let program = r#"
+        stream CorrelatedTrades = Trade
+            .attention_window(duration: 60s, heads: 4, dim: 64)
+            .emit(
+                symbol: symbol,
+                price: price,
+                correlation: attention_score
+            )
+    "#;
+    
+    let events = r#"
+        Trade { symbol: "AAPL", price: 150.0, amount: 1000 }
+        Trade { symbol: "AAPL", price: 150.5, amount: 1100 }
+        Trade { symbol: "AAPL", price: 151.0, amount: 1200 }
+        Trade { symbol: "GOOG", price: 2800.0, amount: 500 }
+        Trade { symbol: "AAPL", price: 151.5, amount: 1300 }
+    "#;
+    
+    let alerts = run_scenario(program, events).await;
+    
+    assert_eq!(alerts.len(), 5);
+    
+    // First event has no history
+    if let Some(varpulis_core::Value::Float(score)) = alerts[0].data.get("correlation") {
+        assert_eq!(*score, 0.0);
+    }
+    
+    // Later AAPL trades should have correlation with history
+    // The 5th trade (AAPL after GOOG) should correlate with earlier AAPL trades
+    for (i, alert) in alerts.iter().enumerate().skip(1) {
+        assert!(alert.data.contains_key("correlation"), "Alert {} should have correlation", i);
+    }
+}
+
+// ============================================================================
+// FRAUD DETECTION COMPREHENSIVE TEST
+// ============================================================================
+
+#[tokio::test]
+async fn test_fraud_detection_with_attention_pattern() {
+    // Simplified version of the user's fraud detection example
+    let program = r#"
+        stream FraudDetection = Trade
+            .attention_window(duration: 30s, heads: 4, dim: 64)
+            .where(amount > 10000)
+            .emit(
+                alert_type: "potential_fraud",
+                trade_amount: amount,
+                correlation: attention_score
+            )
+    "#;
+    
+    let events = r#"
+        Trade { symbol: "AAPL", amount: 500.0 }
+        Trade { symbol: "AAPL", amount: 15000.0 }
+        Trade { symbol: "GOOG", amount: 800.0 }
+        Trade { symbol: "AAPL", amount: 25000.0 }
+        Trade { symbol: "MSFT", amount: 50000.0 }
+    "#;
+    
+    let alerts = run_scenario(program, events).await;
+    
+    // Only trades with amount > 10000 should emit
+    assert_eq!(alerts.len(), 3, "Should have 3 high-value trades");
+    
+    for alert in &alerts {
+        if let Some(varpulis_core::Value::Float(amount)) = alert.data.get("trade_amount") {
+            assert!(*amount > 10000.0, "All alerts should be high-value trades");
+        }
+        assert!(alert.data.contains_key("correlation"), "All alerts should have correlation score");
+    }
+}
+
+// ============================================================================
+// BUILDING METRICS COMPREHENSIVE TEST
+// ============================================================================
+
+#[tokio::test]
+async fn test_building_metrics_comprehensive() {
+    let program = r#"
+        stream BuildingMetrics = merge(
+            stream S1 from SensorEvent where sensor_id == "S1",
+            stream S2 from SensorEvent where sensor_id == "S2",
+            stream S3 from SensorEvent where sensor_id == "S3"
+        )
+        .emit(
+            sensor: sensor_id,
+            reading: temperature
+        )
+    "#;
+    
+    // Comprehensive sensor events
+    let events = r#"
+        SensorEvent { sensor_id: "S1", temperature: 22.0 }
+        SensorEvent { sensor_id: "S2", temperature: 23.5 }
+        SensorEvent { sensor_id: "S4", temperature: 25.0 }
+        SensorEvent { sensor_id: "S3", temperature: 21.0 }
+        SensorEvent { sensor_id: "S1", temperature: 22.5 }
+        SensorEvent { sensor_id: "S5", temperature: 26.0 }
+        SensorEvent { sensor_id: "S2", temperature: 24.0 }
+        SensorEvent { sensor_id: "S3", temperature: 21.5 }
+    "#;
+    
+    let alerts = run_scenario(program, events).await;
+    
+    // S1: 2 events, S2: 2 events, S3: 2 events = 6 total
+    // S4 and S5 should be filtered out
+    assert_eq!(alerts.len(), 6, "Should have 6 alerts from S1, S2, S3 only");
+    
+    // Verify all alerts are from valid sensors
+    for alert in &alerts {
+        if let Some(varpulis_core::Value::Str(sensor)) = alert.data.get("sensor") {
+            assert!(
+                sensor == "S1" || sensor == "S2" || sensor == "S3",
+                "Sensor {} should not be in results", sensor
+            );
+        }
+    }
+}

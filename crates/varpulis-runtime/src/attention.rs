@@ -496,7 +496,7 @@ impl AttentionEngine {
         hasher.finish()
     }
 
-    pub fn attention_score(&mut self, e1: &Event, e2: &Event) -> f32 {
+    pub fn attention_score(&self, e1: &Event, e2: &Event) -> f32 {
         let emb1 = self.embedding_engine.embed(e1);
         let emb2 = self.embedding_engine.embed(e2);
         let head_dim = self.config.embedding_dim / self.config.num_heads;
@@ -561,7 +561,7 @@ impl AttentionWindow {
         result
     }
 
-    pub fn attention_score(&mut self, e1: &Event, e2: &Event) -> f32 { self.engine.attention_score(e1, e2) }
+    pub fn attention_score(&self, e1: &Event, e2: &Event) -> f32 { self.engine.attention_score(e1, e2) }
     pub fn history(&self) -> Vec<&Event> { self.engine.get_history() }
     pub fn stats(&self) -> AttentionStats { self.engine.stats() }
 }
