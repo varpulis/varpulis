@@ -1,6 +1,6 @@
 //! Main execution engine for Varpulis
 
-use crate::aggregation::{AggBinOp, AggResult, Aggregator, Avg, Count, Ema, ExprAggregate, First, Last, Max, Min, StdDev, Sum};
+use crate::aggregation::{AggBinOp, AggResult, Aggregator, Avg, Count, CountDistinct, Ema, ExprAggregate, First, Last, Max, Min, StdDev, Sum};
 use crate::attention::{AttentionConfig, AttentionWindow, EmbeddingConfig};
 use crate::event::Event;
 use crate::sequence::{SequenceContext, SequenceStep, SequenceTracker};
@@ -66,6 +66,15 @@ enum RuntimeSource {
     EventType(String),
     Stream(String),
     Join(Vec<String>),
+    /// Merge multiple event types with optional filters
+    Merge(Vec<MergeSource>),
+}
+
+/// A source in a merge construct with optional filter
+struct MergeSource {
+    name: String,
+    event_type: String,
+    filter: Option<varpulis_core::ast::Expr>,
 }
 
 enum RuntimeOp {
@@ -86,6 +95,13 @@ enum RuntimeOp {
     Sequence,
     /// Attention window for correlation scoring
     AttentionWindow(AttentionWindowConfig),
+    /// Pattern matching with lambda expression
+    Pattern(PatternConfig),
+}
+
+struct PatternConfig {
+    name: String,
+    matcher: varpulis_core::ast::Expr,
 }
 
 struct AttentionWindowConfig {
@@ -226,9 +242,22 @@ impl Engine {
                 RuntimeSource::Join(sources)
             }
             StreamSource::Merge(decls) => {
-                let sources: Vec<String> = decls.iter().map(|d| d.source.clone()).collect();
-                info!("Registering merge stream {} from sources: {:?}", name, sources);
-                RuntimeSource::Join(sources)
+                let merge_sources: Vec<MergeSource> = decls.iter().map(|d| MergeSource {
+                    name: d.name.clone(),
+                    event_type: d.source.clone(),
+                    filter: d.filter.clone(),
+                }).collect();
+                
+                // Register for all source event types
+                for ms in &merge_sources {
+                    let streams = self.event_sources.entry(ms.event_type.clone()).or_default();
+                    if !streams.contains(&name.to_string()) {
+                        streams.push(name.to_string());
+                    }
+                }
+                
+                info!("Registering merge stream {} with {} sources", name, merge_sources.len());
+                RuntimeSource::Merge(merge_sources)
             }
         };
 
@@ -494,6 +523,12 @@ impl Engine {
                         num_heads,
                         embedding_dim,
                         threshold,
+                    }));
+                }
+                StreamOp::Pattern(def) => {
+                    runtime_ops.push(RuntimeOp::Pattern(PatternConfig {
+                        name: def.name.clone(),
+                        matcher: def.matcher.clone(),
                     }));
                 }
                 _ => {
@@ -945,6 +980,23 @@ impl Engine {
                     _ => return None,
                 };
                 
+                // Handle count(distinct(field)) pattern
+                if func_name == "count" {
+                    if let Some(Arg::Positional(inner)) = args.first() {
+                        if let Expr::Call { func: inner_func, args: inner_args } = inner {
+                            if let Expr::Ident(inner_name) = inner_func.as_ref() {
+                                if inner_name == "distinct" {
+                                    let field = inner_args.first().and_then(|a| match a {
+                                        Arg::Positional(Expr::Ident(s)) => Some(s.clone()),
+                                        _ => None,
+                                    });
+                                    return Some((Box::new(CountDistinct), field));
+                                }
+                            }
+                        }
+                    }
+                }
+                
                 let field = args.first().and_then(|a| match a {
                     Arg::Positional(Expr::Ident(s)) => Some(s.clone()),
                     _ => None,
@@ -1040,6 +1092,31 @@ impl Engine {
         event: Event,
         functions: &HashMap<String, UserFunction>,
     ) -> Result<Vec<Alert>, String> {
+        // For merge sources, check if the event passes the appropriate filter
+        if let RuntimeSource::Merge(ref sources) = stream.source {
+            let mut passes_filter = false;
+            for ms in sources {
+                if ms.event_type == event.event_type {
+                    if let Some(ref filter) = ms.filter {
+                        let ctx = SequenceContext::new();
+                        if let Some(result) = Self::eval_expr_with_functions(filter, &event, &ctx, functions, &HashMap::new()) {
+                            if result.as_bool().unwrap_or(false) {
+                                passes_filter = true;
+                                break;
+                            }
+                        }
+                    } else {
+                        // No filter means it passes
+                        passes_filter = true;
+                        break;
+                    }
+                }
+            }
+            if !passes_filter {
+                return Ok(vec![]);
+            }
+        }
+        
         // Process through attention window if present - compute and add attention_score
         let mut enriched_event = event.clone();
         if let Some(ref mut attention_window) = stream.attention_window {
@@ -1223,14 +1300,269 @@ impl Engine {
                     }
                 }
                 RuntimeOp::AttentionWindow(_config) => {
-                    // AttentionWindow is handled at stream level, not per-event
-                    // The attention scores are computed and stored in the event context
-                    // For now, pass through events unchanged
+                    // AttentionWindow is handled at stream level before operations
+                }
+                RuntimeOp::Pattern(config) => {
+                    // Pattern matching: evaluate the matcher expression with events as context
+                    // The matcher is a lambda: events => predicate
+                    let ctx = SequenceContext::new();
+                    let events_value = Value::Array(
+                        current_events.iter()
+                            .map(|e| {
+                                let mut map = IndexMap::new();
+                                map.insert("event_type".to_string(), Value::Str(e.event_type.clone()));
+                                for (k, v) in &e.data {
+                                    map.insert(k.clone(), v.clone());
+                                }
+                                Value::Map(map)
+                            })
+                            .collect()
+                    );
+                    
+                    // Create a context with "events" bound
+                    let mut pattern_vars = HashMap::new();
+                    pattern_vars.insert("events".to_string(), events_value);
+                    
+                    // Evaluate the pattern matcher
+                    if let Some(result) = Self::eval_pattern_expr(&config.matcher, &current_events, &ctx, functions, &pattern_vars, stream.attention_window.as_ref()) {
+                        if !result.as_bool().unwrap_or(false) {
+                            // Pattern didn't match, filter out all events
+                            current_events.clear();
+                            return Ok(alerts);
+                        }
+                    }
                 }
             }
         }
 
         Ok(alerts)
+    }
+    
+    /// Evaluate a pattern expression with support for attention_score builtin
+    fn eval_pattern_expr(
+        expr: &varpulis_core::ast::Expr,
+        events: &[Event],
+        ctx: &SequenceContext,
+        functions: &HashMap<String, UserFunction>,
+        pattern_vars: &HashMap<String, Value>,
+        attention_window: Option<&AttentionWindow>,
+    ) -> Option<Value> {
+        use varpulis_core::ast::{Arg, Expr};
+        
+        match expr {
+            // Lambda: params => body - evaluate body with params bound
+            Expr::Lambda { params, body } => {
+                // For pattern lambdas, the first param is typically "events"
+                Self::eval_pattern_expr(body, events, ctx, functions, pattern_vars, attention_window)
+            }
+            
+            // Block with let bindings
+            Expr::Block { stmts, result } => {
+                let mut local_vars = pattern_vars.clone();
+                for (name, _ty, value_expr, _mutable) in stmts {
+                    if let Some(val) = Self::eval_pattern_expr(value_expr, events, ctx, functions, &local_vars, attention_window) {
+                        local_vars.insert(name.clone(), val);
+                    }
+                }
+                Self::eval_pattern_expr(result, events, ctx, functions, &local_vars, attention_window)
+            }
+            
+            // Function call - check for builtins like attention_score
+            Expr::Call { func, args } => {
+                if let Expr::Ident(func_name) = func.as_ref() {
+                    if func_name == "attention_score" && args.len() == 2 {
+                        // attention_score(e1, e2) - compute attention between two events
+                        if let Some(aw) = attention_window {
+                            let e1_val = args.get(0).and_then(|a| match a {
+                                Arg::Positional(e) => Self::eval_pattern_expr(e, events, ctx, functions, pattern_vars, Some(aw)),
+                                _ => None,
+                            });
+                            let e2_val = args.get(1).and_then(|a| match a {
+                                Arg::Positional(e) => Self::eval_pattern_expr(e, events, ctx, functions, pattern_vars, Some(aw)),
+                                _ => None,
+                            });
+                            
+                            if let (Some(Value::Map(m1)), Some(Value::Map(m2))) = (e1_val, e2_val) {
+                                // Convert maps back to events for attention scoring
+                                let ev1 = Self::map_to_event(&m1);
+                                let ev2 = Self::map_to_event(&m2);
+                                let score = aw.attention_score(&ev1, &ev2);
+                                return Some(Value::Float(score as f64));
+                            }
+                        }
+                        return Some(Value::Float(0.0));
+                    }
+                    
+                    // len() on arrays
+                    if func_name == "len" {
+                        if let Some(Arg::Positional(arr_expr)) = args.first() {
+                            if let Some(Value::Array(arr)) = Self::eval_pattern_expr(arr_expr, events, ctx, functions, pattern_vars, attention_window) {
+                                return Some(Value::Int(arr.len() as i64));
+                            }
+                        }
+                    }
+                }
+                
+                // Method calls on arrays: .filter(), .map(), .flatten()
+                if let Expr::Member { expr: receiver, member } = func.as_ref() {
+                    let receiver_val = Self::eval_pattern_expr(receiver, events, ctx, functions, pattern_vars, attention_window)?;
+                    
+                    match member.as_str() {
+                        "filter" => {
+                            if let Value::Array(arr) = receiver_val {
+                                if let Some(Arg::Positional(Expr::Lambda { params, body })) = args.first() {
+                                    let param_name = params.first().cloned().unwrap_or_else(|| "x".to_string());
+                                    let filtered: Vec<Value> = arr.into_iter().filter(|item| {
+                                        let mut local = pattern_vars.clone();
+                                        local.insert(param_name.clone(), item.clone());
+                                        Self::eval_pattern_expr(body, events, ctx, functions, &local, attention_window)
+                                            .and_then(|v| v.as_bool())
+                                            .unwrap_or(false)
+                                    }).collect();
+                                    return Some(Value::Array(filtered));
+                                }
+                            }
+                        }
+                        "map" => {
+                            if let Value::Array(arr) = receiver_val {
+                                if let Some(Arg::Positional(Expr::Lambda { params, body })) = args.first() {
+                                    let param_name = params.first().cloned().unwrap_or_else(|| "x".to_string());
+                                    let mapped: Vec<Value> = arr.into_iter().filter_map(|item| {
+                                        let mut local = pattern_vars.clone();
+                                        local.insert(param_name.clone(), item);
+                                        Self::eval_pattern_expr(body, events, ctx, functions, &local, attention_window)
+                                    }).collect();
+                                    return Some(Value::Array(mapped));
+                                }
+                            }
+                        }
+                        "flatten" => {
+                            if let Value::Array(arr) = receiver_val {
+                                let flattened: Vec<Value> = arr.into_iter().flat_map(|item| {
+                                    if let Value::Array(inner) = item {
+                                        inner
+                                    } else {
+                                        vec![item]
+                                    }
+                                }).collect();
+                                return Some(Value::Array(flattened));
+                            }
+                        }
+                        "len" => {
+                            if let Value::Array(arr) = receiver_val {
+                                return Some(Value::Int(arr.len() as i64));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                
+                None
+            }
+            
+            // Member access
+            Expr::Member { expr: receiver, member } => {
+                let recv_val = Self::eval_pattern_expr(receiver, events, ctx, functions, pattern_vars, attention_window)?;
+                match recv_val {
+                    Value::Map(m) => m.get(member).cloned(),
+                    _ => None,
+                }
+            }
+            
+            // Identifier lookup
+            Expr::Ident(name) => {
+                pattern_vars.get(name).cloned()
+            }
+            
+            // Literals
+            Expr::Int(n) => Some(Value::Int(*n)),
+            Expr::Float(f) => Some(Value::Float(*f)),
+            Expr::Bool(b) => Some(Value::Bool(*b)),
+            Expr::Str(s) => Some(Value::Str(s.clone())),
+            
+            // Binary comparison
+            Expr::Binary { op, left, right } => {
+                let l = Self::eval_pattern_expr(left, events, ctx, functions, pattern_vars, attention_window)?;
+                let r = Self::eval_pattern_expr(right, events, ctx, functions, pattern_vars, attention_window)?;
+                Self::eval_binary_op(op, &l, &r)
+            }
+            
+            _ => None,
+        }
+    }
+    
+    /// Convert a Value::Map back to an Event for attention scoring
+    fn map_to_event(map: &IndexMap<String, Value>) -> Event {
+        let event_type = map.get("event_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        
+        let mut data = IndexMap::new();
+        for (k, v) in map {
+            if k != "event_type" {
+                data.insert(k.clone(), v.clone());
+            }
+        }
+        
+        Event {
+            event_type,
+            timestamp: chrono::Utc::now(),
+            data,
+        }
+    }
+    
+    /// Evaluate a binary operation
+    fn eval_binary_op(op: &varpulis_core::ast::BinOp, left: &Value, right: &Value) -> Option<Value> {
+        use varpulis_core::ast::BinOp;
+        
+        match op {
+            BinOp::Gt => {
+                match (left, right) {
+                    (Value::Int(l), Value::Int(r)) => Some(Value::Bool(l > r)),
+                    (Value::Float(l), Value::Float(r)) => Some(Value::Bool(l > r)),
+                    (Value::Int(l), Value::Float(r)) => Some(Value::Bool((*l as f64) > *r)),
+                    (Value::Float(l), Value::Int(r)) => Some(Value::Bool(*l > (*r as f64))),
+                    _ => None,
+                }
+            }
+            BinOp::Lt => {
+                match (left, right) {
+                    (Value::Int(l), Value::Int(r)) => Some(Value::Bool(l < r)),
+                    (Value::Float(l), Value::Float(r)) => Some(Value::Bool(l < r)),
+                    (Value::Int(l), Value::Float(r)) => Some(Value::Bool((*l as f64) < *r)),
+                    (Value::Float(l), Value::Int(r)) => Some(Value::Bool(*l < (*r as f64))),
+                    _ => None,
+                }
+            }
+            BinOp::Ge => {
+                match (left, right) {
+                    (Value::Int(l), Value::Int(r)) => Some(Value::Bool(l >= r)),
+                    (Value::Float(l), Value::Float(r)) => Some(Value::Bool(l >= r)),
+                    _ => None,
+                }
+            }
+            BinOp::Le => {
+                match (left, right) {
+                    (Value::Int(l), Value::Int(r)) => Some(Value::Bool(l <= r)),
+                    (Value::Float(l), Value::Float(r)) => Some(Value::Bool(l <= r)),
+                    _ => None,
+                }
+            }
+            BinOp::Eq => Some(Value::Bool(left == right)),
+            BinOp::NotEq => Some(Value::Bool(left != right)),
+            BinOp::And => {
+                let l = left.as_bool().unwrap_or(false);
+                let r = right.as_bool().unwrap_or(false);
+                Some(Value::Bool(l && r))
+            }
+            BinOp::Or => {
+                let l = left.as_bool().unwrap_or(false);
+                let r = right.as_bool().unwrap_or(false);
+                Some(Value::Bool(l || r))
+            }
+            _ => None,
+        }
     }
 
     /// Get metrics

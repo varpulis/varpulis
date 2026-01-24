@@ -1542,6 +1542,10 @@ impl<'source> Parser<'source> {
                 self.advance();
                 Ok(Expr::Ident("attention_score".to_string()))
             }
+            Token::Distinct => {
+                self.advance();
+                Ok(Expr::Ident("distinct".to_string()))
+            }
             // $ for previous event reference in sequences
             Token::Dollar => {
                 self.advance();

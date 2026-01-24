@@ -168,6 +168,30 @@ impl AggregateFunc for Last {
     }
 }
 
+/// Count distinct values aggregation
+pub struct CountDistinct;
+
+impl AggregateFunc for CountDistinct {
+    fn name(&self) -> &str {
+        "count_distinct"
+    }
+
+    fn apply(&self, events: &[Event], field: Option<&str>) -> Value {
+        let field = field.unwrap_or("value");
+        let mut seen = std::collections::HashSet::new();
+        
+        for event in events {
+            if let Some(value) = event.get(field) {
+                // Use string representation for hashing
+                let key = format!("{:?}", value);
+                seen.insert(key);
+            }
+        }
+        
+        Value::Int(seen.len() as i64)
+    }
+}
+
 /// Exponential Moving Average aggregation
 /// EMA = price * k + EMA(previous) * (1 - k)
 /// where k = 2 / (n + 1)
