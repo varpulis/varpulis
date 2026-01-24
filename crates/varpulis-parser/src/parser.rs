@@ -1197,10 +1197,9 @@ impl<'source> Parser<'source> {
     }
 
     fn continue_or_expr(&mut self, mut left: Expr) -> ParseResult<Expr> {
-        // First continue with and-level and below
-        left = self.continue_and_expr(left)?;
+        left = self.continue_xor_expr(left)?;
         while self.match_token(&Token::Or) {
-            let right = self.parse_and_expr()?;
+            let right = self.parse_xor_expr()?;
             left = Expr::Binary {
                 op: BinOp::Or,
                 left: Box::new(left),
@@ -1210,12 +1209,38 @@ impl<'source> Parser<'source> {
         Ok(left)
     }
 
+    fn continue_xor_expr(&mut self, mut left: Expr) -> ParseResult<Expr> {
+        left = self.continue_and_expr(left)?;
+        while self.match_token(&Token::Xor) {
+            let right = self.parse_and_expr()?;
+            left = Expr::Binary {
+                op: BinOp::Xor,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
+    }
+
     fn continue_and_expr(&mut self, mut left: Expr) -> ParseResult<Expr> {
-        left = self.continue_comparison_expr(left)?;
+        left = self.continue_followed_by_expr(left)?;
         while self.match_token(&Token::And) {
-            let right = self.parse_not_expr()?;
+            let right = self.parse_followed_by_expr()?;
             left = Expr::Binary {
                 op: BinOp::And,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
+    }
+
+    fn continue_followed_by_expr(&mut self, mut left: Expr) -> ParseResult<Expr> {
+        left = self.continue_comparison_expr(left)?;
+        while self.match_token(&Token::Arrow) {
+            let right = self.parse_not_expr()?;
+            left = Expr::Binary {
+                op: BinOp::FollowedBy,
                 left: Box::new(left),
                 right: Box::new(right),
             };
@@ -1285,9 +1310,9 @@ impl<'source> Parser<'source> {
     }
 
     fn parse_or_expr(&mut self) -> ParseResult<Expr> {
-        let mut left = self.parse_and_expr()?;
+        let mut left = self.parse_xor_expr()?;
         while self.match_token(&Token::Or) {
-            let right = self.parse_and_expr()?;
+            let right = self.parse_xor_expr()?;
             left = Expr::Binary {
                 op: BinOp::Or,
                 left: Box::new(left),
@@ -1297,12 +1322,39 @@ impl<'source> Parser<'source> {
         Ok(left)
     }
 
+    fn parse_xor_expr(&mut self) -> ParseResult<Expr> {
+        let mut left = self.parse_and_expr()?;
+        while self.match_token(&Token::Xor) {
+            let right = self.parse_and_expr()?;
+            left = Expr::Binary {
+                op: BinOp::Xor,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
+    }
+
     fn parse_and_expr(&mut self) -> ParseResult<Expr> {
-        let mut left = self.parse_not_expr()?;
+        let mut left = self.parse_followed_by_expr()?;
         while self.match_token(&Token::And) {
-            let right = self.parse_not_expr()?;
+            let right = self.parse_followed_by_expr()?;
             left = Expr::Binary {
                 op: BinOp::And,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
+    }
+
+    /// Parse followed-by expression: A -> B
+    fn parse_followed_by_expr(&mut self) -> ParseResult<Expr> {
+        let mut left = self.parse_not_expr()?;
+        while self.match_token(&Token::Arrow) {
+            let right = self.parse_not_expr()?;
+            left = Expr::Binary {
+                op: BinOp::FollowedBy,
                 left: Box::new(left),
                 right: Box::new(right),
             };
@@ -2158,6 +2210,46 @@ mod tests {
                 .pattern(my_pattern: events => events.count() > 10)
         "#);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_followed_by_operator() {
+        // Apama-style: A -> B (A followed by B)
+        let result = parse(r#"
+            stream SequencePattern = Source
+                .pattern(seq: NewsItem -> StockTick)
+        "#);
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_pattern_and_or_xor() {
+        // A and B, A or B, A xor B
+        let result = parse(r#"
+            stream LogicPattern = Source
+                .pattern(logic: (A and B) or (C xor D))
+        "#);
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_pattern_complex_apama_style() {
+        // Apama-style: (A -> B) and not C
+        let result = parse(r#"
+            stream ComplexPattern = Source
+                .pattern(complex: (A -> B) and not C)
+        "#);
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_pattern_chained_followed_by() {
+        // A -> B -> C -> D
+        let result = parse(r#"
+            stream ChainedPattern = Source
+                .pattern(chain: A -> B -> C -> D)
+        "#);
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
     }
 
     // ========================================================================

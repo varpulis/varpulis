@@ -397,6 +397,10 @@ pub enum BinOp {
     // Logical
     And,
     Or,
+    Xor,
+    
+    // Pattern operators
+    FollowedBy,  // -> (A followed by B)
 
     // Bitwise
     BitAnd,
@@ -426,6 +430,8 @@ impl BinOp {
             BinOp::Is => "is",
             BinOp::And => "and",
             BinOp::Or => "or",
+            BinOp::Xor => "xor",
+            BinOp::FollowedBy => "->",
             BinOp::BitAnd => "&",
             BinOp::BitOr => "|",
             BinOp::BitXor => "^",

@@ -99,6 +99,8 @@ pub enum Token {
     And,
     #[token("or")]
     Or,
+    #[token("xor")]
+    Xor,
     #[token("not")]
     Not,
     #[token("in")]
@@ -299,6 +301,7 @@ impl fmt::Display for Token {
             Token::Null => write!(f, "null"),
             Token::And => write!(f, "and"),
             Token::Or => write!(f, "or"),
+            Token::Xor => write!(f, "xor"),
             Token::Not => write!(f, "not"),
             Token::In => write!(f, "in"),
             Token::Is => write!(f, "is"),
