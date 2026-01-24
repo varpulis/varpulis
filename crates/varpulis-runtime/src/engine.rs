@@ -1,6 +1,7 @@
 //! Main execution engine for Varpulis
 
 use crate::aggregation::{AggBinOp, AggResult, Aggregator, Avg, Count, Ema, ExprAggregate, First, Last, Max, Min, StdDev, Sum};
+use crate::attention::{AttentionConfig, AttentionWindow, EmbeddingConfig};
 use crate::event::Event;
 use crate::sequence::{SequenceContext, SequenceStep, SequenceTracker};
 use crate::window::{SlidingWindow, TumblingWindow};
@@ -81,6 +82,15 @@ enum RuntimeOp {
     Log(LogConfig),
     /// Sequence operation - index into sequence_tracker steps
     Sequence,
+    /// Attention window for correlation scoring
+    AttentionWindow(AttentionWindowConfig),
+}
+
+struct AttentionWindowConfig {
+    duration_ns: u64,
+    num_heads: usize,
+    embedding_dim: usize,
+    threshold: f32,
 }
 
 struct PrintConfig {
@@ -439,6 +449,46 @@ impl Engine {
                 StreamOp::Where(expr) => {
                     // Store expression for runtime evaluation with user functions
                     runtime_ops.push(RuntimeOp::WhereExpr(expr.clone()));
+                }
+                StreamOp::AttentionWindow(args) => {
+                    // Parse attention window configuration
+                    let mut duration_ns = 60_000_000_000u64; // 1 minute default
+                    let mut num_heads = 4;
+                    let mut embedding_dim = 64;
+                    let mut threshold = 0.0f32;
+                    
+                    for arg in args {
+                        match arg.name.as_str() {
+                            "duration" => {
+                                if let varpulis_core::ast::Expr::Duration(ns) = &arg.value {
+                                    duration_ns = *ns;
+                                }
+                            }
+                            "heads" | "num_heads" => {
+                                if let varpulis_core::ast::Expr::Int(n) = &arg.value {
+                                    num_heads = *n as usize;
+                                }
+                            }
+                            "dim" | "embedding_dim" => {
+                                if let varpulis_core::ast::Expr::Int(n) = &arg.value {
+                                    embedding_dim = *n as usize;
+                                }
+                            }
+                            "threshold" => {
+                                if let varpulis_core::ast::Expr::Float(f) = &arg.value {
+                                    threshold = *f as f32;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    
+                    runtime_ops.push(RuntimeOp::AttentionWindow(AttentionWindowConfig {
+                        duration_ns,
+                        num_heads,
+                        embedding_dim,
+                        threshold,
+                    }));
                 }
                 _ => {
                     debug!("Skipping operation: {:?}", op);
@@ -1114,6 +1164,11 @@ impl Engine {
                         };
                         alerts.push(alert);
                     }
+                }
+                RuntimeOp::AttentionWindow(_config) => {
+                    // AttentionWindow is handled at stream level, not per-event
+                    // The attention scores are computed and stored in the event context
+                    // For now, pass through events unchanged
                 }
             }
         }
