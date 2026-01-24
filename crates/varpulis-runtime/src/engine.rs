@@ -545,7 +545,268 @@ impl Engine {
                     _ => None,
                 }
             }
+            Expr::Call { func, args } => {
+                // Handle function calls - both built-in and user-defined
+                if let Expr::Ident(func_name) = func.as_ref() {
+                    // Evaluate arguments
+                    let arg_values: Vec<Value> = args.iter().filter_map(|arg| {
+                        match arg {
+                            varpulis_core::ast::Arg::Positional(e) => Self::eval_filter_expr(e, event, ctx),
+                            varpulis_core::ast::Arg::Named(_, e) => Self::eval_filter_expr(e, event, ctx),
+                        }
+                    }).collect();
+
+                    // Built-in functions
+                    match func_name.as_str() {
+                        "abs" => {
+                            arg_values.first().and_then(|v| match v {
+                                Value::Int(n) => Some(Value::Int(n.abs())),
+                                Value::Float(f) => Some(Value::Float(f.abs())),
+                                _ => None,
+                            })
+                        }
+                        "sqrt" => {
+                            arg_values.first().and_then(|v| match v {
+                                Value::Int(n) => Some(Value::Float((*n as f64).sqrt())),
+                                Value::Float(f) => Some(Value::Float(f.sqrt())),
+                                _ => None,
+                            })
+                        }
+                        "floor" => {
+                            arg_values.first().and_then(|v| match v {
+                                Value::Float(f) => Some(Value::Int(f.floor() as i64)),
+                                Value::Int(n) => Some(Value::Int(*n)),
+                                _ => None,
+                            })
+                        }
+                        "ceil" => {
+                            arg_values.first().and_then(|v| match v {
+                                Value::Float(f) => Some(Value::Int(f.ceil() as i64)),
+                                Value::Int(n) => Some(Value::Int(*n)),
+                                _ => None,
+                            })
+                        }
+                        "round" => {
+                            arg_values.first().and_then(|v| match v {
+                                Value::Float(f) => Some(Value::Int(f.round() as i64)),
+                                Value::Int(n) => Some(Value::Int(*n)),
+                                _ => None,
+                            })
+                        }
+                        "len" => {
+                            arg_values.first().and_then(|v| match v {
+                                Value::Str(s) => Some(Value::Int(s.len() as i64)),
+                                Value::Array(a) => Some(Value::Int(a.len() as i64)),
+                                _ => None,
+                            })
+                        }
+                        "to_string" => {
+                            arg_values.first().map(|v| Value::Str(format!("{}", v)))
+                        }
+                        "to_int" => {
+                            arg_values.first().and_then(|v| match v {
+                                Value::Int(n) => Some(Value::Int(*n)),
+                                Value::Float(f) => Some(Value::Int(*f as i64)),
+                                Value::Str(s) => s.parse::<i64>().ok().map(Value::Int),
+                                _ => None,
+                            })
+                        }
+                        "to_float" => {
+                            arg_values.first().and_then(|v| match v {
+                                Value::Int(n) => Some(Value::Float(*n as f64)),
+                                Value::Float(f) => Some(Value::Float(*f)),
+                                Value::Str(s) => s.parse::<f64>().ok().map(Value::Float),
+                                _ => None,
+                            })
+                        }
+                        "min" if arg_values.len() == 2 => {
+                            match (&arg_values[0], &arg_values[1]) {
+                                (Value::Int(a), Value::Int(b)) => Some(Value::Int(*a.min(b))),
+                                (Value::Float(a), Value::Float(b)) => Some(Value::Float(a.min(*b))),
+                                _ => None,
+                            }
+                        }
+                        "max" if arg_values.len() == 2 => {
+                            match (&arg_values[0], &arg_values[1]) {
+                                (Value::Int(a), Value::Int(b)) => Some(Value::Int(*a.max(b))),
+                                (Value::Float(a), Value::Float(b)) => Some(Value::Float(a.max(*b))),
+                                _ => None,
+                            }
+                        }
+                        _ => {
+                            // User-defined function - requires FunctionContext
+                            // For now, log and return None (will be extended)
+                            debug!("User function call: {}({:?})", func_name, arg_values);
+                            None
+                        }
+                    }
+                } else {
+                    None
+                }
+            }
+            Expr::Unary { op, expr: inner } => {
+                let val = Self::eval_filter_expr(inner, event, ctx)?;
+                match op {
+                    varpulis_core::ast::UnaryOp::Neg => match val {
+                        Value::Int(n) => Some(Value::Int(-n)),
+                        Value::Float(f) => Some(Value::Float(-f)),
+                        _ => None,
+                    },
+                    varpulis_core::ast::UnaryOp::Not => match val {
+                        Value::Bool(b) => Some(Value::Bool(!b)),
+                        _ => None,
+                    },
+                    _ => None,
+                }
+            }
             _ => None,
+        }
+    }
+
+    /// Evaluate expression with access to user-defined functions
+    fn eval_expr_with_functions(
+        expr: &varpulis_core::ast::Expr,
+        event: &Event,
+        ctx: &SequenceContext,
+        functions: &HashMap<String, UserFunction>,
+        bindings: &HashMap<String, Value>,
+    ) -> Option<Value> {
+        use varpulis_core::ast::{BinOp, Expr};
+
+        match expr {
+            Expr::Ident(name) => {
+                // Check bindings first, then event, then context
+                bindings.get(name).cloned()
+                    .or_else(|| event.get(name).cloned())
+            }
+            Expr::Int(n) => Some(Value::Int(*n)),
+            Expr::Float(f) => Some(Value::Float(*f)),
+            Expr::Str(s) => Some(Value::Str(s.clone())),
+            Expr::Bool(b) => Some(Value::Bool(*b)),
+            Expr::Call { func, args } => {
+                if let Expr::Ident(func_name) = func.as_ref() {
+                    // Evaluate arguments
+                    let arg_values: Vec<Value> = args.iter().filter_map(|arg| {
+                        match arg {
+                            varpulis_core::ast::Arg::Positional(e) => 
+                                Self::eval_expr_with_functions(e, event, ctx, functions, bindings),
+                            varpulis_core::ast::Arg::Named(_, e) => 
+                                Self::eval_expr_with_functions(e, event, ctx, functions, bindings),
+                        }
+                    }).collect();
+
+                    // Check user-defined functions first
+                    if let Some(user_fn) = functions.get(func_name) {
+                        // Bind parameters to argument values
+                        let mut fn_bindings = HashMap::new();
+                        for (i, (param_name, _)) in user_fn.params.iter().enumerate() {
+                            if let Some(val) = arg_values.get(i) {
+                                fn_bindings.insert(param_name.clone(), val.clone());
+                            }
+                        }
+                        
+                        // Evaluate function body (last expression in body)
+                        if let Some(last_stmt) = user_fn.body.last() {
+                            if let Stmt::Expr(body_expr) = &last_stmt.node {
+                                return Self::eval_expr_with_functions(
+                                    body_expr, event, ctx, functions, &fn_bindings
+                                );
+                            }
+                        }
+                        return None;
+                    }
+
+                    // Built-in functions (same as eval_filter_expr)
+                    match func_name.as_str() {
+                        "abs" => arg_values.first().and_then(|v| match v {
+                            Value::Int(n) => Some(Value::Int(n.abs())),
+                            Value::Float(f) => Some(Value::Float(f.abs())),
+                            _ => None,
+                        }),
+                        "sqrt" => arg_values.first().and_then(|v| match v {
+                            Value::Int(n) => Some(Value::Float((*n as f64).sqrt())),
+                            Value::Float(f) => Some(Value::Float(f.sqrt())),
+                            _ => None,
+                        }),
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            }
+            Expr::Binary { op, left, right } => {
+                let left_val = Self::eval_expr_with_functions(left, event, ctx, functions, bindings)?;
+                let right_val = Self::eval_expr_with_functions(right, event, ctx, functions, bindings)?;
+                
+                match op {
+                    BinOp::Add => match (&left_val, &right_val) {
+                        (Value::Int(a), Value::Int(b)) => Some(Value::Int(a + b)),
+                        (Value::Float(a), Value::Float(b)) => Some(Value::Float(a + b)),
+                        (Value::Int(a), Value::Float(b)) => Some(Value::Float(*a as f64 + b)),
+                        (Value::Float(a), Value::Int(b)) => Some(Value::Float(a + *b as f64)),
+                        _ => None,
+                    },
+                    BinOp::Sub => match (&left_val, &right_val) {
+                        (Value::Int(a), Value::Int(b)) => Some(Value::Int(a - b)),
+                        (Value::Float(a), Value::Float(b)) => Some(Value::Float(a - b)),
+                        (Value::Int(a), Value::Float(b)) => Some(Value::Float(*a as f64 - b)),
+                        (Value::Float(a), Value::Int(b)) => Some(Value::Float(a - *b as f64)),
+                        _ => None,
+                    },
+                    BinOp::Mul => match (&left_val, &right_val) {
+                        (Value::Int(a), Value::Int(b)) => Some(Value::Int(a * b)),
+                        (Value::Float(a), Value::Float(b)) => Some(Value::Float(a * b)),
+                        (Value::Int(a), Value::Float(b)) => Some(Value::Float(*a as f64 * b)),
+                        (Value::Float(a), Value::Int(b)) => Some(Value::Float(a * *b as f64)),
+                        _ => None,
+                    },
+                    BinOp::Div => match (&left_val, &right_val) {
+                        (Value::Int(a), Value::Int(b)) if *b != 0 => Some(Value::Int(a / b)),
+                        (Value::Float(a), Value::Float(b)) if *b != 0.0 => Some(Value::Float(a / b)),
+                        (Value::Int(a), Value::Float(b)) if *b != 0.0 => Some(Value::Float(*a as f64 / b)),
+                        (Value::Float(a), Value::Int(b)) if *b != 0 => Some(Value::Float(a / *b as f64)),
+                        _ => None,
+                    },
+                    BinOp::Eq => Some(Value::Bool(left_val == right_val)),
+                    BinOp::NotEq => Some(Value::Bool(left_val != right_val)),
+                    BinOp::Lt => match (&left_val, &right_val) {
+                        (Value::Int(a), Value::Int(b)) => Some(Value::Bool(a < b)),
+                        (Value::Float(a), Value::Float(b)) => Some(Value::Bool(a < b)),
+                        (Value::Int(a), Value::Float(b)) => Some(Value::Bool((*a as f64) < *b)),
+                        (Value::Float(a), Value::Int(b)) => Some(Value::Bool(*a < *b as f64)),
+                        _ => None,
+                    },
+                    BinOp::Le => match (&left_val, &right_val) {
+                        (Value::Int(a), Value::Int(b)) => Some(Value::Bool(a <= b)),
+                        (Value::Float(a), Value::Float(b)) => Some(Value::Bool(a <= b)),
+                        _ => None,
+                    },
+                    BinOp::Gt => match (&left_val, &right_val) {
+                        (Value::Int(a), Value::Int(b)) => Some(Value::Bool(a > b)),
+                        (Value::Float(a), Value::Float(b)) => Some(Value::Bool(a > b)),
+                        (Value::Int(a), Value::Float(b)) => Some(Value::Bool((*a as f64) > *b)),
+                        (Value::Float(a), Value::Int(b)) => Some(Value::Bool(*a > *b as f64)),
+                        _ => None,
+                    },
+                    BinOp::Ge => match (&left_val, &right_val) {
+                        (Value::Int(a), Value::Int(b)) => Some(Value::Bool(a >= b)),
+                        (Value::Float(a), Value::Float(b)) => Some(Value::Bool(a >= b)),
+                        _ => None,
+                    },
+                    BinOp::And => {
+                        let a = left_val.as_bool()?;
+                        let b = right_val.as_bool()?;
+                        Some(Value::Bool(a && b))
+                    },
+                    BinOp::Or => {
+                        let a = left_val.as_bool()?;
+                        let b = right_val.as_bool()?;
+                        Some(Value::Bool(a || b))
+                    },
+                    _ => None,
+                }
+            }
+            _ => Self::eval_filter_expr(expr, event, ctx),
         }
     }
 
