@@ -844,3 +844,116 @@ async fn test_emit_with_arithmetic_expression() {
         panic!("final_price field not found or not a float");
     }
 }
+
+// ============================================================================
+// ATTENTION WINDOW INTEGRATION TESTS
+// ============================================================================
+
+#[tokio::test]
+async fn test_attention_window_computes_score() {
+    let program = r#"
+        stream CorrelatedTrades = Trade
+            .attention_window(duration: 60s, heads: 4, dim: 64)
+            .emit(
+                symbol: symbol,
+                price: price,
+                attention: attention_score,
+                matches: attention_matches
+            )
+    "#;
+    
+    // Send multiple trades - attention should build up correlation
+    let events = r#"
+        Trade { symbol: "AAPL", price: 150.0, volume: 1000 }
+        Trade { symbol: "AAPL", price: 151.0, volume: 1100 }
+        Trade { symbol: "AAPL", price: 152.0, volume: 1200 }
+        Trade { symbol: "GOOG", price: 2800.0, volume: 500 }
+        Trade { symbol: "AAPL", price: 153.0, volume: 1300 }
+    "#;
+    
+    let alerts = run_scenario(program, events).await;
+    
+    // Should have 5 alerts (one per trade)
+    assert_eq!(alerts.len(), 5, "Should emit for each trade");
+    
+    // First trade has no history, so attention_score should be 0
+    if let Some(varpulis_core::Value::Float(score)) = alerts[0].data.get("attention") {
+        assert_eq!(*score, 0.0, "First event should have 0 attention (no history)");
+    } else {
+        panic!("attention field not found");
+    }
+    
+    // Later trades should have attention_matches > 0
+    if let Some(varpulis_core::Value::Int(matches)) = alerts[4].data.get("matches") {
+        assert!(*matches > 0, "Later trades should have attention matches, got {}", matches);
+    } else {
+        panic!("matches field not found");
+    }
+}
+
+#[tokio::test]
+async fn test_attention_window_with_threshold_filter() {
+    let program = r#"
+        stream HighCorrelation = Trade
+            .attention_window(duration: 30s, heads: 2, dim: 32, threshold: 0.1)
+            .where(attention_score > 0.0)
+            .emit(
+                symbol: symbol,
+                score: attention_score
+            )
+    "#;
+    
+    let events = r#"
+        Trade { symbol: "AAPL", price: 150.0 }
+        Trade { symbol: "AAPL", price: 150.5 }
+        Trade { symbol: "AAPL", price: 151.0 }
+    "#;
+    
+    let alerts = run_scenario(program, events).await;
+    
+    // First trade filtered out (score = 0), subsequent trades may pass
+    // The exact number depends on the attention scores computed
+    for alert in &alerts {
+        if let Some(varpulis_core::Value::Float(score)) = alert.data.get("score") {
+            assert!(*score > 0.0, "Filtered trades should have score > 0");
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_attention_window_fraud_detection_scenario() {
+    let program = r#"
+        stream SuspiciousTransactions = Transaction
+            .attention_window(duration: 300s, heads: 4, dim: 64)
+            .emit(
+                user: user_id,
+                amount: amount,
+                correlation: attention_score,
+                similar_count: attention_matches
+            )
+    "#;
+    
+    // Normal transactions followed by unusual one
+    let events = r#"
+        Transaction { user_id: "U123", amount: 50.0, location: "NYC" }
+        Transaction { user_id: "U123", amount: 75.0, location: "NYC" }
+        Transaction { user_id: "U123", amount: 45.0, location: "NYC" }
+        Transaction { user_id: "U123", amount: 60.0, location: "NYC" }
+        Transaction { user_id: "U123", amount: 5000.0, location: "Lagos" }
+    "#;
+    
+    let alerts = run_scenario(program, events).await;
+    
+    assert_eq!(alerts.len(), 5);
+    
+    // All alerts should have correlation and similar_count fields
+    for alert in &alerts {
+        assert!(alert.data.contains_key("correlation"), "Should have correlation");
+        assert!(alert.data.contains_key("similar_count"), "Should have similar_count");
+    }
+    
+    // The unusual transaction (last one) should still have matches from history
+    if let Some(varpulis_core::Value::Int(matches)) = alerts[4].data.get("similar_count") {
+        assert!(*matches > 0, "Even unusual tx should have history matches");
+    }
+}

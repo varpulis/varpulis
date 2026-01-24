@@ -58,6 +58,8 @@ struct StreamDefinition {
     operations: Vec<RuntimeOp>,
     /// Sequence tracker for followed-by operations
     sequence_tracker: Option<SequenceTracker>,
+    /// Attention window for correlation scoring
+    attention_window: Option<AttentionWindow>,
 }
 
 enum RuntimeSource {
@@ -238,6 +240,9 @@ impl Engine {
             }
         }
 
+        // Extract attention window config from operations if present
+        let attention_window = self.extract_attention_window(&runtime_ops);
+        
         self.streams.insert(
             name.to_string(),
             StreamDefinition {
@@ -245,6 +250,7 @@ impl Engine {
                 source: runtime_source,
                 operations: runtime_ops,
                 sequence_tracker,
+                attention_window,
             },
         );
 
@@ -516,6 +522,25 @@ impl Engine {
         };
 
         Ok((runtime_ops, sequence_tracker, sequence_event_types))
+    }
+
+    /// Extract and create AttentionWindow from runtime operations
+    fn extract_attention_window(&self, ops: &[RuntimeOp]) -> Option<AttentionWindow> {
+        for op in ops {
+            if let RuntimeOp::AttentionWindow(config) = op {
+                let attention_config = AttentionConfig {
+                    num_heads: config.num_heads,
+                    embedding_dim: config.embedding_dim,
+                    threshold: config.threshold,
+                    max_history: 1000,
+                    embedding_config: EmbeddingConfig::default(),
+                    cache_config: Default::default(),
+                };
+                let duration = std::time::Duration::from_nanos(config.duration_ns);
+                return Some(AttentionWindow::new(attention_config, duration));
+            }
+        }
+        None
     }
 
     /// Compile a sequence filter expression into a runtime closure
@@ -1015,7 +1040,39 @@ impl Engine {
         event: Event,
         functions: &HashMap<String, UserFunction>,
     ) -> Result<Vec<Alert>, String> {
-        let mut current_events = vec![event];
+        // Process through attention window if present - compute and add attention_score
+        let mut enriched_event = event.clone();
+        if let Some(ref mut attention_window) = stream.attention_window {
+            let result = attention_window.process(event);
+            
+            // Compute aggregate attention score (max of all scores)
+            let attention_score = if result.scores.is_empty() {
+                0.0
+            } else {
+                result.scores.iter().map(|(_, s)| *s).fold(f32::NEG_INFINITY, f32::max)
+            };
+            
+            // Add attention_score to event data for use in expressions
+            enriched_event.data.insert(
+                "attention_score".to_string(),
+                Value::Float(attention_score as f64),
+            );
+            
+            // Add attention context vector norm as additional metric
+            let context_norm: f32 = result.context.iter().map(|x| x * x).sum::<f32>().sqrt();
+            enriched_event.data.insert(
+                "attention_context_norm".to_string(),
+                Value::Float(context_norm as f64),
+            );
+            
+            // Add number of correlated events
+            enriched_event.data.insert(
+                "attention_matches".to_string(),
+                Value::Int(result.scores.len() as i64),
+            );
+        }
+        
+        let mut current_events = vec![enriched_event];
         let mut alerts = Vec::new();
 
         for op in &mut stream.operations {
