@@ -3,6 +3,7 @@
 //! This crate provides the runtime for executing VarpulisQL programs.
 
 pub mod aggregation;
+pub mod attention;
 pub mod connector;
 pub mod engine;
 pub mod event;
