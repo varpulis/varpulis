@@ -3,6 +3,7 @@
 use crate::aggregation::{AggBinOp, AggResult, Aggregator, Avg, Count, CountDistinct, Ema, ExprAggregate, First, Last, Max, Min, StdDev, Sum};
 use crate::attention::{AttentionConfig, AttentionWindow, EmbeddingConfig};
 use crate::event::Event;
+use crate::pattern::{PatternBuilder, PatternContext, PatternEngine, PatternExpr, PatternFilter};
 use crate::sequence::{SequenceContext, SequenceStep, SequenceTracker};
 use crate::window::{SlidingWindow, TumblingWindow};
 use chrono::Duration;
@@ -60,6 +61,8 @@ struct StreamDefinition {
     sequence_tracker: Option<SequenceTracker>,
     /// Attention window for correlation scoring
     attention_window: Option<AttentionWindow>,
+    /// Pattern engine for Apama-style pattern matching
+    pattern_engine: Option<PatternEngine>,
 }
 
 enum RuntimeSource {
@@ -272,6 +275,9 @@ impl Engine {
         // Extract attention window config from operations if present
         let attention_window = self.extract_attention_window(&runtime_ops);
         
+        // Extract pattern engine from operations if present
+        let pattern_engine = self.extract_pattern_engine(&runtime_ops);
+        
         self.streams.insert(
             name.to_string(),
             StreamDefinition {
@@ -280,6 +286,7 @@ impl Engine {
                 operations: runtime_ops,
                 sequence_tracker,
                 attention_window,
+                pattern_engine,
             },
         );
 
@@ -576,6 +583,86 @@ impl Engine {
             }
         }
         None
+    }
+
+    /// Extract and create PatternEngine from runtime operations
+    fn extract_pattern_engine(&self, ops: &[RuntimeOp]) -> Option<PatternEngine> {
+        for op in ops {
+            if let RuntimeOp::Pattern(config) = op {
+                // Try to convert the matcher expression to a PatternExpr
+                if let Some(pattern_expr) = Self::expr_to_pattern(&config.matcher) {
+                    let mut engine = PatternEngine::new();
+                    engine.track(pattern_expr);
+                    return Some(engine);
+                }
+            }
+        }
+        None
+    }
+
+    /// Convert an AST expression to a PatternExpr for the pattern engine
+    fn expr_to_pattern(expr: &varpulis_core::ast::Expr) -> Option<PatternExpr> {
+        use varpulis_core::ast::{BinOp, Expr, UnaryOp};
+
+        match expr {
+            // Identifier = event type
+            Expr::Ident(name) => Some(PatternBuilder::event(name)),
+
+            // Binary operators: ->, and, or, xor
+            Expr::Binary { op, left, right } => {
+                let left_pattern = Self::expr_to_pattern(left)?;
+                let right_pattern = Self::expr_to_pattern(right)?;
+
+                match op {
+                    BinOp::FollowedBy => Some(PatternBuilder::followed_by(left_pattern, right_pattern)),
+                    BinOp::And => Some(PatternBuilder::and(left_pattern, right_pattern)),
+                    BinOp::Or => Some(PatternBuilder::or(left_pattern, right_pattern)),
+                    BinOp::Xor => Some(PatternBuilder::xor(left_pattern, right_pattern)),
+                    _ => None,
+                }
+            }
+
+            // Unary not
+            Expr::Unary { op: UnaryOp::Not, expr: inner } => {
+                let inner_pattern = Self::expr_to_pattern(inner)?;
+                Some(PatternBuilder::not(inner_pattern))
+            }
+
+            // Call expression: could be all(A) or within(A, 30s) or event with filter
+            Expr::Call { func, args } => {
+                if let Expr::Ident(func_name) = func.as_ref() {
+                    match func_name.as_str() {
+                        "all" => {
+                            if let Some(varpulis_core::ast::Arg::Positional(inner)) = args.first() {
+                                let inner_pattern = Self::expr_to_pattern(inner)?;
+                                return Some(PatternBuilder::all(inner_pattern));
+                            }
+                        }
+                        "within" => {
+                            // within(pattern, duration)
+                            if args.len() >= 2 {
+                                if let (Some(varpulis_core::ast::Arg::Positional(inner)), Some(varpulis_core::ast::Arg::Positional(dur_expr))) = (args.get(0), args.get(1)) {
+                                    let inner_pattern = Self::expr_to_pattern(inner)?;
+                                    if let Expr::Duration(ns) = dur_expr {
+                                        let duration = std::time::Duration::from_nanos(*ns as u64);
+                                        return Some(PatternBuilder::within(inner_pattern, duration));
+                                    }
+                                }
+                            }
+                        }
+                        _ => {
+                            // Treat as event type with filter
+                            // For now, just treat as simple event
+                            return Some(PatternBuilder::event(func_name));
+                        }
+                    }
+                }
+                None
+            }
+
+            // Lambda expressions in patterns are complex - skip for now
+            _ => None,
+        }
     }
 
     /// Compile a sequence filter expression into a runtime closure
