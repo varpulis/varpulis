@@ -66,10 +66,15 @@ enum RuntimeSource {
 }
 
 enum RuntimeOp {
-    Where(Box<dyn Fn(&Event) -> bool + Send + Sync>),
+    /// Filter with closure (for sequence filters with context)
+    WhereClosure(Box<dyn Fn(&Event) -> bool + Send + Sync>),
+    /// Filter with expression (evaluated at runtime with user functions)
+    WhereExpr(varpulis_core::ast::Expr),
     Window(WindowType),
     Aggregate(Aggregator),
     Emit(EmitConfig),
+    /// Emit with expression evaluation for computed fields
+    EmitExpr(EmitExprConfig),
     /// Print to stdout
     Print(PrintConfig),
     /// Log with level
@@ -95,6 +100,10 @@ enum WindowType {
 
 struct EmitConfig {
     fields: Vec<(String, String)>, // (output_name, source_field or literal)
+}
+
+struct EmitExprConfig {
+    fields: Vec<(String, varpulis_core::ast::Expr)>, // (output_name, expression)
 }
 
 impl Engine {
@@ -239,6 +248,7 @@ impl Engine {
         let mut sequence_event_types: Vec<String> = Vec::new();
         let mut match_all_first = false;
         let mut current_timeout: Option<std::time::Duration> = None;
+        let mut negation_conditions: Vec<(String, Option<Box<dyn Fn(&Event, &SequenceContext) -> bool + Send + Sync>>)> = Vec::new();
 
         // Handle sequence() construct - converts SequenceDecl to SequenceSteps
         if let StreamSource::Sequence(decl) = source {
@@ -314,9 +324,16 @@ impl Engine {
                     current_timeout = Some(std::time::Duration::from_nanos(duration_ns));
                     continue;
                 }
-                StreamOp::Not(_clause) => {
-                    // TODO: implement negation
-                    warn!("Not clause not yet implemented in runtime");
+                StreamOp::Not(clause) => {
+                    // Store negation for later addition to sequence tracker
+                    let filter = clause.filter.as_ref().map(|expr| {
+                        Self::compile_sequence_filter(expr.clone())
+                    });
+                    // Add negation event type to sequence event types so it gets routed
+                    if !sequence_event_types.contains(&clause.event_type) {
+                        sequence_event_types.push(clause.event_type.clone());
+                    }
+                    negation_conditions.push((clause.event_type.clone(), filter));
                     continue;
                 }
                 _ => {}
@@ -358,18 +375,35 @@ impl Engine {
                     runtime_ops.push(RuntimeOp::Aggregate(aggregator));
                 }
                 StreamOp::Emit(args) => {
-                    let fields: Vec<(String, String)> = args
-                        .iter()
-                        .filter_map(|arg| {
-                            let value = match &arg.value {
-                                varpulis_core::ast::Expr::Str(s) => s.clone(),
-                                varpulis_core::ast::Expr::Ident(s) => s.clone(),
-                                _ => return None,
-                            };
-                            Some((arg.name.clone(), value))
-                        })
-                        .collect();
-                    runtime_ops.push(RuntimeOp::Emit(EmitConfig { fields }));
+                    // Check if any args have complex expressions (not just strings or idents)
+                    let has_complex_expr = args.iter().any(|arg| {
+                        !matches!(&arg.value, 
+                            varpulis_core::ast::Expr::Str(_) | 
+                            varpulis_core::ast::Expr::Ident(_))
+                    });
+                    
+                    if has_complex_expr {
+                        // Use EmitExpr for complex expressions with function evaluation
+                        let fields: Vec<(String, varpulis_core::ast::Expr)> = args
+                            .iter()
+                            .map(|arg| (arg.name.clone(), arg.value.clone()))
+                            .collect();
+                        runtime_ops.push(RuntimeOp::EmitExpr(EmitExprConfig { fields }));
+                    } else {
+                        // Use simple EmitConfig for string/ident only
+                        let fields: Vec<(String, String)> = args
+                            .iter()
+                            .filter_map(|arg| {
+                                let value = match &arg.value {
+                                    varpulis_core::ast::Expr::Str(s) => s.clone(),
+                                    varpulis_core::ast::Expr::Ident(s) => s.clone(),
+                                    _ => return None,
+                                };
+                                Some((arg.name.clone(), value))
+                            })
+                            .collect();
+                        runtime_ops.push(RuntimeOp::Emit(EmitConfig { fields }));
+                    }
                 }
                 StreamOp::Print(exprs) => {
                     runtime_ops.push(RuntimeOp::Print(PrintConfig { exprs: exprs.clone() }));
@@ -403,13 +437,8 @@ impl Engine {
                     runtime_ops.push(RuntimeOp::Log(LogConfig { level, message, data_field }));
                 }
                 StreamOp::Where(expr) => {
-                    let expr_clone = expr.clone();
-                    let predicate = Box::new(move |event: &Event| {
-                        Self::eval_filter_expr(&expr_clone, event, &SequenceContext::new())
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false)
-                    });
-                    runtime_ops.push(RuntimeOp::Where(predicate));
+                    // Store expression for runtime evaluation with user functions
+                    runtime_ops.push(RuntimeOp::WhereExpr(expr.clone()));
                 }
                 _ => {
                     debug!("Skipping operation: {:?}", op);
@@ -421,7 +450,17 @@ impl Engine {
         let sequence_tracker = if sequence_steps.len() > 1 {
             // Add Sequence operation marker at the beginning
             runtime_ops.insert(0, RuntimeOp::Sequence);
-            Some(SequenceTracker::new(sequence_steps, match_all_first))
+            let mut tracker = SequenceTracker::new(sequence_steps, match_all_first);
+            
+            // Add negation conditions
+            for (event_type, filter) in negation_conditions {
+                tracker.add_negation(crate::sequence::NegationCondition {
+                    event_type,
+                    filter,
+                });
+            }
+            
+            Some(tracker)
         } else {
             None
         };
@@ -908,7 +947,7 @@ impl Engine {
 
         for stream_name in stream_names {
             if let Some(stream) = self.streams.get_mut(&stream_name) {
-                let alerts = Self::process_stream_inner(stream, event.clone()).await?;
+                let alerts = Self::process_stream_with_functions(stream, event.clone(), &self.functions).await?;
                 for alert in alerts {
                     self.alerts_generated += 1;
                     if let Err(e) = self.alert_tx.send(alert).await {
@@ -921,14 +960,29 @@ impl Engine {
         Ok(())
     }
 
-    async fn process_stream_inner(stream: &mut StreamDefinition, event: Event) -> Result<Vec<Alert>, String> {
+    async fn process_stream_with_functions(
+        stream: &mut StreamDefinition, 
+        event: Event,
+        functions: &HashMap<String, UserFunction>,
+    ) -> Result<Vec<Alert>, String> {
         let mut current_events = vec![event];
         let mut alerts = Vec::new();
 
         for op in &mut stream.operations {
             match op {
-                RuntimeOp::Where(predicate) => {
+                RuntimeOp::WhereClosure(predicate) => {
                     current_events.retain(|e| predicate(e));
+                    if current_events.is_empty() {
+                        return Ok(alerts);
+                    }
+                }
+                RuntimeOp::WhereExpr(expr) => {
+                    let ctx = SequenceContext::new();
+                    current_events.retain(|e| {
+                        Self::eval_expr_with_functions(expr, e, &ctx, functions, &HashMap::new())
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false)
+                    });
                     if current_events.is_empty() {
                         return Ok(alerts);
                     }
@@ -1040,6 +1094,25 @@ impl Engine {
                             return Ok(alerts);
                         }
                         current_events = sequence_results;
+                    }
+                }
+                RuntimeOp::EmitExpr(config) => {
+                    let ctx = SequenceContext::new();
+                    for event in &current_events {
+                        let mut alert_data = IndexMap::new();
+                        for (out_name, expr) in &config.fields {
+                            if let Some(value) = Self::eval_expr_with_functions(expr, event, &ctx, functions, &HashMap::new()) {
+                                alert_data.insert(out_name.clone(), value);
+                            }
+                        }
+
+                        let alert = Alert {
+                            alert_type: "stream_output".to_string(),
+                            severity: "info".to_string(),
+                            message: format!("Output from stream {}", stream.name),
+                            data: alert_data,
+                        };
+                        alerts.push(alert);
                     }
                 }
             }

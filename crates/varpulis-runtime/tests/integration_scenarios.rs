@@ -617,3 +617,230 @@ async fn test_electrical_threshold_detection() {
     // Only first reading (200 > 150) should trigger
     assert_eq!(alerts.len(), 1, "Should detect one over-threshold reading");
 }
+
+#[tokio::test]
+async fn test_user_function_in_where_clause() {
+    // Test that user-defined functions work in .where() clauses
+    let program = r#"
+        fn is_high(value: float, threshold: float) -> bool:
+            value > threshold
+        
+        fn double(x: float) -> float:
+            x * 2.0
+        
+        stream HighValues = Measurement
+            .where(is_high(value, double(threshold)))
+            .emit(status: "high", val: value)
+    "#;
+    
+    let events = r#"
+        Measurement { value: 100.0, threshold: 30.0 }
+        Measurement { value: 50.0, threshold: 30.0 }
+        Measurement { value: 150.0, threshold: 100.0 }
+    "#;
+    
+    let alerts = run_scenario(program, events).await;
+    
+    // First: 100 > 60 (30*2) = true -> emit
+    // Second: 50 > 60 = false -> no emit
+    // Third: 150 > 200 (100*2) = false -> no emit
+    assert_eq!(alerts.len(), 1, "Should detect one high value using user functions");
+}
+
+#[tokio::test]
+async fn test_builtin_functions_in_where() {
+    let program = r#"
+        stream AbsCheck = Reading
+            .where(abs(delta) > 10.0)
+            .emit(status: "large_delta", d: delta)
+    "#;
+    
+    let events = r#"
+        Reading { delta: 5.0 }
+        Reading { delta: -15.0 }
+        Reading { delta: 8.0 }
+        Reading { delta: 25.0 }
+    "#;
+    
+    let alerts = run_scenario(program, events).await;
+    
+    // abs(5) = 5 > 10 = false
+    // abs(-15) = 15 > 10 = true
+    // abs(8) = 8 > 10 = false
+    // abs(25) = 25 > 10 = true
+    assert_eq!(alerts.len(), 2, "Should detect two readings with abs(delta) > 10");
+}
+
+#[tokio::test]
+async fn test_nested_function_calls() {
+    let program = r#"
+        fn add_margin(x: float, pct: float) -> float:
+            x * (1.0 + pct / 100.0)
+        
+        stream MarginCheck = Price
+            .where(current > add_margin(base, margin_pct))
+            .emit(status: "above_margin")
+    "#;
+    
+    let events = r#"
+        Price { current: 110.0, base: 100.0, margin_pct: 5.0 }
+        Price { current: 104.0, base: 100.0, margin_pct: 5.0 }
+    "#;
+    
+    let alerts = run_scenario(program, events).await;
+    
+    // 110 > 100 * 1.05 = 105 -> true
+    // 104 > 105 = false
+    assert_eq!(alerts.len(), 1, "Should detect price above margin");
+}
+
+// =============================================================================
+// Negation (.not) Tests
+// =============================================================================
+
+#[tokio::test]
+async fn test_sequence_negation_cancels_match() {
+    // Order -> Payment should match, but Order -> Cancellation -> Payment should not
+    let program = r#"
+        stream OrderPayment = Order as order
+            -> Payment where order_id == order.id as payment
+            .not(Cancellation where order_id == order.id)
+            .emit(status: "paid", order_id: order.id)
+    "#;
+    
+    let events = r#"
+        Order { id: 1 }
+        Cancellation { order_id: 1 }
+        Payment { order_id: 1 }
+    "#;
+    
+    let alerts = run_scenario(program, events).await;
+    
+    // The Cancellation should invalidate the sequence
+    assert_eq!(alerts.len(), 0, "Cancelled order should not emit");
+}
+
+#[tokio::test]
+async fn test_sequence_negation_allows_non_matching() {
+    // Order -> Payment should match when Cancellation is for different order
+    let program = r#"
+        stream OrderPayment = Order as order
+            -> Payment where order_id == order.id as payment
+            .not(Cancellation where order_id == order.id)
+            .emit(status: "paid", order_id: order.id)
+    "#;
+    
+    let events = r#"
+        Order { id: 1 }
+        Cancellation { order_id: 2 }
+        Payment { order_id: 1 }
+    "#;
+    
+    let alerts = run_scenario(program, events).await;
+    
+    // Cancellation for order 2 should not affect order 1
+    assert_eq!(alerts.len(), 1, "Non-matching cancellation should not affect sequence");
+}
+
+#[tokio::test]
+async fn test_sequence_without_negation() {
+    // Verify normal sequence works without .not()
+    let program = r#"
+        stream OrderPayment = Order as order
+            -> Payment where order_id == order.id as payment
+            .emit(status: "paid", order_id: order.id)
+    "#;
+    
+    let events = r#"
+        Order { id: 1 }
+        Cancellation { order_id: 1 }
+        Payment { order_id: 1 }
+    "#;
+    
+    let alerts = run_scenario(program, events).await;
+    
+    // Without .not(), the sequence should complete
+    assert_eq!(alerts.len(), 1, "Sequence without negation should complete");
+}
+
+// =============================================================================
+// EmitExpr with Calculated Expressions Tests
+// =============================================================================
+
+#[tokio::test]
+async fn test_emit_with_function_call() {
+    let program = r#"
+        fn calculate_tax(amount: float, rate: float) -> float:
+            amount * rate / 100.0
+        
+        stream TaxCalculation = Sale
+            .emit(
+                sale_id: id,
+                amount: amount,
+                tax: calculate_tax(amount, tax_rate)
+            )
+    "#;
+    
+    let events = r#"
+        Sale { id: "S1", amount: 100.0, tax_rate: 20.0 }
+    "#;
+    
+    let alerts = run_scenario(program, events).await;
+    
+    assert_eq!(alerts.len(), 1);
+    // Tax should be 100 * 20 / 100 = 20
+    if let Some(varpulis_core::Value::Float(tax)) = alerts[0].data.get("tax") {
+        assert!((tax - 20.0).abs() < 0.001, "Tax should be 20.0, got {}", tax);
+    } else {
+        panic!("Tax field not found or not a float");
+    }
+}
+
+#[tokio::test]
+async fn test_emit_with_builtin_function() {
+    let program = r#"
+        stream AbsoluteValues = Measurement
+            .emit(
+                sensor_id: id,
+                abs_value: abs(reading)
+            )
+    "#;
+    
+    let events = r#"
+        Measurement { id: "M1", reading: -42.5 }
+    "#;
+    
+    let alerts = run_scenario(program, events).await;
+    
+    assert_eq!(alerts.len(), 1);
+    if let Some(varpulis_core::Value::Float(val)) = alerts[0].data.get("abs_value") {
+        assert!((val - 42.5).abs() < 0.001, "Absolute value should be 42.5, got {}", val);
+    } else {
+        panic!("abs_value field not found or not a float");
+    }
+}
+
+#[tokio::test]
+async fn test_emit_with_arithmetic_expression() {
+    let program = r#"
+        stream PriceWithDiscount = Product
+            .emit(
+                product_id: id,
+                final_price: price * (1.0 - discount / 100.0)
+            )
+    "#;
+    
+    let events = r#"
+        Product { id: "P1", price: 100.0, discount: 25.0 }
+    "#;
+    
+    let alerts = run_scenario(program, events).await;
+    
+    assert_eq!(alerts.len(), 1);
+    // Final price should be 100 * (1 - 0.25) = 75
+    if let Some(varpulis_core::Value::Float(val)) = alerts[0].data.get("final_price") {
+        assert!((val - 75.0).abs() < 0.001, "Final price should be 75.0, got {}", val);
+    } else {
+        panic!("final_price field not found or not a float");
+    }
+}

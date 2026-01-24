@@ -96,6 +96,14 @@ impl ActiveCorrelation {
     }
 }
 
+/// A negation condition that invalidates a sequence
+pub struct NegationCondition {
+    /// Event type that triggers negation
+    pub event_type: String,
+    /// Filter function to apply
+    pub filter: Option<Box<dyn Fn(&Event, &SequenceContext) -> bool + Send + Sync>>,
+}
+
 /// Tracks sequences for a stream
 pub struct SequenceTracker {
     /// Steps in the sequence pattern
@@ -106,6 +114,8 @@ pub struct SequenceTracker {
     max_active: usize,
     /// Match all for first step
     match_all_first: bool,
+    /// Negation conditions that invalidate sequences
+    negations: Vec<NegationCondition>,
 }
 
 impl SequenceTracker {
@@ -115,6 +125,7 @@ impl SequenceTracker {
             active: Vec::new(),
             max_active: 10000,
             match_all_first,
+            negations: Vec::new(),
         }
     }
 
@@ -123,14 +134,27 @@ impl SequenceTracker {
         self
     }
 
+    pub fn with_negation(mut self, negation: NegationCondition) -> Self {
+        self.negations.push(negation);
+        self
+    }
+
+    pub fn add_negation(&mut self, negation: NegationCondition) {
+        self.negations.push(negation);
+    }
+
     /// Process an incoming event, returns completed correlations
     pub fn process(&mut self, event: &Event) -> Vec<SequenceContext> {
         let mut completed = Vec::new();
 
+        // First, check if this event triggers any negation condition
+        // If so, invalidate matching active correlations
+        self.check_negations(event);
+
         // Track how many correlations existed before starting new ones
         let existing_count = self.active.len();
 
-        // First, check if this event starts a new correlation
+        // Check if this event starts a new correlation
         if self.should_start_new(event) {
             self.start_correlation(event);
         }
@@ -258,6 +282,31 @@ impl SequenceTracker {
         }
 
         true
+    }
+
+    /// Check if event triggers any negation condition and invalidate matching correlations
+    fn check_negations(&mut self, event: &Event) {
+        if self.negations.is_empty() {
+            return;
+        }
+
+        // Check each negation condition
+        for negation in &self.negations {
+            if event.event_type != negation.event_type {
+                continue;
+            }
+
+            // Remove correlations where the negation filter matches
+            self.active.retain(|correlation| {
+                if let Some(ref filter) = negation.filter {
+                    // If filter returns true, the negation matches -> remove correlation
+                    !filter(event, &correlation.context)
+                } else {
+                    // No filter means any event of this type negates -> remove correlation
+                    false
+                }
+            });
+        }
     }
 
     /// Get count of active correlations
