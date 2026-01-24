@@ -9,6 +9,7 @@ pub mod engine;
 pub mod event;
 pub mod event_file;
 pub mod metrics;
+pub mod pattern;
 pub mod sequence;
 pub mod sink;
 pub mod simulator;
