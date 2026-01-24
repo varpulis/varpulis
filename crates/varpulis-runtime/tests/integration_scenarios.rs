@@ -499,3 +499,121 @@ async fn test_regression_sequence_alert_channel() {
     let alert2 = rx.try_recv();
     assert!(alert2.is_ok(), "Second alert should be received - channel must stay open");
 }
+
+// =============================================================================
+// Electrical Consumption Scenario Tests
+// =============================================================================
+
+#[tokio::test]
+async fn test_electrical_abnormal_floor_consumption() {
+    // Test using inline expression instead of user function (functions in where not yet supported)
+    let program = r#"
+        stream AbnormalFloor = FloorConsumption as fc
+            .where(consumption_kwh > baseline_kwh * 1.5)
+            .emit(
+                alert_type: "abnormal",
+                floor_id: fc.floor_id,
+                consumption: fc.consumption_kwh
+            )
+    "#;
+    
+    let events = r#"
+        FloorConsumption { site_id: "S1", building_id: "B1", floor_id: "F1", consumption_kwh: 100.0, baseline_kwh: 95.0 }
+        FloorConsumption { site_id: "S1", building_id: "B1", floor_id: "F2", consumption_kwh: 200.0, baseline_kwh: 90.0 }
+    "#;
+    
+    let alerts = run_scenario(program, events).await;
+    
+    // Only F2 should trigger (200 > 90 * 1.5 = 135)
+    assert_eq!(alerts.len(), 1, "Should detect one abnormal floor");
+    assert_eq!(
+        alerts[0].data.get("alert_type"),
+        Some(&varpulis_core::Value::Str("abnormal".to_string()))
+    );
+}
+
+#[tokio::test]
+async fn test_electrical_multiple_buildings() {
+    let (tx, mut rx) = mpsc::channel::<Alert>(100);
+    
+    let program = parse(r#"
+        stream AllFloors = FloorConsumption
+            .emit(building_id: building_id, floor_id: floor_id)
+    "#).expect("Failed to parse");
+    
+    let mut engine = Engine::new(tx);
+    engine.load(&program).expect("Failed to load");
+    
+    // Events from different buildings
+    let mut e1 = Event::new("FloorConsumption");
+    e1.data.insert("site_id".to_string(), varpulis_core::Value::Str("S1".to_string()));
+    e1.data.insert("building_id".to_string(), varpulis_core::Value::Str("B1".to_string()));
+    e1.data.insert("floor_id".to_string(), varpulis_core::Value::Str("F1".to_string()));
+    e1.data.insert("consumption_kwh".to_string(), varpulis_core::Value::Float(100.0));
+    
+    let mut e2 = Event::new("FloorConsumption");
+    e2.data.insert("site_id".to_string(), varpulis_core::Value::Str("S1".to_string()));
+    e2.data.insert("building_id".to_string(), varpulis_core::Value::Str("B2".to_string()));
+    e2.data.insert("floor_id".to_string(), varpulis_core::Value::Str("F1".to_string()));
+    e2.data.insert("consumption_kwh".to_string(), varpulis_core::Value::Float(150.0));
+    
+    engine.process(e1).await.expect("Process e1");
+    engine.process(e2).await.expect("Process e2");
+    
+    let mut count = 0;
+    while let Ok(_) = rx.try_recv() {
+        count += 1;
+    }
+    
+    assert_eq!(count, 2, "Should emit for both floors");
+}
+
+#[tokio::test]
+async fn test_electrical_consumption_spike_detection() {
+    // Test sequence pattern for detecting same floor readings
+    let program = r#"
+        stream Spike = FloorConsumption as current
+            -> FloorConsumption as next
+            .emit(
+                alert_type: "spike",
+                current_floor: current.floor_id
+            )
+    "#;
+    
+    let events = r#"
+        FloorConsumption { floor_id: "F1", consumption_kwh: 100.0, baseline_kwh: 95.0 }
+        FloorConsumption { floor_id: "F1", consumption_kwh: 250.0, baseline_kwh: 95.0 }
+    "#;
+    
+    let alerts = run_scenario(program, events).await;
+    
+    // First FloorConsumption -> Second FloorConsumption should trigger
+    assert_eq!(alerts.len(), 1, "Should detect spike sequence");
+    assert_eq!(
+        alerts[0].data.get("alert_type"),
+        Some(&varpulis_core::Value::Str("spike".to_string()))
+    );
+}
+
+#[tokio::test]
+async fn test_electrical_threshold_detection() {
+    // Test using inline expression (user functions in where clauses require additional work)
+    let program = r#"
+        stream OverThreshold = Reading
+            .where(value > baseline * 1.5)
+            .emit(
+                status: "over",
+                reading_value: value
+            )
+    "#;
+    
+    let events = r#"
+        Reading { value: 200.0, baseline: 100.0 }
+        Reading { value: 120.0, baseline: 100.0 }
+    "#;
+    
+    let alerts = run_scenario(program, events).await;
+    
+    // Only first reading (200 > 150) should trigger
+    assert_eq!(alerts.len(), 1, "Should detect one over-threshold reading");
+}

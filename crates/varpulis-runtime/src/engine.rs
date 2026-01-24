@@ -402,6 +402,15 @@ impl Engine {
                     
                     runtime_ops.push(RuntimeOp::Log(LogConfig { level, message, data_field }));
                 }
+                StreamOp::Where(expr) => {
+                    let expr_clone = expr.clone();
+                    let predicate = Box::new(move |event: &Event| {
+                        Self::eval_filter_expr(&expr_clone, event, &SequenceContext::new())
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false)
+                    });
+                    runtime_ops.push(RuntimeOp::Where(predicate));
+                }
                 _ => {
                     debug!("Skipping operation: {:?}", op);
                 }

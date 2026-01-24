@@ -1,0 +1,40 @@
+# Electrical Consumption Test Events
+# Site: SITE-A with 2 buildings (B1, B2)
+# Building B1: 3 floors, Building B2: 2 floors
+
+# Normal readings for Building B1
+@0s FloorConsumption { site_id: "SITE-A", building_id: "B1", floor_id: "F1", consumption_kwh: 100.0, baseline_kwh: 95.0, timestamp: 1000 }
+@1s FloorConsumption { site_id: "SITE-A", building_id: "B1", floor_id: "F2", consumption_kwh: 85.0, baseline_kwh: 90.0, timestamp: 1001 }
+@2s FloorConsumption { site_id: "SITE-A", building_id: "B1", floor_id: "F3", consumption_kwh: 110.0, baseline_kwh: 100.0, timestamp: 1002 }
+
+# Normal readings for Building B2
+@3s FloorConsumption { site_id: "SITE-A", building_id: "B2", floor_id: "F1", consumption_kwh: 75.0, baseline_kwh: 80.0, timestamp: 1003 }
+@4s FloorConsumption { site_id: "SITE-A", building_id: "B2", floor_id: "F2", consumption_kwh: 90.0, baseline_kwh: 85.0, timestamp: 1004 }
+
+# ABNORMAL reading - Floor F2 in B1 suddenly high (triggers AbnormalFloorConsumption)
+@10s FloorConsumption { site_id: "SITE-A", building_id: "B1", floor_id: "F2", consumption_kwh: 200.0, baseline_kwh: 90.0, timestamp: 1010 }
+
+# More normal readings
+@15s FloorConsumption { site_id: "SITE-A", building_id: "B1", floor_id: "F1", consumption_kwh: 105.0, baseline_kwh: 95.0, timestamp: 1015 }
+@16s FloorConsumption { site_id: "SITE-A", building_id: "B1", floor_id: "F3", consumption_kwh: 115.0, baseline_kwh: 100.0, timestamp: 1016 }
+
+# ABNORMAL reading - Floor F1 in B2 very high (triggers AbnormalFloorConsumption)
+@20s FloorConsumption { site_id: "SITE-A", building_id: "B2", floor_id: "F1", consumption_kwh: 180.0, baseline_kwh: 80.0, timestamp: 1020 }
+
+# Site B readings (second site)
+@25s FloorConsumption { site_id: "SITE-B", building_id: "C1", floor_id: "F1", consumption_kwh: 120.0, baseline_kwh: 110.0, timestamp: 1025 }
+@26s FloorConsumption { site_id: "SITE-B", building_id: "C1", floor_id: "F2", consumption_kwh: 130.0, baseline_kwh: 120.0, timestamp: 1026 }
+@27s FloorConsumption { site_id: "SITE-B", building_id: "C1", floor_id: "F3", consumption_kwh: 125.0, baseline_kwh: 115.0, timestamp: 1027 }
+
+# SPIKE detection - Same floor, consumption doubles (triggers ConsumptionSpike)
+@30s FloorConsumption { site_id: "SITE-A", building_id: "B1", floor_id: "F1", consumption_kwh: 100.0, baseline_kwh: 95.0, timestamp: 1030 }
+@35s FloorConsumption { site_id: "SITE-A", building_id: "B1", floor_id: "F1", consumption_kwh: 250.0, baseline_kwh: 95.0, timestamp: 1035 }
+
+# Building B2 all floors abnormal (triggers BuildingAnomaly)
+@40s FloorConsumption { site_id: "SITE-A", building_id: "B2", floor_id: "F1", consumption_kwh: 160.0, baseline_kwh: 80.0, timestamp: 1040 }
+@41s FloorConsumption { site_id: "SITE-A", building_id: "B2", floor_id: "F2", consumption_kwh: 170.0, baseline_kwh: 85.0, timestamp: 1041 }
+
+# Final normal readings
+@50s FloorConsumption { site_id: "SITE-A", building_id: "B1", floor_id: "F1", consumption_kwh: 98.0, baseline_kwh: 95.0, timestamp: 1050 }
+@51s FloorConsumption { site_id: "SITE-A", building_id: "B1", floor_id: "F2", consumption_kwh: 92.0, baseline_kwh: 90.0, timestamp: 1051 }
+@52s FloorConsumption { site_id: "SITE-A", building_id: "B1", floor_id: "F3", consumption_kwh: 103.0, baseline_kwh: 100.0, timestamp: 1052 }
