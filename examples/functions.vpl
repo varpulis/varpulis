@@ -1,0 +1,107 @@
+# VarpulisQL - Functions Example
+#
+# Demonstrates how to write and use reusable functions
+
+# =============================================================================
+# FUNCTION DECLARATIONS
+# =============================================================================
+
+# Simple function with parameters and return type
+fn add(a: int, b: int) -> int:
+    a + b
+
+# Function without parameters
+fn get_threshold() -> float:
+    30.5
+
+# Function with single parameter
+fn is_critical(severity: str) -> bool:
+    severity == "critical"
+
+# Function with complex logic (multi-statement body)
+fn calculate_score(value: float, weight: float) -> float:
+    let normalized = value / 100.0
+    normalized * weight
+
+# Function for validation
+fn is_valid_order(amount: float, status: str) -> bool:
+    amount > 0 && status != "cancelled"
+
+# Function for formatting
+fn format_alert(event_type: str, message: str) -> str:
+    "[" + event_type + "] " + message
+
+# =============================================================================
+# USING FUNCTIONS IN STREAMS
+# =============================================================================
+
+# Use function in filter condition
+stream CriticalAlerts = Alert
+    .where(is_critical(severity))
+    .emit(status: "critical_detected")
+
+# Use function in computed values
+stream ScoredEvents = Measurement
+    .where(calculate_score(value, weight) > 0.8)
+    .emit(
+        score: calculate_score(value, weight),
+        threshold: get_threshold()
+    )
+
+# Use function for validation in sequences
+stream ValidatedOrders = Order as order
+    .where(is_valid_order(amount, status))
+    -> Payment where order_id == order.id
+    .emit(
+        order_id: order.id,
+        amount: order.amount
+    )
+
+# =============================================================================
+# BUILT-IN AGGREGATION FUNCTIONS
+# =============================================================================
+
+# These are built-in and work in aggregate operations:
+# - count(field)   : Count non-null values
+# - sum(field)     : Sum of values
+# - avg(field)     : Average value
+# - min(field)     : Minimum value
+# - max(field)     : Maximum value
+# - first(field)   : First value in window
+# - last(field)    : Last value in window
+# - stddev(field)  : Standard deviation
+# - ema(field, n)  : Exponential moving average (period n)
+
+stream Statistics = SensorReading
+    .window(duration: 5m)
+    .aggregate(
+        total: sum(value),
+        average: avg(value),
+        minimum: min(value),
+        maximum: max(value),
+        count: count(value),
+        trend: ema(value, 10)
+    )
+    .emit(
+        total: total,
+        average: average,
+        range: maximum - minimum
+    )
+
+# =============================================================================
+# LAMBDA EXPRESSIONS (Inline Functions)
+# =============================================================================
+
+# Lambda syntax for inline transformations
+stream Mapped = Event
+    .map(x => x.value * 2)
+    .filter(x => x > 100)
+    .emit(result: value)
+
+# Lambda with multiple fields
+stream Transformed = Measurement
+    .map(m => {
+        normalized: m.value / 100,
+        category: m.type
+    })
+    .emit(normalized: normalized, category: category)

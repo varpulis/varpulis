@@ -30,6 +30,8 @@ pub struct Engine {
     streams: HashMap<String, StreamDefinition>,
     /// Event type to stream mapping
     event_sources: HashMap<String, Vec<String>>,
+    /// User-defined functions
+    functions: HashMap<String, UserFunction>,
     /// Alert sender
     alert_tx: mpsc::Sender<Alert>,
     /// Metrics
@@ -37,6 +39,15 @@ pub struct Engine {
     alerts_generated: u64,
     /// Prometheus metrics
     metrics: Option<Metrics>,
+}
+
+/// User-defined function
+#[derive(Clone)]
+pub struct UserFunction {
+    pub name: String,
+    pub params: Vec<(String, varpulis_core::Type)>, // (name, type)
+    pub return_type: Option<varpulis_core::Type>,
+    pub body: Vec<varpulis_core::span::Spanned<varpulis_core::Stmt>>,
 }
 
 /// Runtime stream definition
@@ -91,6 +102,7 @@ impl Engine {
         Self {
             streams: HashMap::new(),
             event_sources: HashMap::new(),
+            functions: HashMap::new(),
             alert_tx,
             events_processed: 0,
             alerts_generated: 0,
@@ -113,6 +125,16 @@ impl Engine {
                 }
                 Stmt::EventDecl { name, fields, .. } => {
                     info!("Registered event type: {} with {} fields", name, fields.len());
+                }
+                Stmt::FnDecl { name, params, ret, body } => {
+                    let user_fn = UserFunction {
+                        name: name.clone(),
+                        params: params.iter().map(|p| (p.name.clone(), p.ty.clone())).collect(),
+                        return_type: ret.clone(),
+                        body: body.clone(),
+                    };
+                    info!("Registered function: {}({} params)", name, user_fn.params.len());
+                    self.functions.insert(name.clone(), user_fn);
                 }
                 _ => {
                     debug!("Skipping statement: {:?}", stmt.node);
@@ -763,6 +785,16 @@ impl Engine {
             alerts_generated: self.alerts_generated,
             streams_count: self.streams.len(),
         }
+    }
+
+    /// Get a user-defined function by name
+    pub fn get_function(&self, name: &str) -> Option<&UserFunction> {
+        self.functions.get(name)
+    }
+
+    /// Get all registered function names
+    pub fn function_names(&self) -> Vec<&str> {
+        self.functions.keys().map(|s| s.as_str()).collect()
     }
 }
 
