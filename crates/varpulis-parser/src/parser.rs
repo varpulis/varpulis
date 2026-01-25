@@ -198,7 +198,7 @@ impl<'source> Parser<'source> {
             return Err(ParseError::UnexpectedToken {
                 position: self.current.start,
                 expected: "not or event type".to_string(),
-                found: format!("{}", op_name),
+                found: op_name.to_string(),
             });
         }
 
@@ -1057,7 +1057,7 @@ impl<'source> Parser<'source> {
                 Ok(ConfigValue::Str(s))
             }
             Token::Duration(d) => {
-                let d = parse_duration(&d);
+                let d = parse_duration(d);
                 self.advance();
                 Ok(ConfigValue::Duration(d))
             }
@@ -1575,12 +1575,12 @@ impl<'source> Parser<'source> {
                 Ok(Expr::Str(s))
             }
             Token::Duration(d) => {
-                let ns = parse_duration(&d);
+                let ns = parse_duration(d);
                 self.advance();
                 Ok(Expr::Duration(ns))
             }
             Token::Timestamp(t) => {
-                let ns = parse_timestamp(&t);
+                let ns = parse_timestamp(t);
                 self.advance();
                 Ok(Expr::Timestamp(ns))
             }
@@ -1629,15 +1629,14 @@ impl<'source> Parser<'source> {
                             }
                         }
                         
-                        if is_lambda && self.match_token(&Token::RParen) {
-                            if self.match_token(&Token::FatArrow) {
+                        if is_lambda && self.match_token(&Token::RParen)
+                            && self.match_token(&Token::FatArrow) {
                                 let body = self.parse_expr()?;
                                 return Ok(Expr::Lambda {
                                     params,
                                     body: Box::new(body),
                                 });
                             }
-                        }
                         // Not a valid lambda - this is a parse error for tuples
                         return Err(ParseError::UnexpectedToken {
                             position: self.current.start,

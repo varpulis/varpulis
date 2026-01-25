@@ -9,7 +9,9 @@ use std::time::Duration;
 /// Runtime value
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
+#[derive(Default)]
 pub enum Value {
+    #[default]
     Null,
     Bool(bool),
     Int(i64),
@@ -146,11 +148,6 @@ impl fmt::Display for Value {
     }
 }
 
-impl Default for Value {
-    fn default() -> Self {
-        Value::Null
-    }
-}
 
 impl From<bool> for Value {
     fn from(b: bool) -> Self {

@@ -141,7 +141,7 @@ impl Simulator {
             self.sender.send(reading.into()).await?;
 
             // Generate humidity reading (less frequent)
-            if self.tick_count % 3 == 0 {
+            if self.tick_count.is_multiple_of(3) {
                 let humidity = zone.target_humidity
                     + rng.gen_range(-zone.humidity_variance..zone.humidity_variance);
 
@@ -156,7 +156,7 @@ impl Simulator {
         }
 
         // Generate HVAC status (less frequent)
-        if self.tick_count % 5 == 0 {
+        if self.tick_count.is_multiple_of(5) {
             for hvac in &self.config.hvac_units {
                 let power = hvac.base_power * self.degradation_factor
                     + rng.gen_range(-0.5..0.5);
@@ -190,8 +190,10 @@ pub fn create_default_simulator() -> (Simulator, mpsc::Receiver<Event>) {
 /// Create a simulator that produces anomalies
 pub fn create_anomaly_simulator() -> (Simulator, mpsc::Receiver<Event>) {
     let (tx, rx) = mpsc::channel(1000);
-    let mut config = SimulatorConfig::default();
-    config.anomaly_probability = 0.1; // 10% anomaly rate
+    let config = SimulatorConfig {
+        anomaly_probability: 0.1, // 10% anomaly rate
+        ..Default::default()
+    };
     let simulator = Simulator::new(config, tx);
     (simulator, rx)
 }
@@ -199,8 +201,10 @@ pub fn create_anomaly_simulator() -> (Simulator, mpsc::Receiver<Event>) {
 /// Create a simulator with degradation
 pub fn create_degradation_simulator() -> (Simulator, mpsc::Receiver<Event>) {
     let (tx, rx) = mpsc::channel(1000);
-    let mut config = SimulatorConfig::default();
-    config.degradation_enabled = true;
+    let config = SimulatorConfig {
+        degradation_enabled: true,
+        ..Default::default()
+    };
     let simulator = Simulator::new(config, tx);
     (simulator, rx)
 }

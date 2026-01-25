@@ -151,7 +151,7 @@ impl EmbeddingEngine {
         let scale = (2.0 / (input_dim + output_dim) as f32).sqrt();
         (0..size).map(|i| {
             let x = (i as f32 + seed * 1000.0 + offset * 10000.0) * 0.1;
-            (x.sin() * 43758.5453).fract() * 2.0 - 1.0
+            (x.sin() * 43_758.547).fract() * 2.0 - 1.0
         } * scale).collect()
     }
 
@@ -267,7 +267,7 @@ impl EmbeddingEngine {
         ((hasher.finish() % 10000) as f32 / 5000.0) - 1.0
     }
 
-    fn normalize(&self, embedding: &mut Vec<f32>) {
+    fn normalize(&self, embedding: &mut [f32]) {
         // Clamp any non-finite values first
         for e in embedding.iter_mut() {
             if !e.is_finite() { *e = 0.0; }
