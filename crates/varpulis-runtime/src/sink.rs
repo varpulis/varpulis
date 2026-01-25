@@ -104,13 +104,10 @@ impl FileSink {
     pub fn path(&self) -> &PathBuf {
         &self.path
     }
-    
+
     pub fn new(name: impl Into<String>, path: impl Into<PathBuf>) -> Result<Self> {
         let path = path.into();
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)?;
+        let file = OpenOptions::new().create(true).append(true).open(&path)?;
 
         Ok(Self {
             name: name.into(),
@@ -294,8 +291,8 @@ impl Sink for MultiSink {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
     use indexmap::IndexMap;
+    use tempfile::NamedTempFile;
     use varpulis_core::Value;
 
     // ==========================================================================
@@ -350,13 +347,13 @@ mod tests {
     async fn test_file_sink() {
         let temp_file = NamedTempFile::new().unwrap();
         let sink = FileSink::new("test_file", temp_file.path()).unwrap();
-        
+
         let event = Event::new("TestEvent").with_field("value", 42i64);
         assert!(sink.send(&event).await.is_ok());
-        
+
         assert!(sink.flush().await.is_ok());
         assert!(sink.close().await.is_ok());
-        
+
         // Verify file contains the event
         let contents = std::fs::read_to_string(temp_file.path()).unwrap();
         assert!(contents.contains("TestEvent"));
@@ -373,10 +370,10 @@ mod tests {
     async fn test_file_sink_alert() {
         let temp_file = NamedTempFile::new().unwrap();
         let sink = FileSink::new("test_file", temp_file.path()).unwrap();
-        
+
         let mut data = IndexMap::new();
         data.insert("key".to_string(), Value::Str("value".to_string()));
-        
+
         let alert = Alert {
             alert_type: "test_alert".to_string(),
             severity: "critical".to_string(),
@@ -385,7 +382,7 @@ mod tests {
         };
         assert!(sink.send_alert(&alert).await.is_ok());
         assert!(sink.flush().await.is_ok());
-        
+
         let contents = std::fs::read_to_string(temp_file.path()).unwrap();
         assert!(contents.contains("test_alert"));
     }
@@ -406,9 +403,12 @@ mod tests {
         let sink = HttpSink::new("http_test", "http://localhost:8080")
             .with_header("Authorization", "Bearer token123")
             .with_header("X-Custom", "value");
-        
+
         assert_eq!(sink.headers.len(), 2);
-        assert_eq!(sink.headers.get("Authorization"), Some(&"Bearer token123".to_string()));
+        assert_eq!(
+            sink.headers.get("Authorization"),
+            Some(&"Bearer token123".to_string())
+        );
     }
 
     #[tokio::test]
@@ -426,7 +426,7 @@ mod tests {
     async fn test_multi_sink_empty() {
         let sink = MultiSink::new("multi");
         assert_eq!(sink.name(), "multi");
-        
+
         let event = Event::new("Test");
         assert!(sink.send(&event).await.is_ok());
         assert!(sink.flush().await.is_ok());
@@ -438,10 +438,10 @@ mod tests {
         let multi = MultiSink::new("multi")
             .with_sink(Box::new(ConsoleSink::new("console1")))
             .with_sink(Box::new(ConsoleSink::new("console2")));
-        
+
         let event = Event::new("Test").with_field("x", 1i64);
         assert!(multi.send(&event).await.is_ok());
-        
+
         let alert = Alert {
             alert_type: "test".to_string(),
             severity: "info".to_string(),
@@ -449,7 +449,7 @@ mod tests {
             data: IndexMap::new(),
         };
         assert!(multi.send_alert(&alert).await.is_ok());
-        
+
         assert!(multi.flush().await.is_ok());
         assert!(multi.close().await.is_ok());
     }
@@ -458,14 +458,13 @@ mod tests {
     async fn test_multi_sink_with_file() {
         let temp_file = NamedTempFile::new().unwrap();
         let file_sink = FileSink::new("file", temp_file.path()).unwrap();
-        
-        let multi = MultiSink::new("multi")
-            .with_sink(Box::new(file_sink));
-        
+
+        let multi = MultiSink::new("multi").with_sink(Box::new(file_sink));
+
         let event = Event::new("MultiEvent").with_field("val", 100i64);
         assert!(multi.send(&event).await.is_ok());
         assert!(multi.flush().await.is_ok());
-        
+
         let contents = std::fs::read_to_string(temp_file.path()).unwrap();
         assert!(contents.contains("MultiEvent"));
     }

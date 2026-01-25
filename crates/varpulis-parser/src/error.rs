@@ -3,7 +3,7 @@
 use thiserror::Error;
 use varpulis_core::Span;
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone)]
 pub enum ParseError {
     #[error("Unexpected token at position {position}: expected {expected}, found {found}")]
     UnexpectedToken {

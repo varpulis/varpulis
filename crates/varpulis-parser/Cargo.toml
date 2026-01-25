@@ -9,6 +9,8 @@ build = "build.rs"
 varpulis-core = { path = "../varpulis-core" }
 logos = { workspace = true }
 thiserror = { workspace = true }
+pest = "2.8.5"
+pest_derive = "2.8.5"
 
 [build-dependencies]
-lalrpop = "0.20"
+# Tree-sitter will be added here

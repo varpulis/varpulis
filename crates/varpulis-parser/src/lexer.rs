@@ -88,6 +88,8 @@ pub enum Token {
     #[token("attention_score")]
     AttentionScore,
 
+    // Note: Stream operation names (map, filter, etc.) are NOT keywords
+    // They are parsed contextually after '.' and can be used as identifiers
     #[token("true")]
     True,
     #[token("false")]
@@ -454,68 +456,98 @@ mod tests {
 
     #[test]
     fn test_keywords() {
-        let tokens: Vec<_> = tokenize("stream event let var const fn").into_iter().map(|t| t.token).collect();
-        assert_eq!(tokens, vec![
-            Token::Stream,
-            Token::Event,
-            Token::Let,
-            Token::Var,
-            Token::Const,
-            Token::Fn,
-            Token::Eof,
-        ]);
+        let tokens: Vec<_> = tokenize("stream event let var const fn")
+            .into_iter()
+            .map(|t| t.token)
+            .collect();
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Stream,
+                Token::Event,
+                Token::Let,
+                Token::Var,
+                Token::Const,
+                Token::Fn,
+                Token::Eof,
+            ]
+        );
     }
 
     #[test]
     fn test_literals() {
-        let tokens: Vec<_> = tokenize("42 3.14 \"hello\" 5s true null").into_iter().map(|t| t.token).collect();
-        assert_eq!(tokens, vec![
-            Token::Integer(42),
-            Token::Float(3.14),
-            Token::String("hello".to_string()),
-            Token::Duration("5s".to_string()),
-            Token::True,
-            Token::Null,
-            Token::Eof,
-        ]);
+        let tokens: Vec<_> = tokenize("42 3.14 \"hello\" 5s true null")
+            .into_iter()
+            .map(|t| t.token)
+            .collect();
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Integer(42),
+                Token::Float(3.14),
+                Token::String("hello".to_string()),
+                Token::Duration("5s".to_string()),
+                Token::True,
+                Token::Null,
+                Token::Eof,
+            ]
+        );
     }
 
     #[test]
     fn test_operators() {
-        let tokens: Vec<_> = tokenize("+ - * / == != <= >=").into_iter().map(|t| t.token).collect();
-        assert_eq!(tokens, vec![
-            Token::Plus,
-            Token::Minus,
-            Token::Star,
-            Token::Slash,
-            Token::EqEq,
-            Token::NotEq,
-            Token::Le,
-            Token::Ge,
-            Token::Eof,
-        ]);
+        let tokens: Vec<_> = tokenize("+ - * / == != <= >=")
+            .into_iter()
+            .map(|t| t.token)
+            .collect();
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Plus,
+                Token::Minus,
+                Token::Star,
+                Token::Slash,
+                Token::EqEq,
+                Token::NotEq,
+                Token::Le,
+                Token::Ge,
+                Token::Eof,
+            ]
+        );
     }
 
     #[test]
     fn test_stream_decl() {
-        let tokens: Vec<_> = tokenize("stream Trades from TradeEvent").into_iter().map(|t| t.token).collect();
-        assert_eq!(tokens, vec![
-            Token::Stream,
-            Token::Ident("Trades".to_string()),
-            Token::From,
-            Token::Ident("TradeEvent".to_string()),
-            Token::Eof,
-        ]);
+        let tokens: Vec<_> = tokenize("stream Trades from TradeEvent")
+            .into_iter()
+            .map(|t| t.token)
+            .collect();
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Stream,
+                Token::Ident("Trades".to_string()),
+                Token::From,
+                Token::Ident("TradeEvent".to_string()),
+                Token::Eof,
+            ]
+        );
     }
 
     #[test]
     fn test_comments() {
-        let tokens: Vec<_> = tokenize("# comment\nstream /* inline */ Trades").into_iter().map(|t| t.token).collect();
-        assert_eq!(tokens, vec![
-            Token::Stream,
-            Token::Ident("Trades".to_string()),
-            Token::Eof,
-        ]);
+        let tokens: Vec<_> = tokenize("# comment\nstream /* inline */ Trades")
+            .into_iter()
+            .map(|t| t.token)
+            .collect();
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Stream,
+                Token::Ident("Trades".to_string()),
+                Token::Eof,
+            ]
+        );
     }
 
     // ==========================================================================
@@ -525,7 +557,9 @@ mod tests {
     #[test]
     fn test_more_keywords() {
         let tokens: Vec<_> = tokenize("if else elif then match for while break continue return")
-            .into_iter().map(|t| t.token).collect();
+            .into_iter()
+            .map(|t| t.token)
+            .collect();
         assert!(tokens.contains(&Token::If));
         assert!(tokens.contains(&Token::Else));
         assert!(tokens.contains(&Token::Match));
@@ -538,7 +572,9 @@ mod tests {
     #[test]
     fn test_stream_keywords() {
         let tokens: Vec<_> = tokenize("where select join merge window aggregate emit")
-            .into_iter().map(|t| t.token).collect();
+            .into_iter()
+            .map(|t| t.token)
+            .collect();
         assert!(tokens.contains(&Token::Where));
         assert!(tokens.contains(&Token::Select));
         assert!(tokens.contains(&Token::Join));
@@ -551,7 +587,9 @@ mod tests {
     #[test]
     fn test_more_operators() {
         let tokens: Vec<_> = tokenize("% ** < > & | ^ ~ << >> = += -= *= /= %=")
-            .into_iter().map(|t| t.token).collect();
+            .into_iter()
+            .map(|t| t.token)
+            .collect();
         assert!(tokens.contains(&Token::Percent));
         assert!(tokens.contains(&Token::DoubleStar));
         assert!(tokens.contains(&Token::Lt));
@@ -567,7 +605,9 @@ mod tests {
     #[test]
     fn test_delimiters() {
         let tokens: Vec<_> = tokenize("( ) [ ] { } , : ? @")
-            .into_iter().map(|t| t.token).collect();
+            .into_iter()
+            .map(|t| t.token)
+            .collect();
         assert!(tokens.contains(&Token::LParen));
         assert!(tokens.contains(&Token::RParen));
         assert!(tokens.contains(&Token::LBracket));
@@ -583,7 +623,9 @@ mod tests {
     #[test]
     fn test_special_operators() {
         let tokens: Vec<_> = tokenize(". ?. ?? => -> .. ..= $")
-            .into_iter().map(|t| t.token).collect();
+            .into_iter()
+            .map(|t| t.token)
+            .collect();
         assert!(tokens.contains(&Token::Dot));
         assert!(tokens.contains(&Token::QuestionDot));
         assert!(tokens.contains(&Token::QuestionQuestion));
@@ -597,7 +639,9 @@ mod tests {
     #[test]
     fn test_type_keywords() {
         let tokens: Vec<_> = tokenize("int float bool str timestamp duration Stream")
-            .into_iter().map(|t| t.token).collect();
+            .into_iter()
+            .map(|t| t.token)
+            .collect();
         assert!(tokens.contains(&Token::IntType));
         assert!(tokens.contains(&Token::FloatType));
         assert!(tokens.contains(&Token::BoolType));
@@ -610,7 +654,9 @@ mod tests {
     #[test]
     fn test_logical_keywords() {
         let tokens: Vec<_> = tokenize("and or not in is as")
-            .into_iter().map(|t| t.token).collect();
+            .into_iter()
+            .map(|t| t.token)
+            .collect();
         assert!(tokens.contains(&Token::And));
         assert!(tokens.contains(&Token::Or));
         assert!(tokens.contains(&Token::Not));
@@ -622,7 +668,9 @@ mod tests {
     #[test]
     fn test_duration_variants() {
         let tokens: Vec<_> = tokenize("100ms 5s 10m 2h 1d")
-            .into_iter().map(|t| t.token).collect();
+            .into_iter()
+            .map(|t| t.token)
+            .collect();
         assert!(matches!(&tokens[0], Token::Duration(s) if s == "100ms"));
         assert!(matches!(&tokens[1], Token::Duration(s) if s == "5s"));
         assert!(matches!(&tokens[2], Token::Duration(s) if s == "10m"));
@@ -633,7 +681,9 @@ mod tests {
     #[test]
     fn test_string_escapes() {
         let tokens: Vec<_> = tokenize(r#""hello\nworld" "tab\there""#)
-            .into_iter().map(|t| t.token).collect();
+            .into_iter()
+            .map(|t| t.token)
+            .collect();
         assert!(matches!(&tokens[0], Token::String(_)));
         assert!(matches!(&tokens[1], Token::String(_)));
     }
@@ -700,7 +750,10 @@ mod tests {
         assert_eq!(format!("{}", Token::LBrace), "{");
         assert_eq!(format!("{}", Token::RBrace), "}");
         assert_eq!(format!("{}", Token::Duration("5m".to_string())), "5m");
-        assert_eq!(format!("{}", Token::Timestamp("2024-01-01".to_string())), "2024-01-01");
+        assert_eq!(
+            format!("{}", Token::Timestamp("2024-01-01".to_string())),
+            "2024-01-01"
+        );
     }
 
     #[test]

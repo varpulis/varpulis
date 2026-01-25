@@ -2,8 +2,8 @@
 
 use crate::event::{Event, HVACStatus, HumidityReading, TemperatureReading};
 use chrono::Utc;
-use rand::{Rng, SeedableRng};
 use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use tokio::sync::mpsc;
 use tokio::time;
 
@@ -124,7 +124,7 @@ impl Simulator {
         // Generate temperature readings for each zone
         for zone in &self.config.zones {
             let is_anomaly = rng.gen::<f64>() < self.config.anomaly_probability;
-            
+
             let temp = if is_anomaly {
                 // Anomaly: temperature spike
                 zone.target_temp + rng.gen_range(5.0..10.0)
@@ -158,10 +158,9 @@ impl Simulator {
         // Generate HVAC status (less frequent)
         if self.tick_count.is_multiple_of(5) {
             for hvac in &self.config.hvac_units {
-                let power = hvac.base_power * self.degradation_factor
-                    + rng.gen_range(-0.5..0.5);
-                let pressure = hvac.base_pressure / self.degradation_factor
-                    + rng.gen_range(-0.1..0.1);
+                let power = hvac.base_power * self.degradation_factor + rng.gen_range(-0.5..0.5);
+                let pressure =
+                    hvac.base_pressure / self.degradation_factor + rng.gen_range(-0.1..0.1);
 
                 let status = HVACStatus {
                     unit_id: hvac.id.clone(),
@@ -285,10 +284,10 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(100);
         let config = SimulatorConfig::default();
         let mut sim = Simulator::new(config, tx);
-        
+
         // Generate one batch of events
         sim.generate_events().await.unwrap();
-        
+
         // Should have temperature readings for each zone
         let mut temp_count = 0;
         while let Ok(event) = rx.try_recv() {
@@ -304,13 +303,13 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(100);
         let config = SimulatorConfig::default();
         let mut sim = Simulator::new(config, tx);
-        
+
         // Generate events at tick 3 (humidity is generated when tick % 3 == 0)
         sim.tick_count = 2; // Will become 3 in generate_events after increment
         sim.generate_events().await.unwrap();
         sim.tick_count = 3;
         sim.generate_events().await.unwrap();
-        
+
         let mut humidity_count = 0;
         while let Ok(event) = rx.try_recv() {
             if event.event_type == "HumidityReading" {
@@ -325,13 +324,13 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(100);
         let config = SimulatorConfig::default();
         let mut sim = Simulator::new(config, tx);
-        
+
         // Generate events at tick 5 (HVAC is generated when tick % 5 == 0)
         sim.tick_count = 4;
         sim.generate_events().await.unwrap();
         sim.tick_count = 5;
         sim.generate_events().await.unwrap();
-        
+
         let mut hvac_count = 0;
         while let Ok(event) = rx.try_recv() {
             if event.event_type == "HVACStatus" {
@@ -347,9 +346,9 @@ mod tests {
         let mut config = SimulatorConfig::default();
         config.degradation_enabled = true;
         let mut sim = Simulator::new(config, tx);
-        
+
         let initial_degradation = sim.degradation_factor;
-        
+
         // Generate events multiple times
         for _ in 0..10 {
             sim.generate_events().await.unwrap();
@@ -357,7 +356,7 @@ mod tests {
                 sim.degradation_factor += 0.0001;
             }
         }
-        
+
         // Degradation should have increased
         assert!(sim.degradation_factor > initial_degradation);
     }
@@ -367,9 +366,9 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(100);
         let config = SimulatorConfig::default();
         let mut sim = Simulator::new(config, tx);
-        
+
         sim.generate_events().await.unwrap();
-        
+
         // Check temperature reading has correct fields
         if let Ok(event) = rx.try_recv() {
             if event.event_type == "TemperatureReading" {
@@ -385,10 +384,10 @@ mod tests {
         let (tx, rx) = mpsc::channel(1);
         let config = SimulatorConfig::default();
         let mut sim = Simulator::new(config, tx);
-        
+
         // Drop receiver to close channel
         drop(rx);
-        
+
         // Generate events should fail
         let result = sim.generate_events().await;
         assert!(result.is_err());

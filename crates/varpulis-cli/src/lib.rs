@@ -27,12 +27,14 @@ pub fn parse_program(source: &str) -> Result<usize> {
 pub fn validate_program(source: &str) -> Result<usize> {
     let program = parse(source).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
     let statement_count = program.statements.len();
-    
+
     // Try to create engine and load program
     let (alert_tx, _alert_rx) = tokio::sync::mpsc::channel(100);
     let mut engine = varpulis_runtime::engine::Engine::new(alert_tx);
-    engine.load(&program).map_err(|e| anyhow::anyhow!("Load error: {}", e))?;
-    
+    engine
+        .load(&program)
+        .map_err(|e| anyhow::anyhow!("Load error: {}", e))?;
+
     Ok(statement_count)
 }
 
@@ -72,7 +74,8 @@ mod tests {
 
     #[test]
     fn test_parse_program_invalid() {
-        let source = "this is not valid varpulis";
+        // Use truly invalid syntax (unclosed parenthesis)
+        let source = "stream x = (";
         assert!(parse_program(source).is_err());
     }
 

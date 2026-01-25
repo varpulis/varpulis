@@ -155,13 +155,27 @@ enum EvalState {
     /// Waiting for first event
     Initial,
     /// Matched left side of FollowedBy, waiting for right
-    FollowedByRight { left_ctx: PatternContext, deadline: Option<Instant> },
+    FollowedByRight {
+        left_ctx: PatternContext,
+        deadline: Option<Instant>,
+    },
     /// Tracking both sides of And (any order)
-    AndBoth { left_matched: bool, right_matched: bool, left_ctx: PatternContext, right_ctx: PatternContext },
+    AndBoth {
+        left_matched: bool,
+        right_matched: bool,
+        left_ctx: PatternContext,
+        right_ctx: PatternContext,
+    },
     /// Tracking Or branches
-    OrBranch { left_matched: bool, right_matched: bool },
+    OrBranch {
+        left_matched: bool,
+        right_matched: bool,
+    },
     /// Tracking Xor branches (tracks if each side has partially matched)
-    XorBranch { left_partial: bool, right_partial: bool },
+    XorBranch {
+        left_partial: bool,
+        right_partial: bool,
+    },
     /// Waiting for Not condition
     NotWaiting { deadline: Option<Instant> },
     /// Pattern completed
@@ -268,7 +282,9 @@ impl PatternEngine {
         let now = Instant::now();
         self.active.retain(|p| {
             match &p.state {
-                EvalState::FollowedByRight { deadline: Some(d), .. } if now > *d => false,
+                EvalState::FollowedByRight {
+                    deadline: Some(d), ..
+                } if now > *d => false,
                 EvalState::NotWaiting { deadline: Some(d) } if now > *d => false,
                 EvalState::Complete => false, // Already completed, remove
                 EvalState::Failed => false,   // Failed, remove
@@ -276,27 +292,27 @@ impl PatternEngine {
             }
         });
     }
-    
+
     /// Get the number of active patterns
     pub fn active_count(&self) -> usize {
         self.active.len()
     }
-    
+
     /// Get the number of completed patterns
     pub fn completed_count(&self) -> usize {
         self.completed.len()
     }
-    
+
     /// Get elapsed time for oldest active pattern
     pub fn oldest_pattern_age(&self) -> Option<Duration> {
         self.active.first().map(|p| p.started_at.elapsed())
     }
-    
+
     /// Store completed patterns for later retrieval
     pub fn store_completed(&mut self, ctx: PatternContext) {
         self.completed.push(ctx);
     }
-    
+
     /// Drain all completed patterns
     pub fn drain_completed(&mut self) -> Vec<PatternContext> {
         std::mem::take(&mut self.completed)
@@ -312,30 +328,18 @@ fn evaluate_pattern(
     event: &Event,
 ) -> EvalResult {
     match expr {
-        PatternExpr::Event { event_type, filter, alias } => {
-            eval_event_template(event_type, filter.as_ref(), alias.as_deref(), ctx, event)
-        }
-        PatternExpr::FollowedBy(left, right) => {
-            eval_followed_by(left, right, state, ctx, event)
-        }
-        PatternExpr::And(left, right) => {
-            eval_and(left, right, state, ctx, event)
-        }
-        PatternExpr::Or(left, right) => {
-            eval_or(left, right, state, ctx, event)
-        }
-        PatternExpr::Xor(left, right) => {
-            eval_xor(left, right, state, ctx, event)
-        }
-        PatternExpr::Not(inner) => {
-            eval_not(inner, ctx, event)
-        }
-        PatternExpr::Within(inner, duration) => {
-            eval_within(inner, *duration, state, ctx, event)
-        }
-        PatternExpr::All(inner) => {
-            evaluate_pattern(inner, state, ctx, event)
-        }
+        PatternExpr::Event {
+            event_type,
+            filter,
+            alias,
+        } => eval_event_template(event_type, filter.as_ref(), alias.as_deref(), ctx, event),
+        PatternExpr::FollowedBy(left, right) => eval_followed_by(left, right, state, ctx, event),
+        PatternExpr::And(left, right) => eval_and(left, right, state, ctx, event),
+        PatternExpr::Or(left, right) => eval_or(left, right, state, ctx, event),
+        PatternExpr::Xor(left, right) => eval_xor(left, right, state, ctx, event),
+        PatternExpr::Not(inner) => eval_not(inner, ctx, event),
+        PatternExpr::Within(inner, duration) => eval_within(inner, *duration, state, ctx, event),
+        PatternExpr::All(inner) => evaluate_pattern(inner, state, ctx, event),
     }
 }
 
@@ -373,17 +377,16 @@ fn eval_followed_by(
     event: &Event,
 ) -> EvalResult {
     match state {
-        EvalState::Initial => {
-            match evaluate_pattern(left, &EvalState::Initial, ctx, event) {
-                EvalResult::Match(left_ctx) => {
-                    EvalResult::Partial(
-                        EvalState::FollowedByRight { left_ctx: left_ctx.clone(), deadline: None },
-                        left_ctx,
-                    )
-                }
-                other => other,
-            }
-        }
+        EvalState::Initial => match evaluate_pattern(left, &EvalState::Initial, ctx, event) {
+            EvalResult::Match(left_ctx) => EvalResult::Partial(
+                EvalState::FollowedByRight {
+                    left_ctx: left_ctx.clone(),
+                    deadline: None,
+                },
+                left_ctx,
+            ),
+            other => other,
+        },
         EvalState::FollowedByRight { left_ctx, deadline } => {
             if let Some(d) = deadline {
                 if Instant::now() > *d {
@@ -420,32 +423,33 @@ fn eval_and(
                     combined.merge(r_ctx);
                     EvalResult::Match(combined)
                 }
-                (EvalResult::Match(l_ctx), _) => {
-                    EvalResult::Partial(
-                        EvalState::AndBoth {
-                            left_matched: true,
-                            right_matched: false,
-                            left_ctx: l_ctx.clone(),
-                            right_ctx: PatternContext::new(),
-                        },
-                        l_ctx.clone(),
-                    )
-                }
-                (_, EvalResult::Match(r_ctx)) => {
-                    EvalResult::Partial(
-                        EvalState::AndBoth {
-                            left_matched: false,
-                            right_matched: true,
-                            left_ctx: PatternContext::new(),
-                            right_ctx: r_ctx.clone(),
-                        },
-                        r_ctx.clone(),
-                    )
-                }
+                (EvalResult::Match(l_ctx), _) => EvalResult::Partial(
+                    EvalState::AndBoth {
+                        left_matched: true,
+                        right_matched: false,
+                        left_ctx: l_ctx.clone(),
+                        right_ctx: PatternContext::new(),
+                    },
+                    l_ctx.clone(),
+                ),
+                (_, EvalResult::Match(r_ctx)) => EvalResult::Partial(
+                    EvalState::AndBoth {
+                        left_matched: false,
+                        right_matched: true,
+                        left_ctx: PatternContext::new(),
+                        right_ctx: r_ctx.clone(),
+                    },
+                    r_ctx.clone(),
+                ),
                 _ => EvalResult::NoMatch,
             }
         }
-        EvalState::AndBoth { left_matched, right_matched, left_ctx, right_ctx } => {
+        EvalState::AndBoth {
+            left_matched,
+            right_matched,
+            left_ctx,
+            right_ctx,
+        } => {
             if *left_matched && !*right_matched {
                 match evaluate_pattern(right, &EvalState::Initial, left_ctx, event) {
                     EvalResult::Match(r_ctx) => {
@@ -484,16 +488,20 @@ fn eval_or(
             // Try left first
             match evaluate_pattern(left, &EvalState::Initial, ctx, event) {
                 EvalResult::Match(l_ctx) => EvalResult::Match(l_ctx),
-                EvalResult::Partial(_new_state, new_ctx) => {
-                    EvalResult::Partial(
-                        EvalState::OrBranch { left_matched: true, right_matched: false },
-                        new_ctx,
-                    )
-                }
+                EvalResult::Partial(_new_state, new_ctx) => EvalResult::Partial(
+                    EvalState::OrBranch {
+                        left_matched: true,
+                        right_matched: false,
+                    },
+                    new_ctx,
+                ),
                 _ => evaluate_pattern(right, &EvalState::Initial, ctx, event),
             }
         }
-        EvalState::OrBranch { left_matched, right_matched } => {
+        EvalState::OrBranch {
+            left_matched,
+            right_matched,
+        } => {
             // Track which branches have been tried
             let _ = (left_matched, right_matched);
             // Continue trying both branches
@@ -523,25 +531,30 @@ fn eval_xor(
                 (EvalResult::Match(_), EvalResult::Match(_)) => EvalResult::Failed,
                 // Only left matches
                 (EvalResult::Match(l_ctx), _) => EvalResult::Match(l_ctx.clone()),
-                // Only right matches  
+                // Only right matches
                 (_, EvalResult::Match(r_ctx)) => EvalResult::Match(r_ctx.clone()),
                 // Partial on either side - track with XorBranch
-                (EvalResult::Partial(_, l_ctx), _) => {
-                    EvalResult::Partial(
-                        EvalState::XorBranch { left_partial: true, right_partial: false },
-                        l_ctx.clone(),
-                    )
-                }
-                (_, EvalResult::Partial(_, r_ctx)) => {
-                    EvalResult::Partial(
-                        EvalState::XorBranch { left_partial: false, right_partial: true },
-                        r_ctx.clone(),
-                    )
-                }
+                (EvalResult::Partial(_, l_ctx), _) => EvalResult::Partial(
+                    EvalState::XorBranch {
+                        left_partial: true,
+                        right_partial: false,
+                    },
+                    l_ctx.clone(),
+                ),
+                (_, EvalResult::Partial(_, r_ctx)) => EvalResult::Partial(
+                    EvalState::XorBranch {
+                        left_partial: false,
+                        right_partial: true,
+                    },
+                    r_ctx.clone(),
+                ),
                 _ => EvalResult::NoMatch,
             }
         }
-        EvalState::XorBranch { left_partial, right_partial } => {
+        EvalState::XorBranch {
+            left_partial,
+            right_partial,
+        } => {
             // Use the tracking info to decide evaluation strategy
             let left_result = if *left_partial {
                 evaluate_pattern(left, &EvalState::Initial, ctx, event)
@@ -553,7 +566,7 @@ fn eval_xor(
             } else {
                 EvalResult::NoMatch
             };
-            
+
             match (&left_result, &right_result) {
                 (EvalResult::Match(_), EvalResult::Match(_)) => EvalResult::Failed,
                 (EvalResult::Match(l_ctx), _) => EvalResult::Match(l_ctx.clone()),
@@ -565,19 +578,12 @@ fn eval_xor(
     }
 }
 
-fn eval_not(
-    inner: &PatternExpr,
-    ctx: &PatternContext,
-    event: &Event,
-) -> EvalResult {
+fn eval_not(inner: &PatternExpr, ctx: &PatternContext, event: &Event) -> EvalResult {
     match evaluate_pattern(inner, &EvalState::Initial, ctx, event) {
         EvalResult::Match(_) => EvalResult::Failed,
         EvalResult::Partial(_, _) => {
             // Inner pattern is partially matched, enter NotWaiting state
-            EvalResult::Partial(
-                EvalState::NotWaiting { deadline: None },
-                ctx.clone(),
-            )
+            EvalResult::Partial(EvalState::NotWaiting { deadline: None }, ctx.clone())
         }
         _ => EvalResult::Match(ctx.clone()), // Not matched = NOT succeeds
     }
@@ -590,8 +596,11 @@ fn eval_within(
     ctx: &PatternContext,
     event: &Event,
 ) -> EvalResult {
-    let deadline = ctx.started_at.map(|s| s + duration).unwrap_or_else(|| Instant::now() + duration);
-    
+    let deadline = ctx
+        .started_at
+        .map(|s| s + duration)
+        .unwrap_or_else(|| Instant::now() + duration);
+
     if Instant::now() > deadline {
         return EvalResult::Failed;
     }
@@ -601,24 +610,12 @@ fn eval_within(
 
 fn eval_filter(filter: &PatternFilter, ctx: &PatternContext, event: &Event) -> bool {
     match filter {
-        PatternFilter::Eq(field, value) => {
-            event.get(field).map(|v| v == value).unwrap_or(false)
-        }
-        PatternFilter::NotEq(field, value) => {
-            event.get(field).map(|v| v != value).unwrap_or(true)
-        }
-        PatternFilter::Gt(field, value) => {
-            compare_values(event.get(field), value, |a, b| a > b)
-        }
-        PatternFilter::Ge(field, value) => {
-            compare_values(event.get(field), value, |a, b| a >= b)
-        }
-        PatternFilter::Lt(field, value) => {
-            compare_values(event.get(field), value, |a, b| a < b)
-        }
-        PatternFilter::Le(field, value) => {
-            compare_values(event.get(field), value, |a, b| a <= b)
-        }
+        PatternFilter::Eq(field, value) => event.get(field).map(|v| v == value).unwrap_or(false),
+        PatternFilter::NotEq(field, value) => event.get(field).map(|v| v != value).unwrap_or(true),
+        PatternFilter::Gt(field, value) => compare_values(event.get(field), value, |a, b| a > b),
+        PatternFilter::Ge(field, value) => compare_values(event.get(field), value, |a, b| a >= b),
+        PatternFilter::Lt(field, value) => compare_values(event.get(field), value, |a, b| a < b),
+        PatternFilter::Le(field, value) => compare_values(event.get(field), value, |a, b| a <= b),
         PatternFilter::And(left, right) => {
             eval_filter(left, ctx, event) && eval_filter(right, ctx, event)
         }
@@ -802,7 +799,10 @@ mod tests {
         assert_eq!(matches1.len(), 0);
 
         // Matching event (same pattern is still active)
-        let event2 = create_event("StockTick", vec![("symbol", Value::Str("ACME".to_string()))]);
+        let event2 = create_event(
+            "StockTick",
+            vec![("symbol", Value::Str("ACME".to_string()))],
+        );
         let matches2 = engine.process(&event2);
         assert_eq!(matches2.len(), 1);
     }
@@ -819,12 +819,18 @@ mod tests {
         engine.track(pattern);
 
         // First event: NewsItem
-        let news = create_event("NewsItem", vec![("subject", Value::Str("ACME".to_string()))]);
+        let news = create_event(
+            "NewsItem",
+            vec![("subject", Value::Str("ACME".to_string()))],
+        );
         let matches1 = engine.process(&news);
         assert_eq!(matches1.len(), 0); // Partial match
 
         // Second event: StockTick - completes the pattern
-        let tick = create_event("StockTick", vec![("symbol", Value::Str("ACME".to_string()))]);
+        let tick = create_event(
+            "StockTick",
+            vec![("symbol", Value::Str("ACME".to_string()))],
+        );
         let matches2 = engine.process(&tick);
         assert_eq!(matches2.len(), 1);
 
@@ -898,10 +904,7 @@ mod tests {
 
         // (A -> B) and not C
         let pattern = PatternBuilder::and(
-            PatternBuilder::followed_by(
-                PatternBuilder::event("A"),
-                PatternBuilder::event("B"),
-            ),
+            PatternBuilder::followed_by(PatternBuilder::event("A"), PatternBuilder::event("B")),
             PatternBuilder::not(PatternBuilder::event("C")),
         );
         engine.track(pattern);
@@ -954,7 +957,7 @@ mod tests {
         assert_eq!(engine.process(&create_event("A", vec![])).len(), 0);
         let matches = engine.process(&create_event("B", vec![]));
         assert_eq!(matches.len(), 1);
-        
+
         // Both events should be captured
         let ctx = &matches[0];
         assert!(ctx.captured.contains_key("a"));
@@ -967,10 +970,7 @@ mod tests {
 
         // (A -> B) or C - either A followed by B, or just C
         let pattern = PatternBuilder::or(
-            PatternBuilder::followed_by(
-                PatternBuilder::event("A"),
-                PatternBuilder::event("B"),
-            ),
+            PatternBuilder::followed_by(PatternBuilder::event("A"), PatternBuilder::event("B")),
             PatternBuilder::event("C"),
         );
         engine.track(pattern);
@@ -1003,11 +1003,17 @@ mod tests {
         engine.track(pattern);
 
         // NewsItem about ACME
-        let news = create_event("NewsItem", vec![("subject", Value::Str("ACME".to_string()))]);
+        let news = create_event(
+            "NewsItem",
+            vec![("subject", Value::Str("ACME".to_string()))],
+        );
         assert_eq!(engine.process(&news).len(), 0);
 
         // StockTick about ACME - should complete pattern
-        let tick = create_event("StockTick", vec![("symbol", Value::Str("ACME".to_string()))]);
+        let tick = create_event(
+            "StockTick",
+            vec![("symbol", Value::Str("ACME".to_string()))],
+        );
         let matches = engine.process(&tick);
         assert_eq!(matches.len(), 1);
 

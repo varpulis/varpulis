@@ -148,7 +148,6 @@ impl fmt::Display for Value {
     }
 }
 
-
 impl From<bool> for Value {
     fn from(b: bool) -> Self {
         Value::Bool(b)
@@ -495,7 +494,10 @@ mod tests {
     #[test]
     fn test_from_vec() {
         let v: Value = vec![1i64, 2i64, 3i64].into();
-        assert_eq!(v, Value::Array(vec![Value::Int(1), Value::Int(2), Value::Int(3)]));
+        assert_eq!(
+            v,
+            Value::Array(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
+        );
     }
 
     #[test]

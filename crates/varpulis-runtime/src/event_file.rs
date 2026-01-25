@@ -114,10 +114,7 @@ impl EventFileParser {
         // Parse fields
         if rest.starts_with('{') {
             // JSON-style: { field: value, ... }
-            let content = rest
-                .trim_start_matches('{')
-                .trim_end_matches('}')
-                .trim();
+            let content = rest.trim_start_matches('{').trim_end_matches('}').trim();
 
             for field_str in Self::split_fields(content) {
                 let field_str = field_str.trim();
@@ -136,10 +133,7 @@ impl EventFileParser {
             }
         } else if rest.starts_with('(') {
             // Positional: (value1, value2, ...)
-            let content = rest
-                .trim_start_matches('(')
-                .trim_end_matches(')')
-                .trim();
+            let content = rest.trim_start_matches('(').trim_end_matches(')').trim();
 
             for (i, value_str) in Self::split_fields(content).iter().enumerate() {
                 let value_str = value_str.trim();
@@ -220,9 +214,7 @@ impl EventFileParser {
         }
 
         // String (quoted)
-        if (s.starts_with('"') && s.ends_with('"'))
-            || (s.starts_with('\'') && s.ends_with('\''))
-        {
+        if (s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')) {
             let inner = &s[1..s.len() - 1];
             // Handle escape sequences
             let unescaped = inner
@@ -298,10 +290,7 @@ impl EventFilePlayer {
         // Group events by time offset
         let mut batches: HashMap<u64, Vec<&TimedEvent>> = HashMap::new();
         for event in &self.events {
-            batches
-                .entry(event.time_offset_ms)
-                .or_default()
-                .push(event);
+            batches.entry(event.time_offset_ms).or_default().push(event);
         }
 
         // Sort batch times
@@ -318,7 +307,10 @@ impl EventFilePlayer {
             // Send all events in this batch
             if let Some(events) = batches.get(&batch_time) {
                 for timed_event in events {
-                    debug!("Sending event: {} at {}ms", timed_event.event.event_type, batch_time);
+                    debug!(
+                        "Sending event: {} at {}ms",
+                        timed_event.event.event_type, batch_time
+                    );
                     self.sender
                         .send(timed_event.event.clone())
                         .await
@@ -363,7 +355,10 @@ mod tests {
         let events = EventFileParser::parse(source).unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event.event_type, "StockTick");
-        assert_eq!(events[0].event.get("symbol"), Some(&Value::Str("AAPL".to_string())));
+        assert_eq!(
+            events[0].event.get("symbol"),
+            Some(&Value::Str("AAPL".to_string()))
+        );
         assert_eq!(events[0].event.get("price"), Some(&Value::Float(150.5)));
         assert_eq!(events[0].event.get("volume"), Some(&Value::Int(1000)));
     }
@@ -409,7 +404,10 @@ mod tests {
         let events = EventFileParser::parse(source).unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event.event_type, "StockPrice");
-        assert_eq!(events[0].event.get("field_0"), Some(&Value::Str("AAPL".to_string())));
+        assert_eq!(
+            events[0].event.get("field_0"),
+            Some(&Value::Str("AAPL".to_string()))
+        );
         assert_eq!(events[0].event.get("field_1"), Some(&Value::Float(150.5)));
     }
 
@@ -491,7 +489,7 @@ mod tests {
         let source = r#"
             Flags { active: true, disabled: false }
         "#;
-        
+
         let events = EventFileParser::parse(source).unwrap();
         assert_eq!(events[0].event.get("active"), Some(&Value::Bool(true)));
         assert_eq!(events[0].event.get("disabled"), Some(&Value::Bool(false)));
@@ -502,7 +500,7 @@ mod tests {
         let source = r#"
             Data { value: null, other: nil }
         "#;
-        
+
         let events = EventFileParser::parse(source).unwrap();
         assert_eq!(events[0].event.get("value"), Some(&Value::Null));
         assert_eq!(events[0].event.get("other"), Some(&Value::Null));
@@ -513,7 +511,7 @@ mod tests {
         let source = r#"
             Message { text: "Hello\nWorld", path: "C:\\Users\\test" }
         "#;
-        
+
         let events = EventFileParser::parse(source).unwrap();
         let text = events[0].event.get("text").unwrap();
         if let Value::Str(s) = text {
@@ -526,9 +524,12 @@ mod tests {
         let source = r#"
             Event { name: 'single quoted' }
         "#;
-        
+
         let events = EventFileParser::parse(source).unwrap();
-        assert_eq!(events[0].event.get("name"), Some(&Value::Str("single quoted".to_string())));
+        assert_eq!(
+            events[0].event.get("name"),
+            Some(&Value::Str("single quoted".to_string()))
+        );
     }
 
     #[test]
@@ -536,10 +537,16 @@ mod tests {
         let source = r#"
             Event { status: active, mode: processing }
         "#;
-        
+
         let events = EventFileParser::parse(source).unwrap();
-        assert_eq!(events[0].event.get("status"), Some(&Value::Str("active".to_string())));
-        assert_eq!(events[0].event.get("mode"), Some(&Value::Str("processing".to_string())));
+        assert_eq!(
+            events[0].event.get("status"),
+            Some(&Value::Str("active".to_string()))
+        );
+        assert_eq!(
+            events[0].event.get("mode"),
+            Some(&Value::Str("processing".to_string()))
+        );
     }
 
     #[test]
@@ -547,7 +554,7 @@ mod tests {
         let source = r#"
             Data { temp: -15, delta: -3.14 }
         "#;
-        
+
         let events = EventFileParser::parse(source).unwrap();
         assert_eq!(events[0].event.get("temp"), Some(&Value::Int(-15)));
         assert_eq!(events[0].event.get("delta"), Some(&Value::Float(-3.14)));
@@ -558,7 +565,7 @@ mod tests {
         let source = r#"
             Complex { matrix: [[1, 2], [3, 4]] }
         "#;
-        
+
         let events = EventFileParser::parse(source).unwrap();
         let matrix = events[0].event.get("matrix").unwrap();
         if let Value::Array(arr) = matrix {
@@ -658,16 +665,16 @@ mod tests {
                 time_offset_ms: 100,
             },
         ];
-        
+
         let (tx, mut rx) = mpsc::channel(10);
         let player = EventFilePlayer::new(events, tx);
-        
+
         let count = player.play_immediate().await.unwrap();
         assert_eq!(count, 2);
-        
+
         let e1 = rx.recv().await.unwrap();
         assert_eq!(e1.event_type, "A");
-        
+
         let e2 = rx.recv().await.unwrap();
         assert_eq!(e2.event_type, "B");
     }
@@ -688,13 +695,13 @@ mod tests {
                 time_offset_ms: 10, // 10ms later
             },
         ];
-        
+
         let (tx, mut rx) = mpsc::channel(10);
         let player = EventFilePlayer::new(events, tx);
-        
+
         let count = player.play().await.unwrap();
         assert_eq!(count, 3);
-        
+
         // All events should have been sent
         assert!(rx.recv().await.is_some());
         assert!(rx.recv().await.is_some());
@@ -706,7 +713,7 @@ mod tests {
         let events = vec![];
         let (tx, _rx) = mpsc::channel(10);
         let player = EventFilePlayer::new(events, tx);
-        
+
         let count = player.play_immediate().await.unwrap();
         assert_eq!(count, 0);
     }
