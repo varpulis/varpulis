@@ -7,11 +7,12 @@
 | Catégorie | À faire | En cours | Terminé |
 |-----------|---------|----------|----------|
 | Parser Pest | 0 | 0 | 7 |
-| SASE+ | 2 | 0 | 6 |
-| Attention | 3 | 0 | 0 |
+| SASE+ | 1 | 0 | 7 |
+| Attention | 3 | 0 | 1 |
+| Test Infra | 0 | 0 | 4 |
 | Couverture | 2 | 0 | 0 |
 | VS Code | 1 | 0 | 0 |
-| **Total** | **8** | **0** | **13** |
+| **Total** | **7** | **0** | **19** |
 
 ---
 
@@ -40,10 +41,6 @@
   - **Comparer**: Ancien PatternEngine vs SaseEngine
   - **Métriques**: Latence, throughput, mémoire
 
-- [ ] **SASE-08**: Exemples SASE+ concrets
-  - **Action**: Créer `examples/sase_patterns.vpl`
-  - **Démo**: Sequences, negation, Kleene+, partition
-
 ### Terminé
 
 - [x] **SASE-01**: Analyser implémentation actuelle (pattern.rs, sequence.rs)
@@ -53,6 +50,7 @@
 - [x] **SASE-05**: Implémenter négation efficace
 - [x] **SASE-05b**: Intégrer dans runtime engine (structure prête)
 - [x] **SASE-06**: Syntaxe pattern supportée (lambdas + séquences `A -> B -> C`)
+- [x] **SASE-08**: Exemples SASE+ concrets (`examples/sase_patterns.vpl`)
 
 ---
 
@@ -78,6 +76,12 @@
   - **Solution**: Batch embedding + attention avec `rayon`
   - **Complexité**: Medium (2 semaines)
 
+### Terminé
+
+- [x] **ATT-00**: Métriques performance (`AttentionStats`)
+  - `avg_compute_time_us`, `max_compute_time_us`, `ops_per_sec`
+  - `check_performance()` warnings, `estimated_throughput()`
+
 ### Limites actuelles
 
 | History Size | Max Events/sec | Latency | Verdict |
@@ -85,6 +89,33 @@
 | 1K | 1K | 10ms | ✅ OK dev |
 | 10K | 100 | 100ms | ⚠️ Limite |
 | 100K | 1 | 10s | ❌ INUTILISABLE |
+
+---
+
+## ✅ TERMINÉ - Infrastructure de Test MQTT
+
+- [x] **TEST-01**: Docker Compose Mosquitto (`tests/mqtt/docker-compose.yml`)
+- [x] **TEST-02**: Simulateur Python (`tests/mqtt/simulator.py`)
+  - Scénarios: fraud, trading, iot
+  - Options: rate, duration, burst mode
+- [x] **TEST-03**: Scénarios YAML (`tests/mqtt/scenarios/`)
+  - `fraud_scenario.yaml`, `trading_scenario.yaml`, `iot_scenario.yaml`
+- [x] **TEST-04**: Connecteur MQTT Rust (`connector.rs` avec feature `mqtt`)
+  - `MqttSource`, `MqttSink` avec rumqttc
+
+### Utilisation
+
+```bash
+# Démarrer Mosquitto
+cd tests/mqtt && docker-compose up -d
+
+# Simuler événements
+pip install -r requirements.txt
+python simulator.py --scenario fraud --rate 100 --duration 60
+
+# Lancer scénario complet
+python run_scenario.py scenarios/fraud_scenario.yaml
+```
 
 ---
 
@@ -164,6 +195,8 @@ cargo test -p varpulis-parser pest
 | `crates/varpulis-parser/src/parser.rs` | Ancien parser (à supprimer) |
 | `crates/varpulis-runtime/src/sase.rs` | Moteur SASE+ |
 | `crates/varpulis-runtime/src/pattern.rs` | Ancien pattern matcher |
+| `crates/varpulis-runtime/src/connector.rs` | Connecteurs MQTT/Kafka/HTTP |
+| `tests/mqtt/simulator.py` | Simulateur d'événements Python |
 | `vscode-varpulis/syntaxes/varpulis.tmLanguage.json` | TextMate grammar |
 
 ---

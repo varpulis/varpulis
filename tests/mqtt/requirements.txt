@@ -1,0 +1,5 @@
+paho-mqtt>=2.0.0
+faker>=22.0.0
+click>=8.1.0
+rich>=13.0.0
+pyyaml>=6.0.0

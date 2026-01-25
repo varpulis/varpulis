@@ -1,0 +1,71 @@
+# IoT Sensor Test Scenario
+name: iot_monitoring
+description: |
+  IoT sensor monitoring with anomaly detection.
+  Tests temperature spikes, humidity anomalies, and sensor failures.
+
+mqtt:
+  host: localhost
+  port: 1883
+  topic_prefix: varpulis
+
+rules_file: ../../examples/hvac_demo.vpl
+
+sensors:
+  count: 100
+  zones: ["zone_A", "zone_B", "zone_C", "zone_D"]
+
+phases:
+  - name: normal_operation
+    duration: 30s
+    rate: 200
+    description: "Normal sensor readings"
+    events:
+      - type: sensor_reading
+        weight: 0.98
+      - type: temp_spike
+        weight: 0.01
+      - type: sensor_failure
+        weight: 0.01
+
+  - name: hvac_failure
+    duration: 20s
+    rate: 200
+    description: "HVAC failure simulation"
+    events:
+      - type: sensor_reading
+        weight: 0.70
+      - type: temp_spike
+        weight: 0.25
+      - type: humidity_anomaly
+        weight: 0.05
+
+  - name: recovery
+    duration: 20s
+    rate: 200
+    description: "System recovery"
+    events:
+      - type: sensor_reading
+        weight: 0.95
+      - type: temp_spike
+        weight: 0.03
+      - type: sensor_failure
+        weight: 0.02
+
+expected_patterns:
+  - pattern: TemperatureSpike
+    min_count: 20
+    max_latency_ms: 100
+    
+  - pattern: HumidityAnomaly
+    min_count: 5
+    max_latency_ms: 100
+    
+  - pattern: SensorFailure
+    min_count: 3
+    max_latency_ms: 50
+
+performance:
+  max_p99_latency_ms: 100
+  min_throughput: 180
+  max_memory_mb: 256

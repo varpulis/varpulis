@@ -1,0 +1,75 @@
+# Trading/Market Data Test Scenario
+name: trading_hft
+description: |
+  High-frequency trading data simulation for testing
+  market pattern detection and performance under load.
+
+mqtt:
+  host: localhost
+  port: 1883
+  topic_prefix: varpulis
+
+rules_file: ../../examples/financial_markets.vpl
+
+phases:
+  - name: market_open
+    duration: 10s
+    rate: 500
+    description: "Market opening - high activity"
+    events:
+      - type: market_tick
+        weight: 0.90
+      - type: volume_spike
+        weight: 0.10
+
+  - name: normal_trading
+    duration: 60s
+    rate: 1000
+    description: "Normal trading hours"
+    events:
+      - type: market_tick
+        weight: 0.95
+      - type: volume_spike
+        weight: 0.03
+      - type: price_gap
+        weight: 0.02
+
+  - name: volatility_spike
+    duration: 20s
+    rate: 2000
+    description: "High volatility period"
+    events:
+      - type: market_tick
+        weight: 0.80
+      - type: volume_spike
+        weight: 0.15
+      - type: price_gap
+        weight: 0.05
+
+  - name: market_close
+    duration: 10s
+    rate: 500
+    description: "Market closing"
+    events:
+      - type: market_tick
+        weight: 0.95
+      - type: volume_spike
+        weight: 0.05
+
+expected_patterns:
+  - pattern: VolumeSpike
+    min_count: 50
+    max_latency_ms: 10
+    
+  - pattern: PriceGap
+    min_count: 10
+    max_latency_ms: 5
+    
+  - pattern: MACD_Crossover
+    min_count: 5
+    max_latency_ms: 50
+
+performance:
+  max_p99_latency_ms: 10
+  min_throughput: 1500
+  max_memory_mb: 1024
