@@ -31,7 +31,7 @@ use std::path::Path;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 use varpulis_core::Value;
 
 /// A parsed event with optional timing

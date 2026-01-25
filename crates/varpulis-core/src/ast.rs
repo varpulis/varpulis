@@ -1,6 +1,6 @@
 //! Abstract Syntax Tree for VarpulisQL
 
-use crate::span::{Span, Spanned};
+use crate::span::Spanned;
 use crate::types::Type;
 use serde::{Deserialize, Serialize};
 

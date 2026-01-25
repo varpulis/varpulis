@@ -11,8 +11,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{debug, error, info};
-use varpulis_core::Value;
+use tracing::error;
 
 /// Trait for event sinks
 #[async_trait]
@@ -94,6 +93,7 @@ impl Sink for ConsoleSink {
 }
 
 /// File sink - writes JSON lines to a file
+#[allow(dead_code)]
 pub struct FileSink {
     name: String,
     path: PathBuf,
@@ -291,6 +291,8 @@ impl Sink for MultiSink {
 mod tests {
     use super::*;
     use tempfile::NamedTempFile;
+    use indexmap::IndexMap;
+    use varpulis_core::Value;
 
     // ==========================================================================
     // ConsoleSink Tests

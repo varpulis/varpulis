@@ -6,10 +6,8 @@ use crate::event::Event;
 use async_trait::async_trait;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
-use varpulis_core::Value;
+use tracing::{error, info, warn};
 
 /// Connector configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -307,7 +305,7 @@ impl SourceConnector for KafkaSource {
         &self.name
     }
 
-    async fn start(&mut self, tx: mpsc::Sender<Event>) -> Result<(), ConnectorError> {
+    async fn start(&mut self, _tx: mpsc::Sender<Event>) -> Result<(), ConnectorError> {
         // NOTE: Full implementation requires rdkafka crate
         // This is a stub that shows the interface
         warn!(
@@ -341,6 +339,7 @@ impl SourceConnector for KafkaSource {
 }
 
 /// Kafka sink connector (stub implementation)
+#[allow(dead_code)]
 pub struct KafkaSink {
     name: String,
     config: KafkaConfig,
@@ -470,6 +469,7 @@ impl SourceConnector for MqttSource {
 }
 
 /// MQTT sink connector (stub implementation)
+#[allow(dead_code)]
 pub struct MqttSink {
     name: String,
     config: MqttConfig,

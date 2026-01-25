@@ -1610,7 +1610,7 @@ impl<'source> Parser<'source> {
                 // We need to look ahead to see if this is a lambda parameter list
                 if let Token::Ident(_) = &self.current.token {
                     // Save position to potentially backtrack
-                    let saved_pos = self.current.start;
+                    let _saved_pos = self.current.start;
                     let first_ident = self.parse_identifier()?;
                     
                     // Check for multi-param lambda: (a, b) => ...
@@ -1982,7 +1982,7 @@ fn parse_duration(s: &str) -> u64 {
     }
 }
 
-fn parse_timestamp(s: &str) -> i64 {
+fn parse_timestamp(_s: &str) -> i64 {
     // Remove @ prefix and parse ISO8601
     // For MVP, return 0
     0
