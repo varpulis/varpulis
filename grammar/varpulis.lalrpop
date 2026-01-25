@@ -1,7 +1,10 @@
 // VarpulisQL Grammar for LALRPOP
 // 
-// This is a skeleton grammar inspired by Python syntax.
-// It will be refined as the language evolves.
+// NOTE: This grammar is a REFERENCE DOCUMENT only.
+// The actual parser is hand-written (recursive descent) in parser.rs
+// This file documents the intended syntax but is NOT compiled.
+// 
+// Keep this in sync with ast.rs when making changes.
 
 use std::str::FromStr;
 use crate::ast::*;
@@ -147,13 +150,15 @@ match {
 // AST TYPES (defined in separate module)
 // ============================================================================
 
-// These types would be defined in src/ast.rs:
+// Types are defined in varpulis-core/src/ast.rs:
 // 
 // pub enum Stmt { StreamDecl, EventDecl, TypeDecl, VarDecl, FnDecl, ... }
 // pub enum Expr { Binary, Unary, Call, Member, Lambda, Literal, ... }
 // pub enum Type { Int, Float, Bool, Str, Array, Map, Optional, ... }
-// pub struct StreamExpr { source: Box<Expr>, ops: Vec<StreamOp> }
-// etc.
+// pub enum StreamSource { Ident, From, Merge, Join, Sequence, ... }
+// pub enum StreamOp { Where, Select, Window, FollowedBy, Within, Not, ... }
+// 
+// NOTE: The parser returns (StreamSource, Vec<StreamOp>) not a StreamExpr struct.
 
 // ============================================================================
 // GRAMMAR RULES
@@ -283,7 +288,20 @@ StreamOp: StreamOp = {
     
     DOT "collect" LPAREN RPAREN
         => StreamOp::Collect,
+    
+    // Temporal sequence operators (-> syntax parsed specially in hand-written parser)
+    // -> EventType where cond as alias
+    DOT "within" LPAREN <duration:Expr> RPAREN
+        => StreamOp::Within(duration),
+    
+    DOT "not" LPAREN <event:Identifier> <filter:(WHERE <Expr>)?> RPAREN
+        => StreamOp::Not(FollowedByClause { event_type: event, filter, alias: None, match_all: false }),
 };
+
+// NOTE: The -> (FollowedBy) operator is parsed specially:
+//   stream S = EventA as a -> EventB where b.ref == a.id as b .within(5s)
+// This produces StreamOp::FollowedBy(FollowedByClause { ... })
+// See parser.rs parse_followed_by() for implementation.
 
 // ============================================================================
 // EVENT DECLARATIONS
@@ -635,8 +653,10 @@ AggList: Vec<AggItem> = {
 };
 
 AggItem: AggItem = {
-    <alias:Identifier> COLON <func:Identifier> LPAREN <arg:Expr?> RPAREN
-        => AggItem { alias, func, arg },
+    // NOTE: AST uses `expr: Expr` not `func` + `arg`
+    // The parser accepts full expressions like: avg: sum(x) / count(x)
+    <alias:Identifier> COLON <expr:Expr>
+        => AggItem { alias, expr },
 };
 
 OrderList: Vec<OrderItem> = {
@@ -645,9 +665,10 @@ OrderList: Vec<OrderItem> = {
 };
 
 OrderItem: OrderItem = {
-    <expr:Expr> => OrderItem { expr, desc: false },
-    <expr:Expr> "asc" => OrderItem { expr, desc: false },
-    <expr:Expr> "desc" => OrderItem { expr, desc: true },
+    // NOTE: AST uses `descending: bool` not `desc`
+    <expr:Expr> => OrderItem { expr, descending: false },
+    <expr:Expr> "asc" => OrderItem { expr, descending: false },
+    <expr:Expr> "desc" => OrderItem { expr, descending: true },
 };
 
 WindowArgs: WindowArgs = {
