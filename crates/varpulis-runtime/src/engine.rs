@@ -1,9 +1,9 @@
 //! Main execution engine for Varpulis
 
-use crate::aggregation::{AggBinOp, AggResult, Aggregator, Avg, Count, CountDistinct, Ema, ExprAggregate, First, Last, Max, Min, StdDev, Sum};
+use crate::aggregation::{AggBinOp, Aggregator, Avg, Count, CountDistinct, Ema, ExprAggregate, First, Last, Max, Min, StdDev, Sum};
 use crate::attention::{AttentionConfig, AttentionWindow, EmbeddingConfig};
 use crate::event::Event;
-use crate::pattern::{PatternBuilder, PatternContext, PatternEngine, PatternExpr, PatternFilter};
+use crate::pattern::{PatternBuilder, PatternEngine, PatternExpr};
 use crate::sequence::{SequenceContext, SequenceStep, SequenceTracker};
 use crate::window::{SlidingWindow, TumblingWindow};
 use chrono::Duration;
@@ -11,7 +11,6 @@ use crate::metrics::Metrics;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::time::Instant;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 use varpulis_core::ast::{Program, Stmt, StreamOp, StreamSource};
@@ -53,6 +52,7 @@ pub struct UserFunction {
 }
 
 /// Runtime stream definition
+#[allow(dead_code)]
 struct StreamDefinition {
     name: String,
     source: RuntimeSource,
@@ -65,6 +65,7 @@ struct StreamDefinition {
     pattern_engine: Option<PatternEngine>,
 }
 
+#[allow(dead_code)]
 enum RuntimeSource {
     EventType(String),
     Stream(String),
@@ -74,12 +75,14 @@ enum RuntimeSource {
 }
 
 /// A source in a merge construct with optional filter
+#[allow(dead_code)]
 struct MergeSource {
     name: String,
     event_type: String,
     filter: Option<varpulis_core::ast::Expr>,
 }
 
+#[allow(dead_code)]
 enum RuntimeOp {
     /// Filter with closure (for sequence filters with context)
     WhereClosure(Box<dyn Fn(&Event) -> bool + Send + Sync>),
@@ -102,6 +105,7 @@ enum RuntimeOp {
     Pattern(PatternConfig),
 }
 
+#[allow(dead_code)]
 struct PatternConfig {
     name: String,
     matcher: varpulis_core::ast::Expr,
@@ -667,7 +671,7 @@ impl Engine {
 
     /// Compile a sequence filter expression into a runtime closure
     fn compile_sequence_filter(expr: varpulis_core::ast::Expr) -> Box<dyn Fn(&Event, &SequenceContext) -> bool + Send + Sync> {
-        use varpulis_core::ast::{BinOp, Expr};
+        
         
         Box::new(move |event: &Event, ctx: &SequenceContext| {
             Self::eval_filter_expr(&expr, event, ctx)
@@ -1438,7 +1442,7 @@ impl Engine {
         
         match expr {
             // Lambda: params => body - evaluate body with params bound
-            Expr::Lambda { params, body } => {
+            Expr::Lambda { params: _, body } => {
                 // For pattern lambdas, the first param is typically "events"
                 Self::eval_pattern_expr(body, events, ctx, functions, pattern_vars, attention_window)
             }

@@ -4,7 +4,6 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
@@ -525,7 +524,7 @@ async fn run_server(port: u16, enable_metrics: bool, metrics_port: u16) -> Resul
     }));
 
     // Create metrics if enabled
-    let prom_metrics = if enable_metrics {
+    let _prom_metrics = if enable_metrics {
         let metrics = Metrics::new();
         let server = MetricsServer::new(metrics.clone(), format!("127.0.0.1:{}", metrics_port));
         tokio::spawn(async move {

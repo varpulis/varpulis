@@ -1,10 +1,10 @@
 //! Prometheus metrics for Varpulis
 
 use prometheus::{
-    Counter, CounterVec, Gauge, GaugeVec, Histogram, HistogramOpts, HistogramVec, Opts, Registry,
+    CounterVec, Gauge, GaugeVec, HistogramOpts, HistogramVec, Opts, Registry,
 };
 use std::sync::Arc;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tracing::{error, info};
 
@@ -144,7 +144,7 @@ impl MetricsServer {
         info!("Metrics server listening on http://{}/metrics", self.addr);
 
         loop {
-            let (mut socket, addr) = listener.accept().await?;
+            let (mut socket, _addr) = listener.accept().await?;
 
             let metrics_output = self.metrics.gather();
 

@@ -9,7 +9,6 @@
 //! - Event templates with field filters
 
 use crate::event::Event;
-use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use varpulis_core::Value;
@@ -137,6 +136,7 @@ impl PatternContext {
 
 /// Tracks an active pattern match
 #[derive(Debug)]
+#[allow(dead_code)]
 struct ActivePattern {
     /// The pattern expression being matched
     expr: PatternExpr,
@@ -152,6 +152,7 @@ struct ActivePattern {
 
 /// Internal evaluation state for complex patterns
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 enum EvalState {
     /// Waiting for first event
     Initial,
@@ -172,6 +173,7 @@ enum EvalState {
 }
 
 /// Pattern matching engine
+#[allow(dead_code)]
 pub struct PatternEngine {
     /// Active patterns being tracked
     active: Vec<ActivePattern>,
@@ -662,6 +664,8 @@ impl PatternBuilder {
 mod tests {
     use super::*;
     use chrono::Utc;
+    use indexmap::IndexMap;
+    use varpulis_core::Value;
 
     fn create_event(event_type: &str, data: Vec<(&str, Value)>) -> Event {
         let mut event_data = IndexMap::new();

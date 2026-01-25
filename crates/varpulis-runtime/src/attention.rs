@@ -7,11 +7,9 @@
 //! - Embeddings are rule-based or loaded from pre-trained models
 
 use crate::event::Event;
-use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::time::{Duration, Instant};
-use tracing::{debug, warn};
 use varpulis_core::Value;
 
 // ============================================================================
