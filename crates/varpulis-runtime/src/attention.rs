@@ -111,9 +111,13 @@ pub struct CategoricalFeatureConfig {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum CategoricalMethod {
-    OneHot { vocab: Vec<String> },
+    OneHot {
+        vocab: Vec<String>,
+    },
     Hash,
-    Lookup { embeddings: HashMap<String, Vec<f32>> },
+    Lookup {
+        embeddings: HashMap<String, Vec<f32>>,
+    },
 }
 
 // ============================================================================
@@ -143,7 +147,14 @@ impl EmbeddingEngine {
             value_projections.push(Self::init_projection(embedding_dim, head_dim, seed, 2.0));
         }
 
-        Self { config, query_projections, key_projections, value_projections, embedding_dim, num_heads }
+        Self {
+            config,
+            query_projections,
+            key_projections,
+            value_projections,
+            embedding_dim,
+            num_heads,
+        }
     }
 
     fn init_projection(input_dim: usize, output_dim: usize, seed: f32, offset: f32) -> Vec<f32> {
@@ -165,12 +176,13 @@ impl EmbeddingEngine {
 
     fn embed_rule_based(&self, event: &Event) -> Vec<f32> {
         let mut embedding = vec![0.0f32; self.embedding_dim];
-        
+
         if self.config.numeric_features.is_empty() && self.config.categorical_features.is_empty() {
             embedding = self.embed_auto(event);
         } else {
             let mut idx = 0;
-            let features_count = self.config.numeric_features.len() + self.config.categorical_features.len();
+            let features_count =
+                self.config.numeric_features.len() + self.config.categorical_features.len();
             let dim_per_feature = self.embedding_dim / features_count.max(1);
 
             for feat in &self.config.numeric_features {
@@ -205,7 +217,9 @@ impl EmbeddingEngine {
 
     fn embed_auto(&self, event: &Event) -> Vec<f32> {
         let mut embedding = vec![0.0f32; self.embedding_dim];
-        if self.embedding_dim == 0 { return embedding; }
+        if self.embedding_dim == 0 {
+            return embedding;
+        }
         embedding[0] = self.hash_string(&event.event_type);
 
         for (field_name, value) in &event.data {
@@ -214,7 +228,9 @@ impl EmbeddingEngine {
                 Value::Int(i) => embedding[pos] += (*i as f32).clamp(-1e6, 1e6) * 0.001,
                 Value::Float(f) => {
                     let clamped = (*f as f32).clamp(-1e6, 1e6);
-                    if clamped.is_finite() { embedding[pos] += clamped * 0.01; }
+                    if clamped.is_finite() {
+                        embedding[pos] += clamped * 0.01;
+                    }
                 }
                 Value::Str(s) => embedding[pos] += self.hash_string(s),
                 Value::Bool(b) => embedding[pos] += if *b { 1.0 } else { -1.0 },
@@ -229,10 +245,19 @@ impl EmbeddingEngine {
             NumericTransform::Identity => value,
             NumericTransform::LogScale => (1.0 + value.abs()).ln() * value.signum(),
             NumericTransform::Normalize => 1.0 / (1.0 + (-value * 0.1).exp()),
-            NumericTransform::ZScore { mean, std } => if *std > 0.0 { (value - mean) / std } else { 0.0 },
-            NumericTransform::Cyclical { period } => ((value / period) * 2.0 * std::f64::consts::PI).sin(),
+            NumericTransform::ZScore { mean, std } => {
+                if *std > 0.0 {
+                    (value - mean) / std
+                } else {
+                    0.0
+                }
+            }
+            NumericTransform::Cyclical { period } => {
+                ((value / period) * 2.0 * std::f64::consts::PI).sin()
+            }
             NumericTransform::Bucketize { boundaries } => {
-                boundaries.iter().filter(|&&b| value > b).count() as f64 / boundaries.len().max(1) as f64
+                boundaries.iter().filter(|&&b| value > b).count() as f64
+                    / boundaries.len().max(1) as f64
             }
         }
     }
@@ -242,7 +267,9 @@ impl EmbeddingEngine {
             CategoricalMethod::OneHot { vocab } => {
                 let mut emb = vec![0.0f32; vocab.len().max(config.dim)];
                 if let Some(idx) = vocab.iter().position(|v| v == value) {
-                    if idx < emb.len() { emb[idx] = 1.0; }
+                    if idx < emb.len() {
+                        emb[idx] = 1.0;
+                    }
                 }
                 emb
             }
@@ -255,9 +282,10 @@ impl EmbeddingEngine {
                 }
                 emb
             }
-            CategoricalMethod::Lookup { embeddings } => {
-                embeddings.get(value).cloned().unwrap_or_else(|| vec![0.0f32; config.dim])
-            }
+            CategoricalMethod::Lookup { embeddings } => embeddings
+                .get(value)
+                .cloned()
+                .unwrap_or_else(|| vec![0.0f32; config.dim]),
         }
     }
 
@@ -270,11 +298,15 @@ impl EmbeddingEngine {
     fn normalize(&self, embedding: &mut [f32]) {
         // Clamp any non-finite values first
         for e in embedding.iter_mut() {
-            if !e.is_finite() { *e = 0.0; }
+            if !e.is_finite() {
+                *e = 0.0;
+            }
         }
         let norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
         if norm > 1e-8 && norm.is_finite() {
-            for e in embedding.iter_mut() { *e /= norm; }
+            for e in embedding.iter_mut() {
+                *e /= norm;
+            }
         }
     }
 
@@ -296,7 +328,11 @@ impl EmbeddingEngine {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ProjectionType { Query, Key, Value }
+pub enum ProjectionType {
+    Query,
+    Key,
+    Value,
+}
 
 // ============================================================================
 // EMBEDDING CACHE
@@ -320,12 +356,16 @@ impl EmbeddingCache {
         Self {
             entries: HashMap::with_capacity(config.max_size),
             access_order: Vec::with_capacity(config.max_size),
-            config, hits: 0, misses: 0,
+            config,
+            hits: 0,
+            misses: 0,
         }
     }
 
     pub fn get(&mut self, event_hash: u64) -> Option<Vec<f32>> {
-        if !self.config.enabled { return None; }
+        if !self.config.enabled {
+            return None;
+        }
         if let Some(entry) = self.entries.get(&event_hash) {
             if entry.timestamp.elapsed() > self.config.ttl {
                 self.entries.remove(&event_hash);
@@ -344,12 +384,20 @@ impl EmbeddingCache {
     }
 
     pub fn insert(&mut self, event_hash: u64, embedding: Vec<f32>) {
-        if !self.config.enabled { return; }
+        if !self.config.enabled {
+            return;
+        }
         while self.entries.len() >= self.config.max_size && !self.access_order.is_empty() {
             let oldest = self.access_order.remove(0);
             self.entries.remove(&oldest);
         }
-        self.entries.insert(event_hash, CacheEntry { embedding, timestamp: Instant::now() });
+        self.entries.insert(
+            event_hash,
+            CacheEntry {
+                embedding,
+                timestamp: Instant::now(),
+            },
+        );
         self.access_order.push(event_hash);
     }
 
@@ -359,7 +407,11 @@ impl EmbeddingCache {
             capacity: self.config.max_size,
             hits: self.hits,
             misses: self.misses,
-            hit_rate: if self.hits + self.misses > 0 { self.hits as f64 / (self.hits + self.misses) as f64 } else { 0.0 },
+            hit_rate: if self.hits + self.misses > 0 {
+                self.hits as f64 / (self.hits + self.misses) as f64
+            } else {
+                0.0
+            },
         }
     }
 
@@ -400,9 +452,20 @@ pub struct AttentionEngine {
 
 impl AttentionEngine {
     pub fn new(config: AttentionConfig) -> Self {
-        let embedding_engine = EmbeddingEngine::new(config.embedding_config.clone(), config.embedding_dim, config.num_heads);
+        let embedding_engine = EmbeddingEngine::new(
+            config.embedding_config.clone(),
+            config.embedding_dim,
+            config.num_heads,
+        );
         let cache = EmbeddingCache::new(config.cache_config.clone());
-        Self { config, embedding_engine, cache, history: Vec::new(), computations: 0, total_events_processed: 0 }
+        Self {
+            config,
+            embedding_engine,
+            cache,
+            history: Vec::new(),
+            computations: 0,
+            total_events_processed: 0,
+        }
     }
 
     pub fn add_event(&mut self, event: Event) {
@@ -414,7 +477,9 @@ impl AttentionEngine {
         });
         self.history.push((event, embedding));
         self.total_events_processed += 1;
-        while self.history.len() > self.config.max_history { self.history.remove(0); }
+        while self.history.len() > self.config.max_history {
+            self.history.remove(0);
+        }
     }
 
     pub fn compute_attention(&mut self, current: &Event) -> AttentionResult {
@@ -440,17 +505,28 @@ impl AttentionEngine {
         for (hist_event, hist_embedding) in &self.history {
             let mut total = 0.0f32;
             for head in 0..self.config.num_heads {
-                let q = self.embedding_engine.project(&current_embedding, head, ProjectionType::Query);
-                let k = self.embedding_engine.project(hist_embedding, head, ProjectionType::Key);
+                let q =
+                    self.embedding_engine
+                        .project(&current_embedding, head, ProjectionType::Query);
+                let k = self
+                    .embedding_engine
+                    .project(hist_embedding, head, ProjectionType::Key);
                 total += self.dot_product(&q, &k) / (head_dim as f32).sqrt();
             }
             let avg = total / self.config.num_heads as f32;
-            let event_id = format!("{}_{}", hist_event.event_type, hist_event.timestamp.timestamp_millis());
+            let event_id = format!(
+                "{}_{}",
+                hist_event.event_type,
+                hist_event.timestamp.timestamp_millis()
+            );
             all_scores.push((event_id, avg));
         }
 
         let context = self.compute_context(&all_scores);
-        let filtered: Vec<_> = all_scores.into_iter().filter(|(_, s)| *s >= self.config.threshold).collect();
+        let filtered: Vec<_> = all_scores
+            .into_iter()
+            .filter(|(_, s)| *s >= self.config.threshold)
+            .collect();
 
         AttentionResult {
             scores: filtered,
@@ -461,18 +537,29 @@ impl AttentionEngine {
 
     fn compute_context(&self, scores: &[(String, f32)]) -> Vec<f32> {
         let mut context = vec![0.0f32; self.config.embedding_dim];
-        if scores.is_empty() || self.history.is_empty() { return context; }
-        
-        let max_score = scores.iter().map(|(_, s)| *s).fold(f32::NEG_INFINITY, f32::max);
+        if scores.is_empty() || self.history.is_empty() {
+            return context;
+        }
+
+        let max_score = scores
+            .iter()
+            .map(|(_, s)| *s)
+            .fold(f32::NEG_INFINITY, f32::max);
         let weights: Vec<f32> = scores.iter().map(|(_, s)| (s - max_score).exp()).collect();
         let sum: f32 = weights.iter().sum();
-        if sum < 1e-8 { return context; }
+        if sum < 1e-8 {
+            return context;
+        }
 
         for (i, (_, emb)) in self.history.iter().enumerate() {
-            if i >= weights.len() { break; }
+            if i >= weights.len() {
+                break;
+            }
             let w = weights[i] / sum;
             for (j, &e) in emb.iter().enumerate() {
-                if j < context.len() { context[j] += w * e; }
+                if j < context.len() {
+                    context[j] += w * e;
+                }
             }
         }
         context
@@ -489,7 +576,9 @@ impl AttentionEngine {
         keys.sort();
         for key in keys {
             key.hash(&mut hasher);
-            if let Some(v) = event.data.get(key) { format!("{:?}", v).hash(&mut hasher); }
+            if let Some(v) = event.data.get(key) {
+                format!("{:?}", v).hash(&mut hasher);
+            }
         }
         hasher.finish()
     }
@@ -500,14 +589,20 @@ impl AttentionEngine {
         let head_dim = self.config.embedding_dim / self.config.num_heads;
         let mut total = 0.0f32;
         for head in 0..self.config.num_heads {
-            let q = self.embedding_engine.project(&emb1, head, ProjectionType::Query);
-            let k = self.embedding_engine.project(&emb2, head, ProjectionType::Key);
+            let q = self
+                .embedding_engine
+                .project(&emb1, head, ProjectionType::Query);
+            let k = self
+                .embedding_engine
+                .project(&emb2, head, ProjectionType::Key);
             total += self.dot_product(&q, &k) / (head_dim as f32).sqrt();
         }
         total / self.config.num_heads as f32
     }
 
-    pub fn clear_history(&mut self) { self.history.clear(); }
+    pub fn clear_history(&mut self) {
+        self.history.clear();
+    }
 
     pub fn stats(&self) -> AttentionStats {
         AttentionStats {
@@ -519,7 +614,9 @@ impl AttentionEngine {
         }
     }
 
-    pub fn get_history(&self) -> Vec<&Event> { self.history.iter().map(|(e, _)| e).collect() }
+    pub fn get_history(&self) -> Vec<&Event> {
+        self.history.iter().map(|(e, _)| e).collect()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -543,11 +640,17 @@ pub struct AttentionWindow {
 
 impl AttentionWindow {
     pub fn new(config: AttentionConfig, duration: Duration) -> Self {
-        Self { engine: AttentionEngine::new(config), duration, start_time: None }
+        Self {
+            engine: AttentionEngine::new(config),
+            duration,
+            start_time: None,
+        }
     }
 
     pub fn process(&mut self, event: Event) -> AttentionResult {
-        if self.start_time.is_none() { self.start_time = Some(Instant::now()); }
+        if self.start_time.is_none() {
+            self.start_time = Some(Instant::now());
+        }
         if let Some(start) = self.start_time {
             if start.elapsed() > self.duration {
                 self.engine.clear_history();
@@ -559,9 +662,15 @@ impl AttentionWindow {
         result
     }
 
-    pub fn attention_score(&self, e1: &Event, e2: &Event) -> f32 { self.engine.attention_score(e1, e2) }
-    pub fn history(&self) -> Vec<&Event> { self.engine.get_history() }
-    pub fn stats(&self) -> AttentionStats { self.engine.stats() }
+    pub fn attention_score(&self, e1: &Event, e2: &Event) -> f32 {
+        self.engine.attention_score(e1, e2)
+    }
+    pub fn history(&self) -> Vec<&Event> {
+        self.engine.get_history()
+    }
+    pub fn stats(&self) -> AttentionStats {
+        self.engine.stats()
+    }
 }
 
 // ============================================================================

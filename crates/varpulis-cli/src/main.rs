@@ -17,7 +17,7 @@ use varpulis_runtime::engine::{Alert, Engine};
 use varpulis_runtime::event::Event;
 use varpulis_runtime::event_file::{EventFileParser, EventFilePlayer};
 use varpulis_runtime::metrics::{Metrics, MetricsServer};
-use varpulis_runtime::simulator::{SimulatorConfig, Simulator};
+use varpulis_runtime::simulator::{Simulator, SimulatorConfig};
 
 #[derive(Parser)]
 #[command(name = "varpulis")]
@@ -140,7 +140,13 @@ async fn main() -> Result<()> {
             parse_and_show(&source)?;
         }
 
-        Commands::Demo { duration, anomalies, degradation, metrics, metrics_port } => {
+        Commands::Demo {
+            duration,
+            anomalies,
+            degradation,
+            metrics,
+            metrics_port,
+        } => {
             run_demo(duration, anomalies, degradation, metrics, metrics_port).await?;
         }
 
@@ -149,11 +155,20 @@ async fn main() -> Result<()> {
             check_syntax(&source)?;
         }
 
-        Commands::Server { port, metrics, metrics_port } => {
+        Commands::Server {
+            port,
+            metrics,
+            metrics_port,
+        } => {
             run_server(port, metrics, metrics_port).await?;
         }
 
-        Commands::Simulate { program, events, immediate, verbose } => {
+        Commands::Simulate {
+            program,
+            events,
+            immediate,
+            verbose,
+        } => {
             run_simulation(&program, &events, immediate, verbose).await?;
         }
     }
@@ -171,7 +186,9 @@ async fn run_program(source: &str) -> Result<()> {
 
     // Create engine
     let mut engine = Engine::new(alert_tx);
-    engine.load(&program).map_err(|e| anyhow::anyhow!("Load error: {}", e))?;
+    engine
+        .load(&program)
+        .map_err(|e| anyhow::anyhow!("Load error: {}", e))?;
 
     // Spawn alert handler
     tokio::spawn(async move {
@@ -185,7 +202,7 @@ async fn run_program(source: &str) -> Result<()> {
     });
 
     info!("Engine ready. Waiting for events...");
-    
+
     // For now, just show that we parsed successfully
     let metrics = engine.metrics();
     println!("\n✅ Program loaded successfully!");
@@ -225,7 +242,12 @@ fn check_syntax(source: &str) -> Result<()> {
     Ok(())
 }
 
-async fn run_simulation(program_path: &PathBuf, events_path: &PathBuf, immediate: bool, verbose: bool) -> Result<()> {
+async fn run_simulation(
+    program_path: &PathBuf,
+    events_path: &PathBuf,
+    immediate: bool,
+    verbose: bool,
+) -> Result<()> {
     println!("🎬 Varpulis Event Simulation");
     println!("============================");
     println!("Program: {}", program_path.display());
@@ -236,7 +258,10 @@ async fn run_simulation(program_path: &PathBuf, events_path: &PathBuf, immediate
     // Load and parse program
     let program_source = std::fs::read_to_string(program_path)?;
     let program = parse(&program_source).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
-    info!("Loaded program with {} statements", program.statements.len());
+    info!(
+        "Loaded program with {} statements",
+        program.statements.len()
+    );
 
     // Load and parse events
     let events_source = std::fs::read_to_string(events_path)?;
@@ -249,8 +274,10 @@ async fn run_simulation(program_path: &PathBuf, events_path: &PathBuf, immediate
 
     // Create and load engine
     let mut engine = Engine::new(alert_tx);
-    engine.load(&program).map_err(|e| anyhow::anyhow!("Load error: {}", e))?;
-    
+    engine
+        .load(&program)
+        .map_err(|e| anyhow::anyhow!("Load error: {}", e))?;
+
     let metrics = engine.metrics();
     println!("✅ Program loaded: {} streams", metrics.streams_count);
     println!();
@@ -258,7 +285,7 @@ async fn run_simulation(program_path: &PathBuf, events_path: &PathBuf, immediate
     // Collect alerts
     let alerts = Arc::new(RwLock::new(Vec::<Alert>::new()));
     let alerts_clone = alerts.clone();
-    
+
     tokio::spawn(async move {
         while let Some(alert) = alert_rx.recv().await {
             println!("📢 ALERT: {} - {}", alert.alert_type, alert.message);
@@ -279,35 +306,39 @@ async fn run_simulation(program_path: &PathBuf, events_path: &PathBuf, immediate
             if verbose {
                 println!("  [{:3}] {} {{ ... }}", i + 1, timed_event.event.event_type);
             }
-            engine.process(timed_event.event.clone()).await
+            engine
+                .process(timed_event.event.clone())
+                .await
                 .map_err(|e| anyhow::anyhow!("Process error: {}", e))?;
         }
     } else {
         // Timed mode - respect BATCH delays
         let (event_tx, mut event_rx) = mpsc::channel(100);
         let player = EventFilePlayer::new(events.clone(), event_tx);
-        
+
         // Spawn player
-        let player_handle = tokio::spawn(async move {
-            player.play().await
-        });
+        let player_handle = tokio::spawn(async move { player.play().await });
 
         // Process events as they come
         let mut count = 0;
         while let Some(event) = event_rx.recv().await {
             count += 1;
             if verbose {
-                println!("  [{:3}] @{:>6}ms {} {{ ... }}", 
-                    count, 
+                println!(
+                    "  [{:3}] @{:>6}ms {} {{ ... }}",
+                    count,
                     start.elapsed().as_millis(),
                     event.event_type
                 );
             }
-            engine.process(event).await
+            engine
+                .process(event)
+                .await
                 .map_err(|e| anyhow::anyhow!("Process error: {}", e))?;
         }
 
-        player_handle.await?
+        player_handle
+            .await?
             .map_err(|e| anyhow::anyhow!("Player error: {}", e))?;
     }
 
@@ -324,8 +355,10 @@ async fn run_simulation(program_path: &PathBuf, events_path: &PathBuf, immediate
     println!("Duration:         {:?}", elapsed);
     println!("Events processed: {}", final_metrics.events_processed);
     println!("Alerts generated: {}", alerts_count);
-    println!("Event rate:       {:.1} events/sec", 
-        final_metrics.events_processed as f64 / elapsed.as_secs_f64());
+    println!(
+        "Event rate:       {:.1} events/sec",
+        final_metrics.events_processed as f64 / elapsed.as_secs_f64()
+    );
 
     if alerts_count > 0 {
         println!("\n📢 Alerts Summary:");
@@ -337,12 +370,24 @@ async fn run_simulation(program_path: &PathBuf, events_path: &PathBuf, immediate
     Ok(())
 }
 
-async fn run_demo(duration_secs: u64, anomalies: bool, degradation: bool, enable_metrics: bool, metrics_port: u16) -> Result<()> {
+async fn run_demo(
+    duration_secs: u64,
+    anomalies: bool,
+    degradation: bool,
+    enable_metrics: bool,
+    metrics_port: u16,
+) -> Result<()> {
     println!("🏢 Varpulis HVAC Building Demo");
     println!("================================");
     println!("Duration: {} seconds", duration_secs);
-    println!("Anomalies: {}", if anomalies { "enabled" } else { "disabled" });
-    println!("Degradation: {}", if degradation { "enabled" } else { "disabled" });
+    println!(
+        "Anomalies: {}",
+        if anomalies { "enabled" } else { "disabled" }
+    );
+    println!(
+        "Degradation: {}",
+        if degradation { "enabled" } else { "disabled" }
+    );
     if enable_metrics {
         println!("Metrics: http://127.0.0.1:{}/metrics", metrics_port);
     }
@@ -374,7 +419,7 @@ async fn run_demo(duration_secs: u64, anomalies: bool, degradation: bool, enable
     "#;
 
     let program = parse(demo_program).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
-    
+
     // Create prometheus metrics if enabled
     let prom_metrics = if enable_metrics {
         Some(Metrics::new())
@@ -422,7 +467,7 @@ async fn run_demo(duration_secs: u64, anomalies: bool, degradation: bool, enable
         tokio::select! {
             Some(event) = event_rx.recv() => {
                 event_count += 1;
-                
+
                 // Process through engine
                 if let Err(e) = engine.process(event.clone()).await {
                     tracing::warn!("Engine error: {}", e);
@@ -456,7 +501,10 @@ async fn run_demo(duration_secs: u64, anomalies: bool, degradation: bool, enable
     let metrics = engine.metrics();
     println!("Total events processed: {}", metrics.events_processed);
     println!("Total alerts generated: {}", metrics.alerts_generated);
-    println!("Average rate: {:.0} events/sec", event_count as f64 / start.elapsed().as_secs_f64());
+    println!(
+        "Average rate: {:.0} events/sec",
+        event_count as f64 / start.elapsed().as_secs_f64()
+    );
 
     // Cleanup
     simulator_handle.abort();
@@ -472,19 +520,54 @@ async fn run_demo(duration_secs: u64, anomalies: bool, degradation: bool, enable
 #[serde(tag = "type", rename_all = "snake_case")]
 enum WsMessage {
     // Client -> Server
-    LoadFile { path: String },
-    InjectEvent { event_type: String, data: serde_json::Value },
+    LoadFile {
+        path: String,
+    },
+    InjectEvent {
+        event_type: String,
+        data: serde_json::Value,
+    },
     GetStreams,
     GetMetrics,
-    
+
     // Server -> Client
-    LoadResult { success: bool, streams_loaded: usize, error: Option<String> },
-    Streams { data: Vec<StreamInfoMsg> },
-    Event { id: String, event_type: String, timestamp: String, data: serde_json::Value },
-    Alert { id: String, alert_type: String, severity: String, message: String, timestamp: String, data: serde_json::Value },
-    Metrics { events_processed: u64, alerts_generated: u64, active_streams: usize, uptime: f64, memory_usage: u64, cpu_usage: f64 },
-    EventInjected { event_type: String, success: bool },
-    Error { message: String },
+    LoadResult {
+        success: bool,
+        streams_loaded: usize,
+        error: Option<String>,
+    },
+    Streams {
+        data: Vec<StreamInfoMsg>,
+    },
+    Event {
+        id: String,
+        event_type: String,
+        timestamp: String,
+        data: serde_json::Value,
+    },
+    Alert {
+        id: String,
+        alert_type: String,
+        severity: String,
+        message: String,
+        timestamp: String,
+        data: serde_json::Value,
+    },
+    Metrics {
+        events_processed: u64,
+        alerts_generated: u64,
+        active_streams: usize,
+        uptime: f64,
+        memory_usage: u64,
+        cpu_usage: f64,
+    },
+    EventInjected {
+        event_type: String,
+        success: bool,
+    },
+    Error {
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -564,7 +647,7 @@ async fn run_server(port: u16, enable_metrics: bool, metrics_port: u16) -> Resul
         let state = state.clone();
         move || state.clone()
     });
-    
+
     let broadcast_filter = warp::any().map({
         let broadcast_tx = broadcast_tx.clone();
         move || broadcast_tx.clone()
@@ -574,13 +657,17 @@ async fn run_server(port: u16, enable_metrics: bool, metrics_port: u16) -> Resul
         .and(warp::ws())
         .and(state_filter)
         .and(broadcast_filter)
-        .map(|ws: warp::ws::Ws, state: Arc<RwLock<ServerState>>, broadcast_tx: Arc<tokio::sync::broadcast::Sender<String>>| {
-            ws.on_upgrade(move |socket| handle_websocket(socket, state, broadcast_tx))
-        });
+        .map(
+            |ws: warp::ws::Ws,
+             state: Arc<RwLock<ServerState>>,
+             broadcast_tx: Arc<tokio::sync::broadcast::Sender<String>>| {
+                ws.on_upgrade(move |socket| handle_websocket(socket, state, broadcast_tx))
+            },
+        );
 
     // Health check route
-    let health_route = warp::path("health")
-        .map(|| warp::reply::json(&serde_json::json!({"status": "ok"})));
+    let health_route =
+        warp::path("health").map(|| warp::reply::json(&serde_json::json!({"status": "ok"})));
 
     let routes = ws_route.or(health_route);
 
@@ -650,7 +737,7 @@ async fn handle_ws_message(msg: WsMessage, state: &Arc<RwLock<ServerState>>) -> 
                             let mut state = state.write().await;
                             let engine_alert_tx = state.alert_tx.clone();
                             let mut engine = Engine::new(engine_alert_tx);
-                            
+
                             match engine.load(&program) {
                                 Ok(()) => {
                                     let streams_count = engine.metrics().streams_count;
@@ -666,38 +753,41 @@ async fn handle_ws_message(msg: WsMessage, state: &Arc<RwLock<ServerState>>) -> 
                                     success: false,
                                     streams_loaded: 0,
                                     error: Some(e.to_string()),
-                                }
+                                },
                             }
                         }
                         Err(e) => WsMessage::LoadResult {
                             success: false,
                             streams_loaded: 0,
                             error: Some(format!("Parse error: {}", e)),
-                        }
+                        },
                     }
                 }
                 Err(e) => WsMessage::LoadResult {
                     success: false,
                     streams_loaded: 0,
                     error: Some(format!("Failed to read file: {}", e)),
-                }
+                },
             }
         }
 
         WsMessage::GetStreams => {
             let state = state.read().await;
-            WsMessage::Streams { data: state.streams.clone() }
+            WsMessage::Streams {
+                data: state.streams.clone(),
+            }
         }
 
         WsMessage::GetMetrics => {
             let state = state.read().await;
-            let (events_processed, alerts_generated, active_streams) = if let Some(ref engine) = state.engine {
-                let m = engine.metrics();
-                (m.events_processed, m.alerts_generated, m.streams_count)
-            } else {
-                (0, 0, 0)
-            };
-            
+            let (events_processed, alerts_generated, active_streams) =
+                if let Some(ref engine) = state.engine {
+                    let m = engine.metrics();
+                    (m.events_processed, m.alerts_generated, m.streams_count)
+                } else {
+                    (0, 0, 0)
+                };
+
             WsMessage::Metrics {
                 events_processed,
                 alerts_generated,
@@ -713,7 +803,7 @@ async fn handle_ws_message(msg: WsMessage, state: &Arc<RwLock<ServerState>>) -> 
             if let Some(ref mut engine) = state.engine {
                 // Create event from injected data
                 let mut event = Event::new(&event_type);
-                
+
                 // Convert JSON data to event fields
                 if let Some(obj) = data.as_object() {
                     for (key, value) in obj {
@@ -721,16 +811,16 @@ async fn handle_ws_message(msg: WsMessage, state: &Arc<RwLock<ServerState>>) -> 
                         event.data.insert(key.clone(), v);
                     }
                 }
-                
+
                 // Process the event
                 match engine.process(event).await {
-                    Ok(()) => WsMessage::EventInjected { 
+                    Ok(()) => WsMessage::EventInjected {
                         event_type: event_type.clone(),
                         success: true,
                     },
                     Err(e) => WsMessage::Error {
                         message: format!("Failed to process event: {}", e),
-                    }
+                    },
                 }
             } else {
                 WsMessage::Error {
@@ -741,7 +831,7 @@ async fn handle_ws_message(msg: WsMessage, state: &Arc<RwLock<ServerState>>) -> 
 
         _ => WsMessage::Error {
             message: "Unknown message type".to_string(),
-        }
+        },
     }
 }
 
@@ -767,9 +857,7 @@ fn json_to_value(json: &serde_json::Value) -> varpulis_core::Value {
             }
         }
         serde_json::Value::String(s) => Value::Str(s.clone()),
-        serde_json::Value::Array(arr) => {
-            Value::Array(arr.iter().map(json_to_value).collect())
-        }
+        serde_json::Value::Array(arr) => Value::Array(arr.iter().map(json_to_value).collect()),
         serde_json::Value::Object(obj) => {
             let map = obj
                 .iter()

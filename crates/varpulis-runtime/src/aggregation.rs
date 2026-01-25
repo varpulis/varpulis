@@ -36,10 +36,7 @@ impl AggregateFunc for Sum {
 
     fn apply(&self, events: &[Event], field: Option<&str>) -> Value {
         let field = field.unwrap_or("value");
-        let sum: f64 = events
-            .iter()
-            .filter_map(|e| e.get_float(field))
-            .sum();
+        let sum: f64 = events.iter().filter_map(|e| e.get_float(field)).sum();
         Value::Float(sum)
     }
 }
@@ -54,11 +51,8 @@ impl AggregateFunc for Avg {
 
     fn apply(&self, events: &[Event], field: Option<&str>) -> Value {
         let field = field.unwrap_or("value");
-        let values: Vec<f64> = events
-            .iter()
-            .filter_map(|e| e.get_float(field))
-            .collect();
-        
+        let values: Vec<f64> = events.iter().filter_map(|e| e.get_float(field)).collect();
+
         if values.is_empty() {
             return Value::Null;
         }
@@ -116,10 +110,7 @@ impl AggregateFunc for StdDev {
 
     fn apply(&self, events: &[Event], field: Option<&str>) -> Value {
         let field = field.unwrap_or("value");
-        let values: Vec<f64> = events
-            .iter()
-            .filter_map(|e| e.get_float(field))
-            .collect();
+        let values: Vec<f64> = events.iter().filter_map(|e| e.get_float(field)).collect();
 
         if values.len() < 2 {
             return Value::Null;
@@ -179,7 +170,7 @@ impl AggregateFunc for CountDistinct {
     fn apply(&self, events: &[Event], field: Option<&str>) -> Value {
         let field = field.unwrap_or("value");
         let mut seen = std::collections::HashSet::new();
-        
+
         for event in events {
             if let Some(value) = event.get(field) {
                 // Use string representation for hashing
@@ -187,7 +178,7 @@ impl AggregateFunc for CountDistinct {
                 seen.insert(key);
             }
         }
-        
+
         Value::Int(seen.len() as i64)
     }
 }
@@ -225,7 +216,13 @@ impl ExprAggregate {
         right: Box<dyn AggregateFunc>,
         right_field: Option<String>,
     ) -> Self {
-        Self { left, left_field, op, right, right_field }
+        Self {
+            left,
+            left_field,
+            op,
+            right,
+            right_field,
+        }
     }
 }
 
@@ -244,7 +241,13 @@ impl AggregateFunc for ExprAggregate {
                     AggBinOp::Add => l + r,
                     AggBinOp::Sub => l - r,
                     AggBinOp::Mul => l * r,
-                    AggBinOp::Div => if r != 0.0 { l / r } else { f64::NAN },
+                    AggBinOp::Div => {
+                        if r != 0.0 {
+                            l / r
+                        } else {
+                            f64::NAN
+                        }
+                    }
                 };
                 Value::Float(result)
             }
@@ -253,7 +256,13 @@ impl AggregateFunc for ExprAggregate {
                     AggBinOp::Add => l + r,
                     AggBinOp::Sub => l - r,
                     AggBinOp::Mul => l * r,
-                    AggBinOp::Div => if r != 0 { l / r } else { 0 },
+                    AggBinOp::Div => {
+                        if r != 0 {
+                            l / r
+                        } else {
+                            0
+                        }
+                    }
                 };
                 Value::Int(result)
             }
@@ -263,7 +272,13 @@ impl AggregateFunc for ExprAggregate {
                     AggBinOp::Add => l + r,
                     AggBinOp::Sub => l - r,
                     AggBinOp::Mul => l * r,
-                    AggBinOp::Div => if r != 0.0 { l / r } else { f64::NAN },
+                    AggBinOp::Div => {
+                        if r != 0.0 {
+                            l / r
+                        } else {
+                            f64::NAN
+                        }
+                    }
                 };
                 Value::Float(result)
             }
@@ -273,7 +288,13 @@ impl AggregateFunc for ExprAggregate {
                     AggBinOp::Add => l + r,
                     AggBinOp::Sub => l - r,
                     AggBinOp::Mul => l * r,
-                    AggBinOp::Div => if r != 0.0 { l / r } else { f64::NAN },
+                    AggBinOp::Div => {
+                        if r != 0.0 {
+                            l / r
+                        } else {
+                            f64::NAN
+                        }
+                    }
                 };
                 Value::Float(result)
             }
@@ -284,7 +305,9 @@ impl AggregateFunc for ExprAggregate {
 
 impl Ema {
     pub fn new(period: usize) -> Self {
-        Self { period: period.max(1) }
+        Self {
+            period: period.max(1),
+        }
     }
 }
 
@@ -295,20 +318,17 @@ impl AggregateFunc for Ema {
 
     fn apply(&self, events: &[Event], field: Option<&str>) -> Value {
         let field = field.unwrap_or("value");
-        let values: Vec<f64> = events
-            .iter()
-            .filter_map(|e| e.get_float(field))
-            .collect();
+        let values: Vec<f64> = events.iter().filter_map(|e| e.get_float(field)).collect();
 
         if values.is_empty() {
             return Value::Null;
         }
 
         let k = 2.0 / (self.period as f64 + 1.0);
-        
+
         // Start with first value as initial EMA
         let mut ema = values[0];
-        
+
         // Calculate EMA for each subsequent value
         for value in values.iter().skip(1) {
             ema = value * k + ema * (1.0 - k);
@@ -330,7 +350,12 @@ impl Aggregator {
         }
     }
 
-    pub fn add(mut self, alias: impl Into<String>, func: Box<dyn AggregateFunc>, field: Option<String>) -> Self {
+    pub fn add(
+        mut self,
+        alias: impl Into<String>,
+        func: Box<dyn AggregateFunc>,
+        field: Option<String>,
+    ) -> Self {
         self.aggregations.push((alias.into(), func, field));
         self
     }
@@ -503,7 +528,10 @@ mod tests {
     #[test]
     fn test_ema_single_value() {
         let events = vec![Event::new("Test").with_field("value", 100.0)];
-        assert_eq!(Ema::new(3).apply(&events, Some("value")), Value::Float(100.0));
+        assert_eq!(
+            Ema::new(3).apply(&events, Some("value")),
+            Value::Float(100.0)
+        );
     }
 
     #[test]
@@ -615,13 +643,7 @@ mod tests {
             Event::new("Test").with_field("count", 20i64),
         ];
         // This tests that Count returns Int
-        let expr = ExprAggregate::new(
-            Box::new(Count),
-            None,
-            AggBinOp::Mul,
-            Box::new(Count),
-            None,
-        );
+        let expr = ExprAggregate::new(Box::new(Count), None, AggBinOp::Mul, Box::new(Count), None);
         // 2 * 2 = 4
         assert_eq!(expr.apply(&events, None), Value::Int(4));
     }
@@ -650,13 +672,17 @@ mod tests {
         let aggregator = Aggregator::new()
             .add("min_val", Box::new(Min), Some("value".to_string()))
             .add("max_val", Box::new(Max), Some("value".to_string()))
-            .add("range", Box::new(ExprAggregate::new(
-                Box::new(Max),
-                Some("value".to_string()),
-                AggBinOp::Sub,
-                Box::new(Min),
-                Some("value".to_string()),
-            )), None);
+            .add(
+                "range",
+                Box::new(ExprAggregate::new(
+                    Box::new(Max),
+                    Some("value".to_string()),
+                    AggBinOp::Sub,
+                    Box::new(Min),
+                    Some("value".to_string()),
+                )),
+                None,
+            );
 
         let result = aggregator.apply(&events);
         assert_eq!(result.get("min_val"), Some(&Value::Float(10.0)));
@@ -683,11 +709,7 @@ mod tests {
 
     #[test]
     fn test_expr_aggregate_name() {
-        let expr = ExprAggregate::new(
-            Box::new(Sum), None,
-            AggBinOp::Add,
-            Box::new(Count), None,
-        );
+        let expr = ExprAggregate::new(Box::new(Sum), None, AggBinOp::Add, Box::new(Count), None);
         assert_eq!(expr.name(), "expr");
     }
 }

@@ -147,7 +147,7 @@ mod tests {
         let event = Event::new("Test")
             .with_field("name", "value")
             .with_field("count", 42i64);
-        
+
         assert_eq!(event.data.len(), 2);
         assert_eq!(event.get("name"), Some(&Value::Str("value".to_string())));
         assert_eq!(event.get("count"), Some(&Value::Int(42)));
@@ -160,7 +160,7 @@ mod tests {
             .with_field("customer", "Alice")
             .with_field("total", 99.99f64)
             .with_field("premium", true);
-        
+
         assert_eq!(event.data.len(), 4);
     }
 
@@ -180,7 +180,7 @@ mod tests {
         let event = Event::new("Test")
             .with_field("price", 19.99f64)
             .with_field("quantity", 5i64);
-        
+
         assert_eq!(event.get_float("price"), Some(19.99));
         assert_eq!(event.get_float("quantity"), Some(5.0)); // int converts to float
         assert_eq!(event.get_float("missing"), None);
@@ -191,7 +191,7 @@ mod tests {
         let event = Event::new("Test")
             .with_field("count", 42i64)
             .with_field("ratio", 3.7f64);
-        
+
         assert_eq!(event.get_int("count"), Some(42));
         assert_eq!(event.get_int("ratio"), Some(3)); // float truncates to int
         assert_eq!(event.get_int("missing"), None);
@@ -223,7 +223,7 @@ mod tests {
             value: 22.5,
             timestamp: ts,
         };
-        
+
         let event: Event = reading.into();
         assert_eq!(event.event_type, "TemperatureReading");
         assert_eq!(event.get_str("sensor_id"), Some("sensor1"));
@@ -241,7 +241,7 @@ mod tests {
             value: 65.0,
             timestamp: ts,
         };
-        
+
         let event: Event = reading.into();
         assert_eq!(event.event_type, "HumidityReading");
         assert_eq!(event.get_str("sensor_id"), Some("humid1"));
@@ -259,7 +259,7 @@ mod tests {
             compressor_pressure: 2.5,
             timestamp: ts,
         };
-        
+
         let event: Event = status.into();
         assert_eq!(event.event_type, "HVACStatus");
         assert_eq!(event.get_str("unit_id"), Some("hvac1"));
@@ -278,7 +278,7 @@ mod tests {
         let event = Event::new("Test")
             .with_field("key", "first")
             .with_field("key", "second");
-        
+
         assert_eq!(event.get_str("key"), Some("second"));
         assert_eq!(event.data.len(), 1);
     }
@@ -294,7 +294,7 @@ mod tests {
         let event = Event::new("Test")
             .with_field("negative_int", -42i64)
             .with_field("negative_float", -3.14f64);
-        
+
         assert_eq!(event.get_int("negative_int"), Some(-42));
         assert_eq!(event.get_float("negative_float"), Some(-3.14));
     }
@@ -304,7 +304,7 @@ mod tests {
         let event = Event::new("Test")
             .with_field("zero_int", 0i64)
             .with_field("zero_float", 0.0f64);
-        
+
         assert_eq!(event.get_int("zero_int"), Some(0));
         assert_eq!(event.get_float("zero_float"), Some(0.0));
     }

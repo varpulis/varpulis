@@ -1,7 +1,6 @@
 // Build script for varpulis-parser
-// Currently using hand-written parser, LALRPOP integration for future
+// Will be updated for tree-sitter integration
 
 fn main() {
-    // Uncomment when switching to LALRPOP
-    // lalrpop::process_root().unwrap();
+    // Tree-sitter parser will be integrated here
 }

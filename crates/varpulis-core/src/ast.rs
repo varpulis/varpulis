@@ -78,6 +78,54 @@ pub enum Stmt {
     Break,
     /// Continue statement
     Continue,
+    /// SASE+ Pattern declaration: `pattern Name = SEQ(A, B+) within 1h partition by user_id`
+    PatternDecl {
+        name: String,
+        expr: SasePatternExpr,
+        within: Option<Expr>,
+        partition_by: Option<Expr>,
+    },
+}
+
+/// SASE+ Pattern Expression for complex event processing
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum SasePatternExpr {
+    /// Sequence: SEQ(A, B, C)
+    Seq(Vec<SasePatternItem>),
+    /// Conjunction: A AND B
+    And(Box<SasePatternExpr>, Box<SasePatternExpr>),
+    /// Disjunction: A OR B
+    Or(Box<SasePatternExpr>, Box<SasePatternExpr>),
+    /// Negation: NOT A
+    Not(Box<SasePatternExpr>),
+    /// Single event type reference
+    Event(String),
+    /// Grouped expression
+    Group(Box<SasePatternExpr>),
+}
+
+/// Item in a SASE+ sequence with optional Kleene operator
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SasePatternItem {
+    /// Event type name
+    pub event_type: String,
+    /// Optional alias for the event
+    pub alias: Option<String>,
+    /// Kleene operator: None, Plus (+), Star (*), Optional (?)
+    pub kleene: Option<KleeneOp>,
+    /// Optional filter condition
+    pub filter: Option<Expr>,
+}
+
+/// Kleene operators for SASE+ patterns
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum KleeneOp {
+    /// One or more (+)
+    Plus,
+    /// Zero or more (*)
+    Star,
+    /// Zero or one (?)
+    Optional,
 }
 
 /// Stream source
@@ -293,7 +341,7 @@ pub enum Expr {
     Int(i64),
     Float(f64),
     Str(String),
-    Duration(u64), // nanoseconds
+    Duration(u64),  // nanoseconds
     Timestamp(i64), // nanoseconds since epoch
 
     // Collections
@@ -311,16 +359,28 @@ pub enum Expr {
     },
 
     // Unary operation
-    Unary { op: UnaryOp, expr: Box<Expr> },
+    Unary {
+        op: UnaryOp,
+        expr: Box<Expr>,
+    },
 
     // Member access: `expr.member`
-    Member { expr: Box<Expr>, member: String },
+    Member {
+        expr: Box<Expr>,
+        member: String,
+    },
 
     // Optional member access: `expr?.member`
-    OptionalMember { expr: Box<Expr>, member: String },
+    OptionalMember {
+        expr: Box<Expr>,
+        member: String,
+    },
 
     // Index access: `expr[index]`
-    Index { expr: Box<Expr>, index: Box<Expr> },
+    Index {
+        expr: Box<Expr>,
+        index: Box<Expr>,
+    },
 
     // Slice: `expr[start:end]`
     Slice {
@@ -330,7 +390,10 @@ pub enum Expr {
     },
 
     // Function call: `func(args)`
-    Call { func: Box<Expr>, args: Vec<Arg> },
+    Call {
+        func: Box<Expr>,
+        args: Vec<Arg>,
+    },
 
     // Lambda: `x => expr` or `(x, y) => expr`
     Lambda {
@@ -398,9 +461,9 @@ pub enum BinOp {
     And,
     Or,
     Xor,
-    
+
     // Pattern operators
-    FollowedBy,  // -> (A followed by B)
+    FollowedBy, // -> (A followed by B)
 
     // Bitwise
     BitAnd,

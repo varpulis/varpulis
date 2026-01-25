@@ -1,0 +1,31 @@
+{
+  "name": "tree-sitter-varpulis",
+  "version": "0.1.0",
+  "description": "Tree-sitter grammar for VarpulisQL",
+  "main": "bindings/node",
+  "keywords": ["tree-sitter", "parser", "varpulis", "cep"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/varpulis/varpulis.git"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "nan": "^2.17.0"
+  },
+  "devDependencies": {
+    "tree-sitter-cli": "^0.20.8"
+  },
+  "scripts": {
+    "build": "tree-sitter generate",
+    "test": "tree-sitter test",
+    "parse": "tree-sitter parse"
+  },
+  "tree-sitter": [
+    {
+      "scope": "source.varpulis",
+      "file-types": ["vpl"],
+      "highlights": "queries/highlights.scm",
+      "injection-regex": "varpulis"
+    }
+  ]
+}

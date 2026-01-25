@@ -80,19 +80,19 @@ pub trait SinkConnector: Send + Sync {
 pub enum ConnectorError {
     #[error("Connection failed: {0}")]
     ConnectionFailed(String),
-    
+
     #[error("Send failed: {0}")]
     SendFailed(String),
-    
+
     #[error("Receive failed: {0}")]
     ReceiveFailed(String),
-    
+
     #[error("Configuration error: {0}")]
     ConfigError(String),
-    
+
     #[error("Not connected")]
     NotConnected,
-    
+
     #[error("Connector not available: {0}")]
     NotAvailable(String),
 }
@@ -314,17 +314,18 @@ impl SourceConnector for KafkaSource {
         );
         warn!("  Brokers: {}", self.config.brokers);
         warn!("  Topic: {}", self.config.topic);
-        
+
         self.running = true;
-        
+
         // In a real implementation, this would:
         // 1. Create a Kafka consumer
         // 2. Subscribe to the topic
         // 3. Poll for messages and convert to Events
         // 4. Send events through the tx channel
-        
+
         Err(ConnectorError::NotAvailable(
-            "Kafka connector requires 'kafka' feature. Enable with: cargo build --features kafka".to_string()
+            "Kafka connector requires 'kafka' feature. Enable with: cargo build --features kafka"
+                .to_string(),
         ))
     }
 
@@ -365,9 +366,9 @@ impl SinkConnector for KafkaSink {
             "Kafka sink {} send (stub) to {}/{} - event: {}",
             self.name, self.config.brokers, self.config.topic, event.event_type
         );
-        
+
         Err(ConnectorError::NotAvailable(
-            "Kafka connector requires 'kafka' feature".to_string()
+            "Kafka connector requires 'kafka' feature".to_string(),
         ))
     }
 
@@ -449,11 +450,12 @@ impl SourceConnector for MqttSource {
         );
         warn!("  Broker: {}:{}", self.config.broker, self.config.port);
         warn!("  Topic: {}", self.config.topic);
-        
+
         self.running = true;
-        
+
         Err(ConnectorError::NotAvailable(
-            "MQTT connector requires 'mqtt' feature. Enable with: cargo build --features mqtt".to_string()
+            "MQTT connector requires 'mqtt' feature. Enable with: cargo build --features mqtt"
+                .to_string(),
         ))
     }
 
@@ -493,9 +495,9 @@ impl SinkConnector for MqttSink {
             "MQTT sink {} send (stub) to {}:{}/{} - event: {}",
             self.name, self.config.broker, self.config.port, self.config.topic, event.event_type
         );
-        
+
         Err(ConnectorError::NotAvailable(
-            "MQTT connector requires 'mqtt' feature".to_string()
+            "MQTT connector requires 'mqtt' feature".to_string(),
         ))
     }
 
@@ -543,17 +545,25 @@ impl ConnectorRegistry {
     }
 
     /// Create a connector from configuration
-    pub fn create_from_config(config: &ConnectorConfig) -> Result<Box<dyn SinkConnector>, ConnectorError> {
+    pub fn create_from_config(
+        config: &ConnectorConfig,
+    ) -> Result<Box<dyn SinkConnector>, ConnectorError> {
         match config.connector_type.as_str() {
             "console" => Ok(Box::new(ConsoleSink::new("console"))),
             "http" => Ok(Box::new(HttpSink::new("http", &config.url))),
             "kafka" => {
                 let topic = config.topic.clone().unwrap_or_else(|| "events".to_string());
-                Ok(Box::new(KafkaSink::new("kafka", KafkaConfig::new(&config.url, &topic))))
+                Ok(Box::new(KafkaSink::new(
+                    "kafka",
+                    KafkaConfig::new(&config.url, &topic),
+                )))
             }
             "mqtt" => {
                 let topic = config.topic.clone().unwrap_or_else(|| "events".to_string());
-                Ok(Box::new(MqttSink::new("mqtt", MqttConfig::new(&config.url, &topic))))
+                Ok(Box::new(MqttSink::new(
+                    "mqtt",
+                    MqttConfig::new(&config.url, &topic),
+                )))
             }
             _ => Err(ConnectorError::ConfigError(format!(
                 "Unknown connector type: {}",
@@ -585,18 +595,20 @@ mod tests {
         let config = ConnectorConfig::new("kafka", "localhost:9092")
             .with_topic("events")
             .with_property("group.id", "test-group");
-        
+
         assert_eq!(config.connector_type, "kafka");
         assert_eq!(config.url, "localhost:9092");
         assert_eq!(config.topic, Some("events".to_string()));
-        assert_eq!(config.properties.get("group.id"), Some(&"test-group".to_string()));
+        assert_eq!(
+            config.properties.get("group.id"),
+            Some(&"test-group".to_string())
+        );
     }
 
     #[test]
     fn test_kafka_config() {
-        let config = KafkaConfig::new("broker:9092", "my-topic")
-            .with_group_id("my-group");
-        
+        let config = KafkaConfig::new("broker:9092", "my-topic").with_group_id("my-group");
+
         assert_eq!(config.brokers, "broker:9092");
         assert_eq!(config.topic, "my-topic");
         assert_eq!(config.group_id, Some("my-group".to_string()));
@@ -607,7 +619,7 @@ mod tests {
         let config = MqttConfig::new("mqtt.example.com", "sensors/#")
             .with_port(8883)
             .with_credentials("user", "pass");
-        
+
         assert_eq!(config.broker, "mqtt.example.com");
         assert_eq!(config.port, 8883);
         assert_eq!(config.topic, "sensors/#");

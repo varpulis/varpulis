@@ -1,8 +1,6 @@
 //! Prometheus metrics for Varpulis
 
-use prometheus::{
-    CounterVec, Gauge, GaugeVec, HistogramOpts, HistogramVec, Opts, Registry,
-};
+use prometheus::{CounterVec, Gauge, GaugeVec, HistogramOpts, HistogramVec, Opts, Registry};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
@@ -47,7 +45,9 @@ impl Metrics {
                 "varpulis_processing_latency_seconds",
                 "Event processing latency",
             )
-            .buckets(vec![0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0]),
+            .buckets(vec![
+                0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0,
+            ]),
             &["stream"],
         )
         .unwrap();
@@ -58,17 +58,20 @@ impl Metrics {
         )
         .unwrap();
 
-        let active_streams = Gauge::new(
-            "varpulis_active_streams",
-            "Number of active streams",
-        )
-        .unwrap();
+        let active_streams =
+            Gauge::new("varpulis_active_streams", "Number of active streams").unwrap();
 
         registry.register(Box::new(events_total.clone())).unwrap();
-        registry.register(Box::new(events_processed.clone())).unwrap();
+        registry
+            .register(Box::new(events_processed.clone()))
+            .unwrap();
         registry.register(Box::new(alerts_total.clone())).unwrap();
-        registry.register(Box::new(processing_latency.clone())).unwrap();
-        registry.register(Box::new(stream_queue_size.clone())).unwrap();
+        registry
+            .register(Box::new(processing_latency.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(stream_queue_size.clone()))
+            .unwrap();
         registry.register(Box::new(active_streams.clone())).unwrap();
 
         Self {

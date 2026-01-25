@@ -83,8 +83,8 @@ impl ActiveCorrelation {
 
     pub fn advance(&mut self, event: Event, alias: Option<&str>) {
         if let Some(alias) = alias {
-            self.context = std::mem::take(&mut self.context)
-                .with_captured(alias.to_string(), event);
+            self.context =
+                std::mem::take(&mut self.context).with_captured(alias.to_string(), event);
         } else {
             self.context.previous = Some(event);
         }
@@ -277,7 +277,12 @@ impl SequenceTracker {
         self.active.push(correlation);
     }
 
-    fn event_matches_step(&self, event: &Event, step: &SequenceStep, context: &SequenceContext) -> bool {
+    fn event_matches_step(
+        &self,
+        event: &Event,
+        step: &SequenceStep,
+        context: &SequenceContext,
+    ) -> bool {
         // Check event type
         if event.event_type != step.event_type {
             return false;

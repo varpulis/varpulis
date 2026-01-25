@@ -1,0 +1,379 @@
+// VarpulisQL Grammar for pest (PEG Parser)
+// Handles ambiguity naturally via ordered choice
+
+// ============================================================================
+// Whitespace and Comments
+// ============================================================================
+
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+COMMENT = _{ line_comment | block_comment }
+line_comment = { "#" ~ (!"\n" ~ ANY)* }
+block_comment = { "/*" ~ (!"*/" ~ ANY)* ~ "*/" }
+
+// Indentation markers (inserted by preprocessor)
+INDENT = { "\u{00AB}INDENT\u{00BB}" }
+DEDENT = { "\u{00AB}DEDENT\u{00BB}" }
+
+// ============================================================================
+// Program Entry Point
+// ============================================================================
+
+program = { SOI ~ statement* ~ EOI }
+
+statement = {
+    stream_decl
+    | event_decl
+    | type_decl
+    | var_decl
+    | const_decl
+    | fn_decl
+    | config_block
+    | import_stmt
+    | if_stmt
+    | for_stmt
+    | while_stmt
+    | return_stmt
+    | break_stmt
+    | continue_stmt
+    | expr_stmt
+}
+
+// ============================================================================
+// Stream Declaration
+// ============================================================================
+
+stream_decl = {
+    "stream" ~ identifier ~ type_annotation? ~ (
+        ("from" ~ identifier)
+        | ("=" ~ stream_expr)
+    )
+}
+
+stream_expr = { stream_source ~ stream_op* }
+
+// Order matters in PEG - put identifier last as fallback
+stream_source = {
+    merge_source
+    | join_source
+    | sequence_source
+    | all_source
+    | aliased_source
+    | identifier
+}
+
+merge_source = { "merge" ~ "(" ~ inline_stream_list ~ ")" }
+join_source = { "join" ~ "(" ~ join_clause_list ~ ")" }
+sequence_source = { "sequence" ~ "(" ~ sequence_decl ~ ")" }
+all_source = { "all" ~ identifier ~ ("as" ~ identifier)? }
+aliased_source = { identifier ~ "as" ~ identifier }
+
+inline_stream_list = { inline_stream ~ ("," ~ inline_stream)* }
+inline_stream = { 
+    ("stream" ~ identifier ~ "from" ~ identifier ~ ("where" ~ expr)?)
+    | identifier 
+}
+
+join_clause_list = { join_clause ~ ("," ~ join_clause)* }
+join_clause = { 
+    ("stream" ~ identifier ~ "from" ~ identifier ~ ("on" ~ expr)?)
+    | identifier 
+}
+
+sequence_decl = { sequence_step ~ ("," ~ sequence_step)* }
+sequence_step = { 
+    identifier ~ ":" ~ identifier ~ ("where" ~ or_expr)? ~ within_suffix?
+}
+within_suffix = { "." ~ "within" ~ "(" ~ expr ~ ")" }
+
+// ============================================================================
+// Stream Operations
+// ============================================================================
+
+stream_op = { dot_op | followed_by_op }
+
+dot_op = { "." ~ (
+    where_op | select_op | window_op | aggregate_op | partition_by_op
+    | order_by_op | limit_op | distinct_op | map_op | filter_op
+    | tap_op | print_op | log_op | emit_op | to_op | pattern_op
+    | attention_window_op | concurrent_op | process_op | on_error_op
+    | collect_op | on_op | within_op | not_op | fork_op | any_op
+    | all_op | first_op
+)}
+
+// followed_by: use filter_expr for filter (stops before stream ops), 'as identifier' handled at end
+match_all_keyword = { "all" }
+followed_by_op = { "->" ~ match_all_keyword? ~ identifier ~ ("where" ~ filter_expr)? ~ ("as" ~ identifier)? }
+
+// Filter expression that stops before stream operation keywords
+// This prevents .emit(), .where() etc from being parsed as part of the filter
+filter_expr = { filter_or_expr }
+filter_or_expr = { filter_and_expr ~ ("or" ~ filter_and_expr)* }
+filter_and_expr = { filter_not_expr ~ ("and" ~ filter_not_expr)* }
+filter_not_expr = { "not"? ~ filter_comparison_expr }
+filter_comparison_expr = { filter_additive_expr ~ (comparison_op ~ filter_additive_expr)? }
+filter_additive_expr = { filter_multiplicative_expr ~ (additive_op ~ filter_multiplicative_expr)* }
+filter_multiplicative_expr = { filter_unary_expr ~ (multiplicative_op ~ filter_unary_expr)* }
+filter_unary_expr = { ("-" | "~")? ~ filter_postfix_expr }
+filter_postfix_expr = { filter_primary_expr ~ filter_postfix_suffix* }
+filter_postfix_suffix = { 
+    // Member access only if not followed by "(" (which would make it a stream op call)
+    ("." ~ identifier ~ !("("))
+    | optional_member_access 
+    | index_access 
+    | call_args 
+}
+filter_primary_expr = { literal | identifier | "(" ~ filter_expr ~ ")" }
+
+where_op = { "where" ~ "(" ~ expr ~ ")" }
+select_op = { "select" ~ "(" ~ select_list ~ ")" }
+window_op = { "window" ~ "(" ~ window_args ~ ")" }
+aggregate_op = { "aggregate" ~ "(" ~ agg_list ~ ")" }
+partition_by_op = { "partition_by" ~ "(" ~ expr ~ ")" }
+order_by_op = { "order_by" ~ "(" ~ order_list ~ ")" }
+limit_op = { "limit" ~ "(" ~ expr ~ ")" }
+distinct_op = { "distinct" ~ "(" ~ expr? ~ ")" }
+map_op = { "map" ~ "(" ~ expr ~ ")" }
+filter_op = { "filter" ~ "(" ~ expr ~ ")" }
+tap_op = { "tap" ~ "(" ~ named_arg_list ~ ")" }
+print_op = { "print" ~ "(" ~ expr_list? ~ ")" }
+log_op = { "log" ~ "(" ~ named_arg_list? ~ ")" }
+emit_op = { "emit" ~ "(" ~ named_arg_list? ~ ")" }
+to_op = { "to" ~ "(" ~ expr ~ ")" }
+// Pattern: supports both lambda expressions and sequence patterns
+// .pattern(name: events => expr) or .pattern(name: A -> B -> C)
+pattern_op = { "pattern" ~ "(" ~ pattern_def ~ ")" }
+pattern_def = { identifier ~ ":" ~ pattern_body }
+// Pattern body: either a lambda expression OR a pattern sequence/logical expr
+pattern_body = { lambda_expr | pattern_or_expr }
+pattern_or_expr = { pattern_and_expr ~ ("or" ~ pattern_and_expr)* }
+pattern_and_expr = { pattern_xor_expr ~ ("and" ~ pattern_xor_expr)* }
+pattern_xor_expr = { pattern_unary_expr ~ ("xor" ~ pattern_unary_expr)* }
+pattern_unary_expr = { "not"? ~ pattern_primary }
+pattern_primary = { "(" ~ pattern_or_expr ~ ")" | pattern_sequence }
+pattern_sequence = { identifier ~ ("->" ~ identifier)* }
+attention_window_op = { "attention_window" ~ "(" ~ named_arg_list ~ ")" }
+concurrent_op = { "concurrent" ~ "(" ~ named_arg_list ~ ")" }
+process_op = { "process" ~ "(" ~ expr ~ ")" }
+on_error_op = { "on_error" ~ "(" ~ expr ~ ")" }
+collect_op = { "collect" ~ "(" ~ ")" }
+on_op = { "on" ~ "(" ~ expr ~ ")" }
+within_op = { "within" ~ "(" ~ expr ~ ")" }
+not_op = { "not" ~ "(" ~ identifier ~ ("where" ~ expr)? ~ ")" }
+fork_op = { "fork" ~ "(" ~ fork_path_list ~ ")" }
+any_op = { "any" ~ "(" ~ integer? ~ ")" }
+all_op = { "all" ~ "(" ~ ")" }
+first_op = { "first" ~ "(" ~ ")" }
+
+select_list = { select_item ~ ("," ~ select_item)* }
+select_item = { (identifier ~ ":" ~ expr) | identifier }
+
+window_args = { expr ~ ("," ~ "sliding" ~ ":" ~ expr)? ~ ("," ~ "policy" ~ ":" ~ expr)? }
+
+agg_list = { agg_item ~ ("," ~ agg_item)* }
+agg_item = { identifier ~ ":" ~ expr }
+
+order_list = { order_item ~ ("," ~ order_item)* }
+order_item = { expr ~ ("desc" | "asc")? }
+
+fork_path_list = { fork_path ~ ("," ~ fork_path)* }
+fork_path = { identifier ~ ":" ~ stream_op+ }
+
+named_arg_list = { named_arg ~ ("," ~ named_arg)* }
+named_arg = { identifier ~ ":" ~ expr }
+
+expr_list = { expr ~ ("," ~ expr)* }
+
+// ============================================================================
+// Event Declaration
+// ============================================================================
+
+event_decl = { "event" ~ identifier ~ ("extends" ~ identifier)? ~ ":" ~ field+ }
+field = { identifier ~ ":" ~ type_expr ~ "?"? }
+
+// ============================================================================
+// Type Declaration
+// ============================================================================
+
+type_decl = { "type" ~ identifier ~ "=" ~ type_expr }
+
+type_annotation = { ":" ~ type_expr }
+
+type_expr = {
+    array_type
+    | map_type
+    | tuple_type
+    | stream_type
+    | optional_type
+    | primitive_type
+    | named_type
+}
+
+primitive_type = { "int" | "float" | "bool" | "str" | "timestamp" | "duration" }
+array_type = { "[" ~ type_expr ~ "]" }
+map_type = { "{" ~ type_expr ~ ":" ~ type_expr ~ "}" }
+tuple_type = { "(" ~ type_expr ~ ("," ~ type_expr)+ ~ ")" }
+stream_type = { "Stream" ~ "<" ~ type_expr ~ ">" }
+optional_type = { (primitive_type | named_type | array_type | map_type | stream_type) ~ "?" }
+named_type = { identifier }
+
+// ============================================================================
+// Variable and Constant Declaration
+// ============================================================================
+
+var_decl = { ("let" | "var") ~ identifier ~ type_annotation? ~ "=" ~ expr }
+const_decl = { "const" ~ identifier ~ type_annotation? ~ "=" ~ expr }
+
+// ============================================================================
+// Function Declaration
+// ============================================================================
+
+fn_decl = { "fn" ~ identifier ~ "(" ~ param_list? ~ ")" ~ ("->" ~ type_expr)? ~ ":" ~ block }
+block = { INDENT ~ statement+ ~ DEDENT }
+param_list = { param ~ ("," ~ param)* }
+param = { identifier ~ ":" ~ type_expr }
+
+// ============================================================================
+// Control Flow
+// ============================================================================
+
+if_stmt = { "if" ~ expr ~ ":" ~ block ~ elif_clause* ~ else_clause? }
+elif_clause = { "elif" ~ expr ~ ":" ~ block }
+else_clause = { "else" ~ ":" ~ block }
+
+for_stmt = { "for" ~ identifier ~ "in" ~ expr ~ ":" ~ block }
+while_stmt = { "while" ~ expr ~ ":" ~ block }
+return_stmt = { "return" ~ expr? }
+break_stmt = { "break" }
+continue_stmt = { "continue" }
+
+expr_stmt = { expr }
+
+// ============================================================================
+// Config
+// ============================================================================
+
+config_block = { "config" ~ ":" ~ INDENT ~ config_item+ ~ DEDENT }
+config_item = { identifier ~ ":" ~ config_value }
+// Duration before integer for PEG ordering
+config_value = { float | duration | integer | string | boolean | identifier }
+
+// ============================================================================
+// Import
+// ============================================================================
+
+import_stmt = { "import" ~ string ~ ("as" ~ identifier)? }
+
+// ============================================================================
+// Expressions (PEG handles precedence via rule ordering)
+// ============================================================================
+
+expr = { lambda_expr | or_expr }
+
+// Lambda: (x) => expr or x => expr or (x) => { statements }
+lambda_expr = { 
+    (("(" ~ identifier_list? ~ ")") | identifier) ~ "=>" ~ (lambda_block | expr)
+}
+lambda_block = { "{" ~ statement* ~ expr? ~ "}" }
+identifier_list = { identifier ~ ("," ~ identifier)* }
+
+// Logical operators
+or_expr = { and_expr ~ ("or" ~ and_expr)* }
+and_expr = { not_expr ~ ("and" ~ not_expr)* }
+not_expr = { "not"? ~ comparison_expr }
+
+// Comparison
+comparison_expr = { bitwise_or_expr ~ (comparison_op ~ bitwise_or_expr)? }
+comparison_op = { "==" | "!=" | "<=" | ">=" | "<" | ">" | "in" | "is" | ("not" ~ "in") }
+
+// Bitwise operators
+bitwise_or_expr = { bitwise_xor_expr ~ ("|" ~ bitwise_xor_expr)* }
+bitwise_xor_expr = { bitwise_and_expr ~ ("^" ~ bitwise_and_expr)* }
+bitwise_and_expr = { shift_expr ~ ("&" ~ shift_expr)* }
+shift_expr = { additive_expr ~ (("<<" | ">>") ~ additive_expr)* }
+
+// Arithmetic - explicit operator rules so they appear in parse tree
+additive_op = { "+" | "-" }
+additive_expr = { multiplicative_expr ~ (additive_op ~ multiplicative_expr)* }
+multiplicative_op = { "*" | "/" | "%" }
+multiplicative_expr = { power_expr ~ (multiplicative_op ~ power_expr)* }
+power_expr = { unary_expr ~ ("**" ~ power_expr)? }
+
+// Unary
+unary_expr = { ("-" | "~")? ~ postfix_expr }
+
+// Postfix: member access, indexing, calls
+postfix_expr = { primary_expr ~ postfix_suffix* }
+postfix_suffix = { 
+    member_access 
+    | optional_member_access 
+    | index_access 
+    | call_args 
+}
+
+member_access = { "." ~ identifier }
+optional_member_access = { "?." ~ identifier }
+index_access = { "[" ~ expr ~ "]" }
+call_args = { "(" ~ arg_list? ~ ")" }
+
+arg_list = { arg ~ ("," ~ arg)* }
+arg = { (identifier ~ ":" ~ expr) | expr }
+
+// Primary expressions
+primary_expr = {
+    if_expr
+    | literal
+    | identifier
+    | array_literal
+    | map_literal
+    | "(" ~ expr ~ ")"
+}
+
+if_expr = { "if" ~ expr ~ "then" ~ expr ~ "else" ~ expr }
+
+// ============================================================================
+// Literals
+// ============================================================================
+
+literal = { 
+    float 
+    | duration   // Must be before integer (5s vs 5)
+    | integer 
+    | string 
+    | timestamp 
+    | boolean 
+    | null 
+}
+
+integer = @{ ASCII_DIGIT+ }
+float = @{ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ ~ (("e" | "E") ~ ("+" | "-")? ~ ASCII_DIGIT+)? }
+string = @{ "\"" ~ string_content ~ "\"" }
+string_content = { (!("\"" | "\\") ~ ANY | "\\" ~ ANY)* }
+// Duration must match before integer to avoid "5" being parsed as int leaving "s" orphaned
+duration = @{ ASCII_DIGIT+ ~ ("ns" | "us" | "ms" | "s" | "m" | "h" | "d") }
+timestamp = @{ "@" ~ ASCII_DIGIT{4} ~ "-" ~ ASCII_DIGIT{2} ~ "-" ~ ASCII_DIGIT{2} ~ 
+              ("T" ~ ASCII_DIGIT{2} ~ ":" ~ ASCII_DIGIT{2} ~ ":" ~ ASCII_DIGIT{2} ~ 
+               ("Z" | ("+" | "-") ~ ASCII_DIGIT{2} ~ ":" ~ ASCII_DIGIT{2})?)? }
+boolean = { "true" | "false" }
+null = { "null" }
+
+array_literal = { "[" ~ expr_list? ~ "]" }
+map_literal = { "{" ~ map_entry_list? ~ "}" }
+map_entry_list = { map_entry ~ ("," ~ map_entry)* }
+map_entry = { (string | identifier) ~ ":" ~ expr }
+
+// ============================================================================
+// Identifiers and Keywords
+// ============================================================================
+
+// Identifiers: any word that is not exactly a keyword
+identifier = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+
+// Keywords are checked contextually, not blocked from identifiers
+// This allows "input" even though "in" is a keyword
+
+// Context-sensitive words that can be identifiers in some places
+context_keyword = {
+    "all" | "map" | "filter" | "tap" | "print" | "log" | "process" | "on_error"
+    | "collect" | "concurrent" | "fork" | "any" | "first" | "sliding" | "policy"
+    | "desc" | "asc" | "sequence"
+}
