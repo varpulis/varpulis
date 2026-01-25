@@ -1981,10 +1981,97 @@ fn parse_duration(s: &str) -> u64 {
     }
 }
 
-fn parse_timestamp(_s: &str) -> i64 {
-    // Remove @ prefix and parse ISO8601
-    // For MVP, return 0
-    0
+fn parse_timestamp(s: &str) -> i64 {
+    // Remove @ prefix
+    let s = s.strip_prefix('@').unwrap_or(s);
+    
+    // Parse ISO8601: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS(Z|+HH:MM|-HH:MM)
+    // Returns nanoseconds since Unix epoch
+    
+    let (date_part, time_part) = if let Some(idx) = s.find('T') {
+        (&s[..idx], Some(&s[idx+1..]))
+    } else {
+        (s, None)
+    };
+    
+    // Parse date: YYYY-MM-DD
+    let parts: Vec<&str> = date_part.split('-').collect();
+    if parts.len() != 3 {
+        return 0;
+    }
+    
+    let year: i32 = parts[0].parse().unwrap_or(1970);
+    let month: u32 = parts[1].parse().unwrap_or(1);
+    let day: u32 = parts[2].parse().unwrap_or(1);
+    
+    // Calculate days since epoch (1970-01-01)
+    // Simplified: doesn't handle all edge cases but works for common dates
+    let mut days: i64 = 0;
+    
+    // Years
+    for y in 1970..year {
+        days += if is_leap_year(y) { 366 } else { 365 };
+    }
+    for y in (year..1970).rev() {
+        days -= if is_leap_year(y) { 366 } else { 365 };
+    }
+    
+    // Months
+    let days_in_month = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    for m in 1..month {
+        days += days_in_month[(m - 1) as usize] as i64;
+        if m == 2 && is_leap_year(year) {
+            days += 1;
+        }
+    }
+    
+    // Days
+    days += (day - 1) as i64;
+    
+    let mut seconds = days * 86400;
+    
+    // Parse time if present
+    if let Some(time_str) = time_part {
+        // Strip timezone suffix and parse HH:MM:SS
+        let time_only = time_str
+            .trim_end_matches('Z')
+            .split('+').next().unwrap_or(time_str)
+            .split('-').next().unwrap_or(time_str);
+        
+        let time_parts: Vec<&str> = time_only.split(':').collect();
+        if time_parts.len() >= 2 {
+            let hours: i64 = time_parts[0].parse().unwrap_or(0);
+            let minutes: i64 = time_parts[1].parse().unwrap_or(0);
+            let secs: i64 = if time_parts.len() >= 3 {
+                time_parts[2].parse().unwrap_or(0)
+            } else {
+                0
+            };
+            seconds += hours * 3600 + minutes * 60 + secs;
+        }
+        
+        // Handle timezone offset (simplified - just adjust hours)
+        if let Some(tz_idx) = time_str.find('+') {
+            let tz = &time_str[tz_idx+1..];
+            if let Some(colon_idx) = tz.find(':') {
+                let tz_hours: i64 = tz[..colon_idx].parse().unwrap_or(0);
+                seconds -= tz_hours * 3600;
+            }
+        } else if let Some(tz_idx) = time_str[1..].find('-') {
+            let tz = &time_str[tz_idx+2..];
+            if let Some(colon_idx) = tz.find(':') {
+                let tz_hours: i64 = tz[..colon_idx].parse().unwrap_or(0);
+                seconds += tz_hours * 3600;
+            }
+        }
+    }
+    
+    // Convert to nanoseconds
+    seconds * 1_000_000_000
+}
+
+fn is_leap_year(year: i32) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
 }
 
 #[cfg(test)]
@@ -2958,5 +3045,41 @@ mod tests {
     fn test_parse_is_null() {
         let result = parse("let check = x is null");
         assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    // ========================================================================
+    // Timestamp Parsing Tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_timestamp_date_only() {
+        let ns = parse_timestamp("@2024-01-15");
+        // 2024-01-15 is 19737 days after 1970-01-01
+        let expected_days = 19737i64;
+        let expected_ns = expected_days * 86400 * 1_000_000_000;
+        assert_eq!(ns, expected_ns);
+    }
+
+    #[test]
+    fn test_parse_timestamp_with_time() {
+        let ns = parse_timestamp("@2024-01-15T10:30:00Z");
+        let expected_days = 19737i64;
+        let expected_secs = expected_days * 86400 + 10 * 3600 + 30 * 60;
+        let expected_ns = expected_secs * 1_000_000_000;
+        assert_eq!(ns, expected_ns);
+    }
+
+    #[test]
+    fn test_parse_timestamp_epoch() {
+        let ns = parse_timestamp("@1970-01-01");
+        assert_eq!(ns, 0);
+    }
+
+    #[test]
+    fn test_is_leap_year() {
+        assert!(is_leap_year(2000)); // divisible by 400
+        assert!(is_leap_year(2024)); // divisible by 4, not by 100
+        assert!(!is_leap_year(1900)); // divisible by 100, not by 400
+        assert!(!is_leap_year(2023)); // not divisible by 4
     }
 }
