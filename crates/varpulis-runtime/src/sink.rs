@@ -93,7 +93,6 @@ impl Sink for ConsoleSink {
 }
 
 /// File sink - writes JSON lines to a file
-#[allow(dead_code)]
 pub struct FileSink {
     name: String,
     path: PathBuf,
@@ -101,6 +100,11 @@ pub struct FileSink {
 }
 
 impl FileSink {
+    /// Get the file path
+    pub fn path(&self) -> &PathBuf {
+        &self.path
+    }
+    
     pub fn new(name: impl Into<String>, path: impl Into<PathBuf>) -> Result<Self> {
         let path = path.into();
         let file = OpenOptions::new()
@@ -242,7 +246,7 @@ impl MultiSink {
         }
     }
 
-    pub fn add(mut self, sink: Box<dyn Sink>) -> Self {
+    pub fn with_sink(mut self, sink: Box<dyn Sink>) -> Self {
         self.sinks.push(sink);
         self
     }
@@ -432,8 +436,8 @@ mod tests {
     #[tokio::test]
     async fn test_multi_sink_with_console() {
         let multi = MultiSink::new("multi")
-            .add(Box::new(ConsoleSink::new("console1")))
-            .add(Box::new(ConsoleSink::new("console2")));
+            .with_sink(Box::new(ConsoleSink::new("console1")))
+            .with_sink(Box::new(ConsoleSink::new("console2")));
         
         let event = Event::new("Test").with_field("x", 1i64);
         assert!(multi.send(&event).await.is_ok());
@@ -456,7 +460,7 @@ mod tests {
         let file_sink = FileSink::new("file", temp_file.path()).unwrap();
         
         let multi = MultiSink::new("multi")
-            .add(Box::new(file_sink));
+            .with_sink(Box::new(file_sink));
         
         let event = Event::new("MultiEvent").with_field("val", 100i64);
         assert!(multi.send(&event).await.is_ok());

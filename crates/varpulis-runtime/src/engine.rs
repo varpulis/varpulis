@@ -4,7 +4,7 @@ use crate::aggregation::{AggBinOp, Aggregator, Avg, Count, CountDistinct, Ema, E
 use crate::attention::{AttentionConfig, AttentionWindow, EmbeddingConfig};
 use crate::event::Event;
 use crate::pattern::{PatternBuilder, PatternEngine, PatternExpr};
-use crate::sequence::{SequenceContext, SequenceStep, SequenceTracker};
+use crate::sequence::{SequenceContext, SequenceFilter, SequenceStep, SequenceTracker};
 use crate::window::{SlidingWindow, TumblingWindow};
 use chrono::Duration;
 use crate::metrics::Metrics;
@@ -52,7 +52,6 @@ pub struct UserFunction {
 }
 
 /// Runtime stream definition
-#[allow(dead_code)]
 struct StreamDefinition {
     name: String,
     source: RuntimeSource,
@@ -65,7 +64,6 @@ struct StreamDefinition {
     pattern_engine: Option<PatternEngine>,
 }
 
-#[allow(dead_code)]
 enum RuntimeSource {
     EventType(String),
     Stream(String),
@@ -74,15 +72,25 @@ enum RuntimeSource {
     Merge(Vec<MergeSource>),
 }
 
+impl RuntimeSource {
+    /// Get a description of this source for logging
+    fn describe(&self) -> String {
+        match self {
+            RuntimeSource::EventType(t) => format!("event:{}", t),
+            RuntimeSource::Stream(s) => format!("stream:{}", s),
+            RuntimeSource::Join(sources) => format!("join:{}", sources.join(",")),
+            RuntimeSource::Merge(sources) => format!("merge:{} sources", sources.len()),
+        }
+    }
+}
+
 /// A source in a merge construct with optional filter
-#[allow(dead_code)]
 struct MergeSource {
     name: String,
     event_type: String,
     filter: Option<varpulis_core::ast::Expr>,
 }
 
-#[allow(dead_code)]
 enum RuntimeOp {
     /// Filter with closure (for sequence filters with context)
     WhereClosure(Box<dyn Fn(&Event) -> bool + Send + Sync>),
@@ -105,7 +113,6 @@ enum RuntimeOp {
     Pattern(PatternConfig),
 }
 
-#[allow(dead_code)]
 struct PatternConfig {
     name: String,
     matcher: varpulis_core::ast::Expr,
@@ -158,6 +165,19 @@ impl Engine {
     pub fn with_metrics(mut self, metrics: Metrics) -> Self {
         self.metrics = Some(metrics);
         self
+    }
+    
+    /// Add a programmatic filter to a stream using a closure
+    pub fn add_filter<F>(&mut self, stream_name: &str, filter: F) -> Result<(), String>
+    where
+        F: Fn(&Event) -> bool + Send + Sync + 'static,
+    {
+        if let Some(stream) = self.streams.get_mut(stream_name) {
+            stream.operations.insert(0, RuntimeOp::WhereClosure(Box::new(filter)));
+            Ok(())
+        } else {
+            Err(format!("Stream '{}' not found", stream_name))
+        }
     }
 
     /// Load a program into the engine
@@ -282,6 +302,9 @@ impl Engine {
         // Extract pattern engine from operations if present
         let pattern_engine = self.extract_pattern_engine(&runtime_ops);
         
+        // Log source description before moving
+        let source_desc = runtime_source.describe();
+        
         self.streams.insert(
             name.to_string(),
             StreamDefinition {
@@ -294,17 +317,18 @@ impl Engine {
             },
         );
 
-        info!("Registered stream: {}", name);
+        info!("Registered stream: {} (source: {})", name, source_desc);
         Ok(())
     }
 
+    #[allow(clippy::type_complexity)]
     fn compile_ops_with_sequences(&self, source: &StreamSource, ops: &[StreamOp]) -> Result<(Vec<RuntimeOp>, Option<SequenceTracker>, Vec<String>), String> {
         let mut runtime_ops = Vec::new();
         let mut sequence_steps: Vec<SequenceStep> = Vec::new();
         let mut sequence_event_types: Vec<String> = Vec::new();
         let mut match_all_first = false;
         let mut current_timeout: Option<std::time::Duration> = None;
-        let mut negation_conditions: Vec<(String, Option<Box<dyn Fn(&Event, &SequenceContext) -> bool + Send + Sync>>)> = Vec::new();
+        let mut negation_conditions: Vec<(String, Option<SequenceFilter>)> = Vec::new();
 
         // Handle sequence() construct - converts SequenceDecl to SequenceSteps
         if let StreamSource::Sequence(decl) = source {
@@ -595,6 +619,7 @@ impl Engine {
             if let RuntimeOp::Pattern(config) = op {
                 // Try to convert the matcher expression to a PatternExpr
                 if let Some(pattern_expr) = Self::expr_to_pattern(&config.matcher) {
+                    tracing::debug!("Created pattern engine for pattern: {}", config.name);
                     let mut engine = PatternEngine::new();
                     engine.track(pattern_expr);
                     return Some(engine);
@@ -645,10 +670,10 @@ impl Engine {
                         "within" => {
                             // within(pattern, duration)
                             if args.len() >= 2 {
-                                if let (Some(varpulis_core::ast::Arg::Positional(inner)), Some(varpulis_core::ast::Arg::Positional(dur_expr))) = (args.get(0), args.get(1)) {
+                                if let (Some(varpulis_core::ast::Arg::Positional(inner)), Some(varpulis_core::ast::Arg::Positional(dur_expr))) = (args.first(), args.get(1)) {
                                     let inner_pattern = Self::expr_to_pattern(inner)?;
                                     if let Expr::Duration(ns) = dur_expr {
-                                        let duration = std::time::Duration::from_nanos(*ns as u64);
+                                        let duration = std::time::Duration::from_nanos(*ns);
                                         return Some(PatternBuilder::within(inner_pattern, duration));
                                     }
                                 }
@@ -670,7 +695,7 @@ impl Engine {
     }
 
     /// Compile a sequence filter expression into a runtime closure
-    fn compile_sequence_filter(expr: varpulis_core::ast::Expr) -> Box<dyn Fn(&Event, &SequenceContext) -> bool + Send + Sync> {
+    fn compile_sequence_filter(expr: varpulis_core::ast::Expr) -> SequenceFilter {
         
         
         Box::new(move |event: &Event, ctx: &SequenceContext| {
@@ -1073,16 +1098,14 @@ impl Engine {
                 
                 // Handle count(distinct(field)) pattern
                 if func_name == "count" {
-                    if let Some(Arg::Positional(inner)) = args.first() {
-                        if let Expr::Call { func: inner_func, args: inner_args } = inner {
-                            if let Expr::Ident(inner_name) = inner_func.as_ref() {
-                                if inner_name == "distinct" {
-                                    let field = inner_args.first().and_then(|a| match a {
-                                        Arg::Positional(Expr::Ident(s)) => Some(s.clone()),
-                                        _ => None,
-                                    });
-                                    return Some((Box::new(CountDistinct), field));
-                                }
+                    if let Some(Arg::Positional(Expr::Call { func: inner_func, args: inner_args })) = args.first() {
+                        if let Expr::Ident(inner_name) = inner_func.as_ref() {
+                            if inner_name == "distinct" {
+                                let field = inner_args.first().and_then(|a| match a {
+                                    Arg::Positional(Expr::Ident(s)) => Some(s.clone()),
+                                    _ => None,
+                                });
+                                return Some((Box::new(CountDistinct), field));
                             }
                         }
                     }
@@ -1186,6 +1209,7 @@ impl Engine {
         // For merge sources, check if the event passes the appropriate filter
         if let RuntimeSource::Merge(ref sources) = stream.source {
             let mut passes_filter = false;
+            let mut matched_source_name = None;
             for ms in sources {
                 if ms.event_type == event.event_type {
                     if let Some(ref filter) = ms.filter {
@@ -1193,18 +1217,24 @@ impl Engine {
                         if let Some(result) = Self::eval_expr_with_functions(filter, &event, &ctx, functions, &HashMap::new()) {
                             if result.as_bool().unwrap_or(false) {
                                 passes_filter = true;
+                                matched_source_name = Some(&ms.name);
                                 break;
                             }
                         }
                     } else {
                         // No filter means it passes
                         passes_filter = true;
+                        matched_source_name = Some(&ms.name);
                         break;
                     }
                 }
             }
             if !passes_filter {
                 return Ok(vec![]);
+            }
+            // Log which merge source matched (uses ms.name)
+            if let Some(source_name) = matched_source_name {
+                tracing::trace!("Event matched merge source: {}", source_name);
             }
         }
         
@@ -1238,6 +1268,24 @@ impl Engine {
                 "attention_matches".to_string(),
                 Value::Int(result.scores.len() as i64),
             );
+        }
+        
+        // Process pattern engine if present
+        if let Some(ref mut pattern_engine) = stream.pattern_engine {
+            let event_clone = enriched_event.clone();
+            let matched_patterns = pattern_engine.process(&event_clone);
+            if !matched_patterns.is_empty() {
+                // Pattern matched - add matched event types to the event data
+                enriched_event.data.insert(
+                    "pattern_matched".to_string(),
+                    Value::Bool(true),
+                );
+                let total_events: usize = matched_patterns.iter().map(|ctx| ctx.captured.len()).sum();
+                enriched_event.data.insert(
+                    "pattern_events_count".to_string(),
+                    Value::Int(total_events as i64),
+                );
+            }
         }
         
         let mut current_events = vec![enriched_event];
@@ -1430,6 +1478,7 @@ impl Engine {
     }
     
     /// Evaluate a pattern expression with support for attention_score builtin
+    #[allow(clippy::only_used_in_recursion)]
     fn eval_pattern_expr(
         expr: &varpulis_core::ast::Expr,
         events: &[Event],
@@ -1464,7 +1513,7 @@ impl Engine {
                     if func_name == "attention_score" && args.len() == 2 {
                         // attention_score(e1, e2) - compute attention between two events
                         if let Some(aw) = attention_window {
-                            let e1_val = args.get(0).and_then(|a| match a {
+                            let e1_val = args.first().and_then(|a| match a {
                                 Arg::Positional(e) => Self::eval_pattern_expr(e, events, ctx, functions, pattern_vars, Some(aw)),
                                 _ => None,
                             });

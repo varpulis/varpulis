@@ -6,12 +6,15 @@ use crate::event::Event;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+/// Type alias for sequence filter functions
+pub type SequenceFilter = Box<dyn Fn(&Event, &SequenceContext) -> bool + Send + Sync>;
+
 /// A step in a sequence pattern
 pub struct SequenceStep {
     /// Event type to match
     pub event_type: String,
     /// Filter function to apply
-    pub filter: Option<Box<dyn Fn(&Event, &SequenceContext) -> bool + Send + Sync>>,
+    pub filter: Option<SequenceFilter>,
     /// Alias for captured event
     pub alias: Option<String>,
     /// Timeout for this step
@@ -62,6 +65,12 @@ pub struct ActiveCorrelation {
     pub step_timeout: Option<Instant>,
 }
 
+impl Default for ActiveCorrelation {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ActiveCorrelation {
     pub fn new() -> Self {
         Self {
@@ -101,7 +110,7 @@ pub struct NegationCondition {
     /// Event type that triggers negation
     pub event_type: String,
     /// Filter function to apply
-    pub filter: Option<Box<dyn Fn(&Event, &SequenceContext) -> bool + Send + Sync>>,
+    pub filter: Option<SequenceFilter>,
 }
 
 /// Tracks sequences for a stream

@@ -339,7 +339,6 @@ impl SourceConnector for KafkaSource {
 }
 
 /// Kafka sink connector (stub implementation)
-#[allow(dead_code)]
 pub struct KafkaSink {
     name: String,
     config: KafkaConfig,
@@ -363,8 +362,8 @@ impl SinkConnector for KafkaSink {
     async fn send(&self, event: &Event) -> Result<(), ConnectorError> {
         // NOTE: Full implementation requires rdkafka crate
         warn!(
-            "Kafka sink {} send (stub) - event: {}",
-            self.name, event.event_type
+            "Kafka sink {} send (stub) to {}/{} - event: {}",
+            self.name, self.config.brokers, self.config.topic, event.event_type
         );
         
         Err(ConnectorError::NotAvailable(
@@ -469,7 +468,6 @@ impl SourceConnector for MqttSource {
 }
 
 /// MQTT sink connector (stub implementation)
-#[allow(dead_code)]
 pub struct MqttSink {
     name: String,
     config: MqttConfig,
@@ -492,8 +490,8 @@ impl SinkConnector for MqttSink {
 
     async fn send(&self, event: &Event) -> Result<(), ConnectorError> {
         warn!(
-            "MQTT sink {} send (stub) - event: {}",
-            self.name, event.event_type
+            "MQTT sink {} send (stub) to {}:{}/{} - event: {}",
+            self.name, self.config.broker, self.config.port, self.config.topic, event.event_type
         );
         
         Err(ConnectorError::NotAvailable(
@@ -540,8 +538,8 @@ impl ConnectorRegistry {
         self.sources.get_mut(name)
     }
 
-    pub fn get_sink(&self, name: &str) -> Option<&Box<dyn SinkConnector>> {
-        self.sinks.get(name)
+    pub fn get_sink(&self, name: &str) -> Option<&dyn SinkConnector> {
+        self.sinks.get(name).map(|b| b.as_ref())
     }
 
     /// Create a connector from configuration
