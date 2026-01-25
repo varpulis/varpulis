@@ -7,6 +7,7 @@
 //! - Embeddings are rule-based or loaded from pre-trained models
 
 use crate::event::Event;
+use rayon::prelude::*;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::time::{Duration, Instant};
@@ -584,7 +585,100 @@ impl AttentionEngine {
     }
 
     fn dot_product(&self, a: &[f32], b: &[f32]) -> f32 {
-        a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
+        dot_product_simd(a, b)
+    }
+
+    /// Batch compute attention scores for multiple events in parallel
+    pub fn compute_attention_batch(&mut self, events: &[Event]) -> Vec<AttentionResult> {
+        let start = Instant::now();
+        
+        // Pre-compute embeddings for all input events
+        let embeddings: Vec<Vec<f32>> = events
+            .iter()
+            .map(|e| {
+                let hash = self.hash_event(e);
+                self.cache.get(hash).unwrap_or_else(|| {
+                    let emb = self.embedding_engine.embed(e);
+                    self.cache.insert(hash, emb.clone());
+                    emb
+                })
+            })
+            .collect();
+
+        if self.history.is_empty() {
+            return events
+                .iter()
+                .map(|_| AttentionResult {
+                    scores: Vec::new(),
+                    head_weights: vec![0.0; self.config.num_heads],
+                    context: vec![0.0; self.config.embedding_dim],
+                })
+                .collect();
+        }
+
+        let head_dim = self.config.embedding_dim / self.config.num_heads;
+        let num_heads = self.config.num_heads;
+        let threshold = self.config.threshold;
+        let embedding_dim = self.config.embedding_dim;
+
+        // Parallel computation of attention for each event
+        let results: Vec<AttentionResult> = embeddings
+            .par_iter()
+            .enumerate()
+            .map(|(_, current_embedding)| {
+                let mut all_scores = Vec::with_capacity(self.history.len());
+
+                for (hist_event, hist_embedding) in &self.history {
+                    let mut total = 0.0f32;
+                    for head in 0..num_heads {
+                        let q = self.embedding_engine.project(current_embedding, head, ProjectionType::Query);
+                        let k = self.embedding_engine.project(hist_embedding, head, ProjectionType::Key);
+                        total += dot_product_simd(&q, &k) / (head_dim as f32).sqrt();
+                    }
+                    let avg = total / num_heads as f32;
+                    let event_id = format!(
+                        "{}_{}",
+                        hist_event.event_type,
+                        hist_event.timestamp.timestamp_millis()
+                    );
+                    all_scores.push((event_id, avg));
+                }
+
+                let context = compute_context_internal(&all_scores, &self.history, embedding_dim);
+                let filtered: Vec<_> = all_scores
+                    .into_iter()
+                    .filter(|(_, s)| *s >= threshold)
+                    .collect();
+
+                AttentionResult {
+                    scores: filtered,
+                    head_weights: vec![1.0 / num_heads as f32; num_heads],
+                    context,
+                }
+            })
+            .collect();
+
+        // Update metrics
+        let elapsed_us = start.elapsed().as_micros() as u64;
+        self.total_compute_time_us += elapsed_us;
+        self.max_compute_time_us = self.max_compute_time_us.max(elapsed_us);
+        self.computations += events.len() as u64;
+        self.total_ops += (events.len() as u64)
+            * (self.history.len() as u64)
+            * (self.config.num_heads as u64)
+            * (self.config.embedding_dim as u64)
+            * 3;
+
+        // Add events to history
+        for (event, embedding) in events.iter().zip(embeddings.into_iter()) {
+            self.history.push((event.clone(), embedding));
+            self.total_events_processed += 1;
+        }
+        while self.history.len() > self.config.max_history {
+            self.history.remove(0);
+        }
+
+        results
     }
 
     fn hash_event(&self, event: &Event) -> u64 {
@@ -773,5 +867,122 @@ fn value_to_string(value: &Value) -> Option<String> {
         Value::Float(f) => Some(f.to_string()),
         Value::Bool(b) => Some(b.to_string()),
         _ => None,
+    }
+}
+
+// ============================================================================
+// SIMD-OPTIMIZED DOT PRODUCT
+// ============================================================================
+
+/// SIMD-optimized dot product using manual loop unrolling
+/// Processes 8 elements at a time for better cache utilization
+#[inline]
+fn dot_product_simd(a: &[f32], b: &[f32]) -> f32 {
+    let len = a.len().min(b.len());
+    let chunks = len / 8;
+    let remainder = len % 8;
+
+    let mut sum0 = 0.0f32;
+    let mut sum1 = 0.0f32;
+    let mut sum2 = 0.0f32;
+    let mut sum3 = 0.0f32;
+    let mut sum4 = 0.0f32;
+    let mut sum5 = 0.0f32;
+    let mut sum6 = 0.0f32;
+    let mut sum7 = 0.0f32;
+
+    // Process 8 elements at a time (loop unrolling)
+    for i in 0..chunks {
+        let base = i * 8;
+        unsafe {
+            sum0 += *a.get_unchecked(base) * *b.get_unchecked(base);
+            sum1 += *a.get_unchecked(base + 1) * *b.get_unchecked(base + 1);
+            sum2 += *a.get_unchecked(base + 2) * *b.get_unchecked(base + 2);
+            sum3 += *a.get_unchecked(base + 3) * *b.get_unchecked(base + 3);
+            sum4 += *a.get_unchecked(base + 4) * *b.get_unchecked(base + 4);
+            sum5 += *a.get_unchecked(base + 5) * *b.get_unchecked(base + 5);
+            sum6 += *a.get_unchecked(base + 6) * *b.get_unchecked(base + 6);
+            sum7 += *a.get_unchecked(base + 7) * *b.get_unchecked(base + 7);
+        }
+    }
+
+    // Handle remainder
+    let base = chunks * 8;
+    for i in 0..remainder {
+        unsafe {
+            sum0 += *a.get_unchecked(base + i) * *b.get_unchecked(base + i);
+        }
+    }
+
+    sum0 + sum1 + sum2 + sum3 + sum4 + sum5 + sum6 + sum7
+}
+
+/// Compute context vector from scores (standalone function for parallel use)
+fn compute_context_internal(
+    scores: &[(String, f32)],
+    history: &[(Event, Vec<f32>)],
+    embedding_dim: usize,
+) -> Vec<f32> {
+    let mut context = vec![0.0f32; embedding_dim];
+    if scores.is_empty() || history.is_empty() {
+        return context;
+    }
+
+    let max_score = scores
+        .iter()
+        .map(|(_, s)| *s)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let weights: Vec<f32> = scores.iter().map(|(_, s)| (s - max_score).exp()).collect();
+    let sum: f32 = weights.iter().sum();
+    if sum < 1e-8 {
+        return context;
+    }
+
+    for (i, (_, emb)) in history.iter().enumerate() {
+        if i >= weights.len() {
+            break;
+        }
+        let w = weights[i] / sum;
+        for (j, &e) in emb.iter().enumerate() {
+            if j < context.len() {
+                context[j] += w * e;
+            }
+        }
+    }
+    context
+}
+
+// ============================================================================
+// TESTS
+// ============================================================================
+
+#[cfg(test)]
+mod simd_tests {
+    use super::*;
+
+    #[test]
+    fn test_dot_product_simd_basic() {
+        let a = vec![1.0, 2.0, 3.0, 4.0];
+        let b = vec![1.0, 2.0, 3.0, 4.0];
+        let result = dot_product_simd(&a, &b);
+        assert!((result - 30.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_dot_product_simd_large() {
+        let a: Vec<f32> = (0..64).map(|i| i as f32).collect();
+        let b: Vec<f32> = (0..64).map(|i| i as f32).collect();
+        let expected: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+        let result = dot_product_simd(&a, &b);
+        assert!((result - expected).abs() < 1e-3);
+    }
+
+    #[test]
+    fn test_dot_product_simd_uneven() {
+        let a: Vec<f32> = (0..17).map(|i| i as f32).collect();
+        let b: Vec<f32> = (0..17).map(|i| i as f32).collect();
+        let expected: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+        let result = dot_product_simd(&a, &b);
+        assert!((result - expected).abs() < 1e-3);
     }
 }

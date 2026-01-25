@@ -18,6 +18,7 @@ indexmap = { workspace = true }
 rand = { workspace = true }
 prometheus = { workspace = true }
 async-trait = "0.1"
+rayon = "1.10"
 reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
 rumqttc = { version = "0.24", optional = true }
 
@@ -31,4 +32,8 @@ criterion = { version = "0.5", features = ["html_reports"] }
 
 [[bench]]
 name = "pattern_benchmark"
+harness = false
+
+[[bench]]
+name = "attention_benchmark"
 harness = false
