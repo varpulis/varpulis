@@ -6,23 +6,16 @@
 
 | Catégorie | À faire | En cours | Terminé |
 |-----------|---------|----------|----------|
-| Parser Pest | 1 | 0 | 5 |
-| SASE+ | 3 | 0 | 5 |
+| Parser Pest | 0 | 0 | 7 |
+| SASE+ | 2 | 0 | 6 |
+| Attention | 3 | 0 | 0 |
+| Couverture | 2 | 0 | 0 |
 | VS Code | 1 | 0 | 0 |
-| **Total** | **5** | **0** | **10** |
+| **Total** | **8** | **0** | **13** |
 
 ---
 
-## PRIORITÉ HAUTE - Parser Pest
-
-### À faire
-
-- [ ] **PEST-04**: Corriger parsing blocs indentés (fonctions)
-  - **Problème**: Pest ne gère pas l'indentation - les déclarations après une fonction sont incluses dans son corps
-  - **Solution possible**: Utiliser un préprocesseur d'indentation ou lalrpop
-  - **Complexité**: High
-
-### Terminé
+## ✅ TERMINÉ - Parser Pest
 
 - [x] **PEST-00**: Créer grammaire pest complète (`varpulis.pest`)
 - [x] **PEST-00b**: Implémenter `pest_parser.rs` avec conversion vers AST
@@ -30,34 +23,26 @@
 - [x] **PEST-02**: Corriger opérateurs arithmétiques (+, -, *, /) - additive_op/multiplicative_op rules
 - [x] **PEST-03**: Corriger match_all keyword (match_all_keyword rule)
 - [x] **PEST-04**: Étendre pattern grammar (and/or/xor/not)
+- [x] **PEST-05**: Préprocesseur d'indentation (`indent.rs`) - INDENT/DEDENT tokens
+- [x] **PEST-06**: filter_expr pour followed_by (ne consomme plus `.emit()`)
+- [x] **PEST-07**: pattern_body unifiant lambdas et séquences
 
-**Note**: Parser pest fonctionne pour la majorité des cas mais l'ancien parser reste le défaut à cause du problème d'indentation.
+**✅ Parser Pest est maintenant le défaut** - L'ancien parser est déprécié.
 
 ---
 
-## PRIORITÉ MOYENNE - SASE+ Pattern Matching
+## PRIORITÉ HAUTE - SASE+ Pattern Matching
 
 ### À faire
-
-- [ ] **SASE-06**: Ajouter syntaxe pattern au parser
-  - **Syntaxe cible**:
-    ```sql
-    pattern FraudDetection = SEQ(Login, Transaction+, Logout)
-        within 1h
-        partition by user_id
-    ```
-  - **Fichiers**: `varpulis.pest`, `pest_parser.rs`, `ast.rs`
-  - **Complexité**: High
 
 - [ ] **SASE-07**: Benchmarks performance
   - **Action**: Créer `benches/pattern_bench.rs` avec criterion
   - **Comparer**: Ancien PatternEngine vs SaseEngine
   - **Métriques**: Latence, throughput, mémoire
 
-- [ ] **SASE-08**: Optimisation shared subexpression
-  - **Description**: Partager les états NFA entre patterns similaires
-  - **Exemple**: `SEQ(A, B)` et `SEQ(A, C)` partagent l'état A
-  - **Complexité**: High
+- [ ] **SASE-08**: Exemples SASE+ concrets
+  - **Action**: Créer `examples/sase_patterns.vpl`
+  - **Démo**: Sequences, negation, Kleene+, partition
 
 ### Terminé
 
@@ -67,6 +52,53 @@
 - [x] **SASE-04**: Ajouter partition par attribut (SASEXT)
 - [x] **SASE-05**: Implémenter négation efficace
 - [x] **SASE-05b**: Intégrer dans runtime engine (structure prête)
+- [x] **SASE-06**: Syntaxe pattern supportée (lambdas + séquences `A -> B -> C`)
+
+---
+
+## 🔴 PRIORITÉ CRITIQUE - Attention Engine (Performance)
+
+> **Verdict**: Implémentation naïve O(n²) - NE SCALE PAS au-delà de 10K events
+
+### À faire
+
+- [ ] **ATT-01**: ANN Indexing (HNSW) - **100-1000x speedup**
+  - **Problème**: Boucle sur TOUT l'historique O(n)
+  - **Solution**: Utiliser `hnsw_rs` pour recherche top-k en O(log n)
+  - **Gain**: 100K → 100 comparaisons
+  - **Complexité**: High (2-3 semaines)
+
+- [ ] **ATT-02**: SIMD Dot Products - **8x speedup**
+  - **Problème**: `dot_product` scalaire
+  - **Solution**: AVX2/AVX-512 vectorisation
+  - **Complexité**: Medium (1 semaine)
+
+- [ ] **ATT-03**: Batch Processing - **10x speedup**
+  - **Problème**: Traitement event par event
+  - **Solution**: Batch embedding + attention avec `rayon`
+  - **Complexité**: Medium (2 semaines)
+
+### Limites actuelles
+
+| History Size | Max Events/sec | Latency | Verdict |
+|--------------|---------------|---------|----------|
+| 1K | 1K | 10ms | ✅ OK dev |
+| 10K | 100 | 100ms | ⚠️ Limite |
+| 100K | 1 | 10s | ❌ INUTILISABLE |
+
+---
+
+## PRIORITÉ MOYENNE - Couverture de Tests
+
+> **Couverture actuelle**: 62.92% 🔴
+
+### À faire
+
+- [ ] **COV-01**: Augmenter couverture attention.rs
+  - **Cible**: 80%+ sur modules critiques
+
+- [ ] **COV-02**: Tests d'intégration SASE+ avancés
+  - **Action**: Ajouter tests Kleene+, negation, partition
 
 ---
 
@@ -139,9 +171,10 @@ cargo test -p varpulis-parser pest
 ## Métriques actuelles
 
 - **Tests totaux**: 544 passing (8 ignored)
+- **Couverture**: 62.92% 🔴 (cible: 80%)
 - **Clippy warnings**: 0
-- **Couverture SASE+**: 14 tests unitaires
-- **Parser par défaut**: Pest (avec préprocesseur d'indentation)
+- **Parser par défaut**: ✅ Pest (avec préprocesseur d'indentation)
+- **Attention Engine**: ⚠️ Naïve O(n²) - limite 10K events
+- **SASE+ Tests**: 14 tests unitaires
 - **Benchmarks**: Criterion benchmarks disponibles
 - **Documentation**: README.md production-ready
-- **Parser migration**: ✅ Complète - hand-written parser déprécié

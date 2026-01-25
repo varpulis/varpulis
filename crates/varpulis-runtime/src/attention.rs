@@ -448,6 +448,10 @@ pub struct AttentionEngine {
     history: Vec<(Event, Vec<f32>)>,
     computations: u64,
     total_events_processed: u64,
+    // Performance metrics
+    total_compute_time_us: u64,
+    max_compute_time_us: u64,
+    total_ops: u64,
 }
 
 impl AttentionEngine {
@@ -465,6 +469,9 @@ impl AttentionEngine {
             history: Vec::new(),
             computations: 0,
             total_events_processed: 0,
+            total_compute_time_us: 0,
+            max_compute_time_us: 0,
+            total_ops: 0,
         }
     }
 
@@ -483,6 +490,7 @@ impl AttentionEngine {
     }
 
     pub fn compute_attention(&mut self, current: &Event) -> AttentionResult {
+        let start = Instant::now();
         self.computations += 1;
         let event_hash = self.hash_event(current);
         let current_embedding = self.cache.get(event_hash).unwrap_or_else(|| {
@@ -527,6 +535,16 @@ impl AttentionEngine {
             .into_iter()
             .filter(|(_, s)| *s >= self.config.threshold)
             .collect();
+
+        // Track performance metrics
+        let elapsed_us = start.elapsed().as_micros() as u64;
+        self.total_compute_time_us += elapsed_us;
+        self.max_compute_time_us = self.max_compute_time_us.max(elapsed_us);
+        // ops = history_size * num_heads * embedding_dim (projections + dot products)
+        self.total_ops += (self.history.len() as u64)
+            * (self.config.num_heads as u64)
+            * (self.config.embedding_dim as u64)
+            * 3;
 
         AttentionResult {
             scores: filtered,
@@ -605,12 +623,26 @@ impl AttentionEngine {
     }
 
     pub fn stats(&self) -> AttentionStats {
+        let avg_compute_us = if self.computations > 0 {
+            self.total_compute_time_us as f64 / self.computations as f64
+        } else {
+            0.0
+        };
         AttentionStats {
             history_size: self.history.len(),
             max_history: self.config.max_history,
             computations: self.computations,
             total_events: self.total_events_processed,
             cache_stats: self.cache.stats(),
+            // Performance metrics
+            avg_compute_time_us: avg_compute_us,
+            max_compute_time_us: self.max_compute_time_us,
+            total_ops: self.total_ops,
+            ops_per_sec: if self.total_compute_time_us > 0 {
+                (self.total_ops as f64 * 1_000_000.0) / self.total_compute_time_us as f64
+            } else {
+                0.0
+            },
         }
     }
 
@@ -626,6 +658,54 @@ pub struct AttentionStats {
     pub computations: u64,
     pub total_events: u64,
     pub cache_stats: CacheStats,
+    // Performance metrics
+    pub avg_compute_time_us: f64,
+    pub max_compute_time_us: u64,
+    pub total_ops: u64,
+    pub ops_per_sec: f64,
+}
+
+impl AttentionStats {
+    /// Log performance warning if thresholds exceeded
+    pub fn check_performance(&self) -> Option<String> {
+        let mut warnings = Vec::new();
+
+        if self.history_size > 10_000 {
+            warnings.push(format!(
+                "⚠️ History size {} exceeds 10K - O(n²) will degrade performance",
+                self.history_size
+            ));
+        }
+
+        if self.avg_compute_time_us > 10_000.0 {
+            warnings.push(format!(
+                "⚠️ Avg compute time {:.0}μs exceeds 10ms - consider ANN indexing",
+                self.avg_compute_time_us
+            ));
+        }
+
+        if self.max_compute_time_us > 100_000 {
+            warnings.push(format!(
+                "⚠️ Max compute time {}μs exceeds 100ms - P99 latency issue",
+                self.max_compute_time_us
+            ));
+        }
+
+        if warnings.is_empty() {
+            None
+        } else {
+            Some(warnings.join("\n"))
+        }
+    }
+
+    /// Estimate max sustainable events/sec
+    pub fn estimated_throughput(&self) -> f64 {
+        if self.avg_compute_time_us > 0.0 {
+            1_000_000.0 / self.avg_compute_time_us
+        } else {
+            f64::INFINITY
+        }
+    }
 }
 
 // ============================================================================
