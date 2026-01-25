@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: varpulis-mqtt
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
+    restart: unless-stopped
+
+  # Optional: MQTT Explorer for debugging
+  # mqtt-explorer:
+  #   image: smeagolworms4/mqtt-explorer
+  #   container_name: mqtt-explorer
+  #   ports:
+  #     - "4000:4000"
+  #   depends_on:
+  #     - mosquitto

@@ -1,0 +1,93 @@
+# Fraud Detection Test Scenario
+# Run with: python run_scenario.py fraud_scenario.yaml
+
+name: fraud_detection
+description: |
+  Tests fraud detection patterns including account takeover,
+  impossible travel, and high velocity transactions.
+
+# MQTT Configuration
+mqtt:
+  host: localhost
+  port: 1883
+  topic_prefix: varpulis
+
+# Varpulis rules to validate
+rules_file: ../../examples/sase_patterns.vpl
+
+# Test phases
+phases:
+  - name: warmup
+    duration: 10s
+    rate: 50
+    description: "Initial warmup with normal traffic"
+    events:
+      - type: normal_session
+        weight: 1.0
+
+  - name: baseline
+    duration: 30s
+    rate: 100
+    description: "Establish baseline metrics"
+    events:
+      - type: normal_session
+        weight: 0.95
+      - type: account_takeover
+        weight: 0.02
+      - type: impossible_travel
+        weight: 0.02
+      - type: high_velocity
+        weight: 0.01
+
+  - name: attack_wave
+    duration: 30s
+    rate: 200
+    description: "Simulated attack with increased fraud"
+    events:
+      - type: normal_session
+        weight: 0.70
+      - type: account_takeover
+        weight: 0.15
+      - type: impossible_travel
+        weight: 0.10
+      - type: high_velocity
+        weight: 0.05
+
+  - name: cooldown
+    duration: 10s
+    rate: 50
+    description: "Return to normal traffic"
+    events:
+      - type: normal_session
+        weight: 1.0
+
+# Expected pattern detections
+expected_patterns:
+  - pattern: AccountTakeover
+    min_count: 10
+    max_latency_ms: 100
+    
+  - pattern: ImpossibleTravel
+    min_count: 5
+    max_latency_ms: 50
+    
+  - pattern: HighVelocity
+    min_count: 3
+    max_latency_ms: 200
+
+# Performance thresholds
+performance:
+  max_p99_latency_ms: 100
+  min_throughput: 150  # events/sec
+  max_memory_mb: 512
+
+# Validation assertions
+assertions:
+  - name: "All fraud patterns detected"
+    condition: "detected_patterns >= expected_patterns * 0.9"
+    
+  - name: "No false positives on normal sessions"
+    condition: "false_positive_rate < 0.01"
+    
+  - name: "Latency within SLA"
+    condition: "p99_latency < max_p99_latency_ms"

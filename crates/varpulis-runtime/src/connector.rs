@@ -382,7 +382,7 @@ impl SinkConnector for KafkaSink {
 }
 
 // =============================================================================
-// MQTT Connector (stub - requires rumqttc feature)
+// MQTT Connector
 // =============================================================================
 
 /// MQTT configuration
@@ -394,6 +394,7 @@ pub struct MqttConfig {
     pub client_id: Option<String>,
     pub username: Option<String>,
     pub password: Option<String>,
+    pub qos: u8,
 }
 
 impl MqttConfig {
@@ -405,6 +406,7 @@ impl MqttConfig {
             client_id: None,
             username: None,
             password: None,
+            qos: 1,
         }
     }
 
@@ -413,102 +415,343 @@ impl MqttConfig {
         self
     }
 
+    pub fn with_client_id(mut self, client_id: &str) -> Self {
+        self.client_id = Some(client_id.to_string());
+        self
+    }
+
     pub fn with_credentials(mut self, username: &str, password: &str) -> Self {
         self.username = Some(username.to_string());
         self.password = Some(password.to_string());
         self
     }
+
+    pub fn with_qos(mut self, qos: u8) -> Self {
+        self.qos = qos.min(2);
+        self
+    }
 }
 
-/// MQTT source connector (stub implementation)
-pub struct MqttSource {
-    name: String,
-    config: MqttConfig,
-    running: bool,
-}
+// -----------------------------------------------------------------------------
+// MQTT with rumqttc feature enabled
+// -----------------------------------------------------------------------------
+#[cfg(feature = "mqtt")]
+mod mqtt_impl {
+    use super::*;
+    use rumqttc::{AsyncClient, Event as MqttEvent, MqttOptions, Packet, QoS};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
 
-impl MqttSource {
-    pub fn new(name: &str, config: MqttConfig) -> Self {
-        Self {
-            name: name.to_string(),
-            config,
-            running: false,
+    fn qos_from_u8(qos: u8) -> QoS {
+        match qos {
+            0 => QoS::AtMostOnce,
+            1 => QoS::AtLeastOnce,
+            _ => QoS::ExactlyOnce,
+        }
+    }
+
+    /// MQTT source connector with rumqttc
+    pub struct MqttSource {
+        name: String,
+        config: MqttConfig,
+        running: Arc<AtomicBool>,
+        client: Option<AsyncClient>,
+    }
+
+    impl MqttSource {
+        pub fn new(name: &str, config: MqttConfig) -> Self {
+            Self {
+                name: name.to_string(),
+                config,
+                running: Arc::new(AtomicBool::new(false)),
+                client: None,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl SourceConnector for MqttSource {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        async fn start(&mut self, tx: mpsc::Sender<Event>) -> Result<(), ConnectorError> {
+            let client_id = self
+                .config
+                .client_id
+                .clone()
+                .unwrap_or_else(|| format!("varpulis-src-{}", std::process::id()));
+
+            let mut mqtt_opts = MqttOptions::new(client_id, &self.config.broker, self.config.port);
+            mqtt_opts.set_keep_alive(Duration::from_secs(60));
+
+            if let (Some(user), Some(pass)) = (&self.config.username, &self.config.password) {
+                mqtt_opts.set_credentials(user, pass);
+            }
+
+            let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 100);
+
+            client
+                .subscribe(&self.config.topic, qos_from_u8(self.config.qos))
+                .await
+                .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
+
+            self.client = Some(client);
+            self.running.store(true, Ordering::SeqCst);
+
+            info!(
+                "MQTT source {} connected to {}:{}",
+                self.name, self.config.broker, self.config.port
+            );
+            info!("  Subscribed to: {}", self.config.topic);
+
+            let running = self.running.clone();
+            let name = self.name.clone();
+
+            tokio::spawn(async move {
+                while running.load(Ordering::SeqCst) {
+                    match eventloop.poll().await {
+                        Ok(MqttEvent::Incoming(Packet::Publish(publish))) => {
+                            if let Ok(payload) = std::str::from_utf8(&publish.payload) {
+                                if let Ok(json) = serde_json::from_str::<serde_json::Value>(payload)
+                                {
+                                    let event = json_to_event(&json);
+                                    if tx.send(event).await.is_err() {
+                                        warn!("MQTT source {} channel closed", name);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            error!("MQTT source {} error: {:?}", name, e);
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+                        }
+                    }
+                }
+            });
+
+            Ok(())
+        }
+
+        async fn stop(&mut self) -> Result<(), ConnectorError> {
+            self.running.store(false, Ordering::SeqCst);
+            if let Some(client) = &self.client {
+                let _ = client.disconnect().await;
+            }
+            info!("MQTT source {} stopped", self.name);
+            Ok(())
+        }
+
+        fn is_running(&self) -> bool {
+            self.running.load(Ordering::SeqCst)
+        }
+    }
+
+    /// MQTT sink connector with rumqttc
+    pub struct MqttSink {
+        name: String,
+        config: MqttConfig,
+        client: Option<AsyncClient>,
+    }
+
+    impl MqttSink {
+        pub fn new(name: &str, config: MqttConfig) -> Self {
+            Self {
+                name: name.to_string(),
+                config,
+                client: None,
+            }
+        }
+
+        pub async fn connect(&mut self) -> Result<(), ConnectorError> {
+            let client_id = self
+                .config
+                .client_id
+                .clone()
+                .unwrap_or_else(|| format!("varpulis-sink-{}", std::process::id()));
+
+            let mut mqtt_opts = MqttOptions::new(client_id, &self.config.broker, self.config.port);
+            mqtt_opts.set_keep_alive(Duration::from_secs(60));
+
+            if let (Some(user), Some(pass)) = (&self.config.username, &self.config.password) {
+                mqtt_opts.set_credentials(user, pass);
+            }
+
+            let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 100);
+            self.client = Some(client);
+
+            // Spawn eventloop handler
+            tokio::spawn(async move {
+                loop {
+                    if eventloop.poll().await.is_err() {
+                        break;
+                    }
+                }
+            });
+
+            info!(
+                "MQTT sink {} connected to {}:{}",
+                self.name, self.config.broker, self.config.port
+            );
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl SinkConnector for MqttSink {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        async fn send(&self, event: &Event) -> Result<(), ConnectorError> {
+            let client = self.client.as_ref().ok_or(ConnectorError::NotConnected)?;
+
+            let payload =
+                serde_json::to_vec(event).map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
+
+            let topic = format!("{}/{}", self.config.topic, event.event_type);
+
+            client
+                .publish(&topic, qos_from_u8(self.config.qos), false, payload)
+                .await
+                .map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
+
+            Ok(())
+        }
+
+        async fn flush(&self) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+
+        async fn close(&self) -> Result<(), ConnectorError> {
+            if let Some(client) = &self.client {
+                let _ = client.disconnect().await;
+            }
+            Ok(())
+        }
+    }
+
+    fn json_to_event(json: &serde_json::Value) -> Event {
+        let event_type = json
+            .get("event_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown")
+            .to_string();
+
+        let mut event = Event::new(&event_type);
+
+        if let Some(data) = json.get("data").and_then(|v| v.as_object()) {
+            for (k, v) in data {
+                event = event.with_field(k, json_value_to_native(v));
+            }
+        }
+
+        event
+    }
+
+    fn json_value_to_native(v: &serde_json::Value) -> impl Into<crate::value::Value> {
+        match v {
+            serde_json::Value::Bool(b) => crate::value::Value::Bool(*b),
+            serde_json::Value::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    crate::value::Value::Int(i)
+                } else {
+                    crate::value::Value::Float(n.as_f64().unwrap_or(0.0))
+                }
+            }
+            serde_json::Value::String(s) => crate::value::Value::Str(s.clone()),
+            _ => crate::value::Value::Null,
         }
     }
 }
 
-#[async_trait]
-impl SourceConnector for MqttSource {
-    fn name(&self) -> &str {
-        &self.name
+// -----------------------------------------------------------------------------
+// MQTT stub when feature disabled
+// -----------------------------------------------------------------------------
+#[cfg(not(feature = "mqtt"))]
+mod mqtt_impl {
+    use super::*;
+
+    pub struct MqttSource {
+        name: String,
+        #[allow(dead_code)]
+        config: MqttConfig,
+        running: bool,
     }
 
-    async fn start(&mut self, _tx: mpsc::Sender<Event>) -> Result<(), ConnectorError> {
-        warn!(
-            "MQTT source {} starting (stub implementation - requires mqtt feature)",
-            self.name
-        );
-        warn!("  Broker: {}:{}", self.config.broker, self.config.port);
-        warn!("  Topic: {}", self.config.topic);
-
-        self.running = true;
-
-        Err(ConnectorError::NotAvailable(
-            "MQTT connector requires 'mqtt' feature. Enable with: cargo build --features mqtt"
-                .to_string(),
-        ))
+    impl MqttSource {
+        pub fn new(name: &str, config: MqttConfig) -> Self {
+            Self {
+                name: name.to_string(),
+                config,
+                running: false,
+            }
+        }
     }
 
-    async fn stop(&mut self) -> Result<(), ConnectorError> {
-        self.running = false;
-        Ok(())
+    #[async_trait]
+    impl SourceConnector for MqttSource {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        async fn start(&mut self, _tx: mpsc::Sender<Event>) -> Result<(), ConnectorError> {
+            Err(ConnectorError::NotAvailable(
+                "MQTT requires 'mqtt' feature. Build with: cargo build --features mqtt".to_string(),
+            ))
+        }
+
+        async fn stop(&mut self) -> Result<(), ConnectorError> {
+            self.running = false;
+            Ok(())
+        }
+
+        fn is_running(&self) -> bool {
+            self.running
+        }
     }
 
-    fn is_running(&self) -> bool {
-        self.running
+    pub struct MqttSink {
+        name: String,
+        #[allow(dead_code)]
+        config: MqttConfig,
     }
-}
 
-/// MQTT sink connector (stub implementation)
-pub struct MqttSink {
-    name: String,
-    config: MqttConfig,
-}
+    impl MqttSink {
+        pub fn new(name: &str, config: MqttConfig) -> Self {
+            Self {
+                name: name.to_string(),
+                config,
+            }
+        }
+    }
 
-impl MqttSink {
-    pub fn new(name: &str, config: MqttConfig) -> Self {
-        Self {
-            name: name.to_string(),
-            config,
+    #[async_trait]
+    impl SinkConnector for MqttSink {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        async fn send(&self, _event: &Event) -> Result<(), ConnectorError> {
+            Err(ConnectorError::NotAvailable(
+                "MQTT requires 'mqtt' feature".to_string(),
+            ))
+        }
+
+        async fn flush(&self) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+
+        async fn close(&self) -> Result<(), ConnectorError> {
+            Ok(())
         }
     }
 }
 
-#[async_trait]
-impl SinkConnector for MqttSink {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    async fn send(&self, event: &Event) -> Result<(), ConnectorError> {
-        warn!(
-            "MQTT sink {} send (stub) to {}:{}/{} - event: {}",
-            self.name, self.config.broker, self.config.port, self.config.topic, event.event_type
-        );
-
-        Err(ConnectorError::NotAvailable(
-            "MQTT connector requires 'mqtt' feature".to_string(),
-        ))
-    }
-
-    async fn flush(&self) -> Result<(), ConnectorError> {
-        Ok(())
-    }
-
-    async fn close(&self) -> Result<(), ConnectorError> {
-        Ok(())
-    }
-}
+pub use mqtt_impl::{MqttSink, MqttSource};
 
 // =============================================================================
 // Connector Registry
