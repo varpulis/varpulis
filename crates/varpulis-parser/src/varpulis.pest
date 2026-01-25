@@ -187,7 +187,7 @@ expr_list = { expr ~ ("," ~ expr)* }
 // Event Declaration
 // ============================================================================
 
-event_decl = { "event" ~ identifier ~ ("extends" ~ identifier)? ~ ":" ~ field+ }
+event_decl = { "event" ~ identifier ~ ("extends" ~ identifier)? ~ ":" ~ (INDENT ~ field+ ~ DEDENT | field+) }
 field = { identifier ~ ":" ~ type_expr ~ "?"? }
 
 // ============================================================================

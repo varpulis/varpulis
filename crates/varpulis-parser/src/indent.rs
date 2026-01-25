@@ -6,7 +6,9 @@
 //! Only adds markers for block-introducing keywords: fn, if, elif, else, for, while, config
 
 /// Keywords that introduce indented blocks
-const BLOCK_KEYWORDS: &[&str] = &["fn ", "if ", "elif ", "else:", "for ", "while ", "config:"];
+const BLOCK_KEYWORDS: &[&str] = &[
+    "fn ", "if ", "elif ", "else:", "for ", "while ", "config:", "event ",
+];
 
 /// Check if a line ends with a block-introducing pattern
 fn is_block_start(line: &str) -> bool {

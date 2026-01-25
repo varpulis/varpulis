@@ -1,0 +1,174 @@
+# SASE+ Pattern Matching Examples
+# Varpulis CEP Engine - Complex Event Processing
+#
+# This example demonstrates SASE+ pattern matching capabilities:
+# - Sequence patterns (A -> B -> C)
+# - Partition by attribute
+# - Within time constraints
+# - Pattern lambdas
+# - Aggregation patterns
+
+# =============================================================================
+# Base Streams (event types are inferred)
+# =============================================================================
+
+stream Logins from Login
+stream Transactions from Transaction
+stream Logouts from Logout
+stream PasswordChanges from PasswordChange
+
+# =============================================================================
+# PATTERN 1: Simple Sequence (A -> B)
+# Detect login followed by high-value transaction
+# =============================================================================
+
+stream LoginThenLargeTransaction = Login as login
+    -> Transaction where user_id == login.user_id and amount > 10000.0
+    .emit(
+        alert_type: "large_transaction_after_login",
+        severity: "medium"
+    )
+
+# =============================================================================
+# PATTERN 2: Chained Sequence (A -> B -> C)
+# Full session tracking: Login -> Transaction -> Logout
+# =============================================================================
+
+stream FullSession = Login as login
+    -> Transaction where user_id == login.user_id as tx
+    -> Logout where user_id == login.user_id
+    .emit(
+        alert_type: "session_complete",
+        tx_amount: tx.amount
+    )
+
+# =============================================================================
+# PATTERN 3: Four-Step Chain (A -> B -> C -> D)
+# Complex fraud pattern detection
+# =============================================================================
+
+stream FraudChain = Login as login
+    -> PasswordChange where user_id == login.user_id
+    -> Transaction where user_id == login.user_id as tx
+    -> Logout where user_id == login.user_id
+    .emit(
+        alert_type: "potential_fraud_chain",
+        amount: tx.amount,
+        severity: "critical"
+    )
+
+# =============================================================================
+# PATTERN 4: Pattern with Lambda (Count-based detection)
+# Velocity check: >5 transactions in window
+# =============================================================================
+
+stream VelocityAlert = Transaction
+    .partition_by(user_id)
+    .window(10m)
+    .pattern(high_velocity: events => events.len() > 5)
+    .emit(
+        alert_type: "high_velocity",
+        severity: "high"
+    )
+
+# =============================================================================
+# PATTERN 5: Geographic Anomaly
+# Impossible travel: Login from two different countries
+# =============================================================================
+
+stream ImpossibleTravel = Login as login1
+    -> Login where user_id == login1.user_id and country != login1.country as login2
+    .emit(
+        alert_type: "impossible_travel",
+        country1: login1.country,
+        country2: login2.country,
+        severity: "critical"
+    )
+
+# =============================================================================
+# PATTERN 6: Aggregation with Filter
+# Spending pattern: Total > $50K in 24h
+# =============================================================================
+
+stream HighSpending = Transaction
+    .partition_by(user_id)
+    .window(24h)
+    .aggregate(
+        total_amount: sum(amount),
+        tx_count: count()
+    )
+    .where(total_amount > 50000.0)
+    .emit(
+        alert_type: "high_spending_24h",
+        severity: "medium"
+    )
+
+# =============================================================================
+# PATTERN 7: Cross-Account Detection
+# Money mule: Same IP, different users
+# =============================================================================
+
+stream SameIPMultipleUsers = Login as login1
+    -> Login where ip_address == login1.ip_address and user_id != login1.user_id as login2
+    -> Transaction where user_id == login2.user_id as tx
+    .emit(
+        alert_type: "money_mule_suspect",
+        severity: "high"
+    )
+
+# =============================================================================
+# PATTERN 8: Sequence with OR condition
+# Alert on either high amount OR unusual category
+# =============================================================================
+
+stream RiskyTransaction = Transaction
+    .where(amount > 10000.0 or category == "gambling")
+    .emit(
+        alert_type: "risky_transaction",
+        severity: "medium"
+    )
+
+# =============================================================================
+# PATTERN 9: Pattern with Partition and Attention
+# Correlate related events using attention mechanism
+# =============================================================================
+
+stream CorrelatedAlerts = Transaction
+    .partition_by(user_id)
+    .window(1h)
+    .attention_window(
+        embedding: "auto",
+        threshold: 0.7,
+        top_k: 10
+    )
+    .pattern(correlated: events => events.len() > 3)
+    .emit(
+        alert_type: "correlated_activity",
+        severity: "high"
+    )
+
+# =============================================================================
+# PATTERN 10: Simple Match-All Sequence
+# Match all transactions after login
+# =============================================================================
+
+stream AllTransactionsAfterLogin = Login as login
+    -> all Transaction where user_id == login.user_id as tx
+    .emit(
+        alert_type: "transaction_logged",
+        amount: tx.amount
+    )
+
+# =============================================================================
+# Summary: SASE+ Capabilities Demonstrated
+# =============================================================================
+#
+# 1. SEQ (Sequence): A -> B -> C -> D
+# 2. AND (Conjunction): Multiple where conditions  
+# 3. OR (Disjunction): amount > X or category == Y
+# 4. Partition (Grouping): .partition_by(user_id)
+# 5. Window (Time): .window(10m), .window(24h)
+# 6. Aggregation: sum(), count()
+# 7. Pattern Lambdas: events => events.len() > N
+# 8. Attention Window: Correlation scoring
+# 9. Match All: -> all EventType
