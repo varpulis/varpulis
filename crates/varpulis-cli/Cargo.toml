@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 description = "CLI for Varpulis streaming analytics engine"
 
+[lib]
+name = "varpulis_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "varpulis"
 path = "src/main.rs"
