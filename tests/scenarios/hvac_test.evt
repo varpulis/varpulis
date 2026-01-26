@@ -1,0 +1,73 @@
+# HVAC Test Events
+
+# Normal temperature readings
+@0s TemperatureReading { sensor_id: "temp_0", zone: "Zone_A", value: 18.0, unit: "celsius", ts: 1000 }
+@1s TemperatureReading { sensor_id: "temp_1", zone: "Zone_B", value: 19.0, unit: "celsius", ts: 1001 }
+@2s TemperatureReading { sensor_id: "temp_2", zone: "Zone_C", value: 20.0, unit: "celsius", ts: 1002 }
+@3s TemperatureReading { sensor_id: "temp_3", zone: "Zone_A", value: 21.0, unit: "celsius", ts: 1003 }
+@4s TemperatureReading { sensor_id: "temp_4", zone: "Zone_B", value: 22.0, unit: "celsius", ts: 1004 }
+@5s TemperatureReading { sensor_id: "temp_5", zone: "Zone_C", value: 18.0, unit: "celsius", ts: 1005 }
+@6s TemperatureReading { sensor_id: "temp_6", zone: "Zone_A", value: 19.0, unit: "celsius", ts: 1006 }
+@7s TemperatureReading { sensor_id: "temp_7", zone: "Zone_B", value: 20.0, unit: "celsius", ts: 1007 }
+@8s TemperatureReading { sensor_id: "temp_8", zone: "Zone_C", value: 21.0, unit: "celsius", ts: 1008 }
+@9s TemperatureReading { sensor_id: "temp_9", zone: "Zone_A", value: 22.0, unit: "celsius", ts: 1009 }
+@10s TemperatureReading { sensor_id: "temp_10", zone: "Zone_B", value: 18.0, unit: "celsius", ts: 1010 }
+@11s TemperatureReading { sensor_id: "temp_11", zone: "Zone_C", value: 19.0, unit: "celsius", ts: 1011 }
+@12s TemperatureReading { sensor_id: "temp_12", zone: "Zone_A", value: 20.0, unit: "celsius", ts: 1012 }
+@13s TemperatureReading { sensor_id: "temp_13", zone: "Zone_B", value: 21.0, unit: "celsius", ts: 1013 }
+@14s TemperatureReading { sensor_id: "temp_14", zone: "Zone_C", value: 22.0, unit: "celsius", ts: 1014 }
+@15s TemperatureReading { sensor_id: "temp_15", zone: "Zone_A", value: 18.0, unit: "celsius", ts: 1015 }
+@16s TemperatureReading { sensor_id: "temp_16", zone: "Zone_B", value: 19.0, unit: "celsius", ts: 1016 }
+@17s TemperatureReading { sensor_id: "temp_17", zone: "Zone_C", value: 20.0, unit: "celsius", ts: 1017 }
+@18s TemperatureReading { sensor_id: "temp_18", zone: "Zone_A", value: 21.0, unit: "celsius", ts: 1018 }
+@19s TemperatureReading { sensor_id: "temp_19", zone: "Zone_B", value: 22.0, unit: "celsius", ts: 1019 }
+
+# Anomalous temperature readings
+@25s TemperatureReading { sensor_id: "temp_hot", zone: "Zone_A", value: 35.0, unit: "celsius", ts: 1025 }
+@26s TemperatureReading { sensor_id: "temp_cold", zone: "Zone_B", value: 5.0, unit: "celsius", ts: 1026 }
+
+# Humidity readings
+@0s HumidityReading { sensor_id: "hum_0", zone: "Zone_A", value: 45.0, ts: 1000 }
+@1s HumidityReading { sensor_id: "hum_1", zone: "Zone_B", value: 46.0, ts: 1001 }
+@2s HumidityReading { sensor_id: "hum_2", zone: "Zone_C", value: 47.0, ts: 1002 }
+@3s HumidityReading { sensor_id: "hum_3", zone: "Zone_A", value: 48.0, ts: 1003 }
+@4s HumidityReading { sensor_id: "hum_4", zone: "Zone_B", value: 49.0, ts: 1004 }
+@5s HumidityReading { sensor_id: "hum_5", zone: "Zone_C", value: 50.0, ts: 1005 }
+@6s HumidityReading { sensor_id: "hum_6", zone: "Zone_A", value: 51.0, ts: 1006 }
+@7s HumidityReading { sensor_id: "hum_7", zone: "Zone_B", value: 52.0, ts: 1007 }
+@8s HumidityReading { sensor_id: "hum_8", zone: "Zone_C", value: 53.0, ts: 1008 }
+@9s HumidityReading { sensor_id: "hum_9", zone: "Zone_A", value: 54.0, ts: 1009 }
+@10s HumidityReading { sensor_id: "hum_10", zone: "Zone_B", value: 45.0, ts: 1010 }
+@11s HumidityReading { sensor_id: "hum_11", zone: "Zone_C", value: 46.0, ts: 1011 }
+@12s HumidityReading { sensor_id: "hum_12", zone: "Zone_A", value: 47.0, ts: 1012 }
+@13s HumidityReading { sensor_id: "hum_13", zone: "Zone_B", value: 48.0, ts: 1013 }
+@14s HumidityReading { sensor_id: "hum_14", zone: "Zone_C", value: 49.0, ts: 1014 }
+@15s HumidityReading { sensor_id: "hum_15", zone: "Zone_A", value: 50.0, ts: 1015 }
+@16s HumidityReading { sensor_id: "hum_16", zone: "Zone_B", value: 51.0, ts: 1016 }
+@17s HumidityReading { sensor_id: "hum_17", zone: "Zone_C", value: 52.0, ts: 1017 }
+@18s HumidityReading { sensor_id: "hum_18", zone: "Zone_A", value: 53.0, ts: 1018 }
+@19s HumidityReading { sensor_id: "hum_19", zone: "Zone_B", value: 54.0, ts: 1019 }
+
+# HVAC status readings
+@0s HVACStatus { unit_id: "hvac_0", zone: "Zone_A", mode: "heating", power_consumption: 2.5, compressor_pressure: 12.0, refrigerant_temp: -5.0, fan_speed: 1200, runtime_hours: 1000, ts: 1000 }
+@2s HVACStatus { unit_id: "hvac_1", zone: "Zone_B", mode: "cooling", power_consumption: 2.6, compressor_pressure: 12.1, refrigerant_temp: -4.8, fan_speed: 1230, runtime_hours: 1100, ts: 1002 }
+@4s HVACStatus { unit_id: "hvac_2", zone: "Zone_C", mode: "ventilation", power_consumption: 2.7, compressor_pressure: 12.2, refrigerant_temp: -4.6, fan_speed: 1260, runtime_hours: 1200, ts: 1004 }
+@6s HVACStatus { unit_id: "hvac_3", zone: "Zone_A", mode: "heating", power_consumption: 2.8, compressor_pressure: 12.3, refrigerant_temp: -4.4, fan_speed: 1290, runtime_hours: 1300, ts: 1006 }
+@8s HVACStatus { unit_id: "hvac_4", zone: "Zone_B", mode: "cooling", power_consumption: 2.9, compressor_pressure: 12.4, refrigerant_temp: -4.2, fan_speed: 1320, runtime_hours: 1400, ts: 1008 }
+@10s HVACStatus { unit_id: "hvac_5", zone: "Zone_C", mode: "ventilation", power_consumption: 3.0, compressor_pressure: 12.5, refrigerant_temp: -4.0, fan_speed: 1350, runtime_hours: 1500, ts: 1010 }
+@12s HVACStatus { unit_id: "hvac_6", zone: "Zone_A", mode: "heating", power_consumption: 3.1, compressor_pressure: 12.6, refrigerant_temp: -3.8, fan_speed: 1380, runtime_hours: 1600, ts: 1012 }
+@14s HVACStatus { unit_id: "hvac_7", zone: "Zone_B", mode: "cooling", power_consumption: 3.2, compressor_pressure: 12.7, refrigerant_temp: -3.6, fan_speed: 1410, runtime_hours: 1700, ts: 1014 }
+@16s HVACStatus { unit_id: "hvac_8", zone: "Zone_C", mode: "ventilation", power_consumption: 3.3, compressor_pressure: 12.8, refrigerant_temp: -3.4, fan_speed: 1440, runtime_hours: 1800, ts: 1016 }
+@18s HVACStatus { unit_id: "hvac_9", zone: "Zone_A", mode: "heating", power_consumption: 3.4, compressor_pressure: 12.9, refrigerant_temp: -3.2, fan_speed: 1470, runtime_hours: 1900, ts: 1018 }
+
+# Energy meter readings
+@0s EnergyMeter { meter_id: "meter_0", zone: "Zone_A", power_kw: 3.5, cumulative_kwh: 10000.0, ts: 1000 }
+@2s EnergyMeter { meter_id: "meter_1", zone: "Zone_B", power_kw: 3.6, cumulative_kwh: 10050.0, ts: 1002 }
+@4s EnergyMeter { meter_id: "meter_2", zone: "Zone_C", power_kw: 3.7, cumulative_kwh: 10100.0, ts: 1004 }
+@6s EnergyMeter { meter_id: "meter_3", zone: "Zone_A", power_kw: 3.8, cumulative_kwh: 10150.0, ts: 1006 }
+@8s EnergyMeter { meter_id: "meter_4", zone: "Zone_B", power_kw: 3.9, cumulative_kwh: 10200.0, ts: 1008 }
+@10s EnergyMeter { meter_id: "meter_5", zone: "Zone_C", power_kw: 4.0, cumulative_kwh: 10250.0, ts: 1010 }
+@12s EnergyMeter { meter_id: "meter_6", zone: "Zone_A", power_kw: 4.1, cumulative_kwh: 10300.0, ts: 1012 }
+@14s EnergyMeter { meter_id: "meter_7", zone: "Zone_B", power_kw: 4.2, cumulative_kwh: 10350.0, ts: 1014 }
+@16s EnergyMeter { meter_id: "meter_8", zone: "Zone_C", power_kw: 4.3, cumulative_kwh: 10400.0, ts: 1016 }
+@18s EnergyMeter { meter_id: "meter_9", zone: "Zone_A", power_kw: 4.4, cumulative_kwh: 10450.0, ts: 1018 }

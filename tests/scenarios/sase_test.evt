@@ -1,0 +1,41 @@
+# SASE Pattern Test Events
+
+# Scenario 1: Login then large transaction
+@0s Login { user_id: "user1", ip_address: "192.168.1.1", country: "US" }
+@1s Transaction { user_id: "user1", amount: 15000.0, category: "transfer" }
+
+# Scenario 2: Full session
+@2s Login { user_id: "user2", ip_address: "192.168.1.2", country: "FR" }
+@3s Transaction { user_id: "user2", amount: 500.0, category: "purchase" }
+@4s Logout { user_id: "user2" }
+
+# Scenario 3: Fraud chain
+@5s Login { user_id: "user3", ip_address: "10.0.0.1", country: "DE" }
+@6s PasswordChange { user_id: "user3" }
+@7s Transaction { user_id: "user3", amount: 9999.0, category: "wire" }
+@8s Logout { user_id: "user3" }
+
+# Scenario 4: Impossible travel
+@9s Login { user_id: "user4", ip_address: "1.2.3.4", country: "US" }
+@10s Login { user_id: "user4", ip_address: "5.6.7.8", country: "CN" }
+
+# Scenario 5: High velocity transactions
+@11s Transaction { user_id: "user5", amount: 100.0, category: "purchase" }
+@12s Transaction { user_id: "user5", amount: 110.0, category: "purchase" }
+@13s Transaction { user_id: "user5", amount: 120.0, category: "purchase" }
+@14s Transaction { user_id: "user5", amount: 130.0, category: "purchase" }
+@15s Transaction { user_id: "user5", amount: 140.0, category: "purchase" }
+@16s Transaction { user_id: "user5", amount: 150.0, category: "purchase" }
+@17s Transaction { user_id: "user5", amount: 160.0, category: "purchase" }
+
+# Scenario 6: High spending
+@20s Transaction { user_id: "user6", amount: 20000.0, category: "wire" }
+@21s Transaction { user_id: "user6", amount: 35000.0, category: "wire" }
+
+# Scenario 7: Risky transaction
+@25s Transaction { user_id: "user7", amount: 500.0, category: "gambling" }
+
+# Scenario 8: Same IP multiple users (money mule)
+@30s Login { user_id: "mule1", ip_address: "123.45.67.89", country: "RU" }
+@31s Login { user_id: "mule2", ip_address: "123.45.67.89", country: "RU" }
+@32s Transaction { user_id: "mule2", amount: 5000.0, category: "wire" }

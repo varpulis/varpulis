@@ -236,6 +236,22 @@ fn check_syntax(source: &str) -> Result<()> {
         }
         Err(e) => {
             println!("❌ Syntax error: {}", e);
+            
+            // Show context around the error if we have a Located error
+            if let varpulis_parser::ParseError::Located { line, column, hint, .. } = &e {
+                // Show hint if available
+                if let Some(h) = hint {
+                    println!("   💡 Hint: {}", h);
+                }
+                
+                // Show the problematic line from source
+                if let Some(error_line) = source.lines().nth(line - 1) {
+                    println!("   │");
+                    println!("   │ {}", error_line);
+                    println!("   │ {}^", " ".repeat(column.saturating_sub(1)));
+                }
+            }
+            
             std::process::exit(1);
         }
     }

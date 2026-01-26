@@ -26,3 +26,11 @@ Thumbs.db
 .env
 .env.local
 config.local.toml
+
+# E2E Tests
+tests/e2e/node_modules/
+tests/e2e/test-results/
+tests/e2e/test-output/
+tests/e2e/reports/
+tests/e2e/playwright-report/
+tests/e2e/.playwright/

@@ -80,17 +80,60 @@ impl EventFileParser {
                 continue;
             }
 
+            // Check for @Ns timing prefix: @0s EventType { ... }
+            let (time_offset, event_line) = if line.starts_with('@') {
+                Self::parse_timing_prefix(line)?
+            } else {
+                (current_batch_time, line)
+            };
+
             // Parse event: EventType { field: value, ... }
-            let event = Self::parse_event_line(line)
+            let event = Self::parse_event_line(event_line)
                 .map_err(|e| format!("Error at line {}: {}", line_num + 1, e))?;
 
             events.push(TimedEvent {
                 event,
-                time_offset_ms: current_batch_time,
+                time_offset_ms: time_offset,
             });
         }
 
         Ok(events)
+    }
+
+    /// Parse @Ns timing prefix and return (time_ms, rest_of_line)
+    fn parse_timing_prefix(line: &str) -> Result<(u64, &str), String> {
+        // Format: @10s EventType { ... } or @100ms EventType { ... }
+        let line = line.trim_start_matches('@');
+        
+        // Find first space to separate timing from event
+        let space_pos = line.find(char::is_whitespace)
+            .ok_or_else(|| "Invalid timing prefix format".to_string())?;
+        
+        let timing_str = &line[..space_pos];
+        let rest = line[space_pos..].trim();
+        
+        // Parse timing value with unit
+        let time_ms = if timing_str.ends_with("ms") {
+            timing_str.trim_end_matches("ms")
+                .parse::<u64>()
+                .map_err(|_| format!("Invalid timing value: {}", timing_str))?
+        } else if timing_str.ends_with('s') {
+            let secs = timing_str.trim_end_matches('s')
+                .parse::<u64>()
+                .map_err(|_| format!("Invalid timing value: {}", timing_str))?;
+            secs * 1000
+        } else if timing_str.ends_with('m') {
+            let mins = timing_str.trim_end_matches('m')
+                .parse::<u64>()
+                .map_err(|_| format!("Invalid timing value: {}", timing_str))?;
+            mins * 60 * 1000
+        } else {
+            // Assume milliseconds if no unit
+            timing_str.parse::<u64>()
+                .map_err(|_| format!("Invalid timing value: {}", timing_str))?
+        };
+        
+        Ok((time_ms, rest))
     }
 
     /// Parse a single event line

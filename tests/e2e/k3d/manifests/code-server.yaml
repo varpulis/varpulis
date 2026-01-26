@@ -1,0 +1,103 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: code-server
+  namespace: varpulis-test
+  labels:
+    app: code-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: code-server
+  template:
+    metadata:
+      labels:
+        app: code-server
+    spec:
+      containers:
+        - name: code-server
+          image: codercom/code-server:4.96.4
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: PASSWORD
+              value: "varpulis-test"
+          volumeMounts:
+            - name: workspace
+              mountPath: /home/coder/workspace
+            - name: extensions
+              mountPath: /home/coder/.local/share/code-server/extensions
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+      initContainers:
+        - name: install-varpulis
+          image: codercom/code-server:4.96.4
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # Install Varpulis extension
+              code-server --install-extension /extensions/varpulis.vsix || true
+              # Create test workspace
+              mkdir -p /home/coder/workspace/test-flows
+              # Create sample .vflow file
+              cat > /home/coder/workspace/test-flows/sample.vflow << 'EOF'
+              {
+                "nodes": [],
+                "connections": []
+              }
+              EOF
+          volumeMounts:
+            - name: workspace
+              mountPath: /home/coder/workspace
+            - name: extensions
+              mountPath: /home/coder/.local/share/code-server/extensions
+            - name: varpulis-vsix
+              mountPath: /extensions
+      volumes:
+        - name: workspace
+          emptyDir: {}
+        - name: extensions
+          emptyDir: {}
+        - name: varpulis-vsix
+          configMap:
+            name: varpulis-extension
+            optional: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: code-server
+  namespace: varpulis-test
+spec:
+  selector:
+    app: code-server
+  ports:
+    - port: 80
+      targetPort: 8080
+      name: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: code-server
+  namespace: varpulis-test
+spec:
+  rules:
+    - host: code.localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: code-server
+                port:
+                  number: 80

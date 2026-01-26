@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { VarpulisEngine } from './engine';
+import { FlowEditorPanel, FlowEditorProvider } from './flowEditor';
 import { AlertsTreeProvider } from './views/alerts';
 import { EventsTreeProvider } from './views/events';
 import { MetricsTreeProvider } from './views/metrics';
