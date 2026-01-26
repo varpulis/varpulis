@@ -93,6 +93,26 @@
         "command": "varpulis.injectEventFile",
         "title": "Varpulis: Inject Event File (.evt)",
         "icon": "$(file-code)"
+      },
+      {
+        "command": "varpulis.openFlowEditor",
+        "title": "Varpulis: Open Flow Editor",
+        "icon": "$(type-hierarchy)"
+      }
+    ],
+    "customEditors": [
+      {
+        "viewType": "varpulis.flowEditor",
+        "displayName": "Varpulis Flow Editor",
+        "selector": [
+          {
+            "filenamePattern": "*.vflow"
+          },
+          {
+            "filenamePattern": "*.vflow.json"
+          }
+        ],
+        "priority": "default"
       }
     ],
     "menus": {
