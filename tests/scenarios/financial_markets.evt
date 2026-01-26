@@ -1,0 +1,89 @@
+# Financial Markets Test Events
+# Predictable scenarios for technical analysis testing
+# ====================================================
+
+# =============================================================================
+# SCENARIO 1: Market Ticks for BTC/USD
+# Expected: BTCTicks stream processing
+# =============================================================================
+@0s MarketTick { symbol: "BTC/USD", price: 45000.00, volume: 100, bid: 44995.00, ask: 45005.00, ts: 1000 }
+@1s MarketTick { symbol: "BTC/USD", price: 45050.00, volume: 120, bid: 45045.00, ask: 45055.00, ts: 1001 }
+@2s MarketTick { symbol: "BTC/USD", price: 45100.00, volume: 80, bid: 45095.00, ask: 45105.00, ts: 1002 }
+@3s MarketTick { symbol: "BTC/USD", price: 45080.00, volume: 150, bid: 45075.00, ask: 45085.00, ts: 1003 }
+@4s MarketTick { symbol: "BTC/USD", price: 45120.00, volume: 90, bid: 45115.00, ask: 45125.00, ts: 1004 }
+
+# =============================================================================
+# SCENARIO 2: Market Ticks for ETH/USD
+# Expected: ETHTicks stream processing
+# =============================================================================
+@0s MarketTick { symbol: "ETH/USD", price: 2800.00, volume: 500, bid: 2798.00, ask: 2802.00, ts: 1000 }
+@1s MarketTick { symbol: "ETH/USD", price: 2810.00, volume: 600, bid: 2808.00, ask: 2812.00, ts: 1001 }
+@2s MarketTick { symbol: "ETH/USD", price: 2805.00, volume: 450, bid: 2803.00, ask: 2807.00, ts: 1002 }
+@3s MarketTick { symbol: "ETH/USD", price: 2815.00, volume: 700, bid: 2813.00, ask: 2817.00, ts: 1003 }
+@4s MarketTick { symbol: "ETH/USD", price: 2820.00, volume: 550, bid: 2818.00, ask: 2822.00, ts: 1004 }
+
+# =============================================================================
+# SCENARIO 3: OHLCV Candles for SMA/EMA Calculations (1h timeframe)
+# Expected: SMA20, SMA50, EMA12, EMA26 calculations
+# =============================================================================
+# BTC 1h candles - uptrend pattern
+@0s OHLCV { symbol: "BTC/USD", open: 44500.00, high: 45100.00, low: 44400.00, close: 45000.00, volume: 5000, timeframe: "1h", ts: 1000 }
+@60s OHLCV { symbol: "BTC/USD", open: 45000.00, high: 45500.00, low: 44900.00, close: 45300.00, volume: 5500, timeframe: "1h", ts: 4600 }
+@120s OHLCV { symbol: "BTC/USD", open: 45300.00, high: 45800.00, low: 45200.00, close: 45600.00, volume: 6000, timeframe: "1h", ts: 8200 }
+@180s OHLCV { symbol: "BTC/USD", open: 45600.00, high: 46000.00, low: 45500.00, close: 45800.00, volume: 5200, timeframe: "1h", ts: 11800 }
+@240s OHLCV { symbol: "BTC/USD", open: 45800.00, high: 46200.00, low: 45700.00, close: 46000.00, volume: 4800, timeframe: "1h", ts: 15400 }
+
+# ETH 1h candles - uptrend pattern
+@0s OHLCV { symbol: "ETH/USD", open: 2750.00, high: 2820.00, low: 2740.00, close: 2800.00, volume: 25000, timeframe: "1h", ts: 1000 }
+@60s OHLCV { symbol: "ETH/USD", open: 2800.00, high: 2850.00, low: 2790.00, close: 2830.00, volume: 27000, timeframe: "1h", ts: 4600 }
+@120s OHLCV { symbol: "ETH/USD", open: 2830.00, high: 2880.00, low: 2820.00, close: 2860.00, volume: 28000, timeframe: "1h", ts: 8200 }
+@180s OHLCV { symbol: "ETH/USD", open: 2860.00, high: 2900.00, low: 2850.00, close: 2880.00, volume: 26000, timeframe: "1h", ts: 11800 }
+@240s OHLCV { symbol: "ETH/USD", open: 2880.00, high: 2920.00, low: 2870.00, close: 2900.00, volume: 24000, timeframe: "1h", ts: 15400 }
+
+# =============================================================================
+# SCENARIO 4: Golden Cross Pattern (SMA20 crosses above SMA50)
+# Expected: GoldenCross signal when short-term MA > long-term MA
+# =============================================================================
+# Generate enough candles to trigger MA calculations
+@300s OHLCV { symbol: "BTC/USD", open: 46000.00, high: 46500.00, low: 45900.00, close: 46300.00, volume: 5100, timeframe: "1h", ts: 19000 }
+@360s OHLCV { symbol: "BTC/USD", open: 46300.00, high: 46800.00, low: 46200.00, close: 46600.00, volume: 5300, timeframe: "1h", ts: 22600 }
+@420s OHLCV { symbol: "BTC/USD", open: 46600.00, high: 47000.00, low: 46500.00, close: 46800.00, volume: 5400, timeframe: "1h", ts: 26200 }
+@480s OHLCV { symbol: "BTC/USD", open: 46800.00, high: 47200.00, low: 46700.00, close: 47000.00, volume: 5600, timeframe: "1h", ts: 29800 }
+@540s OHLCV { symbol: "BTC/USD", open: 47000.00, high: 47500.00, low: 46900.00, close: 47300.00, volume: 5800, timeframe: "1h", ts: 33400 }
+
+# =============================================================================
+# SCENARIO 5: Death Cross Pattern (SMA20 crosses below SMA50)
+# Expected: DeathCross signal when short-term MA < long-term MA
+# =============================================================================
+# Downtrend pattern
+@600s OHLCV { symbol: "BTC/USD", open: 47300.00, high: 47400.00, low: 46800.00, close: 46900.00, volume: 6200, timeframe: "1h", ts: 37000 }
+@660s OHLCV { symbol: "BTC/USD", open: 46900.00, high: 47000.00, low: 46400.00, close: 46500.00, volume: 6500, timeframe: "1h", ts: 40600 }
+@720s OHLCV { symbol: "BTC/USD", open: 46500.00, high: 46600.00, low: 46000.00, close: 46100.00, volume: 6800, timeframe: "1h", ts: 44200 }
+@780s OHLCV { symbol: "BTC/USD", open: 46100.00, high: 46200.00, low: 45600.00, close: 45700.00, volume: 7000, timeframe: "1h", ts: 47800 }
+@840s OHLCV { symbol: "BTC/USD", open: 45700.00, high: 45800.00, low: 45200.00, close: 45300.00, volume: 7200, timeframe: "1h", ts: 51400 }
+
+# =============================================================================
+# SCENARIO 6: RSI Overbought (RSI > 70)
+# Expected: RSI calculation showing overbought condition
+# =============================================================================
+# Strong uptrend candles
+@900s OHLCV { symbol: "BTC/USD", open: 45300.00, high: 46000.00, low: 45300.00, close: 46000.00, volume: 8000, timeframe: "1h", ts: 55000 }
+@960s OHLCV { symbol: "BTC/USD", open: 46000.00, high: 46800.00, low: 46000.00, close: 46800.00, volume: 8500, timeframe: "1h", ts: 58600 }
+@1020s OHLCV { symbol: "BTC/USD", open: 46800.00, high: 47600.00, low: 46800.00, close: 47600.00, volume: 9000, timeframe: "1h", ts: 62200 }
+
+# =============================================================================
+# SCENARIO 7: RSI Oversold (RSI < 30)
+# Expected: RSI calculation showing oversold condition
+# =============================================================================
+# Strong downtrend candles
+@1080s OHLCV { symbol: "BTC/USD", open: 47600.00, high: 47600.00, low: 46800.00, close: 46800.00, volume: 9500, timeframe: "1h", ts: 65800 }
+@1140s OHLCV { symbol: "BTC/USD", open: 46800.00, high: 46800.00, low: 46000.00, close: 46000.00, volume: 10000, timeframe: "1h", ts: 69400 }
+@1200s OHLCV { symbol: "BTC/USD", open: 46000.00, high: 46000.00, low: 45200.00, close: 45200.00, volume: 10500, timeframe: "1h", ts: 73000 }
+
+# =============================================================================
+# SCENARIO 8: Bollinger Band Breakout
+# Expected: Price breaking above upper Bollinger band
+# =============================================================================
+# Volatility expansion
+@1260s OHLCV { symbol: "BTC/USD", open: 45200.00, high: 46500.00, low: 45100.00, close: 46400.00, volume: 12000, timeframe: "1h", ts: 76600 }
+@1320s OHLCV { symbol: "BTC/USD", open: 46400.00, high: 48000.00, low: 46300.00, close: 47800.00, volume: 15000, timeframe: "1h", ts: 80200 }

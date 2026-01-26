@@ -1,0 +1,81 @@
+# HVAC Monitoring Test Events
+# Predictable scenarios for building automation testing
+# =====================================================
+
+# =============================================================================
+# SCENARIO 1: Normal Temperature Readings (Zone_A, Zone_B, Zone_C)
+# Expected: ZoneTemperatures aggregation with avg_temp ~20°C
+# =============================================================================
+@0s TemperatureReading { sensor_id: "temp_01", zone: "Zone_A", value: 20.0, unit: "celsius", ts: 1000 }
+@1s TemperatureReading { sensor_id: "temp_02", zone: "Zone_B", value: 21.0, unit: "celsius", ts: 1001 }
+@2s TemperatureReading { sensor_id: "temp_03", zone: "Zone_C", value: 19.5, unit: "celsius", ts: 1002 }
+@3s TemperatureReading { sensor_id: "temp_04", zone: "Zone_A", value: 20.5, unit: "celsius", ts: 1003 }
+@4s TemperatureReading { sensor_id: "temp_05", zone: "Zone_B", value: 20.8, unit: "celsius", ts: 1004 }
+@5s TemperatureReading { sensor_id: "temp_06", zone: "Zone_C", value: 19.8, unit: "celsius", ts: 1005 }
+
+# =============================================================================
+# SCENARIO 2: Temperature Anomaly (>30°C or <10°C)
+# Expected: TemperatureAnomaly alert for Zone_A
+# =============================================================================
+@10s TemperatureReading { sensor_id: "temp_hot", zone: "Zone_A", value: 35.0, unit: "celsius", ts: 1010 }
+@11s TemperatureReading { sensor_id: "temp_cold", zone: "Zone_B", value: 5.0, unit: "celsius", ts: 1011 }
+
+# =============================================================================
+# SCENARIO 3: Normal Humidity Readings (40-60%)
+# Expected: ZoneHumidity aggregation with avg_humidity ~50%
+# =============================================================================
+@0s HumidityReading { sensor_id: "hum_01", zone: "Zone_A", value: 50.0, ts: 1000 }
+@1s HumidityReading { sensor_id: "hum_02", zone: "Zone_B", value: 48.0, ts: 1001 }
+@2s HumidityReading { sensor_id: "hum_03", zone: "Zone_C", value: 52.0, ts: 1002 }
+@3s HumidityReading { sensor_id: "hum_04", zone: "Zone_A", value: 51.0, ts: 1003 }
+@4s HumidityReading { sensor_id: "hum_05", zone: "Zone_B", value: 49.0, ts: 1004 }
+
+# =============================================================================
+# SCENARIO 4: Humidity Anomaly (<30% or >70%)
+# Expected: HumidityAnomaly alert
+# =============================================================================
+@15s HumidityReading { sensor_id: "hum_dry", zone: "Zone_A", value: 25.0, ts: 1015 }
+@16s HumidityReading { sensor_id: "hum_wet", zone: "Zone_B", value: 80.0, ts: 1016 }
+
+# =============================================================================
+# SCENARIO 5: HVAC Status - Normal Operation
+# Expected: HVACMetrics with power_consumption tracking
+# =============================================================================
+@0s HVACStatus { unit_id: "hvac_01", zone: "Zone_A", mode: "cooling", power_consumption: 2.5, compressor_pressure: 12.0, refrigerant_temp: -5.0, fan_speed: 1200, runtime_hours: 1000, ts: 1000 }
+@2s HVACStatus { unit_id: "hvac_02", zone: "Zone_B", mode: "heating", power_consumption: 2.8, compressor_pressure: 12.2, refrigerant_temp: -4.5, fan_speed: 1250, runtime_hours: 1500, ts: 1002 }
+@4s HVACStatus { unit_id: "hvac_03", zone: "Zone_C", mode: "ventilation", power_consumption: 1.2, compressor_pressure: 11.8, refrigerant_temp: -5.2, fan_speed: 1100, runtime_hours: 800, ts: 1004 }
+
+# =============================================================================
+# SCENARIO 6: HVAC Power Spike (>5kW)
+# Expected: PowerSpike alert
+# =============================================================================
+@20s HVACStatus { unit_id: "hvac_01", zone: "Zone_A", mode: "cooling", power_consumption: 6.5, compressor_pressure: 14.0, refrigerant_temp: -3.0, fan_speed: 1500, runtime_hours: 1001, ts: 1020 }
+
+# =============================================================================
+# SCENARIO 7: Compressor Degradation Pattern (pressure increasing over time)
+# Expected: CompressorDegradation alert via attention mechanism
+# =============================================================================
+@30s HVACStatus { unit_id: "hvac_01", zone: "Zone_A", mode: "cooling", power_consumption: 2.6, compressor_pressure: 13.0, refrigerant_temp: -4.8, fan_speed: 1200, runtime_hours: 1002, ts: 1030 }
+@32s HVACStatus { unit_id: "hvac_01", zone: "Zone_A", mode: "cooling", power_consumption: 2.7, compressor_pressure: 13.5, refrigerant_temp: -4.5, fan_speed: 1200, runtime_hours: 1002, ts: 1032 }
+@34s HVACStatus { unit_id: "hvac_01", zone: "Zone_A", mode: "cooling", power_consumption: 2.9, compressor_pressure: 14.2, refrigerant_temp: -4.0, fan_speed: 1200, runtime_hours: 1002, ts: 1034 }
+@36s HVACStatus { unit_id: "hvac_01", zone: "Zone_A", mode: "cooling", power_consumption: 3.2, compressor_pressure: 15.0, refrigerant_temp: -3.5, fan_speed: 1200, runtime_hours: 1003, ts: 1036 }
+
+# =============================================================================
+# SCENARIO 8: Maintenance Reminder (runtime_hours > 2000)
+# Expected: MaintenanceReminder alert
+# =============================================================================
+@40s HVACStatus { unit_id: "hvac_old", zone: "Zone_C", mode: "cooling", power_consumption: 3.0, compressor_pressure: 12.5, refrigerant_temp: -4.5, fan_speed: 1150, runtime_hours: 2500, ts: 1040 }
+
+# =============================================================================
+# SCENARIO 9: Energy Meter Readings
+# Expected: ZoneEnergy aggregation
+# =============================================================================
+@0s EnergyMeter { meter_id: "meter_01", zone: "Zone_A", power_kw: 3.5, cumulative_kwh: 10000.0, ts: 1000 }
+@2s EnergyMeter { meter_id: "meter_02", zone: "Zone_B", power_kw: 3.8, cumulative_kwh: 12000.0, ts: 1002 }
+@4s EnergyMeter { meter_id: "meter_03", zone: "Zone_C", power_kw: 2.2, cumulative_kwh: 8000.0, ts: 1004 }
+
+# =============================================================================
+# SCENARIO 10: Energy Anomaly (power > 2x baseline)
+# Expected: EnergyAnomaly alert
+# =============================================================================
+@50s EnergyMeter { meter_id: "meter_01", zone: "Zone_A", power_kw: 8.5, cumulative_kwh: 10050.0, ts: 1050 }

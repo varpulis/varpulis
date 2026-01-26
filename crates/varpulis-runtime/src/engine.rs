@@ -333,11 +333,14 @@ impl Engine {
         };
 
         // Register for all event types in sequence (avoid duplicates)
-        for event_type in sequence_event_types {
-            let streams = self.event_sources.entry(event_type).or_default();
+        for event_type in &sequence_event_types {
+            let streams = self.event_sources.entry(event_type.clone()).or_default();
             if !streams.contains(&name.to_string()) {
                 streams.push(name.to_string());
             }
+        }
+        if !sequence_event_types.is_empty() {
+            debug!("Stream {} registered for sequence event types: {:?}", name, sequence_event_types);
         }
 
         // Extract attention window config from operations if present
@@ -1257,6 +1260,7 @@ impl Engine {
             .get(&event.event_type)
             .cloned()
             .unwrap_or_default();
+        
 
         for stream_name in stream_names {
             if let Some(stream) = self.streams.get_mut(&stream_name) {

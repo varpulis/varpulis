@@ -17,7 +17,6 @@ description = "A modern streaming analytics engine with attention-based pattern 
 
 [workspace.dependencies]
 # Parsing
-lalrpop-util = "0.20"
 logos = "0.14"
 
 # Async runtime

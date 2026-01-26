@@ -12,22 +12,22 @@
 # =============================================================================
 
 event TemperatureReading:
-    sensor_id: string
-    zone: string
+    sensor_id: str
+    zone: str
     value: float
-    unit: string  # "celsius" or "fahrenheit"
+    unit: str  # "celsius" or "fahrenheit"
     ts: timestamp
 
 event HumidityReading:
-    sensor_id: string
-    zone: string
+    sensor_id: str
+    zone: str
     value: float  # percentage 0-100
     ts: timestamp
 
 event HVACStatus:
-    unit_id: string
-    zone: string
-    mode: string  # "heating", "cooling", "ventilation", "off"
+    unit_id: str
+    zone: str
+    mode: str  # "heating", "cooling", "ventilation", "off"
     power_consumption: float  # kW
     compressor_pressure: float  # bar
     refrigerant_temp: float  # celsius
@@ -36,8 +36,8 @@ event HVACStatus:
     ts: timestamp
 
 event EnergyMeter:
-    meter_id: string
-    zone: string
+    meter_id: str
+    zone: str
     power_kw: float
     cumulative_kwh: float
     ts: timestamp
@@ -329,26 +329,26 @@ stream EnergyAnomaly = ZoneEnergy
 # =============================================================================
 
 stream AllAlerts = merge(
-    TemperatureAnomaly,
-    ServerRoomAlert,
-    HumidityAnomaly,
-    PowerSpike,
-    CompressorDegradation,
-    RefrigerantLeak,
-    FanDegradation,
-    MaintenanceReminder,
-    HealthScoreAlert,
-    EnergyAnomaly
-)
-.tap(
-    counter: "hvac_alerts_total",
-    labels: [alert_type, severity, zone]
-)
-.emit()
-.to([
-    "kafka://hvac-alerts",
-    "http://building-management.local/api/alerts"
-])
+        TemperatureAnomaly,
+        ServerRoomAlert,
+        HumidityAnomaly,
+        PowerSpike,
+        CompressorDegradation,
+        RefrigerantLeak,
+        FanDegradation,
+        MaintenanceReminder,
+        HealthScoreAlert,
+        EnergyAnomaly
+    )
+    .tap(
+        counter: "hvac_alerts_total",
+        labels: [alert_type, severity, zone]
+    )
+    .emit()
+    .to([
+        "kafka://hvac-alerts",
+        "http://building-management.local/api/alerts"
+    ])
 
 # =============================================================================
 # CONFIGURATION

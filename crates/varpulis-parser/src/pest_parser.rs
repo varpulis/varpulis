@@ -39,13 +39,65 @@ pub fn parse(source: &str) -> ParseResult<Program> {
 }
 
 fn convert_pest_error(e: pest::error::Error<Rule>) -> ParseError {
-    ParseError::UnexpectedToken {
-        position: match e.location {
-            pest::error::InputLocation::Pos(p) => p,
-            pest::error::InputLocation::Span((s, _)) => s,
-        },
-        expected: format!("{:?}", e.variant),
-        found: "unexpected input".to_string(),
+    let position = match e.location {
+        pest::error::InputLocation::Pos(p) => p,
+        pest::error::InputLocation::Span((s, _)) => s,
+    };
+    
+    // Extract line/column from pest error
+    let (line, column) = match e.line_col {
+        pest::error::LineColLocation::Pos((l, c)) => (l, c),
+        pest::error::LineColLocation::Span((l, c), _) => (l, c),
+    };
+    
+    // Create a human-readable message based on what was expected
+    let message = match &e.variant {
+        pest::error::ErrorVariant::ParsingError { positives, negatives: _ } => {
+            if positives.is_empty() {
+                "Unexpected token".to_string()
+            } else {
+                let expected: Vec<String> = positives.iter().map(|r| format_rule_name(r)).collect();
+                if expected.len() == 1 {
+                    format!("Expected {}", expected[0])
+                } else {
+                    format!("Expected one of: {}", expected.join(", "))
+                }
+            }
+        }
+        pest::error::ErrorVariant::CustomError { message } => message.clone(),
+    };
+    
+    ParseError::Located {
+        line,
+        column,
+        position,
+        message,
+        hint: None,
+    }
+}
+
+/// Convert pest Rule names to human-readable format
+fn format_rule_name(rule: &Rule) -> String {
+    match rule {
+        Rule::identifier => "identifier".to_string(),
+        Rule::integer => "number".to_string(),
+        Rule::float => "number".to_string(),
+        Rule::string => "string".to_string(),
+        Rule::primitive_type => "type (int, float, bool, str, timestamp, duration)".to_string(),
+        Rule::type_expr => "type".to_string(),
+        Rule::expr => "expression".to_string(),
+        Rule::statement => "statement".to_string(),
+        Rule::stream_decl => "stream declaration".to_string(),
+        Rule::event_decl => "event declaration".to_string(),
+        Rule::fn_decl => "function declaration".to_string(),
+        Rule::INDENT => "indented block".to_string(),
+        Rule::DEDENT => "end of block".to_string(),
+        Rule::field => "field declaration (name: type)".to_string(),
+        Rule::comparison_op => "comparison operator (==, !=, <, >, <=, >=)".to_string(),
+        Rule::additive_op => "operator (+, -)".to_string(),
+        Rule::multiplicative_op => "operator (*, /, %)".to_string(),
+        Rule::postfix_suffix => "method call or member access".to_string(),
+        _ => format!("{:?}", rule).to_lowercase().replace('_', " "),
     }
 }
 

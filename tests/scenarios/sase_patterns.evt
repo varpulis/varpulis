@@ -1,0 +1,67 @@
+# SASE Pattern Test Events
+# Predictable scenarios with expected outputs
+# ============================================
+
+# =============================================================================
+# SCENARIO 1: Login then Large Transaction
+# Expected: large_transaction_after_login alert
+# =============================================================================
+@0s Login { user_id: "user1", ip_address: "192.168.1.1", country: "US" }
+@1s Transaction { user_id: "user1", amount: 15000.0, category: "transfer" }
+
+# =============================================================================
+# SCENARIO 2: Full Session (Login -> Transaction -> Logout)
+# Expected: session_complete alert with tx_amount: 500.0
+# =============================================================================
+@2s Login { user_id: "user2", ip_address: "192.168.1.2", country: "FR" }
+@3s Transaction { user_id: "user2", amount: 500.0, category: "purchase" }
+@4s Logout { user_id: "user2" }
+
+# =============================================================================
+# SCENARIO 3: Fraud Chain (Login -> PasswordChange -> Transaction -> Logout)
+# Expected: potential_fraud_chain alert with severity: critical
+# =============================================================================
+@5s Login { user_id: "user3", ip_address: "10.0.0.1", country: "DE" }
+@6s PasswordChange { user_id: "user3" }
+@7s Transaction { user_id: "user3", amount: 9999.0, category: "wire" }
+@8s Logout { user_id: "user3" }
+
+# =============================================================================
+# SCENARIO 4: Impossible Travel (Login from US, then CN)
+# Expected: impossible_travel alert with country1: US, country2: CN
+# =============================================================================
+@9s Login { user_id: "user4", ip_address: "1.2.3.4", country: "US" }
+@10s Login { user_id: "user4", ip_address: "5.6.7.8", country: "CN" }
+
+# =============================================================================
+# SCENARIO 5: High Velocity (>5 transactions in 10 minutes)
+# Expected: high_velocity alert
+# =============================================================================
+@11s Transaction { user_id: "user5", amount: 100.0, category: "purchase" }
+@12s Transaction { user_id: "user5", amount: 110.0, category: "purchase" }
+@13s Transaction { user_id: "user5", amount: 120.0, category: "purchase" }
+@14s Transaction { user_id: "user5", amount: 130.0, category: "purchase" }
+@15s Transaction { user_id: "user5", amount: 140.0, category: "purchase" }
+@16s Transaction { user_id: "user5", amount: 150.0, category: "purchase" }
+@17s Transaction { user_id: "user5", amount: 160.0, category: "purchase" }
+
+# =============================================================================
+# SCENARIO 6: High Spending (Total > $50K in 24h)
+# Expected: high_spending_24h alert
+# =============================================================================
+@20s Transaction { user_id: "user6", amount: 20000.0, category: "wire" }
+@21s Transaction { user_id: "user6", amount: 35000.0, category: "wire" }
+
+# =============================================================================
+# SCENARIO 7: Risky Transaction (gambling category)
+# Expected: risky_transaction alert
+# =============================================================================
+@25s Transaction { user_id: "user7", amount: 500.0, category: "gambling" }
+
+# =============================================================================
+# SCENARIO 8: Money Mule (Same IP, different users)
+# Expected: money_mule_suspect alert
+# =============================================================================
+@30s Login { user_id: "mule1", ip_address: "123.45.67.89", country: "RU" }
+@31s Login { user_id: "mule2", ip_address: "123.45.67.89", country: "RU" }
+@32s Transaction { user_id: "mule2", amount: 5000.0, category: "wire" }

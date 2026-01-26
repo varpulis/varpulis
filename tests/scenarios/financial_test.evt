@@ -1,0 +1,165 @@
+# Financial Market Test Events
+
+# Market ticks
+@0s MarketTick { symbol: "BTC/USD", price: 44900.00, volume: 50, bid: 44895.00, ask: 44905.00, ts: 1000 }
+@0s MarketTick { symbol: "ETH/USD", price: 2790.00, volume: 100, bid: 2788.00, ask: 2792.00, ts: 1000 }
+@1s MarketTick { symbol: "BTC/USD", price: 44820.00, volume: 55, bid: 44815.00, ask: 44825.00, ts: 1001 }
+@1s MarketTick { symbol: "ETH/USD", price: 2782.00, volume: 110, bid: 2780.00, ask: 2784.00, ts: 1001 }
+@2s MarketTick { symbol: "BTC/USD", price: 44760.00, volume: 60, bid: 44755.00, ask: 44765.00, ts: 1002 }
+@2s MarketTick { symbol: "ETH/USD", price: 2776.00, volume: 120, bid: 2774.00, ask: 2778.00, ts: 1002 }
+@3s MarketTick { symbol: "BTC/USD", price: 44720.00, volume: 65, bid: 44715.00, ask: 44725.00, ts: 1003 }
+@3s MarketTick { symbol: "ETH/USD", price: 2772.00, volume: 130, bid: 2770.00, ask: 2774.00, ts: 1003 }
+@4s MarketTick { symbol: "BTC/USD", price: 44700.00, volume: 70, bid: 44695.00, ask: 44705.00, ts: 1004 }
+@4s MarketTick { symbol: "ETH/USD", price: 2770.00, volume: 140, bid: 2768.00, ask: 2772.00, ts: 1004 }
+@5s MarketTick { symbol: "BTC/USD", price: 44700.00, volume: 75, bid: 44695.00, ask: 44705.00, ts: 1005 }
+@5s MarketTick { symbol: "ETH/USD", price: 2770.00, volume: 150, bid: 2768.00, ask: 2772.00, ts: 1005 }
+@6s MarketTick { symbol: "BTC/USD", price: 44720.00, volume: 80, bid: 44715.00, ask: 44725.00, ts: 1006 }
+@6s MarketTick { symbol: "ETH/USD", price: 2772.00, volume: 160, bid: 2770.00, ask: 2774.00, ts: 1006 }
+@7s MarketTick { symbol: "BTC/USD", price: 44760.00, volume: 85, bid: 44755.00, ask: 44765.00, ts: 1007 }
+@7s MarketTick { symbol: "ETH/USD", price: 2776.00, volume: 170, bid: 2774.00, ask: 2778.00, ts: 1007 }
+@8s MarketTick { symbol: "BTC/USD", price: 44820.00, volume: 90, bid: 44815.00, ask: 44825.00, ts: 1008 }
+@8s MarketTick { symbol: "ETH/USD", price: 2782.00, volume: 180, bid: 2780.00, ask: 2784.00, ts: 1008 }
+@9s MarketTick { symbol: "BTC/USD", price: 44900.00, volume: 95, bid: 44895.00, ask: 44905.00, ts: 1009 }
+@9s MarketTick { symbol: "ETH/USD", price: 2790.00, volume: 190, bid: 2788.00, ask: 2792.00, ts: 1009 }
+@10s MarketTick { symbol: "BTC/USD", price: 44800.00, volume: 100, bid: 44795.00, ask: 44805.00, ts: 1010 }
+@10s MarketTick { symbol: "ETH/USD", price: 2780.00, volume: 200, bid: 2778.00, ask: 2782.00, ts: 1010 }
+@11s MarketTick { symbol: "BTC/USD", price: 44720.00, volume: 105, bid: 44715.00, ask: 44725.00, ts: 1011 }
+@11s MarketTick { symbol: "ETH/USD", price: 2772.00, volume: 210, bid: 2770.00, ask: 2774.00, ts: 1011 }
+@12s MarketTick { symbol: "BTC/USD", price: 44660.00, volume: 110, bid: 44655.00, ask: 44665.00, ts: 1012 }
+@12s MarketTick { symbol: "ETH/USD", price: 2766.00, volume: 220, bid: 2764.00, ask: 2768.00, ts: 1012 }
+@13s MarketTick { symbol: "BTC/USD", price: 44620.00, volume: 115, bid: 44615.00, ask: 44625.00, ts: 1013 }
+@13s MarketTick { symbol: "ETH/USD", price: 2762.00, volume: 230, bid: 2760.00, ask: 2764.00, ts: 1013 }
+@14s MarketTick { symbol: "BTC/USD", price: 44600.00, volume: 120, bid: 44595.00, ask: 44605.00, ts: 1014 }
+@14s MarketTick { symbol: "ETH/USD", price: 2760.00, volume: 240, bid: 2758.00, ask: 2762.00, ts: 1014 }
+@15s MarketTick { symbol: "BTC/USD", price: 44600.00, volume: 125, bid: 44595.00, ask: 44605.00, ts: 1015 }
+@15s MarketTick { symbol: "ETH/USD", price: 2760.00, volume: 250, bid: 2758.00, ask: 2762.00, ts: 1015 }
+@16s MarketTick { symbol: "BTC/USD", price: 44620.00, volume: 130, bid: 44615.00, ask: 44625.00, ts: 1016 }
+@16s MarketTick { symbol: "ETH/USD", price: 2762.00, volume: 260, bid: 2760.00, ask: 2764.00, ts: 1016 }
+@17s MarketTick { symbol: "BTC/USD", price: 44660.00, volume: 135, bid: 44655.00, ask: 44665.00, ts: 1017 }
+@17s MarketTick { symbol: "ETH/USD", price: 2766.00, volume: 270, bid: 2764.00, ask: 2768.00, ts: 1017 }
+@18s MarketTick { symbol: "BTC/USD", price: 44720.00, volume: 140, bid: 44715.00, ask: 44725.00, ts: 1018 }
+@18s MarketTick { symbol: "ETH/USD", price: 2772.00, volume: 280, bid: 2770.00, ask: 2774.00, ts: 1018 }
+@19s MarketTick { symbol: "BTC/USD", price: 44800.00, volume: 145, bid: 44795.00, ask: 44805.00, ts: 1019 }
+@19s MarketTick { symbol: "ETH/USD", price: 2780.00, volume: 290, bid: 2778.00, ask: 2782.00, ts: 1019 }
+@20s MarketTick { symbol: "BTC/USD", price: 44700.00, volume: 50, bid: 44695.00, ask: 44705.00, ts: 1020 }
+@20s MarketTick { symbol: "ETH/USD", price: 2770.00, volume: 300, bid: 2768.00, ask: 2772.00, ts: 1020 }
+@21s MarketTick { symbol: "BTC/USD", price: 44620.00, volume: 55, bid: 44615.00, ask: 44625.00, ts: 1021 }
+@21s MarketTick { symbol: "ETH/USD", price: 2762.00, volume: 310, bid: 2760.00, ask: 2764.00, ts: 1021 }
+@22s MarketTick { symbol: "BTC/USD", price: 44560.00, volume: 60, bid: 44555.00, ask: 44565.00, ts: 1022 }
+@22s MarketTick { symbol: "ETH/USD", price: 2756.00, volume: 320, bid: 2754.00, ask: 2758.00, ts: 1022 }
+@23s MarketTick { symbol: "BTC/USD", price: 44520.00, volume: 65, bid: 44515.00, ask: 44525.00, ts: 1023 }
+@23s MarketTick { symbol: "ETH/USD", price: 2752.00, volume: 330, bid: 2750.00, ask: 2754.00, ts: 1023 }
+@24s MarketTick { symbol: "BTC/USD", price: 44500.00, volume: 70, bid: 44495.00, ask: 44505.00, ts: 1024 }
+@24s MarketTick { symbol: "ETH/USD", price: 2750.00, volume: 340, bid: 2748.00, ask: 2752.00, ts: 1024 }
+@25s MarketTick { symbol: "BTC/USD", price: 44500.00, volume: 75, bid: 44495.00, ask: 44505.00, ts: 1025 }
+@25s MarketTick { symbol: "ETH/USD", price: 2750.00, volume: 350, bid: 2748.00, ask: 2752.00, ts: 1025 }
+@26s MarketTick { symbol: "BTC/USD", price: 44520.00, volume: 80, bid: 44515.00, ask: 44525.00, ts: 1026 }
+@26s MarketTick { symbol: "ETH/USD", price: 2752.00, volume: 360, bid: 2750.00, ask: 2754.00, ts: 1026 }
+@27s MarketTick { symbol: "BTC/USD", price: 44560.00, volume: 85, bid: 44555.00, ask: 44565.00, ts: 1027 }
+@27s MarketTick { symbol: "ETH/USD", price: 2756.00, volume: 370, bid: 2754.00, ask: 2758.00, ts: 1027 }
+@28s MarketTick { symbol: "BTC/USD", price: 44620.00, volume: 90, bid: 44615.00, ask: 44625.00, ts: 1028 }
+@28s MarketTick { symbol: "ETH/USD", price: 2762.00, volume: 380, bid: 2760.00, ask: 2764.00, ts: 1028 }
+@29s MarketTick { symbol: "BTC/USD", price: 44700.00, volume: 95, bid: 44695.00, ask: 44705.00, ts: 1029 }
+@29s MarketTick { symbol: "ETH/USD", price: 2770.00, volume: 390, bid: 2768.00, ask: 2772.00, ts: 1029 }
+@30s MarketTick { symbol: "BTC/USD", price: 44600.00, volume: 100, bid: 44595.00, ask: 44605.00, ts: 1030 }
+@30s MarketTick { symbol: "ETH/USD", price: 2760.00, volume: 100, bid: 2758.00, ask: 2762.00, ts: 1030 }
+@31s MarketTick { symbol: "BTC/USD", price: 44520.00, volume: 105, bid: 44515.00, ask: 44525.00, ts: 1031 }
+@31s MarketTick { symbol: "ETH/USD", price: 2752.00, volume: 110, bid: 2750.00, ask: 2754.00, ts: 1031 }
+@32s MarketTick { symbol: "BTC/USD", price: 44460.00, volume: 110, bid: 44455.00, ask: 44465.00, ts: 1032 }
+@32s MarketTick { symbol: "ETH/USD", price: 2746.00, volume: 120, bid: 2744.00, ask: 2748.00, ts: 1032 }
+@33s MarketTick { symbol: "BTC/USD", price: 44420.00, volume: 115, bid: 44415.00, ask: 44425.00, ts: 1033 }
+@33s MarketTick { symbol: "ETH/USD", price: 2742.00, volume: 130, bid: 2740.00, ask: 2744.00, ts: 1033 }
+@34s MarketTick { symbol: "BTC/USD", price: 44400.00, volume: 120, bid: 44395.00, ask: 44405.00, ts: 1034 }
+@34s MarketTick { symbol: "ETH/USD", price: 2740.00, volume: 140, bid: 2738.00, ask: 2742.00, ts: 1034 }
+@35s MarketTick { symbol: "BTC/USD", price: 44400.00, volume: 125, bid: 44395.00, ask: 44405.00, ts: 1035 }
+@35s MarketTick { symbol: "ETH/USD", price: 2740.00, volume: 150, bid: 2738.00, ask: 2742.00, ts: 1035 }
+@36s MarketTick { symbol: "BTC/USD", price: 44420.00, volume: 130, bid: 44415.00, ask: 44425.00, ts: 1036 }
+@36s MarketTick { symbol: "ETH/USD", price: 2742.00, volume: 160, bid: 2740.00, ask: 2744.00, ts: 1036 }
+@37s MarketTick { symbol: "BTC/USD", price: 44460.00, volume: 135, bid: 44455.00, ask: 44465.00, ts: 1037 }
+@37s MarketTick { symbol: "ETH/USD", price: 2746.00, volume: 170, bid: 2744.00, ask: 2748.00, ts: 1037 }
+@38s MarketTick { symbol: "BTC/USD", price: 44520.00, volume: 140, bid: 44515.00, ask: 44525.00, ts: 1038 }
+@38s MarketTick { symbol: "ETH/USD", price: 2752.00, volume: 180, bid: 2750.00, ask: 2754.00, ts: 1038 }
+@39s MarketTick { symbol: "BTC/USD", price: 44600.00, volume: 145, bid: 44595.00, ask: 44605.00, ts: 1039 }
+@39s MarketTick { symbol: "ETH/USD", price: 2760.00, volume: 190, bid: 2758.00, ask: 2762.00, ts: 1039 }
+@40s MarketTick { symbol: "BTC/USD", price: 44500.00, volume: 50, bid: 44495.00, ask: 44505.00, ts: 1040 }
+@40s MarketTick { symbol: "ETH/USD", price: 2750.00, volume: 200, bid: 2748.00, ask: 2752.00, ts: 1040 }
+@41s MarketTick { symbol: "BTC/USD", price: 44420.00, volume: 55, bid: 44415.00, ask: 44425.00, ts: 1041 }
+@41s MarketTick { symbol: "ETH/USD", price: 2742.00, volume: 210, bid: 2740.00, ask: 2744.00, ts: 1041 }
+@42s MarketTick { symbol: "BTC/USD", price: 44360.00, volume: 60, bid: 44355.00, ask: 44365.00, ts: 1042 }
+@42s MarketTick { symbol: "ETH/USD", price: 2736.00, volume: 220, bid: 2734.00, ask: 2738.00, ts: 1042 }
+@43s MarketTick { symbol: "BTC/USD", price: 44320.00, volume: 65, bid: 44315.00, ask: 44325.00, ts: 1043 }
+@43s MarketTick { symbol: "ETH/USD", price: 2732.00, volume: 230, bid: 2730.00, ask: 2734.00, ts: 1043 }
+@44s MarketTick { symbol: "BTC/USD", price: 44300.00, volume: 70, bid: 44295.00, ask: 44305.00, ts: 1044 }
+@44s MarketTick { symbol: "ETH/USD", price: 2730.00, volume: 240, bid: 2728.00, ask: 2732.00, ts: 1044 }
+@45s MarketTick { symbol: "BTC/USD", price: 44300.00, volume: 75, bid: 44295.00, ask: 44305.00, ts: 1045 }
+@45s MarketTick { symbol: "ETH/USD", price: 2730.00, volume: 250, bid: 2728.00, ask: 2732.00, ts: 1045 }
+@46s MarketTick { symbol: "BTC/USD", price: 44320.00, volume: 80, bid: 44315.00, ask: 44325.00, ts: 1046 }
+@46s MarketTick { symbol: "ETH/USD", price: 2732.00, volume: 260, bid: 2730.00, ask: 2734.00, ts: 1046 }
+@47s MarketTick { symbol: "BTC/USD", price: 44360.00, volume: 85, bid: 44355.00, ask: 44365.00, ts: 1047 }
+@47s MarketTick { symbol: "ETH/USD", price: 2736.00, volume: 270, bid: 2734.00, ask: 2738.00, ts: 1047 }
+@48s MarketTick { symbol: "BTC/USD", price: 44420.00, volume: 90, bid: 44415.00, ask: 44425.00, ts: 1048 }
+@48s MarketTick { symbol: "ETH/USD", price: 2742.00, volume: 280, bid: 2740.00, ask: 2744.00, ts: 1048 }
+@49s MarketTick { symbol: "BTC/USD", price: 44500.00, volume: 95, bid: 44495.00, ask: 44505.00, ts: 1049 }
+@49s MarketTick { symbol: "ETH/USD", price: 2750.00, volume: 290, bid: 2748.00, ask: 2752.00, ts: 1049 }
+
+# OHLCV candles
+@0s OHLCV { symbol: "BTC/USD", open: 44500.00, high: 44600.00, low: 44300.00, close: 44400.00, volume: 5000, timeframe: "1h", ts: 1000 }
+@60s OHLCV { symbol: "BTC/USD", open: 44600.00, high: 44700.00, low: 44450.00, close: 44550.00, volume: 5100, timeframe: "1h", ts: 4600 }
+@120s OHLCV { symbol: "BTC/USD", open: 44700.00, high: 44800.00, low: 44600.00, close: 44700.00, volume: 5200, timeframe: "1h", ts: 8200 }
+@180s OHLCV { symbol: "BTC/USD", open: 44800.00, high: 44950.00, low: 44700.00, close: 44850.00, volume: 5300, timeframe: "1h", ts: 11800 }
+@240s OHLCV { symbol: "BTC/USD", open: 44900.00, high: 45100.00, low: 44800.00, close: 45000.00, volume: 5400, timeframe: "1h", ts: 15400 }
+@300s OHLCV { symbol: "BTC/USD", open: 45000.00, high: 45100.00, low: 44800.00, close: 44900.00, volume: 5500, timeframe: "1h", ts: 19000 }
+@360s OHLCV { symbol: "BTC/USD", open: 45100.00, high: 45200.00, low: 44950.00, close: 45050.00, volume: 5600, timeframe: "1h", ts: 22600 }
+@420s OHLCV { symbol: "BTC/USD", open: 45200.00, high: 45300.00, low: 45100.00, close: 45200.00, volume: 5700, timeframe: "1h", ts: 26200 }
+@480s OHLCV { symbol: "BTC/USD", open: 45300.00, high: 45450.00, low: 45200.00, close: 45350.00, volume: 5800, timeframe: "1h", ts: 29800 }
+@540s OHLCV { symbol: "BTC/USD", open: 45400.00, high: 45600.00, low: 45300.00, close: 45500.00, volume: 5900, timeframe: "1h", ts: 33400 }
+@600s OHLCV { symbol: "BTC/USD", open: 44500.00, high: 44600.00, low: 44300.00, close: 44400.00, volume: 6000, timeframe: "1h", ts: 37000 }
+@660s OHLCV { symbol: "BTC/USD", open: 44600.00, high: 44700.00, low: 44450.00, close: 44550.00, volume: 6100, timeframe: "1h", ts: 40600 }
+@720s OHLCV { symbol: "BTC/USD", open: 44700.00, high: 44800.00, low: 44600.00, close: 44700.00, volume: 6200, timeframe: "1h", ts: 44200 }
+@780s OHLCV { symbol: "BTC/USD", open: 44800.00, high: 44950.00, low: 44700.00, close: 44850.00, volume: 6300, timeframe: "1h", ts: 47800 }
+@840s OHLCV { symbol: "BTC/USD", open: 44900.00, high: 45100.00, low: 44800.00, close: 45000.00, volume: 6400, timeframe: "1h", ts: 51400 }
+@900s OHLCV { symbol: "BTC/USD", open: 45000.00, high: 45100.00, low: 44800.00, close: 44900.00, volume: 6500, timeframe: "1h", ts: 55000 }
+@960s OHLCV { symbol: "BTC/USD", open: 45100.00, high: 45200.00, low: 44950.00, close: 45050.00, volume: 6600, timeframe: "1h", ts: 58600 }
+@1020s OHLCV { symbol: "BTC/USD", open: 45200.00, high: 45300.00, low: 45100.00, close: 45200.00, volume: 6700, timeframe: "1h", ts: 62200 }
+@1080s OHLCV { symbol: "BTC/USD", open: 45300.00, high: 45450.00, low: 45200.00, close: 45350.00, volume: 6800, timeframe: "1h", ts: 65800 }
+@1140s OHLCV { symbol: "BTC/USD", open: 45400.00, high: 45600.00, low: 45300.00, close: 45500.00, volume: 6900, timeframe: "1h", ts: 69400 }
+@1200s OHLCV { symbol: "BTC/USD", open: 44500.00, high: 44600.00, low: 44300.00, close: 44400.00, volume: 7000, timeframe: "1h", ts: 73000 }
+@1260s OHLCV { symbol: "BTC/USD", open: 44600.00, high: 44700.00, low: 44450.00, close: 44550.00, volume: 7100, timeframe: "1h", ts: 76600 }
+@1320s OHLCV { symbol: "BTC/USD", open: 44700.00, high: 44800.00, low: 44600.00, close: 44700.00, volume: 7200, timeframe: "1h", ts: 80200 }
+@1380s OHLCV { symbol: "BTC/USD", open: 44800.00, high: 44950.00, low: 44700.00, close: 44850.00, volume: 7300, timeframe: "1h", ts: 83800 }
+@1440s OHLCV { symbol: "BTC/USD", open: 44900.00, high: 45100.00, low: 44800.00, close: 45000.00, volume: 7400, timeframe: "1h", ts: 87400 }
+@1500s OHLCV { symbol: "BTC/USD", open: 45000.00, high: 45100.00, low: 44800.00, close: 44900.00, volume: 7500, timeframe: "1h", ts: 91000 }
+@1560s OHLCV { symbol: "BTC/USD", open: 45100.00, high: 45200.00, low: 44950.00, close: 45050.00, volume: 7600, timeframe: "1h", ts: 94600 }
+@1620s OHLCV { symbol: "BTC/USD", open: 45200.00, high: 45300.00, low: 45100.00, close: 45200.00, volume: 7700, timeframe: "1h", ts: 98200 }
+@1680s OHLCV { symbol: "BTC/USD", open: 45300.00, high: 45450.00, low: 45200.00, close: 45350.00, volume: 7800, timeframe: "1h", ts: 101800 }
+@1740s OHLCV { symbol: "BTC/USD", open: 45400.00, high: 45600.00, low: 45300.00, close: 45500.00, volume: 7900, timeframe: "1h", ts: 105400 }
+@0s OHLCV { symbol: "ETH/USD", open: 2750.00, high: 2760.00, low: 2730.00, close: 2740.00, volume: 10000, timeframe: "1h", ts: 1000 }
+@60s OHLCV { symbol: "ETH/USD", open: 2760.00, high: 2770.00, low: 2745.00, close: 2755.00, volume: 10200, timeframe: "1h", ts: 4600 }
+@120s OHLCV { symbol: "ETH/USD", open: 2770.00, high: 2780.00, low: 2760.00, close: 2770.00, volume: 10400, timeframe: "1h", ts: 8200 }
+@180s OHLCV { symbol: "ETH/USD", open: 2780.00, high: 2795.00, low: 2770.00, close: 2785.00, volume: 10600, timeframe: "1h", ts: 11800 }
+@240s OHLCV { symbol: "ETH/USD", open: 2790.00, high: 2810.00, low: 2780.00, close: 2800.00, volume: 10800, timeframe: "1h", ts: 15400 }
+@300s OHLCV { symbol: "ETH/USD", open: 2800.00, high: 2810.00, low: 2780.00, close: 2790.00, volume: 11000, timeframe: "1h", ts: 19000 }
+@360s OHLCV { symbol: "ETH/USD", open: 2810.00, high: 2820.00, low: 2795.00, close: 2805.00, volume: 11200, timeframe: "1h", ts: 22600 }
+@420s OHLCV { symbol: "ETH/USD", open: 2820.00, high: 2830.00, low: 2810.00, close: 2820.00, volume: 11400, timeframe: "1h", ts: 26200 }
+@480s OHLCV { symbol: "ETH/USD", open: 2830.00, high: 2845.00, low: 2820.00, close: 2835.00, volume: 11600, timeframe: "1h", ts: 29800 }
+@540s OHLCV { symbol: "ETH/USD", open: 2840.00, high: 2860.00, low: 2830.00, close: 2850.00, volume: 11800, timeframe: "1h", ts: 33400 }
+@600s OHLCV { symbol: "ETH/USD", open: 2750.00, high: 2760.00, low: 2730.00, close: 2740.00, volume: 12000, timeframe: "1h", ts: 37000 }
+@660s OHLCV { symbol: "ETH/USD", open: 2760.00, high: 2770.00, low: 2745.00, close: 2755.00, volume: 12200, timeframe: "1h", ts: 40600 }
+@720s OHLCV { symbol: "ETH/USD", open: 2770.00, high: 2780.00, low: 2760.00, close: 2770.00, volume: 12400, timeframe: "1h", ts: 44200 }
+@780s OHLCV { symbol: "ETH/USD", open: 2780.00, high: 2795.00, low: 2770.00, close: 2785.00, volume: 12600, timeframe: "1h", ts: 47800 }
+@840s OHLCV { symbol: "ETH/USD", open: 2790.00, high: 2810.00, low: 2780.00, close: 2800.00, volume: 12800, timeframe: "1h", ts: 51400 }
+@900s OHLCV { symbol: "ETH/USD", open: 2800.00, high: 2810.00, low: 2780.00, close: 2790.00, volume: 13000, timeframe: "1h", ts: 55000 }
+@960s OHLCV { symbol: "ETH/USD", open: 2810.00, high: 2820.00, low: 2795.00, close: 2805.00, volume: 13200, timeframe: "1h", ts: 58600 }
+@1020s OHLCV { symbol: "ETH/USD", open: 2820.00, high: 2830.00, low: 2810.00, close: 2820.00, volume: 13400, timeframe: "1h", ts: 62200 }
+@1080s OHLCV { symbol: "ETH/USD", open: 2830.00, high: 2845.00, low: 2820.00, close: 2835.00, volume: 13600, timeframe: "1h", ts: 65800 }
+@1140s OHLCV { symbol: "ETH/USD", open: 2840.00, high: 2860.00, low: 2830.00, close: 2850.00, volume: 13800, timeframe: "1h", ts: 69400 }
+@1200s OHLCV { symbol: "ETH/USD", open: 2750.00, high: 2760.00, low: 2730.00, close: 2740.00, volume: 14000, timeframe: "1h", ts: 73000 }
+@1260s OHLCV { symbol: "ETH/USD", open: 2760.00, high: 2770.00, low: 2745.00, close: 2755.00, volume: 14200, timeframe: "1h", ts: 76600 }
+@1320s OHLCV { symbol: "ETH/USD", open: 2770.00, high: 2780.00, low: 2760.00, close: 2770.00, volume: 14400, timeframe: "1h", ts: 80200 }
+@1380s OHLCV { symbol: "ETH/USD", open: 2780.00, high: 2795.00, low: 2770.00, close: 2785.00, volume: 14600, timeframe: "1h", ts: 83800 }
+@1440s OHLCV { symbol: "ETH/USD", open: 2790.00, high: 2810.00, low: 2780.00, close: 2800.00, volume: 14800, timeframe: "1h", ts: 87400 }
+@1500s OHLCV { symbol: "ETH/USD", open: 2800.00, high: 2810.00, low: 2780.00, close: 2790.00, volume: 15000, timeframe: "1h", ts: 91000 }
+@1560s OHLCV { symbol: "ETH/USD", open: 2810.00, high: 2820.00, low: 2795.00, close: 2805.00, volume: 15200, timeframe: "1h", ts: 94600 }
+@1620s OHLCV { symbol: "ETH/USD", open: 2820.00, high: 2830.00, low: 2810.00, close: 2820.00, volume: 15400, timeframe: "1h", ts: 98200 }
+@1680s OHLCV { symbol: "ETH/USD", open: 2830.00, high: 2845.00, low: 2820.00, close: 2835.00, volume: 15600, timeframe: "1h", ts: 101800 }
+@1740s OHLCV { symbol: "ETH/USD", open: 2840.00, high: 2860.00, low: 2830.00, close: 2850.00, volume: 15800, timeframe: "1h", ts: 105400 }

@@ -25,7 +25,7 @@ fn calculate_score(value: float, weight: float) -> float:
 
 # Function for validation
 fn is_valid_order(amount: float, status: str) -> bool:
-    amount > 0 && status != "cancelled"
+    amount > 0 and status != "cancelled"
 
 # Function for formatting
 fn format_alert(event_type: str, message: str) -> str:
@@ -73,7 +73,7 @@ stream ValidatedOrders = Order as order
 # - ema(field, n)  : Exponential moving average (period n)
 
 stream Statistics = SensorReading
-    .window(duration: 5m)
+    .window(5m)
     .aggregate(
         total: sum(value),
         average: avg(value),

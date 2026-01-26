@@ -1,0 +1,14 @@
+# Exact SASE Test Scenarios
+
+# User1: Login then $15K transaction -> should trigger large_transaction_after_login
+@0s Login { user_id: "test_user_1", ip_address: "1.1.1.1", country: "US" }
+@1s Transaction { user_id: "test_user_1", amount: 15000.0, category: "wire" }
+
+# User2: Full session -> should trigger session_complete
+@5s Login { user_id: "test_user_2", ip_address: "2.2.2.2", country: "FR" }
+@6s Transaction { user_id: "test_user_2", amount: 100.0, category: "purchase" }
+@7s Logout { user_id: "test_user_2" }
+
+# User3: Impossible travel US -> CN -> should trigger impossible_travel
+@10s Login { user_id: "test_user_3", ip_address: "3.3.3.3", country: "US" }
+@11s Login { user_id: "test_user_3", ip_address: "4.4.4.4", country: "CN" }
