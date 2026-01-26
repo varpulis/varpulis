@@ -34,3 +34,7 @@ tests/e2e/test-output/
 tests/e2e/reports/
 tests/e2e/playwright-report/
 tests/e2e/.playwright/
+
+# Demos
+demos/varpulis-demos/node_modules/
+demos/varpulis-demos/dist/
