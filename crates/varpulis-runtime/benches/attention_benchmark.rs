@@ -257,11 +257,70 @@ fn bench_embedding_cache(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark HNSW vs linear scan
+fn bench_hnsw_vs_linear(c: &mut Criterion) {
+    let mut group = c.benchmark_group("hnsw_vs_linear");
+    group.sample_size(20);
+
+    for history_size in [200, 500, 1000, 2000] {
+        let events = generate_events(history_size + 1);
+        let config = AttentionConfig {
+            max_history: history_size,
+            ..Default::default()
+        };
+
+        // With HNSW
+        group.bench_with_input(
+            BenchmarkId::new("hnsw", history_size),
+            &history_size,
+            |b, _| {
+                b.iter_batched(
+                    || {
+                        let mut engine = AttentionEngine::new(config.clone());
+                        for event in events.iter().take(history_size) {
+                            engine.add_event(event.clone());
+                        }
+                        (engine, events[history_size].clone())
+                    },
+                    |(mut engine, query)| {
+                        engine.compute_attention(black_box(&query))
+                    },
+                    criterion::BatchSize::SmallInput,
+                )
+            },
+        );
+
+        // Without HNSW (linear scan)
+        group.bench_with_input(
+            BenchmarkId::new("linear", history_size),
+            &history_size,
+            |b, _| {
+                b.iter_batched(
+                    || {
+                        let mut engine = AttentionEngine::new_without_hnsw(config.clone());
+                        for event in events.iter().take(history_size) {
+                            engine.add_event(event.clone());
+                        }
+                        (engine, events[history_size].clone())
+                    },
+                    |(mut engine, query)| {
+                        engine.compute_attention(black_box(&query))
+                    },
+                    criterion::BatchSize::SmallInput,
+                )
+            },
+        );
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_attention_single,
     bench_attention_batch,
     bench_single_vs_batch,
+    bench_hnsw_vs_linear,
     bench_attention_scalability,
     bench_embedding_cache,
 );

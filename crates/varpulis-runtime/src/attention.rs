@@ -7,9 +7,11 @@
 //! - Embeddings are rule-based or loaded from pre-trained models
 
 use crate::event::Event;
+use hnsw_rs::prelude::*;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use varpulis_core::Value;
 
@@ -447,6 +449,8 @@ pub struct AttentionEngine {
     embedding_engine: EmbeddingEngine,
     cache: EmbeddingCache,
     history: Vec<(Event, Vec<f32>)>,
+    // HNSW index for O(log n) nearest neighbor search
+    hnsw_index: Option<HnswIndex>,
     computations: u64,
     total_events_processed: u64,
     // Performance metrics
@@ -455,8 +459,87 @@ pub struct AttentionEngine {
     total_ops: u64,
 }
 
+/// HNSW index wrapper for approximate nearest neighbor search
+struct HnswIndex {
+    hnsw: Hnsw<'static, f32, DistL2>,
+    /// Threshold for using HNSW (only use when history > threshold)
+    min_size: usize,
+    /// Number of neighbors to retrieve
+    ef_search: usize,
+    /// Max neighbors per layer
+    max_nb_connection: usize,
+}
+
+impl HnswIndex {
+    fn new(dim: usize, max_elements: usize) -> Self {
+        let max_nb_connection = 16;
+        let ef_construction = 200;
+        let hnsw = Hnsw::new(
+            max_nb_connection,
+            max_elements,
+            16, // max_layer
+            ef_construction,
+            DistL2,
+        );
+        Self {
+            hnsw,
+            min_size: 100, // Only use HNSW when history > 100
+            ef_search: 50, // Retrieve top 50 neighbors
+            max_nb_connection,
+        }
+    }
+
+    fn insert(&mut self, embedding: &[f32], id: usize) {
+        self.hnsw.insert((&embedding.to_vec(), id));
+    }
+
+    fn search(&self, query: &[f32], k: usize) -> Vec<(usize, f32)> {
+        let neighbors = self.hnsw.search(query, k, self.ef_search);
+        neighbors.into_iter().map(|n| (n.d_id, n.distance)).collect()
+    }
+
+    fn rebuild(&mut self, embeddings: &[(usize, Vec<f32>)]) {
+        // Create new HNSW with current data
+        let max_elements = embeddings.len().max(1000);
+        self.hnsw = Hnsw::new(
+            self.max_nb_connection,
+            max_elements,
+            16,
+            200,
+            DistL2,
+        );
+        for (id, emb) in embeddings {
+            self.hnsw.insert((&emb.clone(), *id));
+        }
+    }
+}
+
 impl AttentionEngine {
     pub fn new(config: AttentionConfig) -> Self {
+        let embedding_engine = EmbeddingEngine::new(
+            config.embedding_config.clone(),
+            config.embedding_dim,
+            config.num_heads,
+        );
+        let cache = EmbeddingCache::new(config.cache_config.clone());
+        // Initialize HNSW index
+        let hnsw_index = Some(HnswIndex::new(config.embedding_dim, config.max_history));
+        Self {
+            config,
+            embedding_engine,
+            cache,
+            history: Vec::new(),
+            hnsw_index,
+            computations: 0,
+            total_events_processed: 0,
+            total_compute_time_us: 0,
+            max_compute_time_us: 0,
+            total_ops: 0,
+        }
+    }
+
+    /// Create engine without HNSW (for comparison benchmarks)
+    pub fn new_without_hnsw(config: AttentionConfig) -> Self {
         let embedding_engine = EmbeddingEngine::new(
             config.embedding_config.clone(),
             config.embedding_dim,
@@ -468,6 +551,7 @@ impl AttentionEngine {
             embedding_engine,
             cache,
             history: Vec::new(),
+            hnsw_index: None,
             computations: 0,
             total_events_processed: 0,
             total_compute_time_us: 0,
@@ -483,10 +567,28 @@ impl AttentionEngine {
             self.cache.insert(event_hash, emb.clone());
             emb
         });
-        self.history.push((event, embedding));
+        
+        // Add to HNSW index
+        let idx = self.history.len();
+        if let Some(ref mut hnsw) = self.hnsw_index {
+            hnsw.insert(&embedding, idx);
+        }
+        
+        self.history.push((event, embedding.clone()));
         self.total_events_processed += 1;
-        while self.history.len() > self.config.max_history {
+        
+        // Handle history overflow - need to rebuild HNSW index
+        if self.history.len() > self.config.max_history {
             self.history.remove(0);
+            // Rebuild HNSW with new indices
+            if let Some(ref mut hnsw) = self.hnsw_index {
+                let embeddings: Vec<(usize, Vec<f32>)> = self.history
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (_, emb))| (i, emb.clone()))
+                    .collect();
+                hnsw.rebuild(&embeddings);
+            }
         }
     }
 
@@ -509,16 +611,34 @@ impl AttentionEngine {
         }
 
         let head_dim = self.config.embedding_dim / self.config.num_heads;
-        let mut all_scores = Vec::with_capacity(self.history.len());
+        
+        // Use HNSW for large history, otherwise linear scan
+        let candidates: Vec<usize> = if let Some(ref hnsw) = self.hnsw_index {
+            if self.history.len() > hnsw.min_size {
+                // HNSW search: O(log n) instead of O(n)
+                let k = hnsw.ef_search.min(self.history.len());
+                hnsw.search(&current_embedding, k)
+                    .into_iter()
+                    .map(|(idx, _)| idx)
+                    .filter(|&idx| idx < self.history.len())
+                    .collect()
+            } else {
+                (0..self.history.len()).collect()
+            }
+        } else {
+            (0..self.history.len()).collect()
+        };
 
-        for (hist_event, hist_embedding) in &self.history {
+        let mut all_scores = Vec::with_capacity(candidates.len());
+        let ops_count = candidates.len();
+
+        for idx in candidates {
+            let (hist_event, hist_embedding) = &self.history[idx];
             let mut total = 0.0f32;
             for head in 0..self.config.num_heads {
-                let q =
-                    self.embedding_engine
-                        .project(&current_embedding, head, ProjectionType::Query);
-                let k = self
-                    .embedding_engine
+                let q = self.embedding_engine
+                    .project(&current_embedding, head, ProjectionType::Query);
+                let k = self.embedding_engine
                     .project(hist_embedding, head, ProjectionType::Key);
                 total += self.dot_product(&q, &k) / (head_dim as f32).sqrt();
             }
@@ -541,8 +661,8 @@ impl AttentionEngine {
         let elapsed_us = start.elapsed().as_micros() as u64;
         self.total_compute_time_us += elapsed_us;
         self.max_compute_time_us = self.max_compute_time_us.max(elapsed_us);
-        // ops = history_size * num_heads * embedding_dim (projections + dot products)
-        self.total_ops += (self.history.len() as u64)
+        // ops = candidates * num_heads * embedding_dim (projections + dot products)
+        self.total_ops += (ops_count as u64)
             * (self.config.num_heads as u64)
             * (self.config.embedding_dim as u64)
             * 3;
