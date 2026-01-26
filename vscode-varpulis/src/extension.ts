@@ -35,6 +35,14 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.window.registerTreeDataProvider('varpulis.alerts', alertsProvider);
     vscode.window.registerTreeDataProvider('varpulis.metrics', metricsProvider);
 
+    // Register Flow Editor
+    context.subscriptions.push(FlowEditorProvider.register(context));
+    context.subscriptions.push(
+        vscode.commands.registerCommand('varpulis.openFlowEditor', () => {
+            FlowEditorPanel.createOrShow(context.extensionUri);
+        })
+    );
+
     // Register commands
     context.subscriptions.push(
         vscode.commands.registerCommand('varpulis.startEngine', () => startEngine(streamsProvider, eventsProvider, alertsProvider, metricsProvider)),

@@ -1,0 +1,33 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --vscode-editor-background: #1e1e1e;
+  --vscode-editor-foreground: #d4d4d4;
+  --vscode-panel-border: #444;
+  --vscode-focusBorder: #007acc;
+  --vscode-button-background: #0e639c;
+  --vscode-input-background: #3c3c3c;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--vscode-editor-background);
+  color: var(--vscode-editor-foreground);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.react-flow__node {
+  font-size: 12px;
+}
+
+.react-flow__handle {
+  width: 10px;
+  height: 10px;
+}
+
+.react-flow__edge-path {
+  stroke-width: 2;
+}
