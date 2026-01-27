@@ -34,6 +34,7 @@ fn generate_events(count: usize, event_types: &[&str]) -> Vec<Event> {
 }
 
 /// Generate events with specific user distribution for partition tests
+#[allow(dead_code)]
 fn generate_partitioned_events(count: usize, users: usize, event_types: &[&str]) -> Vec<Event> {
     let mut events = Vec::with_capacity(count);
     for i in 0..count {

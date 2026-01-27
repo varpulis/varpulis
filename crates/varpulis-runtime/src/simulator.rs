@@ -341,6 +341,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::field_reassign_with_default)]
     async fn test_simulator_with_degradation() {
         let (tx, _rx) = mpsc::channel(100);
         let mut config = SimulatorConfig::default();

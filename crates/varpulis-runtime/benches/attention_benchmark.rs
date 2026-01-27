@@ -17,7 +17,7 @@ use varpulis_runtime::event::Event;
 fn generate_events(count: usize) -> Vec<Event> {
     (0..count)
         .map(|i| {
-            Event::new(&format!("Event{}", i % 10))
+            Event::new(format!("Event{}", i % 10))
                 .with_field("id", i as i64)
                 .with_field("value", (i * 17 % 1000) as i64)
                 .with_field("user_id", format!("user_{}", i % 50))

@@ -600,12 +600,12 @@ mod tests {
     #[test]
     fn test_parse_negative_numbers() {
         let source = r#"
-            Data { temp: -15, delta: -3.14 }
+            Data { temp: -15, delta: -2.5 }
         "#;
 
         let events = EventFileParser::parse(source).unwrap();
         assert_eq!(events[0].event.get("temp"), Some(&Value::Int(-15)));
-        assert_eq!(events[0].event.get("delta"), Some(&Value::Float(-3.14)));
+        assert_eq!(events[0].event.get("delta"), Some(&Value::Float(-2.5)));
     }
 
     #[test]

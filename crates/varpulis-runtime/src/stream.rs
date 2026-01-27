@@ -64,7 +64,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stream_channel() {
-        let (sender, mut stream) = channel("test_stream", 10);
+        let (sender, stream) = channel("test_stream", 10);
 
         assert_eq!(sender.name, "test_stream");
         assert_eq!(stream.name, "test_stream");

@@ -895,7 +895,7 @@ mod tests {
         // Second tick - should also match
         let tick2 = create_event("StockTick", vec![("price", Value::Float(101.0))]);
         let matches2 = engine.process(&tick2);
-        assert!(matches2.len() >= 1); // May have multiple due to cloning
+        assert!(!matches2.is_empty()); // May have multiple due to cloning
     }
 
     #[test]
@@ -915,12 +915,12 @@ mod tests {
 
         // C arrives before B - should fail the pattern
         let c = create_event("C", vec![]);
-        let matches_c = engine.process(&c);
+        let _matches_c = engine.process(&c);
         // The 'not' branch should now have failed
 
         // B arrives - pattern should not complete because C arrived
         let b = create_event("B", vec![]);
-        let matches_b = engine.process(&b);
+        let _matches_b = engine.process(&b);
         // This test is complex - the exact behavior depends on implementation details
     }
 

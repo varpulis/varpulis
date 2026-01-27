@@ -4,6 +4,8 @@
 //!
 //! REGRESSION: These tests ensure the alert channel remains open during event processing.
 
+#![allow(clippy::redundant_pattern_matching)]
+
 use tokio::sync::mpsc;
 use varpulis_parser::parse;
 use varpulis_runtime::engine::{Alert, Engine};
@@ -462,7 +464,7 @@ async fn test_regression_event_field_types() {
     event.data.insert("int_field".to_string(), Value::Int(42));
     event
         .data
-        .insert("float_field".to_string(), Value::Float(3.14));
+        .insert("float_field".to_string(), Value::Float(2.5));
     event
         .data
         .insert("bool_field".to_string(), Value::Bool(true));
