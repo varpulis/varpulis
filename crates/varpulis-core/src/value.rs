@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::time::Duration;
 
 /// Runtime value
@@ -177,6 +178,48 @@ impl From<&str> for Value {
         Value::Str(s.to_string())
     }
 }
+
+impl Hash for Value {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // Hash discriminant first to distinguish variants
+        std::mem::discriminant(self).hash(state);
+        match self {
+            Value::Null => {}
+            Value::Bool(b) => b.hash(state),
+            Value::Int(n) => n.hash(state),
+            Value::Float(f) => {
+                // Use bit representation for f64 hashing
+                // Normalize -0.0 to 0.0 and handle NaN consistently
+                let bits = if f.is_nan() {
+                    f64::NAN.to_bits()
+                } else if *f == 0.0 {
+                    0u64
+                } else {
+                    f.to_bits()
+                };
+                bits.hash(state);
+            }
+            Value::Str(s) => s.hash(state),
+            Value::Timestamp(ts) => ts.hash(state),
+            Value::Duration(d) => d.hash(state),
+            Value::Array(arr) => {
+                arr.len().hash(state);
+                for v in arr {
+                    v.hash(state);
+                }
+            }
+            Value::Map(map) => {
+                map.len().hash(state);
+                for (k, v) in map {
+                    k.hash(state);
+                    v.hash(state);
+                }
+            }
+        }
+    }
+}
+
+impl Eq for Value {}
 
 impl<T: Into<Value>> From<Vec<T>> for Value {
     fn from(v: Vec<T>) -> Self {
@@ -516,5 +559,104 @@ mod tests {
     fn test_default() {
         let v: Value = Default::default();
         assert_eq!(v, Value::Null);
+    }
+
+    // ==========================================================================
+    // Hash Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_hash_equal_values_same_hash() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        fn hash_value(v: &Value) -> u64 {
+            let mut hasher = DefaultHasher::new();
+            v.hash(&mut hasher);
+            hasher.finish()
+        }
+
+        // Same values should have same hash
+        assert_eq!(hash_value(&Value::Int(42)), hash_value(&Value::Int(42)));
+        assert_eq!(
+            hash_value(&Value::Str("hello".to_string())),
+            hash_value(&Value::Str("hello".to_string()))
+        );
+        assert_eq!(
+            hash_value(&Value::Float(3.14)),
+            hash_value(&Value::Float(3.14))
+        );
+    }
+
+    #[test]
+    fn test_hash_different_values_different_hash() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        fn hash_value(v: &Value) -> u64 {
+            let mut hasher = DefaultHasher::new();
+            v.hash(&mut hasher);
+            hasher.finish()
+        }
+
+        // Different values should (likely) have different hash
+        assert_ne!(hash_value(&Value::Int(1)), hash_value(&Value::Int(2)));
+        assert_ne!(
+            hash_value(&Value::Int(0)),
+            hash_value(&Value::Str("0".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_hash_float_zero_normalized() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        fn hash_value(v: &Value) -> u64 {
+            let mut hasher = DefaultHasher::new();
+            v.hash(&mut hasher);
+            hasher.finish()
+        }
+
+        // -0.0 and 0.0 should hash the same
+        assert_eq!(
+            hash_value(&Value::Float(0.0)),
+            hash_value(&Value::Float(-0.0))
+        );
+    }
+
+    #[test]
+    fn test_hash_nan_consistent() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        fn hash_value(v: &Value) -> u64 {
+            let mut hasher = DefaultHasher::new();
+            v.hash(&mut hasher);
+            hasher.finish()
+        }
+
+        // All NaN values should hash the same
+        assert_eq!(
+            hash_value(&Value::Float(f64::NAN)),
+            hash_value(&Value::Float(f64::NAN))
+        );
+    }
+
+    #[test]
+    fn test_hash_in_hashset() {
+        use std::collections::HashSet;
+
+        let mut set = HashSet::new();
+        set.insert(Value::Int(1));
+        set.insert(Value::Int(2));
+        set.insert(Value::Int(1)); // Duplicate
+
+        assert_eq!(set.len(), 2);
+
+        set.insert(Value::Str("hello".to_string()));
+        set.insert(Value::Str("hello".to_string())); // Duplicate
+
+        assert_eq!(set.len(), 3);
     }
 }

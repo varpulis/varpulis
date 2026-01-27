@@ -175,9 +175,8 @@ impl AggregateFunc for CountDistinct {
 
         for event in events {
             if let Some(value) = event.get(field) {
-                // Use string representation for hashing
-                let key = format!("{:?}", value);
-                seen.insert(key);
+                // Use Value's Hash impl directly (no more format! overhead)
+                seen.insert(value.clone());
             }
         }
 
