@@ -141,7 +141,7 @@ fn parse_statement(pair: pest::iterators::Pair<Rule>) -> ParseResult<Spanned<Stm
         Rule::return_stmt => parse_return_stmt(inner)?,
         Rule::break_stmt => Stmt::Break,
         Rule::continue_stmt => Stmt::Continue,
-        Rule::expr_stmt => Stmt::Expr(parse_expr(inner.into_inner().next().unwrap())?),
+        Rule::expr_stmt => Stmt::Expr(parse_expr(inner.into_inner().expect_next("expression")?)?),
         _ => {
             return Err(ParseError::UnexpectedToken {
                 position: span.start,
@@ -156,7 +156,7 @@ fn parse_statement(pair: pest::iterators::Pair<Rule>) -> ParseResult<Spanned<Stm
 
 fn parse_stream_decl(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
     let mut inner = pair.into_inner();
-    let name = inner.next().unwrap().as_str().to_string();
+    let name = inner.expect_next("stream name")?.as_str().to_string();
 
     let mut type_annotation = None;
     let mut source = StreamSource::Ident("".to_string());
@@ -165,7 +165,7 @@ fn parse_stream_decl(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
     for p in inner {
         match p.as_rule() {
             Rule::type_annotation => {
-                type_annotation = Some(parse_type(p.into_inner().next().unwrap())?);
+                type_annotation = Some(parse_type(p.into_inner().expect_next("type")?)?);
             }
             Rule::identifier => {
                 source = StreamSource::From(p.as_str().to_string());
@@ -191,7 +191,7 @@ fn parse_stream_expr(
     pair: pest::iterators::Pair<Rule>,
 ) -> ParseResult<(StreamSource, Vec<StreamOp>)> {
     let mut inner = pair.into_inner();
-    let source = parse_stream_source(inner.next().unwrap())?;
+    let source = parse_stream_source(inner.expect_next("stream source")?)?;
     let mut ops = Vec::new();
 
     for p in inner {
@@ -204,7 +204,7 @@ fn parse_stream_expr(
 }
 
 fn parse_stream_source(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamSource> {
-    let inner = pair.into_inner().next().unwrap();
+    let inner = pair.into_inner().expect_next("stream source type")?;
 
     match inner.as_rule() {
         Rule::merge_source => {
@@ -230,19 +230,20 @@ fn parse_stream_source(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamS
             Ok(StreamSource::Join(clauses))
         }
         Rule::sequence_source => {
-            let decl = parse_sequence_decl(inner.into_inner().next().unwrap())?;
+            let decl =
+                parse_sequence_decl(inner.into_inner().expect_next("sequence declaration")?)?;
             Ok(StreamSource::Sequence(decl))
         }
         Rule::all_source => {
             let mut inner_iter = inner.into_inner();
-            let name = inner_iter.next().unwrap().as_str().to_string();
+            let name = inner_iter.expect_next("event name")?.as_str().to_string();
             let alias = inner_iter.next().map(|p| p.as_str().to_string());
             Ok(StreamSource::AllWithAlias { name, alias })
         }
         Rule::aliased_source => {
             let mut inner_iter = inner.into_inner();
-            let name = inner_iter.next().unwrap().as_str().to_string();
-            let alias = inner_iter.next().unwrap().as_str().to_string();
+            let name = inner_iter.expect_next("event name")?.as_str().to_string();
+            let alias = inner_iter.expect_next("alias")?.as_str().to_string();
             Ok(StreamSource::IdentWithAlias { name, alias })
         }
         Rule::identifier => Ok(StreamSource::Ident(inner.as_str().to_string())),
@@ -258,7 +259,7 @@ fn parse_inline_stream(pair: pest::iterators::Pair<Rule>) -> ParseResult<InlineS
     let mut inner = pair.into_inner();
 
     // Check if it's a simple identifier or full declaration
-    let first = inner.next().unwrap();
+    let first = inner.expect_next("stream identifier")?;
     if first.as_rule() == Rule::identifier && inner.clone().next().is_none() {
         let name = first.as_str().to_string();
         return Ok(InlineStreamDecl {
@@ -269,7 +270,7 @@ fn parse_inline_stream(pair: pest::iterators::Pair<Rule>) -> ParseResult<InlineS
     }
 
     let name = first.as_str().to_string();
-    let source = inner.next().unwrap().as_str().to_string();
+    let source = inner.expect_next("stream source")?.as_str().to_string();
     let filter = inner.next().map(|p| parse_expr(p)).transpose()?;
 
     Ok(InlineStreamDecl {
@@ -282,7 +283,7 @@ fn parse_inline_stream(pair: pest::iterators::Pair<Rule>) -> ParseResult<InlineS
 fn parse_join_clause(pair: pest::iterators::Pair<Rule>) -> ParseResult<JoinClause> {
     let mut inner = pair.into_inner();
 
-    let first = inner.next().unwrap();
+    let first = inner.expect_next("join clause identifier")?;
     if first.as_rule() == Rule::identifier && inner.clone().next().is_none() {
         let name = first.as_str().to_string();
         return Ok(JoinClause {
@@ -293,7 +294,7 @@ fn parse_join_clause(pair: pest::iterators::Pair<Rule>) -> ParseResult<JoinClaus
     }
 
     let name = first.as_str().to_string();
-    let source = inner.next().unwrap().as_str().to_string();
+    let source = inner.expect_next("join source")?.as_str().to_string();
     let on = inner.next().map(|p| parse_expr(p)).transpose()?;
 
     Ok(JoinClause { name, source, on })
@@ -317,8 +318,8 @@ fn parse_sequence_decl(pair: pest::iterators::Pair<Rule>) -> ParseResult<Sequenc
 
 fn parse_sequence_step(pair: pest::iterators::Pair<Rule>) -> ParseResult<SequenceStepDecl> {
     let mut inner = pair.into_inner();
-    let alias = inner.next().unwrap().as_str().to_string();
-    let event_type = inner.next().unwrap().as_str().to_string();
+    let alias = inner.expect_next("step alias")?.as_str().to_string();
+    let event_type = inner.expect_next("event type")?.as_str().to_string();
 
     let mut filter = None;
     let mut timeout = None;
@@ -327,7 +328,7 @@ fn parse_sequence_step(pair: pest::iterators::Pair<Rule>) -> ParseResult<Sequenc
         match p.as_rule() {
             Rule::or_expr => filter = Some(parse_expr(p)?),
             Rule::within_suffix => {
-                let expr = p.into_inner().next().unwrap();
+                let expr = p.into_inner().expect_next("within duration")?;
                 timeout = Some(Box::new(parse_expr(expr)?));
             }
             _ => {}
@@ -343,11 +344,11 @@ fn parse_sequence_step(pair: pest::iterators::Pair<Rule>) -> ParseResult<Sequenc
 }
 
 fn parse_stream_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
-    let inner = pair.into_inner().next().unwrap();
+    let inner = pair.into_inner().expect_next("stream operation")?;
 
     match inner.as_rule() {
         Rule::dot_op => {
-            let op_inner = inner.into_inner().next().unwrap();
+            let op_inner = inner.into_inner().expect_next("dot operation")?;
             parse_dot_op(op_inner)
         }
         Rule::followed_by_op => parse_followed_by_op(inner),
@@ -362,7 +363,7 @@ fn parse_stream_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
 fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
     match pair.as_rule() {
         Rule::where_op => {
-            let expr = parse_expr(pair.into_inner().next().unwrap())?;
+            let expr = parse_expr(pair.into_inner().expect_next("where expression")?)?;
             Ok(StreamOp::Where(expr))
         }
         Rule::select_op => {
@@ -377,7 +378,7 @@ fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
             Ok(StreamOp::Select(items))
         }
         Rule::window_op => {
-            let args = parse_window_args(pair.into_inner().next().unwrap())?;
+            let args = parse_window_args(pair.into_inner().expect_next("window arguments")?)?;
             Ok(StreamOp::Window(args))
         }
         Rule::aggregate_op => {
@@ -392,15 +393,15 @@ fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
             Ok(StreamOp::Aggregate(items))
         }
         Rule::map_op => {
-            let expr = parse_expr(pair.into_inner().next().unwrap())?;
+            let expr = parse_expr(pair.into_inner().expect_next("map expression")?)?;
             Ok(StreamOp::Map(expr))
         }
         Rule::filter_op => {
-            let expr = parse_expr(pair.into_inner().next().unwrap())?;
+            let expr = parse_expr(pair.into_inner().expect_next("filter expression")?)?;
             Ok(StreamOp::Filter(expr))
         }
         Rule::within_op => {
-            let expr = parse_expr(pair.into_inner().next().unwrap())?;
+            let expr = parse_expr(pair.into_inner().expect_next("within duration")?)?;
             Ok(StreamOp::Within(expr))
         }
         Rule::emit_op => {
@@ -423,13 +424,13 @@ fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
         }
         Rule::collect_op => Ok(StreamOp::Collect),
         Rule::pattern_op => {
-            let def_pair = pair.into_inner().next().unwrap();
+            let def_pair = pair.into_inner().expect_next("pattern definition")?;
             let mut inner = def_pair.into_inner();
-            let name = inner.next().unwrap().as_str().to_string();
-            let body_pair = inner.next().unwrap();
+            let name = inner.expect_next("pattern name")?.as_str().to_string();
+            let body_pair = inner.expect_next("pattern body")?;
 
             // pattern_body can be lambda_expr or pattern_or_expr
-            let body_inner = body_pair.into_inner().next().unwrap();
+            let body_inner = body_pair.into_inner().expect_next("pattern expression")?;
             let matcher = match body_inner.as_rule() {
                 Rule::lambda_expr => parse_lambda_expr(body_inner)?,
                 Rule::pattern_or_expr => parse_pattern_expr_as_expr(body_inner)?,
@@ -447,7 +448,7 @@ fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
             Ok(StreamOp::AttentionWindow(args))
         }
         Rule::partition_by_op => {
-            let expr = parse_expr(pair.into_inner().next().unwrap())?;
+            let expr = parse_expr(pair.into_inner().expect_next("partition expression")?)?;
             Ok(StreamOp::PartitionBy(expr))
         }
         Rule::order_by_op => {
@@ -462,7 +463,7 @@ fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
             Ok(StreamOp::OrderBy(items))
         }
         Rule::limit_op => {
-            let expr = parse_expr(pair.into_inner().next().unwrap())?;
+            let expr = parse_expr(pair.into_inner().expect_next("limit expression")?)?;
             Ok(StreamOp::Limit(expr))
         }
         Rule::distinct_op => {
@@ -488,24 +489,24 @@ fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
             Ok(StreamOp::Log(args))
         }
         Rule::to_op => {
-            let expr = parse_expr(pair.into_inner().next().unwrap())?;
+            let expr = parse_expr(pair.into_inner().expect_next("to expression")?)?;
             Ok(StreamOp::To(expr))
         }
         Rule::process_op => {
-            let expr = parse_expr(pair.into_inner().next().unwrap())?;
+            let expr = parse_expr(pair.into_inner().expect_next("process expression")?)?;
             Ok(StreamOp::Process(expr))
         }
         Rule::on_error_op => {
-            let expr = parse_expr(pair.into_inner().next().unwrap())?;
+            let expr = parse_expr(pair.into_inner().expect_next("on_error handler")?)?;
             Ok(StreamOp::OnError(expr))
         }
         Rule::on_op => {
-            let expr = parse_expr(pair.into_inner().next().unwrap())?;
+            let expr = parse_expr(pair.into_inner().expect_next("on handler")?)?;
             Ok(StreamOp::On(expr))
         }
         Rule::not_op => {
             let mut inner = pair.into_inner();
-            let event_type = inner.next().unwrap().as_str().to_string();
+            let event_type = inner.expect_next("event type")?.as_str().to_string();
             let filter = inner.next().map(parse_expr).transpose()?;
             Ok(StreamOp::Not(FollowedByClause {
                 event_type,
@@ -553,7 +554,7 @@ fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
 
 fn parse_order_item(pair: pest::iterators::Pair<Rule>) -> ParseResult<OrderItem> {
     let mut inner = pair.into_inner();
-    let expr = parse_expr(inner.next().unwrap())?;
+    let expr = parse_expr(inner.expect_next("order expression")?)?;
     let desc = inner.next().map(|p| p.as_str() == "desc").unwrap_or(false);
     Ok(OrderItem {
         expr,
@@ -563,7 +564,7 @@ fn parse_order_item(pair: pest::iterators::Pair<Rule>) -> ParseResult<OrderItem>
 
 fn parse_fork_path(pair: pest::iterators::Pair<Rule>) -> ParseResult<ForkPath> {
     let mut inner = pair.into_inner();
-    let name = inner.next().unwrap().as_str().to_string();
+    let name = inner.expect_next("fork path name")?.as_str().to_string();
     let mut ops = Vec::new();
     for p in inner {
         if p.as_rule() == Rule::stream_op {
@@ -577,10 +578,10 @@ fn parse_followed_by_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stream
     let mut inner = pair.into_inner();
     let mut match_all = false;
 
-    let first = inner.next().unwrap();
+    let first = inner.expect_next("event type or match_all")?;
     let event_type = if first.as_rule() == Rule::match_all_keyword {
         match_all = true;
-        inner.next().unwrap().as_str().to_string()
+        inner.expect_next("event type")?.as_str().to_string()
     } else {
         first.as_str().to_string()
     };
@@ -607,7 +608,7 @@ fn parse_followed_by_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stream
 
 fn parse_select_item(pair: pest::iterators::Pair<Rule>) -> ParseResult<SelectItem> {
     let mut inner = pair.into_inner();
-    let first = inner.next().unwrap();
+    let first = inner.expect_next("select field or alias")?;
 
     if let Some(second) = inner.next() {
         Ok(SelectItem::Alias(
@@ -621,7 +622,7 @@ fn parse_select_item(pair: pest::iterators::Pair<Rule>) -> ParseResult<SelectIte
 
 fn parse_window_args(pair: pest::iterators::Pair<Rule>) -> ParseResult<WindowArgs> {
     let mut inner = pair.into_inner();
-    let duration = parse_expr(inner.next().unwrap())?;
+    let duration = parse_expr(inner.expect_next("window duration")?)?;
 
     let mut sliding = None;
     let mut policy = None;
@@ -646,21 +647,21 @@ fn parse_window_args(pair: pest::iterators::Pair<Rule>) -> ParseResult<WindowArg
 
 fn parse_agg_item(pair: pest::iterators::Pair<Rule>) -> ParseResult<AggItem> {
     let mut inner = pair.into_inner();
-    let alias = inner.next().unwrap().as_str().to_string();
-    let expr = parse_expr(inner.next().unwrap())?;
+    let alias = inner.expect_next("aggregate alias")?.as_str().to_string();
+    let expr = parse_expr(inner.expect_next("aggregate expression")?)?;
     Ok(AggItem { alias, expr })
 }
 
 fn parse_named_arg(pair: pest::iterators::Pair<Rule>) -> ParseResult<NamedArg> {
     let mut inner = pair.into_inner();
-    let name = inner.next().unwrap().as_str().to_string();
-    let value = parse_expr(inner.next().unwrap())?;
+    let name = inner.expect_next("argument name")?.as_str().to_string();
+    let value = parse_expr(inner.expect_next("argument value")?)?;
     Ok(NamedArg { name, value })
 }
 
 fn parse_event_decl(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
     let mut inner = pair.into_inner();
-    let name = inner.next().unwrap().as_str().to_string();
+    let name = inner.expect_next("event name")?.as_str().to_string();
 
     let mut extends = None;
     let mut fields = Vec::new();
@@ -682,16 +683,16 @@ fn parse_event_decl(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
 
 fn parse_field(pair: pest::iterators::Pair<Rule>) -> ParseResult<Field> {
     let mut inner = pair.into_inner();
-    let name = inner.next().unwrap().as_str().to_string();
-    let ty = parse_type(inner.next().unwrap())?;
+    let name = inner.expect_next("field name")?.as_str().to_string();
+    let ty = parse_type(inner.expect_next("field type")?)?;
     let optional = inner.next().is_some();
     Ok(Field { name, ty, optional })
 }
 
 fn parse_type_decl(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
     let mut inner = pair.into_inner();
-    let name = inner.next().unwrap().as_str().to_string();
-    let ty = parse_type(inner.next().unwrap())?;
+    let name = inner.expect_next("type name")?.as_str().to_string();
+    let ty = parse_type(inner.expect_next("type definition")?)?;
     Ok(Stmt::TypeDecl { name, ty })
 }
 
@@ -710,7 +711,7 @@ fn parse_type(pair: pest::iterators::Pair<Rule>) -> ParseResult<Type> {
             _ => Ok(Type::Named(inner.as_str().to_string())),
         },
         Rule::array_type => {
-            let inner_type = parse_type(inner.into_inner().next().unwrap())?;
+            let inner_type = parse_type(inner.into_inner().expect_next("array element type")?)?;
             Ok(Type::Array(Box::new(inner_type)))
         }
         Rule::named_type | Rule::identifier => Ok(Type::Named(inner.as_str().to_string())),
@@ -720,15 +721,15 @@ fn parse_type(pair: pest::iterators::Pair<Rule>) -> ParseResult<Type> {
 
 fn parse_var_decl(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
     let mut inner = pair.into_inner();
-    let mutable = inner.next().unwrap().as_str() == "var";
-    let name = inner.next().unwrap().as_str().to_string();
+    let mutable = inner.expect_next("let or var keyword")?.as_str() == "var";
+    let name = inner.expect_next("variable name")?.as_str().to_string();
 
     let mut ty = None;
     let mut value = Expr::Null;
 
     for p in inner {
         match p.as_rule() {
-            Rule::type_annotation => ty = Some(parse_type(p.into_inner().next().unwrap())?),
+            Rule::type_annotation => ty = Some(parse_type(p.into_inner().expect_next("type")?)?),
             _ => value = parse_expr(p)?,
         }
     }
@@ -743,14 +744,14 @@ fn parse_var_decl(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
 
 fn parse_const_decl(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
     let mut inner = pair.into_inner();
-    let name = inner.next().unwrap().as_str().to_string();
+    let name = inner.expect_next("constant name")?.as_str().to_string();
 
     let mut ty = None;
     let mut value = Expr::Null;
 
     for p in inner {
         match p.as_rule() {
-            Rule::type_annotation => ty = Some(parse_type(p.into_inner().next().unwrap())?),
+            Rule::type_annotation => ty = Some(parse_type(p.into_inner().expect_next("type")?)?),
             _ => value = parse_expr(p)?,
         }
     }
@@ -760,7 +761,7 @@ fn parse_const_decl(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
 
 fn parse_fn_decl(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
     let mut inner = pair.into_inner();
-    let name = inner.next().unwrap().as_str().to_string();
+    let name = inner.expect_next("function name")?.as_str().to_string();
 
     let mut params = Vec::new();
     let mut ret = None;
@@ -800,14 +801,14 @@ fn parse_block(pair: pest::iterators::Pair<Rule>) -> ParseResult<Vec<Spanned<Stm
 
 fn parse_param(pair: pest::iterators::Pair<Rule>) -> ParseResult<Param> {
     let mut inner = pair.into_inner();
-    let name = inner.next().unwrap().as_str().to_string();
-    let ty = parse_type(inner.next().unwrap())?;
+    let name = inner.expect_next("parameter name")?.as_str().to_string();
+    let ty = parse_type(inner.expect_next("parameter type")?)?;
     Ok(Param { name, ty })
 }
 
 fn parse_config_block(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
     let mut inner = pair.into_inner();
-    let first = inner.next().unwrap();
+    let first = inner.expect_next("config name or item")?;
 
     // Check if first token is identifier (new syntax) or config_item (old syntax)
     let (name, items_start) = if first.as_rule() == Rule::identifier {
@@ -836,8 +837,8 @@ fn parse_config_block(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
 
 fn parse_config_item(pair: pest::iterators::Pair<Rule>) -> ParseResult<ConfigItem> {
     let mut inner = pair.into_inner();
-    let key = inner.next().unwrap().as_str().to_string();
-    let value = parse_config_value(inner.next().unwrap())?;
+    let key = inner.expect_next("config key")?.as_str().to_string();
+    let value = parse_config_value(inner.expect_next("config value")?)?;
     Ok(ConfigItem::Value(key, value))
 }
 
@@ -861,7 +862,7 @@ fn parse_config_value(pair: pest::iterators::Pair<Rule>) -> ParseResult<ConfigVa
 
 fn parse_import_stmt(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
     let mut inner = pair.into_inner();
-    let path_pair = inner.next().unwrap();
+    let path_pair = inner.expect_next("import path")?;
     let path = path_pair.as_str();
     let path = path[1..path.len() - 1].to_string();
     let alias = inner.next().map(|p| p.as_str().to_string());
@@ -870,7 +871,7 @@ fn parse_import_stmt(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
 
 fn parse_if_stmt(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
     let mut inner = pair.into_inner();
-    let cond = parse_expr(inner.next().unwrap())?;
+    let cond = parse_expr(inner.expect_next("if condition")?)?;
 
     let mut then_branch = Vec::new();
     let mut elif_branches = Vec::new();
@@ -882,7 +883,7 @@ fn parse_if_stmt(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
             Rule::statement => then_branch.push(parse_statement(p)?),
             Rule::elif_clause => {
                 let mut elif_inner = p.into_inner();
-                let elif_cond = parse_expr(elif_inner.next().unwrap())?;
+                let elif_cond = parse_expr(elif_inner.expect_next("elif condition")?)?;
                 let mut elif_body = Vec::new();
                 for ep in elif_inner {
                     match ep.as_rule() {
@@ -918,8 +919,8 @@ fn parse_if_stmt(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
 
 fn parse_for_stmt(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
     let mut inner = pair.into_inner();
-    let var = inner.next().unwrap().as_str().to_string();
-    let iter = parse_expr(inner.next().unwrap())?;
+    let var = inner.expect_next("loop variable")?.as_str().to_string();
+    let iter = parse_expr(inner.expect_next("iterable expression")?)?;
     let mut body = Vec::new();
     for p in inner {
         match p.as_rule() {
@@ -933,7 +934,7 @@ fn parse_for_stmt(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
 
 fn parse_while_stmt(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
     let mut inner = pair.into_inner();
-    let cond = parse_expr(inner.next().unwrap())?;
+    let cond = parse_expr(inner.expect_next("while condition")?)?;
     let mut body = Vec::new();
     for p in inner {
         match p.as_rule() {
@@ -993,7 +994,7 @@ fn parse_lambda_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
     let mut params = Vec::new();
 
     // Parse parameters
-    let first = inner.next().unwrap();
+    let first = inner.expect_next("lambda parameters")?;
     match first.as_rule() {
         Rule::identifier_list => {
             for p in first.into_inner() {
@@ -1007,7 +1008,7 @@ fn parse_lambda_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
     }
 
     // Parse body - could be expression or block
-    let body_pair = inner.next().unwrap();
+    let body_pair = inner.expect_next("lambda body")?;
     let body = match body_pair.as_rule() {
         Rule::lambda_block => parse_lambda_block(body_pair)?,
         _ => parse_expr_inner(body_pair)?,
@@ -1068,7 +1069,7 @@ fn parse_pattern_expr_as_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<
     // Convert pattern_or_expr to an Expr representation
     // pattern_or_expr = pattern_and_expr ~ ("or" ~ pattern_and_expr)*
     let mut inner = pair.into_inner();
-    let mut left = parse_pattern_and_as_expr(inner.next().unwrap())?;
+    let mut left = parse_pattern_and_as_expr(inner.expect_next("pattern expression")?)?;
 
     for right_pair in inner {
         let right = parse_pattern_and_as_expr(right_pair)?;
@@ -1083,7 +1084,7 @@ fn parse_pattern_expr_as_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<
 
 fn parse_pattern_and_as_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
     let mut inner = pair.into_inner();
-    let mut left = parse_pattern_xor_as_expr(inner.next().unwrap())?;
+    let mut left = parse_pattern_xor_as_expr(inner.expect_next("and expression")?)?;
 
     for right_pair in inner {
         let right = parse_pattern_xor_as_expr(right_pair)?;
@@ -1098,7 +1099,7 @@ fn parse_pattern_and_as_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<E
 
 fn parse_pattern_xor_as_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
     let mut inner = pair.into_inner();
-    let mut left = parse_pattern_unary_as_expr(inner.next().unwrap())?;
+    let mut left = parse_pattern_unary_as_expr(inner.expect_next("xor expression")?)?;
 
     for right_pair in inner {
         let right = parse_pattern_unary_as_expr(right_pair)?;
@@ -1113,10 +1114,10 @@ fn parse_pattern_xor_as_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<E
 
 fn parse_pattern_unary_as_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
     let mut inner = pair.into_inner();
-    let first = inner.next().unwrap();
+    let first = inner.expect_next("unary expression or operand")?;
 
     if first.as_str() == "not" {
-        let expr = parse_pattern_primary_as_expr(inner.next().unwrap())?;
+        let expr = parse_pattern_primary_as_expr(inner.expect_next("pattern expression")?)?;
         Ok(Expr::Unary {
             op: UnaryOp::Not,
             expr: Box::new(expr),
@@ -1127,7 +1128,9 @@ fn parse_pattern_unary_as_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult
 }
 
 fn parse_pattern_primary_as_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
-    let inner = pair.into_inner().next().unwrap();
+    let inner = pair
+        .into_inner()
+        .expect_next("pattern primary expression")?;
 
     match inner.as_rule() {
         Rule::pattern_or_expr => parse_pattern_expr_as_expr(inner),
@@ -1140,7 +1143,7 @@ fn parse_pattern_sequence_as_expr(pair: pest::iterators::Pair<Rule>) -> ParseRes
     // pattern_sequence = identifier ~ ("->" ~ identifier)*
     // Convert to a chain of FollowedBy binary operations
     let mut inner = pair.into_inner();
-    let mut left = Expr::Ident(inner.next().unwrap().as_str().to_string());
+    let mut left = Expr::Ident(inner.expect_next("sequence start")?.as_str().to_string());
 
     for right_pair in inner {
         let right = Expr::Ident(right_pair.as_str().to_string());
@@ -1154,13 +1157,13 @@ fn parse_pattern_sequence_as_expr(pair: pest::iterators::Pair<Rule>) -> ParseRes
 }
 
 fn parse_filter_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
-    let inner = pair.into_inner().next().unwrap();
+    let inner = pair.into_inner().expect_next("filter expression")?;
     parse_filter_or_expr(inner)
 }
 
 fn parse_filter_or_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
     let mut inner = pair.into_inner();
-    let mut left = parse_filter_and_expr(inner.next().unwrap())?;
+    let mut left = parse_filter_and_expr(inner.expect_next("or expression operand")?)?;
 
     for right_pair in inner {
         let right = parse_filter_and_expr(right_pair)?;
@@ -1175,7 +1178,7 @@ fn parse_filter_or_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> 
 
 fn parse_filter_and_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
     let mut inner = pair.into_inner();
-    let mut left = parse_filter_not_expr(inner.next().unwrap())?;
+    let mut left = parse_filter_not_expr(inner.expect_next("and expression operand")?)?;
 
     for right_pair in inner {
         let right = parse_filter_not_expr(right_pair)?;
@@ -1190,10 +1193,10 @@ fn parse_filter_and_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr>
 
 fn parse_filter_not_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
     let mut inner = pair.into_inner();
-    let first = inner.next().unwrap();
+    let first = inner.expect_next("not or expression")?;
 
     if first.as_str() == "not" {
-        let expr = parse_filter_comparison_expr(inner.next().unwrap())?;
+        let expr = parse_filter_comparison_expr(inner.expect_next("expression after not")?)?;
         Ok(Expr::Unary {
             op: UnaryOp::Not,
             expr: Box::new(expr),
@@ -1205,7 +1208,7 @@ fn parse_filter_not_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr>
 
 fn parse_filter_comparison_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
     let mut inner = pair.into_inner();
-    let left = parse_filter_additive_expr(inner.next().unwrap())?;
+    let left = parse_filter_additive_expr(inner.expect_next("comparison left operand")?)?;
 
     if let Some(op_pair) = inner.next() {
         let op = match op_pair.as_str() {
@@ -1219,7 +1222,7 @@ fn parse_filter_comparison_expr(pair: pest::iterators::Pair<Rule>) -> ParseResul
             "is" => BinOp::Is,
             _ => BinOp::Eq,
         };
-        let right = parse_filter_additive_expr(inner.next().unwrap())?;
+        let right = parse_filter_additive_expr(inner.expect_next("comparison right operand")?)?;
         Ok(Expr::Binary {
             op,
             left: Box::new(left),
@@ -1232,7 +1235,8 @@ fn parse_filter_comparison_expr(pair: pest::iterators::Pair<Rule>) -> ParseResul
 
 fn parse_filter_additive_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
     let mut inner = pair.into_inner();
-    let mut left = parse_filter_multiplicative_expr(inner.next().unwrap())?;
+    let mut left =
+        parse_filter_multiplicative_expr(inner.expect_next("additive expression operand")?)?;
 
     while let Some(op_pair) = inner.next() {
         let op = if op_pair.as_str() == "-" {
@@ -1254,7 +1258,8 @@ fn parse_filter_additive_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<
 
 fn parse_filter_multiplicative_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
     let mut inner = pair.into_inner();
-    let mut left = parse_filter_unary_expr(inner.next().unwrap())?;
+    let mut left =
+        parse_filter_unary_expr(inner.expect_next("multiplicative expression operand")?)?;
 
     while let Some(op_pair) = inner.next() {
         let op = match op_pair.as_str() {
@@ -1277,16 +1282,16 @@ fn parse_filter_multiplicative_expr(pair: pest::iterators::Pair<Rule>) -> ParseR
 
 fn parse_filter_unary_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
     let mut inner = pair.into_inner();
-    let first = inner.next().unwrap();
+    let first = inner.expect_next("unary operator or expression")?;
 
     if first.as_str() == "-" {
-        let expr = parse_filter_postfix_expr(inner.next().unwrap())?;
+        let expr = parse_filter_postfix_expr(inner.expect_next("expression after negation")?)?;
         Ok(Expr::Unary {
             op: UnaryOp::Neg,
             expr: Box::new(expr),
         })
     } else if first.as_str() == "~" {
-        let expr = parse_filter_postfix_expr(inner.next().unwrap())?;
+        let expr = parse_filter_postfix_expr(inner.expect_next("expression after bitwise not")?)?;
         Ok(Expr::Unary {
             op: UnaryOp::BitNot,
             expr: Box::new(expr),
@@ -1298,7 +1303,7 @@ fn parse_filter_unary_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Exp
 
 fn parse_filter_postfix_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
     let mut inner = pair.into_inner();
-    let mut expr = parse_filter_primary_expr(inner.next().unwrap())?;
+    let mut expr = parse_filter_primary_expr(inner.expect_next("postfix expression base")?)?;
 
     for suffix in inner {
         expr = parse_filter_postfix_suffix(expr, suffix)?;
@@ -1319,14 +1324,18 @@ fn parse_filter_postfix_suffix(expr: Expr, pair: pest::iterators::Pair<Rule>) ->
                 })
             }
             Rule::optional_member_access => {
-                let member = first.into_inner().next().unwrap().as_str().to_string();
+                let member = first
+                    .into_inner()
+                    .expect_next("member name")?
+                    .as_str()
+                    .to_string();
                 Ok(Expr::OptionalMember {
                     expr: Box::new(expr),
                     member,
                 })
             }
             Rule::index_access => {
-                let index = parse_expr(first.into_inner().next().unwrap())?;
+                let index = parse_expr(first.into_inner().expect_next("index expression")?)?;
                 Ok(Expr::Index {
                     expr: Box::new(expr),
                     index: Box::new(index),
@@ -1352,7 +1361,7 @@ fn parse_filter_postfix_suffix(expr: Expr, pair: pest::iterators::Pair<Rule>) ->
 }
 
 fn parse_filter_primary_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
-    let inner = pair.into_inner().next().unwrap();
+    let inner = pair.into_inner().expect_next("filter primary expression")?;
 
     match inner.as_rule() {
         Rule::literal => parse_literal(inner),
@@ -1364,7 +1373,7 @@ fn parse_filter_primary_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<E
 
 fn parse_or_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
     let mut inner = pair.into_inner();
-    let mut left = parse_expr_inner(inner.next().unwrap())?;
+    let mut left = parse_expr_inner(inner.expect_next("or expression operand")?)?;
 
     for right_pair in inner {
         let right = parse_expr_inner(right_pair)?;
@@ -1380,7 +1389,7 @@ fn parse_or_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
 
 fn parse_and_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
     let mut inner = pair.into_inner();
-    let mut left = parse_expr_inner(inner.next().unwrap())?;
+    let mut left = parse_expr_inner(inner.expect_next("and expression operand")?)?;
 
     for right_pair in inner {
         let right = parse_expr_inner(right_pair)?;
@@ -1396,10 +1405,10 @@ fn parse_and_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
 
 fn parse_not_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
     let mut inner = pair.into_inner();
-    let first = inner.next().unwrap();
+    let first = inner.expect_next("not keyword or expression")?;
 
     if first.as_str() == "not" {
-        let expr = parse_expr_inner(inner.next().unwrap())?;
+        let expr = parse_expr_inner(inner.expect_next("expression after not")?)?;
         Ok(Expr::Unary {
             op: UnaryOp::Not,
             expr: Box::new(expr),
@@ -1411,7 +1420,7 @@ fn parse_not_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
 
 fn parse_comparison_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
     let mut inner = pair.into_inner();
-    let left = parse_expr_inner(inner.next().unwrap())?;
+    let left = parse_expr_inner(inner.expect_next("comparison left operand")?)?;
 
     if let Some(op_pair) = inner.next() {
         let op = match op_pair.as_str() {
@@ -1425,7 +1434,7 @@ fn parse_comparison_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr>
             "is" => BinOp::Is,
             _ => BinOp::Eq,
         };
-        let right = parse_expr_inner(inner.next().unwrap())?;
+        let right = parse_expr_inner(inner.expect_next("comparison right operand")?)?;
         Ok(Expr::Binary {
             op,
             left: Box::new(left),
@@ -1450,7 +1459,7 @@ fn parse_bitwise_and_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr
 
 fn parse_shift_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
     let mut inner = pair.into_inner();
-    let mut left = parse_expr_inner(inner.next().unwrap())?;
+    let mut left = parse_expr_inner(inner.expect_next("shift expression operand")?)?;
 
     while let Some(op_or_expr) = inner.next() {
         let op = match op_or_expr.as_str() {
@@ -1481,7 +1490,7 @@ fn parse_shift_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
 
 fn parse_additive_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
     let mut inner = pair.into_inner();
-    let mut left = parse_expr_inner(inner.next().unwrap())?;
+    let mut left = parse_expr_inner(inner.expect_next("additive expression operand")?)?;
 
     while let Some(op_pair) = inner.next() {
         let op_text = op_pair.as_str();
@@ -1506,7 +1515,7 @@ fn parse_additive_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
 
 fn parse_multiplicative_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
     let mut inner = pair.into_inner();
-    let mut left = parse_expr_inner(inner.next().unwrap())?;
+    let mut left = parse_expr_inner(inner.expect_next("multiplicative expression operand")?)?;
 
     while let Some(op_pair) = inner.next() {
         let op_text = op_pair.as_str();
@@ -1532,7 +1541,7 @@ fn parse_multiplicative_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<E
 
 fn parse_power_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
     let mut inner = pair.into_inner();
-    let base = parse_expr_inner(inner.next().unwrap())?;
+    let base = parse_expr_inner(inner.expect_next("power expression base")?)?;
 
     if let Some(exp_pair) = inner.next() {
         let exp = parse_expr_inner(exp_pair)?;
@@ -1548,18 +1557,18 @@ fn parse_power_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
 
 fn parse_unary_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
     let mut inner = pair.into_inner();
-    let first = inner.next().unwrap();
+    let first = inner.expect_next("unary operator or expression")?;
 
     match first.as_str() {
         "-" => {
-            let expr = parse_expr_inner(inner.next().unwrap())?;
+            let expr = parse_expr_inner(inner.expect_next("expression after negation")?)?;
             Ok(Expr::Unary {
                 op: UnaryOp::Neg,
                 expr: Box::new(expr),
             })
         }
         "~" => {
-            let expr = parse_expr_inner(inner.next().unwrap())?;
+            let expr = parse_expr_inner(inner.expect_next("expression after bitwise not")?)?;
             Ok(Expr::Unary {
                 op: UnaryOp::BitNot,
                 expr: Box::new(expr),
@@ -1571,7 +1580,7 @@ fn parse_unary_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
 
 fn parse_postfix_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
     let mut inner = pair.into_inner();
-    let mut expr = parse_expr_inner(inner.next().unwrap())?;
+    let mut expr = parse_expr_inner(inner.expect_next("postfix expression base")?)?;
 
     for suffix in inner {
         expr = parse_postfix_suffix(expr, suffix)?;
@@ -1581,25 +1590,33 @@ fn parse_postfix_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
 }
 
 fn parse_postfix_suffix(expr: Expr, pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
-    let inner = pair.into_inner().next().unwrap();
+    let inner = pair.into_inner().expect_next("postfix suffix")?;
 
     match inner.as_rule() {
         Rule::member_access => {
-            let member = inner.into_inner().next().unwrap().as_str().to_string();
+            let member = inner
+                .into_inner()
+                .expect_next("member name")?
+                .as_str()
+                .to_string();
             Ok(Expr::Member {
                 expr: Box::new(expr),
                 member,
             })
         }
         Rule::optional_member_access => {
-            let member = inner.into_inner().next().unwrap().as_str().to_string();
+            let member = inner
+                .into_inner()
+                .expect_next("member name")?
+                .as_str()
+                .to_string();
             Ok(Expr::OptionalMember {
                 expr: Box::new(expr),
                 member,
             })
         }
         Rule::index_access => {
-            let index = parse_expr(inner.into_inner().next().unwrap())?;
+            let index = parse_expr(inner.into_inner().expect_next("index expression")?)?;
             Ok(Expr::Index {
                 expr: Box::new(expr),
                 index: Box::new(index),
@@ -1625,7 +1642,7 @@ fn parse_postfix_suffix(expr: Expr, pair: pest::iterators::Pair<Rule>) -> ParseR
 
 fn parse_arg(pair: pest::iterators::Pair<Rule>) -> ParseResult<Arg> {
     let mut inner = pair.into_inner();
-    let first = inner.next().unwrap();
+    let first = inner.expect_next("argument")?;
 
     if let Some(second) = inner.next() {
         Ok(Arg::Named(
@@ -1638,7 +1655,7 @@ fn parse_arg(pair: pest::iterators::Pair<Rule>) -> ParseResult<Arg> {
 }
 
 fn parse_primary_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
-    let inner = pair.into_inner().next().unwrap();
+    let inner = pair.into_inner().expect_next("primary expression")?;
 
     match inner.as_rule() {
         Rule::if_expr => parse_if_expr(inner),
@@ -1653,9 +1670,9 @@ fn parse_primary_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
 
 fn parse_if_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
     let mut inner = pair.into_inner();
-    let cond = parse_expr_inner(inner.next().unwrap())?;
-    let then_branch = parse_expr_inner(inner.next().unwrap())?;
-    let else_branch = parse_expr_inner(inner.next().unwrap())?;
+    let cond = parse_expr_inner(inner.expect_next("if condition")?)?;
+    let then_branch = parse_expr_inner(inner.expect_next("then branch")?)?;
+    let else_branch = parse_expr_inner(inner.expect_next("else branch")?)?;
 
     Ok(Expr::If {
         cond: Box::new(cond),
@@ -1665,7 +1682,7 @@ fn parse_if_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
 }
 
 fn parse_literal(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
-    let inner = pair.into_inner().next().unwrap();
+    let inner = pair.into_inner().expect_next("literal value")?;
 
     match inner.as_rule() {
         Rule::integer => Ok(Expr::Int(inner.as_str().parse().unwrap_or(0))),
@@ -1700,13 +1717,13 @@ fn parse_map_literal(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
         if p.as_rule() == Rule::map_entry_list {
             for entry in p.into_inner() {
                 let mut inner = entry.into_inner();
-                let key = inner.next().unwrap().as_str().to_string();
+                let key = inner.expect_next("map key")?.as_str().to_string();
                 let key = if key.starts_with('"') {
                     key[1..key.len() - 1].to_string()
                 } else {
                     key
                 };
-                let value = parse_expr(inner.next().unwrap())?;
+                let value = parse_expr(inner.expect_next("map value")?)?;
                 entries.push((key, value));
             }
         }
@@ -1716,7 +1733,7 @@ fn parse_map_literal(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
 
 fn parse_binary_chain(pair: pest::iterators::Pair<Rule>, op: BinOp) -> ParseResult<Expr> {
     let mut inner = pair.into_inner();
-    let mut left = parse_expr_inner(inner.next().unwrap())?;
+    let mut left = parse_expr_inner(inner.expect_next("binary chain operand")?)?;
 
     for right_pair in inner {
         let right = parse_expr_inner(right_pair)?;

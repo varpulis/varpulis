@@ -6,7 +6,7 @@
 
 | Catégorie | À faire | En cours | Terminé |
 |-----------|---------|----------|----------|
-| Parser Pest | 0 | 0 | 7 |
+| Parser Pest | 0 | 0 | **8** |
 | SASE+ | 0 | 0 | **9** |
 | Attention | 0 | 0 | 4 |
 | Benchmarks | 0 | 0 | 2 |
@@ -14,7 +14,7 @@
 | Couverture | 2 | 0 | 0 |
 | VS Code | 1 | 0 | 0 |
 | Engine Refactor | 0 | 0 | **2** |
-| **Total** | **3** | **0** | **28** |
+| **Total** | **3** | **0** | **29** |
 
 ---
 
@@ -29,8 +29,13 @@
 - [x] **PEST-05**: Préprocesseur d'indentation (`indent.rs`) - INDENT/DEDENT tokens
 - [x] **PEST-06**: filter_expr pour followed_by (ne consomme plus `.emit()`)
 - [x] **PEST-07**: pattern_body unifiant lambdas et séquences
+- [x] **PEST-08**: **Remplacer tous les `.unwrap()` par `expect_next()`** 🆕
+  - 114 `.unwrap()` → 0 `.unwrap()`
+  - Messages d'erreur descriptifs
+  - 57 tests passants
 
 **✅ Parser Pest est maintenant le défaut** - L'ancien parser est déprécié.
+**✅ Parser sécurisé** - Plus de panics sur input malformé.
 
 ---
 
