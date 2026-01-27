@@ -128,6 +128,11 @@ impl CountWindow {
     pub fn flush(&mut self) -> Vec<Event> {
         std::mem::take(&mut self.events)
     }
+
+    /// Get current count of events in buffer (for debugging)
+    pub fn current_count(&self) -> usize {
+        self.events.len()
+    }
 }
 
 /// A sliding count window that maintains overlapping windows
@@ -164,6 +169,11 @@ impl SlidingCountWindow {
         } else {
             None
         }
+    }
+
+    /// Get current count of events in buffer (for debugging)
+    pub fn current_count(&self) -> usize {
+        self.events.len()
     }
 }
 
