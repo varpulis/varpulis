@@ -439,6 +439,8 @@ stream StrongSellSignal = TechnicalAnalysis
 # Pattern Detection with Attention (Advanced)
 # =============================================================================
 
+# Anomalous activity detection using attention window
+# Only emits when attention score is high (strong correlation between recent events)
 stream AnomalousActivity = Ticks
     .partition_by(symbol)
     .attention_window(
@@ -446,20 +448,16 @@ stream AnomalousActivity = Ticks
         heads: 4,
         embedding: "rule_based"
     )
-    .pattern(
-        pump_detection: events => {
-            let price_change = (last(events).price - first(events).price) / first(events).price
-            let volume_spike = avg(events.volume) > 3 * baseline_volume(events[0].symbol)
-            let correlation = events.sliding_pairs().map((e1, e2) => attention_score(e1, e2)).filter(score => score > 0.9).count()
-            price_change > 0.05 and volume_spike and correlation > 10
-        }
-    )
+    .where(attention_score > 0.7 and attention_matches > 5)
     .emit(
         signal_type: "PUMP_DETECTED",
         direction: "CAUTION",
         symbol: symbol,
         confidence: 0.75,
-        reason: "Unusual price and volume activity detected - possible pump"
+        attention_score: attention_score,
+        attention_matches: attention_matches,
+        correlation_strength: attention_context_norm,
+        reason: "High attention score - correlated price/volume activity detected"
     )
 
 # =============================================================================

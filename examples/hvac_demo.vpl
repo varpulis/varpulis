@@ -196,6 +196,9 @@ stream CompressorDegradation = HVAC
         unit_id: last(unit_id),
         zone: last(zone),
         confidence: 0.75,
+        attention_score: attention_score,
+        attention_matches: attention_matches,
+        correlation_strength: attention_context_norm,
         recommendation: "Schedule preventive maintenance - compressor showing signs of wear",
         reason: "Progressive decline in compressor pressure with increasing power consumption"
     )
@@ -224,6 +227,9 @@ stream RefrigerantLeak = HVAC
         unit_id: last(unit_id),
         zone: last(zone),
         confidence: 0.8,
+        attention_score: attention_score,
+        attention_matches: attention_matches,
+        correlation_strength: attention_context_norm,
         recommendation: "Immediate inspection required - possible refrigerant leak",
         reason: "Rising refrigerant temperature with elevated compressor pressure"
     )
@@ -251,6 +257,9 @@ stream FanDegradation = HVAC
         unit_id: last(unit_id),
         zone: last(zone),
         confidence: 0.7,
+        attention_score: attention_score,
+        attention_matches: attention_matches,
+        correlation_strength: attention_context_norm,
         recommendation: "Check fan motor bearings and balance",
         reason: "Increased fan speed variance with rising power consumption"
     )
