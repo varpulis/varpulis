@@ -1,8 +1,8 @@
 /**
  * HVAC Demo Dashboard
- * 
- * Educational dashboard showing how Varpulis processes HVAC sensor events.
- * Displays: Raw Events → Streams → Patterns → Alerts
+ *
+ * Real-time building automation monitoring with pattern detection.
+ * All data comes from Varpulis CEP engine via MQTT - no local simulation.
  */
 
 import { Activity, AlertTriangle, ArrowRight, Database, Filter, Thermometer, Wifi, WifiOff } from 'lucide-react'
@@ -10,34 +10,30 @@ import { useEffect, useRef, useState } from 'react'
 import PipelineGraph, { HVAC_PIPELINE } from '../components/PipelineGraph'
 import { useVarpulis, type VarpulisEvent } from '../hooks/useVarpulis'
 
-// Stream pipeline definition (matches hvac_demo.vpl)
-const STREAM_PIPELINE = {
-    events: [
-        { name: 'TemperatureReading', icon: '🌡️', color: 'text-blue-400' },
-        { name: 'HumidityReading', icon: '💧', color: 'text-cyan-400' },
-        { name: 'HVACStatus', icon: '❄️', color: 'text-indigo-400' },
-        { name: 'EnergyMeter', icon: '⚡', color: 'text-yellow-400' },
-    ],
-    streams: [
-        { name: 'Temperatures', source: 'TemperatureReading', ops: ['filter zone'] },
-        { name: 'ZoneTemperatures', source: 'Temperatures', ops: ['group by zone', 'window 5m'] },
-        { name: 'TemperatureAnomaly', source: 'ZoneTemperatures', ops: ['filter temp > 28 OR < 15'] },
-        { name: 'ServerRoomAlert', source: 'Temperatures', ops: ['filter zone = server_room', 'temp > 25'] },
-        { name: 'Humidity', source: 'HumidityReading', ops: [] },
-        { name: 'ZoneHumidity', source: 'Humidity', ops: ['group by zone'] },
-        { name: 'ComfortIndex', source: 'JOIN(ZoneTemp, ZoneHumidity)', ops: ['calculate comfort'] },
-        { name: 'HVACMetrics', source: 'HVACStatus', ops: ['enrich'] },
-        { name: 'PowerSpike', source: 'HVACMetrics', ops: ['filter power > 5kW'] },
-    ],
-    patterns: [
-        { name: 'Temperature Anomaly', condition: 'temp > 28°C OR temp < 15°C', severity: 'critical' },
-        { name: 'Server Room Alert', condition: 'server_room temp > 25°C', severity: 'critical' },
-        { name: 'Humidity Alert', condition: 'humidity > 70% OR < 30%', severity: 'warning' },
-        { name: 'Power Spike', condition: 'power > 5kW', severity: 'critical' },
-        { name: 'Compressor Degradation', condition: 'compressor_health < 80%', severity: 'warning' },
-        { name: 'Refrigerant Leak', condition: 'refrigerant_level < 85%', severity: 'critical' },
-    ]
-}
+const EVENT_TYPES = [
+    { name: 'TemperatureReading', icon: '🌡️', color: 'text-blue-400' },
+    { name: 'HumidityReading', icon: '💧', color: 'text-cyan-400' },
+    { name: 'HVACStatus', icon: '❄️', color: 'text-indigo-400' },
+    { name: 'EnergyMeter', icon: '⚡', color: 'text-yellow-400' },
+]
+
+const PATTERNS = [
+    { name: 'Temperature Anomaly', vplTypes: ['TEMPERATURE_ANOMALY'], severity: 'critical' },
+    { name: 'Server Room Alert', vplTypes: ['SERVER_ROOM_CRITICAL'], severity: 'critical' },
+    { name: 'Humidity Alert', vplTypes: ['HUMIDITY_ANOMALY'], severity: 'warning' },
+    { name: 'Power Spike', vplTypes: ['HVAC_POWER_SPIKE'], severity: 'warning' },
+    { name: 'Compressor Degradation', vplTypes: ['COMPRESSOR_DEGRADATION'], severity: 'warning' },
+    { name: 'Refrigerant Leak', vplTypes: ['REFRIGERANT_LEAK_SUSPECTED'], severity: 'critical' },
+]
+
+const STREAMS = [
+    { name: 'Temperatures', source: 'TemperatureReading', ops: ['filter zone'] },
+    { name: 'ZoneTemperatures', source: 'Temperatures', ops: ['group by zone', 'window 5m'] },
+    { name: 'Humidity', source: 'HumidityReading', ops: [] },
+    { name: 'ZoneHumidity', source: 'Humidity', ops: ['group by zone'] },
+    { name: 'ComfortIndex', source: 'JOIN(ZoneTemp, ZoneHumidity)', ops: ['calculate comfort'] },
+    { name: 'HVACMetrics', source: 'HVACStatus', ops: ['sliding window 15m'] },
+]
 
 export default function HVACDemo() {
     const { connected, mqttConnected, events, alerts } = useVarpulis()
@@ -47,9 +43,41 @@ export default function HVACDemo() {
     const [patternMatches, setPatternMatches] = useState<Record<string, number>>({})
     const [recentEvents, setRecentEvents] = useState<VarpulisEvent[]>([])
     const [zoneData, setZoneData] = useState<Record<string, { temp: number, humidity: number }>>({})
-    const [recentAlerts, setRecentAlerts] = useState<Array<{ type: string, message: string, zone?: string }>>([])
+    const [recentAlerts, setRecentAlerts] = useState<Array<{ type: string, message: string, zone?: string, severity: string }>>([])
 
     const lastEventRef = useRef<string>('')
+    const lastAlertRef = useRef<string>('')
+
+    // Process incoming alerts from Varpulis engine
+    useEffect(() => {
+        if (alerts.length === 0) return
+
+        const latestAlert = alerts[0]
+        const alertKey = `${latestAlert.type}-${latestAlert.timestamp}`
+        if (alertKey === lastAlertRef.current) return
+        lastAlertRef.current = alertKey
+
+        // Extract alert data - handle nested structure
+        const alertData = (latestAlert.data?.data as Record<string, unknown>) || latestAlert.data || {}
+        const alertType = String(alertData.alert_type || latestAlert.data?.alert_type || latestAlert.type || '')
+        const severity = String(alertData.severity || 'warning')
+        const zone = String(alertData.zone || '')
+        const reason = String(alertData.reason || alertData.message || '')
+
+        // Map VPL alert_type to dashboard pattern names
+        for (const pattern of PATTERNS) {
+            if (pattern.vplTypes.includes(alertType)) {
+                setPatternMatches(prev => ({ ...prev, [pattern.name]: (prev[pattern.name] || 0) + 1 }))
+                setRecentAlerts(prev => [{
+                    type: pattern.name,
+                    message: reason || `${pattern.name} detected`,
+                    zone,
+                    severity
+                }, ...prev].slice(0, 15))
+                break
+            }
+        }
+    }, [alerts])
 
     // Process incoming events
     useEffect(() => {
@@ -64,101 +92,43 @@ export default function HVACDemo() {
         setRecentEvents(prev => [latestEvent, ...prev].slice(0, 20))
 
         // Count by event type
-        const eventType = String(latestEvent.data?.event_type || 'unknown')
+        const eventType = String(latestEvent.data?.event_type || latestEvent.type || 'unknown')
         setEventCounts(prev => ({ ...prev, [eventType]: (prev[eventType] || 0) + 1 }))
 
-        // Update zone data
+        // Update zone data and stream counts based on event type
         const zone = String(latestEvent.data?.zone || '')
-        if (zone && eventType === 'TemperatureReading') {
-            const temp = Number(latestEvent.data?.temperature || 0)
-            setZoneData(prev => {
-                const newData = {
-                    ...prev,
-                    [zone]: {
-                        temp,
-                        humidity: prev[zone]?.humidity || 45
-                    }
-                }
-                // ComfortIndex: if we have both temp and humidity
-                if (newData[zone].humidity > 0) {
-                    setStreamCounts(p => ({ ...p, 'ComfortIndex': (p['ComfortIndex'] || 0) + 1 }))
-                }
-                return newData
-            })
 
-            // Stream processing
+        if (eventType === 'TemperatureReading' && zone) {
+            const temp = Number(latestEvent.data?.temperature || latestEvent.data?.value || 0)
+            setZoneData(prev => ({
+                ...prev,
+                [zone]: { temp, humidity: prev[zone]?.humidity || 45 }
+            }))
             setStreamCounts(prev => ({
                 ...prev,
                 'Temperatures': (prev['Temperatures'] || 0) + 1,
                 'ZoneTemperatures': (prev['ZoneTemperatures'] || 0) + 1
             }))
-
-            // ServerRoom stream
-            if (zone === 'server_room') {
-                setStreamCounts(prev => ({ ...prev, 'ServerRoom': (prev['ServerRoom'] || 0) + 1 }))
-                if (temp > 25) {
-                    setPatternMatches(prev => ({ ...prev, 'Server Room Alert': (prev['Server Room Alert'] || 0) + 1 }))
-                    setRecentAlerts(prev => [{ type: 'ServerRoom', message: `Server room temp ${temp.toFixed(1)}°C > 25°C`, zone }, ...prev].slice(0, 10))
-                }
-            }
-
-            // Temperature anomaly
-            if (temp > 28 || temp < 15) {
-                setPatternMatches(prev => ({ ...prev, 'Temperature Anomaly': (prev['Temperature Anomaly'] || 0) + 1 }))
-                setRecentAlerts(prev => [{ type: 'TempAnomaly', message: `${zone}: ${temp.toFixed(1)}°C ${temp > 28 ? '> 28°C' : '< 15°C'}`, zone }, ...prev].slice(0, 10))
-            }
         }
 
-        if (zone && eventType === 'HumidityReading') {
-            const humidity = Number(latestEvent.data?.humidity || 0)
-            setZoneData(prev => {
-                const newData = {
-                    ...prev,
-                    [zone]: {
-                        temp: prev[zone]?.temp || 21,
-                        humidity
-                    }
-                }
-                // ComfortIndex
-                if (newData[zone].temp > 0) {
-                    setStreamCounts(p => ({ ...p, 'ComfortIndex': (p['ComfortIndex'] || 0) + 1 }))
-                }
-                return newData
-            })
+        if (eventType === 'HumidityReading' && zone) {
+            const humidity = Number(latestEvent.data?.humidity || latestEvent.data?.value || 0)
+            setZoneData(prev => ({
+                ...prev,
+                [zone]: { temp: prev[zone]?.temp || 21, humidity }
+            }))
             setStreamCounts(prev => ({
                 ...prev,
                 'Humidity': (prev['Humidity'] || 0) + 1,
                 'ZoneHumidity': (prev['ZoneHumidity'] || 0) + 1
             }))
-            if (humidity > 70 || humidity < 30) {
-                setPatternMatches(prev => ({ ...prev, 'Humidity Alert': (prev['Humidity Alert'] || 0) + 1 }))
-                setRecentAlerts(prev => [{ type: 'Humidity', message: `${zone}: ${humidity.toFixed(0)}% ${humidity > 70 ? '> 70%' : '< 30%'}`, zone }, ...prev].slice(0, 10))
-            }
         }
 
         if (eventType === 'HVACStatus') {
-            const unitId = String(latestEvent.data?.unit_id || '')
-            const power = Number(latestEvent.data?.power_kw || 0)
-            const compressorHealth = Number(latestEvent.data?.compressor_health || 100)
-            const refrigerantLevel = Number(latestEvent.data?.refrigerant_level || 100)
-
             setStreamCounts(prev => ({
                 ...prev,
                 'HVACMetrics': (prev['HVACMetrics'] || 0) + 1
             }))
-
-            if (power > 5) {
-                setPatternMatches(prev => ({ ...prev, 'Power Spike': (prev['Power Spike'] || 0) + 1 }))
-                setRecentAlerts(prev => [{ type: 'PowerSpike', message: `${unitId}: ${power.toFixed(1)}kW > 5kW` }, ...prev].slice(0, 10))
-            }
-            if (compressorHealth < 80) {
-                setPatternMatches(prev => ({ ...prev, 'Compressor Degradation': (prev['Compressor Degradation'] || 0) + 1 }))
-                setRecentAlerts(prev => [{ type: 'Compressor', message: `${unitId}: health ${compressorHealth.toFixed(0)}% < 80%` }, ...prev].slice(0, 10))
-            }
-            if (refrigerantLevel < 85) {
-                setPatternMatches(prev => ({ ...prev, 'Refrigerant Leak': (prev['Refrigerant Leak'] || 0) + 1 }))
-                setRecentAlerts(prev => [{ type: 'Refrigerant', message: `${unitId}: level ${refrigerantLevel.toFixed(0)}% < 85%` }, ...prev].slice(0, 10))
-            }
         }
 
         if (eventType === 'EnergyMeter') {
@@ -167,7 +137,18 @@ export default function HVACDemo() {
                 'Energy': (prev['Energy'] || 0) + 1
             }))
         }
-    }, [events])
+
+        // Update ComfortIndex count when we have both temp and humidity
+        if ((eventType === 'TemperatureReading' || eventType === 'HumidityReading') && zone) {
+            const currentZone = zoneData[zone]
+            if (currentZone?.temp > 0 && currentZone?.humidity > 0) {
+                setStreamCounts(prev => ({
+                    ...prev,
+                    'ComfortIndex': (prev['ComfortIndex'] || 0) + 1
+                }))
+            }
+        }
+    }, [events, zoneData])
 
     const totalEvents = Object.values(eventCounts).reduce((a, b) => a + b, 0)
     const totalPatterns = Object.values(patternMatches).reduce((a, b) => a + b, 0)
@@ -177,7 +158,7 @@ export default function HVACDemo() {
             {/* Header with connection status */}
             <div className="flex items-center justify-between bg-slate-800/50 rounded-lg p-3 border border-slate-700">
                 <div className="flex items-center gap-4">
-                    <h1 className="text-xl font-bold text-white">🏢 HVAC Monitoring Demo</h1>
+                    <h1 className="text-xl font-bold text-white">HVAC Monitoring Demo</h1>
                     <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm ${connected ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
                         {connected ? <Wifi className="w-4 h-4" /> : <WifiOff className="w-4 h-4" />}
                         {connected ? 'Connected' : 'Disconnected'}
@@ -224,7 +205,7 @@ export default function HVACDemo() {
                             Incoming Events
                         </h2>
                         <div className="grid grid-cols-2 gap-2 mb-4">
-                            {STREAM_PIPELINE.events.map(evt => (
+                            {EVENT_TYPES.map(evt => (
                                 <div key={evt.name} className="bg-slate-900/50 rounded p-2 border border-slate-600">
                                     <div className="flex items-center gap-2">
                                         <span>{evt.icon}</span>
@@ -242,12 +223,13 @@ export default function HVACDemo() {
                             {recentEvents.slice(0, 10).map((evt, i) => (
                                 <div key={i} className="text-xs bg-slate-900/50 rounded px-2 py-1 font-mono border-l-2 border-blue-500">
                                     <span className="text-slate-500">{new Date(evt.timestamp).toLocaleTimeString()}</span>
-                                    <span className="text-blue-400 ml-2">{String(evt.data?.event_type || 'event')}</span>
+                                    <span className="text-blue-400 ml-2">{String(evt.data?.event_type || evt.type || 'event')}</span>
                                     <span className="text-slate-400 ml-2">
                                         {evt.data?.zone ? `zone=${String(evt.data.zone)}` : ''}
-                                        {evt.data?.temperature ? ` temp=${String(evt.data.temperature)}°C` : ''}
-                                        {evt.data?.humidity ? ` humidity=${String(evt.data.humidity)}%` : ''}
-                                        {evt.data?.power_kw ? ` power=${String(evt.data.power_kw)}kW` : ''}
+                                        {evt.data?.temperature ? ` temp=${Number(evt.data.temperature).toFixed(1)}C` : ''}
+                                        {evt.data?.value && !evt.data?.temperature ? ` val=${Number(evt.data.value).toFixed(1)}` : ''}
+                                        {evt.data?.humidity ? ` humidity=${Number(evt.data.humidity).toFixed(0)}%` : ''}
+                                        {evt.data?.power_kw ? ` power=${Number(evt.data.power_kw).toFixed(1)}kW` : ''}
                                     </span>
                                 </div>
                             ))}
@@ -269,7 +251,7 @@ export default function HVACDemo() {
                             Events flow through streams with filters, joins, and aggregations
                         </div>
                         <div className="space-y-2">
-                            {STREAM_PIPELINE.streams.map(stream => (
+                            {STREAMS.map(stream => (
                                 <div key={stream.name} className="bg-slate-900/50 rounded p-2 border border-slate-600">
                                     <div className="flex items-center justify-between">
                                         <div className="flex items-center gap-2">
@@ -307,12 +289,15 @@ export default function HVACDemo() {
                                     <div key={zone} className={`rounded p-2 border ${statusColor}`}>
                                         <div className="text-xs text-slate-400">{zone}</div>
                                         <div className="flex items-baseline gap-2">
-                                            <span className="text-lg font-bold text-white">{data.temp.toFixed(1)}°C</span>
+                                            <span className="text-lg font-bold text-white">{data.temp.toFixed(1)}C</span>
                                             <span className="text-sm text-blue-400">{data.humidity.toFixed(0)}%</span>
                                         </div>
                                     </div>
                                 )
                             })}
+                            {Object.keys(zoneData).length === 0 && (
+                                <div className="col-span-2 text-slate-500 text-sm italic">Waiting for zone data...</div>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -322,13 +307,13 @@ export default function HVACDemo() {
                     <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700">
                         <h2 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
                             <Activity className="w-5 h-5 text-yellow-400" />
-                            Pattern Detection
+                            Pattern Detection (from Varpulis)
                         </h2>
                         <div className="text-xs text-slate-400 mb-3">
-                            Patterns detected from stream data
+                            Real patterns detected by Varpulis CEP engine
                         </div>
                         <div className="space-y-2">
-                            {STREAM_PIPELINE.patterns.map(pattern => {
+                            {PATTERNS.map(pattern => {
                                 const count = patternMatches[pattern.name] || 0
                                 const isActive = count > 0
                                 const severityColor = pattern.severity === 'critical' ? 'text-red-400' : 'text-yellow-400'
@@ -343,7 +328,7 @@ export default function HVACDemo() {
                                             </span>
                                         </div>
                                         <div className="text-xs text-slate-500 mt-1 font-mono">
-                                            {pattern.condition}
+                                            {pattern.vplTypes.join(' | ')}
                                         </div>
                                     </div>
                                 )
@@ -358,21 +343,15 @@ export default function HVACDemo() {
                         </h2>
                         <div className="space-y-2 max-h-[250px] overflow-y-auto">
                             {recentAlerts.map((alert, i) => {
-                                const color = alert.type === 'TempAnomaly' || alert.type === 'ServerRoom' || alert.type === 'Refrigerant'
-                                    ? 'border-red-500/50 bg-red-500/10'
-                                    : 'border-yellow-500/50 bg-yellow-500/10'
-                                const textColor = alert.type === 'TempAnomaly' || alert.type === 'ServerRoom' || alert.type === 'Refrigerant'
-                                    ? 'text-red-400' : 'text-yellow-400'
+                                const isCritical = alert.severity === 'critical'
+                                const color = isCritical ? 'border-red-500/50 bg-red-500/10' : 'border-yellow-500/50 bg-yellow-500/10'
+                                const textColor = isCritical ? 'text-red-400' : 'text-yellow-400'
                                 return (
                                     <div key={i} className={`text-xs border rounded p-2 ${color}`}>
                                         <div className={`font-medium ${textColor}`}>
-                                            {alert.type === 'TempAnomaly' ? '🔴 Temperature' :
-                                                alert.type === 'ServerRoom' ? '🔴 Server Room' :
-                                                    alert.type === 'Humidity' ? '🟡 Humidity' :
-                                                        alert.type === 'PowerSpike' ? '🔴 Power Spike' :
-                                                            alert.type === 'Compressor' ? '🟡 Compressor' :
-                                                                alert.type === 'Refrigerant' ? '🔴 Refrigerant' : alert.type}
+                                            {isCritical ? '🔴' : '🟡'} {alert.type}
                                         </div>
+                                        {alert.zone && <div className="text-slate-400">Zone: {alert.zone}</div>}
                                         <div className="text-slate-300 mt-1 font-mono">{alert.message}</div>
                                     </div>
                                 )
@@ -387,7 +366,7 @@ export default function HVACDemo() {
 
             {/* Footer - Instructions */}
             <div className="bg-slate-800/30 rounded-lg p-3 border border-slate-700/50 text-xs text-slate-500">
-                <strong className="text-slate-400">How it works:</strong> Events arrive via MQTT → Flow through streams with filters/joins → Patterns are detected → Alerts are generated.
+                <strong className="text-slate-400">How it works:</strong> Events arrive via MQTT → Flow through Varpulis streams with filters/joins → Patterns are detected by the CEP engine → Alerts are generated.
                 Run <code className="bg-slate-700 px-1 rounded">./start_demo.sh -d hvac</code> to generate events automatically.
             </div>
         </div>
