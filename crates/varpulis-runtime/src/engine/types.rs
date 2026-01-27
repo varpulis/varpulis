@@ -61,7 +61,6 @@ pub struct EngineMetrics {
 // =============================================================================
 
 /// Runtime stream definition
-#[allow(dead_code)]
 pub(crate) struct StreamDefinition {
     pub name: String,
     pub source: RuntimeSource,
@@ -72,7 +71,7 @@ pub(crate) struct StreamDefinition {
     pub attention_window: Option<AttentionWindow>,
     /// Pattern engine for Apama-style pattern matching (legacy)
     pub pattern_engine: Option<PatternEngine>,
-    /// SASE+ pattern matching engine (new, more efficient)
+    /// SASE+ pattern matching engine (NFA-based, primary engine for sequences)
     pub sase_engine: Option<SaseEngine>,
     /// Join buffer for correlating events from multiple sources
     pub join_buffer: Option<JoinBuffer>,
@@ -107,14 +106,11 @@ pub(crate) struct MergeSource {
 }
 
 /// Runtime operations that can be applied to a stream
-#[allow(dead_code)]
 pub(crate) enum RuntimeOp {
     /// Filter with closure (for sequence filters with context)
     WhereClosure(Box<dyn Fn(&Event) -> bool + Send + Sync>),
     /// Filter with expression (evaluated at runtime with user functions)
     WhereExpr(varpulis_core::ast::Expr),
-    /// Partition by key - stores the field name to partition on
-    PartitionBy(String),
     /// Window with optional partition support
     Window(WindowType),
     /// Partitioned window - maintains separate windows per partition key (tumbling)
@@ -219,11 +215,9 @@ impl PartitionedSlidingCountWindowState {
 }
 
 /// State for partitioned aggregators
-#[allow(dead_code)]
 pub(crate) struct PartitionedAggregatorState {
     pub partition_key: String,
     pub aggregator_template: Aggregator,
-    pub aggregators: HashMap<String, Aggregator>,
 }
 
 impl PartitionedAggregatorState {
@@ -231,7 +225,6 @@ impl PartitionedAggregatorState {
         Self {
             partition_key,
             aggregator_template: aggregator,
-            aggregators: HashMap::new(),
         }
     }
 

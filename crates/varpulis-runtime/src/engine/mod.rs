@@ -13,6 +13,9 @@ mod tests;
 // Re-export public types
 pub use types::{Alert, EngineConfig, EngineMetrics, UserFunction};
 
+// Re-export evaluator for use by other modules (e.g., SASE+)
+pub use evaluator::eval_filter_expr;
+
 // Re-export internal types for use within the engine module
 use types::{
     AttentionWindowConfig, EmitConfig, EmitExprConfig, LogConfig, MergeSource,
@@ -27,6 +30,7 @@ use crate::event::Event;
 use crate::join::JoinBuffer;
 use crate::metrics::Metrics;
 use crate::pattern::PatternEngine;
+use crate::sase::SaseEngine;
 use crate::sequence::{SequenceContext, SequenceFilter, SequenceStep, SequenceTracker};
 use crate::window::{
     CountWindow, PartitionedSlidingWindow, PartitionedTumblingWindow, SlidingCountWindow,
@@ -175,8 +179,8 @@ impl Engine {
         source: &StreamSource,
         ops: &[StreamOp],
     ) -> Result<(), String> {
-        // Check if we have sequence operations and build tracker
-        let (runtime_ops, sequence_tracker, sequence_event_types) =
+        // Check if we have sequence operations and build SASE+ engine
+        let (runtime_ops, sequence_tracker, sase_engine, sequence_event_types) =
             self.compile_ops_with_sequences(source, ops)?;
 
         let runtime_source = match source {
@@ -321,7 +325,7 @@ impl Engine {
                 sequence_tracker,
                 attention_window,
                 pattern_engine,
-                sase_engine: None, // TODO: integrate SASE+ pattern matching
+                sase_engine,
                 join_buffer,
             },
         );
@@ -335,7 +339,15 @@ impl Engine {
         &self,
         source: &StreamSource,
         ops: &[StreamOp],
-    ) -> Result<(Vec<RuntimeOp>, Option<SequenceTracker>, Vec<String>), String> {
+    ) -> Result<
+        (
+            Vec<RuntimeOp>,
+            Option<SequenceTracker>,
+            Option<SaseEngine>,
+            Vec<String>,
+        ),
+        String,
+    > {
         let mut runtime_ops = Vec::new();
         let mut sequence_steps: Vec<SequenceStep> = Vec::new();
         let mut sequence_event_types: Vec<String> = Vec::new();
@@ -343,6 +355,11 @@ impl Engine {
         let mut current_timeout: Option<std::time::Duration> = None;
         let mut negation_conditions: Vec<(String, Option<SequenceFilter>)> = Vec::new();
         let mut partition_key: Option<String> = None;
+
+        // For SASE+ pattern compilation
+        let mut followed_by_clauses: Vec<varpulis_core::ast::FollowedByClause> = Vec::new();
+        let mut negation_clauses: Vec<varpulis_core::ast::FollowedByClause> = Vec::new();
+        let mut global_within: Option<std::time::Duration> = None;
 
         // Handle sequence() construct - converts SequenceDecl to SequenceSteps
         if let StreamSource::Sequence(decl) = source {
@@ -399,6 +416,10 @@ impl Engine {
         for op in ops {
             match op {
                 StreamOp::FollowedBy(clause) => {
+                    // Store raw clause for SASE+ compilation
+                    followed_by_clauses.push(clause.clone());
+
+                    // Also build old-style SequenceStep for backward compatibility
                     let filter = clause
                         .filter
                         .as_ref()
@@ -421,11 +442,16 @@ impl Engine {
                         varpulis_core::ast::Expr::Duration(ns) => *ns,
                         _ => 300_000_000_000u64, // 5 minutes default
                     };
-                    current_timeout = Some(std::time::Duration::from_nanos(duration_ns));
+                    let duration = std::time::Duration::from_nanos(duration_ns);
+                    current_timeout = Some(duration);
+                    global_within = Some(duration); // Also store for SASE+
                     continue;
                 }
                 StreamOp::Not(clause) => {
-                    // Store negation for later addition to sequence tracker
+                    // Store negation clause for SASE+ engine
+                    negation_clauses.push(clause.clone());
+
+                    // Also store for legacy sequence tracker
                     let filter = clause
                         .filter
                         .as_ref()
@@ -702,10 +728,47 @@ impl Engine {
             }
         }
 
-        // Build sequence tracker if we have sequence steps (more than just the source)
-        let sequence_tracker = if sequence_steps.len() > 1 {
-            // Add Sequence operation marker at the beginning
-            runtime_ops.insert(0, RuntimeOp::Sequence);
+        // Build SASE+ engine if we have sequence patterns
+        let sase_engine =
+            if !followed_by_clauses.is_empty() || matches!(source, StreamSource::Sequence(_)) {
+                // Add Sequence operation marker at the beginning
+                runtime_ops.insert(0, RuntimeOp::Sequence);
+
+                // Compile to SASE+ pattern
+                if let Some(pattern) = compiler::compile_to_sase_pattern(
+                    source,
+                    &followed_by_clauses,
+                    &negation_clauses,
+                    global_within,
+                ) {
+                    let mut engine = SaseEngine::new(pattern);
+
+                    // Apply partition if specified
+                    if let Some(ref key) = partition_key {
+                        engine = engine.with_partition_by(key.clone());
+                    }
+
+                    // Add global negation conditions
+                    for clause in &negation_clauses {
+                        let predicate = clause
+                            .filter
+                            .as_ref()
+                            .and_then(compiler::expr_to_sase_predicate);
+                        engine.add_negation(clause.event_type.clone(), predicate);
+                    }
+
+                    info!("Created SASE+ engine for sequence pattern");
+                    Some(engine)
+                } else {
+                    warn!("Failed to compile SASE+ pattern, falling back to legacy tracker");
+                    None
+                }
+            } else {
+                None
+            };
+
+        // Build legacy sequence tracker as fallback (will be removed once SASE+ is validated)
+        let sequence_tracker = if sequence_steps.len() > 1 && sase_engine.is_none() {
             let mut tracker = SequenceTracker::new(sequence_steps, match_all_first);
 
             // Add negation conditions
@@ -718,7 +781,12 @@ impl Engine {
             None
         };
 
-        Ok((runtime_ops, sequence_tracker, sequence_event_types))
+        Ok((
+            runtime_ops,
+            sequence_tracker,
+            sase_engine,
+            sequence_event_types,
+        ))
     }
 
     /// Extract and create AttentionWindow from runtime operations
@@ -1129,10 +1197,6 @@ impl Engine {
                         });
                     }
                 }
-                RuntimeOp::PartitionBy(_) => {
-                    // PartitionBy is handled at stream registration time
-                    // No runtime action needed - just pass events through
-                }
                 RuntimeOp::Window(window) => {
                     let mut window_results = Vec::new();
                     for event in current_events {
@@ -1328,9 +1392,37 @@ impl Engine {
                     }
                 }
                 RuntimeOp::Sequence => {
-                    // Process events through sequence tracker
-                    if let Some(ref mut tracker) = stream.sequence_tracker {
-                        let mut sequence_results = Vec::new();
+                    // Process events through SASE+ engine (primary) or legacy sequence tracker (fallback)
+                    let mut sequence_results = Vec::new();
+
+                    if let Some(ref mut sase) = stream.sase_engine {
+                        // Use SASE+ pattern matching (NFA-based, more efficient)
+                        for event in &current_events {
+                            let matches = sase.process(event);
+                            for match_result in matches {
+                                // Create synthetic event from completed sequence
+                                let mut seq_event = Event::new("SequenceMatch");
+                                seq_event
+                                    .data
+                                    .insert("stream".to_string(), Value::Str(stream.name.clone()));
+                                seq_event.data.insert(
+                                    "match_duration_ms".to_string(),
+                                    Value::Int(match_result.duration.as_millis() as i64),
+                                );
+                                // Add captured events to the result
+                                for (alias, captured) in &match_result.captured {
+                                    for (k, v) in &captured.data {
+                                        seq_event
+                                            .data
+                                            .insert(format!("{}_{}", alias, k), v.clone());
+                                    }
+                                }
+                                sequence_results.push(seq_event);
+                            }
+                        }
+                    } else if let Some(ref mut tracker) = stream.sequence_tracker {
+                        // Fallback to legacy sequence tracker
+                        warn!("Using legacy sequence tracker instead of SASE+");
                         for event in &current_events {
                             let completed = tracker.process(event);
                             for ctx in completed {
@@ -1350,14 +1442,15 @@ impl Engine {
                                 sequence_results.push(seq_event);
                             }
                         }
-                        if sequence_results.is_empty() {
-                            return Ok(StreamProcessResult {
-                                alerts,
-                                output_events: vec![],
-                            });
-                        }
-                        current_events = sequence_results;
                     }
+
+                    if sequence_results.is_empty() {
+                        return Ok(StreamProcessResult {
+                            alerts,
+                            output_events: vec![],
+                        });
+                    }
+                    current_events = sequence_results;
                 }
                 RuntimeOp::EmitExpr(config) => {
                     let ctx = SequenceContext::new();
@@ -1489,9 +1582,6 @@ impl Engine {
                             output_events: vec![],
                         });
                     }
-                }
-                RuntimeOp::PartitionBy(_) => {
-                    // PartitionBy is handled at stream registration time
                 }
                 RuntimeOp::Window(_window) => {
                     // For joins, we skip the window operation since it's already

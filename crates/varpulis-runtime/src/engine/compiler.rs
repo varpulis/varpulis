@@ -1,15 +1,18 @@
 //! Compilation functions for the Varpulis engine
 //!
 //! This module contains functions for converting VPL AST elements into
-//! runtime structures (aggregators, pattern expressions, sequence filters).
+//! runtime structures (aggregators, SASE+ patterns, sequence filters).
 
 use crate::aggregation::{
     AggBinOp, Avg, Count, CountDistinct, Ema, ExprAggregate, First, Last, Max, Min, StdDev, Sum,
 };
 use crate::pattern::{PatternBuilder, PatternExpr};
+use crate::sase::{CompareOp, Predicate, SasePattern};
 use crate::sequence::{SequenceContext, SequenceFilter};
 use crate::Event;
+use std::time::Duration;
 use tracing::warn;
+use varpulis_core::ast::{FollowedByClause, SequenceStepDecl, StreamSource};
 
 use super::evaluator;
 
@@ -185,6 +188,203 @@ pub fn expr_to_pattern(expr: &varpulis_core::ast::Expr) -> Option<PatternExpr> {
         }
 
         // Lambda expressions in patterns are complex - skip for now
+        _ => None,
+    }
+}
+
+// =============================================================================
+// SASE+ Pattern Compilation
+// =============================================================================
+
+/// Compile a sequence source and operations into a SASE+ pattern
+pub fn compile_to_sase_pattern(
+    source: &StreamSource,
+    followed_by_clauses: &[FollowedByClause],
+    _negation_clauses: &[FollowedByClause],
+    within_duration: Option<Duration>,
+) -> Option<SasePattern> {
+    let mut steps: Vec<SasePattern> = Vec::new();
+
+    // Handle source
+    match source {
+        StreamSource::Sequence(decl) => {
+            // sequence() construct with explicit steps
+            for step in &decl.steps {
+                let pattern = compile_sequence_step_to_sase(step);
+                steps.push(pattern);
+            }
+        }
+        StreamSource::Ident(name) | StreamSource::From(name) => {
+            steps.push(SasePattern::Event {
+                event_type: name.clone(),
+                predicate: None,
+                alias: None,
+            });
+        }
+        StreamSource::IdentWithAlias { name, alias } => {
+            steps.push(SasePattern::Event {
+                event_type: name.clone(),
+                predicate: None,
+                alias: Some(alias.clone()),
+            });
+        }
+        StreamSource::AllWithAlias { name, alias } => {
+            // match_all -> Kleene+
+            let event_pattern = SasePattern::Event {
+                event_type: name.clone(),
+                predicate: None,
+                alias: alias.clone(),
+            };
+            steps.push(SasePattern::KleenePlus(Box::new(event_pattern)));
+        }
+        _ => return None,
+    }
+
+    // Add followed_by clauses
+    for clause in followed_by_clauses {
+        let predicate = clause
+            .filter
+            .as_ref()
+            .and_then(expr_to_sase_predicate);
+        let event_pattern = SasePattern::Event {
+            event_type: clause.event_type.clone(),
+            predicate,
+            alias: clause.alias.clone(),
+        };
+
+        // Handle match_all
+        let pattern = if clause.match_all {
+            SasePattern::KleenePlus(Box::new(event_pattern))
+        } else {
+            event_pattern
+        };
+
+        steps.push(pattern);
+    }
+
+    // Build the final pattern
+    if steps.is_empty() {
+        return None;
+    }
+
+    let pattern = if steps.len() == 1 {
+        steps.pop().unwrap()
+    } else {
+        SasePattern::Seq(steps)
+    };
+
+    // Apply within constraint if specified
+    match within_duration {
+        Some(duration) => Some(SasePattern::Within(Box::new(pattern), duration)),
+        None => Some(pattern),
+    }
+}
+
+/// Compile a sequence step declaration to a SASE pattern
+fn compile_sequence_step_to_sase(step: &SequenceStepDecl) -> SasePattern {
+    let predicate = step.filter.as_ref().and_then(expr_to_sase_predicate);
+
+    SasePattern::Event {
+        event_type: step.event_type.clone(),
+        predicate,
+        alias: Some(step.alias.clone()),
+    }
+}
+
+/// Convert a VPL expression to a SASE predicate
+pub fn expr_to_sase_predicate(expr: &varpulis_core::ast::Expr) -> Option<Predicate> {
+    use varpulis_core::ast::{BinOp, Expr, UnaryOp};
+
+    match expr {
+        // Binary comparison: field == value
+        Expr::Binary { op, left, right } => {
+            let compare_op = match op {
+                BinOp::Eq => Some(CompareOp::Eq),
+                BinOp::NotEq => Some(CompareOp::NotEq),
+                BinOp::Lt => Some(CompareOp::Lt),
+                BinOp::Le => Some(CompareOp::Le),
+                BinOp::Gt => Some(CompareOp::Gt),
+                BinOp::Ge => Some(CompareOp::Ge),
+                BinOp::And => {
+                    let left_pred = expr_to_sase_predicate(left)?;
+                    let right_pred = expr_to_sase_predicate(right)?;
+                    return Some(Predicate::And(Box::new(left_pred), Box::new(right_pred)));
+                }
+                BinOp::Or => {
+                    let left_pred = expr_to_sase_predicate(left)?;
+                    let right_pred = expr_to_sase_predicate(right)?;
+                    return Some(Predicate::Or(Box::new(left_pred), Box::new(right_pred)));
+                }
+                _ => None,
+            }?;
+
+            // Handle cross-event reference comparisons (e.g., order_id == order.id)
+            // Left: current event field, Right: reference to captured event
+            if let (
+                Expr::Ident(field),
+                Expr::Member {
+                    expr: ref_expr,
+                    member: ref_field,
+                },
+            ) = (left.as_ref(), right.as_ref())
+            {
+                if let Expr::Ident(ref_alias) = ref_expr.as_ref() {
+                    return Some(Predicate::CompareRef {
+                        field: field.clone(),
+                        op: compare_op,
+                        ref_alias: ref_alias.clone(),
+                        ref_field: ref_field.clone(),
+                    });
+                }
+            }
+
+            // Extract field name from left side for simple comparisons
+            let field = match left.as_ref() {
+                Expr::Ident(name) => name.clone(),
+                _ => {
+                    // Fall back to runtime expression evaluation for complex left-side
+                    return Some(Predicate::Expr(Box::new(expr.clone())));
+                }
+            };
+
+            // Extract value from right side
+            if let Some(value) = expr_to_value(right) {
+                Some(Predicate::Compare {
+                    field,
+                    op: compare_op,
+                    value,
+                })
+            } else {
+                // Right side is complex (e.g., another field or expression)
+                // Fall back to runtime expression evaluation
+                Some(Predicate::Expr(Box::new(expr.clone())))
+            }
+        }
+
+        // Unary not
+        Expr::Unary {
+            op: UnaryOp::Not,
+            expr: inner,
+        } => {
+            let inner_pred = expr_to_sase_predicate(inner)?;
+            Some(Predicate::Not(Box::new(inner_pred)))
+        }
+
+        // Fall back to storing the expression for runtime evaluation
+        _ => Some(Predicate::Expr(Box::new(expr.clone()))),
+    }
+}
+
+/// Convert an AST expression to a Value (for predicates)
+fn expr_to_value(expr: &varpulis_core::ast::Expr) -> Option<varpulis_core::Value> {
+    use varpulis_core::ast::Expr;
+    use varpulis_core::Value;
+
+    match expr {
+        Expr::Int(n) => Some(Value::Int(*n)),
+        Expr::Float(f) => Some(Value::Float(*f)),
+        Expr::Str(s) => Some(Value::Str(s.clone())),
+        Expr::Bool(b) => Some(Value::Bool(*b)),
         _ => None,
     }
 }
