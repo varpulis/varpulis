@@ -1,349 +1,420 @@
-import { Activity, AlertTriangle, DollarSign, Pause, Play, RotateCcw, Settings, TrendingDown, TrendingUp } from 'lucide-react'
-import { useEffect, useState } from 'react'
-import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+/**
+ * Financial Demo Dashboard
+ * 
+ * Educational dashboard showing how Varpulis processes financial market events.
+ * Displays: Raw Events → Streams → Technical Indicators → Trading Signals
+ */
 
-interface PricePoint {
-    time: string
-    price: number
-    volume: number
-    sma20: number
-    sma50: number
-}
+import { AlertTriangle, Database, Filter, TrendingUp, Wifi, WifiOff } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import PipelineGraph, { FINANCIAL_PIPELINE } from '../components/PipelineGraph'
+import { useVarpulis, type VarpulisEvent } from '../hooks/useVarpulis'
 
-interface Signal {
-    id: number
-    type: 'golden_cross' | 'death_cross' | 'breakout' | 'volume_spike'
-    symbol: string
-    message: string
-    price: number
-    timestamp: Date
-}
+const EVENT_TYPES = [
+    { name: 'MarketTick', icon: '📈', color: 'text-blue-400' },
+    { name: 'OHLCV', icon: '📊', color: 'text-green-400' },
+    { name: 'OrderBook', icon: '📋', color: 'text-purple-400' },
+    { name: 'NewsEvent', icon: '📰', color: 'text-yellow-400' },
+]
+
+const PATTERNS = [
+    { name: 'Golden Cross', vplTypes: ['GOLDEN_CROSS', 'STRONG_BUY'], severity: 'bullish' },
+    { name: 'Death Cross', vplTypes: ['DEATH_CROSS', 'STRONG_SELL'], severity: 'bearish' },
+    { name: 'Overbought', vplTypes: ['RSI_OVERBOUGHT'], severity: 'warning' },
+    { name: 'Oversold', vplTypes: ['RSI_OVERSOLD'], severity: 'bullish' },
+    { name: 'MACD Bullish', vplTypes: ['MACD_BULLISH'], severity: 'bullish' },
+    { name: 'MACD Bearish', vplTypes: ['MACD_BEARISH'], severity: 'bearish' },
+    { name: 'Breakout', vplTypes: ['BB_SQUEEZE', 'BB_BREAKOUT_UP', 'BB_BREAKOUT_DOWN'], severity: 'warning' },
+]
 
 export default function FinancialDemo() {
-    const [isRunning, setIsRunning] = useState(false)
-    const [symbol, setSymbol] = useState('BTC/USD')
-    const [currentPrice, setCurrentPrice] = useState(45000)
-    const [priceHistory, setPriceHistory] = useState<PricePoint[]>([])
-    const [signals, setSignals] = useState<Signal[]>([])
-    const [eventCount, setEventCount] = useState(0)
-    const [stats, setStats] = useState({ high: 45000, low: 45000, change: 0, volume: 0 })
+    const { connected, mqttConnected, events, alerts } = useVarpulis()
 
-    const [config, setConfig] = useState({
-        smaShort: 20,
-        smaLong: 50,
-        volumeThreshold: 1000,
-        breakoutPercent: 2
-    })
+    const [eventCounts, setEventCounts] = useState<Record<string, number>>({})
+    const [streamCounts, setStreamCounts] = useState<Record<string, number>>({})
+    const [patternMatches, setPatternMatches] = useState<Record<string, number>>({})
+    const [recentEvents, setRecentEvents] = useState<VarpulisEvent[]>([])
+    const [marketData, setMarketData] = useState<Record<string, { price: number, change: number, volume: number }>>({})
+    const [indicatorsBySymbol, setIndicatorsBySymbol] = useState<Record<string, { sma20: number, sma50: number, rsi: number, macd: number, bbUpper: number, bbLower: number }>>({})
+    const [selectedSymbol, setSelectedSymbol] = useState<string>('BTC')
 
-    const calculateSMA = (data: number[], period: number): number => {
-        if (data.length < period) return data[data.length - 1] || 0
-        const slice = data.slice(-period)
-        return slice.reduce((a, b) => a + b, 0) / period
-    }
+    const lastEventRef = useRef<string>('')
+    const lastAlertRef = useRef<string>('')
+
+    // Process alerts to extract indicators and pattern matches
+    useEffect(() => {
+        if (alerts.length === 0) return
+
+        const latestAlert = alerts[0]
+        const alertKey = `${latestAlert.type}-${latestAlert.timestamp}`
+        if (alertKey === lastAlertRef.current) return
+        lastAlertRef.current = alertKey
+
+        // Handle nested data structure
+        const nestedData = (latestAlert.data?.data as Record<string, unknown>) || latestAlert.data || {}
+        // VPL emits signal_type for trading signals, event_type for indicators
+        const alertType = String(nestedData.signal_type || nestedData.event_type || latestAlert.data?.signal_type || latestAlert.data?.event_type || '')
+
+        // Update indicators by symbol (field names match VPL emit statements)
+        const rawSymbol = String(nestedData.symbol || latestAlert.data?.symbol || '')
+        const symbol = rawSymbol.replace('/USD', '')
+
+        if (symbol) {
+            setIndicatorsBySymbol(prev => {
+                const current = prev[symbol] || { sma20: 0, sma50: 0, rsi: 50, macd: 0, bbUpper: 0, bbLower: 0 }
+                const updated = { ...current }
+
+                if (nestedData.sma_20) updated.sma20 = Number(nestedData.sma_20)
+                if (nestedData.sma_50) updated.sma50 = Number(nestedData.sma_50)
+                if (nestedData.rsi) updated.rsi = Number(nestedData.rsi)
+                if (nestedData.macd_line) updated.macd = Number(nestedData.macd_line)
+                if (nestedData.upper) updated.bbUpper = Number(nestedData.upper)
+                if (nestedData.lower) updated.bbLower = Number(nestedData.lower)
+
+                return { ...prev, [symbol]: updated }
+            })
+        }
+
+        // Map VPL signal_type/event_type to dashboard pattern names
+        const signalTypeMap: Record<string, string> = {
+            'GOLDEN_CROSS': 'Golden Cross',
+            'GoldenCross': 'Golden Cross',
+            'DEATH_CROSS': 'Death Cross',
+            'DeathCross': 'Death Cross',
+            'RSI_OVERBOUGHT': 'Overbought',
+            'RSI_OVERSOLD': 'Oversold',
+            'BB_SQUEEZE': 'Breakout',
+            'BB_BREAKOUT_UP': 'Breakout',
+            'BB_BREAKOUT_DOWN': 'Breakout',
+            'MACD_BULLISH': 'MACD Bullish',
+            'MACD_BEARISH': 'MACD Bearish',
+            'PUMP_DETECTED': 'Breakout',
+            'PUMP_AND_DUMP': 'Breakout',
+            'STRONG_BUY': 'Golden Cross',
+            'STRONG_SELL': 'Death Cross',
+        }
+
+        const patternName = signalTypeMap[alertType]
+        if (patternName) {
+            setPatternMatches(prev => ({ ...prev, [patternName]: (prev[patternName] || 0) + 1 }))
+        }
+
+        // Handle RSI indicator alerts (event_type: "RSI")
+        if (alertType === 'RSI') {
+            const rsi = Number(nestedData.rsi || 0)
+            if (rsi > 70) {
+                setPatternMatches(prev => ({ ...prev, 'Overbought': (prev['Overbought'] || 0) + 1 }))
+            } else if (rsi < 30) {
+                setPatternMatches(prev => ({ ...prev, 'Oversold': (prev['Oversold'] || 0) + 1 }))
+            }
+        }
+
+        // Handle MACD indicator alerts (event_type: "MACD")
+        if (alertType === 'MACD' && !patternName) {
+            const histogram = Number(nestedData.histogram || 0)
+            if (histogram > 0) {
+                setPatternMatches(prev => ({ ...prev, 'MACD Bullish': (prev['MACD Bullish'] || 0) + 1 }))
+            } else if (histogram < 0) {
+                setPatternMatches(prev => ({ ...prev, 'MACD Bearish': (prev['MACD Bearish'] || 0) + 1 }))
+            }
+        }
+    }, [alerts])
 
     useEffect(() => {
-        if (!isRunning) return
+        if (events.length === 0) return
 
-        const interval = setInterval(() => {
-            // Generate price movement (random walk with momentum)
-            const momentum = (Math.random() - 0.48) * 200
-            const newPrice = Math.max(30000, Math.min(60000, currentPrice + momentum))
-            const volume = Math.floor(Math.random() * 500 + 50)
+        const latestEvent = events[0]
+        const eventKey = `${latestEvent.type}-${latestEvent.timestamp}`
+        if (eventKey === lastEventRef.current) return
+        lastEventRef.current = eventKey
 
-            setCurrentPrice(newPrice)
+        // Update event counts
+        const eventType = latestEvent.type || 'Unknown'
+        setEventCounts(prev => ({ ...prev, [eventType]: (prev[eventType] || 0) + 1 }))
 
-            setPriceHistory(prev => {
-                const prices = [...prev.map(p => p.price), newPrice]
-                const sma20 = calculateSMA(prices, config.smaShort)
-                const sma50 = calculateSMA(prices, config.smaLong)
+        // Update recent events
+        setRecentEvents(prev => [latestEvent, ...prev].slice(0, 20))
 
-                const now = new Date()
-                const timeStr = `${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`
-
-                const newPoint: PricePoint = {
-                    time: timeStr,
-                    price: newPrice,
-                    volume,
-                    sma20,
-                    sma50
-                }
-
-                // Check for crossovers
-                if (prev.length > 1) {
-                    const lastPoint = prev[prev.length - 1]
-
-                    // Golden Cross: SMA20 crosses above SMA50
-                    if (lastPoint.sma20 <= lastPoint.sma50 && sma20 > sma50) {
-                        setSignals(s => [{
-                            id: Date.now(),
-                            type: 'golden_cross' as const,
-                            symbol,
-                            message: `Golden Cross detected! SMA${config.smaShort} crossed above SMA${config.smaLong}`,
-                            price: newPrice,
-                            timestamp: new Date()
-                        }, ...s].slice(0, 20))
-                    }
-
-                    // Death Cross: SMA20 crosses below SMA50
-                    if (lastPoint.sma20 >= lastPoint.sma50 && sma20 < sma50) {
-                        setSignals(s => [{
-                            id: Date.now(),
-                            type: 'death_cross' as const,
-                            symbol,
-                            message: `Death Cross detected! SMA${config.smaShort} crossed below SMA${config.smaLong}`,
-                            price: newPrice,
-                            timestamp: new Date()
-                        }, ...s].slice(0, 20))
-                    }
-
-                    // Volume spike
-                    if (volume > config.volumeThreshold) {
-                        setSignals(s => [{
-                            id: Date.now(),
-                            type: 'volume_spike' as const,
-                            symbol,
-                            message: `High volume detected: ${volume} units`,
-                            price: newPrice,
-                            timestamp: new Date()
-                        }, ...s].slice(0, 20))
-                    }
-                }
-
-                return [...prev.slice(-60), newPoint]
-            })
-
-            // Update stats
-            setStats(prev => ({
-                high: Math.max(prev.high, newPrice),
-                low: Math.min(prev.low, newPrice),
-                change: ((newPrice - 45000) / 45000 * 100),
-                volume: prev.volume + volume
+        // Update stream counts and market data based on event type
+        if (eventType === 'MarketTick') {
+            setStreamCounts(prev => ({
+                ...prev,
+                'Prices': (prev['Prices'] || 0) + 1,
+                'SMA': (prev['SMA'] || 0) + 1,
+                'Bollinger': (prev['Bollinger'] || 0) + 1,
             }))
 
-            setEventCount(prev => prev + 1)
-        }, 500)
+            const symbol = String(latestEvent.data?.symbol || 'BTC/USD')
+            const price = Number(latestEvent.data?.price || 0)
+            const change = Number(latestEvent.data?.change_pct || 0)
+            const volume = Number(latestEvent.data?.volume || 0)
 
-        return () => clearInterval(interval)
-    }, [isRunning, currentPrice, symbol, config])
+            setMarketData(prev => ({
+                ...prev,
+                [symbol]: { price, change, volume }
+            }))
+        } else if (eventType === 'OHLCV') {
+            setStreamCounts(prev => ({
+                ...prev,
+                'Candles': (prev['Candles'] || 0) + 1,
+                'RSI': (prev['RSI'] || 0) + 1,
+                'MACD': (prev['MACD'] || 0) + 1,
+            }))
+        } else if (eventType === 'OrderBook') {
+            setStreamCounts(prev => ({
+                ...prev,
+                'Liquidity': (prev['Liquidity'] || 0) + 1,
+            }))
+        } else if (eventType === 'NewsEvent') {
+            setStreamCounts(prev => ({
+                ...prev,
+                'Sentiment': (prev['Sentiment'] || 0) + 1,
+            }))
+        } else if (eventType === 'TradingSignal') {
+            setStreamCounts(prev => ({
+                ...prev,
+                'Signals': (prev['Signals'] || 0) + 1,
+            }))
 
-    const reset = () => {
-        setIsRunning(false)
-        setCurrentPrice(45000)
-        setPriceHistory([])
-        setSignals([])
-        setEventCount(0)
-        setStats({ high: 45000, low: 45000, change: 0, volume: 0 })
-    }
-
-    const getSignalIcon = (type: string) => {
-        switch (type) {
-            case 'golden_cross': return <TrendingUp className="w-4 h-4 text-emerald-400" />
-            case 'death_cross': return <TrendingDown className="w-4 h-4 text-red-400" />
-            case 'volume_spike': return <Activity className="w-4 h-4 text-blue-400" />
-            default: return <AlertTriangle className="w-4 h-4 text-yellow-400" />
+            // Process trading signals
+            const signal = String(latestEvent.data?.signal || '')
+            if (signal === 'golden_cross') {
+                setPatternMatches(prev => ({ ...prev, 'Golden Cross': (prev['Golden Cross'] || 0) + 1 }))
+            } else if (signal === 'death_cross') {
+                setPatternMatches(prev => ({ ...prev, 'Death Cross': (prev['Death Cross'] || 0) + 1 }))
+            } else if (signal === 'overbought') {
+                setPatternMatches(prev => ({ ...prev, 'Overbought': (prev['Overbought'] || 0) + 1 }))
+            } else if (signal === 'oversold') {
+                setPatternMatches(prev => ({ ...prev, 'Oversold': (prev['Oversold'] || 0) + 1 }))
+            } else if (signal === 'breakout') {
+                setPatternMatches(prev => ({ ...prev, 'Breakout': (prev['Breakout'] || 0) + 1 }))
+            } else if (signal === 'macd_bullish') {
+                setPatternMatches(prev => ({ ...prev, 'MACD Bullish': (prev['MACD Bullish'] || 0) + 1 }))
+            } else if (signal === 'macd_bearish') {
+                setPatternMatches(prev => ({ ...prev, 'MACD Bearish': (prev['MACD Bearish'] || 0) + 1 }))
+            }
         }
-    }
+    }, [events])
 
-    const getSignalColor = (type: string) => {
-        switch (type) {
-            case 'golden_cross': return 'bg-emerald-500/10 border-emerald-500/30'
-            case 'death_cross': return 'bg-red-500/10 border-red-500/30'
-            case 'volume_spike': return 'bg-blue-500/10 border-blue-500/30'
-            default: return 'bg-yellow-500/10 border-yellow-500/30'
-        }
-    }
+    const totalEvents = Object.values(eventCounts).reduce((a, b) => a + b, 0)
+    const totalPatterns = Object.values(patternMatches).reduce((a, b) => a + b, 0)
 
     return (
-        <div className="p-6 max-w-7xl mx-auto">
-            {/* Controls */}
-            <div className="flex items-center justify-between mb-6">
+        <div className="p-4 space-y-4 max-w-[1600px] mx-auto">
+            {/* Header */}
+            <div className="flex items-center justify-between bg-slate-800/50 rounded-lg p-3 border border-slate-700">
                 <div className="flex items-center gap-4">
-                    <button
-                        onClick={() => setIsRunning(!isRunning)}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${isRunning
-                            ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
-                            : 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'
-                            }`}
-                    >
-                        {isRunning ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                        {isRunning ? 'Pause' : 'Start'} Feed
-                    </button>
-                    <button onClick={reset} className="flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-700 text-slate-300 hover:bg-slate-600">
-                        <RotateCcw className="w-4 h-4" />
-                        Reset
-                    </button>
-                    <select
-                        value={symbol}
-                        onChange={e => setSymbol(e.target.value)}
-                        className="input-field"
-                    >
-                        <option value="BTC/USD">BTC/USD</option>
-                        <option value="ETH/USD">ETH/USD</option>
-                        <option value="AAPL">AAPL</option>
-                    </select>
+                    <h1 className="text-xl font-bold text-white">📈 Financial Markets Demo</h1>
+                    <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm ${connected ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
+                        {connected ? <Wifi className="w-4 h-4" /> : <WifiOff className="w-4 h-4" />}
+                        {connected ? 'Connected' : 'Disconnected'}
+                    </div>
+                    {connected && mqttConnected && (
+                        <div className="bg-blue-500/20 text-blue-400 px-3 py-1 rounded-full text-sm">
+                            MQTT Active
+                        </div>
+                    )}
                 </div>
-                <div className="flex items-center gap-4 text-sm text-slate-400">
-                    <span>Ticks: <span className="text-white font-mono">{eventCount}</span></span>
-                    <span>Signals: <span className="text-white font-mono">{signals.length}</span></span>
+                <div className="flex items-center gap-6 text-sm">
+                    <span className="text-slate-400">Events: <span className="text-white font-mono font-bold">{totalEvents}</span></span>
+                    <span className="text-slate-400">Signals: <span className="text-yellow-400 font-mono font-bold">{totalPatterns}</span></span>
+                    <span className="text-slate-400">Alerts: <span className="text-red-400 font-mono font-bold">{alerts.length}</span></span>
                 </div>
             </div>
 
-            {/* Price Header */}
-            <div className="card mb-6">
-                <div className="flex items-center justify-between">
-                    <div>
-                        <div className="flex items-center gap-3">
-                            <DollarSign className="w-8 h-8 text-blue-400" />
-                            <div>
-                                <h2 className="text-2xl font-bold text-white">{symbol}</h2>
-                                <p className="text-slate-400 text-sm">Real-time Market Data</p>
+            {/* Stream Pipeline Graph */}
+            <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700">
+                <h2 className="text-lg font-semibold text-white mb-2 flex items-center gap-2">
+                    <Filter className="w-5 h-5 text-purple-400" />
+                    Trading Signal Pipeline
+                </h2>
+                <div className="text-xs text-slate-400 mb-2">
+                    Events flow from left to right: Market Data → Streams → Technical Indicators → Trading Signals
+                </div>
+                <PipelineGraph
+                    nodes={FINANCIAL_PIPELINE.nodes}
+                    edges={FINANCIAL_PIPELINE.edges}
+                    eventCounts={eventCounts}
+                    streamCounts={streamCounts}
+                    patternCounts={patternMatches}
+                />
+            </div>
+
+            {/* Main content - 3 columns */}
+            <div className="grid grid-cols-3 gap-4">
+                {/* Column 1: Market Events */}
+                <div className="space-y-4">
+                    <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700">
+                        <h2 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+                            <Database className="w-5 h-5 text-blue-400" />
+                            Market Events
+                        </h2>
+                        <div className="grid grid-cols-2 gap-2 mb-4">
+                            {EVENT_TYPES.map(evt => (
+                                <div key={evt.name} className="bg-slate-900/50 rounded p-2 border border-slate-600">
+                                    <div className="flex items-center gap-2">
+                                        <span>{evt.icon}</span>
+                                        <span className={`text-xs font-medium ${evt.color}`}>{evt.name}</span>
+                                    </div>
+                                    <div className="text-lg font-mono font-bold text-white">{eventCounts[evt.name] || 0}</div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Live Event Feed */}
+                    <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700 max-h-[300px] overflow-y-auto">
+                        <h3 className="text-sm font-semibold text-slate-300 mb-2">Live Market Feed</h3>
+                        <div className="space-y-1 text-xs font-mono">
+                            {recentEvents.slice(0, 10).map((evt, i) => (
+                                <div key={i} className="text-slate-400 truncate">
+                                    <span className="text-blue-400">{evt.type}</span>
+                                    <span className="text-slate-600"> | </span>
+                                    <span>{String(evt.data?.symbol || '')}</span>
+                                    {evt.data?.price ? <span className="text-green-400"> ${Number(evt.data.price).toFixed(2)}</span> : null}
+                                    {evt.data?.change_pct ? (
+                                        <span className={Number(evt.data.change_pct) >= 0 ? 'text-green-400' : 'text-red-400'}>
+                                            {' '}{Number(evt.data.change_pct) >= 0 ? '+' : ''}{Number(evt.data.change_pct).toFixed(2)}%
+                                        </span>
+                                    ) : null}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+
+                {/* Column 2: Market Data & Indicators */}
+                <div className="space-y-4">
+                    <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700">
+                        <h2 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+                            <TrendingUp className="w-5 h-5 text-green-400" />
+                            Market Prices
+                        </h2>
+                        <div className="space-y-2">
+                            {Object.entries(marketData).slice(0, 5).map(([symbol, data]) => (
+                                <div key={symbol} className="bg-slate-900/50 rounded p-2 border border-slate-600">
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-sm font-medium text-blue-300">{symbol}</span>
+                                        <span className="text-sm font-mono text-white">${data.price.toLocaleString()}</span>
+                                    </div>
+                                    <div className="flex items-center justify-between text-xs mt-1">
+                                        <span className={data.change >= 0 ? 'text-green-400' : 'text-red-400'}>
+                                            {data.change >= 0 ? '+' : ''}{data.change.toFixed(2)}%
+                                        </span>
+                                        <span className="text-slate-500">Vol: {data.volume.toLocaleString()}</span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Technical Indicators - Per Symbol */}
+                    <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700">
+                        <div className="flex items-center justify-between mb-3">
+                            <h3 className="text-sm font-semibold text-slate-300">Technical Indicators</h3>
+                            <div className="flex gap-1">
+                                {['BTC', 'ETH', 'SOL'].map(sym => (
+                                    <button
+                                        key={sym}
+                                        onClick={() => setSelectedSymbol(sym)}
+                                        className={`px-2 py-1 text-xs rounded ${selectedSymbol === sym
+                                            ? 'bg-blue-500 text-white'
+                                            : 'bg-slate-700 text-slate-400 hover:bg-slate-600'}`}
+                                    >
+                                        {sym}
+                                    </button>
+                                ))}
                             </div>
                         </div>
-                    </div>
-                    <div className="text-right">
-                        <div className="text-4xl font-bold text-white">${currentPrice.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
-                        <div className={`text-lg ${stats.change >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                            {stats.change >= 0 ? '+' : ''}{stats.change.toFixed(2)}%
-                        </div>
-                    </div>
-                </div>
-                <div className="grid grid-cols-4 gap-4 mt-4 pt-4 border-t border-slate-700">
-                    <div className="text-center">
-                        <div className="text-lg font-semibold text-emerald-400">${stats.high.toLocaleString()}</div>
-                        <div className="text-xs text-slate-400">24h High</div>
-                    </div>
-                    <div className="text-center">
-                        <div className="text-lg font-semibold text-red-400">${stats.low.toLocaleString()}</div>
-                        <div className="text-xs text-slate-400">24h Low</div>
-                    </div>
-                    <div className="text-center">
-                        <div className="text-lg font-semibold text-white">{stats.volume.toLocaleString()}</div>
-                        <div className="text-xs text-slate-400">Volume</div>
-                    </div>
-                    <div className="text-center">
-                        <div className="text-lg font-semibold text-blue-400">{priceHistory.length > 0 ? priceHistory[priceHistory.length - 1]?.sma20.toFixed(0) : '-'}</div>
-                        <div className="text-xs text-slate-400">SMA{config.smaShort}</div>
-                    </div>
-                </div>
-            </div>
-
-            <div className="grid lg:grid-cols-3 gap-6">
-                {/* Charts */}
-                <div className="lg:col-span-2 space-y-6">
-                    {/* Price Chart */}
-                    <div className="card">
-                        <h3 className="text-lg font-semibold text-white mb-4">Price & Moving Averages</h3>
-                        <div className="h-72">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <LineChart data={priceHistory}>
-                                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                                    <XAxis dataKey="time" stroke="#9ca3af" fontSize={10} />
-                                    <YAxis domain={['auto', 'auto']} stroke="#9ca3af" fontSize={10} tickFormatter={v => `$${(v / 1000).toFixed(0)}k`} />
-                                    <Tooltip
-                                        contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #475569', borderRadius: '8px' }}
-                                        labelStyle={{ color: '#fff' }}
-                                        formatter={(value) => value != null ? `$${Number(value).toLocaleString()}` : ''}
-                                    />
-                                    <Line type="monotone" dataKey="price" stroke="#3b82f6" strokeWidth={2} dot={false} name="Price" />
-                                    <Line type="monotone" dataKey="sma20" stroke="#10b981" strokeWidth={1.5} dot={false} name={`SMA${config.smaShort}`} strokeDasharray="5 5" />
-                                    <Line type="monotone" dataKey="sma50" stroke="#f59e0b" strokeWidth={1.5} dot={false} name={`SMA${config.smaLong}`} strokeDasharray="5 5" />
-                                </LineChart>
-                            </ResponsiveContainer>
-                        </div>
-                        <div className="flex items-center justify-center gap-6 mt-4 text-sm">
-                            <span className="flex items-center gap-2"><span className="w-3 h-3 bg-blue-500 rounded-full"></span> Price</span>
-                            <span className="flex items-center gap-2"><span className="w-3 h-1 bg-emerald-500"></span> SMA{config.smaShort}</span>
-                            <span className="flex items-center gap-2"><span className="w-3 h-1 bg-amber-500"></span> SMA{config.smaLong}</span>
-                        </div>
-                    </div>
-
-                    {/* Volume Chart */}
-                    <div className="card">
-                        <h3 className="text-lg font-semibold text-white mb-4">Volume</h3>
-                        <div className="h-32">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <BarChart data={priceHistory.slice(-30)}>
-                                    <XAxis dataKey="time" stroke="#9ca3af" fontSize={10} />
-                                    <YAxis stroke="#9ca3af" fontSize={10} />
-                                    <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #475569', borderRadius: '8px' }} />
-                                    <Bar dataKey="volume" fill="#6366f1" />
-                                </BarChart>
-                            </ResponsiveContainer>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Right Panel */}
-                <div className="space-y-6">
-                    {/* Signals */}
-                    <div className="card">
-                        <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-                            <Activity className="w-5 h-5 text-blue-400" />
-                            Trading Signals
-                        </h3>
-                        <div className="space-y-2 max-h-64 overflow-y-auto">
-                            {signals.length === 0 ? (
-                                <p className="text-slate-400 text-sm text-center py-4">No signals yet. Start the feed to detect patterns.</p>
-                            ) : (
-                                signals.map(signal => (
-                                    <div key={signal.id} className={`flex items-start gap-3 p-3 rounded-lg border ${getSignalColor(signal.type)}`}>
-                                        {getSignalIcon(signal.type)}
-                                        <div className="flex-1 min-w-0">
-                                            <div className="flex items-center justify-between">
-                                                <span className="text-sm font-medium text-white capitalize">{signal.type.replace('_', ' ')}</span>
-                                                <span className="text-xs text-slate-500">{signal.timestamp.toLocaleTimeString()}</span>
-                                            </div>
-                                            <p className="text-xs text-slate-400 truncate">{signal.message}</p>
-                                            <p className="text-xs text-slate-500">@ ${signal.price.toLocaleString()}</p>
+                        {(() => {
+                            const ind = indicatorsBySymbol[selectedSymbol] || { sma20: 0, sma50: 0, rsi: 50, macd: 0, bbUpper: 0, bbLower: 0 }
+                            return (
+                                <div className="grid grid-cols-2 gap-2">
+                                    <div className="bg-slate-900/50 rounded p-2">
+                                        <div className="text-xs text-slate-400">SMA 20</div>
+                                        <div className="text-sm font-mono text-purple-400">{ind.sma20.toFixed(2)}</div>
+                                    </div>
+                                    <div className="bg-slate-900/50 rounded p-2">
+                                        <div className="text-xs text-slate-400">SMA 50</div>
+                                        <div className="text-sm font-mono text-purple-400">{ind.sma50.toFixed(2)}</div>
+                                    </div>
+                                    <div className="bg-slate-900/50 rounded p-2">
+                                        <div className="text-xs text-slate-400">RSI</div>
+                                        <div className={`text-sm font-mono ${ind.rsi > 70 ? 'text-red-400' : ind.rsi < 30 ? 'text-green-400' : 'text-yellow-400'}`}>
+                                            {ind.rsi.toFixed(1)}
                                         </div>
                                     </div>
-                                ))
-                            )}
+                                    <div className="bg-slate-900/50 rounded p-2">
+                                        <div className="text-xs text-slate-400">MACD</div>
+                                        <div className={`text-sm font-mono ${ind.macd >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                            {ind.macd.toFixed(2)}
+                                        </div>
+                                    </div>
+                                    <div className="bg-slate-900/50 rounded p-2">
+                                        <div className="text-xs text-slate-400">BB Upper</div>
+                                        <div className="text-sm font-mono text-cyan-400">${ind.bbUpper.toFixed(2)}</div>
+                                    </div>
+                                    <div className="bg-slate-900/50 rounded p-2">
+                                        <div className="text-xs text-slate-400">BB Lower</div>
+                                        <div className="text-sm font-mono text-cyan-400">${ind.bbLower.toFixed(2)}</div>
+                                    </div>
+                                </div>
+                            )
+                        })()}
+                    </div>
+                </div>
+
+                {/* Column 3: Signals & Alerts */}
+                <div className="space-y-4">
+                    <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700">
+                        <h2 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+                            <AlertTriangle className="w-5 h-5 text-orange-400" />
+                            Trading Signals
+                        </h2>
+                        <div className="space-y-2">
+                            {PATTERNS.map(pattern => (
+                                <div key={pattern.name} className={`bg-slate-900/50 rounded p-2 border ${patternMatches[pattern.name] ? 'border-yellow-500/50' : 'border-slate-600'}`}>
+                                    <div className="flex items-center justify-between">
+                                        <span className={`text-sm font-medium ${pattern.severity === 'bullish' ? 'text-green-400' :
+                                            pattern.severity === 'bearish' ? 'text-red-400' : 'text-yellow-400'
+                                            }`}>
+                                            {pattern.severity === 'bullish' ? '🟢' : pattern.severity === 'bearish' ? '🔴' : '🟡'} {pattern.name}
+                                        </span>
+                                        <span className="text-sm font-mono text-white">{patternMatches[pattern.name] || 0}</span>
+                                    </div>
+                                    <div className="text-xs text-slate-500 mt-1 font-mono">{pattern.vplTypes.join(' | ')}</div>
+                                </div>
+                            ))}
                         </div>
                     </div>
 
-                    {/* Configuration */}
-                    <div className="card">
-                        <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-                            <Settings className="w-5 h-5 text-slate-400" />
-                            Indicator Settings
-                        </h3>
-                        <div className="space-y-3">
-                            <div>
-                                <label className="block text-sm text-slate-400 mb-1">Short SMA Period</label>
-                                <input
-                                    type="number"
-                                    value={config.smaShort}
-                                    onChange={e => setConfig(prev => ({ ...prev, smaShort: Number(e.target.value) }))}
-                                    className="input-field w-full"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-sm text-slate-400 mb-1">Long SMA Period</label>
-                                <input
-                                    type="number"
-                                    value={config.smaLong}
-                                    onChange={e => setConfig(prev => ({ ...prev, smaLong: Number(e.target.value) }))}
-                                    className="input-field w-full"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-sm text-slate-400 mb-1">Volume Threshold</label>
-                                <input
-                                    type="number"
-                                    value={config.volumeThreshold}
-                                    onChange={e => setConfig(prev => ({ ...prev, volumeThreshold: Number(e.target.value) }))}
-                                    className="input-field w-full"
-                                />
-                            </div>
-                        </div>
-                        <div className="mt-4 p-3 bg-slate-900 rounded-lg">
-                            <p className="text-xs text-slate-400 font-mono">
-                                stream GoldenCross from MarketTick<br />
-                                &nbsp;&nbsp;where sma({config.smaShort}) &gt; sma({config.smaLong})<br />
-                                &nbsp;&nbsp;&nbsp;&nbsp;and prev(sma({config.smaShort})) &lt;= prev(sma({config.smaLong}))<br />
-                                &nbsp;&nbsp;emit {'{'}symbol, signal: "buy"{'}'}
-                            </p>
+                    {/* Alerts */}
+                    <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700">
+                        <h3 className="text-sm font-semibold text-red-400 mb-2">🚨 Active Alerts ({alerts.length})</h3>
+                        <div className="space-y-2 max-h-[200px] overflow-y-auto">
+                            {alerts.length === 0 ? (
+                                <div className="text-xs text-slate-500">No alerts detected</div>
+                            ) : (
+                                alerts.slice(0, 10).map((alert, i) => {
+                                    // Handle nested data structure: alert.data.data contains the actual values
+                                    const nestedData = (alert.data?.data as Record<string, unknown>) || {};
+                                    const alertType = String(nestedData.event_type || alert.data?.event_type || alert.type || 'Alert');
+                                    const message = String(nestedData.message || alert.data?.message || '');
+                                    const symbol = String(nestedData.symbol || '');
+                                    const value = nestedData.sma_20 || nestedData.sma_50 || nestedData.rsi || '';
+
+                                    return (
+                                        <div key={i} className="bg-emerald-900/20 rounded p-2 border border-emerald-500/30">
+                                            <div className="flex justify-between items-center">
+                                                <span className="text-sm font-medium text-emerald-400">{alertType}</span>
+                                                {symbol && <span className="text-xs text-slate-400">{symbol}</span>}
+                                            </div>
+                                            {value && <div className="text-lg font-mono text-white">{Number(value).toFixed(2)}</div>}
+                                            <div className="text-xs text-slate-400">{message}</div>
+                                        </div>
+                                    );
+                                })
+                            )}
                         </div>
                     </div>
                 </div>
