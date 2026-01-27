@@ -1,0 +1,13 @@
+# HVAC Demo - Main Configuration
+# This file configures MQTT connectivity and imports the HVAC logic
+
+config mqtt {
+    broker: "localhost",
+    port: 1883,
+    client_id: "varpulis-hvac-demo",
+    input_topic: "varpulis/events/#",
+    output_topic: "varpulis/alerts"
+}
+
+# Import HVAC monitoring logic
+import "../../examples/hvac_demo.vpl"

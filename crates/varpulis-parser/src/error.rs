@@ -16,7 +16,7 @@ impl SourceLocation {
     pub fn from_position(source: &str, position: usize) -> Self {
         let mut line = 1;
         let mut column = 1;
-        
+
         for (i, ch) in source.chars().enumerate() {
             if i >= position {
                 break;
@@ -28,8 +28,12 @@ impl SourceLocation {
                 column += 1;
             }
         }
-        
-        SourceLocation { line, column, position }
+
+        SourceLocation {
+            line,
+            column,
+            position,
+        }
     }
 }
 
@@ -83,9 +87,14 @@ impl ParseError {
             message: message.into(),
         }
     }
-    
+
     /// Create an error with source location and optional hint
-    pub fn at_location(source: &str, position: usize, message: impl Into<String>, hint: Option<String>) -> Self {
+    pub fn at_location(
+        source: &str,
+        position: usize,
+        message: impl Into<String>,
+        hint: Option<String>,
+    ) -> Self {
         let loc = SourceLocation::from_position(source, position);
         ParseError::Located {
             line: loc.line,

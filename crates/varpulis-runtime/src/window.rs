@@ -99,6 +99,74 @@ impl SlidingWindow {
     }
 }
 
+/// A count-based window that emits after collecting N events
+pub struct CountWindow {
+    count: usize,
+    events: Vec<Event>,
+}
+
+impl CountWindow {
+    pub fn new(count: usize) -> Self {
+        Self {
+            count,
+            events: Vec::with_capacity(count),
+        }
+    }
+
+    pub fn add(&mut self, event: Event) -> Option<Vec<Event>> {
+        self.events.push(event);
+
+        if self.events.len() >= self.count {
+            // Window is full, emit all events and reset
+            let completed = std::mem::take(&mut self.events);
+            Some(completed)
+        } else {
+            None
+        }
+    }
+
+    pub fn flush(&mut self) -> Vec<Event> {
+        std::mem::take(&mut self.events)
+    }
+}
+
+/// A sliding count window that maintains overlapping windows
+pub struct SlidingCountWindow {
+    window_size: usize,
+    slide_size: usize,
+    events: VecDeque<Event>,
+    events_since_emit: usize,
+}
+
+impl SlidingCountWindow {
+    pub fn new(window_size: usize, slide_size: usize) -> Self {
+        Self {
+            window_size,
+            slide_size,
+            events: VecDeque::with_capacity(window_size),
+            events_since_emit: 0,
+        }
+    }
+
+    pub fn add(&mut self, event: Event) -> Option<Vec<Event>> {
+        self.events.push_back(event);
+        self.events_since_emit += 1;
+
+        // Remove old events if window is overfull
+        while self.events.len() > self.window_size {
+            self.events.pop_front();
+        }
+
+        // Emit if we have enough events and slide interval reached
+        if self.events.len() >= self.window_size && self.events_since_emit >= self.slide_size {
+            self.events_since_emit = 0;
+            Some(self.events.iter().cloned().collect())
+        } else {
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,0 +1,13 @@
+# SASE Security Demo - Main Configuration
+# This file configures MQTT connectivity and imports the security patterns
+
+config mqtt {
+    broker: "localhost",
+    port: 1883,
+    client_id: "varpulis-sase-demo",
+    input_topic: "varpulis/events/#",
+    output_topic: "varpulis/alerts"
+}
+
+# Import SASE patterns
+import "../../examples/sase_patterns.vpl"

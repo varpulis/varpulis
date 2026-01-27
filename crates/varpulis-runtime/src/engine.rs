@@ -10,14 +10,14 @@ use crate::metrics::Metrics;
 use crate::pattern::{PatternBuilder, PatternEngine, PatternExpr};
 use crate::sase::SaseEngine;
 use crate::sequence::{SequenceContext, SequenceFilter, SequenceStep, SequenceTracker};
-use crate::window::{SlidingWindow, TumblingWindow};
+use crate::window::{CountWindow, SlidingCountWindow, SlidingWindow, TumblingWindow};
 use chrono::Duration;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
-use varpulis_core::ast::{Program, Stmt, StreamOp, StreamSource};
+use varpulis_core::ast::{ConfigItem, ConfigValue, Program, Stmt, StreamOp, StreamSource};
 use varpulis_core::Value;
 
 /// Alert emitted by the engine
@@ -29,6 +29,13 @@ pub struct Alert {
     pub data: IndexMap<String, Value>,
 }
 
+/// Configuration block parsed from VPL
+#[derive(Debug, Clone)]
+pub struct EngineConfig {
+    pub name: String,
+    pub values: HashMap<String, ConfigValue>,
+}
+
 /// The main Varpulis engine
 pub struct Engine {
     /// Registered stream definitions
@@ -37,6 +44,8 @@ pub struct Engine {
     event_sources: HashMap<String, Vec<String>>,
     /// User-defined functions
     functions: HashMap<String, UserFunction>,
+    /// Configuration blocks (e.g., mqtt, kafka)
+    configs: HashMap<String, EngineConfig>,
     /// Alert sender
     alert_tx: mpsc::Sender<Alert>,
     /// Metrics
@@ -103,8 +112,15 @@ enum RuntimeOp {
     WhereClosure(Box<dyn Fn(&Event) -> bool + Send + Sync>),
     /// Filter with expression (evaluated at runtime with user functions)
     WhereExpr(varpulis_core::ast::Expr),
+    /// Partition by key - stores the field name to partition on
+    PartitionBy(String),
+    /// Window with optional partition support
     Window(WindowType),
+    /// Partitioned window - maintains separate windows per partition key
+    PartitionedWindow(PartitionedWindowState),
     Aggregate(Aggregator),
+    /// Partitioned aggregate - maintains separate aggregators per partition key
+    PartitionedAggregate(PartitionedAggregatorState),
     Emit(EmitConfig),
     /// Emit with expression evaluation for computed fields
     EmitExpr(EmitExprConfig),
@@ -118,6 +134,77 @@ enum RuntimeOp {
     AttentionWindow(AttentionWindowConfig),
     /// Pattern matching with lambda expression
     Pattern(PatternConfig),
+}
+
+/// State for partitioned windows - maintains separate windows per partition key
+struct PartitionedWindowState {
+    partition_key: String,
+    window_size: usize, // For count-based windows
+    windows: std::collections::HashMap<String, CountWindow>,
+}
+
+impl PartitionedWindowState {
+    fn new(partition_key: String, window_size: usize) -> Self {
+        Self {
+            partition_key,
+            window_size,
+            windows: std::collections::HashMap::new(),
+        }
+    }
+
+    fn add(&mut self, event: Event) -> Option<Vec<Event>> {
+        let key = event
+            .get(&self.partition_key)
+            .map(|v| format!("{}", v))
+            .unwrap_or_else(|| "default".to_string());
+
+        let window = self
+            .windows
+            .entry(key)
+            .or_insert_with(|| CountWindow::new(self.window_size));
+
+        window.add(event)
+    }
+}
+
+/// State for partitioned aggregators
+struct PartitionedAggregatorState {
+    partition_key: String,
+    aggregator_template: Aggregator,
+    aggregators: std::collections::HashMap<String, Aggregator>,
+}
+
+impl PartitionedAggregatorState {
+    fn new(partition_key: String, aggregator: Aggregator) -> Self {
+        Self {
+            partition_key,
+            aggregator_template: aggregator,
+            aggregators: std::collections::HashMap::new(),
+        }
+    }
+
+    fn apply(&mut self, events: &[Event]) -> Vec<(String, IndexMap<String, Value>)> {
+        // Group events by partition key
+        let mut partitions: std::collections::HashMap<String, Vec<Event>> =
+            std::collections::HashMap::new();
+
+        for event in events {
+            let key = event
+                .get(&self.partition_key)
+                .map(|v| format!("{}", v))
+                .unwrap_or_else(|| "default".to_string());
+            partitions.entry(key).or_default().push(event.clone());
+        }
+
+        // Apply aggregator to each partition
+        let mut results = Vec::new();
+        for (key, partition_events) in partitions {
+            let result = self.aggregator_template.apply(&partition_events);
+            results.push((key, result));
+        }
+
+        results
+    }
 }
 
 struct PatternConfig {
@@ -145,6 +232,8 @@ struct LogConfig {
 enum WindowType {
     Tumbling(TumblingWindow),
     Sliding(SlidingWindow),
+    Count(CountWindow),
+    SlidingCount(SlidingCountWindow),
 }
 
 struct EmitConfig {
@@ -161,11 +250,17 @@ impl Engine {
             streams: HashMap::new(),
             event_sources: HashMap::new(),
             functions: HashMap::new(),
+            configs: HashMap::new(),
             alert_tx,
             events_processed: 0,
             alerts_generated: 0,
             metrics: None,
         }
+    }
+
+    /// Get a configuration block by name
+    pub fn get_config(&self, name: &str) -> Option<&EngineConfig> {
+        self.configs.get(name)
     }
 
     /// Enable Prometheus metrics
@@ -226,6 +321,30 @@ impl Engine {
                         user_fn.params.len()
                     );
                     self.functions.insert(name.clone(), user_fn);
+                }
+                Stmt::Config { name, items } => {
+                    let mut values = HashMap::new();
+                    for item in items {
+                        if let ConfigItem::Value(key, val) = item {
+                            values.insert(key.clone(), val.clone());
+                        }
+                    }
+                    info!(
+                        "Registered config block: {} with {} items",
+                        name,
+                        values.len()
+                    );
+                    self.configs.insert(
+                        name.clone(),
+                        EngineConfig {
+                            name: name.clone(),
+                            values,
+                        },
+                    );
+                }
+                Stmt::Import { path, alias } => {
+                    info!("Import statement: {} (alias: {:?})", path, alias);
+                    // TODO: Load and merge imported file
                 }
                 _ => {
                     debug!("Skipping statement: {:?}", stmt.node);
@@ -340,7 +459,10 @@ impl Engine {
             }
         }
         if !sequence_event_types.is_empty() {
-            debug!("Stream {} registered for sequence event types: {:?}", name, sequence_event_types);
+            debug!(
+                "Stream {} registered for sequence event types: {:?}",
+                name, sequence_event_types
+            );
         }
 
         // Extract attention window config from operations if present
@@ -381,6 +503,8 @@ impl Engine {
         let mut match_all_first = false;
         let mut current_timeout: Option<std::time::Duration> = None;
         let mut negation_conditions: Vec<(String, Option<SequenceFilter>)> = Vec::new();
+        let mut partition_key: Option<String> = None;
+        let mut pending_window_size: Option<usize> = None;
 
         // Handle sequence() construct - converts SequenceDecl to SequenceSteps
         if let StreamSource::Sequence(decl) = source {
@@ -481,27 +605,63 @@ impl Engine {
             // Handle non-sequence operations
             match op {
                 StreamOp::Window(args) => {
-                    // Parse duration from expression
-                    // For MVP, assume it's a duration literal
-                    let duration_ns = match &args.duration {
-                        varpulis_core::ast::Expr::Duration(ns) => *ns,
-                        _ => 300_000_000_000, // 5 minutes default
-                    };
-                    let duration = Duration::nanoseconds(duration_ns as i64);
+                    // Check if this is a count-based or time-based window
+                    match &args.duration {
+                        varpulis_core::ast::Expr::Int(count) => {
+                            // Count-based window
+                            let count = *count as usize;
+                            pending_window_size = Some(count);
 
-                    if let Some(sliding) = &args.sliding {
-                        let slide_ns = match sliding {
-                            varpulis_core::ast::Expr::Duration(ns) => *ns,
-                            _ => 60_000_000_000, // 1 minute default
-                        };
-                        let slide = Duration::nanoseconds(slide_ns as i64);
-                        runtime_ops.push(RuntimeOp::Window(WindowType::Sliding(
-                            SlidingWindow::new(duration, slide),
-                        )));
-                    } else {
-                        runtime_ops.push(RuntimeOp::Window(WindowType::Tumbling(
-                            TumblingWindow::new(duration),
-                        )));
+                            // If we have a partition key, use partitioned window
+                            if let Some(ref key) = partition_key {
+                                runtime_ops.push(RuntimeOp::PartitionedWindow(
+                                    PartitionedWindowState::new(key.clone(), count),
+                                ));
+                            } else if let Some(sliding) = &args.sliding {
+                                let slide = match sliding {
+                                    varpulis_core::ast::Expr::Int(n) => *n as usize,
+                                    _ => 1,
+                                };
+                                runtime_ops.push(RuntimeOp::Window(WindowType::SlidingCount(
+                                    SlidingCountWindow::new(count, slide),
+                                )));
+                            } else {
+                                runtime_ops.push(RuntimeOp::Window(WindowType::Count(
+                                    CountWindow::new(count),
+                                )));
+                            }
+                        }
+                        varpulis_core::ast::Expr::Duration(ns) => {
+                            // Time-based window
+                            let duration = Duration::nanoseconds(*ns as i64);
+                            if let Some(sliding) = &args.sliding {
+                                let slide_ns = match sliding {
+                                    varpulis_core::ast::Expr::Duration(ns) => *ns,
+                                    _ => 60_000_000_000, // 1 minute default
+                                };
+                                let slide = Duration::nanoseconds(slide_ns as i64);
+                                runtime_ops.push(RuntimeOp::Window(WindowType::Sliding(
+                                    SlidingWindow::new(duration, slide),
+                                )));
+                            } else {
+                                runtime_ops.push(RuntimeOp::Window(WindowType::Tumbling(
+                                    TumblingWindow::new(duration),
+                                )));
+                            }
+                        }
+                        _ => {
+                            // Default to 5 minute tumbling window
+                            let duration = Duration::nanoseconds(300_000_000_000);
+                            runtime_ops.push(RuntimeOp::Window(WindowType::Tumbling(
+                                TumblingWindow::new(duration),
+                            )));
+                        }
+                    }
+                }
+                StreamOp::PartitionBy(expr) => {
+                    // Extract partition key field name
+                    if let varpulis_core::ast::Expr::Ident(field) = expr {
+                        partition_key = Some(field.clone());
                     }
                 }
                 StreamOp::Aggregate(items) => {
@@ -511,7 +671,14 @@ impl Engine {
                             aggregator = aggregator.add(item.alias.clone(), func, field);
                         }
                     }
-                    runtime_ops.push(RuntimeOp::Aggregate(aggregator));
+                    // If we have a partition key, use partitioned aggregate
+                    if let Some(ref key) = partition_key {
+                        runtime_ops.push(RuntimeOp::PartitionedAggregate(
+                            PartitionedAggregatorState::new(key.clone(), aggregator),
+                        ));
+                    } else {
+                        runtime_ops.push(RuntimeOp::Aggregate(aggregator));
+                    }
                 }
                 StreamOp::Emit(args) => {
                     // Check if any args have complex expressions (not just strings or idents)
@@ -1260,7 +1427,6 @@ impl Engine {
             .get(&event.event_type)
             .cloned()
             .unwrap_or_default();
-        
 
         for stream_name in stream_names {
             if let Some(stream) = self.streams.get_mut(&stream_name) {
@@ -1398,6 +1564,10 @@ impl Engine {
                         return Ok(alerts);
                     }
                 }
+                RuntimeOp::PartitionBy(_) => {
+                    // PartitionBy is handled at stream registration time
+                    // No runtime action needed - just pass events through
+                }
                 RuntimeOp::Window(window) => {
                     let mut window_results = Vec::new();
                     for event in current_events {
@@ -1412,6 +1582,28 @@ impl Engine {
                                     window_results = window_events;
                                 }
                             }
+                            WindowType::Count(w) => {
+                                if let Some(completed) = w.add(event) {
+                                    window_results = completed;
+                                }
+                            }
+                            WindowType::SlidingCount(w) => {
+                                if let Some(window_events) = w.add(event) {
+                                    window_results = window_events;
+                                }
+                            }
+                        }
+                    }
+                    current_events = window_results;
+                    if current_events.is_empty() {
+                        return Ok(alerts);
+                    }
+                }
+                RuntimeOp::PartitionedWindow(state) => {
+                    let mut window_results = Vec::new();
+                    for event in current_events {
+                        if let Some(completed) = state.add(event) {
+                            window_results.extend(completed);
                         }
                     }
                     current_events = window_results;
@@ -1427,6 +1619,23 @@ impl Engine {
                         agg_event.data.insert(key, value);
                     }
                     current_events = vec![agg_event];
+                }
+                RuntimeOp::PartitionedAggregate(state) => {
+                    let results = state.apply(&current_events);
+                    // Create one synthetic event per partition
+                    current_events = results
+                        .into_iter()
+                        .map(|(partition_key, result)| {
+                            let mut agg_event = Event::new("AggregationResult");
+                            agg_event
+                                .data
+                                .insert("_partition".to_string(), Value::Str(partition_key));
+                            for (key, value) in result {
+                                agg_event.data.insert(key, value);
+                            }
+                            agg_event
+                        })
+                        .collect();
                 }
                 RuntimeOp::Emit(config) => {
                     for event in &current_events {

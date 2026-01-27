@@ -183,42 +183,73 @@ fn bench_sase_with_predicates(c: &mut Criterion) {
 /// Benchmark long sequences (5-10 events)
 fn bench_long_sequence(c: &mut Criterion) {
     let mut group = c.benchmark_group("long_sequence");
-    
+
     // 5-event sequence
     let events_5 = generate_events(5000, &["A", "B", "C", "D", "E"]);
     group.bench_function("seq_5_events_5k", |b| {
         b.iter(|| {
             let pattern = SasePattern::Seq(vec![
-                SasePattern::Event { event_type: "A".into(), predicate: None, alias: Some("a".into()) },
-                SasePattern::Event { event_type: "B".into(), predicate: None, alias: Some("b".into()) },
-                SasePattern::Event { event_type: "C".into(), predicate: None, alias: Some("c".into()) },
-                SasePattern::Event { event_type: "D".into(), predicate: None, alias: Some("d".into()) },
-                SasePattern::Event { event_type: "E".into(), predicate: None, alias: Some("e".into()) },
+                SasePattern::Event {
+                    event_type: "A".into(),
+                    predicate: None,
+                    alias: Some("a".into()),
+                },
+                SasePattern::Event {
+                    event_type: "B".into(),
+                    predicate: None,
+                    alias: Some("b".into()),
+                },
+                SasePattern::Event {
+                    event_type: "C".into(),
+                    predicate: None,
+                    alias: Some("c".into()),
+                },
+                SasePattern::Event {
+                    event_type: "D".into(),
+                    predicate: None,
+                    alias: Some("d".into()),
+                },
+                SasePattern::Event {
+                    event_type: "E".into(),
+                    predicate: None,
+                    alias: Some("e".into()),
+                },
             ]);
-            let mut engine = SaseEngine::new(pattern).with_strategy(SelectionStrategy::SkipTillNextMatch);
+            let mut engine =
+                SaseEngine::new(pattern).with_strategy(SelectionStrategy::SkipTillNextMatch);
             let mut matches = 0;
             for event in &events_5 {
-                for _m in engine.process(black_box(event)) { matches += 1; }
+                for _m in engine.process(black_box(event)) {
+                    matches += 1;
+                }
             }
             matches
         })
     });
 
     // 10-event sequence
-    let events_10 = generate_events(10000, &["E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8", "E9", "E10"]);
+    let events_10 = generate_events(
+        10000,
+        &["E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8", "E9", "E10"],
+    );
     group.bench_function("seq_10_events_10k", |b| {
         b.iter(|| {
-            let pattern = SasePattern::Seq((1..=10).map(|i| {
-                SasePattern::Event {
-                    event_type: format!("E{}", i),
-                    predicate: None,
-                    alias: Some(format!("e{}", i)),
-                }
-            }).collect());
-            let mut engine = SaseEngine::new(pattern).with_strategy(SelectionStrategy::SkipTillNextMatch);
+            let pattern = SasePattern::Seq(
+                (1..=10)
+                    .map(|i| SasePattern::Event {
+                        event_type: format!("E{}", i),
+                        predicate: None,
+                        alias: Some(format!("e{}", i)),
+                    })
+                    .collect(),
+            );
+            let mut engine =
+                SaseEngine::new(pattern).with_strategy(SelectionStrategy::SkipTillNextMatch);
             let mut matches = 0;
             for event in &events_10 {
-                for _m in engine.process(black_box(event)) { matches += 1; }
+                for _m in engine.process(black_box(event)) {
+                    matches += 1;
+                }
             }
             matches
         })
@@ -230,27 +261,37 @@ fn bench_long_sequence(c: &mut Criterion) {
 /// Benchmark complex patterns: negation, OR, nested
 fn bench_complex_patterns(c: &mut Criterion) {
     let mut group = c.benchmark_group("complex_patterns");
-    
+
     let events = generate_events(5000, &["Login", "Action", "Logout", "Error"]);
 
     // Negation: Login -> NOT(Error) -> Logout (simple negation without Kleene)
     group.bench_function("negation_5k", |b| {
         b.iter(|| {
             let pattern = SasePattern::Seq(vec![
-                SasePattern::Event { event_type: "Login".into(), predicate: None, alias: Some("login".into()) },
+                SasePattern::Event {
+                    event_type: "Login".into(),
+                    predicate: None,
+                    alias: Some("login".into()),
+                },
                 SasePattern::Not(Box::new(SasePattern::Event {
                     event_type: "Error".into(),
                     predicate: None,
                     alias: None,
                 })),
-                SasePattern::Event { event_type: "Logout".into(), predicate: None, alias: Some("logout".into()) },
+                SasePattern::Event {
+                    event_type: "Logout".into(),
+                    predicate: None,
+                    alias: Some("logout".into()),
+                },
             ]);
             let mut engine = SaseEngine::new(pattern)
                 .with_strategy(SelectionStrategy::SkipTillNextMatch)
                 .with_max_runs(1000);
             let mut matches = 0;
             for event in &events {
-                for _m in engine.process(black_box(event)) { matches += 1; }
+                for _m in engine.process(black_box(event)) {
+                    matches += 1;
+                }
             }
             matches
         })
@@ -261,16 +302,35 @@ fn bench_complex_patterns(c: &mut Criterion) {
         b.iter(|| {
             let pattern = SasePattern::Seq(vec![
                 SasePattern::Or(
-                    Box::new(SasePattern::Event { event_type: "Login".into(), predicate: None, alias: Some("start".into()) }),
-                    Box::new(SasePattern::Event { event_type: "Register".into(), predicate: None, alias: Some("start".into()) }),
+                    Box::new(SasePattern::Event {
+                        event_type: "Login".into(),
+                        predicate: None,
+                        alias: Some("start".into()),
+                    }),
+                    Box::new(SasePattern::Event {
+                        event_type: "Register".into(),
+                        predicate: None,
+                        alias: Some("start".into()),
+                    }),
                 ),
-                SasePattern::Event { event_type: "Action".into(), predicate: None, alias: Some("action".into()) },
-                SasePattern::Event { event_type: "Logout".into(), predicate: None, alias: Some("logout".into()) },
+                SasePattern::Event {
+                    event_type: "Action".into(),
+                    predicate: None,
+                    alias: Some("action".into()),
+                },
+                SasePattern::Event {
+                    event_type: "Logout".into(),
+                    predicate: None,
+                    alias: Some("logout".into()),
+                },
             ]);
-            let mut engine = SaseEngine::new(pattern).with_strategy(SelectionStrategy::SkipTillNextMatch);
+            let mut engine =
+                SaseEngine::new(pattern).with_strategy(SelectionStrategy::SkipTillNextMatch);
             let mut matches = 0;
             for event in &events {
-                for _m in engine.process(black_box(event)) { matches += 1; }
+                for _m in engine.process(black_box(event)) {
+                    matches += 1;
+                }
             }
             matches
         })
@@ -282,22 +342,37 @@ fn bench_complex_patterns(c: &mut Criterion) {
         b.iter(|| {
             let pattern = SasePattern::Or(
                 Box::new(SasePattern::Seq(vec![
-                    SasePattern::Event { event_type: "A".into(), predicate: None, alias: Some("a".into()) },
+                    SasePattern::Event {
+                        event_type: "A".into(),
+                        predicate: None,
+                        alias: Some("a".into()),
+                    },
                     SasePattern::KleenePlus(Box::new(SasePattern::Event {
-                        event_type: "B".into(), predicate: None, alias: Some("b".into()),
+                        event_type: "B".into(),
+                        predicate: None,
+                        alias: Some("b".into()),
                     })),
                 ])),
                 Box::new(SasePattern::Seq(vec![
-                    SasePattern::Event { event_type: "C".into(), predicate: None, alias: Some("c".into()) },
+                    SasePattern::Event {
+                        event_type: "C".into(),
+                        predicate: None,
+                        alias: Some("c".into()),
+                    },
                     SasePattern::KleeneStar(Box::new(SasePattern::Event {
-                        event_type: "D".into(), predicate: None, alias: Some("d".into()),
+                        event_type: "D".into(),
+                        predicate: None,
+                        alias: Some("d".into()),
                     })),
                 ])),
             );
-            let mut engine = SaseEngine::new(pattern).with_strategy(SelectionStrategy::SkipTillAnyMatch);
+            let mut engine =
+                SaseEngine::new(pattern).with_strategy(SelectionStrategy::SkipTillAnyMatch);
             let mut matches = 0;
             for event in &events_nested {
-                for _m in engine.process(black_box(event)) { matches += 1; }
+                for _m in engine.process(black_box(event)) {
+                    matches += 1;
+                }
             }
             matches
         })
@@ -309,7 +384,7 @@ fn bench_complex_patterns(c: &mut Criterion) {
 /// Benchmark with multiple predicates
 fn bench_multi_predicates(c: &mut Criterion) {
     let mut group = c.benchmark_group("multi_predicates");
-    
+
     let events = generate_events(5000, &["Order", "Payment", "Shipment"]);
 
     // Order(value > 500) -> Payment(amount matches) -> Shipment
@@ -347,10 +422,13 @@ fn bench_multi_predicates(c: &mut Criterion) {
                     alias: Some("shipment".into()),
                 },
             ]);
-            let mut engine = SaseEngine::new(pattern).with_strategy(SelectionStrategy::StrictContiguous);
+            let mut engine =
+                SaseEngine::new(pattern).with_strategy(SelectionStrategy::StrictContiguous);
             let mut matches = 0;
             for event in &events {
-                for _m in engine.process(black_box(event)) { matches += 1; }
+                for _m in engine.process(black_box(event)) {
+                    matches += 1;
+                }
             }
             matches
         })
@@ -362,22 +440,37 @@ fn bench_multi_predicates(c: &mut Criterion) {
 /// Benchmark throughput: events per second
 fn bench_throughput(c: &mut Criterion) {
     let mut group = c.benchmark_group("throughput");
-    
+
     for size in [10_000, 50_000, 100_000] {
         group.throughput(Throughput::Elements(size as u64));
         let events = generate_events(size, &["A", "B", "C", "D"]);
-        
+
         group.bench_with_input(BenchmarkId::new("seq_3", size), &events, |b, events| {
             b.iter(|| {
                 let pattern = SasePattern::Seq(vec![
-                    SasePattern::Event { event_type: "A".into(), predicate: None, alias: Some("a".into()) },
-                    SasePattern::Event { event_type: "B".into(), predicate: None, alias: Some("b".into()) },
-                    SasePattern::Event { event_type: "C".into(), predicate: None, alias: Some("c".into()) },
+                    SasePattern::Event {
+                        event_type: "A".into(),
+                        predicate: None,
+                        alias: Some("a".into()),
+                    },
+                    SasePattern::Event {
+                        event_type: "B".into(),
+                        predicate: None,
+                        alias: Some("b".into()),
+                    },
+                    SasePattern::Event {
+                        event_type: "C".into(),
+                        predicate: None,
+                        alias: Some("c".into()),
+                    },
                 ]);
-                let mut engine = SaseEngine::new(pattern).with_strategy(SelectionStrategy::SkipTillNextMatch);
+                let mut engine =
+                    SaseEngine::new(pattern).with_strategy(SelectionStrategy::SkipTillNextMatch);
                 let mut matches = 0;
                 for event in events {
-                    for _m in engine.process(black_box(event)) { matches += 1; }
+                    for _m in engine.process(black_box(event)) {
+                        matches += 1;
+                    }
                 }
                 matches
             })
@@ -395,18 +488,29 @@ fn bench_scalability(c: &mut Criterion) {
 
     // Test with 100K events
     let events_100k = generate_events(100_000, &["A", "B", "C"]);
-    
+
     group.throughput(Throughput::Elements(100_000));
     group.bench_function("100k_simple_seq", |b| {
         b.iter(|| {
             let pattern = SasePattern::Seq(vec![
-                SasePattern::Event { event_type: "A".into(), predicate: None, alias: Some("a".into()) },
-                SasePattern::Event { event_type: "B".into(), predicate: None, alias: Some("b".into()) },
+                SasePattern::Event {
+                    event_type: "A".into(),
+                    predicate: None,
+                    alias: Some("a".into()),
+                },
+                SasePattern::Event {
+                    event_type: "B".into(),
+                    predicate: None,
+                    alias: Some("b".into()),
+                },
             ]);
-            let mut engine = SaseEngine::new(pattern).with_strategy(SelectionStrategy::SkipTillNextMatch);
+            let mut engine =
+                SaseEngine::new(pattern).with_strategy(SelectionStrategy::SkipTillNextMatch);
             let mut matches = 0;
             for event in &events_100k {
-                for _m in engine.process(black_box(event)) { matches += 1; }
+                for _m in engine.process(black_box(event)) {
+                    matches += 1;
+                }
             }
             matches
         })
@@ -418,16 +522,29 @@ fn bench_scalability(c: &mut Criterion) {
     group.bench_function("50k_kleene_plus", |b| {
         b.iter(|| {
             let pattern = SasePattern::Seq(vec![
-                SasePattern::Event { event_type: "Start".into(), predicate: None, alias: Some("s".into()) },
+                SasePattern::Event {
+                    event_type: "Start".into(),
+                    predicate: None,
+                    alias: Some("s".into()),
+                },
                 SasePattern::KleenePlus(Box::new(SasePattern::Event {
-                    event_type: "Middle".into(), predicate: None, alias: Some("m".into()),
+                    event_type: "Middle".into(),
+                    predicate: None,
+                    alias: Some("m".into()),
                 })),
-                SasePattern::Event { event_type: "End".into(), predicate: None, alias: Some("e".into()) },
+                SasePattern::Event {
+                    event_type: "End".into(),
+                    predicate: None,
+                    alias: Some("e".into()),
+                },
             ]);
-            let mut engine = SaseEngine::new(pattern).with_strategy(SelectionStrategy::SkipTillNextMatch);
+            let mut engine =
+                SaseEngine::new(pattern).with_strategy(SelectionStrategy::SkipTillNextMatch);
             let mut matches = 0;
             for event in &events_kleene {
-                for _m in engine.process(black_box(event)) { matches += 1; }
+                for _m in engine.process(black_box(event)) {
+                    matches += 1;
+                }
             }
             matches
         })

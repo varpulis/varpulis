@@ -43,20 +43,23 @@ fn convert_pest_error(e: pest::error::Error<Rule>) -> ParseError {
         pest::error::InputLocation::Pos(p) => p,
         pest::error::InputLocation::Span((s, _)) => s,
     };
-    
+
     // Extract line/column from pest error
     let (line, column) = match e.line_col {
         pest::error::LineColLocation::Pos((l, c)) => (l, c),
         pest::error::LineColLocation::Span((l, c), _) => (l, c),
     };
-    
+
     // Create a human-readable message based on what was expected
     let message = match &e.variant {
-        pest::error::ErrorVariant::ParsingError { positives, negatives: _ } => {
+        pest::error::ErrorVariant::ParsingError {
+            positives,
+            negatives: _,
+        } => {
             if positives.is_empty() {
                 "Unexpected token".to_string()
             } else {
-                let expected: Vec<String> = positives.iter().map(|r| format_rule_name(r)).collect();
+                let expected: Vec<String> = positives.iter().map(format_rule_name).collect();
                 if expected.len() == 1 {
                     format!("Expected {}", expected[0])
                 } else {
@@ -66,7 +69,7 @@ fn convert_pest_error(e: pest::error::Error<Rule>) -> ParseError {
         }
         pest::error::ErrorVariant::CustomError { message } => message.clone(),
     };
-    
+
     ParseError::Located {
         line,
         column,
@@ -785,13 +788,32 @@ fn parse_param(pair: pest::iterators::Pair<Rule>) -> ParseResult<Param> {
 }
 
 fn parse_config_block(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
+    let mut inner = pair.into_inner();
+    let first = inner.next().unwrap();
+
+    // Check if first token is identifier (new syntax) or config_item (old syntax)
+    let (name, items_start) = if first.as_rule() == Rule::identifier {
+        (first.as_str().to_string(), None)
+    } else {
+        // Old syntax: config: with indentation - use "default" as name
+        ("default".to_string(), Some(first))
+    };
+
     let mut items = Vec::new();
-    for p in pair.into_inner() {
+
+    // If we have a config_item from old syntax, parse it first
+    if let Some(first_item) = items_start {
+        if first_item.as_rule() == Rule::config_item {
+            items.push(parse_config_item(first_item)?);
+        }
+    }
+
+    for p in inner {
         if p.as_rule() == Rule::config_item {
             items.push(parse_config_item(p)?);
         }
     }
-    Ok(Stmt::Config(items))
+    Ok(Stmt::Config { name, items })
 }
 
 fn parse_config_item(pair: pest::iterators::Pair<Rule>) -> ParseResult<ConfigItem> {

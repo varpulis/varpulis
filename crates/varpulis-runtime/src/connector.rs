@@ -643,27 +643,35 @@ mod mqtt_impl {
 
         let mut event = Event::new(&event_type);
 
+        // First try nested "data" object, then fall back to top-level fields
         if let Some(data) = json.get("data").and_then(|v| v.as_object()) {
             for (k, v) in data {
                 event = event.with_field(k, json_value_to_native(v));
+            }
+        } else if let Some(obj) = json.as_object() {
+            // Parse fields directly from root object (excluding event_type)
+            for (k, v) in obj {
+                if k != "event_type" {
+                    event = event.with_field(k, json_value_to_native(v));
+                }
             }
         }
 
         event
     }
 
-    fn json_value_to_native(v: &serde_json::Value) -> impl Into<crate::value::Value> {
+    fn json_value_to_native(v: &serde_json::Value) -> impl Into<varpulis_core::Value> {
         match v {
-            serde_json::Value::Bool(b) => crate::value::Value::Bool(*b),
+            serde_json::Value::Bool(b) => varpulis_core::Value::Bool(*b),
             serde_json::Value::Number(n) => {
                 if let Some(i) = n.as_i64() {
-                    crate::value::Value::Int(i)
+                    varpulis_core::Value::Int(i)
                 } else {
-                    crate::value::Value::Float(n.as_f64().unwrap_or(0.0))
+                    varpulis_core::Value::Float(n.as_f64().unwrap_or(0.0))
                 }
             }
-            serde_json::Value::String(s) => crate::value::Value::Str(s.clone()),
-            _ => crate::value::Value::Null,
+            serde_json::Value::String(s) => varpulis_core::Value::Str(s.clone()),
+            _ => varpulis_core::Value::Null,
         }
     }
 }

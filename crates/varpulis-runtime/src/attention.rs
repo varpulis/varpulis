@@ -322,31 +322,35 @@ impl EmbeddingEngine {
         let head_dim = self.embedding_dim / self.num_heads;
         let emb_len = self.embedding_dim.min(embedding.len());
         let mut result = vec![0.0f32; head_dim];
-        
+
         // SIMD-optimized matrix-vector multiplication with loop unrolling
         for i in 0..head_dim {
             let row_start = i * self.embedding_dim;
             let mut sum = 0.0f32;
-            
+
             // Process 4 elements at a time
             let chunks = emb_len / 4;
             for c in 0..chunks {
                 let base = c * 4;
                 unsafe {
-                    sum += *projection.get_unchecked(row_start + base) * *embedding.get_unchecked(base);
-                    sum += *projection.get_unchecked(row_start + base + 1) * *embedding.get_unchecked(base + 1);
-                    sum += *projection.get_unchecked(row_start + base + 2) * *embedding.get_unchecked(base + 2);
-                    sum += *projection.get_unchecked(row_start + base + 3) * *embedding.get_unchecked(base + 3);
+                    sum += *projection.get_unchecked(row_start + base)
+                        * *embedding.get_unchecked(base);
+                    sum += *projection.get_unchecked(row_start + base + 1)
+                        * *embedding.get_unchecked(base + 1);
+                    sum += *projection.get_unchecked(row_start + base + 2)
+                        * *embedding.get_unchecked(base + 2);
+                    sum += *projection.get_unchecked(row_start + base + 3)
+                        * *embedding.get_unchecked(base + 3);
                 }
             }
-            
+
             // Handle remainder
             for j in (chunks * 4)..emb_len {
                 unsafe {
                     sum += *projection.get_unchecked(row_start + j) * *embedding.get_unchecked(j);
                 }
             }
-            
+
             result[i] = sum;
         }
         result
@@ -519,19 +523,16 @@ impl HnswIndex {
 
     fn search(&self, query: &[f32], k: usize) -> Vec<(usize, f32)> {
         let neighbors = self.hnsw.search(query, k, self.ef_search);
-        neighbors.into_iter().map(|n| (n.d_id, n.distance)).collect()
+        neighbors
+            .into_iter()
+            .map(|n| (n.d_id, n.distance))
+            .collect()
     }
 
     fn rebuild(&mut self, embeddings: &[(usize, Vec<f32>)]) {
         // Create new HNSW with current data
         let max_elements = embeddings.len().max(1000);
-        self.hnsw = Hnsw::new(
-            self.max_nb_connection,
-            max_elements,
-            16,
-            200,
-            DistL2,
-        );
+        self.hnsw = Hnsw::new(self.max_nb_connection, max_elements, 16, 200, DistL2);
         for (id, emb) in embeddings {
             self.hnsw.insert((&emb.clone(), *id));
         }
@@ -591,27 +592,31 @@ impl AttentionEngine {
             self.cache.insert(event_hash, emb.clone());
             emb
         });
-        
+
         // Pre-compute K projections for all heads (Stage 2b optimization)
         let k_projections: Vec<Vec<f32>> = (0..self.config.num_heads)
-            .map(|head| self.embedding_engine.project(&embedding, head, ProjectionType::Key))
+            .map(|head| {
+                self.embedding_engine
+                    .project(&embedding, head, ProjectionType::Key)
+            })
             .collect();
-        
+
         // Add to HNSW index
         let idx = self.history.len();
         if let Some(ref mut hnsw) = self.hnsw_index {
             hnsw.insert(&embedding, idx);
         }
-        
+
         self.history.push((event, embedding.clone(), k_projections));
         self.total_events_processed += 1;
-        
+
         // Handle history overflow - need to rebuild HNSW index
         if self.history.len() > self.config.max_history {
             self.history.remove(0);
             // Rebuild HNSW with new indices
             if let Some(ref mut hnsw) = self.hnsw_index {
-                let embeddings: Vec<(usize, Vec<f32>)> = self.history
+                let embeddings: Vec<(usize, Vec<f32>)> = self
+                    .history
                     .iter()
                     .enumerate()
                     .map(|(i, (_, emb, _))| (i, emb.clone()))
@@ -641,12 +646,15 @@ impl AttentionEngine {
 
         let head_dim = self.config.embedding_dim / self.config.num_heads;
         let scale = 1.0 / (head_dim as f32).sqrt();
-        
+
         // Pre-compute Q projections ONCE (was computed k times before!)
         let q_projections: Vec<Vec<f32>> = (0..self.config.num_heads)
-            .map(|head| self.embedding_engine.project(&current_embedding, head, ProjectionType::Query))
+            .map(|head| {
+                self.embedding_engine
+                    .project(&current_embedding, head, ProjectionType::Query)
+            })
             .collect();
-        
+
         // Use HNSW for large history, otherwise linear scan
         let candidates: Vec<usize> = if let Some(ref hnsw) = self.hnsw_index {
             if self.history.len() > hnsw.min_size {
@@ -745,7 +753,7 @@ impl AttentionEngine {
     /// Batch compute attention scores for multiple events in parallel
     pub fn compute_attention_batch(&mut self, events: &[Event]) -> Vec<AttentionResult> {
         let start = Instant::now();
-        
+
         // Pre-compute embeddings for all input events
         let embeddings: Vec<Vec<f32>> = events
             .iter()
@@ -785,7 +793,11 @@ impl AttentionEngine {
                 for (hist_event, _hist_embedding, k_projections) in &self.history {
                     let mut total = 0.0f32;
                     for head in 0..num_heads {
-                        let q = self.embedding_engine.project(current_embedding, head, ProjectionType::Query);
+                        let q = self.embedding_engine.project(
+                            current_embedding,
+                            head,
+                            ProjectionType::Query,
+                        );
                         let k = &k_projections[head];
                         total += dot_product_simd(&q, k) / (head_dim as f32).sqrt();
                     }
@@ -798,7 +810,11 @@ impl AttentionEngine {
                     all_scores.push((event_id, avg));
                 }
 
-                let history_embs: Vec<(Event, Vec<f32>)> = self.history.iter().map(|(e, emb, _)| (e.clone(), emb.clone())).collect();
+                let history_embs: Vec<(Event, Vec<f32>)> = self
+                    .history
+                    .iter()
+                    .map(|(e, emb, _)| (e.clone(), emb.clone()))
+                    .collect();
                 let context = compute_context_internal(&all_scores, &history_embs, embedding_dim);
                 let filtered: Vec<_> = all_scores
                     .into_iter()
@@ -827,7 +843,10 @@ impl AttentionEngine {
         // Add events to history with pre-computed K projections
         for (event, embedding) in events.iter().zip(embeddings.into_iter()) {
             let k_projections: Vec<Vec<f32>> = (0..self.config.num_heads)
-                .map(|head| self.embedding_engine.project(&embedding, head, ProjectionType::Key))
+                .map(|head| {
+                    self.embedding_engine
+                        .project(&embedding, head, ProjectionType::Key)
+                })
                 .collect();
             self.history.push((event.clone(), embedding, k_projections));
             self.total_events_processed += 1;

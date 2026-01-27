@@ -15,7 +15,7 @@ path = "src/main.rs"
 [dependencies]
 varpulis-core = { path = "../varpulis-core" }
 varpulis-parser = { path = "../varpulis-parser" }
-varpulis-runtime = { path = "../varpulis-runtime" }
+varpulis-runtime = { path = "../varpulis-runtime", features = ["mqtt"] }
 tokio = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }

@@ -1,0 +1,16 @@
+# Financial Markets Demo - Main Configuration
+# This file configures MQTT connectivity and imports the trading logic
+
+config mqtt {
+    broker: "localhost",
+    port: 1883,
+    client_id: "varpulis-financial-demo",
+    input_topic: "varpulis/events/#",
+    output_topic: "varpulis/alerts"
+}
+
+# Import financial markets logic
+# Note: The imported file contains streams with .emit() that publish
+# computed indicators (SMA, RSI, MACD, Bollinger) to MQTT
+import "../../examples/financial_markets.vpl"
+
