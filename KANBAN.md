@@ -1,19 +1,20 @@
 # Varpulis CEP - Kanban
 
-> Dernière mise à jour: 2026-01-25
+> Dernière mise à jour: 2026-01-27
 
 ## Vue d'ensemble
 
 | Catégorie | À faire | En cours | Terminé |
 |-----------|---------|----------|----------|
 | Parser Pest | 0 | 0 | 7 |
-| SASE+ | 1 | 0 | 7 |
+| SASE+ | 0 | 0 | **9** |
 | Attention | 0 | 0 | 4 |
 | Benchmarks | 0 | 0 | 2 |
 | Test Infra | 0 | 0 | 4 |
 | Couverture | 2 | 0 | 0 |
 | VS Code | 1 | 0 | 0 |
-| **Total** | **4** | **0** | **24** |
+| Engine Refactor | 0 | 0 | **2** |
+| **Total** | **3** | **0** | **28** |
 
 ---
 
@@ -33,14 +34,9 @@
 
 ---
 
-## PRIORITÉ HAUTE - SASE+ Pattern Matching
+## ✅ TERMINÉ - SASE+ Pattern Matching
 
-### À faire
-
-- [ ] **SASE-07**: Benchmarks performance
-  - **Action**: Créer `benches/pattern_bench.rs` avec criterion
-  - **Comparer**: Ancien PatternEngine vs SaseEngine
-  - **Métriques**: Latence, throughput, mémoire
+> **Statut**: SASE+ est maintenant le **moteur principal** pour le pattern matching
 
 ### Terminé
 
@@ -51,7 +47,14 @@
 - [x] **SASE-05**: Implémenter négation efficace
 - [x] **SASE-05b**: Intégrer dans runtime engine (structure prête)
 - [x] **SASE-06**: Syntaxe pattern supportée (lambdas + séquences `A -> B -> C`)
+- [x] **SASE-07**: Benchmarks performance (`benches/pattern_benchmark.rs`)
 - [x] **SASE-08**: Exemples SASE+ concrets (`examples/sase_patterns.vpl`)
+- [x] **SASE-09**: **Intégration complète dans engine.rs** 🆕
+  - SASE+ utilisé en priorité pour tous les patterns de séquence
+  - Références inter-événements (CompareRef)
+  - Kleene+ avec `CompleteAndBranch`
+  - Négation globale via `global_negations`
+  - Export `eval_filter_expr` pour évaluation des prédicats
 
 ---
 
@@ -171,6 +174,25 @@ python run_scenario.py scenarios/fraud_scenario.yaml
 
 ---
 
+## ✅ TERMINÉ - Refactoring Engine
+
+> **Statut**: engine.rs découpé en modules, code mort supprimé
+
+### Terminé
+
+- [x] **ENG-01**: Modulariser engine.rs (3,716 → ~1,700 lignes)
+  - `mod.rs` - Point d'entrée et Engine struct
+  - `compiler.rs` - Compilation VPL → Runtime
+  - `evaluator.rs` - Évaluation expressions
+  - `types.rs` - Types et structs
+  - `tests.rs` - Tests unitaires
+- [x] **ENG-02**: Supprimer code mort
+  - `PartitionBy` variant inutilisé
+  - `aggregators` field inutilisé
+  - `#[allow(dead_code)]` sur `sase_engine`
+
+---
+
 ## Ordre d'exécution recommandé
 
 ```mermaid
@@ -229,11 +251,16 @@ cargo test -p varpulis-parser pest
 
 ## Métriques actuelles
 
-- **Tests totaux**: 544 passing (8 ignored)
+- **Tests totaux**: 544+ passing
 - **Couverture**: 62.92% 🔴 (cible: 80%)
 - **Clippy warnings**: 0
 - **Parser par défaut**: ✅ Pest (avec préprocesseur d'indentation)
-- **Attention Engine**: ⚠️ Naïve O(n²) - limite 10K events
-- **SASE+ Tests**: 14 tests unitaires
+- **Attention Engine**: ✅ Optimisé ~30x speedup
+- **SASE+ Engine**: ✅ **Intégré comme moteur principal**
+  - NFA-based pattern matching
+  - Kleene+ avec émission continue
+  - Négation globale
+  - Références inter-événements
+- **Engine**: ✅ Modularisé (5 sous-modules)
 - **Benchmarks**: Criterion benchmarks disponibles
 - **Documentation**: README.md production-ready
