@@ -40,6 +40,77 @@ export default function FinancialDemo() {
     })
 
     const lastEventRef = useRef<string>('')
+    const lastAlertRef = useRef<string>('')
+
+    // Process alerts to extract indicators and pattern matches
+    useEffect(() => {
+        if (alerts.length === 0) return
+
+        const latestAlert = alerts[0]
+        const alertKey = `${latestAlert.type}-${latestAlert.timestamp}`
+        if (alertKey === lastAlertRef.current) return
+        lastAlertRef.current = alertKey
+
+        // Handle nested data structure
+        const nestedData = (latestAlert.data?.data as Record<string, unknown>) || {}
+        const alertType = String(nestedData.event_type || latestAlert.data?.event_type || '')
+
+        // Update indicators from alerts (field names match VPL emit statements)
+        if (nestedData.sma_20) {
+            setIndicators(prev => ({ ...prev, sma20: Number(nestedData.sma_20) }))
+        }
+        if (nestedData.sma_50) {
+            setIndicators(prev => ({ ...prev, sma50: Number(nestedData.sma_50) }))
+        }
+        if (nestedData.rsi) {
+            setIndicators(prev => ({ ...prev, rsi: Number(nestedData.rsi) }))
+        }
+        if (nestedData.macd_line) {
+            setIndicators(prev => ({ ...prev, macd: Number(nestedData.macd_line) }))
+        }
+        if (nestedData.upper) {
+            setIndicators(prev => ({ ...prev, bbUpper: Number(nestedData.upper) }))
+        }
+        if (nestedData.lower) {
+            setIndicators(prev => ({ ...prev, bbLower: Number(nestedData.lower) }))
+        }
+
+        // Update pattern matches based on alert type from CEP
+        if (alertType === 'GoldenCross' || alertType === 'GOLDEN_CROSS') {
+            setPatternMatches(prev => ({ ...prev, 'Golden Cross': (prev['Golden Cross'] || 0) + 1 }))
+        }
+        if (alertType === 'DeathCross' || alertType === 'DEATH_CROSS') {
+            setPatternMatches(prev => ({ ...prev, 'Death Cross': (prev['Death Cross'] || 0) + 1 }))
+        }
+        if (alertType === 'RSI') {
+            const rsi = Number(nestedData.rsi || 0)
+            if (rsi > 70) {
+                setPatternMatches(prev => ({ ...prev, 'Overbought': (prev['Overbought'] || 0) + 1 }))
+            } else if (rsi < 30) {
+                setPatternMatches(prev => ({ ...prev, 'Oversold': (prev['Oversold'] || 0) + 1 }))
+            }
+        }
+        if (alertType === 'RSI_OVERBOUGHT') {
+            setPatternMatches(prev => ({ ...prev, 'Overbought': (prev['Overbought'] || 0) + 1 }))
+        }
+        if (alertType === 'RSI_OVERSOLD') {
+            setPatternMatches(prev => ({ ...prev, 'Oversold': (prev['Oversold'] || 0) + 1 }))
+        }
+        if (alertType === 'BollingerBands') {
+            setPatternMatches(prev => ({ ...prev, 'Breakout': (prev['Breakout'] || 0) + 1 }))
+        }
+        if (alertType === 'MACD') {
+            const histogram = Number(nestedData.histogram || 0)
+            if (histogram > 0) {
+                setPatternMatches(prev => ({ ...prev, 'MACD Bullish': (prev['MACD Bullish'] || 0) + 1 }))
+            } else {
+                setPatternMatches(prev => ({ ...prev, 'MACD Bearish': (prev['MACD Bearish'] || 0) + 1 }))
+            }
+        }
+        if (alertType === 'PumpAndDump') {
+            setPatternMatches(prev => ({ ...prev, 'MACD Bullish': (prev['MACD Bullish'] || 0) + 1 }))
+        }
+    }, [alerts])
 
     useEffect(() => {
         if (events.length === 0) return

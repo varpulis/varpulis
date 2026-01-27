@@ -16,6 +16,7 @@
 #   ./start-financial.sh           # Start all components
 #   ./start-financial.sh --no-ui   # Start without dashboard
 #   ./start-financial.sh --stop    # Stop all components
+#   ./start-financial.sh --status  # Show running components
 #
 # =============================================================================
 
@@ -24,6 +25,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 VARPULIS_BIN="$PROJECT_ROOT/target/release/varpulis"
+PID_FILE="$SCRIPT_DIR/.financial-demo.pid"
+GENERATOR_NAME="financial-generator"
 
 # Colors
 GREEN='\033[0;32m'
@@ -40,12 +43,59 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 # Parse arguments
 NO_UI=false
 STOP=false
+STATUS=false
 for arg in "$@"; do
     case $arg in
         --no-ui) NO_UI=true ;;
         --stop) STOP=true ;;
+        --status) STATUS=true ;;
     esac
 done
+
+is_generator_running() {
+    docker ps --format "{{.Names}}" 2>/dev/null | grep -q "$GENERATOR_NAME"
+}
+
+is_varpulis_running() {
+    pgrep -f "varpulis run.*financial" >/dev/null 2>&1
+}
+
+show_status() {
+    echo ""
+    echo "╔════════════════════════════════════════════════════════════════╗"
+    echo "║           📈 FINANCIAL DEMO STATUS                             ║"
+    echo "╚════════════════════════════════════════════════════════════════╝"
+    echo ""
+    
+    # MQTT
+    if docker ps --format "{{.Names}}" 2>/dev/null | grep -q "mosquitto"; then
+        log_success "MQTT Broker: running"
+    else
+        log_error "MQTT Broker: stopped"
+    fi
+    
+    # Generator
+    if is_generator_running; then
+        log_success "Generator: running"
+    else
+        log_error "Generator: stopped"
+    fi
+    
+    # Varpulis CEP
+    if is_varpulis_running; then
+        log_success "Varpulis CEP: running"
+    else
+        log_error "Varpulis CEP: stopped"
+    fi
+    
+    # Dashboard
+    if docker ps --format "{{.Names}}" 2>/dev/null | grep -q "dashboard-ui"; then
+        log_success "Dashboard: http://localhost:5173"
+    else
+        log_warn "Dashboard: stopped"
+    fi
+    echo ""
+}
 
 stop_demo() {
     log_info "Stopping Financial demo..."
@@ -53,15 +103,39 @@ stop_demo() {
     # Stop varpulis
     pkill -f "varpulis run.*financial" 2>/dev/null || true
     
-    # Stop generator
-    docker compose -f "$SCRIPT_DIR/docker-compose.yml" stop generator 2>/dev/null || true
+    # Stop generator containers with our name pattern
+    docker ps -a --format "{{.Names}}" 2>/dev/null | grep "$GENERATOR_NAME" | xargs -r docker rm -f 2>/dev/null || true
+    
+    # Also stop any anonymous generator-run containers
+    docker ps -a --format "{{.Names}}" 2>/dev/null | grep "generator-run" | xargs -r docker rm -f 2>/dev/null || true
+    
+    # Clean up PID file
+    rm -f "$PID_FILE"
     
     log_success "Demo stopped"
 }
 
+if [ "$STATUS" = true ]; then
+    show_status
+    exit 0
+fi
+
 if [ "$STOP" = true ]; then
     stop_demo
     exit 0
+fi
+
+# Check if already running
+if is_varpulis_running; then
+    log_warn "Financial demo is already running!"
+    log_info "Use --stop to stop it first, or --status to check status"
+    exit 1
+fi
+
+# Stop any orphan generators
+if is_generator_running; then
+    log_warn "Cleaning up orphan generator..."
+    docker ps -a --format "{{.Names}}" 2>/dev/null | grep "$GENERATOR_NAME" | xargs -r docker rm -f 2>/dev/null || true
 fi
 
 echo ""
@@ -85,10 +159,16 @@ log_success "MQTT broker running on localhost:1883"
 # Step 2: Start Financial generator
 log_info "Starting Financial event generator..."
 docker compose -f "$SCRIPT_DIR/docker-compose.yml" run -d --rm \
+    --name "$GENERATOR_NAME" \
     generator /generators/financial/generator.py --broker mosquitto --rate 2
 
-sleep 1
-log_success "Generator producing MarketTick, OHLCV events"
+sleep 2
+if is_generator_running; then
+    log_success "Generator producing MarketTick, OHLCV events"
+else
+    log_error "Generator failed to start"
+    exit 1
+fi
 
 # Step 3: Start Dashboard (optional)
 if [ "$NO_UI" = false ]; then
