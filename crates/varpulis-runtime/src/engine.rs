@@ -123,8 +123,10 @@ enum RuntimeOp {
     PartitionBy(String),
     /// Window with optional partition support
     Window(WindowType),
-    /// Partitioned window - maintains separate windows per partition key
+    /// Partitioned window - maintains separate windows per partition key (tumbling)
     PartitionedWindow(PartitionedWindowState),
+    /// Partitioned sliding count window - maintains separate sliding windows per partition key
+    PartitionedSlidingCountWindow(PartitionedSlidingCountWindowState),
     Aggregate(Aggregator),
     /// Partitioned aggregate - maintains separate aggregators per partition key
     PartitionedAggregate(PartitionedAggregatorState),
@@ -184,6 +186,39 @@ impl PartitionedWindowState {
             .windows
             .entry(key)
             .or_insert_with(|| CountWindow::new(self.window_size));
+
+        window.add(event)
+    }
+}
+
+/// State for partitioned sliding count windows - maintains separate sliding windows per partition key
+struct PartitionedSlidingCountWindowState {
+    partition_key: String,
+    window_size: usize,
+    slide_size: usize,
+    windows: std::collections::HashMap<String, SlidingCountWindow>,
+}
+
+impl PartitionedSlidingCountWindowState {
+    fn new(partition_key: String, window_size: usize, slide_size: usize) -> Self {
+        Self {
+            partition_key,
+            window_size,
+            slide_size,
+            windows: std::collections::HashMap::new(),
+        }
+    }
+
+    fn add(&mut self, event: Event) -> Option<Vec<Event>> {
+        let key = event
+            .get(&self.partition_key)
+            .map(|v| format!("{}", v))
+            .unwrap_or_else(|| "default".to_string());
+
+        let window = self
+            .windows
+            .entry(key)
+            .or_insert_with(|| SlidingCountWindow::new(self.window_size, self.slide_size));
 
         window.add(event)
     }
@@ -659,18 +694,28 @@ impl Engine {
                             // Count-based window
                             let count = *count as usize;
 
+                            // Get slide amount if specified (default to window size for tumbling)
+                            let slide = args.sliding.as_ref().map(|s| match s {
+                                varpulis_core::ast::Expr::Int(n) => *n as usize,
+                                _ => 1,
+                            });
+
                             // If we have a partition key, use partitioned window
                             if let Some(ref key) = partition_key {
-                                runtime_ops.push(RuntimeOp::PartitionedWindow(
-                                    PartitionedWindowState::new(key.clone(), count),
-                                ));
-                            } else if let Some(sliding) = &args.sliding {
-                                let slide = match sliding {
-                                    varpulis_core::ast::Expr::Int(n) => *n as usize,
-                                    _ => 1,
-                                };
+                                if let Some(slide_size) = slide {
+                                    // Partitioned sliding count window
+                                    runtime_ops.push(RuntimeOp::PartitionedSlidingCountWindow(
+                                        PartitionedSlidingCountWindowState::new(key.clone(), count, slide_size),
+                                    ));
+                                } else {
+                                    // Partitioned tumbling count window
+                                    runtime_ops.push(RuntimeOp::PartitionedWindow(
+                                        PartitionedWindowState::new(key.clone(), count),
+                                    ));
+                                }
+                            } else if let Some(slide_size) = slide {
                                 runtime_ops.push(RuntimeOp::Window(WindowType::SlidingCount(
-                                    SlidingCountWindow::new(count, slide),
+                                    SlidingCountWindow::new(count, slide_size),
                                 )));
                             } else {
                                 runtime_ops.push(RuntimeOp::Window(WindowType::Count(
@@ -1964,6 +2009,21 @@ impl Engine {
                         });
                     }
                 }
+                RuntimeOp::PartitionedSlidingCountWindow(state) => {
+                    let mut window_results = Vec::new();
+                    for event in current_events {
+                        if let Some(completed) = state.add(event) {
+                            window_results.extend(completed);
+                        }
+                    }
+                    current_events = window_results;
+                    if current_events.is_empty() {
+                        return Ok(StreamProcessResult {
+                            alerts,
+                            output_events: vec![],
+                        });
+                    }
+                }
                 RuntimeOp::Aggregate(aggregator) => {
                     let result = aggregator.apply(&current_events);
                     // Create synthetic event from aggregation result
@@ -2250,6 +2310,21 @@ impl Engine {
                     // Just pass events through
                 }
                 RuntimeOp::PartitionedWindow(state) => {
+                    let mut window_results = Vec::new();
+                    for event in current_events {
+                        if let Some(completed) = state.add(event) {
+                            window_results.extend(completed);
+                        }
+                    }
+                    current_events = window_results;
+                    if current_events.is_empty() {
+                        return Ok(StreamProcessResult {
+                            alerts,
+                            output_events: vec![],
+                        });
+                    }
+                }
+                RuntimeOp::PartitionedSlidingCountWindow(state) => {
                     let mut window_results = Vec::new();
                     for event in current_events {
                         if let Some(completed) = state.add(event) {

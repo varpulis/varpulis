@@ -43,11 +43,11 @@ stream ETHTicks = Ticks.where(symbol == "ETH/USD")
 # Moving Averages (SMA & EMA)
 # =============================================================================
 
-# Simple Moving Average - 20 periods
+# Simple Moving Average - 20 periods (sliding window, emits on every new event)
 stream SMA20 = OHLCV
     .where(timeframe == "1m")
     .partition_by(symbol)
-    .window(20)
+    .window(20, sliding: 1)
     .aggregate(
         symbol: last(symbol),
         sma_20: avg(close),
@@ -60,11 +60,11 @@ stream SMA20 = OHLCV
         ts: ts
     )
 
-# Simple Moving Average - 50 periods
+# Simple Moving Average - 50 periods (sliding window, emits on every new event)
 stream SMA50 = OHLCV
     .where(timeframe == "1m")
     .partition_by(symbol)
-    .window(50)
+    .window(50, sliding: 1)
     .aggregate(
         symbol: last(symbol),
         sma_50: avg(close),
@@ -81,7 +81,7 @@ stream SMA50 = OHLCV
 stream EMA12 = OHLCV
     .where(timeframe == "1m")
     .partition_by(symbol)
-    .window(12)
+    .window(12, sliding: 1)
     .aggregate(
         symbol: last(symbol),
         ema_12: ema(close, 12),
@@ -92,7 +92,7 @@ stream EMA12 = OHLCV
 stream EMA26 = OHLCV
     .where(timeframe == "1m")
     .partition_by(symbol)
-    .window(26)
+    .window(26, sliding: 1)
     .aggregate(
         symbol: last(symbol),
         ema_26: ema(close, 26),
@@ -115,7 +115,7 @@ stream MACD = join(EMA12, EMA26)
 # MACD Signal Line (9-period EMA of MACD)
 stream MACDSignal = MACD
     .partition_by(symbol)
-    .window(9)
+    .window(9, sliding: 1)
     .aggregate(
         symbol: last(symbol),
         macd_line: last(macd_line),
@@ -139,7 +139,7 @@ stream MACDSignal = MACD
 stream PriceChanges = OHLCV
     .where(timeframe == "1m")
     .partition_by(symbol)
-    .window(2)
+    .window(2, sliding: 1)
     .aggregate(
         symbol: last(symbol),
         prev_close: first(close),
@@ -156,7 +156,7 @@ stream PriceChanges = OHLCV
 
 stream RSI = PriceChanges
     .partition_by(symbol)
-    .window(14)
+    .window(14, sliding: 1)
     .aggregate(
         symbol: last(symbol),
         avg_gain: avg(gain),
@@ -187,7 +187,7 @@ stream RSI = PriceChanges
 stream BollingerBands = OHLCV
     .where(timeframe == "1m")
     .partition_by(symbol)
-    .window(20)
+    .window(20, sliding: 1)
     .aggregate(
         symbol: last(symbol),
         close: last(close),
