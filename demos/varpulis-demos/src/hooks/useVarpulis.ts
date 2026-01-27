@@ -94,6 +94,7 @@ export function useVarpulis(): VarpulisConnection {
 
                 // Route to appropriate state based on topic
                 if (message.topic?.includes('/alerts') || message.topic?.includes('/security_alerts')) {
+                    console.log('Alert routed:', message.topic, varpulisEvent.data);
                     setAlerts(prev => [varpulisEvent, ...prev].slice(0, MAX_EVENTS));
                 } else if (message.topic?.includes('/dashboard/')) {
                     // Update dashboard-specific data
