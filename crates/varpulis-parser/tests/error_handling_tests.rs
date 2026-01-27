@@ -163,7 +163,7 @@ fn test_deeply_nested_expression_no_overflow() {
     for _ in 0..50 {
         nested.push_str("(value + ");
     }
-    nested.push_str("1");
+    nested.push('1');
     for _ in 0..50 {
         nested.push(')');
     }
