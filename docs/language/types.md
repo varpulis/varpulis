@@ -1,18 +1,18 @@
-# Système de types
+# Type System
 
-## Types primitifs
+## Primitive Types
 
-| Type | Description | Exemples |
+| Type | Description | Examples |
 |------|-------------|----------|
-| `int` | Entier signé 64 bits | `42`, `-100`, `0` |
-| `float` | Flottant 64 bits (IEEE 754) | `3.14`, `-0.5`, `1e10` |
-| `bool` | Booléen | `true`, `false` |
-| `str` | Chaîne de caractères UTF-8 | `"hello"`, `'world'` |
-| `timestamp` | Point dans le temps (ns precision) | `@2026-01-23T10:00:00Z` |
-| `duration` | Durée temporelle | `5s`, `10m`, `1h`, `2d` |
-| `null` | Absence de valeur | `null` |
+| `int` | Signed 64-bit integer | `42`, `-100`, `0` |
+| `float` | 64-bit floating point (IEEE 754) | `3.14`, `-0.5`, `1e10` |
+| `bool` | Boolean | `true`, `false` |
+| `str` | UTF-8 string | `"hello"`, `'world'` |
+| `timestamp` | Point in time (ns precision) | `@2026-01-23T10:00:00Z` |
+| `duration` | Time duration | `5s`, `10m`, `1h`, `2d` |
+| `null` | Absence of value | `null` |
 
-## Types composés
+## Composite Types
 
 ### Arrays
 
@@ -22,7 +22,7 @@ let names: [str] = ["alice", "bob"]
 let empty: [float] = []
 ```
 
-### Maps (dictionnaires)
+### Maps (dictionaries)
 
 ```varpulis
 let config: {str: int} = {
@@ -43,22 +43,22 @@ let point: (float, float) = (3.14, 2.71)
 let record: (str, int, bool) = ("alice", 30, true)
 ```
 
-## Types optionnels
+## Optional Types
 
 ```varpulis
 let maybe_value: int? = null
 let definitely: int = 42
 
-# Opérateur de coalescence
-let result = maybe_value ?? 0  # 0 si null
+# Coalesce operator
+let result = maybe_value ?? 0  # 0 if null
 
-# Accès sécurisé
+# Safe access
 let name = user?.profile?.name ?? "unknown"
 ```
 
-## Types d'événements
+## Event Types
 
-### Déclaration
+### Declaration
 
 ```varpulis
 event TradeEvent:
@@ -66,7 +66,7 @@ event TradeEvent:
     price: float
     volume: int
     timestamp: timestamp
-    exchange: str?  # optionnel
+    exchange: str?  # optional
 
 event SensorReading:
     sensor_id: str
@@ -75,7 +75,7 @@ event SensorReading:
     location: (float, float)  # lat, lon
 ```
 
-### Héritage d'événements
+### Event Inheritance
 
 ```varpulis
 event BaseEvent:
@@ -88,16 +88,16 @@ event OrderEvent extends BaseEvent:
     total: float
 ```
 
-## Types de streams
+## Stream Types
 
 ```varpulis
-# Stream typé explicitement
+# Explicitly typed stream
 stream Trades: Stream<TradeEvent> from TradeEvent
 
-# Inférence de type
+# Type inference
 stream HighValue = Trades.where(price > 1000)  # Stream<TradeEvent>
 
-# Stream transformé
+# Transformed stream
 stream Summary = Trades
     .window(1m)
     .aggregate(
@@ -106,9 +106,9 @@ stream Summary = Trades
     )  # Stream<{avg_price: float, total_volume: int}>
 ```
 
-## Inférence de types
+## Type Inference
 
-Le compilateur infère automatiquement les types quand possible :
+The compiler automatically infers types when possible:
 
 ```varpulis
 let x = 42          # int
@@ -117,22 +117,22 @@ let z = "hello"     # str
 let items = [1, 2]  # [int]
 
 stream Result = Input
-    .map(e => e.value * 2)  # type de retour inféré
+    .map(e => e.value * 2)  # return type inferred
 ```
 
-## Conversions de types
+## Type Conversions
 
 ```varpulis
-# Conversions explicites
+# Explicit conversions
 let i: int = int("42")
 let f: float = float(42)
 let s: str = str(3.14)
 
-# Parse avec gestion d'erreur
+# Parse with error handling
 let maybe_int: int? = try_int("not a number")  # null
 ```
 
-## Alias de types
+## Type Aliases
 
 ```varpulis
 type UserId = str

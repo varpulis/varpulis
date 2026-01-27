@@ -167,6 +167,86 @@ impl SlidingCountWindow {
     }
 }
 
+/// A partitioned tumbling window that maintains separate windows per partition key
+pub struct PartitionedTumblingWindow {
+    partition_key: String,
+    duration: Duration,
+    windows: std::collections::HashMap<String, TumblingWindow>,
+}
+
+impl PartitionedTumblingWindow {
+    pub fn new(partition_key: String, duration: Duration) -> Self {
+        Self {
+            partition_key,
+            duration,
+            windows: std::collections::HashMap::new(),
+        }
+    }
+
+    pub fn add(&mut self, event: Event) -> Option<Vec<Event>> {
+        let key = event
+            .get(&self.partition_key)
+            .map(|v| format!("{}", v))
+            .unwrap_or_else(|| "default".to_string());
+
+        let window = self
+            .windows
+            .entry(key)
+            .or_insert_with(|| TumblingWindow::new(self.duration));
+
+        window.add(event)
+    }
+
+    pub fn flush(&mut self) -> Vec<Event> {
+        let mut all_events = Vec::new();
+        for window in self.windows.values_mut() {
+            all_events.extend(window.flush());
+        }
+        all_events
+    }
+}
+
+/// A partitioned sliding window that maintains separate windows per partition key
+pub struct PartitionedSlidingWindow {
+    partition_key: String,
+    window_size: Duration,
+    slide_interval: Duration,
+    windows: std::collections::HashMap<String, SlidingWindow>,
+}
+
+impl PartitionedSlidingWindow {
+    pub fn new(partition_key: String, window_size: Duration, slide_interval: Duration) -> Self {
+        Self {
+            partition_key,
+            window_size,
+            slide_interval,
+            windows: std::collections::HashMap::new(),
+        }
+    }
+
+    pub fn add(&mut self, event: Event) -> Option<Vec<Event>> {
+        let key = event
+            .get(&self.partition_key)
+            .map(|v| format!("{}", v))
+            .unwrap_or_else(|| "default".to_string());
+
+        let window = self
+            .windows
+            .entry(key)
+            .or_insert_with(|| SlidingWindow::new(self.window_size, self.slide_interval));
+
+        window.add(event)
+    }
+
+    pub fn current_all(&self) -> Vec<Event> {
+        let mut all_events = Vec::new();
+        for window in self.windows.values() {
+            all_events.extend(window.current());
+        }
+        all_events
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -8,6 +8,7 @@ pub mod connector;
 pub mod engine;
 pub mod event;
 pub mod event_file;
+pub mod join;
 pub mod metrics;
 pub mod pattern;
 pub mod sase;

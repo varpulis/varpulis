@@ -114,7 +114,7 @@ stream EnrichedOrders = join(
 )
 ```
 
-## Pattern matching avec attention
+## Pattern Matching with Attention
 
 ```varpulis
 stream FraudDetection = Trades

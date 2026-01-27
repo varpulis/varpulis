@@ -140,12 +140,18 @@ stream PriceChanges = OHLCV
     .where(timeframe == "1m")
     .partition_by(symbol)
     .window(2)
-    .select(
+    .aggregate(
         symbol: last(symbol),
-        change: last(close) - first(close),
-        gain: if last(close) > first(close) then last(close) - first(close) else 0,
-        loss: if last(close) < first(close) then first(close) - last(close) else 0,
+        prev_close: first(close),
+        curr_close: last(close),
         ts: last(ts)
+    )
+    .select(
+        symbol,
+        change: curr_close - prev_close,
+        gain: if curr_close > prev_close then curr_close - prev_close else 0,
+        loss: if curr_close < prev_close then prev_close - curr_close else 0,
+        ts
     )
 
 stream RSI = PriceChanges
@@ -159,13 +165,18 @@ stream RSI = PriceChanges
     )
     .select(
         symbol,
-        rsi: 100 - (100 / (1 + avg_gain / max(avg_loss, 0.0001))),
+        avg_gain,
+        avg_loss,
+        rs: avg_gain / (avg_loss + 0.0001),
+        rsi: 100.0 - (100.0 / (1.0 + avg_gain / (avg_loss + 0.0001))),
         ts
     )
     .emit(
         event_type: "RSI",
         symbol: symbol,
         rsi: rsi,
+        avg_gain: avg_gain,
+        avg_loss: avg_loss,
         ts: ts
     )
 

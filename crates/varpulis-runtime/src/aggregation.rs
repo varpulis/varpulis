@@ -75,7 +75,8 @@ impl AggregateFunc for Min {
         events
             .iter()
             .filter_map(|e| e.get_float(field))
-            .min_by(|a, b| a.partial_cmp(b).unwrap())
+            .filter(|x| !x.is_nan()) // Filter out NaN values
+            .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
             .map(Value::Float)
             .unwrap_or(Value::Null)
     }
@@ -94,7 +95,8 @@ impl AggregateFunc for Max {
         events
             .iter()
             .filter_map(|e| e.get_float(field))
-            .max_by(|a, b| a.partial_cmp(b).unwrap())
+            .filter(|x| !x.is_nan()) // Filter out NaN values
+            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
             .map(Value::Float)
             .unwrap_or(Value::Null)
     }
@@ -711,5 +713,71 @@ mod tests {
     fn test_expr_aggregate_name() {
         let expr = ExprAggregate::new(Box::new(Sum), None, AggBinOp::Add, Box::new(Count), None);
         assert_eq!(expr.name(), "expr");
+    }
+
+    // ==========================================================================
+    // NaN Handling Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_min_with_nan_values_no_panic() {
+        let events = vec![
+            Event::new("Test").with_field("value", f64::NAN),
+            Event::new("Test").with_field("value", 20.0),
+            Event::new("Test").with_field("value", f64::NAN),
+            Event::new("Test").with_field("value", 10.0),
+        ];
+        let result = Min.apply(&events, Some("value"));
+        // Should return 10.0 (minimum of non-NaN values)
+        assert_eq!(result, Value::Float(10.0));
+    }
+
+    #[test]
+    fn test_max_with_nan_values_no_panic() {
+        let events = vec![
+            Event::new("Test").with_field("value", f64::NAN),
+            Event::new("Test").with_field("value", 20.0),
+            Event::new("Test").with_field("value", f64::NAN),
+            Event::new("Test").with_field("value", 30.0),
+        ];
+        let result = Max.apply(&events, Some("value"));
+        // Should return 30.0 (maximum of non-NaN values)
+        assert_eq!(result, Value::Float(30.0));
+    }
+
+    #[test]
+    fn test_min_all_nan_returns_null() {
+        let events = vec![
+            Event::new("Test").with_field("value", f64::NAN),
+            Event::new("Test").with_field("value", f64::NAN),
+        ];
+        let result = Min.apply(&events, Some("value"));
+        // All NaN should return Null
+        assert_eq!(result, Value::Null);
+    }
+
+    #[test]
+    fn test_max_all_nan_returns_null() {
+        let events = vec![
+            Event::new("Test").with_field("value", f64::NAN),
+            Event::new("Test").with_field("value", f64::NAN),
+        ];
+        let result = Max.apply(&events, Some("value"));
+        // All NaN should return Null
+        assert_eq!(result, Value::Null);
+    }
+
+    #[test]
+    fn test_count_distinct_basic() {
+        let events = vec![
+            Event::new("Test").with_field("category", "A"),
+            Event::new("Test").with_field("category", "B"),
+            Event::new("Test").with_field("category", "A"),
+            Event::new("Test").with_field("category", "C"),
+            Event::new("Test").with_field("category", "B"),
+        ];
+        let result = CountDistinct.apply(&events, Some("category"));
+        // Should count 3 distinct values: A, B, C
+        assert_eq!(result, Value::Int(3));
     }
 }

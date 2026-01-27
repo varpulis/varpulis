@@ -12,6 +12,24 @@ use varpulis_core::ast::*;
 use varpulis_core::span::{Span, Spanned};
 use varpulis_core::types::Type;
 
+/// Extension trait for safer iterator extraction
+trait IteratorExt<'a> {
+    /// Get the next element or return an error with the expected rule description
+    fn expect_next(&mut self, expected: &str) -> ParseResult<pest::iterators::Pair<'a, Rule>>;
+}
+
+impl<'a> IteratorExt<'a> for pest::iterators::Pairs<'a, Rule> {
+    fn expect_next(&mut self, expected: &str) -> ParseResult<pest::iterators::Pair<'a, Rule>> {
+        self.next().ok_or_else(|| ParseError::Located {
+            line: 0,
+            column: 0,
+            position: 0,
+            message: format!("Expected {}", expected),
+            hint: None,
+        })
+    }
+}
+
 #[derive(Parser)]
 #[grammar = "varpulis.pest"]
 pub struct VarpulisParser;
@@ -106,7 +124,7 @@ fn format_rule_name(rule: &Rule) -> String {
 
 fn parse_statement(pair: pest::iterators::Pair<Rule>) -> ParseResult<Spanned<Stmt>> {
     let span = Span::new(pair.as_span().start(), pair.as_span().end());
-    let inner = pair.into_inner().next().unwrap();
+    let inner = pair.into_inner().expect_next("statement body")?;
 
     let stmt = match inner.as_rule() {
         Rule::stream_decl => parse_stream_decl(inner)?,
