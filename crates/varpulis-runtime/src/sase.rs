@@ -19,7 +19,9 @@
 //! - A*: Kleene star (zero or more)
 //! - WITHIN(pattern, duration): Temporal constraint
 
+use crate::engine::eval_filter_expr;
 use crate::event::Event;
+use crate::sequence::SequenceContext;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use varpulis_core::Value;
@@ -492,6 +494,15 @@ pub struct MatchResult {
 }
 
 /// SASE+ Pattern Matching Engine
+/// Global negation condition for invalidating active runs
+#[derive(Clone)]
+pub struct GlobalNegation {
+    /// Event type that triggers negation
+    pub event_type: String,
+    /// Optional predicate (with access to captured events)
+    pub predicate: Option<Predicate>,
+}
+
 pub struct SaseEngine {
     /// Compiled NFA
     nfa: Nfa,
@@ -505,6 +516,8 @@ pub struct SaseEngine {
     partition_by: Option<String>,
     /// Partitioned runs for SASEXT
     partitioned_runs: HashMap<String, Vec<Run>>,
+    /// Global negation conditions that invalidate active runs
+    global_negations: Vec<GlobalNegation>,
 }
 
 impl SaseEngine {
@@ -517,7 +530,22 @@ impl SaseEngine {
             strategy: SelectionStrategy::SkipTillAnyMatch,
             partition_by: None,
             partitioned_runs: HashMap::new(),
+            global_negations: Vec::new(),
         }
+    }
+
+    /// Add a global negation condition that invalidates active runs
+    pub fn add_negation(&mut self, event_type: String, predicate: Option<Predicate>) {
+        self.global_negations.push(GlobalNegation {
+            event_type,
+            predicate,
+        });
+    }
+
+    /// Builder method to add a global negation
+    pub fn with_negation(mut self, event_type: String, predicate: Option<Predicate>) -> Self {
+        self.add_negation(event_type, predicate);
+        self
     }
 
     pub fn with_max_runs(mut self, max: usize) -> Self {
@@ -542,6 +570,9 @@ impl SaseEngine {
 
         // Clean up timed-out runs
         self.cleanup_timeouts();
+
+        // Check global negations - invalidate runs that match
+        self.check_global_negations(event);
 
         // If using partitioning, route to appropriate partition
         if let Some(ref partition_field) = self.partition_by {
@@ -593,6 +624,11 @@ impl SaseEngine {
                         completed.push(result);
                         runs.remove(i);
                     }
+                    RunAdvanceResult::CompleteAndBranch(result, branch_run) => {
+                        completed.push(result);
+                        runs[i] = branch_run;
+                        i += 1;
+                    }
                     RunAdvanceResult::Branch(new_run) => {
                         if runs.len() < max_runs {
                             runs.push(new_run);
@@ -631,6 +667,11 @@ impl SaseEngine {
                 RunAdvanceResult::Complete(result) => {
                     completed.push(result);
                     self.runs.remove(i);
+                }
+                RunAdvanceResult::CompleteAndBranch(result, branch_run) => {
+                    completed.push(result);
+                    self.runs[i] = branch_run;
+                    i += 1;
                 }
                 RunAdvanceResult::Branch(new_run) => {
                     self.runs[i] = run;
@@ -699,6 +740,40 @@ impl SaseEngine {
         }
     }
 
+    /// Check global negation conditions and invalidate matching runs
+    fn check_global_negations(&mut self, event: &Event) {
+        for negation in &self.global_negations {
+            // Check if event type matches the negation
+            if event.event_type != negation.event_type {
+                continue;
+            }
+
+            // Invalidate runs where the predicate matches (or all runs if no predicate)
+            for run in &mut self.runs {
+                let should_invalidate = match &negation.predicate {
+                    Some(pred) => eval_predicate(pred, event, &run.captured),
+                    None => true, // No predicate means any event of this type invalidates
+                };
+                if should_invalidate {
+                    run.invalidated = true;
+                }
+            }
+
+            // Also check partitioned runs
+            for runs in self.partitioned_runs.values_mut() {
+                for run in runs.iter_mut() {
+                    let should_invalidate = match &negation.predicate {
+                        Some(pred) => eval_predicate(pred, event, &run.captured),
+                        None => true,
+                    };
+                    if should_invalidate {
+                        run.invalidated = true;
+                    }
+                }
+            }
+        }
+    }
+
     /// Get statistics
     pub fn stats(&self) -> SaseStats {
         let total_runs: usize = if self.partition_by.is_some() {
@@ -719,6 +794,8 @@ impl SaseEngine {
 enum RunAdvanceResult {
     Continue,
     Complete(MatchResult),
+    /// Complete the pattern AND continue with a branched run (for Kleene+)
+    CompleteAndBranch(MatchResult, Run),
     Branch(Run),
     Invalidate,
     NoMatch,
@@ -766,6 +843,22 @@ fn advance_run(
             }
 
             if next_state.state_type == StateType::Kleene && next_state.self_loop {
+                // For Kleene states, check if we can complete via epsilon to accept
+                // This allows emitting matches while continuing to collect more
+                for &eps_id in &next_state.epsilon_transitions {
+                    let eps_state = &nfa.states[eps_id];
+                    if eps_state.state_type == StateType::Accept {
+                        // We can complete AND continue! Create match result and branch
+                        let result = MatchResult {
+                            captured: run.captured.clone(),
+                            stack: run.stack.clone(),
+                            duration: run.started_at.elapsed(),
+                        };
+                        let branch = run.branch();
+                        return RunAdvanceResult::CompleteAndBranch(result, branch);
+                    }
+                }
+                // No epsilon to accept, just branch to continue looping
                 let branch = run.branch();
                 return RunAdvanceResult::Branch(branch);
             }
@@ -857,7 +950,17 @@ fn eval_predicate(predicate: &Predicate, event: &Event, captured: &HashMap<Strin
             eval_predicate(left, event, captured) || eval_predicate(right, event, captured)
         }
         Predicate::Not(inner) => !eval_predicate(inner, event, captured),
-        Predicate::Expr(_) => true, // TODO: evaluate complex expressions
+        Predicate::Expr(expr) => {
+            // Build SequenceContext from captured events for expression evaluation
+            let ctx = SequenceContext {
+                captured: captured.clone(),
+                previous: None,
+            };
+            // Evaluate the expression and check if it returns true
+            eval_filter_expr(expr, event, &ctx)
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        }
     }
 }
 
