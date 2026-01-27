@@ -42,7 +42,7 @@ export function useVarpulis(): VarpulisConnection {
     const connect = useCallback(() => {
         if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
-        console.log(`Connecting to Varpulis at ${WS_URL}...`);
+        console.log(`[VARPULIS] Connecting to WebSocket at ${WS_URL}...`);
         const ws = new WebSocket(WS_URL);
 
         ws.onopen = () => {
@@ -70,7 +70,7 @@ export function useVarpulis(): VarpulisConnection {
                 const message = JSON.parse(event.data);
                 handleMessage(message);
             } catch (e) {
-                console.error('Failed to parse message:', e);
+                console.error('Failed to parse WebSocket message:', e);
             }
         };
 
@@ -94,7 +94,6 @@ export function useVarpulis(): VarpulisConnection {
 
                 // Route to appropriate state based on topic
                 if (message.topic?.includes('/alerts') || message.topic?.includes('/security_alerts')) {
-                    console.log('Alert routed:', message.topic, varpulisEvent.data);
                     setAlerts(prev => [varpulisEvent, ...prev].slice(0, MAX_EVENTS));
                 } else if (message.topic?.includes('/dashboard/')) {
                     // Update dashboard-specific data

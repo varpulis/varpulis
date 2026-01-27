@@ -122,6 +122,8 @@ enum RuntimeOp {
     Aggregate(Aggregator),
     /// Partitioned aggregate - maintains separate aggregators per partition key
     PartitionedAggregate(PartitionedAggregatorState),
+    /// Select/projection with computed fields
+    Select(SelectConfig),
     Emit(EmitConfig),
     /// Emit with expression evaluation for computed fields
     EmitExpr(EmitExprConfig),
@@ -135,6 +137,12 @@ enum RuntimeOp {
     AttentionWindow(AttentionWindowConfig),
     /// Pattern matching with lambda expression
     Pattern(PatternConfig),
+}
+
+/// Configuration for select/projection operation
+struct SelectConfig {
+    /// Fields to include: (output_name, expression)
+    fields: Vec<(String, varpulis_core::ast::Expr)>,
 }
 
 /// State for partitioned windows - maintains separate windows per partition key
@@ -679,6 +687,20 @@ impl Engine {
                     } else {
                         runtime_ops.push(RuntimeOp::Aggregate(aggregator));
                     }
+                }
+                StreamOp::Select(items) => {
+                    let fields: Vec<(String, varpulis_core::ast::Expr)> = items
+                        .iter()
+                        .map(|item| match item {
+                            varpulis_core::ast::SelectItem::Field(name) => {
+                                (name.clone(), varpulis_core::ast::Expr::Ident(name.clone()))
+                            }
+                            varpulis_core::ast::SelectItem::Alias(name, expr) => {
+                                (name.clone(), expr.clone())
+                            }
+                        })
+                        .collect();
+                    runtime_ops.push(RuntimeOp::Select(SelectConfig { fields }));
                 }
                 StreamOp::Emit(args) => {
                     // Check if any args have complex expressions (not just strings or idents)
@@ -1634,6 +1656,29 @@ impl Engine {
                                 agg_event.data.insert(key, value);
                             }
                             agg_event
+                        })
+                        .collect();
+                }
+                RuntimeOp::Select(config) => {
+                    // Transform events by evaluating expressions and creating new fields
+                    let ctx = SequenceContext::new();
+                    current_events = current_events
+                        .into_iter()
+                        .map(|event| {
+                            let mut new_event = Event::new(&event.event_type);
+                            new_event.timestamp = event.timestamp;
+                            for (out_name, expr) in &config.fields {
+                                if let Some(value) = Self::eval_expr_with_functions(
+                                    expr,
+                                    &event,
+                                    &ctx,
+                                    functions,
+                                    &HashMap::new(),
+                                ) {
+                                    new_event.data.insert(out_name.clone(), value);
+                                }
+                            }
+                            new_event
                         })
                         .collect();
                 }
