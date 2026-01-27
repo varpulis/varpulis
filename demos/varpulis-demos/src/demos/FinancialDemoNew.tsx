@@ -54,9 +54,16 @@ export default function FinancialDemo() {
         const nestedData = (latestAlert.data?.data as Record<string, unknown>) || {}
         const alertType = String(nestedData.event_type || latestAlert.data?.event_type || '')
 
+        // Debug logging
+        console.log('Alert received:', alertType, nestedData)
+
         // Update indicators by symbol (field names match VPL emit statements)
         const symbol = String(nestedData.symbol || '').replace('/USD', '')
-        if (!symbol) return
+        if (!symbol) {
+            console.log('No symbol found in alert')
+            return
+        }
+        console.log('Processing alert for symbol:', symbol, 'sma_20:', nestedData.sma_20)
 
         setIndicatorsBySymbol(prev => {
             const current = prev[symbol] || { sma20: 0, sma50: 0, rsi: 50, macd: 0, bbUpper: 0, bbLower: 0 }

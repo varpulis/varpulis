@@ -519,10 +519,6 @@ stream AllSignals = merge(
 )
 .tap(counter: "trading_signals_total", labels: [signal_type, direction])
 .emit()
-.to([
-    "kafka://trading-signals",
-    "http://webhook.trading-bot.local/signals"
-])
 
 # =============================================================================
 # Configuration
