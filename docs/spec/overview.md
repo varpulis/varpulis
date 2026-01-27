@@ -96,6 +96,24 @@ Varpulis is a next-generation streaming analytics engine combining:
 5. **State Manager** - State management (in-memory / RocksDB)
 6. **Observability Layer** - Metrics, traces, logs
 
+## Feature Status
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Basic stream processing | ✅ Implemented | Filter, aggregate, emit |
+| Count-based windows | ✅ Implemented | Tumbling and sliding |
+| Time-based windows | ✅ Implemented | Tumbling and sliding |
+| Partitioned windows | ✅ Implemented | partition_by() with any window type |
+| Join operations | ✅ Implemented | Multi-stream correlation with .on() |
+| Sequence patterns | ✅ Implemented | followed-by, negation, timeout |
+| Attention mechanism | ✅ Implemented | Deterministic correlation scoring |
+| User-defined functions | ✅ Implemented | fn keyword |
+| MQTT connector | ✅ Implemented | Input and output |
+| HTTP connector | ✅ Implemented | Event ingestion |
+| WebSocket | 🚧 Partial | Server mode working |
+| RocksDB state | 📋 Planned | Currently in-memory only |
+| Clustering | 📋 Planned | Single-node only |
+
 ## See Also
 
 - [System Architecture](../architecture/system.md)

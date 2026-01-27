@@ -6,11 +6,15 @@ use crate::aggregation::{
 };
 use crate::attention::{AttentionConfig, AttentionWindow, EmbeddingConfig};
 use crate::event::Event;
+use crate::join::JoinBuffer;
 use crate::metrics::Metrics;
 use crate::pattern::{PatternBuilder, PatternEngine, PatternExpr};
 use crate::sase::SaseEngine;
 use crate::sequence::{SequenceContext, SequenceFilter, SequenceStep, SequenceTracker};
-use crate::window::{CountWindow, SlidingCountWindow, SlidingWindow, TumblingWindow};
+use crate::window::{
+    CountWindow, PartitionedSlidingWindow, PartitionedTumblingWindow, SlidingCountWindow,
+    SlidingWindow, TumblingWindow,
+};
 use chrono::Duration;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -78,6 +82,8 @@ struct StreamDefinition {
     pattern_engine: Option<PatternEngine>,
     /// SASE+ pattern matching engine (new, more efficient)
     sase_engine: Option<SaseEngine>,
+    /// Join buffer for correlating events from multiple sources
+    join_buffer: Option<JoinBuffer>,
 }
 
 enum RuntimeSource {
@@ -143,6 +149,13 @@ enum RuntimeOp {
 struct SelectConfig {
     /// Fields to include: (output_name, expression)
     fields: Vec<(String, varpulis_core::ast::Expr)>,
+}
+
+/// Result of processing a stream: alerts to emit and output events for dependent streams
+struct StreamProcessResult {
+    alerts: Vec<Alert>,
+    /// Output events to feed to dependent streams (with stream name as event_type)
+    output_events: Vec<Event>,
 }
 
 /// State for partitioned windows - maintains separate windows per partition key
@@ -244,6 +257,8 @@ enum WindowType {
     Sliding(SlidingWindow),
     Count(CountWindow),
     SlidingCount(SlidingCountWindow),
+    PartitionedTumbling(PartitionedTumblingWindow),
+    PartitionedSliding(PartitionedSlidingWindow),
 }
 
 struct EmitConfig {
@@ -432,6 +447,13 @@ impl Engine {
                     "Registering join stream {} from sources: {:?}",
                     name, sources
                 );
+                // Register for all join source streams
+                for source in &sources {
+                    self.event_sources
+                        .entry(source.clone())
+                        .or_default()
+                        .push(name.to_string());
+                }
                 RuntimeSource::Join(sources)
             }
             StreamSource::Merge(decls) => {
@@ -481,6 +503,22 @@ impl Engine {
         // Extract pattern engine from operations if present
         let pattern_engine = self.extract_pattern_engine(&runtime_ops);
 
+        // Create JoinBuffer for Join sources
+        let join_buffer = if let StreamSource::Join(clauses) = source {
+            let join_sources: Vec<String> = clauses.iter().map(|c| c.source.clone()).collect();
+            let join_keys = self.extract_join_keys(clauses, ops);
+            let window_duration = self.extract_window_duration(ops);
+
+            debug!(
+                "Creating JoinBuffer for stream {} with sources {:?}, keys {:?}, window {:?}",
+                name, join_sources, join_keys, window_duration
+            );
+
+            Some(JoinBuffer::new(join_sources, join_keys, window_duration))
+        } else {
+            None
+        };
+
         // Log source description before moving
         let source_desc = runtime_source.describe();
 
@@ -494,6 +532,7 @@ impl Engine {
                 attention_window,
                 pattern_engine,
                 sase_engine: None, // TODO: integrate SASE+ pattern matching
+                join_buffer,
             },
         );
 
@@ -642,7 +681,31 @@ impl Engine {
                         varpulis_core::ast::Expr::Duration(ns) => {
                             // Time-based window
                             let duration = Duration::nanoseconds(*ns as i64);
-                            if let Some(sliding) = &args.sliding {
+                            if let Some(ref key) = partition_key {
+                                // Partitioned time-based window
+                                if let Some(sliding) = &args.sliding {
+                                    let slide_ns = match sliding {
+                                        varpulis_core::ast::Expr::Duration(ns) => *ns,
+                                        _ => 60_000_000_000, // 1 minute default
+                                    };
+                                    let slide = Duration::nanoseconds(slide_ns as i64);
+                                    runtime_ops.push(RuntimeOp::Window(
+                                        WindowType::PartitionedSliding(
+                                            PartitionedSlidingWindow::new(
+                                                key.clone(),
+                                                duration,
+                                                slide,
+                                            ),
+                                        ),
+                                    ));
+                                } else {
+                                    runtime_ops.push(RuntimeOp::Window(
+                                        WindowType::PartitionedTumbling(
+                                            PartitionedTumblingWindow::new(key.clone(), duration),
+                                        ),
+                                    ));
+                                }
+                            } else if let Some(sliding) = &args.sliding {
                                 let slide_ns = match sliding {
                                     varpulis_core::ast::Expr::Duration(ns) => *ns,
                                     _ => 60_000_000_000, // 1 minute default
@@ -660,9 +723,17 @@ impl Engine {
                         _ => {
                             // Default to 5 minute tumbling window
                             let duration = Duration::nanoseconds(300_000_000_000);
-                            runtime_ops.push(RuntimeOp::Window(WindowType::Tumbling(
-                                TumblingWindow::new(duration),
-                            )));
+                            if let Some(ref key) = partition_key {
+                                runtime_ops.push(RuntimeOp::Window(
+                                    WindowType::PartitionedTumbling(
+                                        PartitionedTumblingWindow::new(key.clone(), duration),
+                                    ),
+                                ));
+                            } else {
+                                runtime_ops.push(RuntimeOp::Window(WindowType::Tumbling(
+                                    TumblingWindow::new(duration),
+                                )));
+                            }
                         }
                     }
                 }
@@ -881,6 +952,140 @@ impl Engine {
         None
     }
 
+    /// Extract join keys from join clauses and operations
+    /// Returns a map of source_name -> join_key_field
+    fn extract_join_keys(
+        &self,
+        clauses: &[varpulis_core::ast::JoinClause],
+        ops: &[StreamOp],
+    ) -> HashMap<String, String> {
+        let mut join_keys: HashMap<String, String> = HashMap::new();
+
+        // First check clauses for on conditions
+        for clause in clauses {
+            if let Some(ref on_expr) = clause.on {
+                if let Some((source, field)) = self.extract_field_from_expr(on_expr, &clause.source)
+                {
+                    join_keys.insert(source, field);
+                }
+            }
+        }
+
+        // Then check operations for StreamOp::On
+        for op in ops {
+            if let StreamOp::On(expr) = op {
+                // Parse expressions like: EMA12.symbol == EMA26.symbol
+                // or: A.key == B.key and B.key == C.key
+                self.extract_join_keys_from_expr(expr, &mut join_keys);
+            }
+        }
+
+        // If no join keys found, use "symbol" as default (common join key)
+        if join_keys.is_empty() {
+            for clause in clauses {
+                join_keys.insert(clause.source.clone(), "symbol".to_string());
+            }
+        }
+
+        join_keys
+    }
+
+    /// Extract join keys from an expression (e.g., EMA12.symbol == EMA26.symbol)
+    fn extract_join_keys_from_expr(
+        &self,
+        expr: &varpulis_core::ast::Expr,
+        keys: &mut HashMap<String, String>,
+    ) {
+        use varpulis_core::ast::{BinOp, Expr};
+
+        if let Expr::Binary { op, left, right } = expr {
+            match op {
+                BinOp::Eq => {
+                    // Extract source.field from both sides
+                    if let (Some((src1, field1)), Some((src2, field2))) = (
+                        self.extract_source_field(left),
+                        self.extract_source_field(right),
+                    ) {
+                        keys.insert(src1, field1);
+                        keys.insert(src2, field2);
+                    }
+                }
+                BinOp::And => {
+                    // Recursively process both sides for compound conditions
+                    self.extract_join_keys_from_expr(left, keys);
+                    self.extract_join_keys_from_expr(right, keys);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Extract source name and field name from an expression like EMA12.symbol
+    fn extract_source_field(
+        &self,
+        expr_node: &varpulis_core::ast::Expr,
+    ) -> Option<(String, String)> {
+        use varpulis_core::ast::Expr;
+
+        match expr_node {
+            Expr::Member { expr, member } => {
+                if let Expr::Ident(source) = expr.as_ref() {
+                    return Some((source.clone(), member.clone()));
+                }
+            }
+            Expr::Ident(name) => {
+                // Simple identifier - might be just a field name
+                // Return as field only, source will be inferred
+                return Some(("".to_string(), name.clone()));
+            }
+            _ => {}
+        }
+        None
+    }
+
+    /// Extract a field from an expression for a specific source
+    fn extract_field_from_expr(
+        &self,
+        expr: &varpulis_core::ast::Expr,
+        source: &str,
+    ) -> Option<(String, String)> {
+        use varpulis_core::ast::{BinOp, Expr};
+
+        if let Expr::Binary {
+            op: BinOp::Eq,
+            left,
+            right,
+        } = expr
+        {
+            // Check left side
+            if let Some((src, field)) = self.extract_source_field(left) {
+                if src == source || src.is_empty() {
+                    return Some((source.to_string(), field));
+                }
+            }
+            // Check right side
+            if let Some((src, field)) = self.extract_source_field(right) {
+                if src == source || src.is_empty() {
+                    return Some((source.to_string(), field));
+                }
+            }
+        }
+        None
+    }
+
+    /// Extract window duration from operations
+    fn extract_window_duration(&self, ops: &[StreamOp]) -> Duration {
+        for op in ops {
+            if let StreamOp::Window(args) = op {
+                if let varpulis_core::ast::Expr::Duration(ns) = &args.duration {
+                    return Duration::nanoseconds(*ns as i64);
+                }
+            }
+        }
+        // Default to 1 minute if no window specified
+        Duration::minutes(1)
+    }
+
     /// Convert an AST expression to a PatternExpr for the pattern engine
     fn expr_to_pattern(expr: &varpulis_core::ast::Expr) -> Option<PatternExpr> {
         use varpulis_core::ast::{BinOp, Expr, UnaryOp};
@@ -988,10 +1193,20 @@ impl Engine {
                 expr: object,
                 member,
             } => {
-                // Handle alias.field access (e.g., order.id)
+                // Handle alias.field access (e.g., order.id, EMA12.symbol)
                 if let Expr::Ident(alias) = object.as_ref() {
+                    // First check sequence context for captured events
                     if let Some(captured) = ctx.get(alias.as_str()) {
                         return captured.get(member).cloned();
+                    }
+                    // Then check event data with prefixed field name (for join results)
+                    let prefixed_field = format!("{}.{}", alias, member);
+                    if let Some(value) = event.get(&prefixed_field) {
+                        return Some(value.clone());
+                    }
+                    // Also try the member directly if alias matches event type
+                    if alias == &event.event_type {
+                        return event.get(member).cloned();
                     }
                 }
                 None
@@ -1339,6 +1554,20 @@ impl Engine {
                     _ => None,
                 }
             }
+            Expr::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                // Evaluate condition
+                let cond_val =
+                    Self::eval_expr_with_functions(cond, event, ctx, functions, bindings)?;
+                if cond_val.as_bool().unwrap_or(false) {
+                    Self::eval_expr_with_functions(then_branch, event, ctx, functions, bindings)
+                } else {
+                    Self::eval_expr_with_functions(else_branch, event, ctx, functions, bindings)
+                }
+            }
             _ => Self::eval_filter_expr(expr, event, ctx),
         }
     }
@@ -1443,22 +1672,48 @@ impl Engine {
     pub async fn process(&mut self, event: Event) -> Result<(), String> {
         self.events_processed += 1;
 
-        // Find streams that source from this event type
-        let stream_names = self
-            .event_sources
-            .get(&event.event_type)
-            .cloned()
-            .unwrap_or_default();
+        // Process events with depth limit to prevent infinite loops
+        // Each event carries its depth level
+        let mut pending_events: Vec<(Event, usize)> = vec![(event, 0)];
+        const MAX_CHAIN_DEPTH: usize = 10;
 
-        for stream_name in stream_names {
-            if let Some(stream) = self.streams.get_mut(&stream_name) {
-                let alerts =
-                    Self::process_stream_with_functions(stream, event.clone(), &self.functions)
-                        .await?;
-                for alert in alerts {
-                    self.alerts_generated += 1;
-                    if let Err(e) = self.alert_tx.send(alert).await {
-                        warn!("Failed to send alert: {}", e);
+        // Process events iteratively, feeding output to dependent streams
+        while let Some((current_event, depth)) = pending_events.pop() {
+            // Prevent infinite loops by limiting chain depth
+            if depth >= MAX_CHAIN_DEPTH {
+                debug!(
+                    "Max chain depth reached for event type: {}",
+                    current_event.event_type
+                );
+                continue;
+            }
+
+            let stream_names = self
+                .event_sources
+                .get(&current_event.event_type)
+                .cloned()
+                .unwrap_or_default();
+
+            for stream_name in stream_names {
+                if let Some(stream) = self.streams.get_mut(&stream_name) {
+                    let result = Self::process_stream_with_functions(
+                        stream,
+                        current_event.clone(),
+                        &self.functions,
+                    )
+                    .await?;
+
+                    // Send alerts
+                    for alert in result.alerts {
+                        self.alerts_generated += 1;
+                        if let Err(e) = self.alert_tx.send(alert).await {
+                            warn!("Failed to send alert: {}", e);
+                        }
+                    }
+
+                    // Queue output events for processing by dependent streams
+                    for output_event in result.output_events {
+                        pending_events.push((output_event, depth + 1));
                     }
                 }
             }
@@ -1471,7 +1726,7 @@ impl Engine {
         stream: &mut StreamDefinition,
         event: Event,
         functions: &HashMap<String, UserFunction>,
-    ) -> Result<Vec<Alert>, String> {
+    ) -> Result<StreamProcessResult, String> {
         // For merge sources, check if the event passes the appropriate filter
         if let RuntimeSource::Merge(ref sources) = stream.source {
             let mut passes_filter = false;
@@ -1502,11 +1757,65 @@ impl Engine {
                 }
             }
             if !passes_filter {
-                return Ok(vec![]);
+                return Ok(StreamProcessResult {
+                    alerts: vec![],
+                    output_events: vec![],
+                });
             }
             // Log which merge source matched (uses ms.name)
             if let Some(source_name) = matched_source_name {
                 tracing::trace!("Event matched merge source: {}", source_name);
+            }
+        }
+
+        // For join sources, route through the JoinBuffer for correlation
+        if let RuntimeSource::Join(ref sources) = stream.source {
+            if let Some(ref mut join_buffer) = stream.join_buffer {
+                // Determine which source this event came from
+                // The event_type should match one of the source stream names
+                let source_name = sources
+                    .iter()
+                    .find(|s| **s == event.event_type)
+                    .cloned()
+                    .unwrap_or_else(|| event.event_type.clone());
+
+                tracing::debug!(
+                    "Join stream {}: Adding event from source '{}' (event_type: {})",
+                    stream.name,
+                    source_name,
+                    event.event_type
+                );
+
+                // Add event to join buffer and try to correlate
+                match join_buffer.add_event(&source_name, event.clone()) {
+                    Some(correlated_event) => {
+                        tracing::debug!(
+                            "Join stream {}: Correlated event with {} fields",
+                            stream.name,
+                            correlated_event.data.len()
+                        );
+                        // Continue processing with the correlated event
+                        return Self::process_join_result(stream, correlated_event, functions)
+                            .await;
+                    }
+                    None => {
+                        // No correlation yet - need events from all sources
+                        tracing::trace!(
+                            "Join stream {}: No correlation yet, waiting for more events",
+                            stream.name
+                        );
+                        return Ok(StreamProcessResult {
+                            alerts: vec![],
+                            output_events: vec![],
+                        });
+                    }
+                }
+            } else {
+                tracing::warn!("Join stream {} has no JoinBuffer configured", stream.name);
+                return Ok(StreamProcessResult {
+                    alerts: vec![],
+                    output_events: vec![],
+                });
             }
         }
 
@@ -1572,7 +1881,10 @@ impl Engine {
                 RuntimeOp::WhereClosure(predicate) => {
                     current_events.retain(|e| predicate(e));
                     if current_events.is_empty() {
-                        return Ok(alerts);
+                        return Ok(StreamProcessResult {
+                            alerts,
+                            output_events: vec![],
+                        });
                     }
                 }
                 RuntimeOp::WhereExpr(expr) => {
@@ -1583,7 +1895,10 @@ impl Engine {
                             .unwrap_or(false)
                     });
                     if current_events.is_empty() {
-                        return Ok(alerts);
+                        return Ok(StreamProcessResult {
+                            alerts,
+                            output_events: vec![],
+                        });
                     }
                 }
                 RuntimeOp::PartitionBy(_) => {
@@ -1614,11 +1929,24 @@ impl Engine {
                                     window_results = window_events;
                                 }
                             }
+                            WindowType::PartitionedTumbling(w) => {
+                                if let Some(completed) = w.add(event) {
+                                    window_results = completed;
+                                }
+                            }
+                            WindowType::PartitionedSliding(w) => {
+                                if let Some(window_events) = w.add(event) {
+                                    window_results = window_events;
+                                }
+                            }
                         }
                     }
                     current_events = window_results;
                     if current_events.is_empty() {
-                        return Ok(alerts);
+                        return Ok(StreamProcessResult {
+                            alerts,
+                            output_events: vec![],
+                        });
                     }
                 }
                 RuntimeOp::PartitionedWindow(state) => {
@@ -1630,7 +1958,10 @@ impl Engine {
                     }
                     current_events = window_results;
                     if current_events.is_empty() {
-                        return Ok(alerts);
+                        return Ok(StreamProcessResult {
+                            alerts,
+                            output_events: vec![],
+                        });
                     }
                 }
                 RuntimeOp::Aggregate(aggregator) => {
@@ -1777,7 +2108,10 @@ impl Engine {
                             }
                         }
                         if sequence_results.is_empty() {
-                            return Ok(alerts);
+                            return Ok(StreamProcessResult {
+                                alerts,
+                                output_events: vec![],
+                            });
                         }
                         current_events = sequence_results;
                     }
@@ -1847,14 +2181,222 @@ impl Engine {
                         if !result.as_bool().unwrap_or(false) {
                             // Pattern didn't match, filter out all events
                             current_events.clear();
-                            return Ok(alerts);
+                            return Ok(StreamProcessResult {
+                                alerts,
+                                output_events: vec![],
+                            });
                         }
                     }
                 }
             }
         }
 
-        Ok(alerts)
+        // Return remaining events as output for dependent streams
+        // Set their event_type to the stream name for routing
+        let output_events: Vec<Event> = current_events
+            .into_iter()
+            .map(|mut e| {
+                e.event_type = stream.name.clone();
+                e
+            })
+            .collect();
+
+        Ok(StreamProcessResult {
+            alerts,
+            output_events,
+        })
+    }
+
+    /// Process a join result through the stream operations (skipping join-specific handling)
+    async fn process_join_result(
+        stream: &mut StreamDefinition,
+        correlated_event: Event,
+        functions: &HashMap<String, UserFunction>,
+    ) -> Result<StreamProcessResult, String> {
+        let mut current_events = vec![correlated_event];
+        let mut alerts = Vec::new();
+
+        for op in &mut stream.operations {
+            match op {
+                RuntimeOp::WhereClosure(predicate) => {
+                    current_events.retain(|e| predicate(e));
+                    if current_events.is_empty() {
+                        return Ok(StreamProcessResult {
+                            alerts,
+                            output_events: vec![],
+                        });
+                    }
+                }
+                RuntimeOp::WhereExpr(expr) => {
+                    let ctx = SequenceContext::new();
+                    current_events.retain(|e| {
+                        Self::eval_expr_with_functions(expr, e, &ctx, functions, &HashMap::new())
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false)
+                    });
+                    if current_events.is_empty() {
+                        return Ok(StreamProcessResult {
+                            alerts,
+                            output_events: vec![],
+                        });
+                    }
+                }
+                RuntimeOp::PartitionBy(_) => {
+                    // PartitionBy is handled at stream registration time
+                }
+                RuntimeOp::Window(_window) => {
+                    // For joins, we skip the window operation since it's already
+                    // handled by the JoinBuffer's window duration
+                    // Just pass events through
+                }
+                RuntimeOp::PartitionedWindow(state) => {
+                    let mut window_results = Vec::new();
+                    for event in current_events {
+                        if let Some(completed) = state.add(event) {
+                            window_results.extend(completed);
+                        }
+                    }
+                    current_events = window_results;
+                    if current_events.is_empty() {
+                        return Ok(StreamProcessResult {
+                            alerts,
+                            output_events: vec![],
+                        });
+                    }
+                }
+                RuntimeOp::Aggregate(aggregator) => {
+                    let result = aggregator.apply(&current_events);
+                    let mut agg_event = Event::new("AggregationResult");
+                    for (key, value) in result {
+                        agg_event.data.insert(key, value);
+                    }
+                    current_events = vec![agg_event];
+                }
+                RuntimeOp::PartitionedAggregate(state) => {
+                    let results = state.apply(&current_events);
+                    current_events = results
+                        .into_iter()
+                        .map(|(partition_key, result)| {
+                            let mut agg_event = Event::new("AggregationResult");
+                            agg_event
+                                .data
+                                .insert("_partition".to_string(), Value::Str(partition_key));
+                            for (key, value) in result {
+                                agg_event.data.insert(key, value);
+                            }
+                            agg_event
+                        })
+                        .collect();
+                }
+                RuntimeOp::Select(config) => {
+                    let ctx = SequenceContext::new();
+                    current_events = current_events
+                        .into_iter()
+                        .map(|event| {
+                            let mut new_event = Event::new(&event.event_type);
+                            new_event.timestamp = event.timestamp;
+                            for (out_name, expr) in &config.fields {
+                                if let Some(value) = Self::eval_expr_with_functions(
+                                    expr,
+                                    &event,
+                                    &ctx,
+                                    functions,
+                                    &HashMap::new(),
+                                ) {
+                                    new_event.data.insert(out_name.clone(), value);
+                                }
+                            }
+                            new_event
+                        })
+                        .collect();
+                }
+                RuntimeOp::Emit(config) => {
+                    for event in &current_events {
+                        let mut alert_data = IndexMap::new();
+                        for (out_name, source_field) in &config.fields {
+                            if out_name == "event_type" {
+                                continue;
+                            }
+                            if let Some(value) = event.get(source_field) {
+                                alert_data.insert(out_name.clone(), value.clone());
+                            } else {
+                                alert_data
+                                    .insert(out_name.clone(), Value::Str(source_field.clone()));
+                            }
+                        }
+
+                        let alert_type = config
+                            .fields
+                            .iter()
+                            .find(|(name, _)| name == "event_type")
+                            .map(|(_, val)| val.clone())
+                            .unwrap_or_else(|| stream.name.clone());
+
+                        let alert = Alert {
+                            alert_type,
+                            severity: "info".to_string(),
+                            message: format!("Output from join stream {}", stream.name),
+                            data: alert_data,
+                        };
+                        alerts.push(alert);
+                    }
+                }
+                RuntimeOp::EmitExpr(config) => {
+                    let ctx = SequenceContext::new();
+                    for event in &current_events {
+                        let mut alert_data = IndexMap::new();
+                        let mut event_type = "stream_output".to_string();
+
+                        for (out_name, expr) in &config.fields {
+                            if let Some(value) = Self::eval_expr_with_functions(
+                                expr,
+                                event,
+                                &ctx,
+                                functions,
+                                &HashMap::new(),
+                            ) {
+                                if out_name == "event_type" {
+                                    if let Some(s) = value.as_str() {
+                                        event_type = s.to_string();
+                                    }
+                                } else {
+                                    alert_data.insert(out_name.clone(), value);
+                                }
+                            }
+                        }
+
+                        let alert = Alert {
+                            alert_type: event_type,
+                            severity: "info".to_string(),
+                            message: format!("Output from join stream {}", stream.name),
+                            data: alert_data,
+                        };
+                        alerts.push(alert);
+                    }
+                }
+                RuntimeOp::Print(_)
+                | RuntimeOp::Log(_)
+                | RuntimeOp::Sequence
+                | RuntimeOp::AttentionWindow(_)
+                | RuntimeOp::Pattern(_) => {
+                    // Skip these for join results
+                }
+            }
+        }
+
+        // Return remaining events as output for dependent streams
+        let output_events: Vec<Event> = current_events
+            .into_iter()
+            .map(|mut e| {
+                e.event_type = stream.name.clone();
+                e
+            })
+            .collect();
+
+        Ok(StreamProcessResult {
+            alerts,
+            output_events,
+        })
     }
 
     /// Evaluate a pattern expression with support for attention_score builtin

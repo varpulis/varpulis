@@ -1,18 +1,18 @@
-# Grammaire formelle VarpulisQL
+# VarpulisQL Formal Grammar
 
 ## Notation
 
-Cette grammaire utilise une notation EBNF simplifiée :
+This grammar uses simplified EBNF notation:
 - `|` : alternative
-- `*` : zéro ou plus
-- `+` : un ou plus
-- `?` : optionnel
-- `()` : groupement
-- `"..."` : terminal littéral
+- `*` : zero or more
+- `+` : one or more
+- `?` : optional
+- `()` : grouping
+- `"..."` : literal terminal
 
-## Lexèmes
+## Lexemes
 
-### Mots-clés
+### Keywords
 
 ```
 STREAM EVENT TYPE LET VAR CONST FN CONFIG
@@ -26,7 +26,7 @@ AS EXTENDS IMPORT EXPORT
 INT FLOAT BOOL STR TIMESTAMP DURATION
 ```
 
-### Opérateurs
+### Operators
 
 ```
 + - * / % **
@@ -37,7 +37,7 @@ INT FLOAT BOOL STR TIMESTAMP DURATION
 .. ..=
 ```
 
-### Littéraux
+### Literals
 
 ```
 INTEGER     : [0-9]+
@@ -50,7 +50,7 @@ IDENTIFIER  : [a-zA-Z_][a-zA-Z0-9_]*
 
 ## Productions
 
-### Programme
+### Program
 
 ```ebnf
 program         ::= statement*
@@ -64,7 +64,7 @@ statement       ::= stream_decl
                   | import_stmt
 ```
 
-### Déclarations
+### Declarations
 
 ```ebnf
 stream_decl     ::= 'stream' IDENTIFIER (':' type)? '=' stream_expr
@@ -108,7 +108,7 @@ optional_type   ::= type '?'
 stream_type     ::= 'Stream' '<' type '>'
 ```
 
-### Expressions de stream
+### Stream Expressions
 
 ```ebnf
 stream_expr     ::= stream_source stream_op*
@@ -237,7 +237,7 @@ map_entries     ::= map_entry (',' map_entry)*
 map_entry       ::= (STRING | IDENTIFIER) ':' expr
 ```
 
-### Blocs et contrôle
+### Blocks and Control Flow
 
 ```ebnf
 block           ::= NEWLINE INDENT statement+ DEDENT

@@ -1,107 +1,107 @@
-# Opérateurs
+# Operators
 
-## Opérateurs arithmétiques
+## Arithmetic Operators
 
-| Opérateur | Description | Exemple |
-|-----------|-------------|---------|
+| Operator | Description | Example |
+|----------|-------------|---------|
 | `+` | Addition | `a + b` |
-| `-` | Soustraction | `a - b` |
+| `-` | Subtraction | `a - b` |
 | `*` | Multiplication | `a * b` |
 | `/` | Division | `a / b` |
 | `%` | Modulo | `a % b` |
-| `**` | Puissance | `a ** b` |
-| `-` (unaire) | Négation | `-a` |
+| `**` | Power | `a ** b` |
+| `-` (unary) | Negation | `-a` |
 
-## Opérateurs de comparaison
+## Comparison Operators
 
-| Opérateur | Description | Exemple |
-|-----------|-------------|---------|
-| `==` | Égalité | `a == b` |
-| `!=` | Inégalité | `a != b` |
-| `<` | Inférieur | `a < b` |
-| `<=` | Inférieur ou égal | `a <= b` |
-| `>` | Supérieur | `a > b` |
-| `>=` | Supérieur ou égal | `a >= b` |
+| Operator | Description | Example |
+|----------|-------------|---------|
+| `==` | Equality | `a == b` |
+| `!=` | Inequality | `a != b` |
+| `<` | Less than | `a < b` |
+| `<=` | Less than or equal | `a <= b` |
+| `>` | Greater than | `a > b` |
+| `>=` | Greater than or equal | `a >= b` |
 
-## Opérateurs logiques
+## Logical Operators
 
-| Opérateur | Description | Exemple |
-|-----------|-------------|---------|
-| `and` | ET logique | `a and b` |
-| `or` | OU logique | `a or b` |
-| `not` | NON logique | `not a` |
+| Operator | Description | Example |
+|----------|-------------|---------|
+| `and` | Logical AND | `a and b` |
+| `or` | Logical OR | `a or b` |
+| `not` | Logical NOT | `not a` |
 
-## Opérateurs bit à bit
+## Bitwise Operators
 
-| Opérateur | Description | Exemple |
-|-----------|-------------|---------|
-| `&` | AND bit à bit | `a & b` |
-| `\|` | OR bit à bit | `a \| b` |
-| `^` | XOR bit à bit | `a ^ b` |
-| `~` | NOT bit à bit | `~a` |
-| `<<` | Décalage gauche | `a << 2` |
-| `>>` | Décalage droite | `a >> 2` |
+| Operator | Description | Example |
+|----------|-------------|---------|
+| `&` | Bitwise AND | `a & b` |
+| `\|` | Bitwise OR | `a \| b` |
+| `^` | Bitwise XOR | `a ^ b` |
+| `~` | Bitwise NOT | `~a` |
+| `<<` | Left shift | `a << 2` |
+| `>>` | Right shift | `a >> 2` |
 
-## Opérateurs d'affectation
+## Assignment Operators
 
-| Opérateur | Description | Exemple |
-|-----------|-------------|---------|
-| `=` | Affectation | `x = 5` |
-| `+=` | Addition et affectation | `x += 1` |
-| `-=` | Soustraction et affectation | `x -= 1` |
-| `*=` | Multiplication et affectation | `x *= 2` |
-| `/=` | Division et affectation | `x /= 2` |
-| `%=` | Modulo et affectation | `x %= 3` |
+| Operator | Description | Example |
+|----------|-------------|---------|
+| `=` | Assignment | `x = 5` |
+| `+=` | Addition assignment | `x += 1` |
+| `-=` | Subtraction assignment | `x -= 1` |
+| `*=` | Multiplication assignment | `x *= 2` |
+| `/=` | Division assignment | `x /= 2` |
+| `%=` | Modulo assignment | `x %= 3` |
 
-## Opérateurs de chaînage
+## Chaining Operators
 
-| Opérateur | Description | Exemple |
-|-----------|-------------|---------|
-| `.` | Accès membre / chaînage | `stream.where(...).map(...)` |
-| `?.` | Accès optionnel | `user?.name` |
-| `??` | Coalescence null | `value ?? default` |
+| Operator | Description | Example |
+|----------|-------------|---------|
+| `.` | Member access / chaining | `stream.where(...).map(...)` |
+| `?.` | Optional access | `user?.name` |
+| `??` | Null coalesce | `value ?? default` |
 
-## Opérateurs de collection
+## Collection Operators
 
-| Opérateur | Description | Exemple |
-|-----------|-------------|---------|
-| `[]` | Indexation | `array[0]` |
+| Operator | Description | Example |
+|----------|-------------|---------|
+| `[]` | Indexing | `array[0]` |
 | `[:]` | Slice | `array[1:3]` |
-| `in` | Appartenance | `x in list` |
-| `not in` | Non-appartenance | `x not in list` |
+| `in` | Membership | `x in list` |
+| `not in` | Non-membership | `x not in list` |
 
-## Opérateurs de range
+## Range Operators
 
-| Opérateur | Description | Exemple |
-|-----------|-------------|---------|
-| `..` | Range exclusif | `0..10` (0 à 9) |
-| `..=` | Range inclusif | `0..=10` (0 à 10) |
+| Operator | Description | Example |
+|----------|-------------|---------|
+| `..` | Exclusive range | `0..10` (0 to 9) |
+| `..=` | Inclusive range | `0..=10` (0 to 10) |
 
-## Opérateurs lambda
+## Lambda Operators
 
-| Opérateur | Description | Exemple |
-|-----------|-------------|---------|
+| Operator | Description | Example |
+|----------|-------------|---------|
 | `=>` | Lambda expression | `x => x * 2` |
-| `->` | Type de retour | `fn add(a: int, b: int) -> int` |
+| `->` | Return type | `fn add(a: int, b: int) -> int` |
 
-## Opérateurs de durée
+## Duration Operators
 
 ```varpulis
-# Suffixes de durée
-5s      # 5 secondes
-10m     # 10 minutes  
-2h      # 2 heures
-1d      # 1 jour
-500ms   # 500 millisecondes
-100us   # 100 microsecondes
-50ns    # 50 nanosecondes
+# Duration suffixes
+5s      # 5 seconds
+10m     # 10 minutes
+2h      # 2 hours
+1d      # 1 day
+500ms   # 500 milliseconds
+100us   # 100 microseconds
+50ns    # 50 nanoseconds
 ```
 
-## Priorité des opérateurs (du plus élevé au plus bas)
+## Operator Precedence (highest to lowest)
 
 1. `()`, `[]`, `.`, `?.`
 2. `**`
-3. `-` (unaire), `not`, `~`
+3. `-` (unary), `not`, `~`
 4. `*`, `/`, `%`
 5. `+`, `-`
 6. `<<`, `>>`

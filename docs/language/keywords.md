@@ -1,102 +1,102 @@
-# Mots-clés réservés
+# Reserved Keywords
 
-## Déclarations
+## Declarations
 
-| Mot-clé | Description |
+| Keyword | Description |
 |---------|-------------|
-| `stream` | Déclare un stream |
-| `event` | Déclare un type d'événement |
-| `type` | Déclare un alias de type |
-| `let` | Déclare une variable immutable |
-| `var` | Déclare une variable mutable |
-| `const` | Déclare une constante globale |
-| `fn` | Déclare une fonction |
-| `config` | Bloc de configuration |
+| `stream` | Declares a stream |
+| `event` | Declares an event type |
+| `type` | Declares a type alias |
+| `let` | Declares an immutable variable |
+| `var` | Declares a mutable variable |
+| `const` | Declares a global constant |
+| `fn` | Declares a function |
+| `config` | Configuration block |
 
-## Contrôle de flux
+## Control Flow
 
-| Mot-clé | Description |
+| Keyword | Description |
 |---------|-------------|
 | `if` | Condition |
-| `else` | Branche alternative |
-| `elif` | Condition alternative (else if) |
+| `else` | Alternative branch |
+| `elif` | Alternative condition (else if) |
 | `match` | Pattern matching |
-| `for` | Boucle sur itérable |
-| `while` | Boucle conditionnelle |
-| `break` | Sort de la boucle |
-| `continue` | Passe à l'itération suivante |
-| `return` | Retourne une valeur |
+| `for` | Loop over iterable |
+| `while` | Conditional loop |
+| `break` | Exit loop |
+| `continue` | Skip to next iteration |
+| `return` | Return a value |
 
-## Opérateurs de stream
+## Stream Operators
 
-| Mot-clé | Description |
+| Keyword | Description |
 |---------|-------------|
-| `from` | Source d'un stream |
-| `where` | Filtrage |
+| `from` | Stream source |
+| `where` | Filtering |
 | `select` | Projection |
-| `join` | Jointure de streams |
-| `merge` | Fusion de streams |
-| `window` | Fenêtre temporelle |
-| `aggregate` | Agrégation |
-| `partition_by` | Partitionnement |
-| `order_by` | Tri |
+| `join` | Stream join |
+| `merge` | Stream merge |
+| `window` | Time window |
+| `aggregate` | Aggregation |
+| `partition_by` | Partitioning |
+| `order_by` | Sorting |
 | `limit` | Limitation |
-| `distinct` | Dédoublonnage |
-| `emit` | Émission vers sink |
+| `distinct` | Deduplication |
+| `emit` | Emit to sink |
 
-## Patterns et attention
+## Patterns and Attention
 
-| Mot-clé | Description |
+| Keyword | Description |
 |---------|-------------|
-| `pattern` | Définit un pattern de détection |
-| `attention_window` | Fenêtre avec attention mechanism |
-| `attention_score` | Score de corrélation entre événements |
+| `pattern` | Defines a detection pattern |
+| `attention_window` | Window with attention mechanism |
+| `attention_score` | Correlation score between events |
 
-## Types et valeurs
+## Types and Values
 
-| Mot-clé | Description |
+| Keyword | Description |
 |---------|-------------|
-| `true` | Booléen vrai |
-| `false` | Booléen faux |
-| `null` | Absence de valeur |
-| `int` | Type entier |
-| `float` | Type flottant |
-| `bool` | Type booléen |
-| `str` | Type chaîne |
-| `timestamp` | Type timestamp |
-| `duration` | Type durée |
+| `true` | Boolean true |
+| `false` | Boolean false |
+| `null` | Absence of value |
+| `int` | Integer type |
+| `float` | Floating point type |
+| `bool` | Boolean type |
+| `str` | String type |
+| `timestamp` | Timestamp type |
+| `duration` | Duration type |
 
-## Opérateurs logiques
+## Logical Operators
 
-| Mot-clé | Description |
+| Keyword | Description |
 |---------|-------------|
-| `and` | ET logique |
-| `or` | OU logique |
-| `not` | NON logique |
-| `in` | Appartenance |
-| `is` | Test de type/identité |
+| `and` | Logical AND |
+| `or` | Logical OR |
+| `not` | Logical NOT |
+| `in` | Membership |
+| `is` | Type/identity test |
 
-## Gestion d'erreurs
+## Error Handling
 
-| Mot-clé | Description |
+| Keyword | Description |
 |---------|-------------|
-| `try` | Bloc try |
-| `catch` | Capture d'exception |
-| `finally` | Bloc final |
-| `raise` | Lève une exception |
+| `try` | Try block |
+| `catch` | Exception capture |
+| `finally` | Final block |
+| `raise` | Raise an exception |
 
-## Autres
+## Other
 
-| Mot-clé | Description |
+| Keyword | Description |
 |---------|-------------|
 | `as` | Alias/cast |
-| `extends` | Héritage d'événement |
-| `import` | Import de module |
-| `export` | Export de symbole |
+| `extends` | Event inheritance |
+| `import` | Module import |
+| `export` | Symbol export |
 
-## Mots-clés réservés pour usage futur
+## Keywords Reserved for Future Use
 
-Les mots suivants sont réservés pour de potentielles extensions :
+The following words are reserved for potential extensions:
 
 - `async`, `await`
 - `class`, `trait`, `impl`
