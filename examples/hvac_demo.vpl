@@ -309,7 +309,7 @@ stream ZoneEnergy = Energy
         zone: last(zone),
         avg_power_kw: avg(power_kw),
         max_power_kw: max(power_kw),
-        total_kwh: sum(power_kw) / 4,  # Approximate kWh from 15min readings
+        sum_power: sum(power_kw),  # Sum for kWh calculation (divide by 4 in consumer)
         readings: count()
     )
 

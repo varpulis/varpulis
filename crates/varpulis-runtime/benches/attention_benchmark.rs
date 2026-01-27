@@ -49,9 +49,7 @@ fn bench_attention_single(c: &mut Criterion) {
                         }
                         (engine, events[history_size].clone())
                     },
-                    |(mut engine, query)| {
-                        engine.compute_attention(black_box(&query))
-                    },
+                    |(mut engine, query)| engine.compute_attention(black_box(&query)),
                     criterion::BatchSize::SmallInput,
                 )
             },
@@ -94,9 +92,7 @@ fn bench_attention_batch(c: &mut Criterion) {
                             .collect();
                         (engine, batch)
                     },
-                    |(mut engine, batch)| {
-                        engine.compute_attention_batch(black_box(&batch))
-                    },
+                    |(mut engine, batch)| engine.compute_attention_batch(black_box(&batch)),
                     criterion::BatchSize::SmallInput,
                 )
             },
@@ -109,7 +105,7 @@ fn bench_attention_batch(c: &mut Criterion) {
 /// Compare single vs batch processing
 fn bench_single_vs_batch(c: &mut Criterion) {
     let mut group = c.benchmark_group("single_vs_batch");
-    
+
     let history_size = 500;
     let batch_size = 50;
     let events = generate_events(history_size + batch_size);
@@ -161,9 +157,7 @@ fn bench_single_vs_batch(c: &mut Criterion) {
                     .collect();
                 (engine, batch)
             },
-            |(mut engine, batch)| {
-                engine.compute_attention_batch(black_box(&batch))
-            },
+            |(mut engine, batch)| engine.compute_attention_batch(black_box(&batch)),
             criterion::BatchSize::SmallInput,
         )
     });
@@ -196,9 +190,7 @@ fn bench_attention_scalability(c: &mut Criterion) {
                         }
                         (engine, events[history_size].clone())
                     },
-                    |(mut engine, query)| {
-                        engine.compute_attention(black_box(&query))
-                    },
+                    |(mut engine, query)| engine.compute_attention(black_box(&query)),
                     criterion::BatchSize::SmallInput,
                 )
             },
@@ -282,9 +274,7 @@ fn bench_hnsw_vs_linear(c: &mut Criterion) {
                         }
                         (engine, events[history_size].clone())
                     },
-                    |(mut engine, query)| {
-                        engine.compute_attention(black_box(&query))
-                    },
+                    |(mut engine, query)| engine.compute_attention(black_box(&query)),
                     criterion::BatchSize::SmallInput,
                 )
             },
@@ -303,9 +293,7 @@ fn bench_hnsw_vs_linear(c: &mut Criterion) {
                         }
                         (engine, events[history_size].clone())
                     },
-                    |(mut engine, query)| {
-                        engine.compute_attention(black_box(&query))
-                    },
+                    |(mut engine, query)| engine.compute_attention(black_box(&query)),
                     criterion::BatchSize::SmallInput,
                 )
             },

@@ -48,8 +48,11 @@ pub enum Stmt {
         ret: Option<Type>,
         body: Vec<Spanned<Stmt>>,
     },
-    /// Configuration block
-    Config(Vec<ConfigItem>),
+    /// Configuration block with name (e.g., `config mqtt { ... }`)
+    Config {
+        name: String,
+        items: Vec<ConfigItem>,
+    },
     /// Import statement
     Import { path: String, alias: Option<String> },
     /// Expression statement
@@ -540,4 +543,41 @@ pub enum ConfigValue {
     Ident(String),
     Array(Vec<ConfigValue>),
     Map(Vec<(String, ConfigValue)>),
+}
+
+impl ConfigValue {
+    /// Get value as string (works for Str and Ident)
+    pub fn as_string(&self) -> Option<&str> {
+        match self {
+            ConfigValue::Str(s) => Some(s),
+            ConfigValue::Ident(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// Get value as i64
+    pub fn as_int(&self) -> Option<i64> {
+        match self {
+            ConfigValue::Int(i) => Some(*i),
+            ConfigValue::Float(f) => Some(*f as i64),
+            _ => None,
+        }
+    }
+
+    /// Get value as f64
+    pub fn as_float(&self) -> Option<f64> {
+        match self {
+            ConfigValue::Float(f) => Some(*f),
+            ConfigValue::Int(i) => Some(*i as f64),
+            _ => None,
+        }
+    }
+
+    /// Get value as bool
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            ConfigValue::Bool(b) => Some(*b),
+            _ => None,
+        }
+    }
 }

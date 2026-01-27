@@ -104,35 +104,40 @@ impl EventFileParser {
     fn parse_timing_prefix(line: &str) -> Result<(u64, &str), String> {
         // Format: @10s EventType { ... } or @100ms EventType { ... }
         let line = line.trim_start_matches('@');
-        
+
         // Find first space to separate timing from event
-        let space_pos = line.find(char::is_whitespace)
+        let space_pos = line
+            .find(char::is_whitespace)
             .ok_or_else(|| "Invalid timing prefix format".to_string())?;
-        
+
         let timing_str = &line[..space_pos];
         let rest = line[space_pos..].trim();
-        
+
         // Parse timing value with unit
         let time_ms = if timing_str.ends_with("ms") {
-            timing_str.trim_end_matches("ms")
+            timing_str
+                .trim_end_matches("ms")
                 .parse::<u64>()
                 .map_err(|_| format!("Invalid timing value: {}", timing_str))?
         } else if timing_str.ends_with('s') {
-            let secs = timing_str.trim_end_matches('s')
+            let secs = timing_str
+                .trim_end_matches('s')
                 .parse::<u64>()
                 .map_err(|_| format!("Invalid timing value: {}", timing_str))?;
             secs * 1000
         } else if timing_str.ends_with('m') {
-            let mins = timing_str.trim_end_matches('m')
+            let mins = timing_str
+                .trim_end_matches('m')
                 .parse::<u64>()
                 .map_err(|_| format!("Invalid timing value: {}", timing_str))?;
             mins * 60 * 1000
         } else {
             // Assume milliseconds if no unit
-            timing_str.parse::<u64>()
+            timing_str
+                .parse::<u64>()
                 .map_err(|_| format!("Invalid timing value: {}", timing_str))?
         };
-        
+
         Ok((time_ms, rest))
     }
 

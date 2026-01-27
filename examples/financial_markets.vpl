@@ -44,8 +44,8 @@ stream ETHTicks = Ticks.where(symbol == "ETH/USD")
 # =============================================================================
 
 # Simple Moving Average - 20 periods
-stream SMA20 = Candles
-    .where(timeframe == "1h")
+stream SMA20 = OHLCV
+    .where(timeframe == "1m")
     .partition_by(symbol)
     .window(20)
     .aggregate(
@@ -53,10 +53,16 @@ stream SMA20 = Candles
         sma_20: avg(close),
         ts: last(ts)
     )
+    .emit(
+        event_type: "SMA20",
+        symbol: symbol,
+        sma_20: sma_20,
+        ts: ts
+    )
 
 # Simple Moving Average - 50 periods
-stream SMA50 = Candles
-    .where(timeframe == "1h")
+stream SMA50 = OHLCV
+    .where(timeframe == "1m")
     .partition_by(symbol)
     .window(50)
     .aggregate(
@@ -64,10 +70,16 @@ stream SMA50 = Candles
         sma_50: avg(close),
         ts: last(ts)
     )
+    .emit(
+        event_type: "SMA50",
+        symbol: symbol,
+        sma_50: sma_50,
+        ts: ts
+    )
 
 # Exponential Moving Average - 12 periods (for MACD)
-stream EMA12 = Candles
-    .where(timeframe == "1h")
+stream EMA12 = OHLCV
+    .where(timeframe == "1m")
     .partition_by(symbol)
     .window(12)
     .aggregate(
@@ -77,8 +89,8 @@ stream EMA12 = Candles
     )
 
 # Exponential Moving Average - 26 periods (for MACD)
-stream EMA26 = Candles
-    .where(timeframe == "1h")
+stream EMA26 = OHLCV
+    .where(timeframe == "1m")
     .partition_by(symbol)
     .window(26)
     .aggregate(
@@ -111,13 +123,21 @@ stream MACDSignal = MACD
         histogram: last(macd_line) - ema(macd_line, 9),
         ts: last(ts)
     )
+    .emit(
+        event_type: "MACD",
+        symbol: symbol,
+        macd_line: macd_line,
+        signal_line: signal_line,
+        histogram: histogram,
+        ts: ts
+    )
 
 # =============================================================================
 # RSI (Relative Strength Index)
 # =============================================================================
 
-stream PriceChanges = Candles
-    .where(timeframe == "1h")
+stream PriceChanges = OHLCV
+    .where(timeframe == "1m")
     .partition_by(symbol)
     .window(2)
     .select(
@@ -142,13 +162,19 @@ stream RSI = PriceChanges
         rsi: 100 - (100 / (1 + avg_gain / max(avg_loss, 0.0001))),
         ts
     )
+    .emit(
+        event_type: "RSI",
+        symbol: symbol,
+        rsi: rsi,
+        ts: ts
+    )
 
 # =============================================================================
 # Bollinger Bands
 # =============================================================================
 
-stream BollingerBands = Candles
-    .where(timeframe == "1h")
+stream BollingerBands = OHLCV
+    .where(timeframe == "1m")
     .partition_by(symbol)
     .window(20)
     .aggregate(
@@ -167,6 +193,15 @@ stream BollingerBands = Candles
         bandwidth: (sma + 2 * std_dev - (sma - 2 * std_dev)) / sma * 100,
         percent_b: (close - (sma - 2 * std_dev)) / ((sma + 2 * std_dev) - (sma - 2 * std_dev)),
         ts
+    )
+    .emit(
+        event_type: "BollingerBands",
+        symbol: symbol,
+        middle: middle_band,
+        upper: upper_band,
+        lower: lower_band,
+        bandwidth: bandwidth,
+        ts: ts
     )
 
 # =============================================================================

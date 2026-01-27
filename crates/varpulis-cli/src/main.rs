@@ -12,6 +12,7 @@ use tracing_subscriber::FmtSubscriber;
 use warp::ws::{Message, WebSocket};
 use warp::Filter;
 
+use varpulis_core::ast::{Program, Stmt};
 use varpulis_parser::parse;
 use varpulis_runtime::engine::{Alert, Engine};
 use varpulis_runtime::event::Event;
@@ -124,15 +125,18 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::Run { file, code } => {
-            let source = if let Some(path) = file {
-                std::fs::read_to_string(&path)?
+            let (source, base_path) = if let Some(ref path) = file {
+                (
+                    std::fs::read_to_string(path)?,
+                    path.parent().map(|p| p.to_path_buf()),
+                )
             } else if let Some(code) = code {
-                code
+                (code, None)
             } else {
                 anyhow::bail!("Either --file or --code must be provided");
             };
 
-            run_program(&source).await?;
+            run_program(&source, base_path.as_ref()).await?;
         }
 
         Commands::Parse { file } => {
@@ -176,10 +180,17 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn run_program(source: &str) -> Result<()> {
+async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
+    use varpulis_runtime::connector::{
+        MqttConfig, MqttSink, MqttSource, SinkConnector, SourceConnector,
+    };
+
     info!("Parsing VarpulisQL program...");
-    let program = parse(source).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
+    let mut program = parse(source).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
     info!("Parsed {} statements", program.statements.len());
+
+    // Resolve imports
+    resolve_imports(&mut program, base_path)?;
 
     // Create alert channel
     let (alert_tx, mut alert_rx) = mpsc::channel::<Alert>(100);
@@ -190,23 +201,150 @@ async fn run_program(source: &str) -> Result<()> {
         .load(&program)
         .map_err(|e| anyhow::anyhow!("Load error: {}", e))?;
 
-    // Spawn alert handler
-    tokio::spawn(async move {
-        while let Some(alert) = alert_rx.recv().await {
-            println!("\n📢 ALERT: {} ({})", alert.alert_type, alert.severity);
-            println!("   Message: {}", alert.message);
-            for (key, value) in &alert.data {
-                println!("   {}: {}", key, value);
-            }
-        }
-    });
-
-    info!("Engine ready. Waiting for events...");
-
-    // For now, just show that we parsed successfully
     let metrics = engine.metrics();
     println!("\n✅ Program loaded successfully!");
     println!("   Streams registered: {}", metrics.streams_count);
+
+    // Check for MQTT config
+    let mqtt_config = engine.get_config("mqtt");
+
+    if let Some(config) = mqtt_config {
+        let broker = config
+            .values
+            .get("broker")
+            .and_then(|v| v.as_string())
+            .unwrap_or("localhost");
+        let port: u16 = config
+            .values
+            .get("port")
+            .and_then(|v| v.as_int())
+            .map(|i| i as u16)
+            .unwrap_or(1883);
+        let input_topic = config
+            .values
+            .get("input_topic")
+            .and_then(|v| v.as_string())
+            .unwrap_or("varpulis/events/#");
+        let output_topic = config
+            .values
+            .get("output_topic")
+            .and_then(|v| v.as_string())
+            .unwrap_or("varpulis/alerts");
+        let client_id = config
+            .values
+            .get("client_id")
+            .and_then(|v| v.as_string())
+            .unwrap_or("varpulis-engine");
+
+        println!("\n🔌 MQTT Configuration:");
+        println!("   Broker: {}:{}", broker, port);
+        println!("   Input:  {}", input_topic);
+        println!("   Output: {}", output_topic);
+
+        // Create MQTT source
+        let mqtt_source_config = MqttConfig::new(broker, input_topic)
+            .with_port(port)
+            .with_client_id(&format!("{}-source", client_id));
+        let mut mqtt_source = MqttSource::new("mqtt-source", mqtt_source_config);
+
+        // Create MQTT sink for alerts
+        let mqtt_sink_config = MqttConfig::new(broker, output_topic)
+            .with_port(port)
+            .with_client_id(&format!("{}-sink", client_id));
+        let mqtt_sink = MqttSink::new("mqtt-sink", mqtt_sink_config);
+        let mqtt_sink = Arc::new(mqtt_sink);
+
+        // Create event channel
+        let (event_tx, mut event_rx) = mpsc::channel::<Event>(1000);
+
+        // Spawn alert handler that publishes to MQTT
+        let sink_clone = mqtt_sink.clone();
+        tokio::spawn(async move {
+            while let Some(alert) = alert_rx.recv().await {
+                println!("📢 ALERT: {} - {}", alert.alert_type, alert.message);
+
+                // Publish alert to MQTT
+                let alert_event = Event::new(&format!("Alert:{}", alert.alert_type));
+                if let Err(e) = sink_clone.send(&alert_event).await {
+                    tracing::warn!("Failed to publish alert to MQTT: {}", e);
+                }
+            }
+        });
+
+        // Start MQTT source
+        println!("\n🚀 Starting MQTT source...");
+        mqtt_source
+            .start(event_tx)
+            .await
+            .map_err(|e| anyhow::anyhow!("MQTT source error: {}", e))?;
+
+        println!("📡 Listening for events on {}...\n", input_topic);
+        println!("   Press Ctrl+C to stop\n");
+
+        let start = std::time::Instant::now();
+        let mut last_report = std::time::Instant::now();
+        let mut event_count = 0u64;
+
+        // Process events from MQTT
+        loop {
+            tokio::select! {
+                Some(event) = event_rx.recv() => {
+                    event_count += 1;
+
+                    // Process through engine
+                    if let Err(e) = engine.process(event.clone()).await {
+                        tracing::warn!("Engine error: {}", e);
+                    }
+
+                    // Progress report every 2 seconds
+                    if last_report.elapsed() >= std::time::Duration::from_secs(2) {
+                        let metrics = engine.metrics();
+                        print!("\r📊 Events: {} | Alerts: {} | Rate: {:.0}/s    ",
+                            metrics.events_processed,
+                            metrics.alerts_generated,
+                            event_count as f64 / start.elapsed().as_secs_f64()
+                        );
+                        std::io::Write::flush(&mut std::io::stdout())?;
+                        last_report = std::time::Instant::now();
+                    }
+                }
+                _ = tokio::signal::ctrl_c() => {
+                    println!("\n\n⏹️  Stopping...");
+                    mqtt_source.stop().await.ok();
+                    break;
+                }
+            }
+        }
+
+        // Final stats
+        let metrics = engine.metrics();
+        println!("\n📈 Final Statistics:");
+        println!("   Events processed: {}", metrics.events_processed);
+        println!("   Alerts generated: {}", metrics.alerts_generated);
+        println!("   Runtime: {:.1}s", start.elapsed().as_secs_f64());
+    } else {
+        // No MQTT config - just show that we loaded successfully
+        println!("\n⚠️  No 'config mqtt' block found in program.");
+        println!("   Add a config block to connect to MQTT:");
+        println!("   ");
+        println!("   config mqtt {{");
+        println!("       broker: \"localhost\",");
+        println!("       port: 1883,");
+        println!("       input_topic: \"varpulis/events/#\",");
+        println!("       output_topic: \"varpulis/alerts\"");
+        println!("   }}");
+
+        // Spawn alert handler anyway for demo mode
+        tokio::spawn(async move {
+            while let Some(alert) = alert_rx.recv().await {
+                println!("\n📢 ALERT: {} ({})", alert.alert_type, alert.severity);
+                println!("   Message: {}", alert.message);
+                for (key, value) in &alert.data {
+                    println!("   {}: {}", key, value);
+                }
+            }
+        });
+    }
 
     Ok(())
 }
@@ -236,14 +374,17 @@ fn check_syntax(source: &str) -> Result<()> {
         }
         Err(e) => {
             println!("❌ Syntax error: {}", e);
-            
+
             // Show context around the error if we have a Located error
-            if let varpulis_parser::ParseError::Located { line, column, hint, .. } = &e {
+            if let varpulis_parser::ParseError::Located {
+                line, column, hint, ..
+            } = &e
+            {
                 // Show hint if available
                 if let Some(h) = hint {
                     println!("   💡 Hint: {}", h);
                 }
-                
+
                 // Show the problematic line from source
                 if let Some(error_line) = source.lines().nth(line - 1) {
                     println!("   │");
@@ -251,7 +392,7 @@ fn check_syntax(source: &str) -> Result<()> {
                     println!("   │ {}^", " ".repeat(column.saturating_sub(1)));
                 }
             }
-            
+
             std::process::exit(1);
         }
     }
@@ -882,4 +1023,63 @@ fn json_to_value(json: &serde_json::Value) -> varpulis_core::Value {
             Value::Map(map)
         }
     }
+}
+
+/// Resolve import statements by loading and parsing imported files
+fn resolve_imports(program: &mut Program, base_path: Option<&PathBuf>) -> Result<()> {
+    use varpulis_core::span::{Span, Spanned};
+
+    let mut imported_statements = Vec::new();
+    let mut imports_to_process = Vec::new();
+
+    // Collect import statements
+    for stmt in &program.statements {
+        if let Stmt::Import { path, .. } = &stmt.node {
+            imports_to_process.push(path.clone());
+        }
+    }
+
+    // Process each import
+    for import_path in imports_to_process {
+        let full_path = if let Some(base) = base_path {
+            base.join(&import_path)
+        } else {
+            PathBuf::from(&import_path)
+        };
+
+        info!("Loading import: {}", full_path.display());
+
+        let import_source = std::fs::read_to_string(&full_path).map_err(|e| {
+            anyhow::anyhow!("Failed to read import '{}': {}", full_path.display(), e)
+        })?;
+
+        let import_program = parse(&import_source).map_err(|e| {
+            anyhow::anyhow!("Parse error in import '{}': {}", full_path.display(), e)
+        })?;
+
+        info!(
+            "Imported {} statements from {}",
+            import_program.statements.len(),
+            full_path.display()
+        );
+
+        // Recursively resolve imports in the imported file
+        let import_base = full_path.parent().map(|p| p.to_path_buf());
+        let mut imported = import_program;
+        resolve_imports(&mut imported, import_base.as_ref())?;
+
+        imported_statements.extend(imported.statements);
+    }
+
+    // Remove import statements and prepend imported content
+    program
+        .statements
+        .retain(|stmt| !matches!(&stmt.node, Stmt::Import { .. }));
+
+    // Insert imported statements at the beginning (before the main file's statements)
+    let mut new_statements = imported_statements;
+    new_statements.append(&mut program.statements);
+    program.statements = new_statements;
+
+    Ok(())
 }

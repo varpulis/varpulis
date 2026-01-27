@@ -252,8 +252,11 @@ expr_stmt = { expr }
 // Config
 // ============================================================================
 
-config_block = { "config" ~ ":" ~ INDENT ~ config_item+ ~ DEDENT }
-config_item = { identifier ~ ":" ~ config_value }
+config_block = { 
+    ("config" ~ identifier ~ "{" ~ config_item* ~ "}")
+    | ("config" ~ ":" ~ INDENT ~ config_item+ ~ DEDENT)
+}
+config_item = { identifier ~ ":" ~ config_value ~ ","? }
 // Duration before integer for PEG ordering
 config_value = { float | duration | integer | string | boolean | identifier }
 

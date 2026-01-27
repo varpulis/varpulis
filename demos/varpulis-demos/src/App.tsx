@@ -1,8 +1,8 @@
 import { Building2, Play, Settings, Shield, TrendingUp, Zap } from 'lucide-react'
 import { useState } from 'react'
-import FinancialDemo from './demos/FinancialDemo'
+import FinancialDemo from './demos/FinancialDemoNew'
 import HVACDemo from './demos/HVACDemo'
-import SASEDemo from './demos/SASEDemo'
+import SASEDemo from './demos/SASEDemoNew'
 
 type DemoType = 'hvac' | 'financial' | 'sase' | null
 

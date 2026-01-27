@@ -1,0 +1,60 @@
+services:
+  # Event Generator for demos
+  generator:
+    build:
+      context: .
+      dockerfile: generator/Dockerfile
+    container_name: varpulis-generator
+    volumes:
+      - ./hvac:/generators/hvac:ro
+      - ./sase:/generators/sase:ro
+      - ./financial:/generators/financial:ro
+    depends_on:
+      - mosquitto
+    profiles:
+      - demo
+    command: [ "/generators/hvac/generator.py", "--broker", "mosquitto", "--rate", "2" ]
+
+  # MQTT Broker
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: varpulis-mosquitto
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+    restart: unless-stopped
+
+  # Dashboard Backend (MQTT -> WebSocket bridge)
+  dashboard-server:
+    build:
+      context: ./varpulis-demos/server
+      dockerfile: Dockerfile
+    container_name: varpulis-dashboard-server
+    ports:
+      - "3002:3002"
+    environment:
+      - MQTT_BROKER=mqtt://mosquitto:1883
+      - PORT=3002
+    depends_on:
+      - mosquitto
+    restart: unless-stopped
+
+  # React Dashboard (optional - can run locally for dev)
+  dashboard-ui:
+    build:
+      context: ./varpulis-demos
+      dockerfile: Dockerfile
+    container_name: varpulis-dashboard-ui
+    ports:
+      - "5173:80"
+    depends_on:
+      - dashboard-server
+    restart: unless-stopped
+
+volumes:
+  mosquitto_data:
+  mosquitto_log:
