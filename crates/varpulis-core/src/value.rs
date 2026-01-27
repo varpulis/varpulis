@@ -218,7 +218,7 @@ mod tests {
 
     #[test]
     fn test_type_name_float() {
-        assert_eq!(Value::Float(3.14).type_name(), "float");
+        assert_eq!(Value::Float(2.5).type_name(), "float");
     }
 
     #[test]
@@ -328,7 +328,7 @@ mod tests {
 
     #[test]
     fn test_as_float_from_float() {
-        assert_eq!(Value::Float(3.14).as_float(), Some(3.14));
+        assert_eq!(Value::Float(2.5).as_float(), Some(2.5));
     }
 
     #[test]
@@ -408,7 +408,7 @@ mod tests {
 
     #[test]
     fn test_display_float() {
-        assert_eq!(format!("{}", Value::Float(3.14)), "3.14");
+        assert_eq!(format!("{}", Value::Float(2.75)), "2.75");
     }
 
     #[test]
@@ -439,12 +439,12 @@ mod tests {
 
     #[test]
     fn test_display_duration_hours() {
-        assert_eq!(format!("{}", Value::Duration(7200_000_000_000)), "2h");
+        assert_eq!(format!("{}", Value::Duration(7_200_000_000_000)), "2h");
     }
 
     #[test]
     fn test_display_duration_days() {
-        assert_eq!(format!("{}", Value::Duration(172800_000_000_000)), "2d");
+        assert_eq!(format!("{}", Value::Duration(172_800_000_000_000)), "2d");
     }
 
     #[test]
@@ -475,8 +475,8 @@ mod tests {
 
     #[test]
     fn test_from_f64() {
-        let v: Value = 3.14f64.into();
-        assert_eq!(v, Value::Float(3.14));
+        let v: Value = 2.5f64.into();
+        assert_eq!(v, Value::Float(2.5));
     }
 
     #[test]

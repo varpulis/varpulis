@@ -107,6 +107,7 @@ struct MergeSource {
     filter: Option<varpulis_core::ast::Expr>,
 }
 
+#[allow(dead_code)]
 enum RuntimeOp {
     /// Filter with closure (for sequence filters with context)
     WhereClosure(Box<dyn Fn(&Event) -> bool + Send + Sync>),
@@ -168,6 +169,7 @@ impl PartitionedWindowState {
 }
 
 /// State for partitioned aggregators
+#[allow(dead_code)]
 struct PartitionedAggregatorState {
     partition_key: String,
     aggregator_template: Aggregator,
@@ -504,7 +506,6 @@ impl Engine {
         let mut current_timeout: Option<std::time::Duration> = None;
         let mut negation_conditions: Vec<(String, Option<SequenceFilter>)> = Vec::new();
         let mut partition_key: Option<String> = None;
-        let mut pending_window_size: Option<usize> = None;
 
         // Handle sequence() construct - converts SequenceDecl to SequenceSteps
         if let StreamSource::Sequence(decl) = source {
@@ -610,7 +611,6 @@ impl Engine {
                         varpulis_core::ast::Expr::Int(count) => {
                             // Count-based window
                             let count = *count as usize;
-                            pending_window_size = Some(count);
 
                             // If we have a partition key, use partitioned window
                             if let Some(ref key) = partition_key {

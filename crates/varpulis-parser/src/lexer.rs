@@ -476,7 +476,7 @@ mod tests {
 
     #[test]
     fn test_literals() {
-        let tokens: Vec<_> = tokenize("42 3.14 \"hello\" 5s true null")
+        let tokens: Vec<_> = tokenize("42 2.5 \"hello\" 5s true null")
             .into_iter()
             .map(|t| t.token)
             .collect();
@@ -484,7 +484,7 @@ mod tests {
             tokens,
             vec![
                 Token::Integer(42),
-                Token::Float(3.14),
+                Token::Float(2.5),
                 Token::String("hello".to_string()),
                 Token::Duration("5s".to_string()),
                 Token::True,
@@ -708,7 +708,7 @@ mod tests {
         assert_eq!(format!("{}", Token::Stream), "stream");
         assert_eq!(format!("{}", Token::Plus), "+");
         assert_eq!(format!("{}", Token::Integer(42)), "42");
-        assert_eq!(format!("{}", Token::Float(3.14)), "3.14");
+        assert_eq!(format!("{}", Token::Float(2.5)), "2.5");
         assert_eq!(format!("{}", Token::String("test".to_string())), "\"test\"");
         assert_eq!(format!("{}", Token::Ident("foo".to_string())), "foo");
         assert_eq!(format!("{}", Token::Eof), "EOF");
@@ -775,9 +775,9 @@ mod tests {
 
     #[test]
     fn test_negative_number() {
-        let tokens: Vec<_> = tokenize("-42 -3.14").into_iter().map(|t| t.token).collect();
+        let tokens: Vec<_> = tokenize("-42 -2.5").into_iter().map(|t| t.token).collect();
         assert!(tokens.contains(&Token::Minus));
         assert!(tokens.contains(&Token::Integer(42)));
-        assert!(tokens.contains(&Token::Float(3.14)));
+        assert!(tokens.contains(&Token::Float(2.5)));
     }
 }

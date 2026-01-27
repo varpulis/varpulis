@@ -153,12 +153,12 @@ mod tests {
 
     #[test]
     fn test_parse_duration_hours() {
-        assert_eq!(parse_duration("1h"), 3600_000_000_000);
+        assert_eq!(parse_duration("1h"), 3_600_000_000_000);
     }
 
     #[test]
     fn test_parse_duration_days() {
-        assert_eq!(parse_duration("1d"), 86400_000_000_000);
+        assert_eq!(parse_duration("1d"), 86_400_000_000_000);
     }
 
     #[test]
@@ -169,7 +169,7 @@ mod tests {
     #[test]
     fn test_parse_timestamp_with_time() {
         let ns = parse_timestamp("@1970-01-01T01:00:00Z");
-        assert_eq!(ns, 3600_000_000_000); // 1 hour in nanoseconds
+        assert_eq!(ns, 3_600_000_000_000); // 1 hour in nanoseconds
     }
 
     #[test]

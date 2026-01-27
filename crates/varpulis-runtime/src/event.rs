@@ -293,10 +293,10 @@ mod tests {
     fn test_event_negative_values() {
         let event = Event::new("Test")
             .with_field("negative_int", -42i64)
-            .with_field("negative_float", -3.14f64);
+            .with_field("negative_float", -2.5f64);
 
         assert_eq!(event.get_int("negative_int"), Some(-42));
-        assert_eq!(event.get_float("negative_float"), Some(-3.14));
+        assert_eq!(event.get_float("negative_float"), Some(-2.5));
     }
 
     #[test]

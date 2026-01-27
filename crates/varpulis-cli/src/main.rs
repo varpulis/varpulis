@@ -264,7 +264,7 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
                 println!("📢 ALERT: {} - {}", alert.alert_type, alert.message);
 
                 // Publish alert to MQTT
-                let alert_event = Event::new(&format!("Alert:{}", alert.alert_type));
+                let alert_event = Event::new(format!("Alert:{}", alert.alert_type));
                 if let Err(e) = sink_clone.send(&alert_event).await {
                     tracing::warn!("Failed to publish alert to MQTT: {}", e);
                 }
@@ -1027,6 +1027,7 @@ fn json_to_value(json: &serde_json::Value) -> varpulis_core::Value {
 
 /// Resolve import statements by loading and parsing imported files
 fn resolve_imports(program: &mut Program, base_path: Option<&PathBuf>) -> Result<()> {
+    #[allow(unused_imports)]
     use varpulis_core::span::{Span, Spanned};
 
     let mut imported_statements = Vec::new();

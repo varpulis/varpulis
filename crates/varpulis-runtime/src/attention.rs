@@ -6,11 +6,15 @@
 //! - No generation, only correlation scoring
 //! - Embeddings are rule-based or loaded from pre-trained models
 
+#![allow(clippy::needless_range_loop)]
+#![allow(clippy::unnecessary_to_owned)]
+
 use crate::event::Event;
 use hnsw_rs::prelude::*;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+#[allow(unused_imports)]
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use varpulis_core::Value;
@@ -499,7 +503,7 @@ struct HnswIndex {
 }
 
 impl HnswIndex {
-    fn new(dim: usize, max_elements: usize) -> Self {
+    fn new(_dim: usize, max_elements: usize) -> Self {
         let max_nb_connection = 16;
         let ef_construction = 200;
         let hnsw = Hnsw::new(

@@ -8,6 +8,9 @@
 //! - Edge cases and error handling
 //! - Business scenarios (Trading, HVAC, Fraud)
 
+#![allow(clippy::field_reassign_with_default)]
+#![allow(unused_variables)]
+
 use chrono::Utc;
 use indexmap::IndexMap;
 use std::time::Duration;
@@ -894,7 +897,7 @@ fn test_compute_attention_threshold_filtering() {
 #[test]
 fn test_attention_score_deterministic() {
     let config = AttentionConfig::default();
-    let mut engine = AttentionEngine::new(config);
+    let engine = AttentionEngine::new(config);
 
     let e1 = create_event("Trade", vec![("price", Value::Float(100.0))]);
     let e2 = create_event("Trade", vec![("price", Value::Float(150.0))]);
@@ -908,7 +911,7 @@ fn test_attention_score_deterministic() {
 #[test]
 fn test_attention_score_symmetric_tendency() {
     let config = AttentionConfig::default();
-    let mut engine = AttentionEngine::new(config);
+    let engine = AttentionEngine::new(config);
 
     let e1 = create_event("Trade", vec![("price", Value::Float(100.0))]);
     let e2 = create_event("Trade", vec![("price", Value::Float(100.0))]);
@@ -923,7 +926,7 @@ fn test_attention_score_symmetric_tendency() {
 #[test]
 fn test_attention_score_similar_vs_different() {
     let config = AttentionConfig::default();
-    let mut engine = AttentionEngine::new(config);
+    let engine = AttentionEngine::new(config);
 
     let base = create_event(
         "Trade",
@@ -1001,7 +1004,7 @@ fn test_attention_window_process_multiple() {
 #[test]
 fn test_attention_window_attention_score() {
     let config = AttentionConfig::default();
-    let mut window = AttentionWindow::new(config, Duration::from_secs(60));
+    let window = AttentionWindow::new(config, Duration::from_secs(60));
 
     let e1 = create_event("Trade", vec![("price", Value::Float(100.0))]);
     let e2 = create_event("Trade", vec![("price", Value::Float(100.0))]);
