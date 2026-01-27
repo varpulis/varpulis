@@ -316,12 +316,25 @@ export default function FinancialDemo() {
                             {alerts.length === 0 ? (
                                 <div className="text-xs text-slate-500">No alerts detected</div>
                             ) : (
-                                alerts.slice(0, 5).map((alert, i) => (
-                                    <div key={i} className="bg-red-900/20 rounded p-2 border border-red-500/30">
-                                        <div className="text-sm font-medium text-red-400">{String(alert.data?.alert_type || alert.type || 'Alert')}</div>
-                                        <div className="text-xs text-slate-400">{String(alert.data?.message || '')}</div>
-                                    </div>
-                                ))
+                                alerts.slice(0, 10).map((alert, i) => {
+                                    // Handle nested data structure: alert.data.data contains the actual values
+                                    const nestedData = (alert.data?.data as Record<string, unknown>) || {};
+                                    const alertType = String(nestedData.event_type || alert.data?.event_type || alert.type || 'Alert');
+                                    const message = String(nestedData.message || alert.data?.message || '');
+                                    const symbol = String(nestedData.symbol || '');
+                                    const value = nestedData.sma_20 || nestedData.sma_50 || nestedData.rsi || '';
+
+                                    return (
+                                        <div key={i} className="bg-emerald-900/20 rounded p-2 border border-emerald-500/30">
+                                            <div className="flex justify-between items-center">
+                                                <span className="text-sm font-medium text-emerald-400">{alertType}</span>
+                                                {symbol && <span className="text-xs text-slate-400">{symbol}</span>}
+                                            </div>
+                                            {value && <div className="text-lg font-mono text-white">{Number(value).toFixed(2)}</div>}
+                                            <div className="text-xs text-slate-400">{message}</div>
+                                        </div>
+                                    );
+                                })
                             )}
                         </div>
                     </div>

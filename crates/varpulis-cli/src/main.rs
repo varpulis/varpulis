@@ -252,7 +252,10 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
             .with_port(port)
             .with_client_id(&format!("{}-sink", client_id));
         let mut mqtt_sink = MqttSink::new("mqtt-sink", mqtt_sink_config);
-        mqtt_sink.connect().await.map_err(|e| anyhow::anyhow!("MQTT sink connection error: {}", e))?;
+        mqtt_sink
+            .connect()
+            .await
+            .map_err(|e| anyhow::anyhow!("MQTT sink connection error: {}", e))?;
         let mqtt_sink = Arc::new(mqtt_sink);
 
         // Create event channel
@@ -266,13 +269,20 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
 
                 // Publish alert to MQTT with full data
                 let mut alert_event = Event::new(&alert.alert_type);
-                alert_event.data.insert("message".to_string(), varpulis_core::Value::Str(alert.message.clone()));
-                alert_event.data.insert("severity".to_string(), varpulis_core::Value::Str(alert.severity.clone()));
+                alert_event.data.insert(
+                    "message".to_string(),
+                    varpulis_core::Value::Str(alert.message.clone()),
+                );
+                alert_event.data.insert(
+                    "severity".to_string(),
+                    varpulis_core::Value::Str(alert.severity.clone()),
+                );
                 for (key, value) in &alert.data {
                     alert_event.data.insert(key.clone(), value.clone());
                 }
-                if let Err(e) = sink_clone.send(&alert_event).await {
-                    tracing::warn!("Failed to publish alert to MQTT: {}", e);
+                match sink_clone.as_ref().send(&alert_event).await {
+                    Ok(_) => tracing::debug!("Published alert to MQTT: {}", alert.alert_type),
+                    Err(e) => tracing::warn!("Failed to publish alert to MQTT: {}", e),
                 }
             }
         });
