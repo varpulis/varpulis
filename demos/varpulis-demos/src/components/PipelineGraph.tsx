@@ -237,7 +237,7 @@ export default function PipelineGraph({
     }, [eventCounts, streamCounts, patternCounts, pipelineNodes, getCount, setNodes, setEdges])
 
     return (
-        <div className="w-full h-[400px] bg-slate-900/50 rounded-lg">
+        <div className="w-full h-[180px] bg-slate-900/50 rounded-lg">
             <ReactFlow
                 nodes={nodes}
                 edges={edges}
@@ -285,98 +285,37 @@ export default function PipelineGraph({
     )
 }
 
-// Graph definitions for each demo (simplified - no x/y needed, dagre handles layout)
+// Simplified graph definitions - only show key flow
 
 export const FINANCIAL_PIPELINE = {
     nodes: [
-        // Events
         { id: 'MarketTick', label: '📈 MarketTick', type: 'event' as const },
         { id: 'OHLCV', label: '📊 OHLCV', type: 'event' as const },
-        { id: 'OrderBook', label: '📋 OrderBook', type: 'event' as const },
-        { id: 'NewsEvent', label: '📰 News', type: 'event' as const },
-
-        // Streams
-        { id: 'Prices', label: 'Prices', type: 'stream' as const },
-        { id: 'Candles', label: 'Candles', type: 'stream' as const },
-        { id: 'Liquidity', label: 'Liquidity', type: 'stream' as const },
-        { id: 'Sentiment', label: 'Sentiment', type: 'stream' as const },
-
-        // Derived Streams
-        { id: 'SMA', label: 'SMA 20/50', type: 'stream' as const },
-        { id: 'RSI', label: 'RSI', type: 'stream' as const },
-        { id: 'Bollinger', label: 'Bollinger', type: 'stream' as const },
-        { id: 'MACD', label: 'MACD', type: 'stream' as const },
-
-        // Patterns
-        { id: 'GoldenCross', label: '🟢 GoldenCross', type: 'pattern' as const },
-        { id: 'DeathCross', label: '🔴 DeathCross', type: 'pattern' as const },
-        { id: 'Overbought', label: '🟡 Overbought', type: 'pattern' as const },
-        { id: 'Breakout', label: '🟢 Breakout', type: 'pattern' as const },
+        { id: 'Indicators', label: 'Indicators', type: 'stream' as const },
+        { id: 'Attention', label: '🧠 Attention', type: 'stream' as const },
+        { id: 'Signals', label: 'Signals', type: 'pattern' as const },
     ],
     edges: [
-        // Event to Stream
-        { from: 'MarketTick', to: 'Prices' },
-        { from: 'OHLCV', to: 'Candles' },
-        { from: 'OrderBook', to: 'Liquidity' },
-        { from: 'NewsEvent', to: 'Sentiment' },
-
-        // Stream to Derived
-        { from: 'Prices', to: 'SMA', label: 'window 20/50' },
-        { from: 'Candles', to: 'RSI', label: 'RSI(14)' },
-        { from: 'Prices', to: 'Bollinger', label: 'std dev' },
-        { from: 'SMA', to: 'MACD', label: 'EMA diff' },
-
-        // Derived to Pattern
-        { from: 'SMA', to: 'GoldenCross', label: 'SMA20 > SMA50' },
-        { from: 'SMA', to: 'DeathCross', label: 'SMA20 < SMA50' },
-        { from: 'RSI', to: 'Overbought', label: 'RSI > 70' },
-        { from: 'Bollinger', to: 'Breakout', label: 'price > upper' },
+        { from: 'MarketTick', to: 'Attention', label: 'attention_window' },
+        { from: 'OHLCV', to: 'Indicators', label: 'SMA/RSI/MACD' },
+        { from: 'Indicators', to: 'Signals', label: 'join + filter' },
+        { from: 'Attention', to: 'Signals', label: 'pattern detect' },
     ]
 }
 
 export const HVAC_PIPELINE = {
     nodes: [
-        // Events
-        { id: 'TemperatureReading', label: '🌡️ TempReading', type: 'event' as const },
-        { id: 'HumidityReading', label: '💧 Humidity', type: 'event' as const },
-        { id: 'HVACStatus', label: '❄️ HVACStatus', type: 'event' as const },
-        { id: 'EnergyMeter', label: '⚡ EnergyMeter', type: 'event' as const },
-
-        // Streams
-        { id: 'Temperatures', label: 'Temperatures', type: 'stream' as const },
-        { id: 'Humidity', label: 'Humidity', type: 'stream' as const },
-        { id: 'HVACMetrics', label: 'HVACMetrics', type: 'stream' as const },
-        { id: 'Energy', label: 'Energy', type: 'stream' as const },
-
-        // Derived Streams
-        { id: 'ZoneTemperatures', label: 'ZoneTemps', type: 'stream' as const },
-        { id: 'ComfortIndex', label: 'ComfortIndex', type: 'stream' as const },
-        { id: 'ServerRoom', label: 'ServerRoom', type: 'stream' as const },
-
-        // Patterns
-        { id: 'TempAnomaly', label: '🔴 TempAnomaly', type: 'pattern' as const },
-        { id: 'HumidityAlert', label: '🟡 HumidityAlert', type: 'pattern' as const },
-        { id: 'PowerSpike', label: '🔴 PowerSpike', type: 'pattern' as const },
-        { id: 'ServerAlert', label: '🔴 ServerAlert', type: 'pattern' as const },
+        { id: 'TemperatureReading', label: '🌡️ Sensors', type: 'event' as const },
+        { id: 'HVACStatus', label: '❄️ HVAC', type: 'event' as const },
+        { id: 'Zones', label: 'Zones', type: 'stream' as const },
+        { id: 'Attention', label: '🧠 Attention', type: 'stream' as const },
+        { id: 'Alerts', label: 'Alerts', type: 'pattern' as const },
     ],
     edges: [
-        // Event to Stream
-        { from: 'TemperatureReading', to: 'Temperatures' },
-        { from: 'HumidityReading', to: 'Humidity' },
-        { from: 'HVACStatus', to: 'HVACMetrics' },
-        { from: 'EnergyMeter', to: 'Energy' },
-
-        // Stream to Derived
-        { from: 'Temperatures', to: 'ZoneTemperatures', label: 'group by zone' },
-        { from: 'Temperatures', to: 'ServerRoom', label: 'filter zone' },
-        { from: 'ZoneTemperatures', to: 'ComfortIndex', label: 'join' },
-        { from: 'Humidity', to: 'ComfortIndex', label: 'join' },
-
-        // Derived to Pattern
-        { from: 'ZoneTemperatures', to: 'TempAnomaly', label: 'temp > 28' },
-        { from: 'Humidity', to: 'HumidityAlert', label: 'humidity > 70' },
-        { from: 'HVACMetrics', to: 'PowerSpike', label: 'power > 5kW' },
-        { from: 'ServerRoom', to: 'ServerAlert', label: 'temp > 25' },
+        { from: 'TemperatureReading', to: 'Zones', label: 'partition by zone' },
+        { from: 'HVACStatus', to: 'Attention', label: 'attention_window' },
+        { from: 'Zones', to: 'Alerts', label: 'anomaly detect' },
+        { from: 'Attention', to: 'Alerts', label: 'degradation' },
     ]
 }
 
