@@ -35,9 +35,8 @@ export default function FinancialDemo() {
     const [patternMatches, setPatternMatches] = useState<Record<string, number>>({})
     const [recentEvents, setRecentEvents] = useState<VarpulisEvent[]>([])
     const [marketData, setMarketData] = useState<Record<string, { price: number, change: number, volume: number }>>({})
-    const [indicators, setIndicators] = useState<{ sma20: number, sma50: number, rsi: number, macd: number, bbUpper: number, bbLower: number }>({
-        sma20: 0, sma50: 0, rsi: 50, macd: 0, bbUpper: 0, bbLower: 0
-    })
+    const [indicatorsBySymbol, setIndicatorsBySymbol] = useState<Record<string, { sma20: number, sma50: number, rsi: number, macd: number, bbUpper: number, bbLower: number }>>({})
+    const [selectedSymbol, setSelectedSymbol] = useState<string>('BTC')
 
     const lastEventRef = useRef<string>('')
     const lastAlertRef = useRef<string>('')
@@ -55,25 +54,23 @@ export default function FinancialDemo() {
         const nestedData = (latestAlert.data?.data as Record<string, unknown>) || {}
         const alertType = String(nestedData.event_type || latestAlert.data?.event_type || '')
 
-        // Update indicators from alerts (field names match VPL emit statements)
-        if (nestedData.sma_20) {
-            setIndicators(prev => ({ ...prev, sma20: Number(nestedData.sma_20) }))
-        }
-        if (nestedData.sma_50) {
-            setIndicators(prev => ({ ...prev, sma50: Number(nestedData.sma_50) }))
-        }
-        if (nestedData.rsi) {
-            setIndicators(prev => ({ ...prev, rsi: Number(nestedData.rsi) }))
-        }
-        if (nestedData.macd_line) {
-            setIndicators(prev => ({ ...prev, macd: Number(nestedData.macd_line) }))
-        }
-        if (nestedData.upper) {
-            setIndicators(prev => ({ ...prev, bbUpper: Number(nestedData.upper) }))
-        }
-        if (nestedData.lower) {
-            setIndicators(prev => ({ ...prev, bbLower: Number(nestedData.lower) }))
-        }
+        // Update indicators by symbol (field names match VPL emit statements)
+        const symbol = String(nestedData.symbol || '').replace('/USD', '')
+        if (!symbol) return
+
+        setIndicatorsBySymbol(prev => {
+            const current = prev[symbol] || { sma20: 0, sma50: 0, rsi: 50, macd: 0, bbUpper: 0, bbLower: 0 }
+            const updated = { ...current }
+
+            if (nestedData.sma_20) updated.sma20 = Number(nestedData.sma_20)
+            if (nestedData.sma_50) updated.sma50 = Number(nestedData.sma_50)
+            if (nestedData.rsi) updated.rsi = Number(nestedData.rsi)
+            if (nestedData.macd_line) updated.macd = Number(nestedData.macd_line)
+            if (nestedData.upper) updated.bbUpper = Number(nestedData.upper)
+            if (nestedData.lower) updated.bbLower = Number(nestedData.lower)
+
+            return { ...prev, [symbol]: updated }
+        })
 
         // Update pattern matches based on alert type from CEP
         if (alertType === 'GoldenCross' || alertType === 'GOLDEN_CROSS') {
@@ -145,32 +142,12 @@ export default function FinancialDemo() {
                 ...prev,
                 [symbol]: { price, change, volume }
             }))
-
-            // Update indicators if provided
-            if (latestEvent.data?.sma_20) {
-                setIndicators(prev => ({
-                    ...prev,
-                    sma20: Number(latestEvent.data?.sma_20 || prev.sma20),
-                    sma50: Number(latestEvent.data?.sma_50 || prev.sma50),
-                }))
-            }
         } else if (eventType === 'OHLCV') {
             setStreamCounts(prev => ({
                 ...prev,
                 'Candles': (prev['Candles'] || 0) + 1,
                 'RSI': (prev['RSI'] || 0) + 1,
                 'MACD': (prev['MACD'] || 0) + 1,
-            }))
-
-            // Extract all indicators from OHLCV events
-            setIndicators(prev => ({
-                ...prev,
-                sma20: Number(latestEvent.data?.sma_20 || prev.sma20),
-                sma50: Number(latestEvent.data?.sma_50 || prev.sma50),
-                rsi: Number(latestEvent.data?.rsi || prev.rsi),
-                macd: Number(latestEvent.data?.macd || prev.macd),
-                bbUpper: Number(latestEvent.data?.bb_upper || prev.bbUpper),
-                bbLower: Number(latestEvent.data?.bb_lower || prev.bbLower),
             }))
         } else if (eventType === 'OrderBook') {
             setStreamCounts(prev => ({
@@ -320,39 +297,59 @@ export default function FinancialDemo() {
                         </div>
                     </div>
 
-                    {/* Technical Indicators */}
+                    {/* Technical Indicators - Per Symbol */}
                     <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700">
-                        <h3 className="text-sm font-semibold text-slate-300 mb-2">Technical Indicators</h3>
-                        <div className="grid grid-cols-2 gap-2">
-                            <div className="bg-slate-900/50 rounded p-2">
-                                <div className="text-xs text-slate-400">SMA 20</div>
-                                <div className="text-sm font-mono text-purple-400">{indicators.sma20.toFixed(2)}</div>
-                            </div>
-                            <div className="bg-slate-900/50 rounded p-2">
-                                <div className="text-xs text-slate-400">SMA 50</div>
-                                <div className="text-sm font-mono text-purple-400">{indicators.sma50.toFixed(2)}</div>
-                            </div>
-                            <div className="bg-slate-900/50 rounded p-2">
-                                <div className="text-xs text-slate-400">RSI</div>
-                                <div className={`text-sm font-mono ${indicators.rsi > 70 ? 'text-red-400' : indicators.rsi < 30 ? 'text-green-400' : 'text-yellow-400'}`}>
-                                    {indicators.rsi.toFixed(1)}
-                                </div>
-                            </div>
-                            <div className="bg-slate-900/50 rounded p-2">
-                                <div className="text-xs text-slate-400">MACD</div>
-                                <div className={`text-sm font-mono ${indicators.macd >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                    {indicators.macd.toFixed(2)}
-                                </div>
-                            </div>
-                            <div className="bg-slate-900/50 rounded p-2">
-                                <div className="text-xs text-slate-400">BB Upper</div>
-                                <div className="text-sm font-mono text-cyan-400">${indicators.bbUpper.toFixed(2)}</div>
-                            </div>
-                            <div className="bg-slate-900/50 rounded p-2">
-                                <div className="text-xs text-slate-400">BB Lower</div>
-                                <div className="text-sm font-mono text-cyan-400">${indicators.bbLower.toFixed(2)}</div>
+                        <div className="flex items-center justify-between mb-3">
+                            <h3 className="text-sm font-semibold text-slate-300">Technical Indicators</h3>
+                            <div className="flex gap-1">
+                                {['BTC', 'ETH', 'SOL'].map(sym => (
+                                    <button
+                                        key={sym}
+                                        onClick={() => setSelectedSymbol(sym)}
+                                        className={`px-2 py-1 text-xs rounded ${selectedSymbol === sym
+                                            ? 'bg-blue-500 text-white'
+                                            : 'bg-slate-700 text-slate-400 hover:bg-slate-600'}`}
+                                    >
+                                        {sym}
+                                    </button>
+                                ))}
                             </div>
                         </div>
+                        {(() => {
+                            const ind = indicatorsBySymbol[selectedSymbol] || { sma20: 0, sma50: 0, rsi: 50, macd: 0, bbUpper: 0, bbLower: 0 }
+                            return (
+                                <div className="grid grid-cols-2 gap-2">
+                                    <div className="bg-slate-900/50 rounded p-2">
+                                        <div className="text-xs text-slate-400">SMA 20</div>
+                                        <div className="text-sm font-mono text-purple-400">{ind.sma20.toFixed(2)}</div>
+                                    </div>
+                                    <div className="bg-slate-900/50 rounded p-2">
+                                        <div className="text-xs text-slate-400">SMA 50</div>
+                                        <div className="text-sm font-mono text-purple-400">{ind.sma50.toFixed(2)}</div>
+                                    </div>
+                                    <div className="bg-slate-900/50 rounded p-2">
+                                        <div className="text-xs text-slate-400">RSI</div>
+                                        <div className={`text-sm font-mono ${ind.rsi > 70 ? 'text-red-400' : ind.rsi < 30 ? 'text-green-400' : 'text-yellow-400'}`}>
+                                            {ind.rsi.toFixed(1)}
+                                        </div>
+                                    </div>
+                                    <div className="bg-slate-900/50 rounded p-2">
+                                        <div className="text-xs text-slate-400">MACD</div>
+                                        <div className={`text-sm font-mono ${ind.macd >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                            {ind.macd.toFixed(2)}
+                                        </div>
+                                    </div>
+                                    <div className="bg-slate-900/50 rounded p-2">
+                                        <div className="text-xs text-slate-400">BB Upper</div>
+                                        <div className="text-sm font-mono text-cyan-400">${ind.bbUpper.toFixed(2)}</div>
+                                    </div>
+                                    <div className="bg-slate-900/50 rounded p-2">
+                                        <div className="text-xs text-slate-400">BB Lower</div>
+                                        <div className="text-sm font-mono text-cyan-400">${ind.bbLower.toFixed(2)}</div>
+                                    </div>
+                                </div>
+                            )
+                        })()}
                     </div>
                 </div>
 
