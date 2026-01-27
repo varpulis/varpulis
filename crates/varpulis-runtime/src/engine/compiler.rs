@@ -242,10 +242,7 @@ pub fn compile_to_sase_pattern(
 
     // Add followed_by clauses
     for clause in followed_by_clauses {
-        let predicate = clause
-            .filter
-            .as_ref()
-            .and_then(expr_to_sase_predicate);
+        let predicate = clause.filter.as_ref().and_then(expr_to_sase_predicate);
         let event_pattern = SasePattern::Event {
             event_type: clause.event_type.clone(),
             predicate,
