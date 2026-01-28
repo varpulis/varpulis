@@ -1,0 +1,77 @@
+# Varpulis - Scénario 5: Détection d'Anomalies avec Attention
+# Utilise le mécanisme d'attention unique à Varpulis pour détecter
+# des corrélations progressives dans les données de capteurs.
+#
+# LIGNES DE CODE: ~50
+# ÉQUIVALENT FLINK: Non disponible nativement - nécessiterait ~500+ lignes
+#                   avec intégration ML custom (TensorFlow/PyTorch)
+
+event SensorReading:
+    sensor_id: str
+    value: float
+    unit: str
+    location: str
+    ts: timestamp
+
+stream Sensors from SensorReading
+
+# Détection d'anomalies avec mécanisme d'attention
+# L'attention calcule automatiquement les corrélations entre événements
+stream ProgressiveDegradation = Sensors
+    .partition_by(sensor_id)
+    .attention_window(
+        duration: 1h,
+        heads: 4,
+        embedding: "rule_based"
+    )
+    .pattern(
+        degradation: events => {
+            # Extraire les valeurs et calculer la tendance
+            let values = events.map(e => e.value)
+            let trend = (last(values) - first(values)) / len(values)
+
+            # Utiliser le mécanisme d'attention pour détecter les corrélations
+            let attention_scores = events.sliding_pairs().map((e1, e2) => attention_score(e1, e2))
+            let high_correlation = attention_scores.filter(s => s > 0.75).count()
+
+            # Détecter une dégradation progressive
+            let is_declining = trend < -0.05
+            let has_pattern = high_correlation > len(events) * 0.6
+
+            is_declining and has_pattern
+        }
+    )
+    .emit(
+        alert_type: "PROGRESSIVE_DEGRADATION",
+        severity: "warning",
+        sensor_id: last(sensor_id),
+        location: last(location),
+        attention_score: attention_score,
+        attention_matches: attention_matches,
+        correlation_strength: attention_context_norm,
+        confidence: 0.85,
+        recommendation: "Schedule preventive maintenance"
+    )
+
+# Détection de pics anormaux via attention
+stream AnomalousPeak = Sensors
+    .partition_by(sensor_id)
+    .attention_window(
+        duration: 30m,
+        heads: 4,
+        embedding: "rule_based"
+    )
+    .where(attention_score > 0.8 and attention_matches > 5)
+    .emit(
+        alert_type: "ANOMALOUS_PEAK",
+        severity: if attention_score > 0.9 then "critical" else "warning",
+        sensor_id: sensor_id,
+        location: location,
+        value: value,
+        attention_score: attention_score,
+        correlated_events: attention_matches,
+        reason: "High correlation detected in recent readings"
+    )
+
+config:
+    mode: "balanced"

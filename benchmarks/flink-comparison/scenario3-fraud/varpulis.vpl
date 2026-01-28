@@ -1,0 +1,49 @@
+# Varpulis - Scénario 3: Détection de Fraude Multi-Événements
+# Pattern: Transaction suspicieuse → Plusieurs petites transactions → Retrait important
+#
+# LIGNES DE CODE: ~40
+
+event Transaction:
+    user_id: str
+    amount: float
+    type: str       # "purchase", "transfer", "withdrawal", "deposit"
+    merchant: str
+    location: str
+    risk_score: float
+    ts: timestamp
+
+# Streams pré-filtrés pour optimisation
+stream SuspiciousTransactions = Transaction
+    .where(risk_score > 0.7 or amount > 5000)
+
+stream SmallTransactions = Transaction
+    .where(amount < 100 and type == "purchase")
+
+stream LargeWithdrawals = Transaction
+    .where(type == "withdrawal" and amount > 1000)
+
+# Pattern de fraude: Transaction suspecte → 3+ petites transactions → Gros retrait
+stream FraudPattern = SuspiciousTransactions as suspicious
+    -> SmallTransactions where user_id == suspicious.user_id as small1
+    .within(1h)
+    -> SmallTransactions where user_id == suspicious.user_id as small2
+    .within(30m)
+    -> SmallTransactions where user_id == suspicious.user_id as small3
+    .within(30m)
+    -> LargeWithdrawals where user_id == suspicious.user_id as withdrawal
+    .within(2h)
+    .emit(
+        alert_type: "FRAUD_PATTERN_DETECTED",
+        severity: "critical",
+        user_id: suspicious.user_id,
+        initial_risk_score: suspicious.risk_score,
+        initial_amount: suspicious.amount,
+        small_tx_total: small1.amount + small2.amount + small3.amount,
+        withdrawal_amount: withdrawal.amount,
+        total_duration_hours: (withdrawal.ts - suspicious.ts) / 3600000,
+        confidence: 0.95,
+        recommendation: "Block account and investigate immediately"
+    )
+
+config:
+    mode: "low_latency"

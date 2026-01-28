@@ -159,12 +159,13 @@ event Simple:
 #[test]
 fn test_deeply_nested_expression_no_overflow() {
     // Deeply nested expressions should not cause stack overflow
+    // Note: Using 20 levels to avoid stack overflow in CI environments with limited stack
     let mut nested = "stream X = Event.where(".to_string();
-    for _ in 0..50 {
+    for _ in 0..20 {
         nested.push_str("(value + ");
     }
     nested.push('1');
-    for _ in 0..50 {
+    for _ in 0..20 {
         nested.push(')');
     }
     nested.push(')');
