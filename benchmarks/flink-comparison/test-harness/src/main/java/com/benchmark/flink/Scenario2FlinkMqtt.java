@@ -212,11 +212,14 @@ public class Scenario2FlinkMqtt {
         env.setParallelism(1);
 
         // Create MQTT source
+        // forMonotonousTimestamps because benchmark events arrive in order
+        // withIdleness allows watermark to progress even when no new events arrive
         DataStream<UserEvent> eventStream = env
             .addSource(new MqttSourceFunction())
             .assignTimestampsAndWatermarks(
-                WatermarkStrategy.<UserEvent>forBoundedOutOfOrderness(Duration.ofMillis(1000))
+                WatermarkStrategy.<UserEvent>forMonotonousTimestamps()
                     .withTimestampAssigner((event, ts) -> event.timestamp)
+                    .withIdleness(Duration.ofSeconds(2))
             );
 
         // Define CEP pattern: Login followed by FailedTransaction within 10 minutes
@@ -242,7 +245,7 @@ public class Scenario2FlinkMqtt {
                     return false;
                 }
             })
-            .within(Time.minutes(10));
+            .within(Time.seconds(5));  // Short window for benchmark (real would be 10 minutes)
 
         // Apply pattern
         PatternStream<UserEvent> patternStream = CEP.pattern(

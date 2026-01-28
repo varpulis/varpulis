@@ -19,18 +19,32 @@ VARPULIS_OUTPUT = "benchmark/output/varpulis"
 FLINK_OUTPUT = "benchmark/output/flink"
 
 # Test events: Login -> FailedTransaction pattern
-EVENTS = [
-    {"type": "Login", "user_id": "user1", "ip_address": "192.168.1.1", "device": "mobile", "ts": 1000},
-    {"type": "Login", "user_id": "user2", "ip_address": "192.168.1.2", "device": "desktop", "ts": 2000},
-    {"type": "Transaction", "user_id": "user1", "amount": 500.0, "status": "failed", "merchant": "store_a", "ts": 3000},
-    {"type": "Transaction", "user_id": "user3", "amount": 100.0, "status": "success", "merchant": "store_b", "ts": 4000},
-    {"type": "Login", "user_id": "user3", "ip_address": "192.168.1.3", "device": "tablet", "ts": 5000},
-    {"type": "Transaction", "user_id": "user2", "amount": 1500.0, "status": "failed", "merchant": "store_c", "ts": 6000},
-    {"type": "Transaction", "user_id": "user3", "amount": 200.0, "status": "failed", "merchant": "store_d", "ts": 7000},
-    {"type": "Login", "user_id": "user4", "ip_address": "192.168.1.4", "device": "mobile", "ts": 8000},
-    {"type": "Transaction", "user_id": "user4", "amount": 50.0, "status": "success", "merchant": "store_e", "ts": 9000},
-    {"type": "Transaction", "user_id": "user4", "amount": 2000.0, "status": "failed", "merchant": "store_f", "ts": 10000},
+# Timestamps will be set dynamically based on current time
+# Offsets in milliseconds - spaced 1 second apart for clearer watermark progression
+EVENTS_TEMPLATE = [
+    {"type": "Login", "user_id": "user1", "ip_address": "192.168.1.1", "device": "mobile", "ts_offset": 0},
+    {"type": "Login", "user_id": "user2", "ip_address": "192.168.1.2", "device": "desktop", "ts_offset": 1000},
+    {"type": "Transaction", "user_id": "user1", "amount": 500.0, "status": "failed", "merchant": "store_a", "ts_offset": 2000},
+    {"type": "Transaction", "user_id": "user3", "amount": 100.0, "status": "success", "merchant": "store_b", "ts_offset": 3000},
+    {"type": "Login", "user_id": "user3", "ip_address": "192.168.1.3", "device": "tablet", "ts_offset": 4000},
+    {"type": "Transaction", "user_id": "user2", "amount": 1500.0, "status": "failed", "merchant": "store_c", "ts_offset": 5000},
+    {"type": "Transaction", "user_id": "user3", "amount": 200.0, "status": "failed", "merchant": "store_d", "ts_offset": 6000},
+    {"type": "Login", "user_id": "user4", "ip_address": "192.168.1.4", "device": "mobile", "ts_offset": 7000},
+    {"type": "Transaction", "user_id": "user4", "amount": 50.0, "status": "success", "merchant": "store_e", "ts_offset": 8000},
+    {"type": "Transaction", "user_id": "user4", "amount": 2000.0, "status": "failed", "merchant": "store_f", "ts_offset": 9000},
+    # Heartbeat event with high timestamp to force Flink watermark progression
+    {"type": "Login", "user_id": "_heartbeat", "ip_address": "0.0.0.0", "device": "system", "ts_offset": 20000},
 ]
+
+def get_events_with_timestamps():
+    """Generate events with timestamps based on current time."""
+    base_ts = int(time.time() * 1000)
+    events = []
+    for e in EVENTS_TEMPLATE:
+        event = {k: v for k, v in e.items() if k != 'ts_offset'}
+        event['ts'] = base_ts + e['ts_offset']
+        events.append(event)
+    return events
 
 EXPECTED_USERS = sorted(["user1", "user2", "user3", "user4"])
 
@@ -90,7 +104,7 @@ def main():
 
     # Paths
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    vpl_file = os.path.join(base_dir, "scenario2_mqtt.vpl")
+    vpl_file = os.path.join(base_dir, "..", "scenario2-sequence", "varpulis.vpl")
     flink_jar = os.path.join(base_dir, "target/flink-varpulis-comparison-1.0-SNAPSHOT.jar")
     varpulis_bin = "/home/cpo/cep/target/release/varpulis"
 
@@ -129,11 +143,12 @@ def main():
         varpulis_proc.terminate()
         sys.exit(1)
 
-    # Publish events
-    print(f"\n[*] Publishing {len(EVENTS)} events...")
+    # Publish events with real timestamps
+    events = get_events_with_timestamps()
+    print(f"\n[*] Publishing {len(events)} events...")
     collector.start_time = time.time() * 1000
 
-    for i, event in enumerate(EVENTS):
+    for i, event in enumerate(events):
         topic = f"{INPUT_TOPIC_PREFIX}{event['type']}"
         pub.publish(topic, json.dumps(event))
         print(f"  [{i+1:2}] {event['type']:12} user={event['user_id']}")
@@ -141,9 +156,9 @@ def main():
 
     pub_end = time.time() * 1000
 
-    # Wait for results
-    print("\n[*] Waiting for alerts (5s)...")
-    time.sleep(5)
+    # Wait for results (7s to allow Flink watermark idleness to kick in)
+    print("\n[*] Waiting for alerts (7s)...")
+    time.sleep(7)
 
     # Cleanup
     sub.loop_stop()
@@ -195,7 +210,7 @@ def main():
     results = {
         "timestamp": datetime.now().isoformat(),
         "scenario": "Login -> FailedTransaction",
-        "events_count": len(EVENTS),
+        "events_count": len(events),
         "expected_alerts": EXPECTED_USERS,
         "varpulis": {
             "alerts": v_users,
