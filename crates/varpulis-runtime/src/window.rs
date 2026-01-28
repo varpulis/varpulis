@@ -28,7 +28,8 @@ impl TumblingWindow {
             self.window_start = Some(event_time);
         }
 
-        let window_start = self.window_start.unwrap();
+        // Safe: we just set it above if it was None
+        let window_start = self.window_start?;
         let window_end = window_start + self.duration;
 
         if event_time >= window_end {
