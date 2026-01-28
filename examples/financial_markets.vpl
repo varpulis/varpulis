@@ -515,6 +515,81 @@ stream OrderExecution = OrderSubmit as order
         slippage: fill.price - order.limit_price
     )
 
+# Flash Crash Detection and Recovery
+# Detect rapid drop followed by recovery (V-shaped pattern)
+stream FlashCrashRecovery = MarketTick as pre_crash
+    -> MarketTick where symbol == pre_crash.symbol and price <= pre_crash.price * 0.95 as bottom
+    .within(5m)
+    -> MarketTick where symbol == pre_crash.symbol and price >= pre_crash.price * 0.98 as recovery
+    .within(10m)
+    .emit(
+        signal_type: "FLASH_CRASH_RECOVERY",
+        direction: "WATCH",
+        symbol: pre_crash.symbol,
+        pre_crash_price: pre_crash.price,
+        bottom_price: bottom.price,
+        recovery_price: recovery.price,
+        drop_percent: (pre_crash.price - bottom.price) / pre_crash.price * 100,
+        confidence: 0.8,
+        reason: "Flash crash with V-shaped recovery detected"
+    )
+
+# Pre-filtered streams for SASE+ patterns
+stream HighVolumeTicks = Ticks.where(volume > 10000)
+stream NormalSpreadTicks = Ticks.where((ask - bid) / bid < 0.005)
+stream DailyCandles = Candles.where(timeframe == "1d")
+
+# Volume Surge Preceding Price Move
+# High volume often precedes significant price movements
+stream VolumePrecedesMove = HighVolumeTicks as volume_surge
+    -> MarketTick where symbol == volume_surge.symbol and (price > volume_surge.price * 1.03 or price < volume_surge.price * 0.97) as price_move
+    .within(15m)
+    .emit(
+        signal_type: "VOLUME_PRECEDES_MOVE",
+        direction: if price_move.price > volume_surge.price then "BUY" else "SELL",
+        symbol: volume_surge.symbol,
+        initial_volume: volume_surge.volume,
+        initial_price: volume_surge.price,
+        final_price: price_move.price,
+        price_change_percent: (price_move.price - volume_surge.price) / volume_surge.price * 100,
+        confidence: 0.7,
+        reason: "High volume preceded significant price movement"
+    )
+
+# Spread Widening Alert
+# Widening bid-ask spread indicates market stress or low liquidity
+stream SpreadWidening = NormalSpreadTicks as normal_spread
+    -> MarketTick where symbol == normal_spread.symbol and (ask - bid) / bid > 0.02 as wide_spread
+    .within(5m)
+    .emit(
+        signal_type: "SPREAD_WIDENING",
+        direction: "CAUTION",
+        symbol: normal_spread.symbol,
+        normal_spread_bps: (normal_spread.ask - normal_spread.bid) / normal_spread.bid * 10000,
+        wide_spread_bps: (wide_spread.ask - wide_spread.bid) / wide_spread.bid * 10000,
+        confidence: 0.75,
+        reason: "Bid-ask spread widened significantly - possible liquidity crisis"
+    )
+
+# Consecutive Up Days (Momentum)
+# Three consecutive higher closes
+stream MomentumUp = DailyCandles as day1
+    -> OHLCV where symbol == day1.symbol and timeframe == "1d" and close > day1.close as day2
+    .within(2d)
+    -> OHLCV where symbol == day1.symbol and timeframe == "1d" and close > day2.close as day3
+    .within(2d)
+    .emit(
+        signal_type: "MOMENTUM_UP",
+        direction: "BUY",
+        symbol: day1.symbol,
+        day1_close: day1.close,
+        day2_close: day2.close,
+        day3_close: day3.close,
+        total_gain_percent: (day3.close - day1.close) / day1.close * 100,
+        confidence: 0.65,
+        reason: "Three consecutive higher closes - bullish momentum"
+    )
+
 # =============================================================================
 # Aggregate All Signals
 # =============================================================================
@@ -531,7 +606,13 @@ stream AllSignals = merge(
     MACDBearish,
     StrongBuySignal,
     StrongSellSignal,
-    AnomalousActivity
+    AnomalousActivity,
+    NewsDrivenMove,
+    PumpAndDump,
+    FlashCrashRecovery,
+    VolumePrecedesMove,
+    SpreadWidening,
+    MomentumUp
 )
 .tap(counter: "trading_signals_total", labels: [signal_type, direction])
 .emit()
