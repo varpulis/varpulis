@@ -91,6 +91,14 @@ enum Commands {
         /// Metrics port
         #[arg(long, default_value = "9090")]
         metrics_port: u16,
+
+        /// Bind address (default: 127.0.0.1 for security)
+        #[arg(long, default_value = "127.0.0.1")]
+        bind: String,
+
+        /// Working directory for file operations (default: current directory)
+        #[arg(long)]
+        workdir: Option<PathBuf>,
     },
 
     /// Simulate events from an event file (.evt)
@@ -163,8 +171,12 @@ async fn main() -> Result<()> {
             port,
             metrics,
             metrics_port,
+            bind,
+            workdir,
         } => {
-            run_server(port, metrics, metrics_port).await?;
+            let workdir = workdir
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+            run_server(port, metrics, metrics_port, &bind, workdir).await?;
         }
 
         Commands::Simulate {
@@ -757,14 +769,51 @@ struct ServerState {
     streams: Vec<StreamInfoMsg>,
     start_time: std::time::Instant,
     alert_tx: mpsc::Sender<Alert>,
+    /// Allowed working directory for file operations (prevents path traversal)
+    workdir: PathBuf,
 }
 
-async fn run_server(port: u16, enable_metrics: bool, metrics_port: u16) -> Result<()> {
+/// Validate that a path is within the allowed working directory.
+/// Returns the canonical path if valid, or an error message if path traversal detected.
+fn validate_path(path: &str, workdir: &std::path::Path) -> Result<PathBuf, String> {
+    let requested = PathBuf::from(path);
+
+    // Resolve to absolute path
+    let absolute = if requested.is_absolute() {
+        requested
+    } else {
+        workdir.join(&requested)
+    };
+
+    // Canonicalize to resolve .. and symlinks
+    let canonical = absolute.canonicalize().map_err(|e| {
+        format!("Invalid path: {}", e)
+    })?;
+
+    // Ensure the canonical path starts with workdir
+    let workdir_canonical = workdir.canonicalize().map_err(|e| {
+        format!("Invalid workdir: {}", e)
+    })?;
+
+    if !canonical.starts_with(&workdir_canonical) {
+        return Err("Access denied: path outside allowed directory".to_string());
+    }
+
+    Ok(canonical)
+}
+
+async fn run_server(port: u16, enable_metrics: bool, metrics_port: u16, bind: &str, workdir: PathBuf) -> Result<()> {
+    // Canonicalize workdir early to ensure it's valid
+    let workdir = workdir.canonicalize().map_err(|e| {
+        anyhow::anyhow!("Invalid workdir '{}': {}", workdir.display(), e)
+    })?;
+
     println!("🚀 Varpulis Server");
     println!("==================");
-    println!("WebSocket: ws://127.0.0.1:{}/ws", port);
+    println!("WebSocket: ws://{}:{}/ws", bind, port);
+    println!("Workdir:   {}", workdir.display());
     if enable_metrics {
-        println!("Metrics:   http://127.0.0.1:{}/metrics", metrics_port);
+        println!("Metrics:   http://{}:{}/metrics", bind, metrics_port);
     }
     println!();
 
@@ -777,6 +826,7 @@ async fn run_server(port: u16, enable_metrics: bool, metrics_port: u16) -> Resul
         streams: Vec::new(),
         start_time: std::time::Instant::now(),
         alert_tx: alert_tx.clone(),
+        workdir: workdir.clone(),
     }));
 
     // Create metrics if enabled
@@ -844,8 +894,13 @@ async fn run_server(port: u16, enable_metrics: bool, metrics_port: u16) -> Resul
 
     let routes = ws_route.or(health_route);
 
-    info!("Server listening on 0.0.0.0:{}", port);
-    warp::serve(routes).run(([0, 0, 0, 0], port)).await;
+    // Parse bind address
+    let bind_addr: std::net::IpAddr = bind.parse().map_err(|e| {
+        anyhow::anyhow!("Invalid bind address '{}': {}", bind, e)
+    })?;
+
+    info!("Server listening on {}:{}", bind, port);
+    warp::serve(routes).run((bind_addr, port)).await;
 
     Ok(())
 }
@@ -903,7 +958,24 @@ async fn handle_websocket(
 async fn handle_ws_message(msg: WsMessage, state: &Arc<RwLock<ServerState>>) -> WsMessage {
     match msg {
         WsMessage::LoadFile { path } => {
-            match std::fs::read_to_string(&path) {
+            // Validate path to prevent path traversal attacks
+            let workdir = {
+                let state = state.read().await;
+                state.workdir.clone()
+            };
+
+            let validated_path = match validate_path(&path, &workdir) {
+                Ok(p) => p,
+                Err(e) => {
+                    return WsMessage::LoadResult {
+                        success: false,
+                        streams_loaded: 0,
+                        error: Some(e),
+                    };
+                }
+            };
+
+            match std::fs::read_to_string(&validated_path) {
                 Ok(source) => {
                     match parse(&source) {
                         Ok(program) => {
@@ -936,10 +1008,11 @@ async fn handle_ws_message(msg: WsMessage, state: &Arc<RwLock<ServerState>>) -> 
                         },
                     }
                 }
-                Err(e) => WsMessage::LoadResult {
+                Err(_) => WsMessage::LoadResult {
                     success: false,
                     streams_loaded: 0,
-                    error: Some(format!("Failed to read file: {}", e)),
+                    // Generic error message to avoid information disclosure
+                    error: Some("Failed to read file".to_string()),
                 },
             }
         }
@@ -1041,10 +1114,33 @@ fn json_to_value(json: &serde_json::Value) -> varpulis_core::Value {
     }
 }
 
+/// Maximum depth for nested imports to prevent stack overflow
+const MAX_IMPORT_DEPTH: usize = 10;
+
 /// Resolve import statements by loading and parsing imported files
 fn resolve_imports(program: &mut Program, base_path: Option<&PathBuf>) -> Result<()> {
+    use std::collections::HashSet;
+    let mut visited = HashSet::new();
+    resolve_imports_inner(program, base_path, 0, &mut visited)
+}
+
+/// Inner implementation with depth tracking and cycle detection
+fn resolve_imports_inner(
+    program: &mut Program,
+    base_path: Option<&PathBuf>,
+    depth: usize,
+    visited: &mut std::collections::HashSet<PathBuf>,
+) -> Result<()> {
     #[allow(unused_imports)]
     use varpulis_core::span::{Span, Spanned};
+
+    // Check recursion depth limit
+    if depth > MAX_IMPORT_DEPTH {
+        anyhow::bail!(
+            "Import depth limit exceeded (max {}). Check for circular imports.",
+            MAX_IMPORT_DEPTH
+        );
+    }
 
     let mut imported_statements = Vec::new();
     let mut imports_to_process = Vec::new();
@@ -1063,6 +1159,18 @@ fn resolve_imports(program: &mut Program, base_path: Option<&PathBuf>) -> Result
         } else {
             PathBuf::from(&import_path)
         };
+
+        // Canonicalize to detect cycles with different relative paths
+        let canonical_path = full_path.canonicalize().map_err(|e| {
+            anyhow::anyhow!("Failed to resolve import '{}': {}", full_path.display(), e)
+        })?;
+
+        // Check for circular import
+        if visited.contains(&canonical_path) {
+            info!("Skipping already imported file: {}", canonical_path.display());
+            continue;
+        }
+        visited.insert(canonical_path.clone());
 
         info!("Loading import: {}", full_path.display());
 
@@ -1083,7 +1191,7 @@ fn resolve_imports(program: &mut Program, base_path: Option<&PathBuf>) -> Result
         // Recursively resolve imports in the imported file
         let import_base = full_path.parent().map(|p| p.to_path_buf());
         let mut imported = import_program;
-        resolve_imports(&mut imported, import_base.as_ref())?;
+        resolve_imports_inner(&mut imported, import_base.as_ref(), depth + 1, visited)?;
 
         imported_statements.extend(imported.statements);
     }
