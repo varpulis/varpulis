@@ -548,8 +548,8 @@ mod mqtt_impl {
                             }
 
                             // Exponential backoff: 1s, 2s, 4s, 8s, ... up to MAX_BACKOFF_SECS
-                            let backoff_secs = (1u64 << (consecutive_errors - 1).min(5))
-                                .min(MAX_BACKOFF_SECS);
+                            let backoff_secs =
+                                (1u64 << (consecutive_errors - 1).min(5)).min(MAX_BACKOFF_SECS);
 
                             warn!(
                                 "MQTT source {} error (attempt {}/{}): {:?}, retrying in {}s",
