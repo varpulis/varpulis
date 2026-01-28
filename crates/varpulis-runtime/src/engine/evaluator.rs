@@ -492,6 +492,177 @@ pub fn eval_pattern_expr(
                         }
                     }
                 }
+
+                // first() - get first element of array
+                if func_name == "first" {
+                    if let Some(Arg::Positional(arr_expr)) = args.first() {
+                        if let Some(Value::Array(arr)) = eval_pattern_expr(
+                            arr_expr,
+                            events,
+                            ctx,
+                            functions,
+                            pattern_vars,
+                            attention_window,
+                        ) {
+                            return arr.first().cloned();
+                        }
+                    }
+                }
+
+                // last() - get last element of array
+                if func_name == "last" {
+                    if let Some(Arg::Positional(arr_expr)) = args.first() {
+                        if let Some(Value::Array(arr)) = eval_pattern_expr(
+                            arr_expr,
+                            events,
+                            ctx,
+                            functions,
+                            pattern_vars,
+                            attention_window,
+                        ) {
+                            return arr.last().cloned();
+                        }
+                    }
+                }
+
+                // avg() - average of array
+                if func_name == "avg" {
+                    if let Some(Arg::Positional(arr_expr)) = args.first() {
+                        if let Some(Value::Array(arr)) = eval_pattern_expr(
+                            arr_expr,
+                            events,
+                            ctx,
+                            functions,
+                            pattern_vars,
+                            attention_window,
+                        ) {
+                            let nums: Vec<f64> = arr
+                                .iter()
+                                .filter_map(|v| match v {
+                                    Value::Int(n) => Some(*n as f64),
+                                    Value::Float(f) => Some(*f),
+                                    _ => None,
+                                })
+                                .collect();
+                            if nums.is_empty() {
+                                return Some(Value::Float(0.0));
+                            }
+                            let avg = nums.iter().sum::<f64>() / nums.len() as f64;
+                            return Some(Value::Float(avg));
+                        }
+                    }
+                }
+
+                // variance() - variance of array
+                if func_name == "variance" {
+                    if let Some(Arg::Positional(arr_expr)) = args.first() {
+                        if let Some(Value::Array(arr)) = eval_pattern_expr(
+                            arr_expr,
+                            events,
+                            ctx,
+                            functions,
+                            pattern_vars,
+                            attention_window,
+                        ) {
+                            let nums: Vec<f64> = arr
+                                .iter()
+                                .filter_map(|v| match v {
+                                    Value::Int(n) => Some(*n as f64),
+                                    Value::Float(f) => Some(*f),
+                                    _ => None,
+                                })
+                                .collect();
+                            if nums.is_empty() {
+                                return Some(Value::Float(0.0));
+                            }
+                            let mean = nums.iter().sum::<f64>() / nums.len() as f64;
+                            let variance = nums
+                                .iter()
+                                .map(|x| (x - mean).powi(2))
+                                .sum::<f64>()
+                                / nums.len() as f64;
+                            return Some(Value::Float(variance));
+                        }
+                    }
+                }
+
+                // sum() - sum of array
+                if func_name == "sum" {
+                    if let Some(Arg::Positional(arr_expr)) = args.first() {
+                        if let Some(Value::Array(arr)) = eval_pattern_expr(
+                            arr_expr,
+                            events,
+                            ctx,
+                            functions,
+                            pattern_vars,
+                            attention_window,
+                        ) {
+                            let sum: f64 = arr
+                                .iter()
+                                .filter_map(|v| match v {
+                                    Value::Int(n) => Some(*n as f64),
+                                    Value::Float(f) => Some(*f),
+                                    _ => None,
+                                })
+                                .sum();
+                            return Some(Value::Float(sum));
+                        }
+                    }
+                }
+
+                // min() - minimum of array
+                if func_name == "min" {
+                    if let Some(Arg::Positional(arr_expr)) = args.first() {
+                        if let Some(Value::Array(arr)) = eval_pattern_expr(
+                            arr_expr,
+                            events,
+                            ctx,
+                            functions,
+                            pattern_vars,
+                            attention_window,
+                        ) {
+                            let min = arr
+                                .iter()
+                                .filter_map(|v| match v {
+                                    Value::Int(n) => Some(*n as f64),
+                                    Value::Float(f) => Some(*f),
+                                    _ => None,
+                                })
+                                .fold(f64::INFINITY, f64::min);
+                            if min.is_infinite() {
+                                return None;
+                            }
+                            return Some(Value::Float(min));
+                        }
+                    }
+                }
+
+                // max() - maximum of array
+                if func_name == "max" {
+                    if let Some(Arg::Positional(arr_expr)) = args.first() {
+                        if let Some(Value::Array(arr)) = eval_pattern_expr(
+                            arr_expr,
+                            events,
+                            ctx,
+                            functions,
+                            pattern_vars,
+                            attention_window,
+                        ) {
+                            let max = arr
+                                .iter()
+                                .filter_map(|v| match v {
+                                    Value::Int(n) => Some(*n as f64),
+                                    Value::Float(f) => Some(*f),
+                                    _ => None,
+                                })
+                                .fold(f64::NEG_INFINITY, f64::max);
+                            if max.is_infinite() {
+                                return None;
+                            }
+                            return Some(Value::Float(max));
+                        }
+                    }
+                }
             }
 
             // Method calls on arrays: .filter(), .map(), .flatten()
@@ -543,13 +714,32 @@ pub fn eval_pattern_expr(
                             if let Some(Arg::Positional(Expr::Lambda { params, body })) =
                                 args.first()
                             {
-                                let param_name =
-                                    params.first().cloned().unwrap_or_else(|| "x".to_string());
                                 let mapped: Vec<Value> = arr
                                     .into_iter()
                                     .filter_map(|item| {
                                         let mut local = pattern_vars.clone();
-                                        local.insert(param_name.clone(), item);
+
+                                        // Handle multi-param lambdas for sliding_pairs: (e1, e2) => ...
+                                        if params.len() >= 2 {
+                                            if let Value::Array(pair) = &item {
+                                                if pair.len() >= 2 {
+                                                    local.insert(params[0].clone(), pair[0].clone());
+                                                    local.insert(params[1].clone(), pair[1].clone());
+                                                } else {
+                                                    return None;
+                                                }
+                                            } else {
+                                                return None;
+                                            }
+                                        } else {
+                                            // Single param lambda
+                                            let param_name = params
+                                                .first()
+                                                .cloned()
+                                                .unwrap_or_else(|| "x".to_string());
+                                            local.insert(param_name, item);
+                                        }
+
                                         eval_pattern_expr(
                                             body,
                                             events,
@@ -579,9 +769,94 @@ pub fn eval_pattern_expr(
                             return Some(Value::Array(flattened));
                         }
                     }
-                    "len" => {
+                    "len" | "count" => {
                         if let Value::Array(arr) = receiver_val {
                             return Some(Value::Int(arr.len() as i64));
+                        }
+                    }
+                    "sliding_pairs" => {
+                        // Generate pairs of consecutive elements: [a, b, c] -> [[a, b], [b, c]]
+                        if let Value::Array(arr) = receiver_val {
+                            if arr.len() < 2 {
+                                return Some(Value::Array(vec![]));
+                            }
+                            let pairs: Vec<Value> = arr
+                                .windows(2)
+                                .map(|pair| Value::Array(pair.to_vec()))
+                                .collect();
+                            return Some(Value::Array(pairs));
+                        }
+                    }
+                    "first" => {
+                        if let Value::Array(arr) = receiver_val {
+                            return arr.first().cloned();
+                        }
+                    }
+                    "last" => {
+                        if let Value::Array(arr) = receiver_val {
+                            return arr.last().cloned();
+                        }
+                    }
+                    "sum" => {
+                        if let Value::Array(arr) = receiver_val {
+                            let sum: f64 = arr
+                                .iter()
+                                .filter_map(|v| match v {
+                                    Value::Int(n) => Some(*n as f64),
+                                    Value::Float(f) => Some(*f),
+                                    _ => None,
+                                })
+                                .sum();
+                            return Some(Value::Float(sum));
+                        }
+                    }
+                    "avg" => {
+                        if let Value::Array(arr) = receiver_val {
+                            let nums: Vec<f64> = arr
+                                .iter()
+                                .filter_map(|v| match v {
+                                    Value::Int(n) => Some(*n as f64),
+                                    Value::Float(f) => Some(*f),
+                                    _ => None,
+                                })
+                                .collect();
+                            if nums.is_empty() {
+                                return Some(Value::Float(0.0));
+                            }
+                            let avg = nums.iter().sum::<f64>() / nums.len() as f64;
+                            return Some(Value::Float(avg));
+                        }
+                    }
+                    "min" => {
+                        if let Value::Array(arr) = receiver_val {
+                            let min = arr
+                                .iter()
+                                .filter_map(|v| match v {
+                                    Value::Int(n) => Some(*n as f64),
+                                    Value::Float(f) => Some(*f),
+                                    _ => None,
+                                })
+                                .fold(f64::INFINITY, f64::min);
+                            if min.is_infinite() {
+                                return None;
+                            }
+                            return Some(Value::Float(min));
+                        }
+                    }
+                    "max" => {
+                        if let Value::Array(arr) = receiver_val {
+                            let max = arr
+                                .iter()
+                                .filter_map(|v| match v {
+                                    Value::Int(n) => Some(*n as f64),
+                                    Value::Float(f) => Some(*f),
+                                    _ => None,
+                                })
+                                .fold(f64::NEG_INFINITY, f64::max);
+                            if max.is_infinite() {
+                                return None;
+                            }
+                            return Some(Value::Float(max));
                         }
                     }
                     _ => {}
