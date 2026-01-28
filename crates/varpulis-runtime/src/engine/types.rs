@@ -7,7 +7,6 @@ use crate::attention::AttentionWindow;
 use crate::join::JoinBuffer;
 use crate::pattern::PatternEngine;
 use crate::sase::SaseEngine;
-use crate::sequence::SequenceTracker;
 use crate::window::{
     CountWindow, PartitionedSlidingWindow, PartitionedTumblingWindow, SlidingCountWindow,
     SlidingWindow, TumblingWindow,
@@ -65,11 +64,9 @@ pub(crate) struct StreamDefinition {
     pub name: String,
     pub source: RuntimeSource,
     pub operations: Vec<RuntimeOp>,
-    /// Sequence tracker for followed-by operations
-    pub sequence_tracker: Option<SequenceTracker>,
     /// Attention window for correlation scoring
     pub attention_window: Option<AttentionWindow>,
-    /// Pattern engine for Apama-style pattern matching (legacy)
+    /// Pattern engine for Apama-style pattern matching (lambdas)
     pub pattern_engine: Option<PatternEngine>,
     /// SASE+ pattern matching engine (NFA-based, primary engine for sequences)
     pub sase_engine: Option<SaseEngine>,

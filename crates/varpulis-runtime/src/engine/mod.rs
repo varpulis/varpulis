@@ -31,7 +31,7 @@ use crate::join::JoinBuffer;
 use crate::metrics::Metrics;
 use crate::pattern::PatternEngine;
 use crate::sase::SaseEngine;
-use crate::sequence::{SequenceContext, SequenceFilter, SequenceStep, SequenceTracker};
+use crate::sequence::SequenceContext;
 use crate::window::{
     CountWindow, PartitionedSlidingWindow, PartitionedTumblingWindow, SlidingCountWindow,
     SlidingWindow, TumblingWindow,
@@ -180,7 +180,7 @@ impl Engine {
         ops: &[StreamOp],
     ) -> Result<(), String> {
         // Check if we have sequence operations and build SASE+ engine
-        let (runtime_ops, sequence_tracker, sase_engine, sequence_event_types) =
+        let (runtime_ops, sase_engine, sequence_event_types) =
             self.compile_ops_with_sequences(source, ops)?;
 
         let runtime_source = match source {
@@ -322,7 +322,6 @@ impl Engine {
                 name: name.to_string(),
                 source: runtime_source,
                 operations: runtime_ops,
-                sequence_tracker,
                 attention_window,
                 pattern_engine,
                 sase_engine,
@@ -334,26 +333,13 @@ impl Engine {
         Ok(())
     }
 
-    #[allow(clippy::type_complexity)]
     fn compile_ops_with_sequences(
         &self,
         source: &StreamSource,
         ops: &[StreamOp],
-    ) -> Result<
-        (
-            Vec<RuntimeOp>,
-            Option<SequenceTracker>,
-            Option<SaseEngine>,
-            Vec<String>,
-        ),
-        String,
-    > {
+    ) -> Result<(Vec<RuntimeOp>, Option<SaseEngine>, Vec<String>), String> {
         let mut runtime_ops = Vec::new();
-        let mut sequence_steps: Vec<SequenceStep> = Vec::new();
         let mut sequence_event_types: Vec<String> = Vec::new();
-        let mut match_all_first = false;
-        let mut current_timeout: Option<std::time::Duration> = None;
-        let mut negation_conditions: Vec<(String, Option<SequenceFilter>)> = Vec::new();
         let mut partition_key: Option<String> = None;
 
         // For SASE+ pattern compilation
@@ -361,56 +347,11 @@ impl Engine {
         let mut negation_clauses: Vec<varpulis_core::ast::FollowedByClause> = Vec::new();
         let mut global_within: Option<std::time::Duration> = None;
 
-        // Handle sequence() construct - converts SequenceDecl to SequenceSteps
+        // Collect sequence event types from source
         if let StreamSource::Sequence(decl) = source {
-            match_all_first = decl.match_all;
             for step in &decl.steps {
-                let filter = step
-                    .filter
-                    .as_ref()
-                    .map(|expr| compiler::compile_sequence_filter(expr.clone()));
-                let timeout = step.timeout.as_ref().and_then(|expr| {
-                    if let varpulis_core::ast::Expr::Duration(ns) = expr.as_ref() {
-                        Some(std::time::Duration::from_nanos(*ns))
-                    } else {
-                        None
-                    }
-                });
-                sequence_steps.push(SequenceStep {
-                    event_type: step.event_type.clone(),
-                    filter,
-                    alias: Some(step.alias.clone()),
-                    timeout,
-                    match_all: false,
-                });
                 sequence_event_types.push(step.event_type.clone());
             }
-        }
-
-        // Check if we have any FollowedBy operations - if so, add source as first step
-        let has_followed_by = ops.iter().any(|op| matches!(op, StreamOp::FollowedBy(_)));
-        if has_followed_by && sequence_steps.is_empty() {
-            let (source_event_type, source_alias, source_match_all) = match source {
-                StreamSource::Ident(name) => (name.clone(), None, false),
-                StreamSource::IdentWithAlias { name, alias } => {
-                    (name.clone(), Some(alias.clone()), false)
-                }
-                StreamSource::AllWithAlias { name, alias } => (name.clone(), alias.clone(), true),
-                StreamSource::From(name) => (name.clone(), None, false),
-                StreamSource::Sequence(_) => {
-                    return Err("Sequence source already handled".to_string())
-                }
-                _ => return Err("Sequences require a single event type source".to_string()),
-            };
-            match_all_first = source_match_all;
-            // First step is the source event type
-            sequence_steps.push(SequenceStep {
-                event_type: source_event_type,
-                filter: None,
-                alias: source_alias,
-                timeout: None,
-                match_all: false,
-            });
         }
 
         for op in ops {
@@ -418,22 +359,7 @@ impl Engine {
                 StreamOp::FollowedBy(clause) => {
                     // Store raw clause for SASE+ compilation
                     followed_by_clauses.push(clause.clone());
-
-                    // Also build old-style SequenceStep for backward compatibility
-                    let filter = clause
-                        .filter
-                        .as_ref()
-                        .map(|expr| compiler::compile_sequence_filter(expr.clone()));
-                    let step = SequenceStep {
-                        event_type: clause.event_type.clone(),
-                        filter,
-                        alias: clause.alias.clone(),
-                        timeout: current_timeout.take(),
-                        match_all: clause.match_all,
-                    };
-                    // Note: match_all_first is set from source (AllWithAlias), not from FollowedBy
                     sequence_event_types.push(clause.event_type.clone());
-                    sequence_steps.push(step);
                     continue;
                 }
                 StreamOp::Within(expr) => {
@@ -442,25 +368,16 @@ impl Engine {
                         varpulis_core::ast::Expr::Duration(ns) => *ns,
                         _ => 300_000_000_000u64, // 5 minutes default
                     };
-                    let duration = std::time::Duration::from_nanos(duration_ns);
-                    current_timeout = Some(duration);
-                    global_within = Some(duration); // Also store for SASE+
+                    global_within = Some(std::time::Duration::from_nanos(duration_ns));
                     continue;
                 }
                 StreamOp::Not(clause) => {
                     // Store negation clause for SASE+ engine
                     negation_clauses.push(clause.clone());
-
-                    // Also store for legacy sequence tracker
-                    let filter = clause
-                        .filter
-                        .as_ref()
-                        .map(|expr| compiler::compile_sequence_filter(expr.clone()));
                     // Add negation event type to sequence event types so it gets routed
                     if !sequence_event_types.contains(&clause.event_type) {
                         sequence_event_types.push(clause.event_type.clone());
                     }
-                    negation_conditions.push((clause.event_type.clone(), filter));
                     continue;
                 }
                 _ => {}
@@ -760,33 +677,14 @@ impl Engine {
                     info!("Created SASE+ engine for sequence pattern");
                     Some(engine)
                 } else {
-                    warn!("Failed to compile SASE+ pattern, falling back to legacy tracker");
+                    warn!("Failed to compile SASE+ pattern");
                     None
                 }
             } else {
                 None
             };
 
-        // Build legacy sequence tracker as fallback (will be removed once SASE+ is validated)
-        let sequence_tracker = if sequence_steps.len() > 1 && sase_engine.is_none() {
-            let mut tracker = SequenceTracker::new(sequence_steps, match_all_first);
-
-            // Add negation conditions
-            for (event_type, filter) in negation_conditions {
-                tracker.add_negation(crate::sequence::NegationCondition { event_type, filter });
-            }
-
-            Some(tracker)
-        } else {
-            None
-        };
-
-        Ok((
-            runtime_ops,
-            sequence_tracker,
-            sase_engine,
-            sequence_event_types,
-        ))
+        Ok((runtime_ops, sase_engine, sequence_event_types))
     }
 
     /// Extract and create AttentionWindow from runtime operations
@@ -1392,11 +1290,10 @@ impl Engine {
                     }
                 }
                 RuntimeOp::Sequence => {
-                    // Process events through SASE+ engine (primary) or legacy sequence tracker (fallback)
+                    // Process events through SASE+ engine (NFA-based pattern matching)
                     let mut sequence_results = Vec::new();
 
                     if let Some(ref mut sase) = stream.sase_engine {
-                        // Use SASE+ pattern matching (NFA-based, more efficient)
                         for event in &current_events {
                             let matches = sase.process(event);
                             for match_result in matches {
@@ -1411,28 +1308,6 @@ impl Engine {
                                 );
                                 // Add captured events to the result
                                 for (alias, captured) in &match_result.captured {
-                                    for (k, v) in &captured.data {
-                                        seq_event
-                                            .data
-                                            .insert(format!("{}_{}", alias, k), v.clone());
-                                    }
-                                }
-                                sequence_results.push(seq_event);
-                            }
-                        }
-                    } else if let Some(ref mut tracker) = stream.sequence_tracker {
-                        // Fallback to legacy sequence tracker
-                        warn!("Using legacy sequence tracker instead of SASE+");
-                        for event in &current_events {
-                            let completed = tracker.process(event);
-                            for ctx in completed {
-                                // Create synthetic event from completed sequence
-                                let mut seq_event = Event::new("SequenceMatch");
-                                seq_event
-                                    .data
-                                    .insert("stream".to_string(), Value::Str(stream.name.clone()));
-                                // Add captured events to the result
-                                for (alias, captured) in &ctx.captured {
                                     for (k, v) in &captured.data {
                                         seq_event
                                             .data

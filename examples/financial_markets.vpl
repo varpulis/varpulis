@@ -28,6 +28,13 @@ event OHLCV:
     timeframe: str  # "1m", "5m", "15m", "1h", "4h", "1d"
     ts: timestamp
 
+event NewsEvent:
+    symbol: str
+    headline: str
+    sentiment: float
+    pre_price: float
+    ts: timestamp
+
 # =============================================================================
 # Base Streams
 # =============================================================================

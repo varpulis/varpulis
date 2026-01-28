@@ -8,22 +8,9 @@ use crate::aggregation::{
 };
 use crate::pattern::{PatternBuilder, PatternExpr};
 use crate::sase::{CompareOp, Predicate, SasePattern};
-use crate::sequence::{SequenceContext, SequenceFilter};
-use crate::Event;
 use std::time::Duration;
 use tracing::warn;
 use varpulis_core::ast::{FollowedByClause, SequenceStepDecl, StreamSource};
-
-use super::evaluator;
-
-/// Compile a sequence filter expression into a runtime closure
-pub fn compile_sequence_filter(expr: varpulis_core::ast::Expr) -> SequenceFilter {
-    Box::new(move |event: &Event, ctx: &SequenceContext| {
-        evaluator::eval_filter_expr(&expr, event, ctx)
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false)
-    })
-}
 
 /// Compile an aggregate expression into an AggregateFunc
 pub fn compile_agg_expr(

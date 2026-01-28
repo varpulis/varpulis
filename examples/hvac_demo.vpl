@@ -180,9 +180,10 @@ stream CompressorDegradation = HVAC
     .pattern(
         degradation: events => {
             let pressures = events.map(e => e.compressor_pressure)
-            let pressure_trend = linear_regression_slope(pressures)
+            # Simple trend: (last - first) / count as approximation of slope
+            let pressure_trend = (last(pressures) - first(pressures)) / len(pressures)
             let powers = events.map(e => e.power_consumption)
-            let power_trend = linear_regression_slope(powers)
+            let power_trend = (last(powers) - first(powers)) / len(powers)
             let attention_scores = events.sliding_pairs().map((e1, e2) => attention_score(e1, e2))
             let high_correlation = attention_scores.filter(s => s > 0.8).count() > events.len() * 0.7
             let pressure_declining = pressure_trend < -0.01
@@ -214,9 +215,12 @@ stream RefrigerantLeak = HVAC
     .pattern(
         leak_pattern: events => {
             let temps = events.map(e => e.refrigerant_temp)
-            let temp_trend = linear_regression_slope(temps)
+            # Simple trend: (last - first) / count as approximation of slope
+            let temp_trend = (last(temps) - first(temps)) / len(temps)
             let pressures = events.map(e => e.compressor_pressure)
-            let pressure_elevated = avg(pressures) > baseline_pressure(events[0].unit_id) * 1.15
+            # Baseline pressure: typical operating pressure is ~150 PSI
+            let baseline_psi = 150.0
+            let pressure_elevated = avg(pressures) > baseline_psi * 1.15
             let anomaly_correlation = events.filter(e => e.refrigerant_temp > 45).sliding_pairs().map((e1, e2) => attention_score(e1, e2)).filter(s => s > 0.85).count()
             temp_trend > 0.1 and pressure_elevated and anomaly_correlation > 5
         }
@@ -247,7 +251,9 @@ stream FanDegradation = HVAC
             let speeds = events.map(e => e.fan_speed)
             let speed_variance = variance(speeds)
             let baseline_variance = 50
-            let power_trend = linear_regression_slope(events.map(e => e.power_consumption))
+            let powers = events.map(e => e.power_consumption)
+            # Simple trend: (last - first) / count as approximation of slope
+            let power_trend = (last(powers) - first(powers)) / len(powers)
             speed_variance > baseline_variance * 2 and power_trend > 0.02
         }
     )
@@ -323,8 +329,9 @@ stream ZoneEnergy = Energy
     )
 
 # Energy anomaly (unusual consumption)
+# Baseline: typical zone consumes ~5 kW average
 stream EnergyAnomaly = ZoneEnergy
-    .where(avg_power_kw > baseline_energy(zone) * 1.3)
+    .where(avg_power_kw > 5.0 * 1.3)  # 30% above baseline
     .emit(
         alert_type: "ENERGY_ANOMALY",
         severity: "warning",
