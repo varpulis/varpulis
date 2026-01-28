@@ -786,14 +786,14 @@ fn validate_path(path: &str, workdir: &std::path::Path) -> Result<PathBuf, Strin
     };
 
     // Canonicalize to resolve .. and symlinks
-    let canonical = absolute.canonicalize().map_err(|e| {
-        format!("Invalid path: {}", e)
-    })?;
+    let canonical = absolute
+        .canonicalize()
+        .map_err(|e| format!("Invalid path: {}", e))?;
 
     // Ensure the canonical path starts with workdir
-    let workdir_canonical = workdir.canonicalize().map_err(|e| {
-        format!("Invalid workdir: {}", e)
-    })?;
+    let workdir_canonical = workdir
+        .canonicalize()
+        .map_err(|e| format!("Invalid workdir: {}", e))?;
 
     if !canonical.starts_with(&workdir_canonical) {
         return Err("Access denied: path outside allowed directory".to_string());
@@ -802,11 +802,17 @@ fn validate_path(path: &str, workdir: &std::path::Path) -> Result<PathBuf, Strin
     Ok(canonical)
 }
 
-async fn run_server(port: u16, enable_metrics: bool, metrics_port: u16, bind: &str, workdir: PathBuf) -> Result<()> {
+async fn run_server(
+    port: u16,
+    enable_metrics: bool,
+    metrics_port: u16,
+    bind: &str,
+    workdir: PathBuf,
+) -> Result<()> {
     // Canonicalize workdir early to ensure it's valid
-    let workdir = workdir.canonicalize().map_err(|e| {
-        anyhow::anyhow!("Invalid workdir '{}': {}", workdir.display(), e)
-    })?;
+    let workdir = workdir
+        .canonicalize()
+        .map_err(|e| anyhow::anyhow!("Invalid workdir '{}': {}", workdir.display(), e))?;
 
     println!("🚀 Varpulis Server");
     println!("==================");
@@ -895,9 +901,9 @@ async fn run_server(port: u16, enable_metrics: bool, metrics_port: u16, bind: &s
     let routes = ws_route.or(health_route);
 
     // Parse bind address
-    let bind_addr: std::net::IpAddr = bind.parse().map_err(|e| {
-        anyhow::anyhow!("Invalid bind address '{}': {}", bind, e)
-    })?;
+    let bind_addr: std::net::IpAddr = bind
+        .parse()
+        .map_err(|e| anyhow::anyhow!("Invalid bind address '{}': {}", bind, e))?;
 
     info!("Server listening on {}:{}", bind, port);
     warp::serve(routes).run((bind_addr, port)).await;
@@ -1167,7 +1173,10 @@ fn resolve_imports_inner(
 
         // Check for circular import
         if visited.contains(&canonical_path) {
-            info!("Skipping already imported file: {}", canonical_path.display());
+            info!(
+                "Skipping already imported file: {}",
+                canonical_path.display()
+            );
             continue;
         }
         visited.insert(canonical_path.clone());
