@@ -1,0 +1,12 @@
+[
+  {"type": "Login", "user_id": "user1", "ip_address": "192.168.1.1", "device": "mobile", "ts": 1000},
+  {"type": "Login", "user_id": "user2", "ip_address": "192.168.1.2", "device": "desktop", "ts": 2000},
+  {"type": "Transaction", "user_id": "user1", "amount": 500.0, "status": "failed", "merchant": "store_a", "ts": 3000},
+  {"type": "Transaction", "user_id": "user3", "amount": 100.0, "status": "success", "merchant": "store_b", "ts": 4000},
+  {"type": "Login", "user_id": "user3", "ip_address": "192.168.1.3", "device": "tablet", "ts": 5000},
+  {"type": "Transaction", "user_id": "user2", "amount": 1500.0, "status": "failed", "merchant": "store_c", "ts": 6000},
+  {"type": "Transaction", "user_id": "user3", "amount": 200.0, "status": "failed", "merchant": "store_d", "ts": 7000},
+  {"type": "Login", "user_id": "user4", "ip_address": "192.168.1.4", "device": "mobile", "ts": 8000},
+  {"type": "Transaction", "user_id": "user4", "amount": 50.0, "status": "success", "merchant": "store_e", "ts": 9000},
+  {"type": "Transaction", "user_id": "user4", "amount": 2000.0, "status": "failed", "merchant": "store_f", "ts": 10000}
+]

@@ -12,6 +12,7 @@
 - **SASE+ Pattern Matching**: Advanced pattern matching with Kleene closures
 - **Real-time Analytics**: Window aggregations, joins, and transformations
 - **Attention Window**: AI-powered anomaly detection
+- **Connectors**: MQTT (production), HTTP webhooks, Kafka (planned)
 - **VS Code Extension**: Syntax highlighting and language support
 
 ## Quick Start
@@ -23,16 +24,38 @@
 git clone https://github.com/varpulis/varpulis.git
 cd varpulis
 
-# Build
+# Build (basic)
 cargo build --release
+
+# Build with MQTT support (recommended for production)
+cargo build --release --features mqtt
 
 # Run tests
 cargo test --workspace
 ```
 
-### Example: Fraud Detection
+### Running with MQTT
+
+```bash
+# Build with MQTT support
+cargo build --release --features mqtt
+
+# Run your program (connects to MQTT broker)
+./target/release/varpulis run --file my_patterns.vpl
+```
+
+### Example: Fraud Detection with MQTT
 
 ```varpulis
+# MQTT Configuration - connect to broker
+config mqtt {
+    broker: "localhost",
+    port: 1883,
+    client_id: "fraud-detector",
+    input_topic: "transactions/#",
+    output_topic: "alerts/fraud"
+}
+
 # Define events
 event Transaction:
     user_id: str
@@ -45,7 +68,7 @@ pattern SuspiciousActivity = SEQ(
     Transaction+ as txs where amount > 1000
 ) within 10m partition by user_id
 
-# Stream processing with alert
+# Stream processing with alert (published to MQTT)
 stream FraudAlert = Transaction as tx
     -> Transaction where amount > tx.amount * 2 as suspicious
     .emit(
@@ -55,6 +78,32 @@ stream FraudAlert = Transaction as tx
         suspicious_amount: suspicious.amount
     )
 ```
+
+## Connectors
+
+Varpulis supports multiple connectors for event ingestion and output:
+
+| Connector | Feature Flag | Status | Documentation |
+|-----------|--------------|--------|---------------|
+| **MQTT** | `--features mqtt` | Production | [docs/language/connectors.md](docs/language/connectors.md) |
+| **HTTP** | (included) | Production | Webhooks via `.to("http://...")` |
+| **Kafka** | `--features kafka` | Planned | `.to("kafka://...")` |
+
+### MQTT Configuration
+
+Add a `config mqtt { }` block at the top of your VPL file:
+
+```varpulis
+config mqtt {
+    broker: "localhost",       # MQTT broker hostname
+    port: 1883,                # MQTT broker port
+    client_id: "my-app",       # Unique client identifier
+    input_topic: "events/#",   # Subscribe pattern (# = wildcard)
+    output_topic: "alerts"     # Publish topic for .emit() results
+}
+```
+
+See [docs/language/connectors.md](docs/language/connectors.md) for complete documentation.
 
 ## Architecture
 
@@ -148,8 +197,11 @@ npm run compile
 
 ## Documentation
 
+- [Language Syntax](docs/language/syntax.md)
+- [Connectors (MQTT, HTTP, Kafka)](docs/language/connectors.md)
 - [Language Grammar](docs/language/grammar.md)
 - [Built-in Functions](docs/language/builtins.md)
+- [Interactive Demos](demos/README.md)
 - [Architecture](docs/architecture/)
 - [Examples](examples/)
 

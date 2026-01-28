@@ -224,25 +224,98 @@ while condition:
         break
 ```
 
+## Connectors
+
+### MQTT Connector
+
+The MQTT connector allows Varpulis to receive events from and send alerts to an MQTT broker.
+
+**IMPORTANT**: MQTT support requires the `mqtt` feature flag at compile time:
+```bash
+cargo build --release --features mqtt
+```
+
+```varpulis
+# MQTT configuration block - place at the top of your VPL file
+config mqtt {
+    broker: "localhost",       # MQTT broker hostname or IP
+    port: 1883,                # MQTT broker port (default: 1883)
+    client_id: "varpulis-app", # Unique client identifier
+    input_topic: "events/#",   # Topic pattern to subscribe to (supports wildcards)
+    output_topic: "alerts"     # Topic prefix for output messages
+}
+
+# Import pattern definitions from another file
+import "patterns.vpl"
+```
+
+The MQTT connector automatically:
+- Subscribes to `input_topic` to receive events
+- Publishes stream `.emit()` results to `output_topic`
+- Handles reconnection on connection loss
+- Supports QoS levels 0, 1, and 2
+
+**Example with streams:**
+```varpulis
+config mqtt {
+    broker: "localhost",
+    port: 1883,
+    client_id: "fraud-detector",
+    input_topic: "transactions/#",
+    output_topic: "alerts/fraud"
+}
+
+event Transaction:
+    user_id: str
+    amount: float
+    status: str
+
+# Alerts will be published to "alerts/fraud"
+stream FraudAlert = Transaction
+    .where(amount > 10000 and status == "pending")
+    .emit(
+        alert_type: "high_value_transaction",
+        user_id: user_id,
+        amount: amount
+    )
+```
+
+### HTTP Connector
+
+```varpulis
+# HTTP webhook sink
+stream Alerts = DetectedPatterns
+    .emit(severity: "high")
+    .to("http://webhook.example.com/alerts")
+```
+
+### Kafka Connector (requires `kafka` feature)
+
+```varpulis
+stream Output = Processed
+    .emit()
+    .to("kafka://broker:9092/topic")
+```
+
 ## Configuration
 
 ```varpulis
 config:
     mode: "low_latency"
-    
+
     embedding:
         type: "rule_based"
         dim: 128
-    
+
     attention:
         enabled: true
         compute: "cpu"
         num_heads: 4
-    
+
     state:
         backend: "rocksdb"
         path: "/var/lib/varpulis/state"
-    
+
     observability:
         metrics:
             enabled: true
