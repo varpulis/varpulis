@@ -1,0 +1,41 @@
+{
+  "timestamp": "2026-01-28T15:55:42.510502",
+  "scenario": "Login -> FailedTransaction",
+  "events_count": 11,
+  "expected_alerts": [
+    "user1",
+    "user2",
+    "user3",
+    "user4"
+  ],
+  "varpulis": {
+    "alerts": [
+      "user1",
+      "user2",
+      "user3",
+      "user4"
+    ],
+    "correct": true,
+    "latencies_ms": [
+      202.51611328125,
+      504.22216796875,
+      604.734619140625,
+      906.24267578125
+    ]
+  },
+  "flink": {
+    "alerts": [
+      "user1",
+      "user2",
+      "user3",
+      "user4"
+    ],
+    "correct": true,
+    "latencies_ms": [
+      781.81591796875,
+      785.578369140625,
+      874.523193359375,
+      1075.7109375
+    ]
+  }
+}
