@@ -41,8 +41,23 @@ use indexmap::IndexMap;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
-use varpulis_core::ast::{ConfigItem, Program, Stmt, StreamOp, StreamSource};
+use varpulis_core::ast::{
+    ConfigItem, Expr, Program, SasePatternExpr, Stmt, StreamOp, StreamSource,
+};
 use varpulis_core::Value;
+
+/// Named SASE+ pattern definition
+#[derive(Debug, Clone)]
+pub struct NamedPattern {
+    /// Pattern name
+    pub name: String,
+    /// SASE+ pattern expression (SEQ, AND, OR, NOT)
+    pub expr: SasePatternExpr,
+    /// Optional time constraint
+    pub within: Option<Expr>,
+    /// Optional partition key expression
+    pub partition_by: Option<Expr>,
+}
 
 /// The main Varpulis engine
 pub struct Engine {
@@ -52,6 +67,8 @@ pub struct Engine {
     event_sources: HashMap<String, Vec<String>>,
     /// User-defined functions
     functions: HashMap<String, UserFunction>,
+    /// Named patterns for reuse
+    patterns: HashMap<String, NamedPattern>,
     /// Configuration blocks (e.g., mqtt, kafka)
     configs: HashMap<String, EngineConfig>,
     /// Alert sender
@@ -69,12 +86,23 @@ impl Engine {
             streams: HashMap::new(),
             event_sources: HashMap::new(),
             functions: HashMap::new(),
+            patterns: HashMap::new(),
             configs: HashMap::new(),
             alert_tx,
             events_processed: 0,
             alerts_generated: 0,
             metrics: None,
         }
+    }
+
+    /// Get a named pattern by name
+    pub fn get_pattern(&self, name: &str) -> Option<&NamedPattern> {
+        self.patterns.get(name)
+    }
+
+    /// Get all registered patterns
+    pub fn patterns(&self) -> &HashMap<String, NamedPattern> {
+        &self.patterns
     }
 
     /// Get a configuration block by name
@@ -160,6 +188,26 @@ impl Engine {
                             values,
                         },
                     );
+                }
+                Stmt::PatternDecl {
+                    name,
+                    expr,
+                    within,
+                    partition_by,
+                } => {
+                    let named_pattern = NamedPattern {
+                        name: name.clone(),
+                        expr: expr.clone(),
+                        within: within.clone(),
+                        partition_by: partition_by.clone(),
+                    };
+                    info!(
+                        "Registered SASE+ pattern: {} (within: {}, partition: {})",
+                        name,
+                        within.is_some(),
+                        partition_by.is_some()
+                    );
+                    self.patterns.insert(name.clone(), named_pattern);
                 }
                 Stmt::Import { path, alias } => {
                     info!("Import statement: {} (alias: {:?})", path, alias);

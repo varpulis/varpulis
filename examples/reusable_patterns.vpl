@@ -1,0 +1,97 @@
+# VarpulisQL - Reusable SASE+ Patterns
+#
+# This example demonstrates the pattern declaration syntax for defining
+# reusable complex event patterns that can be referenced across your application.
+#
+# Syntax: pattern Name = SEQ(...) [within duration] [partition by key]
+
+# Event definitions
+event Login:
+    user_id: str
+    ip_address: str
+    device: str
+    location: str
+
+event Logout:
+    user_id: str
+    session_duration: int
+
+event Transaction:
+    user_id: str
+    amount: float
+    status: str
+    merchant: str
+    currency: str
+
+event Alert:
+    user_id: str
+    alert_type: str
+    severity: str
+
+# =============================================================================
+# REUSABLE PATTERN DECLARATIONS
+# =============================================================================
+
+# Pattern 1: Simple sequence - Login followed by Logout
+pattern LoginLogout = SEQ(Login, Logout) within 24h partition by user_id
+
+# Pattern 2: Login followed by multiple failed transactions
+# The + Kleene operator matches one or more failed transactions
+pattern LoginThenFailedTx = SEQ(
+    Login as login,
+    Transaction+ where status == "failed" as failed_txs
+) within 10m partition by user_id
+
+# Pattern 3: High-value transaction pattern
+# Matches transactions over $1000
+pattern HighValueTx = Transaction where amount > 1000 as high_value
+
+# Pattern 4: Using OR to match any of multiple event types
+pattern AuthEvent = Login OR Logout
+
+# Pattern 5: Using AND to require concurrent patterns
+pattern BothLoginAndTx = Login AND Transaction
+
+# Pattern 6: Negation - Login without a subsequent Logout (potential session leak)
+pattern LoginWithoutLogout = SEQ(
+    Login as login,
+    NOT Logout,
+    Transaction as tx
+) within 1h partition by user_id
+
+# Pattern 7: Complex fraud detection sequence
+pattern FraudSequence = SEQ(
+    Login where device == "unknown" as suspicious_login,
+    Transaction+ where amount > 500 as transactions,
+    NOT Logout
+) within 30m partition by user_id
+
+# Pattern 8: Multi-location access detection
+pattern MultiLocationAccess = SEQ(
+    Login as first_login,
+    Login where location != first_login.location as second_login
+) within 1h partition by user_id
+
+# =============================================================================
+# STREAMS USING PATTERNS (Future feature - pattern reference in streams)
+# =============================================================================
+
+# Note: Currently, patterns are stored for reference but stream execution
+# uses the inline sequence syntax. Future versions will allow:
+# stream Alerts = apply(LoginThenFailedTx).emit(...)
+
+# Current working syntax - equivalent to LoginThenFailedTx pattern:
+stream SuspiciousActivity = Login as login
+    -> Transaction where user_id == login.user_id and status == "failed" as failed_tx
+    .within(10m)
+    .emit(
+        alert_type: "LOGIN_THEN_FAILED_TX",
+        user_id: login.user_id,
+        login_ip: login.ip_address,
+        failed_amount: failed_tx.amount,
+        severity: if failed_tx.amount > 1000 then "high" else "medium"
+    )
+
+# Runtime configuration
+config:
+    mode: "low_latency"

@@ -109,6 +109,7 @@ fn format_rule_name(rule: &Rule) -> String {
         Rule::expr => "expression".to_string(),
         Rule::statement => "statement".to_string(),
         Rule::stream_decl => "stream declaration".to_string(),
+        Rule::pattern_decl => "pattern declaration".to_string(),
         Rule::event_decl => "event declaration".to_string(),
         Rule::fn_decl => "function declaration".to_string(),
         Rule::INDENT => "indented block".to_string(),
@@ -118,6 +119,9 @@ fn format_rule_name(rule: &Rule) -> String {
         Rule::additive_op => "operator (+, -)".to_string(),
         Rule::multiplicative_op => "operator (*, /, %)".to_string(),
         Rule::postfix_suffix => "method call or member access".to_string(),
+        Rule::sase_pattern_expr => "SASE pattern expression".to_string(),
+        Rule::sase_seq_expr => "SEQ expression".to_string(),
+        Rule::kleene_op => "Kleene operator (+, *, ?)".to_string(),
         _ => format!("{:?}", rule).to_lowercase().replace('_', " "),
     }
 }
@@ -128,6 +132,7 @@ fn parse_statement(pair: pest::iterators::Pair<Rule>) -> ParseResult<Spanned<Stm
 
     let stmt = match inner.as_rule() {
         Rule::stream_decl => parse_stream_decl(inner)?,
+        Rule::pattern_decl => parse_pattern_decl(inner)?,
         Rule::event_decl => parse_event_decl(inner)?,
         Rule::type_decl => parse_type_decl(inner)?,
         Rule::var_decl => parse_var_decl(inner)?,
@@ -201,6 +206,191 @@ fn parse_stream_expr(
     }
 
     Ok((source, ops))
+}
+
+// ============================================================================
+// SASE+ Pattern Declaration Parsing
+// ============================================================================
+
+fn parse_pattern_decl(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
+    let mut inner = pair.into_inner();
+    let name = inner.expect_next("pattern name")?.as_str().to_string();
+
+    let mut expr = SasePatternExpr::Event("".to_string());
+    let mut within = None;
+    let mut partition_by = None;
+
+    for p in inner {
+        match p.as_rule() {
+            Rule::sase_pattern_expr => {
+                expr = parse_sase_pattern_expr(p)?;
+            }
+            Rule::pattern_within_clause => {
+                let dur_pair = p.into_inner().expect_next("within duration")?;
+                within = Some(Expr::Duration(parse_duration(dur_pair.as_str())));
+            }
+            Rule::pattern_partition_clause => {
+                let key = p
+                    .into_inner()
+                    .expect_next("partition key")?
+                    .as_str()
+                    .to_string();
+                partition_by = Some(Expr::Ident(key));
+            }
+            _ => {}
+        }
+    }
+
+    Ok(Stmt::PatternDecl {
+        name,
+        expr,
+        within,
+        partition_by,
+    })
+}
+
+fn parse_sase_pattern_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<SasePatternExpr> {
+    let inner = pair.into_inner().expect_next("SASE pattern expression")?;
+    parse_sase_or_expr(inner)
+}
+
+fn parse_sase_or_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<SasePatternExpr> {
+    let mut inner = pair.into_inner();
+    let mut left = parse_sase_and_expr(inner.expect_next("OR expression operand")?)?;
+
+    for right_pair in inner {
+        let right = parse_sase_and_expr(right_pair)?;
+        left = SasePatternExpr::Or(Box::new(left), Box::new(right));
+    }
+
+    Ok(left)
+}
+
+fn parse_sase_and_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<SasePatternExpr> {
+    let mut inner = pair.into_inner();
+    let mut left = parse_sase_not_expr(inner.expect_next("AND expression operand")?)?;
+
+    for right_pair in inner {
+        let right = parse_sase_not_expr(right_pair)?;
+        left = SasePatternExpr::And(Box::new(left), Box::new(right));
+    }
+
+    Ok(left)
+}
+
+fn parse_sase_not_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<SasePatternExpr> {
+    let mut inner = pair.into_inner();
+    let first = inner.expect_next("NOT or primary expression")?;
+
+    if first.as_str() == "NOT" {
+        let expr = parse_sase_primary_expr(inner.expect_next("expression after NOT")?)?;
+        Ok(SasePatternExpr::Not(Box::new(expr)))
+    } else {
+        parse_sase_primary_expr(first)
+    }
+}
+
+fn parse_sase_primary_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<SasePatternExpr> {
+    let inner = pair.into_inner().expect_next("SASE primary expression")?;
+
+    match inner.as_rule() {
+        Rule::sase_seq_expr => parse_sase_seq_expr(inner),
+        Rule::sase_grouped_expr => {
+            let nested = inner.into_inner().expect_next("grouped expression")?;
+            let expr = parse_sase_pattern_expr(nested)?;
+            Ok(SasePatternExpr::Group(Box::new(expr)))
+        }
+        Rule::sase_event_ref => parse_sase_event_ref(inner),
+        _ => Ok(SasePatternExpr::Event(inner.as_str().to_string())),
+    }
+}
+
+fn parse_sase_seq_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<SasePatternExpr> {
+    let mut items = Vec::new();
+
+    for p in pair.into_inner() {
+        if p.as_rule() == Rule::sase_seq_items {
+            for item in p.into_inner() {
+                if item.as_rule() == Rule::sase_seq_item {
+                    items.push(parse_sase_seq_item(item)?);
+                }
+            }
+        }
+    }
+
+    Ok(SasePatternExpr::Seq(items))
+}
+
+fn parse_sase_seq_item(pair: pest::iterators::Pair<Rule>) -> ParseResult<SasePatternItem> {
+    let inner = pair.into_inner().expect_next("sequence item")?;
+
+    match inner.as_rule() {
+        Rule::sase_negated_item => parse_sase_item_inner(inner, true),
+        Rule::sase_positive_item => parse_sase_item_inner(inner, false),
+        _ => parse_sase_item_inner(inner, false),
+    }
+}
+
+fn parse_sase_item_inner(
+    pair: pest::iterators::Pair<Rule>,
+    _negated: bool,
+) -> ParseResult<SasePatternItem> {
+    let mut inner = pair.into_inner();
+    let event_type = inner.expect_next("event type")?.as_str().to_string();
+
+    let mut kleene = None;
+    let mut filter = None;
+    let mut alias = None;
+
+    for p in inner {
+        match p.as_rule() {
+            Rule::kleene_op => {
+                kleene = Some(match p.as_str() {
+                    "+" => KleeneOp::Plus,
+                    "*" => KleeneOp::Star,
+                    "?" => KleeneOp::Optional,
+                    _ => KleeneOp::Plus,
+                });
+            }
+            Rule::sase_where_clause => {
+                filter = Some(parse_expr(
+                    p.into_inner().expect_next("filter expression")?,
+                )?);
+            }
+            Rule::sase_alias_clause => {
+                alias = Some(p.into_inner().expect_next("alias")?.as_str().to_string());
+            }
+            _ => {}
+        }
+    }
+
+    // For negated items, we prefix with "!" to indicate negation
+    // The runtime will interpret this
+    let event_type = if _negated {
+        format!("!{}", event_type)
+    } else {
+        event_type
+    };
+
+    Ok(SasePatternItem {
+        event_type,
+        alias,
+        kleene,
+        filter,
+    })
+}
+
+fn parse_sase_event_ref(pair: pest::iterators::Pair<Rule>) -> ParseResult<SasePatternExpr> {
+    // Single event reference with optional kleene, where, alias
+    let item = parse_sase_item_inner(pair, false)?;
+
+    // If it's a simple event with no modifiers, return Event variant
+    if item.alias.is_none() && item.kleene.is_none() && item.filter.is_none() {
+        Ok(SasePatternExpr::Event(item.event_type))
+    } else {
+        // Otherwise wrap in a single-item Seq
+        Ok(SasePatternExpr::Seq(vec![item]))
+    }
 }
 
 fn parse_stream_source(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamSource> {
@@ -1904,6 +2094,63 @@ mod tests {
     fn test_parse_pattern_with_lambda() {
         let result =
             parse("stream Test = Trade.window(1m).pattern(p: x => x.len() > 3).emit(alert: true)");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_sase_pattern_decl_simple() {
+        let result = parse("pattern SimpleAlert = SEQ(Login, Transaction)");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_sase_pattern_decl_with_kleene() {
+        let result = parse("pattern MultiTx = SEQ(Login, Transaction+ where amount > 1000)");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_sase_pattern_decl_with_alias() {
+        let result = parse("pattern AliasedPattern = SEQ(Login as login, Transaction as tx)");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_sase_pattern_decl_with_within() {
+        let result = parse("pattern TimedPattern = SEQ(A, B) within 10m");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_sase_pattern_decl_with_partition() {
+        let result = parse("pattern PartitionedPattern = SEQ(A, B) partition by user_id");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_sase_pattern_decl_full() {
+        // Note: In SASE+ syntax, 'where' comes before 'as' (filter then alias)
+        let result = parse(
+            "pattern SuspiciousActivity = SEQ(Transaction+ where amount > 1000 as txs) within 10m partition by user_id"
+        );
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_sase_pattern_decl_or() {
+        let result = parse("pattern AlertOrWarn = Login OR Logout");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_sase_pattern_decl_and() {
+        let result = parse("pattern BothEvents = Login AND Transaction");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_sase_pattern_decl_not() {
+        let result = parse("pattern NoLogout = SEQ(Login, NOT Logout, Transaction)");
         assert!(result.is_ok(), "Failed: {:?}", result.err());
     }
 }
