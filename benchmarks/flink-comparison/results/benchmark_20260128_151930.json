@@ -1,0 +1,29 @@
+{
+  "timestamp": "2026-01-28T15:19:30.529127",
+  "scenario": "Login -> FailedTransaction",
+  "events_count": 10,
+  "expected_alerts": [
+    "user1",
+    "user2",
+    "user3",
+    "user4"
+  ],
+  "varpulis": {
+    "alerts": [],
+    "correct": false,
+    "latencies_ms": []
+  },
+  "flink": {
+    "alerts": [
+      "user1",
+      "user2",
+      "user3"
+    ],
+    "correct": false,
+    "latencies_ms": [
+      910.947265625,
+      915.88623046875,
+      919.76611328125
+    ]
+  }
+}
