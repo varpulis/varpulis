@@ -522,7 +522,9 @@ mod mqtt_impl {
                             if let Ok(payload) = std::str::from_utf8(&publish.payload) {
                                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(payload)
                                 {
-                                    let event = json_to_event(&json);
+                                    // Extract event type from topic (last segment) or from JSON
+                                    let topic = &publish.topic;
+                                    let event = json_to_event_with_topic(&json, topic);
                                     if tx.send(event).await.is_err() {
                                         warn!("MQTT source {} channel closed", name);
                                         break;
@@ -664,14 +666,24 @@ mod mqtt_impl {
         }
     }
 
-    fn json_to_event(json: &serde_json::Value) -> Event {
-        // Support both "event_type" and "type" field names for flexibility
+    /// Convert JSON to Event, using the MQTT topic to determine event type if not in JSON
+    fn json_to_event_with_topic(json: &serde_json::Value, topic: &str) -> Event {
+        // Priority: 1) event_type field, 2) type field, 3) last segment of MQTT topic
         let event_type = json
             .get("event_type")
             .or_else(|| json.get("type"))
             .and_then(|v| v.as_str())
-            .unwrap_or("Unknown")
-            .to_string();
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| {
+                // Extract event type from MQTT topic (last segment)
+                // e.g., "benchmark/input/MarketATick" -> "MarketATick"
+                topic
+                    .rsplit('/')
+                    .next()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("Unknown")
+                    .to_string()
+            });
 
         let mut event = Event::new(&event_type);
 
