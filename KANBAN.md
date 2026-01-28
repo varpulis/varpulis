@@ -1,20 +1,20 @@
 # Varpulis CEP - Kanban
 
-> Dernière mise à jour: 2026-01-27
+> Dernière mise à jour: 2026-01-28
 
 ## Vue d'ensemble
 
 | Catégorie | À faire | En cours | Terminé |
 |-----------|---------|----------|----------|
 | Parser Pest | 0 | 0 | **8** |
-| SASE+ | 0 | 0 | **9** |
+| SASE+ | 0 | 0 | **10** |
 | Attention | 0 | 0 | 4 |
 | Benchmarks | 0 | 0 | 2 |
 | Test Infra | 0 | 0 | 4 |
 | Couverture | 2 | 0 | 0 |
 | VS Code | 1 | 0 | 0 |
-| Engine Refactor | 0 | 0 | **2** |
-| **Total** | **3** | **0** | **29** |
+| Engine Refactor | 0 | 0 | **3** |
+| **Total** | **3** | **0** | **31** |
 
 ---
 
@@ -54,12 +54,16 @@
 - [x] **SASE-06**: Syntaxe pattern supportée (lambdas + séquences `A -> B -> C`)
 - [x] **SASE-07**: Benchmarks performance (`benches/pattern_benchmark.rs`)
 - [x] **SASE-08**: Exemples SASE+ concrets (`examples/sase_patterns.vpl`)
-- [x] **SASE-09**: **Intégration complète dans engine.rs** 🆕
+- [x] **SASE-09**: **Intégration complète dans engine.rs**
   - SASE+ utilisé en priorité pour tous les patterns de séquence
   - Références inter-événements (CompareRef)
   - Kleene+ avec `CompleteAndBranch`
   - Négation globale via `global_negations`
   - Export `eval_filter_expr` pour évaluation des prédicats
+- [x] **SASE-10**: **Enrichissement des démos avec patterns SASE+** 🆕
+  - HVAC: 4 nouveaux patterns (RapidTempSwing, CascadeFailure, etc.)
+  - Financial: 4 nouveaux patterns (FlashCrashRecovery, MomentumUp, etc.)
+  - Total: 11 patterns SASE+ dans les exemples
 
 ---
 
@@ -181,7 +185,7 @@ python run_scenario.py scenarios/fraud_scenario.yaml
 
 ## ✅ TERMINÉ - Refactoring Engine
 
-> **Statut**: engine.rs découpé en modules, code mort supprimé
+> **Statut**: engine.rs découpé en modules, code mort supprimé, legacy tracker retiré
 
 ### Terminé
 
@@ -195,6 +199,11 @@ python run_scenario.py scenarios/fraud_scenario.yaml
   - `PartitionBy` variant inutilisé
   - `aggregators` field inutilisé
   - `#[allow(dead_code)]` sur `sase_engine`
+- [x] **ENG-03**: Supprimer legacy SequenceTracker 🆕
+  - SASE+ est maintenant le seul moteur de séquences
+  - Supprimé `sequence_tracker` field de `StreamDefinition`
+  - Supprimé `compile_sequence_filter()` inutilisé
+  - ~150 lignes de code legacy supprimées
 
 ---
 
@@ -261,11 +270,12 @@ cargo test -p varpulis-parser pest
 - **Clippy warnings**: 0
 - **Parser par défaut**: ✅ Pest (avec préprocesseur d'indentation)
 - **Attention Engine**: ✅ Optimisé ~30x speedup
-- **SASE+ Engine**: ✅ **Intégré comme moteur principal**
+- **SASE+ Engine**: ✅ **Seul moteur de séquences** (legacy tracker supprimé)
   - NFA-based pattern matching
   - Kleene+ avec émission continue
   - Négation globale
   - Références inter-événements
-- **Engine**: ✅ Modularisé (5 sous-modules)
+  - 11 patterns dans les exemples
+- **Engine**: ✅ Modularisé (5 sous-modules), nettoyé
 - **Benchmarks**: Criterion benchmarks disponibles
 - **Documentation**: README.md production-ready
