@@ -9,8 +9,8 @@ Varpulis supports multiple connector types:
 | Connector | Input | Output | Status |
 |-----------|-------|--------|--------|
 | **MQTT**  | Yes | Yes | Production |
-| **HTTP**  | Yes | Yes | Production |
-| **Kafka** | Yes | Yes | Planned |
+| **HTTP**  | No | Yes | Output only |
+| **Kafka** | No | No | Stub (not implemented) |
 | **Console** | No | Yes | Debug |
 
 ## MQTT Connector

@@ -284,9 +284,12 @@ stream Alerts = DetectedPatterns
     .to("http://webhook.example.com/alerts")
 ```
 
-### Kafka Connector (requires `kafka` feature)
+### Kafka Connector (Not Yet Implemented)
+
+Kafka support is planned but not yet available. The syntax will be:
 
 ```varpulis
+# PLANNED - NOT YET IMPLEMENTED
 stream Output = Processed
     .emit()
     .to("kafka://broker:9092/topic")

@@ -105,14 +105,16 @@ Varpulis is a next-generation streaming analytics engine combining:
 | Time-based windows | ✅ Implemented | Tumbling and sliding |
 | Partitioned windows | ✅ Implemented | partition_by() with any window type |
 | Join operations | ✅ Implemented | Multi-stream correlation with .on() |
-| Sequence patterns | ✅ Implemented | followed-by, negation, timeout |
+| Sequence patterns | ✅ Implemented | followed-by, within timeout |
 | Attention mechanism | ✅ Implemented | Deterministic correlation scoring |
-| User-defined functions | ✅ Implemented | fn keyword |
+| User-defined functions | ✅ Implemented | fn keyword (parsed, basic eval) |
 | MQTT connector | ✅ Implemented | Input and output |
-| HTTP connector | ✅ Implemented | Event ingestion |
-| WebSocket | 🚧 Partial | Server mode working |
+| HTTP connector | 🚧 Partial | Output only (webhooks) |
+| WebSocket | ✅ Implemented | Server mode for dashboard |
+| Kafka connector | 📋 Planned | Stub only, not functional |
 | RocksDB state | 📋 Planned | Currently in-memory only |
 | Clustering | 📋 Planned | Single-node only |
+| Parallelization ops | 🚧 Partial | Parsed but not evaluated (.concurrent, .process) |
 
 ## See Also
 
