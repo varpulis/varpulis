@@ -237,9 +237,9 @@ stream DashboardAlerts from TemperatureAnomaly
 
 ## Prérequis
 
-- **Varpulis CLI** compilé avec feature `mqtt`:
+- **Varpulis CLI**:
   ```bash
-  cargo build --release --features mqtt
+  cargo build --release
   ```
 - **Python 3.8+** avec `paho-mqtt`, `click`, `faker`, `rich`
 - **Node.js 18+** pour le dashboard server

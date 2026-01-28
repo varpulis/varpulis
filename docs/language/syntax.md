@@ -228,12 +228,7 @@ while condition:
 
 ### MQTT Connector
 
-The MQTT connector allows Varpulis to receive events from and send alerts to an MQTT broker.
-
-**IMPORTANT**: MQTT support requires the `mqtt` feature flag at compile time:
-```bash
-cargo build --release --features mqtt
-```
+The MQTT connector allows Varpulis to receive events from and send alerts to an MQTT broker. MQTT support is included by default in the Varpulis CLI.
 
 ```varpulis
 # MQTT configuration block - place at the top of your VPL file

@@ -56,11 +56,11 @@ See [`language/syntax.md`](language/syntax.md#connectors) for complete connector
 - [`language/grammar.md`](language/grammar.md) - Formal grammar (LALRPOP)
 
 ### 🔌 Connectors (see [`language/connectors.md`](language/connectors.md))
-| Connector | Config | Feature Flag | Status |
-|-----------|--------|--------------|--------|
-| **MQTT** | `config mqtt { broker, port, ... }` | `--features mqtt` | Production |
-| **HTTP** | `.to("http://...")` | (included) | Production |
-| **Kafka** | `.to("kafka://...")` | `--features kafka` | Planned |
+| Connector | Config | Status |
+|-----------|--------|--------|
+| **MQTT** | `config mqtt { broker, port, ... }` | Production |
+| **HTTP** | `.to("http://...")` | Production |
+| **Kafka** | `.to("kafka://...")` | Planned |
 
 ### 📚 Examples
 - [`examples/hvac-building.md`](examples/hvac-building.md) - HVAC building supervision (IoT/Smart Building)

@@ -24,11 +24,8 @@
 git clone https://github.com/varpulis/varpulis.git
 cd varpulis
 
-# Build (basic)
+# Build
 cargo build --release
-
-# Build with MQTT support (recommended for production)
-cargo build --release --features mqtt
 
 # Run tests
 cargo test --workspace
@@ -37,10 +34,7 @@ cargo test --workspace
 ### Running with MQTT
 
 ```bash
-# Build with MQTT support
-cargo build --release --features mqtt
-
-# Run your program (connects to MQTT broker)
+# Run your program (connects to MQTT broker defined in config)
 ./target/release/varpulis run --file my_patterns.vpl
 ```
 
@@ -83,11 +77,11 @@ stream FraudAlert = Transaction as tx
 
 Varpulis supports multiple connectors for event ingestion and output:
 
-| Connector | Feature Flag | Status | Documentation |
-|-----------|--------------|--------|---------------|
-| **MQTT** | `--features mqtt` | Production | [docs/language/connectors.md](docs/language/connectors.md) |
-| **HTTP** | (included) | Production | Webhooks via `.to("http://...")` |
-| **Kafka** | `--features kafka` | Planned | `.to("kafka://...")` |
+| Connector | Status | Documentation |
+|-----------|--------|---------------|
+| **MQTT** | Production | [docs/language/connectors.md](docs/language/connectors.md) |
+| **HTTP** | Production | Webhooks via `.to("http://...")` |
+| **Kafka** | Planned | `.to("kafka://...")` |
 
 ### MQTT Configuration
 
