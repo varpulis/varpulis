@@ -287,4 +287,4 @@ config_entry    ::= (STRING | IDENTIFIER) ':' config_value
 
 ## See Also
 
-- [LALRPOP Implementation](../../grammar/varpulis.lalrpop)
+- [Pest Grammar](../../crates/varpulis-parser/src/varpulis.pest)

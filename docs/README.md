@@ -53,7 +53,7 @@ See [`language/syntax.md`](language/syntax.md#connectors) for complete connector
 - [`language/keywords.md`](language/keywords.md) - Reserved keywords
 - [`language/operators.md`](language/operators.md) - Operators
 - [`language/builtins.md`](language/builtins.md) - Built-in functions
-- [`language/grammar.md`](language/grammar.md) - Formal grammar (LALRPOP)
+- [`language/grammar.md`](language/grammar.md) - Formal grammar (Pest PEG)
 
 ### 🔌 Connectors (see [`language/connectors.md`](language/connectors.md))
 | Connector | Config | Status |
