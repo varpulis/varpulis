@@ -71,9 +71,6 @@ Stream processing library for Apache Kafka. See [comparison](overview.md#vs-kafk
 
 ## L
 
-### LALRPOP
-LR(1) parser generator for Rust.
-
 ### Latency
 Time elapsed between receiving an event and producing the result.
 
@@ -89,6 +86,9 @@ Logical division of a stream to enable parallel processing.
 
 ### Pattern
 Detection rule defining a sequence or combination of events to identify.
+
+### Pest
+PEG (Parsing Expression Grammar) parser generator for Rust, used by VarpulisQL.
 
 ## R
 

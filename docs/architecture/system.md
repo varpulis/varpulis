@@ -49,7 +49,7 @@ Event Sources → Ingestion → Embedding → Pattern Matching → Aggregation �
 ## Components
 
 ### Compiler
-- Parse VarpulisQL via LALRPOP
+- Parse VarpulisQL via Pest PEG parser
 - Generates IR (Intermediate Representation)
 - Static optimizations
 
