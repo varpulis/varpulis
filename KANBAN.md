@@ -14,7 +14,8 @@
 | Couverture | 2 | 0 | 0 |
 | VS Code | 1 | 0 | 0 |
 | Engine Refactor | 0 | 0 | **3** |
-| **Total** | **3** | **0** | **31** |
+| Security | 0 | 0 | **3** |
+| **Total** | **3** | **0** | **34** |
 
 ---
 
@@ -204,6 +205,27 @@ python run_scenario.py scenarios/fraud_scenario.yaml
   - Supprimé `sequence_tracker` field de `StreamDefinition`
   - Supprimé `compile_sequence_filter()` inutilisé
   - ~150 lignes de code legacy supprimées
+
+---
+
+## ✅ TERMINÉ - Security Hardening
+
+> **Statut**: Vulnérabilités critiques corrigées
+
+### Terminé
+
+- [x] **SEC-01**: Corriger vulnérabilité path traversal 🆕
+  - Ajout de `validate_path()` pour vérifier que les chemins sont dans le workdir
+  - Utilisation de `canonicalize()` pour résoudre les `..` et symlinks
+  - Messages d'erreur génériques (pas de disclosure de chemins)
+- [x] **SEC-02**: Bind WebSocket sur localhost par défaut 🆕
+  - Changement de `0.0.0.0` à `127.0.0.1` par défaut
+  - Ajout option `--bind` pour accès externe explicite
+  - Ajout option `--workdir` pour limiter l'accès fichiers
+- [x] **SEC-03**: Limite de récursion pour imports 🆕
+  - Ajout de `MAX_IMPORT_DEPTH = 10`
+  - Détection de cycles avec `HashSet<PathBuf>`
+  - Protection contre stack overflow et boucles infinies
 
 ---
 
