@@ -510,9 +510,15 @@ mod mqtt_impl {
             let name = self.name.clone();
 
             tokio::spawn(async move {
+                let mut consecutive_errors: u32 = 0;
+                const MAX_CONSECUTIVE_ERRORS: u32 = 10;
+                const MAX_BACKOFF_SECS: u64 = 30;
+
                 while running.load(Ordering::SeqCst) {
                     match eventloop.poll().await {
                         Ok(MqttEvent::Incoming(Packet::Publish(publish))) => {
+                            // Reset error counter on successful message
+                            consecutive_errors = 0;
                             if let Ok(payload) = std::str::from_utf8(&publish.payload) {
                                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(payload)
                                 {
@@ -524,13 +530,37 @@ mod mqtt_impl {
                                 }
                             }
                         }
-                        Ok(_) => {}
+                        Ok(_) => {
+                            // Other successful events (ConnAck, SubAck, etc.) reset error counter
+                            consecutive_errors = 0;
+                        }
                         Err(e) => {
-                            error!("MQTT source {} error: {:?}", name, e);
-                            tokio::time::sleep(Duration::from_secs(1)).await;
+                            consecutive_errors += 1;
+
+                            // Check if we've exceeded the error limit
+                            if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
+                                error!(
+                                    "MQTT source {} exceeded max consecutive errors ({}), stopping",
+                                    name, MAX_CONSECUTIVE_ERRORS
+                                );
+                                running.store(false, Ordering::SeqCst);
+                                break;
+                            }
+
+                            // Exponential backoff: 1s, 2s, 4s, 8s, ... up to MAX_BACKOFF_SECS
+                            let backoff_secs = (1u64 << (consecutive_errors - 1).min(5))
+                                .min(MAX_BACKOFF_SECS);
+
+                            warn!(
+                                "MQTT source {} error (attempt {}/{}): {:?}, retrying in {}s",
+                                name, consecutive_errors, MAX_CONSECUTIVE_ERRORS, e, backoff_secs
+                            );
+
+                            tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
                         }
                     }
                 }
+                info!("MQTT source {} eventloop stopped", name);
             });
 
             Ok(())
@@ -635,8 +665,10 @@ mod mqtt_impl {
     }
 
     fn json_to_event(json: &serde_json::Value) -> Event {
+        // Support both "event_type" and "type" field names for flexibility
         let event_type = json
             .get("event_type")
+            .or_else(|| json.get("type"))
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown")
             .to_string();
@@ -649,9 +681,9 @@ mod mqtt_impl {
                 event = event.with_field(k, json_value_to_native(v));
             }
         } else if let Some(obj) = json.as_object() {
-            // Parse fields directly from root object (excluding event_type)
+            // Parse fields directly from root object (excluding type fields)
             for (k, v) in obj {
-                if k != "event_type" {
+                if k != "event_type" && k != "type" {
                     event = event.with_field(k, json_value_to_native(v));
                 }
             }

@@ -41,8 +41,13 @@ pub fn eval_filter_expr(
                     return captured.get(member).cloned();
                 }
                 // Then check event data with prefixed field name (for join results)
-                let prefixed_field = format!("{}.{}", alias, member);
-                if let Some(value) = event.get(&prefixed_field) {
+                // Try both dot notation (alias.field) and underscore notation (alias_field)
+                let prefixed_dot = format!("{}.{}", alias, member);
+                if let Some(value) = event.get(&prefixed_dot) {
+                    return Some(value.clone());
+                }
+                let prefixed_underscore = format!("{}_{}", alias, member);
+                if let Some(value) = event.get(&prefixed_underscore) {
                     return Some(value.clone());
                 }
                 // Also try the member directly if alias matches event type
