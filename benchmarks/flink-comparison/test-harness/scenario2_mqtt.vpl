@@ -1,0 +1,42 @@
+# Varpulis - Scenario 2 MQTT: Temporal Pattern (Login -> FailedTransaction)
+# Reads from MQTT, writes alerts to MQTT
+
+config mqtt {
+    broker: "localhost",
+    port: 1883,
+    client_id: "varpulis-benchmark-scenario2",
+    input_topic: "benchmark/input/#",
+    output_topic: "benchmark/output/varpulis"
+}
+
+# Event type definitions
+event Login:
+    user_id: str
+    ip_address: str
+    device: str
+
+event Transaction:
+    user_id: str
+    amount: float
+    status: str
+    merchant: str
+
+# SASE+ Temporal sequence pattern:
+# Login followed by failed Transaction from same user within 10 minutes
+stream SuspiciousActivity = Login as login
+    -> Transaction where user_id == login.user_id and status == "failed" as failed_tx
+    .within(10m)
+    .emit(
+        alert_type: "LOGIN_THEN_FAILED_TX",
+        user_id: login.user_id,
+        login_ip: login.ip_address,
+        login_device: login.device,
+        failed_amount: failed_tx.amount,
+        merchant: failed_tx.merchant,
+        time_between: failed_tx.ts - login.ts,
+        severity: if failed_tx.amount > 1000 then "high" else "medium"
+    )
+
+# Configuration
+config:
+    mode: "low_latency"

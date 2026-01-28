@@ -1,0 +1,14 @@
+# Maven build output
+target/
+
+# IDE files
+.idea/
+*.iml
+.classpath
+.project
+.settings/
+
+# Python
+__pycache__/
+*.pyc
+.venv/

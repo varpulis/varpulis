@@ -1,0 +1,51 @@
+# Scenario 2: Login -> FailedTransaction Test
+# Tests pattern: Login followed by failed Transaction within 10 minutes
+#
+# Expected matches:
+# 1. user1: Login at 0ms, FailedTx at 2000ms -> MATCH (amount=500, severity=medium)
+# 2. user2: Login at 1000ms, FailedTx at 5000ms -> MATCH (amount=1500, severity=high)
+# 3. user3: Login at 4000ms, FailedTx at 6000ms -> MATCH (amount=200, severity=medium)
+# 4. user4: Login at 7000ms, FailedTx at 9000ms -> MATCH (amount=2000, severity=high)
+#
+# Non-matches:
+# - user3's successful Transaction at 3000ms (status != failed)
+# - user4's successful Transaction at 8000ms (status != failed)
+
+# User1 logs in
+Login { user_id: "user1", ip_address: "192.168.1.1", device: "mobile" }
+
+# User2 logs in
+BATCH 1000
+Login { user_id: "user2", ip_address: "192.168.1.2", device: "desktop" }
+
+# User1 has failed transaction -> MATCH expected
+BATCH 2000
+Transaction { user_id: "user1", amount: 500.0, status: "failed", merchant: "store_a" }
+
+# User3 has successful transaction (no login yet, and success anyway)
+BATCH 3000
+Transaction { user_id: "user3", amount: 100.0, status: "success", merchant: "store_b" }
+
+# User3 logs in
+BATCH 4000
+Login { user_id: "user3", ip_address: "192.168.1.3", device: "tablet" }
+
+# User2 has failed transaction -> MATCH expected (high severity, amount > 1000)
+BATCH 5000
+Transaction { user_id: "user2", amount: 1500.0, status: "failed", merchant: "store_c" }
+
+# User3 has failed transaction -> MATCH expected
+BATCH 6000
+Transaction { user_id: "user3", amount: 200.0, status: "failed", merchant: "store_d" }
+
+# User4 logs in
+BATCH 7000
+Login { user_id: "user4", ip_address: "192.168.1.4", device: "mobile" }
+
+# User4 has successful transaction (no match - success)
+BATCH 8000
+Transaction { user_id: "user4", amount: 50.0, status: "success", merchant: "store_e" }
+
+# User4 has failed transaction -> MATCH expected (high severity)
+BATCH 9000
+Transaction { user_id: "user4", amount: 2000.0, status: "failed", merchant: "store_f" }
