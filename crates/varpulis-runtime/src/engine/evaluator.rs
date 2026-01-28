@@ -576,10 +576,7 @@ pub fn eval_pattern_expr(
                                 return Some(Value::Float(0.0));
                             }
                             let mean = nums.iter().sum::<f64>() / nums.len() as f64;
-                            let variance = nums
-                                .iter()
-                                .map(|x| (x - mean).powi(2))
-                                .sum::<f64>()
+                            let variance = nums.iter().map(|x| (x - mean).powi(2)).sum::<f64>()
                                 / nums.len() as f64;
                             return Some(Value::Float(variance));
                         }
@@ -723,8 +720,10 @@ pub fn eval_pattern_expr(
                                         if params.len() >= 2 {
                                             if let Value::Array(pair) = &item {
                                                 if pair.len() >= 2 {
-                                                    local.insert(params[0].clone(), pair[0].clone());
-                                                    local.insert(params[1].clone(), pair[1].clone());
+                                                    local
+                                                        .insert(params[0].clone(), pair[0].clone());
+                                                    local
+                                                        .insert(params[1].clone(), pair[1].clone());
                                                 } else {
                                                     return None;
                                                 }

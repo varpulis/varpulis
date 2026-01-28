@@ -583,8 +583,8 @@ mod tests {
             hash_value(&Value::Str("hello".to_string()))
         );
         assert_eq!(
-            hash_value(&Value::Float(3.14)),
-            hash_value(&Value::Float(3.14))
+            hash_value(&Value::Float(42.5)),
+            hash_value(&Value::Float(42.5))
         );
     }
 
