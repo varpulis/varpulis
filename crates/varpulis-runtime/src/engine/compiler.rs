@@ -252,7 +252,8 @@ pub fn compile_to_sase_pattern(
     }
 
     let pattern = if steps.len() == 1 {
-        steps.pop().unwrap()
+        // Safe: we just checked steps is not empty
+        steps.pop()?
     } else {
         SasePattern::Seq(steps)
     };

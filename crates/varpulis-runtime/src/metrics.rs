@@ -26,19 +26,19 @@ impl Metrics {
             Opts::new("varpulis_events_total", "Total events received"),
             &["event_type"],
         )
-        .unwrap();
+        .expect("failed to create events_total counter");
 
         let events_processed = CounterVec::new(
             Opts::new("varpulis_events_processed", "Events processed by stream"),
             &["stream"],
         )
-        .unwrap();
+        .expect("failed to create events_processed counter");
 
         let alerts_total = CounterVec::new(
             Opts::new("varpulis_alerts_total", "Total alerts generated"),
             &["alert_type", "severity"],
         )
-        .unwrap();
+        .expect("failed to create alerts_total counter");
 
         let processing_latency = HistogramVec::new(
             HistogramOpts::new(
@@ -50,29 +50,35 @@ impl Metrics {
             ]),
             &["stream"],
         )
-        .unwrap();
+        .expect("failed to create processing_latency histogram");
 
         let stream_queue_size = GaugeVec::new(
             Opts::new("varpulis_stream_queue_size", "Stream queue size"),
             &["stream"],
         )
-        .unwrap();
+        .expect("failed to create stream_queue_size gauge");
 
-        let active_streams =
-            Gauge::new("varpulis_active_streams", "Number of active streams").unwrap();
+        let active_streams = Gauge::new("varpulis_active_streams", "Number of active streams")
+            .expect("failed to create active_streams gauge");
 
-        registry.register(Box::new(events_total.clone())).unwrap();
+        registry
+            .register(Box::new(events_total.clone()))
+            .expect("failed to register events_total");
         registry
             .register(Box::new(events_processed.clone()))
-            .unwrap();
-        registry.register(Box::new(alerts_total.clone())).unwrap();
+            .expect("failed to register events_processed");
+        registry
+            .register(Box::new(alerts_total.clone()))
+            .expect("failed to register alerts_total");
         registry
             .register(Box::new(processing_latency.clone()))
-            .unwrap();
+            .expect("failed to register processing_latency");
         registry
             .register(Box::new(stream_queue_size.clone()))
-            .unwrap();
-        registry.register(Box::new(active_streams.clone())).unwrap();
+            .expect("failed to register stream_queue_size");
+        registry
+            .register(Box::new(active_streams.clone()))
+            .expect("failed to register active_streams");
 
         Self {
             registry: Arc::new(registry),
