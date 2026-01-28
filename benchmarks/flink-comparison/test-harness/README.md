@@ -56,10 +56,10 @@ This test harness provides a fair comparison between Flink CEP and Varpulis CEP 
 
 ## Building
 
-### Varpulis (with MQTT support)
+### Varpulis
 ```bash
 cd /path/to/cep
-cargo build --release --features mqtt
+cargo build --release
 ```
 
 ### Flink Benchmark

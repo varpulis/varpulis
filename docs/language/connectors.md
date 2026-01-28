@@ -6,29 +6,16 @@ This document describes how to connect Varpulis to external systems for both eve
 
 Varpulis supports multiple connector types:
 
-| Connector | Feature Flag | Input | Output | Status |
-|-----------|--------------|-------|--------|--------|
-| **MQTT**  | `--features mqtt` | Yes | Yes | Production |
-| **HTTP**  | (included) | Yes | Yes | Production |
-| **Kafka** | `--features kafka` | Yes | Yes | Planned |
-| **Console** | (included) | No | Yes | Debug |
+| Connector | Input | Output | Status |
+|-----------|-------|--------|--------|
+| **MQTT**  | Yes | Yes | Production |
+| **HTTP**  | Yes | Yes | Production |
+| **Kafka** | Yes | Yes | Planned |
+| **Console** | No | Yes | Debug |
 
 ## MQTT Connector
 
 MQTT is the recommended connector for production deployments. It provides reliable message delivery with QoS support.
-
-### Building with MQTT Support
-
-```bash
-# Debug build
-cargo build --features mqtt
-
-# Release build
-cargo build --release --features mqtt
-
-# Check if MQTT is enabled
-varpulis --version  # Shows enabled features
-```
 
 ### Configuration Block
 
