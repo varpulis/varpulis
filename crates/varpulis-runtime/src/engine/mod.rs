@@ -333,6 +333,7 @@ impl Engine {
         Ok(())
     }
 
+    #[allow(clippy::type_complexity)]
     fn compile_ops_with_sequences(
         &self,
         source: &StreamSource,
