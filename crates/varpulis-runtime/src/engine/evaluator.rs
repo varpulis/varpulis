@@ -257,6 +257,40 @@ pub fn eval_expr_with_functions(
         Expr::Float(f) => Some(Value::Float(*f)),
         Expr::Str(s) => Some(Value::Str(s.clone())),
         Expr::Bool(b) => Some(Value::Bool(*b)),
+        Expr::Member {
+            expr: object,
+            member,
+        } => {
+            // Handle alias.field access (e.g., order.id, MarketA.price)
+            if let Expr::Ident(alias) = object.as_ref() {
+                // First check sequence context for captured events
+                if let Some(captured) = ctx.get(alias.as_str()) {
+                    return captured.get(member).cloned();
+                }
+                // Check bindings for captured event
+                if let Some(Value::Map(m)) = bindings.get(alias) {
+                    if let Some(v) = m.get(member) {
+                        return Some(v.clone());
+                    }
+                }
+                // Then check event data with prefixed field name (for join results)
+                // Try dot notation (alias.field) - this is how JoinBuffer stores fields
+                let prefixed_dot = format!("{}.{}", alias, member);
+                if let Some(value) = event.get(&prefixed_dot) {
+                    return Some(value.clone());
+                }
+                // Try underscore notation (alias_field)
+                let prefixed_underscore = format!("{}_{}", alias, member);
+                if let Some(value) = event.get(&prefixed_underscore) {
+                    return Some(value.clone());
+                }
+                // Also try the member directly if alias matches event type
+                if alias == &event.event_type {
+                    return event.get(member).cloned();
+                }
+            }
+            None
+        }
         Expr::Call { func, args } => {
             if let Expr::Ident(func_name) = func.as_ref() {
                 // Evaluate arguments
@@ -309,6 +343,20 @@ pub fn eval_expr_with_functions(
                         Value::Float(f) => Some(Value::Float(f.sqrt())),
                         _ => None,
                     }),
+                    "min" if arg_values.len() == 2 => match (&arg_values[0], &arg_values[1]) {
+                        (Value::Int(a), Value::Int(b)) => Some(Value::Int(*a.min(b))),
+                        (Value::Float(a), Value::Float(b)) => Some(Value::Float(a.min(*b))),
+                        (Value::Int(a), Value::Float(b)) => Some(Value::Float((*a as f64).min(*b))),
+                        (Value::Float(a), Value::Int(b)) => Some(Value::Float(a.min(*b as f64))),
+                        _ => None,
+                    },
+                    "max" if arg_values.len() == 2 => match (&arg_values[0], &arg_values[1]) {
+                        (Value::Int(a), Value::Int(b)) => Some(Value::Int(*a.max(b))),
+                        (Value::Float(a), Value::Float(b)) => Some(Value::Float(a.max(*b))),
+                        (Value::Int(a), Value::Float(b)) => Some(Value::Float((*a as f64).max(*b))),
+                        (Value::Float(a), Value::Int(b)) => Some(Value::Float(a.max(*b as f64))),
+                        _ => None,
+                    },
                     _ => None,
                 }
             } else {

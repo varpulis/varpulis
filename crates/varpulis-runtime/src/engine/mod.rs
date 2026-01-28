@@ -231,6 +231,9 @@ impl Engine {
         let (runtime_ops, sase_engine, sequence_event_types) =
             self.compile_ops_with_sequences(source, ops)?;
 
+        // Mapping from event_type to source name (for join streams)
+        let mut event_type_to_source: HashMap<String, String> = HashMap::new();
+
         let runtime_source = match source {
             StreamSource::From(event_type) => {
                 self.event_sources
@@ -289,12 +292,36 @@ impl Engine {
                     "Registering join stream {} from sources: {:?}",
                     name, sources
                 );
-                // Register for all join source streams
+                // For join sources, we need to register for the underlying event types
+                // of the source streams, not the stream names themselves
+                // Also build a mapping from event_type -> source_name for routing
                 for source in &sources {
-                    self.event_sources
-                        .entry(source.clone())
-                        .or_default()
-                        .push(name.to_string());
+                    // Check if source is a registered stream
+                    if let Some(stream_def) = self.streams.get(source) {
+                        // Get the underlying event type from the stream
+                        let event_type = match &stream_def.source {
+                            RuntimeSource::EventType(et) => et.clone(),
+                            RuntimeSource::Stream(s) => s.clone(),
+                            _ => source.clone(),
+                        };
+                        info!(
+                            "Join source '{}' resolved to event type '{}'",
+                            source, event_type
+                        );
+                        self.event_sources
+                            .entry(event_type.clone())
+                            .or_default()
+                            .push(name.to_string());
+                        // Store mapping for later use during event routing
+                        event_type_to_source.insert(event_type, source.clone());
+                    } else {
+                        // Source stream not yet registered, use as-is (might be event type)
+                        self.event_sources
+                            .entry(source.clone())
+                            .or_default()
+                            .push(name.to_string());
+                        event_type_to_source.insert(source.clone(), source.clone());
+                    }
                 }
                 RuntimeSource::Join(sources)
             }
@@ -374,6 +401,7 @@ impl Engine {
                 pattern_engine,
                 sase_engine,
                 join_buffer,
+                event_type_to_source,
             },
         );
 
@@ -1006,13 +1034,13 @@ impl Engine {
         }
 
         // For join sources, route through the JoinBuffer for correlation
-        if let RuntimeSource::Join(ref sources) = stream.source {
+        if let RuntimeSource::Join(ref _sources) = stream.source {
             if let Some(ref mut join_buffer) = stream.join_buffer {
-                // Determine which source this event came from
-                // The event_type should match one of the source stream names
-                let source_name = sources
-                    .iter()
-                    .find(|s| **s == event.event_type)
+                // Determine which source this event came from using the event_type_to_source mapping
+                // This maps event types (e.g., "MarketATick") to source names (e.g., "MarketA")
+                let source_name = stream
+                    .event_type_to_source
+                    .get(&event.event_type)
                     .cloned()
                     .unwrap_or_else(|| event.event_type.clone());
 
@@ -1037,9 +1065,10 @@ impl Engine {
                     }
                     None => {
                         // No correlation yet - need events from all sources
-                        tracing::trace!(
-                            "Join stream {}: No correlation yet, waiting for more events",
-                            stream.name
+                        tracing::debug!(
+                            "Join stream {}: No correlation yet, waiting for more events (buffer stats: {:?})",
+                            stream.name,
+                            join_buffer.stats()
                         );
                         return Ok(StreamProcessResult {
                             alerts: vec![],
@@ -1489,17 +1518,28 @@ impl Engine {
                 }
                 RuntimeOp::WhereExpr(expr) => {
                     let ctx = SequenceContext::new();
+                    let before_count = current_events.len();
                     current_events.retain(|e| {
-                        evaluator::eval_expr_with_functions(
+                        let result = evaluator::eval_expr_with_functions(
                             expr,
                             e,
                             &ctx,
                             functions,
                             &HashMap::new(),
-                        )
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false)
+                        );
+                        let passes = result.as_ref().and_then(|v| v.as_bool()).unwrap_or(false);
+                        tracing::trace!(
+                            "Join where clause eval: result={:?}, passes={}",
+                            result,
+                            passes
+                        );
+                        passes
                     });
+                    tracing::debug!(
+                        "Join where clause: {} events before, {} after filter",
+                        before_count,
+                        current_events.len()
+                    );
                     if current_events.is_empty() {
                         return Ok(StreamProcessResult {
                             alerts,

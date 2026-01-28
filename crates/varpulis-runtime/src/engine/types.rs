@@ -72,6 +72,8 @@ pub(crate) struct StreamDefinition {
     pub sase_engine: Option<SaseEngine>,
     /// Join buffer for correlating events from multiple sources
     pub join_buffer: Option<JoinBuffer>,
+    /// Mapping from event type to join source name (for join streams)
+    pub event_type_to_source: std::collections::HashMap<String, String>,
 }
 
 /// Source of events for a stream

@@ -851,3 +851,102 @@ async fn test_engine_div_by_zero() {
         .unwrap();
     assert!(rx.try_recv().is_err());
 }
+
+// ==========================================================================
+// Join Tests
+// ==========================================================================
+
+#[tokio::test]
+async fn test_engine_join_derived_streams() {
+    // Test that join works with derived streams (stream names resolve to event types)
+    // This is the key fix for scenario 4 - events arrive as MarketATick/MarketBTick
+    // but join sources reference MarketA/MarketB streams
+    let source = r#"
+        stream MarketA from MarketATick
+        stream MarketB from MarketBTick
+
+        stream Arbitrage = join(MarketA, MarketB)
+            .on(MarketA.symbol == MarketB.symbol)
+            .window(1s)
+            .emit(
+                alert: "matched",
+                symbol: MarketA.symbol,
+                price_a: MarketA.price,
+                price_b: MarketB.price
+            )
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    // Send MarketATick (not MarketA!) - engine should route it correctly
+    let event_a = Event::new("MarketATick")
+        .with_field("symbol", "AAPL")
+        .with_field("price", 150.0)
+        .with_field("volume", 100i64)
+        .with_field("exchange", "NYSE");
+    engine.process(event_a).await.unwrap();
+
+    // No alert yet - waiting for MarketB
+    assert!(
+        rx.try_recv().is_err(),
+        "Should not alert with just one event"
+    );
+
+    // Send MarketBTick (not MarketB!) - engine should route it correctly
+    let event_b = Event::new("MarketBTick")
+        .with_field("symbol", "AAPL")
+        .with_field("price", 152.0)
+        .with_field("volume", 200i64)
+        .with_field("exchange", "NASDAQ");
+    engine.process(event_b).await.unwrap();
+
+    // Now should get correlated alert
+    let alert = rx.try_recv().expect("Should have alert after both events");
+    assert_eq!(
+        alert.data.get("alert"),
+        Some(&Value::Str("matched".to_string()))
+    );
+    assert_eq!(
+        alert.data.get("symbol"),
+        Some(&Value::Str("AAPL".to_string()))
+    );
+}
+
+#[tokio::test]
+async fn test_engine_join_no_correlation_different_keys() {
+    let source = r#"
+        stream MarketA from MarketATick
+        stream MarketB from MarketBTick
+
+        stream Arbitrage = join(MarketA, MarketB)
+            .on(MarketA.symbol == MarketB.symbol)
+            .window(1s)
+            .emit(alert: "matched")
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    // Send MarketATick with symbol AAPL
+    let event_a = Event::new("MarketATick")
+        .with_field("symbol", "AAPL")
+        .with_field("price", 150.0);
+    engine.process(event_a).await.unwrap();
+
+    // Send MarketBTick with different symbol GOOG
+    let event_b = Event::new("MarketBTick")
+        .with_field("symbol", "GOOG")
+        .with_field("price", 100.0);
+    engine.process(event_b).await.unwrap();
+
+    // No alert - different symbols
+    assert!(
+        rx.try_recv().is_err(),
+        "Should not alert with different join keys"
+    );
+}
