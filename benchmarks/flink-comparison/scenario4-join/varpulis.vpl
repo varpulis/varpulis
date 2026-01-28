@@ -1,0 +1,51 @@
+# Varpulis - Scénario 4: Jointure de Streams
+# Corréler les prix de deux marchés pour détecter des opportunités d'arbitrage
+
+event MarketATick:
+    symbol: str
+    price: float
+    volume: int
+    exchange: str
+    ts: timestamp
+
+event MarketBTick:
+    symbol: str
+    price: float
+    volume: int
+    exchange: str
+    ts: timestamp
+
+# Base streams
+stream MarketA from MarketATick
+stream MarketB from MarketBTick
+
+# Jointure des deux marchés sur le même symbole
+stream ArbitrageOpportunity = join(MarketA, MarketB)
+    .on(MarketA.symbol == MarketB.symbol)
+    .window(1s)
+    .where(abs(MarketA.price - MarketB.price) / min(MarketA.price, MarketB.price) > 0.01)
+    .select(
+        symbol: MarketA.symbol,
+        price_a: MarketA.price,
+        price_b: MarketB.price,
+        spread_pct: abs(MarketA.price - MarketB.price) / min(MarketA.price, MarketB.price) * 100,
+        exchange_a: MarketA.exchange,
+        exchange_b: MarketB.exchange,
+        min_volume: min(MarketA.volume, MarketB.volume)
+    )
+    .emit(
+        alert_type: "ARBITRAGE_OPPORTUNITY",
+        symbol: symbol,
+        price_a: price_a,
+        price_b: price_b,
+        spread_pct: spread_pct,
+        exchange_a: exchange_a,
+        exchange_b: exchange_b,
+        buy_on: if price_a < price_b then exchange_a else exchange_b,
+        sell_on: if price_a > price_b then exchange_a else exchange_b,
+        potential_profit: abs(price_a - price_b) * min_volume
+    )
+
+# Configuration
+config:
+    mode: "low_latency"
