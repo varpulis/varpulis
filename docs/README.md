@@ -7,11 +7,11 @@
 ## Quick Start
 
 ```bash
-# Build with MQTT support
-cargo build --release --features mqtt
+# Build
+cargo build --release
 
-# Run with MQTT connector
-varpulis run my_patterns.vpl --mqtt localhost:1883
+# Run a VPL program with MQTT
+varpulis run my_patterns.vpl
 ```
 
 **Minimal VPL file with MQTT:**
@@ -29,50 +29,56 @@ stream Alert = SomeEvent
     .emit(message: "High value detected")
 ```
 
-See [`language/syntax.md`](language/syntax.md#connectors) for complete connector documentation.
+---
 
 ## Documentation Structure
+
+### 📊 Project Status
+- [`development/STATUS.md`](development/STATUS.md) - **Current project status**
+- [`development/KANBAN.md`](development/KANBAN.md) - Task tracking
+- [`development/AUDIT_REPORT.md`](development/AUDIT_REPORT.md) - Security audit
 
 ### 📋 Specifications
 - [`spec/overview.md`](spec/overview.md) - Project overview and vision
 - [`spec/roadmap.md`](spec/roadmap.md) - Roadmap and development phases
 - [`spec/benchmarks.md`](spec/benchmarks.md) - Performance objectives
-
-### 🏗️ Architecture
-- [`architecture/system.md`](architecture/system.md) - System architecture overview
-- [`architecture/attention-engine.md`](architecture/attention-engine.md) - Deterministic attention engine
-- [`architecture/state-management.md`](architecture/state-management.md) - State management and checkpointing
-- [`architecture/parallelism.md`](architecture/parallelism.md) - Parallelization and supervision
-- [`architecture/observability.md`](architecture/observability.md) - Metrics, traces and logs
+- [`spec/glossary.md`](spec/glossary.md) - Glossary of terms
 
 ### 📝 VarpulisQL Language
 - [`language/overview.md`](language/overview.md) - Language philosophy and design
-- [`language/syntax.md`](language/syntax.md) - Complete syntax
-- [`language/connectors.md`](language/connectors.md) - **Connectors (MQTT, HTTP, Kafka)**
-- [`language/types.md`](language/types.md) - Type system
-- [`language/keywords.md`](language/keywords.md) - Reserved keywords
-- [`language/operators.md`](language/operators.md) - Operators
+- [`language/syntax.md`](language/syntax.md) - Complete syntax reference
+- [`language/connectors.md`](language/connectors.md) - Connectors (MQTT, HTTP)
 - [`language/builtins.md`](language/builtins.md) - Built-in functions
+- [`language/types.md`](language/types.md) - Type system
+- [`language/operators.md`](language/operators.md) - Operators
 - [`language/grammar.md`](language/grammar.md) - Formal grammar (Pest PEG)
 
-### 🔌 Connectors (see [`language/connectors.md`](language/connectors.md))
-| Connector | Config | Status |
-|-----------|--------|--------|
-| **MQTT** | `config mqtt { broker, port, ... }` | Production |
-| **HTTP** | `.to("http://...")` | Production |
-| **Kafka** | `.to("kafka://...")` | Planned |
+### 🏗️ Architecture
+- [`architecture/system.md`](architecture/system.md) - System architecture
+- [`architecture/attention-engine.md`](architecture/attention-engine.md) - Attention mechanism
+- [`architecture/state-management.md`](architecture/state-management.md) - State management
+- [`architecture/parallelism.md`](architecture/parallelism.md) - Parallelization
+- [`architecture/observability.md`](architecture/observability.md) - Metrics and traces
 
-### 📚 Examples
-- [`examples/hvac-building.md`](examples/hvac-building.md) - HVAC building supervision (IoT/Smart Building)
-- [`examples/financial-markets.md`](examples/financial-markets.md) - Financial markets technical analysis (Trading)
-- [`../demos/README.md`](../demos/README.md) - **Interactive demos with MQTT**
-
-## Quick Links
-
-- [GitHub Organization](https://github.com/varpulis)
-- [Glossary](spec/glossary.md)
+### 📚 Examples & Demos
+- [`examples/hvac-building.md`](examples/hvac-building.md) - HVAC monitoring
+- [`examples/financial-markets.md`](examples/financial-markets.md) - Financial analytics
+- [`../demos/README.md`](../demos/README.md) - **Interactive demos**
 
 ---
 
-**Version**: 0.1  
-**License**: Apache 2.0 / MIT (TBD)
+## Connector Status
+
+| Connector | Input | Output | Status |
+|-----------|-------|--------|--------|
+| **MQTT** | Yes | Yes | Production |
+| **HTTP** | No | Yes | Output only |
+| **Kafka** | No | No | Not implemented |
+
+See [`language/connectors.md`](language/connectors.md) for details.
+
+---
+
+**Version**: 0.1
+**Parser**: Pest PEG
+**License**: MIT
