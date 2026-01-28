@@ -2,6 +2,12 @@
 """
 Full benchmark comparison: Varpulis vs Flink CEP
 Runs both systems and compares results.
+
+Usage:
+    python run_full_benchmark.py [processing|event]
+
+    processing: Use processing time (wall-clock) - fair comparison, low latency
+    event: Use event time with watermarks - proper out-of-order handling
 """
 
 import json
@@ -12,6 +18,9 @@ import os
 from datetime import datetime
 import paho.mqtt.client as mqtt
 
+# Time semantics mode: "processing" or "event"
+TIME_MODE = sys.argv[1] if len(sys.argv) > 1 else "processing"
+
 MQTT_BROKER = "localhost"
 MQTT_PORT = 1883
 INPUT_TOPIC_PREFIX = "benchmark/input/"
@@ -21,7 +30,7 @@ FLINK_OUTPUT = "benchmark/output/flink"
 # Test events: Login -> FailedTransaction pattern
 # Timestamps will be set dynamically based on current time
 # Offsets in milliseconds - spaced 1 second apart for clearer watermark progression
-EVENTS_TEMPLATE = [
+EVENTS_BASE = [
     {"type": "Login", "user_id": "user1", "ip_address": "192.168.1.1", "device": "mobile", "ts_offset": 0},
     {"type": "Login", "user_id": "user2", "ip_address": "192.168.1.2", "device": "desktop", "ts_offset": 1000},
     {"type": "Transaction", "user_id": "user1", "amount": 500.0, "status": "failed", "merchant": "store_a", "ts_offset": 2000},
@@ -32,15 +41,25 @@ EVENTS_TEMPLATE = [
     {"type": "Login", "user_id": "user4", "ip_address": "192.168.1.4", "device": "mobile", "ts_offset": 7000},
     {"type": "Transaction", "user_id": "user4", "amount": 50.0, "status": "success", "merchant": "store_e", "ts_offset": 8000},
     {"type": "Transaction", "user_id": "user4", "amount": 2000.0, "status": "failed", "merchant": "store_f", "ts_offset": 9000},
-    # Heartbeat event with high timestamp to force Flink watermark progression
-    {"type": "Login", "user_id": "_heartbeat", "ip_address": "0.0.0.0", "device": "system", "ts_offset": 20000},
 ]
+
+# Heartbeat event with high timestamp to force Flink watermark progression (only needed in event-time mode)
+HEARTBEAT_EVENT = {"type": "Login", "user_id": "_heartbeat", "ip_address": "0.0.0.0", "device": "system", "ts_offset": 20000}
+
+def get_events_template():
+    """Get events template based on time mode."""
+    if TIME_MODE == "event":
+        # In event-time mode, include heartbeat to force watermark progression
+        return EVENTS_BASE + [HEARTBEAT_EVENT]
+    else:
+        # In processing-time mode, no heartbeat needed
+        return EVENTS_BASE
 
 def get_events_with_timestamps():
     """Generate events with timestamps based on current time."""
     base_ts = int(time.time() * 1000)
     events = []
-    for e in EVENTS_TEMPLATE:
+    for e in get_events_template():
         event = {k: v for k, v in e.items() if k != 'ts_offset'}
         event['ts'] = base_ts + e['ts_offset']
         events.append(event)
@@ -76,6 +95,7 @@ def main():
     print("="*70)
     print(" BENCHMARK: Varpulis vs Flink CEP")
     print(" Pattern: Login -> FailedTransaction (same user)")
+    print(f" Time Mode: {TIME_MODE.upper()}")
     print("="*70)
 
     # Check MQTT
@@ -117,9 +137,9 @@ def main():
     )
 
     # Start Flink
-    print("[*] Starting Flink...")
+    print(f"[*] Starting Flink ({TIME_MODE} time)...")
     flink_proc = subprocess.Popen(
-        ["java", "-jar", flink_jar],
+        ["java", "-jar", flink_jar, TIME_MODE],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT
     )
@@ -210,6 +230,7 @@ def main():
     results = {
         "timestamp": datetime.now().isoformat(),
         "scenario": "Login -> FailedTransaction",
+        "time_mode": TIME_MODE,
         "events_count": len(events),
         "expected_alerts": EXPECTED_USERS,
         "varpulis": {

@@ -22,6 +22,7 @@ program = { SOI ~ statement* ~ EOI }
 
 statement = {
     stream_decl
+    | pattern_decl
     | event_decl
     | type_decl
     | var_decl
@@ -182,6 +183,51 @@ named_arg_list = { named_arg ~ ("," ~ named_arg)* }
 named_arg = { identifier ~ ":" ~ expr }
 
 expr_list = { expr ~ ("," ~ expr)* }
+
+// ============================================================================
+// SASE+ Pattern Declaration (Reusable Named Patterns)
+// ============================================================================
+
+// Pattern declaration: pattern Name = SEQ(...) within 10m partition by user_id
+pattern_decl = {
+    "pattern" ~ identifier ~ "=" ~ sase_pattern_expr ~
+    pattern_within_clause? ~ pattern_partition_clause?
+}
+
+pattern_within_clause = { "within" ~ duration }
+pattern_partition_clause = { "partition" ~ "by" ~ identifier }
+
+// SASE+ Pattern expressions
+sase_pattern_expr = { sase_or_expr }
+sase_or_expr = { sase_and_expr ~ ("OR" ~ sase_and_expr)* }
+sase_and_expr = { sase_not_expr ~ ("AND" ~ sase_not_expr)* }
+sase_not_expr = { "NOT"? ~ sase_primary_expr }
+
+sase_primary_expr = {
+    sase_seq_expr
+    | sase_grouped_expr
+    | sase_event_ref
+}
+
+// SEQ(A, B+, C* where cond as alias, NOT D)
+sase_seq_expr = { "SEQ" ~ "(" ~ sase_seq_items ~ ")" }
+sase_seq_items = { sase_seq_item ~ ("," ~ sase_seq_item)* }
+sase_seq_item = {
+    sase_negated_item
+    | sase_positive_item
+}
+sase_negated_item = { "NOT" ~ identifier ~ kleene_op? ~ sase_where_clause? ~ sase_alias_clause? }
+sase_positive_item = { identifier ~ kleene_op? ~ sase_where_clause? ~ sase_alias_clause? }
+
+kleene_op = { "+" | "*" | "?" }
+sase_where_clause = { "where" ~ expr }
+sase_alias_clause = { "as" ~ identifier }
+
+// Grouped expression: (A OR B)
+sase_grouped_expr = { "(" ~ sase_pattern_expr ~ ")" }
+
+// Simple event reference
+sase_event_ref = { identifier ~ kleene_op? ~ sase_where_clause? ~ sase_alias_clause? }
 
 // ============================================================================
 // Event Declaration

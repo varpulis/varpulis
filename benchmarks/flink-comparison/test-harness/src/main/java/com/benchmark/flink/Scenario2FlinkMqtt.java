@@ -198,10 +198,19 @@ public class Scenario2FlinkMqtt {
         }
     }
 
+    // Time semantics mode: "processing" or "event"
+    private static String timeMode = "processing";
+
     public static void main(String[] args) throws Exception {
+        // Check for command line argument to select time mode
+        if (args.length > 0) {
+            timeMode = args[0].toLowerCase();
+        }
+
         System.out.println("========================================");
         System.out.println("Flink Scenario 2 - MQTT Mode");
         System.out.println("Pattern: Login -> FailedTransaction");
+        System.out.println("Time Mode: " + timeMode.toUpperCase());
         System.out.println("========================================");
         System.out.println("Listening on: " + INPUT_TOPIC_LOGIN + ", " + INPUT_TOPIC_TX);
         System.out.println("Publishing to: " + OUTPUT_TOPIC);
@@ -211,16 +220,26 @@ public class Scenario2FlinkMqtt {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(1);
 
-        // Create MQTT source
-        // forMonotonousTimestamps because benchmark events arrive in order
-        // withIdleness allows watermark to progress even when no new events arrive
-        DataStream<UserEvent> eventStream = env
-            .addSource(new MqttSourceFunction())
-            .assignTimestampsAndWatermarks(
-                WatermarkStrategy.<UserEvent>forMonotonousTimestamps()
-                    .withTimestampAssigner((event, ts) -> event.timestamp)
-                    .withIdleness(Duration.ofSeconds(2))
-            );
+        // Create MQTT source with appropriate time semantics
+        DataStream<UserEvent> eventStream;
+
+        if ("event".equals(timeMode)) {
+            // EVENT TIME: Use event timestamps with watermarks
+            // Matches will be emitted when watermark passes window end
+            System.out.println("[FLINK] Using EVENT TIME semantics (watermarks required)");
+            eventStream = env
+                .addSource(new MqttSourceFunction())
+                .assignTimestampsAndWatermarks(
+                    WatermarkStrategy.<UserEvent>forMonotonousTimestamps()
+                        .withTimestampAssigner((event, ts) -> event.timestamp)
+                        .withIdleness(Duration.ofSeconds(2))
+                );
+        } else {
+            // PROCESSING TIME: Use wall-clock time, no watermarks
+            // Matches are emitted immediately when pattern completes
+            System.out.println("[FLINK] Using PROCESSING TIME semantics (no watermarks)");
+            eventStream = env.addSource(new MqttSourceFunction());
+        }
 
         // Define CEP pattern: Login followed by FailedTransaction within 10 minutes
         Pattern<UserEvent, ?> pattern = Pattern.<UserEvent>begin("login")

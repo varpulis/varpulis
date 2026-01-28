@@ -22,6 +22,7 @@
 use crate::engine::eval_filter_expr;
 use crate::event::Event;
 use crate::sequence::SequenceContext;
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use varpulis_core::Value;
@@ -409,10 +410,14 @@ pub struct Run {
     pub stack: Vec<StackEntry>,
     /// Captured events by alias
     pub captured: HashMap<String, Event>,
-    /// When this run started
+    /// When this run started (wall-clock time for metrics)
     pub started_at: Instant,
-    /// Deadline for completion (from WITHIN)
+    /// Deadline for completion (from WITHIN) - wall-clock time (legacy)
     pub deadline: Option<Instant>,
+    /// Event timestamp when this run started (for event-time processing)
+    pub event_time_started_at: Option<DateTime<Utc>>,
+    /// Deadline in event-time (for watermark-based timeout)
+    pub event_time_deadline: Option<DateTime<Utc>>,
     /// Partition key (for SASEXT optimization)
     pub partition_key: Option<Value>,
     /// Is this run invalidated by negation?
@@ -427,6 +432,23 @@ impl Run {
             captured: HashMap::new(),
             started_at: Instant::now(),
             deadline: None,
+            event_time_started_at: None,
+            event_time_deadline: None,
+            partition_key: None,
+            invalidated: false,
+        }
+    }
+
+    /// Create a new run with event-time tracking
+    pub fn new_with_event_time(start_state: usize, event_timestamp: DateTime<Utc>) -> Self {
+        Self {
+            current_state: start_state,
+            stack: Vec::new(),
+            captured: HashMap::new(),
+            started_at: Instant::now(),
+            deadline: None,
+            event_time_started_at: Some(event_timestamp),
+            event_time_deadline: None,
             partition_key: None,
             invalidated: false,
         }
@@ -442,6 +464,15 @@ impl Run {
         self
     }
 
+    /// Set event-time deadline based on timeout duration
+    pub fn with_event_time_deadline(mut self, timeout: Duration) -> Self {
+        if let Some(started_at) = self.event_time_started_at {
+            self.event_time_deadline =
+                Some(started_at + chrono::Duration::from_std(timeout).unwrap_or_default());
+        }
+        self
+    }
+
     pub fn push(&mut self, event: Event, alias: Option<String>) {
         if let Some(ref a) = alias {
             self.captured.insert(a.clone(), event.clone());
@@ -453,9 +484,19 @@ impl Run {
         });
     }
 
+    /// Check if run has timed out based on wall-clock time (legacy mode)
     pub fn is_timed_out(&self) -> bool {
         if let Some(deadline) = self.deadline {
             Instant::now() > deadline
+        } else {
+            false
+        }
+    }
+
+    /// Check if run has timed out based on event-time watermark
+    pub fn is_timed_out_event_time(&self, watermark: DateTime<Utc>) -> bool {
+        if let Some(deadline) = self.event_time_deadline {
+            watermark > deadline
         } else {
             false
         }
@@ -503,6 +544,16 @@ pub struct GlobalNegation {
     pub predicate: Option<Predicate>,
 }
 
+/// Time semantics for the engine
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TimeSemantics {
+    /// Processing time: use wall-clock time (no watermarks needed)
+    #[default]
+    ProcessingTime,
+    /// Event time: use event timestamps with watermark-based window completion
+    EventTime,
+}
+
 pub struct SaseEngine {
     /// Compiled NFA
     nfa: Nfa,
@@ -518,6 +569,14 @@ pub struct SaseEngine {
     partitioned_runs: HashMap<String, Vec<Run>>,
     /// Global negation conditions that invalidate active runs
     global_negations: Vec<GlobalNegation>,
+    /// Time semantics (processing time vs event time)
+    time_semantics: TimeSemantics,
+    /// Current watermark (for event-time processing)
+    watermark: Option<DateTime<Utc>>,
+    /// Maximum out-of-orderness tolerance for watermark generation
+    max_out_of_orderness: Duration,
+    /// Maximum observed event timestamp (for watermark generation)
+    max_timestamp: Option<DateTime<Utc>>,
 }
 
 impl SaseEngine {
@@ -531,7 +590,41 @@ impl SaseEngine {
             partition_by: None,
             partitioned_runs: HashMap::new(),
             global_negations: Vec::new(),
+            time_semantics: TimeSemantics::ProcessingTime,
+            watermark: None,
+            max_out_of_orderness: Duration::from_secs(0),
+            max_timestamp: None,
         }
+    }
+
+    /// Enable event-time processing with watermarks
+    pub fn with_event_time(mut self) -> Self {
+        self.time_semantics = TimeSemantics::EventTime;
+        self
+    }
+
+    /// Set maximum out-of-orderness tolerance for watermark generation
+    /// The watermark will be: max_timestamp - max_out_of_orderness
+    pub fn with_max_out_of_orderness(mut self, duration: Duration) -> Self {
+        self.max_out_of_orderness = duration;
+        self
+    }
+
+    /// Get current time semantics
+    pub fn time_semantics(&self) -> TimeSemantics {
+        self.time_semantics
+    }
+
+    /// Get current watermark
+    pub fn watermark(&self) -> Option<DateTime<Utc>> {
+        self.watermark
+    }
+
+    /// Manually advance the watermark (useful for testing or external control)
+    pub fn advance_watermark(&mut self, new_watermark: DateTime<Utc>) {
+        self.watermark = Some(new_watermark);
+        // Cleanup runs that have exceeded their event-time deadline
+        self.cleanup_by_watermark();
     }
 
     /// Add a global negation condition that invalidates active runs
@@ -568,7 +661,12 @@ impl SaseEngine {
     pub fn process(&mut self, event: &Event) -> Vec<MatchResult> {
         let mut completed = Vec::new();
 
-        // Clean up timed-out runs
+        // Update watermark tracking for event-time processing
+        if self.time_semantics == TimeSemantics::EventTime {
+            self.update_watermark(event);
+        }
+
+        // Clean up timed-out runs (uses watermark in EventTime mode)
         self.cleanup_timeouts();
 
         // Check global negations - invalidate runs that match
@@ -702,11 +800,22 @@ impl SaseEngine {
         for &next_id in &start_state.transitions {
             let next_state = &self.nfa.states[next_id];
             if event_matches_state(&self.nfa, event, next_state, &HashMap::new()) {
-                let mut run = Run::new(next_id);
+                let mut run = match self.time_semantics {
+                    TimeSemantics::ProcessingTime => Run::new(next_id),
+                    TimeSemantics::EventTime => Run::new_with_event_time(next_id, event.timestamp),
+                };
 
                 // Set deadline if state has timeout
                 if let Some(timeout) = next_state.timeout {
-                    run.deadline = Some(Instant::now() + timeout);
+                    match self.time_semantics {
+                        TimeSemantics::ProcessingTime => {
+                            run.deadline = Some(Instant::now() + timeout);
+                        }
+                        TimeSemantics::EventTime => {
+                            // Set event-time deadline based on first event's timestamp
+                            run = run.with_event_time_deadline(timeout);
+                        }
+                    }
                 }
 
                 // Capture event
@@ -722,7 +831,12 @@ impl SaseEngine {
             for &next_id in &eps_state.transitions {
                 let next_state = &self.nfa.states[next_id];
                 if event_matches_state(&self.nfa, event, next_state, &HashMap::new()) {
-                    let mut run = Run::new(next_id);
+                    let mut run = match self.time_semantics {
+                        TimeSemantics::ProcessingTime => Run::new(next_id),
+                        TimeSemantics::EventTime => {
+                            Run::new_with_event_time(next_id, event.timestamp)
+                        }
+                    };
                     run.push(event.clone(), next_state.alias.clone());
                     return Some(run);
                 }
@@ -733,10 +847,52 @@ impl SaseEngine {
     }
 
     fn cleanup_timeouts(&mut self) {
-        self.runs.retain(|r| !r.is_timed_out() && !r.invalidated);
+        match self.time_semantics {
+            TimeSemantics::ProcessingTime => {
+                // Use wall-clock time for timeout check
+                self.runs.retain(|r| !r.is_timed_out() && !r.invalidated);
+                for runs in self.partitioned_runs.values_mut() {
+                    runs.retain(|r| !r.is_timed_out() && !r.invalidated);
+                }
+            }
+            TimeSemantics::EventTime => {
+                // Use watermark for timeout check
+                self.cleanup_by_watermark();
+            }
+        }
+    }
 
-        for runs in self.partitioned_runs.values_mut() {
-            runs.retain(|r| !r.is_timed_out() && !r.invalidated);
+    /// Cleanup runs based on watermark (for event-time processing)
+    fn cleanup_by_watermark(&mut self) {
+        if let Some(watermark) = self.watermark {
+            self.runs
+                .retain(|r| !r.is_timed_out_event_time(watermark) && !r.invalidated);
+            for runs in self.partitioned_runs.values_mut() {
+                runs.retain(|r| !r.is_timed_out_event_time(watermark) && !r.invalidated);
+            }
+        }
+    }
+
+    /// Update watermark based on incoming event timestamp
+    fn update_watermark(&mut self, event: &Event) {
+        let event_ts = event.timestamp;
+
+        // Track maximum observed timestamp
+        match self.max_timestamp {
+            Some(max_ts) if event_ts > max_ts => {
+                self.max_timestamp = Some(event_ts);
+            }
+            None => {
+                self.max_timestamp = Some(event_ts);
+            }
+            _ => {}
+        }
+
+        // Update watermark: max_timestamp - max_out_of_orderness
+        if let Some(max_ts) = self.max_timestamp {
+            let new_watermark =
+                max_ts - chrono::Duration::from_std(self.max_out_of_orderness).unwrap_or_default();
+            self.watermark = Some(new_watermark);
         }
     }
 
@@ -1269,5 +1425,163 @@ mod tests {
         let result = &results[0];
         assert!(result.captured.contains_key("order"));
         assert!(result.captured.contains_key("payment"));
+    }
+
+    // =========================================================================
+    // Event-Time / Watermark Tests
+    // =========================================================================
+
+    #[test]
+    fn test_event_time_mode_basic() {
+        use chrono::{TimeZone, Utc};
+
+        let pattern =
+            PatternBuilder::seq(vec![PatternBuilder::event("A"), PatternBuilder::event("B")]);
+
+        let mut engine = SaseEngine::new(pattern).with_event_time();
+
+        assert_eq!(engine.time_semantics(), TimeSemantics::EventTime);
+
+        let ts1 = Utc.with_ymd_and_hms(2026, 1, 28, 10, 0, 0).unwrap();
+        let ts2 = Utc.with_ymd_and_hms(2026, 1, 28, 10, 0, 1).unwrap();
+
+        let event_a = Event::new("A").with_timestamp(ts1);
+        let event_b = Event::new("B").with_timestamp(ts2);
+
+        engine.process(&event_a);
+        let results = engine.process(&event_b);
+
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_watermark_tracking() {
+        use chrono::{TimeZone, Utc};
+
+        let pattern = PatternBuilder::event("A");
+
+        let mut engine = SaseEngine::new(pattern).with_event_time();
+
+        assert!(engine.watermark().is_none());
+
+        let ts1 = Utc.with_ymd_and_hms(2026, 1, 28, 10, 0, 0).unwrap();
+        let event = Event::new("A").with_timestamp(ts1);
+        engine.process(&event);
+
+        // Watermark should now be set
+        assert!(engine.watermark().is_some());
+        assert_eq!(engine.watermark().unwrap(), ts1);
+    }
+
+    #[test]
+    fn test_watermark_with_out_of_orderness() {
+        use chrono::{TimeZone, Utc};
+
+        let pattern = PatternBuilder::event("A");
+
+        let mut engine = SaseEngine::new(pattern)
+            .with_event_time()
+            .with_max_out_of_orderness(std::time::Duration::from_secs(5));
+
+        let ts = Utc.with_ymd_and_hms(2026, 1, 28, 10, 0, 10).unwrap();
+        let event = Event::new("A").with_timestamp(ts);
+        engine.process(&event);
+
+        // Watermark should be ts - 5s
+        let expected_watermark = Utc.with_ymd_and_hms(2026, 1, 28, 10, 0, 5).unwrap();
+        assert_eq!(engine.watermark().unwrap(), expected_watermark);
+    }
+
+    #[test]
+    fn test_event_time_within_timeout() {
+        use chrono::{TimeZone, Utc};
+        use std::time::Duration;
+
+        // Pattern with 5 second window
+        let pattern = SasePattern::Within(
+            Box::new(PatternBuilder::seq(vec![
+                PatternBuilder::event("Login"),
+                PatternBuilder::event("Transaction"),
+            ])),
+            Duration::from_secs(5),
+        );
+
+        let mut engine = SaseEngine::new(pattern).with_event_time();
+
+        let ts1 = Utc.with_ymd_and_hms(2026, 1, 28, 10, 0, 0).unwrap();
+        let ts2 = Utc.with_ymd_and_hms(2026, 1, 28, 10, 0, 3).unwrap(); // Within 5s
+
+        let login = Event::new("Login").with_timestamp(ts1);
+        let tx = Event::new("Transaction").with_timestamp(ts2);
+
+        engine.process(&login);
+        let results = engine.process(&tx);
+
+        // Should match because within the window
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_event_time_within_expired_by_watermark() {
+        use chrono::{TimeZone, Utc};
+        use std::time::Duration;
+
+        // Pattern with 5 second window
+        let pattern = SasePattern::Within(
+            Box::new(PatternBuilder::seq(vec![
+                PatternBuilder::event("Login"),
+                PatternBuilder::event("Transaction"),
+            ])),
+            Duration::from_secs(5),
+        );
+
+        let mut engine = SaseEngine::new(pattern).with_event_time();
+
+        let ts1 = Utc.with_ymd_and_hms(2026, 1, 28, 10, 0, 0).unwrap();
+        let ts2 = Utc.with_ymd_and_hms(2026, 1, 28, 10, 0, 10).unwrap(); // After 5s window
+
+        let login = Event::new("Login").with_timestamp(ts1);
+        let tx = Event::new("Transaction").with_timestamp(ts2);
+
+        engine.process(&login);
+
+        // When processing second event, watermark advances to ts2
+        // The run's deadline (ts1 + 5s) is now past the watermark (ts2)
+        // So the run should be cleaned up
+        let results = engine.process(&tx);
+
+        // Should NOT match because the partial match expired
+        assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn test_manual_watermark_advance() {
+        use chrono::{TimeZone, Utc};
+        use std::time::Duration;
+
+        // Pattern with 5 second window
+        let pattern = SasePattern::Within(
+            Box::new(PatternBuilder::seq(vec![
+                PatternBuilder::event("Login"),
+                PatternBuilder::event("Transaction"),
+            ])),
+            Duration::from_secs(5),
+        );
+
+        let mut engine = SaseEngine::new(pattern).with_event_time();
+
+        let ts1 = Utc.with_ymd_and_hms(2026, 1, 28, 10, 0, 0).unwrap();
+        let login = Event::new("Login").with_timestamp(ts1);
+        engine.process(&login);
+
+        // Active runs should be 1
+        assert_eq!(engine.stats().active_runs, 1);
+
+        // Manually advance watermark past the deadline
+        let future_watermark = Utc.with_ymd_and_hms(2026, 1, 28, 10, 0, 10).unwrap();
+        engine.advance_watermark(future_watermark);
+
+        // Run should now be cleaned up
+        assert_eq!(engine.stats().active_runs, 0);
     }
 }
