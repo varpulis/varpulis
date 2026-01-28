@@ -1,0 +1,34 @@
+# Varpulis - Scénario 1: Agrégation Simple
+# Compter les événements par catégorie sur une fenêtre glissante de 5 minutes
+
+event PageView:
+    user_id: str
+    page: str
+    category: str
+    duration_ms: int
+    ts: timestamp
+
+# Agrégation par catégorie sur fenêtre de 5 minutes, glissant toutes les 30 secondes
+stream PageViewsByCategory = PageView
+    .partition_by(category)
+    .window(5m, sliding: 30s)
+    .aggregate(
+        category: last(category),
+        view_count: count(),
+        unique_users: count_distinct(user_id),
+        avg_duration: avg(duration_ms),
+        total_duration: sum(duration_ms)
+    )
+    .emit(
+        metric_type: "PAGE_VIEWS_BY_CATEGORY",
+        category: category,
+        view_count: view_count,
+        unique_users: unique_users,
+        avg_duration_ms: avg_duration,
+        total_duration_ms: total_duration,
+        window_end: now()
+    )
+
+# Configuration
+config:
+    mode: "throughput"
