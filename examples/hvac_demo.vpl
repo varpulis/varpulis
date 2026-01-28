@@ -341,6 +341,73 @@ stream EnergyAnomaly = ZoneEnergy
     )
 
 # =============================================================================
+# SASE+ TEMPORAL SEQUENCE PATTERNS
+# =============================================================================
+
+# Rapid Temperature Swing Detection
+# Detects oscillating temperature that may indicate HVAC instability
+stream RapidTempSwing = TemperatureReading as cold_reading
+    -> TemperatureReading where sensor_id == cold_reading.sensor_id and value > cold_reading.value + 5 as hot_reading
+    -> TemperatureReading where sensor_id == cold_reading.sensor_id and value < hot_reading.value - 5 as swing_back
+    .within(30m)
+    .emit(
+        alert_type: "RAPID_TEMP_SWING",
+        severity: "warning",
+        zone: cold_reading.zone,
+        sensor_id: cold_reading.sensor_id,
+        initial_temp: cold_reading.value,
+        peak_temp: hot_reading.value,
+        final_temp: swing_back.value,
+        reason: "Rapid temperature oscillation detected - possible HVAC instability"
+    )
+
+# Cross-Zone Failure Cascade Detection
+# Detects temperature anomalies spreading across zones (central system failure)
+stream CascadeFailure = TemperatureAnomaly as first_zone
+    -> TemperatureAnomaly where zone != first_zone.zone as second_zone
+    .within(15m)
+    .emit(
+        alert_type: "CASCADE_FAILURE",
+        severity: "critical",
+        first_zone: first_zone.zone,
+        second_zone: second_zone.zone,
+        first_temp: first_zone.temperature,
+        second_temp: second_zone.temperature,
+        reason: "Temperature anomalies spreading across zones - check central HVAC system"
+    )
+
+# Energy Spike Before Temperature Problem
+# Detects when energy consumption spikes are followed by temperature issues
+stream EnergyTempCorrelation = EnergyAnomaly as energy_spike
+    -> TemperatureAnomaly where zone == energy_spike.zone as temp_problem
+    .within(20m)
+    .emit(
+        alert_type: "ENERGY_TEMP_CORRELATION",
+        severity: "warning",
+        zone: energy_spike.zone,
+        energy_kw: energy_spike.power_kw,
+        temperature: temp_problem.temperature,
+        reason: "Energy spike followed by temperature anomaly - HVAC efficiency degrading"
+    )
+
+# Compressor Short Cycling Detection
+# Detects rapid on-off cycles indicating compressor problems
+# Pattern: Running -> Off -> Running again within short time
+stream CompressorShortCycle = HVACStatus as start_run
+    -> HVACStatus where unit_id == start_run.unit_id and mode == "off" as stop
+    .within(5m)
+    -> HVACStatus where unit_id == start_run.unit_id and mode != "off" as restart
+    .within(5m)
+    .emit(
+        alert_type: "SHORT_CYCLING",
+        severity: "warning",
+        unit_id: start_run.unit_id,
+        zone: start_run.zone,
+        cycle_mode: restart.mode,
+        reason: "Compressor short cycling detected - may cause premature wear"
+    )
+
+# =============================================================================
 # AGGREGATE ALL ALERTS
 # =============================================================================
 
@@ -354,7 +421,11 @@ stream AllAlerts = merge(
         FanDegradation,
         MaintenanceReminder,
         HealthScoreAlert,
-        EnergyAnomaly
+        EnergyAnomaly,
+        RapidTempSwing,
+        CascadeFailure,
+        EnergyTempCorrelation,
+        CompressorShortCycle
     )
     .tap(
         counter: "hvac_alerts_total",
