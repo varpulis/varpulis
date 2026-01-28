@@ -1,0 +1,15 @@
+# Benchmark results (generated, not to be committed)
+results/
+
+# Build artifacts
+target/
+*.class
+*.jar
+!test-harness/target/benchmark-*.jar
+
+# IDE files
+.idea/
+*.iml
+
+# Logs
+*.log
