@@ -38,3 +38,7 @@ tests/e2e/.playwright/
 # Demos
 demos/varpulis-demos/node_modules/
 demos/varpulis-demos/dist/
+
+# Benchmark results (generated)
+benchmarks/flink-comparison/results/
+benchmarks/flink-comparison/test-harness/dependency-reduced-pom.xml
