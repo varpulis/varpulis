@@ -14,7 +14,7 @@
 | Engine Refactor | 0 | 0 | **3** |
 | Security | 0 | 0 | **7** |
 | CLI Refactor | 0 | 0 | **2** |
-| Performance | 1 | 0 | **2** |
+| Performance | 0 | 1 | **2** |
 | Couverture | 2 | 0 | 0 |
 | VS Code | 1 | 0 | 0 |
 | **Total** | **4** | **0** | **42** |
@@ -87,7 +87,7 @@
 
 ## PRIORITE HAUTE - Performance
 
-### A faire
+### En cours
 
 - [ ] **PERF-01**: Reduire cloning dans les hot paths
   - **Severite**: HIGH
@@ -96,6 +96,10 @@
   - **Fichier**: `crates/varpulis-runtime/src/engine/mod.rs`
   - **Effort**: 2-3 jours
   - **Note**: Necessite refactoring Event, Window, Aggregation
+  - **Progres**:
+    - [x] SASE+ engine: `SharedEvent` (Arc<Event>) pour StackEntry, Run, MatchResult
+    - [ ] Window module: Vec<Event> -> Vec<SharedEvent>
+    - [ ] Aggregation module: adapter pour SharedEvent
 
 ### Termine
 
