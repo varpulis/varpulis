@@ -71,14 +71,18 @@ impl SlidingWindow {
         let event_time = event.timestamp;
         self.events.push_back(event);
 
-        // Remove old events outside window
+        // Remove old events outside window using binary search + drain
+        // This is O(log n + k) where k is expired events, vs O(k) pop_front loops
         let cutoff = event_time - self.window_size;
-        while let Some(front) = self.events.front() {
-            if front.timestamp < cutoff {
-                self.events.pop_front();
-            } else {
-                break;
-            }
+        let expired_count = self
+            .events
+            .iter()
+            .position(|e| e.timestamp >= cutoff)
+            .unwrap_or(self.events.len());
+
+        if expired_count > 0 {
+            // Drain all expired events in one operation
+            self.events.drain(0..expired_count);
         }
 
         // Check if we should emit based on slide interval
@@ -158,9 +162,10 @@ impl SlidingCountWindow {
         self.events.push_back(event);
         self.events_since_emit += 1;
 
-        // Remove old events if window is overfull
-        while self.events.len() > self.window_size {
-            self.events.pop_front();
+        // Remove old events if window is overfull - drain excess in one operation
+        let overflow = self.events.len().saturating_sub(self.window_size);
+        if overflow > 0 {
+            self.events.drain(0..overflow);
         }
 
         // Emit if we have enough events and slide interval reached
