@@ -12,24 +12,18 @@
 | Benchmarks | 0 | 0 | **2** |
 | Test Infra | 0 | 0 | **4** |
 | Engine Refactor | 0 | 0 | **3** |
-| Security | 2 | 0 | **5** |
+| Security | 1 | 0 | **6** |
 | CLI Refactor | 0 | 0 | **2** |
 | Performance | 3 | 0 | 0 |
 | Couverture | 2 | 0 | 0 |
 | VS Code | 1 | 0 | 0 |
-| **Total** | **8** | **0** | **38** |
+| **Total** | **7** | **0** | **39** |
 
 ---
 
 ## PRIORITE HAUTE - Security
 
 ### A faire
-
-- [ ] **SEC-04**: Implementer authentification WebSocket
-  - **Severite**: HIGH
-  - **Action**: JWT ou API key authentication
-  - **Fichier**: `crates/varpulis-cli/src/main.rs`
-  - **Effort**: 1-2 jours
 
 - [ ] **SEC-05**: Ajouter support TLS/WSS
   - **Severite**: HIGH
@@ -39,6 +33,13 @@
 
 ### Termine
 
+- [x] **SEC-04**: Implementer authentification WebSocket
+  - Module `auth.rs` avec `AuthConfig` struct
+  - API key validation avec constant-time comparison
+  - Support header (Bearer/ApiKey) et query (api_key/token)
+  - Integration warp filter avec rejection handling
+  - Option CLI `--api-key` et env `VARPULIS_API_KEY`
+  - **35 tests unitaires**
 - [x] **SEC-01**: Corriger vulnerabilite path traversal
   - Ajout de `validate_path()` avec `canonicalize()`
   - Messages d'erreur generiques
