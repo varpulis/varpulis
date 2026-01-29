@@ -1016,7 +1016,9 @@ impl Engine {
                 continue;
             }
 
-            let stream_names = self
+            // Collect stream names to avoid borrowing issues
+            // PERF: This clones the Vec<String>, but avoids borrow conflicts with streams HashMap
+            let stream_names: Vec<String> = self
                 .event_sources
                 .get(&current_event.event_type)
                 .cloned()

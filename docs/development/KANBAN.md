@@ -14,10 +14,10 @@
 | Engine Refactor | 0 | 0 | **3** |
 | Security | 0 | 0 | **7** |
 | CLI Refactor | 0 | 0 | **2** |
-| Performance | 3 | 0 | 0 |
+| Performance | 1 | 0 | **2** |
 | Couverture | 2 | 0 | 0 |
 | VS Code | 1 | 0 | 0 |
-| **Total** | **6** | **0** | **40** |
+| **Total** | **4** | **0** | **42** |
 
 ---
 
@@ -95,16 +95,19 @@
   - **Action**: Utiliser `Arc<Event>` pour evenements partages
   - **Fichier**: `crates/varpulis-runtime/src/engine/mod.rs`
   - **Effort**: 2-3 jours
+  - **Note**: Necessite refactoring Event, Window, Aggregation
 
-- [ ] **PERF-02**: Optimiser window cleanup
-  - **Action**: Remplacer O(n) iteration par deque rotation
-  - **Fichier**: `crates/varpulis-runtime/src/window.rs`
-  - **Effort**: 0.5 jour
+### Termine
 
-- [ ] **PERF-03**: Optimiser CountDistinct hashing
-  - **Action**: Implementer Hash directement sur Value
-  - **Fichier**: `crates/varpulis-runtime/src/aggregation.rs`
-  - **Effort**: 0.5 jour
+- [x] **PERF-02**: Optimiser window cleanup
+  - SlidingWindow: position() + drain() au lieu de pop_front() loop
+  - SlidingCountWindow: saturating_sub + drain()
+  - Complexite: O(log n + k) vs O(k) pour k events expires
+
+- [x] **PERF-03**: Optimiser CountDistinct et aggregations
+  - CountDistinct: stocke u64 hashes au lieu de cloner Values
+  - Avg: algorithme single-pass avec fold
+  - StdDev: algorithme de Welford (single-pass, stable numeriquement)
 
 ---
 
