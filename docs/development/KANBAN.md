@@ -12,27 +12,26 @@
 | Benchmarks | 0 | 0 | **2** |
 | Test Infra | 0 | 0 | **4** |
 | Engine Refactor | 0 | 0 | **3** |
-| Security | 1 | 0 | **6** |
+| Security | 0 | 0 | **7** |
 | CLI Refactor | 0 | 0 | **2** |
 | Performance | 3 | 0 | 0 |
 | Couverture | 2 | 0 | 0 |
 | VS Code | 1 | 0 | 0 |
-| **Total** | **7** | **0** | **39** |
+| **Total** | **6** | **0** | **40** |
 
 ---
 
-## PRIORITE HAUTE - Security
+## TERMINE - Security
 
-### A faire
-
-- [ ] **SEC-05**: Ajouter support TLS/WSS
-  - **Severite**: HIGH
-  - **Action**: Activer WSS avec certificats TLS
-  - **Fichier**: `crates/varpulis-cli/src/main.rs`
-  - **Effort**: 1 jour
+> **Statut**: Toutes les tâches de sécurité complétées
 
 ### Termine
 
+- [x] **SEC-05**: Ajouter support TLS/WSS
+  - Options CLI `--tls-cert` et `--tls-key`
+  - Variables env `VARPULIS_TLS_CERT`, `VARPULIS_TLS_KEY`
+  - Validation que cert et key sont fournis ensemble
+  - Affichage `wss://` quand TLS activé
 - [x] **SEC-04**: Implementer authentification WebSocket
   - Module `auth.rs` avec `AuthConfig` struct
   - API key validation avec constant-time comparison
