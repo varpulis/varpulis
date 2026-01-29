@@ -2,6 +2,7 @@
 
 use crate::event::Event;
 use indexmap::IndexMap;
+use std::hash::{Hash, Hasher};
 use varpulis_core::Value;
 
 /// Result of an aggregation
@@ -41,7 +42,7 @@ impl AggregateFunc for Sum {
     }
 }
 
-/// Average aggregation
+/// Average aggregation (single-pass algorithm)
 pub struct Avg;
 
 impl AggregateFunc for Avg {
@@ -51,14 +52,21 @@ impl AggregateFunc for Avg {
 
     fn apply(&self, events: &[Event], field: Option<&str>) -> Value {
         let field = field.unwrap_or("value");
-        let values: Vec<f64> = events.iter().filter_map(|e| e.get_float(field)).collect();
 
-        if values.is_empty() {
-            return Value::Null;
+        // Single-pass: accumulate sum and count together
+        let (sum, count) =
+            events
+                .iter()
+                .fold((0.0, 0usize), |(sum, count), e| match e.get_float(field) {
+                    Some(v) => (sum + v, count + 1),
+                    None => (sum, count),
+                });
+
+        if count == 0 {
+            Value::Null
+        } else {
+            Value::Float(sum / count as f64)
         }
-
-        let sum: f64 = values.iter().sum();
-        Value::Float(sum / values.len() as f64)
     }
 }
 
@@ -102,7 +110,7 @@ impl AggregateFunc for Max {
     }
 }
 
-/// Standard deviation aggregation
+/// Standard deviation aggregation (Welford's online algorithm for single-pass)
 pub struct StdDev;
 
 impl AggregateFunc for StdDev {
@@ -112,15 +120,29 @@ impl AggregateFunc for StdDev {
 
     fn apply(&self, events: &[Event], field: Option<&str>) -> Value {
         let field = field.unwrap_or("value");
-        let values: Vec<f64> = events.iter().filter_map(|e| e.get_float(field)).collect();
 
-        if values.len() < 2 {
+        // Welford's online algorithm for numerically stable variance
+        // Single pass: no intermediate Vec allocation
+        let mut count = 0usize;
+        let mut mean = 0.0;
+        let mut m2 = 0.0; // Sum of squared differences from mean
+
+        for event in events {
+            if let Some(x) = event.get_float(field) {
+                count += 1;
+                let delta = x - mean;
+                mean += delta / count as f64;
+                let delta2 = x - mean;
+                m2 += delta * delta2;
+            }
+        }
+
+        if count < 2 {
             return Value::Null;
         }
 
-        let n = values.len() as f64;
-        let mean = values.iter().sum::<f64>() / n;
-        let variance = values.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0);
+        // Sample standard deviation (n-1 denominator)
+        let variance = m2 / (count - 1) as f64;
         Value::Float(variance.sqrt())
     }
 }
@@ -162,6 +184,7 @@ impl AggregateFunc for Last {
 }
 
 /// Count distinct values aggregation
+/// Optimized to store only hashes instead of cloning full Values
 pub struct CountDistinct;
 
 impl AggregateFunc for CountDistinct {
@@ -171,16 +194,19 @@ impl AggregateFunc for CountDistinct {
 
     fn apply(&self, events: &[Event], field: Option<&str>) -> Value {
         let field = field.unwrap_or("value");
-        let mut seen = std::collections::HashSet::new();
+        let mut seen_hashes = std::collections::HashSet::new();
 
         for event in events {
             if let Some(value) = event.get(field) {
-                // Use Value's Hash impl directly (no more format! overhead)
-                seen.insert(value.clone());
+                // Compute hash directly without cloning the value
+                // This avoids expensive deep clones for Array/Map values
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                value.hash(&mut hasher);
+                seen_hashes.insert(hasher.finish());
             }
         }
 
-        Value::Int(seen.len() as i64)
+        Value::Int(seen_hashes.len() as i64)
     }
 }
 
