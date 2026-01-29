@@ -396,4 +396,134 @@ mod tests {
         // Should use the most recent event from A (value=110)
         assert_eq!(correlated.get("A.value"), Some(&Value::Float(110.0)));
     }
+
+    #[test]
+    fn test_join_buffer_three_way_join() {
+        let sources = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+        let mut join_keys = HashMap::new();
+        join_keys.insert("A".to_string(), "symbol".to_string());
+        join_keys.insert("B".to_string(), "symbol".to_string());
+        join_keys.insert("C".to_string(), "symbol".to_string());
+
+        let mut buffer = JoinBuffer::new(sources, join_keys, Duration::minutes(1));
+
+        // Add events from A and B
+        buffer.add_event("A", create_event("A", "BTC", 100.0));
+        let result = buffer.add_event("B", create_event("B", "BTC", 200.0));
+        assert!(
+            result.is_none(),
+            "Should not correlate with just 2 of 3 sources"
+        );
+
+        // Add event from C - should now correlate
+        let result = buffer.add_event("C", create_event("C", "BTC", 300.0));
+        assert!(result.is_some(), "Should correlate with all 3 sources");
+
+        let correlated = result.unwrap();
+        assert_eq!(correlated.get("A.value"), Some(&Value::Float(100.0)));
+        assert_eq!(correlated.get("B.value"), Some(&Value::Float(200.0)));
+        assert_eq!(correlated.get("C.value"), Some(&Value::Float(300.0)));
+    }
+
+    #[test]
+    fn test_join_buffer_max_events_limit() {
+        let sources = vec!["A".to_string(), "B".to_string()];
+        let mut join_keys = HashMap::new();
+        join_keys.insert("A".to_string(), "symbol".to_string());
+        join_keys.insert("B".to_string(), "symbol".to_string());
+
+        let mut buffer =
+            JoinBuffer::new(sources, join_keys, Duration::minutes(1)).with_max_events(3);
+
+        // Add 5 events from A for same symbol
+        for i in 0..5 {
+            buffer.add_event("A", create_event("A", "BTC", i as f64));
+        }
+
+        // Should only keep 3 events (most recent)
+        let stats = buffer.stats();
+        assert_eq!(stats.events_per_source.get("A"), Some(&3));
+    }
+
+    #[test]
+    fn test_join_buffer_missing_key_field() {
+        let sources = vec!["A".to_string(), "B".to_string()];
+        let mut join_keys = HashMap::new();
+        join_keys.insert("A".to_string(), "symbol".to_string());
+        join_keys.insert("B".to_string(), "symbol".to_string());
+
+        let mut buffer = JoinBuffer::new(sources, join_keys, Duration::minutes(1));
+
+        // Add event from A
+        buffer.add_event("A", create_event("A", "BTC", 100.0));
+
+        // Add event from B without symbol field
+        let event_b = Event::new("B").with_field("value", 200.0f64);
+        let result = buffer.add_event("B", event_b);
+
+        assert!(result.is_none(), "Should not correlate - missing key field");
+    }
+
+    #[test]
+    fn test_join_buffer_common_key_detection() {
+        let sources = vec!["A".to_string(), "B".to_string()];
+        // Empty join keys - should detect common "symbol" field
+        let join_keys = HashMap::new();
+
+        let mut buffer = JoinBuffer::new(sources, join_keys, Duration::minutes(1));
+
+        // Add events with symbol field
+        buffer.add_event("A", create_event("A", "BTC", 100.0));
+        let result = buffer.add_event("B", create_event("B", "BTC", 200.0));
+
+        // Should auto-detect "symbol" as common key
+        assert!(
+            result.is_some(),
+            "Should correlate using auto-detected symbol key"
+        );
+    }
+
+    #[test]
+    fn test_join_buffer_continuous_correlation() {
+        let sources = vec!["A".to_string(), "B".to_string()];
+        let mut join_keys = HashMap::new();
+        join_keys.insert("A".to_string(), "symbol".to_string());
+        join_keys.insert("B".to_string(), "symbol".to_string());
+
+        let mut buffer = JoinBuffer::new(sources, join_keys, Duration::minutes(1));
+
+        // First correlation
+        buffer.add_event("A", create_event("A", "BTC", 100.0));
+        let result1 = buffer.add_event("B", create_event("B", "BTC", 200.0));
+        assert!(result1.is_some());
+
+        // New events should also correlate
+        let result2 = buffer.add_event("A", create_event("A", "BTC", 150.0));
+        assert!(
+            result2.is_some(),
+            "Should correlate again with existing B event"
+        );
+
+        let result3 = buffer.add_event("B", create_event("B", "BTC", 250.0));
+        assert!(result3.is_some(), "Should correlate with recent A event");
+    }
+
+    #[test]
+    fn test_join_buffer_multiple_symbols() {
+        let sources = vec!["A".to_string(), "B".to_string()];
+        let mut join_keys = HashMap::new();
+        join_keys.insert("A".to_string(), "symbol".to_string());
+        join_keys.insert("B".to_string(), "symbol".to_string());
+
+        let mut buffer = JoinBuffer::new(sources, join_keys, Duration::minutes(1));
+
+        // Add events for different symbols
+        buffer.add_event("A", create_event("A", "BTC", 100.0));
+        buffer.add_event("A", create_event("A", "ETH", 50.0));
+        buffer.add_event("B", create_event("B", "ETH", 60.0)); // Should correlate with ETH
+
+        let stats = buffer.stats();
+        // After correlation, events are still in buffer
+        assert!(stats.total_events >= 2);
+    }
 }
