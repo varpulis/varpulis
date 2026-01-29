@@ -1582,7 +1582,7 @@ async fn test_engine_max_chain_depth() {
         alerts.push(alert);
     }
     assert!(
-        alerts.len() >= 1,
+        !alerts.is_empty(),
         "Should have at least one alert from chain"
     );
 }
