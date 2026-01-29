@@ -304,4 +304,189 @@ mod tests {
         assert!(result.is_some());
         assert_eq!(result.unwrap().len(), 3);
     }
+
+    #[test]
+    fn test_count_window() {
+        let mut window = CountWindow::new(3);
+
+        // Add events
+        let event1 = Event::new("Test").with_field("value", 1i64);
+        assert!(window.add(event1).is_none());
+        assert_eq!(window.current_count(), 1);
+
+        let event2 = Event::new("Test").with_field("value", 2i64);
+        assert!(window.add(event2).is_none());
+        assert_eq!(window.current_count(), 2);
+
+        // Third event should complete window
+        let event3 = Event::new("Test").with_field("value", 3i64);
+        let result = window.add(event3);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().len(), 3);
+        assert_eq!(window.current_count(), 0);
+    }
+
+    #[test]
+    fn test_count_window_flush() {
+        let mut window = CountWindow::new(5);
+
+        // Add fewer events than count
+        for i in 0..3 {
+            let event = Event::new("Test").with_field("value", i as i64);
+            window.add(event);
+        }
+
+        // Flush should return partial window
+        let flushed = window.flush();
+        assert_eq!(flushed.len(), 3);
+        assert_eq!(window.current_count(), 0);
+    }
+
+    #[test]
+    fn test_sliding_count_window() {
+        let mut window = SlidingCountWindow::new(5, 2);
+
+        // Fill initial window (need 5 events)
+        for i in 0..5 {
+            let event = Event::new("Test").with_field("value", i as i64);
+            let result = window.add(event);
+            if i < 4 {
+                assert!(result.is_none(), "Should not emit before window is full");
+            } else {
+                assert!(result.is_some(), "Should emit when window is full");
+                assert_eq!(result.unwrap().len(), 5);
+            }
+        }
+
+        // Add 2 more events (slide size = 2)
+        for i in 5..7 {
+            let event = Event::new("Test").with_field("value", i as i64);
+            let result = window.add(event);
+            if i < 6 {
+                assert!(result.is_none());
+            } else {
+                assert!(result.is_some());
+                // Window still has 5 events (oldest were dropped)
+                assert_eq!(result.unwrap().len(), 5);
+            }
+        }
+    }
+
+    #[test]
+    fn test_tumbling_window_flush() {
+        let mut window = TumblingWindow::new(Duration::seconds(10));
+        let base_time = Utc::now();
+
+        // Add some events
+        for i in 0..3 {
+            let event = Event::new("Test").with_timestamp(base_time + Duration::seconds(i));
+            window.add(event);
+        }
+
+        // Flush should return all events
+        let flushed = window.flush();
+        assert_eq!(flushed.len(), 3);
+    }
+
+    #[test]
+    fn test_sliding_window_current() {
+        let mut window = SlidingWindow::new(Duration::seconds(10), Duration::seconds(1));
+        let base_time = Utc::now();
+
+        // Add events
+        window.add(Event::new("Test").with_timestamp(base_time));
+        window.add(Event::new("Test").with_timestamp(base_time + Duration::seconds(1)));
+        window.add(Event::new("Test").with_timestamp(base_time + Duration::seconds(2)));
+
+        // current() should return all events in window
+        let current = window.current();
+        assert_eq!(current.len(), 3);
+    }
+
+    #[test]
+    fn test_sliding_window_expiry() {
+        let mut window = SlidingWindow::new(Duration::seconds(5), Duration::seconds(1));
+        let base_time = Utc::now();
+
+        // Add early event
+        window.add(Event::new("Test").with_timestamp(base_time));
+
+        // Add event much later - should expire the first one
+        let later_event = Event::new("Test").with_timestamp(base_time + Duration::seconds(10));
+        window.add(later_event);
+
+        // Current should only have the later event
+        let current = window.current();
+        assert_eq!(current.len(), 1);
+    }
+
+    #[test]
+    fn test_partitioned_tumbling_window() {
+        let mut window = PartitionedTumblingWindow::new("region".to_string(), Duration::seconds(5));
+        let base_time = Utc::now();
+
+        // Add events for "east" region
+        let event1 = Event::new("Test")
+            .with_timestamp(base_time)
+            .with_field("region", "east");
+        window.add(event1);
+
+        // Add events for "west" region
+        let event2 = Event::new("Test")
+            .with_timestamp(base_time)
+            .with_field("region", "west");
+        window.add(event2);
+
+        // Trigger east window completion
+        let event3 = Event::new("Test")
+            .with_timestamp(base_time + Duration::seconds(6))
+            .with_field("region", "east");
+        let result = window.add(event3);
+        assert!(result.is_some());
+        // Only "east" events should be in result
+        assert_eq!(result.unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_partitioned_sliding_window() {
+        let mut window = PartitionedSlidingWindow::new(
+            "region".to_string(),
+            Duration::seconds(10),
+            Duration::seconds(2),
+        );
+        let base_time = Utc::now();
+
+        // Add event for "east"
+        let event = Event::new("Test")
+            .with_timestamp(base_time)
+            .with_field("region", "east");
+        let result = window.add(event);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().len(), 1);
+
+        // Add event for "west" within slide interval
+        let event = Event::new("Test")
+            .with_timestamp(base_time + Duration::seconds(1))
+            .with_field("region", "west");
+        let result = window.add(event);
+        // First event for west partition, should emit
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_count_window_multiple_completions() {
+        let mut window = CountWindow::new(2);
+
+        // Complete first window
+        window.add(Event::new("Test").with_field("batch", 1i64));
+        let result = window.add(Event::new("Test").with_field("batch", 1i64));
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().len(), 2);
+
+        // Complete second window
+        window.add(Event::new("Test").with_field("batch", 2i64));
+        let result = window.add(Event::new("Test").with_field("batch", 2i64));
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().len(), 2);
+    }
 }
