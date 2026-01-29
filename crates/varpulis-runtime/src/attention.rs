@@ -1167,3 +1167,300 @@ mod simd_tests {
         assert!((result - expected).abs() < 1e-3);
     }
 }
+
+#[cfg(test)]
+mod attention_tests {
+    use super::*;
+
+    #[test]
+    fn test_attention_config_default() {
+        let config = AttentionConfig::default();
+        assert_eq!(config.num_heads, 4);
+        assert_eq!(config.embedding_dim, 64);
+        assert_eq!(config.threshold, 0.0);
+        assert_eq!(config.max_history, 1000);
+    }
+
+    #[test]
+    fn test_cache_config_default() {
+        let config = CacheConfig::default();
+        assert_eq!(config.max_size, 10000);
+        assert_eq!(config.ttl, Duration::from_secs(300));
+        assert!(config.enabled);
+    }
+
+    #[test]
+    fn test_embedding_config_default() {
+        let config = EmbeddingConfig::default();
+        assert_eq!(config.embedding_type, EmbeddingType::RuleBased);
+        assert!(config.numeric_features.is_empty());
+        assert!(config.categorical_features.is_empty());
+        assert!(config.model_path.is_none());
+    }
+
+    #[test]
+    fn test_transform_numeric_identity() {
+        let engine = AttentionEngine::new(AttentionConfig::default());
+        let result = engine
+            .embedding_engine
+            .transform_numeric(42.0, &NumericTransform::Identity);
+        assert!((result - 42.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_transform_numeric_log_scale() {
+        let engine = AttentionEngine::new(AttentionConfig::default());
+        let result = engine
+            .embedding_engine
+            .transform_numeric(100.0, &NumericTransform::LogScale);
+        // ln(1 + 100) * sign(100) ≈ 4.615
+        assert!(result > 4.0 && result < 5.0);
+
+        // Negative value
+        let neg_result = engine
+            .embedding_engine
+            .transform_numeric(-100.0, &NumericTransform::LogScale);
+        assert!(neg_result < -4.0 && neg_result > -5.0);
+    }
+
+    #[test]
+    fn test_transform_numeric_normalize() {
+        let engine = AttentionEngine::new(AttentionConfig::default());
+        // Sigmoid-like normalization
+        let result = engine
+            .embedding_engine
+            .transform_numeric(0.0, &NumericTransform::Normalize);
+        assert!((result - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_transform_numeric_zscore() {
+        let engine = AttentionEngine::new(AttentionConfig::default());
+        let transform = NumericTransform::ZScore {
+            mean: 50.0,
+            std: 10.0,
+        };
+        let result = engine.embedding_engine.transform_numeric(60.0, &transform);
+        assert!((result - 1.0).abs() < 1e-6); // (60-50)/10 = 1.0
+
+        // Zero std should return 0
+        let zero_std = NumericTransform::ZScore {
+            mean: 50.0,
+            std: 0.0,
+        };
+        let result = engine.embedding_engine.transform_numeric(60.0, &zero_std);
+        assert!((result - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_transform_numeric_cyclical() {
+        let engine = AttentionEngine::new(AttentionConfig::default());
+        let transform = NumericTransform::Cyclical { period: 24.0 };
+
+        // At 0, sin should be 0
+        let result = engine.embedding_engine.transform_numeric(0.0, &transform);
+        assert!(result.abs() < 0.01);
+
+        // At period/4, should be at max (sin(pi/2) = 1)
+        let result = engine.embedding_engine.transform_numeric(6.0, &transform);
+        assert!(result > 0.9);
+    }
+
+    #[test]
+    fn test_transform_numeric_bucketize() {
+        let engine = AttentionEngine::new(AttentionConfig::default());
+        let transform = NumericTransform::Bucketize {
+            boundaries: vec![10.0, 20.0, 30.0],
+        };
+
+        let result = engine.embedding_engine.transform_numeric(5.0, &transform);
+        assert!((result - 0.0).abs() < 1e-6); // Below all boundaries
+
+        let result = engine.embedding_engine.transform_numeric(25.0, &transform);
+        assert!((result - 2.0 / 3.0).abs() < 1e-6); // Above 2 of 3 boundaries
+    }
+
+    #[test]
+    fn test_embed_categorical_hash() {
+        let engine = AttentionEngine::new(AttentionConfig::default());
+        let config = CategoricalFeatureConfig {
+            field: "type".to_string(),
+            method: CategoricalMethod::Hash,
+            dim: 16,
+            weight: 1.0,
+        };
+
+        let emb = engine
+            .embedding_engine
+            .embed_categorical("test_value", &config);
+        assert_eq!(emb.len(), 16);
+        // Hash embedding should have some non-zero values
+        let non_zero: usize = emb.iter().filter(|&&x| x.abs() > 0.01).count();
+        assert!(non_zero > 0);
+    }
+
+    #[test]
+    fn test_embed_categorical_onehot() {
+        let engine = AttentionEngine::new(AttentionConfig::default());
+        let config = CategoricalFeatureConfig {
+            field: "status".to_string(),
+            method: CategoricalMethod::OneHot {
+                vocab: vec![
+                    "active".to_string(),
+                    "inactive".to_string(),
+                    "pending".to_string(),
+                ],
+            },
+            dim: 3,
+            weight: 1.0,
+        };
+
+        let emb = engine.embedding_engine.embed_categorical("active", &config);
+        assert!((emb[0] - 1.0).abs() < 1e-6);
+        assert!((emb[1] - 0.0).abs() < 1e-6);
+
+        let emb = engine
+            .embedding_engine
+            .embed_categorical("inactive", &config);
+        assert!((emb[0] - 0.0).abs() < 1e-6);
+        assert!((emb[1] - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_embed_categorical_lookup() {
+        let engine = AttentionEngine::new(AttentionConfig::default());
+        let mut embeddings = HashMap::new();
+        embeddings.insert("red".to_string(), vec![1.0, 0.0, 0.0]);
+        embeddings.insert("green".to_string(), vec![0.0, 1.0, 0.0]);
+
+        let config = CategoricalFeatureConfig {
+            field: "color".to_string(),
+            method: CategoricalMethod::Lookup { embeddings },
+            dim: 3,
+            weight: 1.0,
+        };
+
+        let emb = engine.embedding_engine.embed_categorical("red", &config);
+        assert_eq!(emb, vec![1.0, 0.0, 0.0]);
+
+        // Unknown value should return zeros
+        let emb = engine.embedding_engine.embed_categorical("blue", &config);
+        assert_eq!(emb, vec![0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn test_attention_engine_creation() {
+        let config = AttentionConfig::default();
+        let engine = AttentionEngine::new(config.clone());
+
+        // Check config is stored correctly
+        assert_eq!(engine.config.num_heads, config.num_heads);
+        assert_eq!(engine.config.embedding_dim, config.embedding_dim);
+        assert_eq!(engine.config.max_history, config.max_history);
+    }
+
+    #[test]
+    fn test_attention_engine_add_event() {
+        let config = AttentionConfig {
+            threshold: 0.0, // Accept all
+            ..Default::default()
+        };
+        let mut engine = AttentionEngine::new(config);
+
+        let event = Event::new("TestEvent")
+            .with_field("value", 42.0f64)
+            .with_field("name", "test");
+
+        engine.add_event(event);
+
+        let stats = engine.stats();
+        assert_eq!(stats.history_size, 1);
+    }
+
+    #[test]
+    fn test_attention_compute() {
+        let config = AttentionConfig {
+            threshold: 0.0,
+            ..Default::default()
+        };
+        let mut engine = AttentionEngine::new(config);
+
+        // Add first event to history
+        let event1 = Event::new("TestEvent")
+            .with_field("value", 42.0f64)
+            .with_field("name", "test");
+        engine.add_event(event1);
+
+        // Compute attention for second event
+        let event2 = Event::new("TestEvent")
+            .with_field("value", 43.0f64)
+            .with_field("name", "test2");
+
+        let result = engine.compute_attention(&event2);
+        // Should have correlation with first event
+        assert!(!result.scores.is_empty());
+    }
+
+    #[test]
+    fn test_attention_stats() {
+        let config = AttentionConfig::default();
+        let mut engine = AttentionEngine::new(config);
+
+        let stats = engine.stats();
+        assert_eq!(stats.history_size, 0);
+        assert_eq!(stats.total_events, 0);
+
+        engine.add_event(Event::new("Test").with_field("x", 1.0f64));
+        engine.add_event(Event::new("Test").with_field("x", 2.0f64));
+
+        let stats = engine.stats();
+        assert_eq!(stats.history_size, 2);
+        assert_eq!(stats.total_events, 2);
+    }
+
+    #[test]
+    fn test_attention_max_history() {
+        let config = AttentionConfig {
+            max_history: 3,
+            ..Default::default()
+        };
+        let mut engine = AttentionEngine::new(config);
+
+        // Add 5 events
+        for i in 0..5 {
+            engine.add_event(Event::new("Test").with_field("x", i as f64));
+        }
+
+        // Should only keep 3 events
+        let stats = engine.stats();
+        assert_eq!(stats.history_size, 3);
+    }
+
+    #[test]
+    fn test_attention_clear_history() {
+        let config = AttentionConfig::default();
+        let mut engine = AttentionEngine::new(config);
+
+        engine.add_event(Event::new("Test").with_field("x", 1.0f64));
+        engine.add_event(Event::new("Test").with_field("x", 2.0f64));
+
+        assert_eq!(engine.stats().history_size, 2);
+
+        engine.clear_history();
+        assert_eq!(engine.stats().history_size, 0);
+    }
+
+    #[test]
+    fn test_attention_get_history() {
+        let config = AttentionConfig::default();
+        let mut engine = AttentionEngine::new(config);
+
+        engine.add_event(Event::new("Test1").with_field("x", 1.0f64));
+        engine.add_event(Event::new("Test2").with_field("x", 2.0f64));
+
+        let history = engine.get_history();
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].event_type, "Test1");
+        assert_eq!(history[1].event_type, "Test2");
+    }
+}
