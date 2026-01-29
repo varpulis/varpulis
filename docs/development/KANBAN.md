@@ -300,6 +300,8 @@ python run_scenario.py scenarios/fraud_scenario.yaml
     - [x] Tests print operation
     - [x] Tests import statement
     - [x] Tests window module (CountWindow, SlidingCountWindow, PartitionedWindows)
+    - [x] Tests join module (3-way join, max events, common key detection, continuous correlation)
+    - [x] Tests attention module (transforms, embeddings, stats, history)
 
 ### En cours
 
@@ -406,7 +408,7 @@ cargo tarpaulin --out Html
 
 | Metrique | Valeur | Cible | Statut |
 |----------|--------|-------|--------|
-| **Tests totaux** | **625** | 100+ | Excellent |
+| **Tests totaux** | **650** | 100+ | Excellent |
 | **Tests CLI** | **76** | - | Excellent |
 | **Couverture** | 62.92% | 80% | Needs work |
 | **Clippy warnings** | 0 | 0 | Excellent |
