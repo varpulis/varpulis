@@ -424,11 +424,45 @@ impl Engine {
         let mut negation_clauses: Vec<varpulis_core::ast::FollowedByClause> = Vec::new();
         let mut global_within: Option<std::time::Duration> = None;
 
-        // Collect sequence event types from source
-        if let StreamSource::Sequence(decl) = source {
-            for step in &decl.steps {
-                sequence_event_types.push(step.event_type.clone());
+        // Helper closure to resolve a stream/event name to the underlying event type
+        let resolve_event_type = |name: &str| -> String {
+            if let Some(stream_def) = self.streams.get(name) {
+                // This is a registered stream - get its underlying event type
+                match &stream_def.source {
+                    RuntimeSource::EventType(et) => et.clone(),
+                    RuntimeSource::Stream(s) => s.clone(),
+                    _ => name.to_string(),
+                }
+            } else {
+                // Not a registered stream - use as-is (it's an event type)
+                name.to_string()
             }
+        };
+
+        // Collect sequence event types from source (with stream resolution)
+        match source {
+            StreamSource::Sequence(decl) => {
+                for step in &decl.steps {
+                    let resolved = resolve_event_type(&step.event_type);
+                    if !sequence_event_types.contains(&resolved) {
+                        sequence_event_types.push(resolved);
+                    }
+                }
+            }
+            StreamSource::Ident(name) | StreamSource::From(name) => {
+                // Initial source - resolve if it's a derived stream
+                let resolved = resolve_event_type(name);
+                if !sequence_event_types.contains(&resolved) {
+                    sequence_event_types.push(resolved);
+                }
+            }
+            StreamSource::IdentWithAlias { name, .. } | StreamSource::AllWithAlias { name, .. } => {
+                let resolved = resolve_event_type(name);
+                if !sequence_event_types.contains(&resolved) {
+                    sequence_event_types.push(resolved);
+                }
+            }
+            _ => {}
         }
 
         for op in ops {
@@ -436,7 +470,11 @@ impl Engine {
                 StreamOp::FollowedBy(clause) => {
                     // Store raw clause for SASE+ compilation
                     followed_by_clauses.push(clause.clone());
-                    sequence_event_types.push(clause.event_type.clone());
+                    // Resolve event type for routing registration
+                    let resolved = resolve_event_type(&clause.event_type);
+                    if !sequence_event_types.contains(&resolved) {
+                        sequence_event_types.push(resolved);
+                    }
                     continue;
                 }
                 StreamOp::Within(expr) => {
@@ -452,8 +490,9 @@ impl Engine {
                     // Store negation clause for SASE+ engine
                     negation_clauses.push(clause.clone());
                     // Add negation event type to sequence event types so it gets routed
-                    if !sequence_event_types.contains(&clause.event_type) {
-                        sequence_event_types.push(clause.event_type.clone());
+                    let resolved = resolve_event_type(&clause.event_type);
+                    if !sequence_event_types.contains(&resolved) {
+                        sequence_event_types.push(resolved);
                     }
                     continue;
                 }
@@ -728,12 +767,36 @@ impl Engine {
                 // Add Sequence operation marker at the beginning
                 runtime_ops.insert(0, RuntimeOp::Sequence);
 
-                // Compile to SASE+ pattern
-                if let Some(pattern) = compiler::compile_to_sase_pattern(
+                // Create stream resolver for derived streams
+                let stream_resolver = |name: &str| -> Option<compiler::DerivedStreamInfo> {
+                    let stream_def = self.streams.get(name)?;
+
+                    // Extract event type from the stream source
+                    let event_type = match &stream_def.source {
+                        RuntimeSource::EventType(et) => et.clone(),
+                        RuntimeSource::Stream(s) => s.clone(),
+                        _ => return None, // Join/Merge sources not supported as derived streams
+                    };
+
+                    // Find the first WhereExpr in operations (the stream's filter)
+                    let filter = stream_def.operations.iter().find_map(|op| {
+                        if let RuntimeOp::WhereExpr(expr) = op {
+                            Some(expr.clone())
+                        } else {
+                            None
+                        }
+                    });
+
+                    Some(compiler::DerivedStreamInfo { event_type, filter })
+                };
+
+                // Compile to SASE+ pattern with stream resolution
+                if let Some(pattern) = compiler::compile_to_sase_pattern_with_resolver(
                     source,
                     &followed_by_clauses,
                     &negation_clauses,
                     global_within,
+                    &stream_resolver,
                 ) {
                     let mut engine = SaseEngine::new(pattern);
 
