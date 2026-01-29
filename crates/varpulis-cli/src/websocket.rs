@@ -607,11 +607,11 @@ mod tests {
 
     #[test]
     fn test_json_to_value_float() {
-        let json = serde_json::json!(3.14);
+        let json = serde_json::json!(3.15);
         let value = json_to_value(&json);
         match value {
             varpulis_core::Value::Float(f) => {
-                assert!((f - 3.14).abs() < 0.001);
+                assert!((f - 3.15).abs() < 0.001);
             }
             _ => panic!("Expected Float"),
         }
@@ -697,9 +697,9 @@ mod tests {
 
     #[test]
     fn test_value_to_json_float() {
-        let value = varpulis_core::Value::Float(2.718);
+        let value = varpulis_core::Value::Float(2.72);
         let json = value_to_json(&value);
-        assert_eq!(json, serde_json::json!(2.718));
+        assert_eq!(json, serde_json::json!(2.72));
     }
 
     #[test]

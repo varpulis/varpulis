@@ -18,6 +18,7 @@ use varpulis_runtime::metrics::{Metrics, MetricsServer};
 use varpulis_runtime::simulator::{Simulator, SimulatorConfig};
 
 // Import our new modules
+use varpulis_cli::auth::{self, AuthConfig};
 use varpulis_cli::security;
 use varpulis_cli::websocket::{self, ServerState};
 
@@ -100,6 +101,10 @@ enum Commands {
         /// Working directory for file operations (default: current directory)
         #[arg(long)]
         workdir: Option<PathBuf>,
+
+        /// API key for WebSocket authentication (optional, disables auth if not set)
+        #[arg(long, env = "VARPULIS_API_KEY")]
+        api_key: Option<String>,
     },
 
     /// Simulate events from an event file (.evt)
@@ -174,11 +179,19 @@ async fn main() -> Result<()> {
             metrics_port,
             bind,
             workdir,
+            api_key,
         } => {
             // Use security module to validate workdir - NO unwrap()!
             let workdir =
                 security::validate_workdir(workdir).map_err(|e| anyhow::anyhow!("{}", e))?;
-            run_server(port, metrics, metrics_port, &bind, workdir).await?;
+
+            // Create auth config from CLI argument or environment variable
+            let auth_config = match api_key {
+                Some(key) => AuthConfig::with_api_key(key),
+                None => AuthConfig::disabled(),
+            };
+
+            run_server(port, metrics, metrics_port, &bind, workdir, auth_config).await?;
         }
 
         Commands::Simulate {
@@ -710,11 +723,20 @@ async fn run_server(
     metrics_port: u16,
     bind: &str,
     workdir: PathBuf,
+    auth_config: AuthConfig,
 ) -> Result<()> {
     println!("Varpulis Server");
     println!("==================");
     println!("WebSocket: ws://{}:{}/ws", bind, port);
     println!("Workdir:   {}", workdir.display());
+    println!(
+        "Auth:      {}",
+        if auth_config.is_required() {
+            "enabled (API key required)"
+        } else {
+            "disabled"
+        }
+    );
     if enable_metrics {
         println!("Metrics:   http://{}:{}/metrics", bind, metrics_port);
     }
@@ -747,6 +769,9 @@ async fn run_server(
     // Spawn alert forwarder using websocket module
     websocket::spawn_alert_forwarder(alert_rx, broadcast_tx.clone());
 
+    // Create auth config Arc for sharing
+    let auth_config = Arc::new(auth_config);
+
     // WebSocket route
     let state_filter = warp::any().map({
         let state = state.clone();
@@ -758,12 +783,15 @@ async fn run_server(
         move || broadcast_tx.clone()
     });
 
+    // WebSocket route with optional authentication
     let ws_route = warp::path("ws")
+        .and(auth::with_auth(auth_config.clone()))
         .and(warp::ws())
         .and(state_filter)
         .and(broadcast_filter)
         .map(
-            |ws: warp::ws::Ws,
+            |_auth: (),
+             ws: warp::ws::Ws,
              state: Arc<RwLock<ServerState>>,
              broadcast_tx: Arc<tokio::sync::broadcast::Sender<String>>| {
                 ws.on_upgrade(move |socket| {
@@ -772,11 +800,11 @@ async fn run_server(
             },
         );
 
-    // Health check route
+    // Health check route (no auth required)
     let health_route =
         warp::path("health").map(|| warp::reply::json(&serde_json::json!({"status": "ok"})));
 
-    let routes = ws_route.or(health_route);
+    let routes = ws_route.or(health_route).recover(auth::handle_rejection);
 
     // Parse bind address - NO unwrap()!
     let bind_addr: std::net::IpAddr = bind
