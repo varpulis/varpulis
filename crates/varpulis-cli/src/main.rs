@@ -105,6 +105,14 @@ enum Commands {
         /// API key for WebSocket authentication (optional, disables auth if not set)
         #[arg(long, env = "VARPULIS_API_KEY")]
         api_key: Option<String>,
+
+        /// Path to TLS certificate file (PEM format). Enables WSS when provided with --tls-key
+        #[arg(long, env = "VARPULIS_TLS_CERT")]
+        tls_cert: Option<PathBuf>,
+
+        /// Path to TLS private key file (PEM format). Required when --tls-cert is provided
+        #[arg(long, env = "VARPULIS_TLS_KEY")]
+        tls_key: Option<PathBuf>,
     },
 
     /// Simulate events from an event file (.evt)
@@ -180,6 +188,8 @@ async fn main() -> Result<()> {
             bind,
             workdir,
             api_key,
+            tls_cert,
+            tls_key,
         } => {
             // Use security module to validate workdir - NO unwrap()!
             let workdir =
@@ -191,7 +201,28 @@ async fn main() -> Result<()> {
                 None => AuthConfig::disabled(),
             };
 
-            run_server(port, metrics, metrics_port, &bind, workdir, auth_config).await?;
+            // Validate TLS configuration
+            let tls_config = match (tls_cert, tls_key) {
+                (Some(cert), Some(key)) => Some((cert, key)),
+                (None, None) => None,
+                (Some(_), None) => {
+                    anyhow::bail!("--tls-cert requires --tls-key to be specified");
+                }
+                (None, Some(_)) => {
+                    anyhow::bail!("--tls-key requires --tls-cert to be specified");
+                }
+            };
+
+            run_server(
+                port,
+                metrics,
+                metrics_port,
+                &bind,
+                workdir,
+                auth_config,
+                tls_config,
+            )
+            .await?;
         }
 
         Commands::Simulate {
@@ -724,11 +755,19 @@ async fn run_server(
     bind: &str,
     workdir: PathBuf,
     auth_config: AuthConfig,
+    tls_config: Option<(PathBuf, PathBuf)>,
 ) -> Result<()> {
+    let tls_enabled = tls_config.is_some();
+    let protocol = if tls_enabled { "wss" } else { "ws" };
+
     println!("Varpulis Server");
     println!("==================");
-    println!("WebSocket: ws://{}:{}/ws", bind, port);
+    println!("WebSocket: {}://{}:{}/ws", protocol, bind, port);
     println!("Workdir:   {}", workdir.display());
+    println!(
+        "TLS:       {}",
+        if tls_enabled { "enabled" } else { "disabled" }
+    );
     println!(
         "Auth:      {}",
         if auth_config.is_required() {
@@ -812,7 +851,19 @@ async fn run_server(
         .map_err(|e| anyhow::anyhow!("Invalid bind address '{}': {}", bind, e))?;
 
     info!("Server listening on {}:{}", bind, port);
-    warp::serve(routes).run((bind_addr, port)).await;
+
+    // Start server with or without TLS
+    if let Some((cert_path, key_path)) = tls_config {
+        info!("TLS enabled with cert: {}", cert_path.display());
+        warp::serve(routes)
+            .tls()
+            .cert_path(&cert_path)
+            .key_path(&key_path)
+            .run((bind_addr, port))
+            .await;
+    } else {
+        warp::serve(routes).run((bind_addr, port)).await;
+    }
 
     Ok(())
 }
