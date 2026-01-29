@@ -24,8 +24,14 @@ use crate::event::Event;
 use crate::sequence::SequenceContext;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use varpulis_core::Value;
+
+/// Shared event reference for efficient cloning in pattern matching.
+/// Using Arc allows multiple pattern runs to share the same event data
+/// without expensive deep copies.
+pub type SharedEvent = Arc<Event>;
 
 // ============================================================================
 // PATTERN EXPRESSION AST
@@ -393,8 +399,8 @@ impl Default for NfaCompiler {
 /// A stack entry for Kleene closure handling
 #[derive(Debug, Clone)]
 pub struct StackEntry {
-    /// Captured event
-    pub event: Event,
+    /// Captured event (Arc for efficient sharing across runs)
+    pub event: SharedEvent,
     /// Alias for this capture
     pub alias: Option<String>,
     /// Timestamp of capture
@@ -408,8 +414,8 @@ pub struct Run {
     pub current_state: usize,
     /// Stack of matched events (for Kleene closure)
     pub stack: Vec<StackEntry>,
-    /// Captured events by alias
-    pub captured: HashMap<String, Event>,
+    /// Captured events by alias (Arc for efficient sharing)
+    pub captured: HashMap<String, SharedEvent>,
     /// When this run started (wall-clock time for metrics)
     pub started_at: Instant,
     /// Deadline for completion (from WITHIN) - wall-clock time (legacy)
@@ -473,9 +479,9 @@ impl Run {
         self
     }
 
-    pub fn push(&mut self, event: Event, alias: Option<String>) {
+    pub fn push(&mut self, event: SharedEvent, alias: Option<String>) {
         if let Some(ref a) = alias {
-            self.captured.insert(a.clone(), event.clone());
+            self.captured.insert(a.clone(), Arc::clone(&event));
         }
         self.stack.push(StackEntry {
             event,
@@ -526,8 +532,8 @@ pub enum SelectionStrategy {
 /// Result of pattern matching
 #[derive(Debug, Clone)]
 pub struct MatchResult {
-    /// All captured events by alias
-    pub captured: HashMap<String, Event>,
+    /// All captured events by alias (Arc for zero-copy access)
+    pub captured: HashMap<String, SharedEvent>,
     /// The event stack (ordered sequence of matches)
     pub stack: Vec<StackEntry>,
     /// Match duration
@@ -659,18 +665,25 @@ impl SaseEngine {
 
     /// Process an incoming event, returns completed matches
     pub fn process(&mut self, event: &Event) -> Vec<MatchResult> {
+        // Wrap event in Arc for efficient sharing across pattern runs
+        let shared_event: SharedEvent = Arc::new(event.clone());
+        self.process_shared(shared_event)
+    }
+
+    /// Process a shared event (Arc<Event>) - avoids cloning for internal use
+    pub fn process_shared(&mut self, event: SharedEvent) -> Vec<MatchResult> {
         let mut completed = Vec::new();
 
         // Update watermark tracking for event-time processing
         if self.time_semantics == TimeSemantics::EventTime {
-            self.update_watermark(event);
+            self.update_watermark(&event);
         }
 
         // Clean up timed-out runs (uses watermark in EventTime mode)
         self.cleanup_timeouts();
 
         // Check global negations - invalidate runs that match
-        self.check_global_negations(event);
+        self.check_global_negations(&event);
 
         // If using partitioning, route to appropriate partition
         if let Some(ref partition_field) = self.partition_by {
@@ -680,10 +693,10 @@ impl SaseEngine {
                 .unwrap_or_default();
 
             // Process partitioned runs
-            completed.extend(self.process_partition(&partition_key, event));
+            completed.extend(self.process_partition(&partition_key, &event));
 
             // Try to start new run in partition
-            if let Some(run) = self.try_start_run(event) {
+            if let Some(run) = self.try_start_run(&event) {
                 let partition_runs = self.partitioned_runs.entry(partition_key).or_default();
                 if partition_runs.len() < self.max_runs {
                     partition_runs.push(run);
@@ -691,10 +704,10 @@ impl SaseEngine {
             }
         } else {
             // Non-partitioned processing
-            completed.extend(self.process_runs(event));
+            completed.extend(self.process_runs(&event));
 
             // Try to start new run
-            if let Some(run) = self.try_start_run(event) {
+            if let Some(run) = self.try_start_run(&event) {
                 if self.runs.len() < self.max_runs {
                     self.runs.push(run);
                 }
@@ -704,7 +717,7 @@ impl SaseEngine {
         completed
     }
 
-    fn process_partition(&mut self, partition_key: &str, event: &Event) -> Vec<MatchResult> {
+    fn process_partition(&mut self, partition_key: &str, event: &SharedEvent) -> Vec<MatchResult> {
         let mut completed = Vec::new();
         let max_runs = self.max_runs;
 
@@ -744,7 +757,7 @@ impl SaseEngine {
         completed
     }
 
-    fn process_runs(&mut self, event: &Event) -> Vec<MatchResult> {
+    fn process_runs(&mut self, event: &SharedEvent) -> Vec<MatchResult> {
         let mut completed = Vec::new();
         let mut new_runs = Vec::new();
         let mut i = 0;
@@ -793,13 +806,14 @@ impl SaseEngine {
         completed
     }
 
-    fn try_start_run(&self, event: &Event) -> Option<Run> {
+    fn try_start_run(&self, event: &SharedEvent) -> Option<Run> {
         let start_state = &self.nfa.states[self.nfa.start_state];
+        let empty_captured: HashMap<String, SharedEvent> = HashMap::new();
 
         // Check if event matches any transition from start
         for &next_id in &start_state.transitions {
             let next_state = &self.nfa.states[next_id];
-            if event_matches_state(&self.nfa, event, next_state, &HashMap::new()) {
+            if event_matches_state(&self.nfa, event, next_state, &empty_captured) {
                 let mut run = match self.time_semantics {
                     TimeSemantics::ProcessingTime => Run::new(next_id),
                     TimeSemantics::EventTime => Run::new_with_event_time(next_id, event.timestamp),
@@ -819,25 +833,26 @@ impl SaseEngine {
                 }
 
                 // Capture event
-                run.push(event.clone(), next_state.alias.clone());
+                run.push(Arc::clone(event), next_state.alias.clone());
 
                 return Some(run);
             }
         }
 
         // Check epsilon transitions
+        let empty_captured: HashMap<String, SharedEvent> = HashMap::new();
         for &eps_id in &start_state.epsilon_transitions {
             let eps_state = &self.nfa.states[eps_id];
             for &next_id in &eps_state.transitions {
                 let next_state = &self.nfa.states[next_id];
-                if event_matches_state(&self.nfa, event, next_state, &HashMap::new()) {
+                if event_matches_state(&self.nfa, event, next_state, &empty_captured) {
                     let mut run = match self.time_semantics {
                         TimeSemantics::ProcessingTime => Run::new(next_id),
                         TimeSemantics::EventTime => {
                             Run::new_with_event_time(next_id, event.timestamp)
                         }
                     };
-                    run.push(event.clone(), next_state.alias.clone());
+                    run.push(Arc::clone(event), next_state.alias.clone());
                     return Some(run);
                 }
             }
@@ -963,7 +978,7 @@ fn advance_run(
     nfa: &Nfa,
     strategy: SelectionStrategy,
     run: &mut Run,
-    event: &Event,
+    event: &SharedEvent,
 ) -> RunAdvanceResult {
     let current_state = &nfa.states[run.current_state];
 
@@ -988,7 +1003,7 @@ fn advance_run(
         let next_state = &nfa.states[next_id];
         if event_matches_state(nfa, event, next_state, &run.captured) {
             run.current_state = next_id;
-            run.push(event.clone(), next_state.alias.clone());
+            run.push(Arc::clone(event), next_state.alias.clone());
 
             if next_state.state_type == StateType::Accept {
                 return RunAdvanceResult::Complete(MatchResult {
@@ -1039,7 +1054,7 @@ fn advance_run(
             let next_state = &nfa.states[next_id];
             if event_matches_state(nfa, event, next_state, &run.captured) {
                 run.current_state = next_id;
-                run.push(event.clone(), next_state.alias.clone());
+                run.push(Arc::clone(event), next_state.alias.clone());
 
                 if next_state.state_type == StateType::Accept {
                     return RunAdvanceResult::Complete(MatchResult {
@@ -1064,7 +1079,7 @@ fn event_matches_state(
     _nfa: &Nfa,
     event: &Event,
     state: &State,
-    captured: &HashMap<String, Event>,
+    captured: &HashMap<String, SharedEvent>,
 ) -> bool {
     if let Some(ref expected_type) = state.event_type {
         if event.event_type != *expected_type {
@@ -1081,7 +1096,11 @@ fn event_matches_state(
     true
 }
 
-fn eval_predicate(predicate: &Predicate, event: &Event, captured: &HashMap<String, Event>) -> bool {
+fn eval_predicate(
+    predicate: &Predicate,
+    event: &Event,
+    captured: &HashMap<String, SharedEvent>,
+) -> bool {
     match predicate {
         Predicate::Compare { field, op, value } => event
             .get(field)
@@ -1108,8 +1127,13 @@ fn eval_predicate(predicate: &Predicate, event: &Event, captured: &HashMap<Strin
         Predicate::Not(inner) => !eval_predicate(inner, event, captured),
         Predicate::Expr(expr) => {
             // Build SequenceContext from captured events for expression evaluation
+            // Dereference Arc<Event> to Event for compatibility with SequenceContext
+            let captured_events: HashMap<String, Event> = captured
+                .iter()
+                .map(|(k, v)| (k.clone(), (**v).clone()))
+                .collect();
             let ctx = SequenceContext {
-                captured: captured.clone(),
+                captured: captured_events,
                 previous: None,
             };
             // Evaluate the expression and check if it returns true
