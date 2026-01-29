@@ -950,3 +950,99 @@ async fn test_engine_join_no_correlation_different_keys() {
         "Should not alert with different join keys"
     );
 }
+
+#[tokio::test]
+async fn test_engine_derived_stream_in_sequence() {
+    // Test that derived streams (streams with filters) work as sequence sources
+    let source = r#"
+        stream HighValue = Transaction
+            .where(amount > 100)
+
+        stream LowValue = Transaction
+            .where(amount <= 100)
+
+        stream Pattern = HighValue as high
+            -> LowValue where user_id == high.user_id as low
+            .emit(pattern: "high_then_low", user_id: high.user_id)
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    // Send high value transaction (amount > 100)
+    let high_tx = Event::new("Transaction")
+        .with_field("user_id", "user1")
+        .with_field("amount", 200.0);
+    engine.process(high_tx).await.unwrap();
+
+    // No alert yet
+    assert!(rx.try_recv().is_err(), "Should not alert after first event");
+
+    // Send low value transaction (amount <= 100) from same user
+    let low_tx = Event::new("Transaction")
+        .with_field("user_id", "user1")
+        .with_field("amount", 50.0);
+    engine.process(low_tx).await.unwrap();
+
+    // Should get alert now - pattern matched
+    let alert = rx
+        .try_recv()
+        .expect("Should have alert after pattern match");
+    assert_eq!(
+        alert.data.get("pattern"),
+        Some(&Value::Str("high_then_low".to_string()))
+    );
+    assert_eq!(
+        alert.data.get("user_id"),
+        Some(&Value::Str("user1".to_string()))
+    );
+}
+
+#[tokio::test]
+async fn test_engine_derived_stream_filters_applied() {
+    // Test that derived stream filters are correctly applied
+    let source = r#"
+        stream HighValue = Transaction
+            .where(amount > 100)
+
+        stream Pattern = HighValue as high
+            -> Transaction as any
+            .emit(matched: "yes")
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    // Send low value transaction first (should NOT match HighValue)
+    let low_tx = Event::new("Transaction").with_field("amount", 50.0);
+    engine.process(low_tx.clone()).await.unwrap();
+
+    // No alert - low value doesn't match HighValue
+    assert!(
+        rx.try_recv().is_err(),
+        "Low value should not match HighValue stream"
+    );
+
+    // Send high value transaction (should match HighValue)
+    let high_tx = Event::new("Transaction").with_field("amount", 200.0);
+    engine.process(high_tx).await.unwrap();
+
+    // Still no alert - waiting for second step
+    assert!(rx.try_recv().is_err(), "Should wait for second step");
+
+    // Send any transaction
+    engine.process(low_tx).await.unwrap();
+
+    // Should get alert now
+    let alert = rx
+        .try_recv()
+        .expect("Should have alert after pattern match");
+    assert_eq!(
+        alert.data.get("matched"),
+        Some(&Value::Str("yes".to_string()))
+    );
+}

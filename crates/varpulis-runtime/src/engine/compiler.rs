@@ -183,12 +183,25 @@ pub fn expr_to_pattern(expr: &varpulis_core::ast::Expr) -> Option<PatternExpr> {
 // SASE+ Pattern Compilation
 // =============================================================================
 
-/// Compile a sequence source and operations into a SASE+ pattern
-pub fn compile_to_sase_pattern(
+/// Information about a derived stream for pattern compilation
+#[derive(Debug, Clone)]
+pub struct DerivedStreamInfo {
+    /// The underlying event type (e.g., "Transaction")
+    pub event_type: String,
+    /// Optional filter expression from the stream definition
+    pub filter: Option<varpulis_core::ast::Expr>,
+}
+
+/// Stream resolver function type: given a stream name, returns derived stream info if found
+pub type StreamResolver<'a> = &'a dyn Fn(&str) -> Option<DerivedStreamInfo>;
+
+/// Compile a sequence source and operations into a SASE+ pattern with stream resolution
+pub fn compile_to_sase_pattern_with_resolver(
     source: &StreamSource,
     followed_by_clauses: &[FollowedByClause],
     _negation_clauses: &[FollowedByClause],
     within_duration: Option<Duration>,
+    stream_resolver: StreamResolver,
 ) -> Option<SasePattern> {
     let mut steps: Vec<SasePattern> = Vec::new();
 
@@ -202,24 +215,45 @@ pub fn compile_to_sase_pattern(
             }
         }
         StreamSource::Ident(name) | StreamSource::From(name) => {
+            // Check if this is a derived stream
+            let (event_type, predicate) = if let Some(info) = stream_resolver(name) {
+                let pred = info.filter.as_ref().and_then(expr_to_sase_predicate);
+                (info.event_type, pred)
+            } else {
+                (name.clone(), None)
+            };
             steps.push(SasePattern::Event {
-                event_type: name.clone(),
-                predicate: None,
+                event_type,
+                predicate,
                 alias: None,
             });
         }
         StreamSource::IdentWithAlias { name, alias } => {
+            // Check if this is a derived stream
+            let (event_type, predicate) = if let Some(info) = stream_resolver(name) {
+                let pred = info.filter.as_ref().and_then(expr_to_sase_predicate);
+                (info.event_type, pred)
+            } else {
+                (name.clone(), None)
+            };
             steps.push(SasePattern::Event {
-                event_type: name.clone(),
-                predicate: None,
+                event_type,
+                predicate,
                 alias: Some(alias.clone()),
             });
         }
         StreamSource::AllWithAlias { name, alias } => {
+            // Check if this is a derived stream
+            let (event_type, predicate) = if let Some(info) = stream_resolver(name) {
+                let pred = info.filter.as_ref().and_then(expr_to_sase_predicate);
+                (info.event_type, pred)
+            } else {
+                (name.clone(), None)
+            };
             // match_all -> Kleene+
             let event_pattern = SasePattern::Event {
-                event_type: name.clone(),
-                predicate: None,
+                event_type,
+                predicate,
                 alias: alias.clone(),
             };
             steps.push(SasePattern::KleenePlus(Box::new(event_pattern)));
@@ -229,9 +263,27 @@ pub fn compile_to_sase_pattern(
 
     // Add followed_by clauses
     for clause in followed_by_clauses {
-        let predicate = clause.filter.as_ref().and_then(expr_to_sase_predicate);
+        // Check if event_type is a derived stream
+        let (resolved_event_type, stream_predicate) =
+            if let Some(info) = stream_resolver(&clause.event_type) {
+                (info.event_type, info.filter)
+            } else {
+                (clause.event_type.clone(), None)
+            };
+
+        // Combine stream filter with clause filter
+        let clause_predicate = clause.filter.as_ref().and_then(expr_to_sase_predicate);
+        let stream_pred = stream_predicate.as_ref().and_then(expr_to_sase_predicate);
+
+        let predicate = match (stream_pred, clause_predicate) {
+            (Some(sp), Some(cp)) => Some(Predicate::And(Box::new(sp), Box::new(cp))),
+            (Some(sp), None) => Some(sp),
+            (None, Some(cp)) => Some(cp),
+            (None, None) => None,
+        };
+
         let event_pattern = SasePattern::Event {
-            event_type: clause.event_type.clone(),
+            event_type: resolved_event_type,
             predicate,
             alias: clause.alias.clone(),
         };
