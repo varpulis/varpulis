@@ -665,13 +665,6 @@ impl SaseEngine {
 
     /// Process an incoming event, returns completed matches
     pub fn process(&mut self, event: &Event) -> Vec<MatchResult> {
-        // Wrap event in Arc for efficient sharing across pattern runs
-        let shared_event: SharedEvent = Arc::new(event.clone());
-        self.process_shared(shared_event)
-    }
-
-    /// Process a shared event (Arc<Event>) - avoids cloning for internal use
-    pub fn process_shared(&mut self, event: SharedEvent) -> Vec<MatchResult> {
         let mut completed = Vec::new();
 
         // Update watermark tracking for event-time processing
@@ -717,7 +710,7 @@ impl SaseEngine {
         completed
     }
 
-    fn process_partition(&mut self, partition_key: &str, event: &SharedEvent) -> Vec<MatchResult> {
+    fn process_partition(&mut self, partition_key: &str, event: &Event) -> Vec<MatchResult> {
         let mut completed = Vec::new();
         let max_runs = self.max_runs;
 
@@ -757,7 +750,7 @@ impl SaseEngine {
         completed
     }
 
-    fn process_runs(&mut self, event: &SharedEvent) -> Vec<MatchResult> {
+    fn process_runs(&mut self, event: &Event) -> Vec<MatchResult> {
         let mut completed = Vec::new();
         let mut new_runs = Vec::new();
         let mut i = 0;
@@ -806,7 +799,7 @@ impl SaseEngine {
         completed
     }
 
-    fn try_start_run(&self, event: &SharedEvent) -> Option<Run> {
+    fn try_start_run(&self, event: &Event) -> Option<Run> {
         let start_state = &self.nfa.states[self.nfa.start_state];
         let empty_captured: HashMap<String, SharedEvent> = HashMap::new();
 
@@ -833,7 +826,7 @@ impl SaseEngine {
                 }
 
                 // Capture event
-                run.push(Arc::clone(event), next_state.alias.clone());
+                run.push(Arc::new(event.clone()), next_state.alias.clone());
 
                 return Some(run);
             }
@@ -852,7 +845,7 @@ impl SaseEngine {
                             Run::new_with_event_time(next_id, event.timestamp)
                         }
                     };
-                    run.push(Arc::clone(event), next_state.alias.clone());
+                    run.push(Arc::new(event.clone()), next_state.alias.clone());
                     return Some(run);
                 }
             }
@@ -978,7 +971,7 @@ fn advance_run(
     nfa: &Nfa,
     strategy: SelectionStrategy,
     run: &mut Run,
-    event: &SharedEvent,
+    event: &Event,
 ) -> RunAdvanceResult {
     let current_state = &nfa.states[run.current_state];
 
@@ -1003,7 +996,7 @@ fn advance_run(
         let next_state = &nfa.states[next_id];
         if event_matches_state(nfa, event, next_state, &run.captured) {
             run.current_state = next_id;
-            run.push(Arc::clone(event), next_state.alias.clone());
+            run.push(Arc::new(event.clone()), next_state.alias.clone());
 
             if next_state.state_type == StateType::Accept {
                 return RunAdvanceResult::Complete(MatchResult {
@@ -1054,7 +1047,7 @@ fn advance_run(
             let next_state = &nfa.states[next_id];
             if event_matches_state(nfa, event, next_state, &run.captured) {
                 run.current_state = next_id;
-                run.push(Arc::clone(event), next_state.alias.clone());
+                run.push(Arc::new(event.clone()), next_state.alias.clone());
 
                 if next_state.state_type == StateType::Accept {
                     return RunAdvanceResult::Complete(MatchResult {
