@@ -3,6 +3,7 @@
 //! This library provides the core functionality for the Varpulis CLI,
 //! organized into dedicated modules for security, WebSocket handling, and more.
 
+pub mod auth;
 pub mod security;
 pub mod websocket;
 
