@@ -1,4 +1,10 @@
-//! Varpulis CLI library - testable functions
+//! Varpulis CLI library - testable functions and modules
+//!
+//! This library provides the core functionality for the Varpulis CLI,
+//! organized into dedicated modules for security, WebSocket handling, and more.
+
+pub mod security;
+pub mod websocket;
 
 use anyhow::Result;
 use varpulis_parser::parse;
@@ -7,11 +13,11 @@ use varpulis_parser::parse;
 pub fn check_syntax(source: &str) -> Result<()> {
     match parse(source) {
         Ok(program) => {
-            println!("✅ Syntax OK ({} statements)", program.statements.len());
+            println!("Syntax OK ({} statements)", program.statements.len());
             Ok(())
         }
         Err(e) => {
-            println!("❌ Syntax error: {}", e);
+            println!("Syntax error: {}", e);
             Err(anyhow::anyhow!("Parse error: {}", e))
         }
     }
@@ -55,7 +61,7 @@ mod tests {
     #[test]
     fn test_check_syntax_invalid() {
         let source = r#"
-            stream Invalid = 
+            stream Invalid =
                 .where(
         "#;
         assert!(check_syntax(source).is_err());
@@ -69,7 +75,7 @@ mod tests {
         "#;
         let result = parse_program(source);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 1);
+        assert_eq!(result.expect("should succeed"), 1);
     }
 
     #[test]
@@ -88,7 +94,7 @@ mod tests {
         "#;
         let result = validate_program(source);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 1);
+        assert_eq!(result.expect("should succeed"), 1);
     }
 
     #[tokio::test]
@@ -97,14 +103,14 @@ mod tests {
             stream A = Events
                 .where(event_type == "a")
                 .emit(alert_type: "a")
-            
+
             stream B = Events
                 .where(event_type == "b")
                 .emit(alert_type: "b")
         "#;
         let result = validate_program(source);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 2);
+        assert_eq!(result.expect("should succeed"), 2);
     }
 
     #[tokio::test]
