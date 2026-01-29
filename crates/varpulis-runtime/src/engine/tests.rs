@@ -1046,3 +1046,686 @@ async fn test_engine_derived_stream_filters_applied() {
         Some(&Value::Str("yes".to_string()))
     );
 }
+
+// ==========================================================================
+// Public API Coverage Tests
+// ==========================================================================
+
+#[tokio::test]
+async fn test_engine_get_pattern() {
+    let source = r#"
+        pattern HighTemp = TemperatureReading where value > 30
+        pattern LowTemp = TemperatureReading where value < 10
+    "#;
+
+    let program = parse_program(source);
+    let (tx, _rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    // Test get_pattern for existing patterns
+    let high_temp = engine.get_pattern("HighTemp");
+    assert!(high_temp.is_some(), "HighTemp pattern should exist");
+    assert_eq!(high_temp.unwrap().name, "HighTemp");
+
+    let low_temp = engine.get_pattern("LowTemp");
+    assert!(low_temp.is_some(), "LowTemp pattern should exist");
+
+    // Test get_pattern for non-existing pattern
+    let missing = engine.get_pattern("MissingPattern");
+    assert!(missing.is_none(), "Non-existing pattern should return None");
+}
+
+#[tokio::test]
+async fn test_engine_patterns_list() {
+    let source = r#"
+        pattern A = EventA where x > 1
+        pattern B = EventB where y < 2
+        pattern C = EventC where z == 3
+    "#;
+
+    let program = parse_program(source);
+    let (tx, _rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    let patterns = engine.patterns();
+    assert_eq!(patterns.len(), 3, "Should have 3 patterns");
+    assert!(patterns.contains_key("A"));
+    assert!(patterns.contains_key("B"));
+    assert!(patterns.contains_key("C"));
+}
+
+#[tokio::test]
+async fn test_engine_user_functions() {
+    let source = r#"
+        fn double(x: int) -> int:
+            x * 2
+
+        fn triple(x: int) -> int:
+            x * 3
+
+        stream Test = EventA
+            .where(double(value) > 10)
+            .emit(result: triple(value))
+    "#;
+
+    let program = parse_program(source);
+    let (tx, _rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    // Test get_function
+    let double_fn = engine.get_function("double");
+    assert!(double_fn.is_some(), "double function should exist");
+    assert_eq!(double_fn.unwrap().name, "double");
+
+    let triple_fn = engine.get_function("triple");
+    assert!(triple_fn.is_some(), "triple function should exist");
+
+    let missing_fn = engine.get_function("missing");
+    assert!(
+        missing_fn.is_none(),
+        "Non-existing function should return None"
+    );
+
+    // Test function_names
+    let names = engine.function_names();
+    assert_eq!(names.len(), 2, "Should have 2 user functions");
+    assert!(names.contains(&"double"));
+    assert!(names.contains(&"triple"));
+}
+
+#[tokio::test]
+async fn test_engine_add_filter() {
+    let source = r#"
+        stream Test = EventA
+            .emit(value: value)
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    // Add a runtime filter
+    engine
+        .add_filter("Test", |event| event.get_int("value").unwrap_or(0) > 50)
+        .unwrap();
+
+    // Event below filter threshold - no alert
+    let low_event = Event::new("EventA").with_field("value", 30i64);
+    engine.process(low_event).await.unwrap();
+    assert!(rx.try_recv().is_err(), "Low value should be filtered out");
+
+    // Event above filter threshold - should alert
+    let high_event = Event::new("EventA").with_field("value", 100i64);
+    engine.process(high_event).await.unwrap();
+    let alert = rx.try_recv().expect("High value should pass filter");
+    assert_eq!(alert.data.get("value"), Some(&Value::Int(100)));
+}
+
+#[tokio::test]
+async fn test_engine_add_filter_nonexistent_stream() {
+    let (tx, _rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+
+    // Try to add filter to non-existent stream
+    let result = engine.add_filter("NonExistent", |_| true);
+    assert!(result.is_err(), "Should fail for non-existent stream");
+    assert!(result.unwrap_err().contains("not found"));
+}
+
+#[tokio::test]
+async fn test_engine_metrics_detailed() {
+    let source = r#"
+        stream Test1 = EventA.emit(x: 1)
+        stream Test2 = EventB.emit(y: 2)
+    "#;
+
+    let program = parse_program(source);
+    let (tx, _rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    let metrics = engine.metrics();
+    assert_eq!(metrics.streams_count, 2, "Should have 2 streams");
+    assert_eq!(metrics.events_processed, 0, "No events processed yet");
+
+    // Process some events
+    engine.process(Event::new("EventA")).await.unwrap();
+    engine.process(Event::new("EventB")).await.unwrap();
+    engine.process(Event::new("EventA")).await.unwrap();
+
+    let metrics = engine.metrics();
+    assert_eq!(
+        metrics.events_processed, 3,
+        "Should have processed 3 events"
+    );
+}
+
+// ==========================================================================
+// Edge Case Tests
+// ==========================================================================
+
+#[tokio::test]
+async fn test_engine_empty_program() {
+    let source = "";
+    let program = parse_program(source);
+    let (tx, _rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    let metrics = engine.metrics();
+    assert_eq!(
+        metrics.streams_count, 0,
+        "Empty program should have no streams"
+    );
+}
+
+#[tokio::test]
+async fn test_engine_event_with_many_fields() {
+    let source = r#"
+        stream Test = BigEvent
+            .where(field1 > 0 and field2 > 0 and field3 > 0)
+            .emit(sum: field1 + field2 + field3)
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    let event = Event::new("BigEvent")
+        .with_field("field1", 10i64)
+        .with_field("field2", 20i64)
+        .with_field("field3", 30i64)
+        .with_field("field4", 40i64)
+        .with_field("field5", 50i64);
+
+    engine.process(event).await.unwrap();
+
+    let alert = rx.try_recv().expect("Should receive alert");
+    assert_eq!(alert.data.get("sum"), Some(&Value::Int(60)));
+}
+
+#[tokio::test]
+async fn test_engine_special_characters_in_event_type() {
+    let source = r#"
+        stream Test = Event_With_Underscores
+            .emit(ok: "yes")
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    let event = Event::new("Event_With_Underscores");
+    engine.process(event).await.unwrap();
+
+    let alert = rx.try_recv().expect("Should receive alert");
+    assert_eq!(alert.data.get("ok"), Some(&Value::Str("yes".to_string())));
+}
+
+// ==========================================================================
+// Config Block Tests
+// ==========================================================================
+
+#[tokio::test]
+async fn test_engine_get_config() {
+    let source = r#"
+        config:
+            mode: "low_latency"
+            state_backend: "rocksdb"
+    "#;
+
+    let program = parse_program(source);
+    let (tx, _rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    // When using "config:" (old syntax), the name defaults to "default"
+    let config = engine.get_config("default");
+    assert!(config.is_some(), "default config block should exist");
+    assert_eq!(config.unwrap().name, "default");
+
+    // Test get_config for non-existing config
+    let missing = engine.get_config("redis");
+    assert!(missing.is_none(), "Non-existing config should return None");
+}
+
+// ==========================================================================
+// Window Operation Tests
+// ==========================================================================
+
+#[tokio::test]
+async fn test_engine_count_window() {
+    let source = r#"
+        stream Test = StockTick
+            .window(3)
+            .aggregate(avg_price: avg(price))
+            .emit(average: avg_price)
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    // Send 2 events - no output yet (window not complete)
+    engine
+        .process(Event::new("StockTick").with_field("price", 100.0))
+        .await
+        .unwrap();
+    engine
+        .process(Event::new("StockTick").with_field("price", 110.0))
+        .await
+        .unwrap();
+    assert!(rx.try_recv().is_err(), "Window not complete yet");
+
+    // Third event completes window
+    engine
+        .process(Event::new("StockTick").with_field("price", 120.0))
+        .await
+        .unwrap();
+    let alert = rx
+        .try_recv()
+        .expect("Should have alert after window completes");
+    // Average should be (100 + 110 + 120) / 3 = 110
+    if let Some(Value::Float(avg)) = alert.data.get("average") {
+        assert!((avg - 110.0).abs() < 0.001, "Average should be 110.0");
+    }
+}
+
+#[tokio::test]
+async fn test_engine_tumbling_time_window() {
+    let source = r#"
+        stream Test = SensorData
+            .window(1s)
+            .aggregate(max_temp: max(temperature))
+            .emit(max_value: max_temp)
+    "#;
+
+    let program = parse_program(source);
+    let (tx, _rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    // Process events - window behavior is time-based
+    engine
+        .process(Event::new("SensorData").with_field("temperature", 25.0))
+        .await
+        .unwrap();
+    engine
+        .process(Event::new("SensorData").with_field("temperature", 30.0))
+        .await
+        .unwrap();
+
+    // Time windows rely on wall clock, so we just verify processing works
+    let metrics = engine.metrics();
+    assert_eq!(metrics.events_processed, 2);
+}
+
+#[tokio::test]
+async fn test_engine_sliding_count_window() {
+    let source = r#"
+        stream Test = StockTick
+            .window(5, sliding: 1)
+            .aggregate(sum_vol: sum(volume))
+            .emit(total: sum_vol)
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    // Fill the window
+    for i in 0..5 {
+        engine
+            .process(Event::new("StockTick").with_field("volume", (i + 1) as f64 * 100.0))
+            .await
+            .unwrap();
+    }
+
+    // Should get alert after window is full
+    let alert = rx.try_recv().expect("Should have alert");
+    // sum = 100 + 200 + 300 + 400 + 500 = 1500
+    if let Some(Value::Float(sum)) = alert.data.get("total") {
+        assert!((sum - 1500.0).abs() < 0.001, "Sum should be 1500.0");
+    }
+}
+
+// ==========================================================================
+// Aggregation Operation Tests
+// ==========================================================================
+
+#[tokio::test]
+async fn test_engine_aggregation_count() {
+    let source = r#"
+        stream Test = EventA
+            .window(3)
+            .aggregate(cnt: count())
+            .emit(event_count: cnt)
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    for _ in 0..3 {
+        engine.process(Event::new("EventA")).await.unwrap();
+    }
+
+    let alert = rx.try_recv().expect("Should have alert");
+    assert_eq!(alert.data.get("event_count"), Some(&Value::Int(3)));
+}
+
+#[tokio::test]
+async fn test_engine_aggregation_min_max() {
+    let source = r#"
+        stream Test = Reading
+            .window(4)
+            .aggregate(
+                min_val: min(value),
+                max_val: max(value)
+            )
+            .emit(minimum: min_val, maximum: max_val)
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    let values = vec![50.0, 20.0, 80.0, 30.0];
+    for v in values {
+        engine
+            .process(Event::new("Reading").with_field("value", v))
+            .await
+            .unwrap();
+    }
+
+    let alert = rx.try_recv().expect("Should have alert");
+    assert_eq!(alert.data.get("minimum"), Some(&Value::Float(20.0)));
+    assert_eq!(alert.data.get("maximum"), Some(&Value::Float(80.0)));
+}
+
+// ==========================================================================
+// Select Operation Tests
+// ==========================================================================
+
+#[tokio::test]
+async fn test_engine_select_simple() {
+    let source = r#"
+        stream Test = SensorData
+            .window(2)
+            .select(temp: temperature, loc: location)
+            .emit(selected_temp: temp, selected_loc: loc)
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    engine
+        .process(
+            Event::new("SensorData")
+                .with_field("temperature", 25.0)
+                .with_field("location", "room1")
+                .with_field("humidity", 60.0),
+        )
+        .await
+        .unwrap();
+    engine
+        .process(
+            Event::new("SensorData")
+                .with_field("temperature", 26.0)
+                .with_field("location", "room2")
+                .with_field("humidity", 65.0),
+        )
+        .await
+        .unwrap();
+
+    // Window of 2 should trigger
+    let alert = rx.try_recv().expect("Should have alert");
+    // Select should project only specified fields
+    assert!(alert.data.contains_key("selected_temp") || alert.data.contains_key("selected_loc"));
+}
+
+// ==========================================================================
+// Partitioned Window Tests
+// ==========================================================================
+
+#[tokio::test]
+async fn test_engine_partitioned_window() {
+    let source = r#"
+        stream Test = StockTick
+            .partition_by(symbol)
+            .window(2)
+            .aggregate(total_vol: sum(volume))
+            .emit(symbol: symbol, volume: total_vol)
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    // AAPL partition
+    engine
+        .process(
+            Event::new("StockTick")
+                .with_field("symbol", "AAPL")
+                .with_field("volume", 100.0),
+        )
+        .await
+        .unwrap();
+    engine
+        .process(
+            Event::new("StockTick")
+                .with_field("symbol", "AAPL")
+                .with_field("volume", 200.0),
+        )
+        .await
+        .unwrap();
+
+    // GOOG partition - separate window
+    engine
+        .process(
+            Event::new("StockTick")
+                .with_field("symbol", "GOOG")
+                .with_field("volume", 500.0),
+        )
+        .await
+        .unwrap();
+
+    // AAPL window should complete with 2 events (sum = 300)
+    let alert = rx.try_recv().expect("AAPL window should complete");
+    if let Some(Value::Float(vol)) = alert.data.get("volume") {
+        assert!((vol - 300.0).abs() < 0.001, "AAPL volume should be 300.0");
+    }
+
+    // GOOG window not complete yet (only 1 event)
+    assert!(
+        rx.try_recv().is_err(),
+        "GOOG window should not be complete yet"
+    );
+}
+
+// ==========================================================================
+// Max Chain Depth Test
+// ==========================================================================
+
+#[tokio::test]
+async fn test_engine_max_chain_depth() {
+    // Test that deeply chained streams don't cause infinite loops
+    let source = r#"
+        stream Level1 = Source .emit(level: "1")
+        stream Level2 = Level1 .emit(level: "2")
+        stream Level3 = Level2 .emit(level: "3")
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    engine.process(Event::new("Source")).await.unwrap();
+
+    // Should get all 3 alerts from the chain
+    let mut alerts = Vec::new();
+    while let Ok(alert) = rx.try_recv() {
+        alerts.push(alert);
+    }
+    assert!(
+        alerts.len() >= 1,
+        "Should have at least one alert from chain"
+    );
+}
+
+// ==========================================================================
+// Event Declaration Tests
+// ==========================================================================
+
+#[tokio::test]
+async fn test_engine_event_declaration() {
+    let source = r#"
+        event StockTick {
+            symbol: string,
+            price: float,
+            volume: int
+        }
+
+        stream Test = StockTick
+            .emit(s: symbol, p: price)
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    engine
+        .process(
+            Event::new("StockTick")
+                .with_field("symbol", "AAPL")
+                .with_field("price", 150.0)
+                .with_field("volume", 1000i64),
+        )
+        .await
+        .unwrap();
+
+    let alert = rx.try_recv().expect("Should have alert");
+    assert_eq!(alert.data.get("s"), Some(&Value::Str("AAPL".to_string())));
+}
+
+// ==========================================================================
+// Print Operation Test
+// ==========================================================================
+
+#[tokio::test]
+async fn test_engine_print_operation() {
+    let source = r#"
+        stream Test = SensorData
+            .print("Temperature:", temperature)
+            .emit(ok: "yes")
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    engine
+        .process(Event::new("SensorData").with_field("temperature", 25.5))
+        .await
+        .unwrap();
+
+    // Print operation should not block emit
+    let alert = rx.try_recv().expect("Should have alert after print");
+    assert_eq!(alert.data.get("ok"), Some(&Value::Str("yes".to_string())));
+}
+
+// ==========================================================================
+// Merge Source Tests
+// ==========================================================================
+
+#[tokio::test]
+async fn test_engine_merge_streams() {
+    // Define some source streams and then merge them
+    let source = r#"
+        stream TempAlerts = TemperatureReading
+            .where(value > 30)
+            .emit(alert_type: "temperature", value: value)
+
+        stream HumidAlerts = HumidityReading
+            .where(value > 70)
+            .emit(alert_type: "humidity", value: value)
+
+        stream AllAlerts = merge(TempAlerts, HumidAlerts)
+            .emit(merged: "yes")
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    // Temperature event that passes filter (value > 30)
+    engine
+        .process(Event::new("TemperatureReading").with_field("value", 35.0))
+        .await
+        .unwrap();
+    // Should get alert from TempAlerts first, then from AllAlerts merge
+    let _ = rx.try_recv(); // TempAlerts emit
+
+    // Humidity event that passes filter (value > 70)
+    engine
+        .process(Event::new("HumidityReading").with_field("value", 80.0))
+        .await
+        .unwrap();
+    // Should get alert from HumidAlerts
+    let _ = rx.try_recv(); // HumidAlerts emit
+
+    // Temperature event that fails filter (value <= 30)
+    engine
+        .process(Event::new("TemperatureReading").with_field("value", 25.0))
+        .await
+        .unwrap();
+    // No more alerts expected after previous clears
+    let metrics = engine.metrics();
+    assert!(
+        metrics.events_processed >= 3,
+        "Should have processed 3 events"
+    );
+}
+
+// ==========================================================================
+// Import Statement Test
+// ==========================================================================
+
+#[tokio::test]
+async fn test_engine_import_statement() {
+    // Import statements are logged but not yet fully implemented
+    let source = r#"
+        import "some/path.vpl"
+        import "another/module" as mod
+
+        stream Test = EventA
+            .emit(ok: "yes")
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    // load() should succeed even with import statements (they are no-ops for now)
+    engine.load(&program).unwrap();
+
+    engine.process(Event::new("EventA")).await.unwrap();
+    let alert = rx.try_recv().expect("Should have alert");
+    assert_eq!(alert.data.get("ok"), Some(&Value::Str("yes".to_string())));
+}

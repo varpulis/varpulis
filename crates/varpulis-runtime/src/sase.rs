@@ -669,14 +669,14 @@ impl SaseEngine {
 
         // Update watermark tracking for event-time processing
         if self.time_semantics == TimeSemantics::EventTime {
-            self.update_watermark(&event);
+            self.update_watermark(event);
         }
 
         // Clean up timed-out runs (uses watermark in EventTime mode)
         self.cleanup_timeouts();
 
         // Check global negations - invalidate runs that match
-        self.check_global_negations(&event);
+        self.check_global_negations(event);
 
         // If using partitioning, route to appropriate partition
         if let Some(ref partition_field) = self.partition_by {
@@ -686,10 +686,10 @@ impl SaseEngine {
                 .unwrap_or_default();
 
             // Process partitioned runs
-            completed.extend(self.process_partition(&partition_key, &event));
+            completed.extend(self.process_partition(&partition_key, event));
 
             // Try to start new run in partition
-            if let Some(run) = self.try_start_run(&event) {
+            if let Some(run) = self.try_start_run(event) {
                 let partition_runs = self.partitioned_runs.entry(partition_key).or_default();
                 if partition_runs.len() < self.max_runs {
                     partition_runs.push(run);
@@ -697,10 +697,10 @@ impl SaseEngine {
             }
         } else {
             // Non-partitioned processing
-            completed.extend(self.process_runs(&event));
+            completed.extend(self.process_runs(event));
 
             // Try to start new run
-            if let Some(run) = self.try_start_run(&event) {
+            if let Some(run) = self.try_start_run(event) {
                 if self.runs.len() < self.max_runs {
                     self.runs.push(run);
                 }
@@ -1599,6 +1599,347 @@ mod tests {
         engine.advance_watermark(future_watermark);
 
         // Run should now be cleaned up
+        assert_eq!(engine.stats().active_runs, 0);
+    }
+
+    // =========================================================================
+    // COV-02: Advanced SASE+ Integration Tests
+    // =========================================================================
+
+    #[test]
+    fn test_out_of_order_events_in_sequence() {
+        // Test that events arriving out of order don't incorrectly match
+        // Pattern: SEQ(A, B, C) should only match when events arrive in order
+
+        let pattern = PatternBuilder::seq(vec![
+            PatternBuilder::event("A"),
+            PatternBuilder::event("B"),
+            PatternBuilder::event("C"),
+        ]);
+
+        let mut engine = SaseEngine::new(pattern);
+
+        // Send B first (out of order) - should not start a run
+        let results = engine.process(&make_event("B", vec![]));
+        assert!(results.is_empty());
+        assert_eq!(engine.stats().active_runs, 0);
+
+        // Send A - starts a new run
+        let results = engine.process(&make_event("A", vec![]));
+        assert!(results.is_empty());
+        assert_eq!(engine.stats().active_runs, 1);
+
+        // Send C (skipping B) - should not complete
+        let results = engine.process(&make_event("C", vec![]));
+        assert!(results.is_empty());
+
+        // Send B - now should move run forward
+        let results = engine.process(&make_event("B", vec![]));
+        assert!(results.is_empty());
+
+        // Send C again - should complete
+        let results = engine.process(&make_event("C", vec![]));
+        assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn test_concurrent_patterns_same_event_type() {
+        // Multiple runs can be active for the same event type
+        // Pattern: SEQ(A, B) - sending multiple A events should create multiple runs
+
+        let pattern =
+            PatternBuilder::seq(vec![PatternBuilder::event("A"), PatternBuilder::event("B")]);
+
+        let mut engine = SaseEngine::new(pattern);
+
+        // Send first A
+        engine.process(&make_event("A", vec![("id", Value::Int(1))]));
+        assert_eq!(engine.stats().active_runs, 1);
+
+        // Send second A - creates another run
+        engine.process(&make_event("A", vec![("id", Value::Int(2))]));
+        assert_eq!(engine.stats().active_runs, 2);
+
+        // Send B - should complete BOTH runs
+        let results = engine.process(&make_event("B", vec![]));
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_kleene_star_with_occurrences() {
+        // A* matches zero or more - test with some occurrences
+        // Pattern: SEQ(Start, Middle*, End)
+
+        let pattern = PatternBuilder::seq(vec![
+            PatternBuilder::event("Start"),
+            PatternBuilder::zero_or_more(PatternBuilder::event("Middle")),
+            PatternBuilder::event("End"),
+        ]);
+
+        let mut engine = SaseEngine::new(pattern);
+
+        // Start
+        engine.process(&make_event("Start", vec![]));
+        assert_eq!(engine.stats().active_runs, 1);
+
+        // Some Middle events
+        engine.process(&make_event("Middle", vec![]));
+        engine.process(&make_event("Middle", vec![]));
+
+        // End should complete
+        let results = engine.process(&make_event("End", vec![]));
+        // Kleene star creates multiple completion possibilities
+        assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn test_kleene_plus_requires_at_least_one() {
+        // A+ should require at least one occurrence
+        // Pattern: SEQ(Start, Middle+, End)
+
+        let pattern = PatternBuilder::seq(vec![
+            PatternBuilder::event("Start"),
+            PatternBuilder::one_or_more(PatternBuilder::event("Middle")),
+            PatternBuilder::event("End"),
+        ]);
+
+        let mut engine = SaseEngine::new(pattern);
+
+        // Start
+        engine.process(&make_event("Start", vec![]));
+
+        // Skip Middle and send End - should NOT match
+        let results = engine.process(&make_event("End", vec![]));
+        assert!(results.is_empty());
+
+        // Start again
+        engine.process(&make_event("Start", vec![]));
+
+        // Send one Middle
+        engine.process(&make_event("Middle", vec![]));
+
+        // Send End - should match
+        let results = engine.process(&make_event("End", vec![]));
+        assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn test_or_pattern_in_sequence() {
+        // Test OR within a sequence: SEQ(Start, OR(A, B), End)
+        let pattern = PatternBuilder::seq(vec![
+            PatternBuilder::event("Start"),
+            PatternBuilder::or(PatternBuilder::event("A"), PatternBuilder::event("B")),
+            PatternBuilder::event("End"),
+        ]);
+
+        let mut engine = SaseEngine::new(pattern);
+
+        // Start
+        engine.process(&make_event("Start", vec![]));
+        assert_eq!(engine.stats().active_runs, 1);
+
+        // A should advance the run (matches OR branch)
+        engine.process(&make_event("A", vec![]));
+
+        // End should complete
+        let results = engine.process(&make_event("End", vec![]));
+        assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn test_and_pattern_both_required() {
+        // AND(A, B) should match when both occur (any order)
+        let pattern = PatternBuilder::and(PatternBuilder::event("A"), PatternBuilder::event("B"));
+
+        let mut engine = SaseEngine::new(pattern);
+
+        // Just A - should not complete
+        let results = engine.process(&make_event("A", vec![]));
+        assert!(results.is_empty());
+
+        // Now B - should complete
+        let results = engine.process(&make_event("B", vec![]));
+        assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn test_and_pattern_reverse_order() {
+        // AND(A, B) should match even if B comes before A
+        let pattern = PatternBuilder::and(PatternBuilder::event("A"), PatternBuilder::event("B"));
+
+        let mut engine = SaseEngine::new(pattern);
+
+        // B first
+        let results = engine.process(&make_event("B", vec![]));
+        assert!(results.is_empty());
+
+        // Then A - should complete
+        let results = engine.process(&make_event("A", vec![]));
+        assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn test_compare_ref_between_events() {
+        // Test referencing fields between events
+        // Pattern: SEQ(Order as order, Payment where order_id == order.id)
+
+        let pattern = PatternBuilder::seq(vec![
+            PatternBuilder::event_as("Order", "order"),
+            PatternBuilder::event_where(
+                "Payment",
+                Predicate::CompareRef {
+                    field: "order_id".to_string(),
+                    op: CompareOp::Eq,
+                    ref_alias: "order".to_string(),
+                    ref_field: "id".to_string(),
+                },
+            ),
+        ]);
+
+        let mut engine = SaseEngine::new(pattern);
+
+        // Order with id 123
+        engine.process(&make_event("Order", vec![("id", Value::Int(123))]));
+
+        // Payment with wrong order_id - should not complete
+        let results = engine.process(&make_event("Payment", vec![("order_id", Value::Int(999))]));
+        assert!(results.is_empty());
+
+        // Payment with correct order_id - should complete
+        let results = engine.process(&make_event("Payment", vec![("order_id", Value::Int(123))]));
+        assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn test_long_sequence_chain() {
+        // Test a longer sequence: SEQ(A, B, C, D, E)
+        let pattern = PatternBuilder::seq(vec![
+            PatternBuilder::event("A"),
+            PatternBuilder::event("B"),
+            PatternBuilder::event("C"),
+            PatternBuilder::event("D"),
+            PatternBuilder::event("E"),
+        ]);
+
+        let mut engine = SaseEngine::new(pattern);
+
+        // Process events in order
+        engine.process(&make_event("A", vec![]));
+        assert_eq!(engine.stats().active_runs, 1);
+
+        engine.process(&make_event("B", vec![]));
+        engine.process(&make_event("C", vec![]));
+        engine.process(&make_event("D", vec![]));
+
+        // E should complete
+        let results = engine.process(&make_event("E", vec![]));
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_partition_isolation() {
+        // Test that partitions are truly isolated
+        // Events in different partitions should not interact
+
+        let pattern = PatternBuilder::seq(vec![
+            PatternBuilder::event_as("A", "a"),
+            PatternBuilder::event("B"),
+        ]);
+
+        let mut engine = SaseEngine::new(pattern).with_partition_by("region".to_string());
+
+        // A for region "east"
+        engine.process(&make_event(
+            "A",
+            vec![("region", Value::Str("east".into()))],
+        ));
+
+        // B for region "west" - should not complete the east run
+        let results = engine.process(&make_event(
+            "B",
+            vec![("region", Value::Str("west".into()))],
+        ));
+        assert!(results.is_empty());
+
+        // B for region "east" - should complete
+        let results = engine.process(&make_event(
+            "B",
+            vec![("region", Value::Str("east".into()))],
+        ));
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_negation_cancels_match() {
+        // Test that negation properly prevents a match
+        // Pattern: SEQ(A, NOT(Cancel), B)
+        // If Cancel arrives between A and B, the pattern should not match
+
+        let pattern = PatternBuilder::seq(vec![
+            PatternBuilder::event_as("A", "a"),
+            PatternBuilder::not(PatternBuilder::event("Cancel")),
+            PatternBuilder::event("B"),
+        ]);
+
+        let mut engine = SaseEngine::new(pattern);
+
+        // Global negation also needs to be registered
+        engine.add_negation("Cancel".to_string(), None);
+
+        // A starts the sequence
+        engine.process(&make_event("A", vec![]));
+        assert!(engine.stats().active_runs > 0);
+
+        // Cancel should invalidate the run
+        engine.process(&make_event("Cancel", vec![]));
+
+        // B should NOT complete (run was cancelled)
+        let results = engine.process(&make_event("B", vec![]));
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_multiple_kleene_matches() {
+        // Test that Kleene+ captures multiple events
+        // Pattern: SEQ(Start, Tick+, End)
+
+        let pattern = PatternBuilder::seq(vec![
+            PatternBuilder::event_as("Start", "start"),
+            PatternBuilder::one_or_more(PatternBuilder::event_as("Tick", "tick")),
+            PatternBuilder::event_as("End", "end"),
+        ]);
+
+        let mut engine = SaseEngine::new(pattern);
+
+        engine.process(&make_event("Start", vec![("val", Value::Int(0))]));
+
+        // Multiple ticks
+        engine.process(&make_event("Tick", vec![("val", Value::Int(1))]));
+        engine.process(&make_event("Tick", vec![("val", Value::Int(2))]));
+        engine.process(&make_event("Tick", vec![("val", Value::Int(3))]));
+
+        let results = engine.process(&make_event("End", vec![("val", Value::Int(100))]));
+
+        // Should have multiple results (one for each combination)
+        assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn test_stats_tracking() {
+        let pattern =
+            PatternBuilder::seq(vec![PatternBuilder::event("A"), PatternBuilder::event("B")]);
+
+        let mut engine = SaseEngine::new(pattern);
+
+        let initial_stats = engine.stats();
+        assert_eq!(initial_stats.active_runs, 0);
+        assert!(initial_stats.nfa_states > 0); // NFA should have states
+
+        engine.process(&make_event("A", vec![]));
+        assert_eq!(engine.stats().active_runs, 1);
+
+        engine.process(&make_event("B", vec![]));
+        // After completion, run is removed
         assert_eq!(engine.stats().active_runs, 0);
     }
 }

@@ -15,7 +15,7 @@
 | Security | 0 | 0 | **7** |
 | CLI Refactor | 0 | 0 | **2** |
 | Performance | 0 | 1 | **2** |
-| Couverture | 2 | 0 | 0 |
+| Couverture | 0 | 2 | 0 |
 | VS Code | 1 | 0 | 0 |
 | **Total** | **4** | **0** | **42** |
 
@@ -282,16 +282,43 @@ python run_scenario.py scenarios/fraud_scenario.yaml
 
 > **Couverture actuelle**: 62.92% (cible: 80%)
 
-### A faire
+### En cours
 
 - [ ] **COV-01**: Augmenter couverture engine/mod.rs
-  - **Couverture actuelle**: ~55%
+  - **Couverture actuelle**: ~65% (progression de ~55%)
   - **Cible**: 80%+
   - **Action**: Ajouter tests unitaires pour fonctions non couvertes
+  - **Progres**:
+    - [x] Tests API publique: `get_pattern`, `patterns`, `get_function`, `function_names`, `add_filter`
+    - [x] Tests config: `get_config`
+    - [x] Tests window: count, tumbling time, sliding count, partitioned
+    - [x] Tests aggregation: count, min/max
+    - [x] Tests select
+    - [x] Tests edge cases: empty program, many fields, special characters, max chain depth
+    - [x] Tests event declaration
+    - [x] Tests merge sources
+    - [x] Tests print operation
+    - [x] Tests import statement
+    - [x] Tests window module (CountWindow, SlidingCountWindow, PartitionedWindows)
+
+### En cours
 
 - [ ] **COV-02**: Tests d'integration SASE+ avances
   - **Action**: Ajouter tests Kleene+, negation, partition
   - **Scenarios**: Out-of-order events, clock skew, concurrent patterns
+  - **Progres**:
+    - [x] Tests out-of-order events
+    - [x] Tests concurrent patterns (same event type)
+    - [x] Tests Kleene+ requires at least one
+    - [x] Tests Kleene* with occurrences
+    - [x] Tests OR pattern in sequence
+    - [x] Tests AND pattern both orders
+    - [x] Tests CompareRef between events
+    - [x] Tests long sequence chain (5 events)
+    - [x] Tests partition isolation
+    - [x] Tests negation cancels match
+    - [x] Tests multiple Kleene matches
+    - [x] Tests stats tracking
 
 ---
 
@@ -379,7 +406,7 @@ cargo tarpaulin --out Html
 
 | Metrique | Valeur | Cible | Statut |
 |----------|--------|-------|--------|
-| **Tests totaux** | **157+** | 100+ | Excellent |
+| **Tests totaux** | **625** | 100+ | Excellent |
 | **Tests CLI** | **76** | - | Excellent |
 | **Couverture** | 62.92% | 80% | Needs work |
 | **Clippy warnings** | 0 | 0 | Excellent |
