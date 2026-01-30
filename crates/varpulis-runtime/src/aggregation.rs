@@ -1,6 +1,6 @@
 //! Aggregation functions for stream processing
 
-use crate::event::Event;
+use crate::event::{Event, SharedEvent};
 use indexmap::IndexMap;
 use std::hash::{Hash, Hasher};
 use varpulis_core::Value;
@@ -12,6 +12,23 @@ pub type AggResult = IndexMap<String, Value>;
 pub trait AggregateFunc: Send + Sync {
     fn name(&self) -> &str;
     fn apply(&self, events: &[Event], field: Option<&str>) -> Value;
+
+    /// Apply aggregation to SharedEvent slice (avoids cloning in hot paths)
+    fn apply_shared(&self, events: &[SharedEvent], field: Option<&str>) -> Value {
+        // Default implementation: create temporary references
+        // Aggregations only read, so we can iterate and dereference
+        // Individual implementations can override for better performance
+        let refs: Vec<&Event> = events.iter().map(|e| e.as_ref()).collect();
+        self.apply_refs(&refs, field)
+    }
+
+    /// Apply aggregation to event references (internal helper)
+    fn apply_refs(&self, events: &[&Event], field: Option<&str>) -> Value {
+        // Default: clone to Vec<Event> - suboptimal but correct
+        // Most aggregations just iterate and read fields
+        let owned: Vec<Event> = events.iter().map(|e| (*e).clone()).collect();
+        self.apply(&owned, field)
+    }
 }
 
 /// Count aggregation
@@ -391,6 +408,16 @@ impl Aggregator {
         let mut result = IndexMap::new();
         for (alias, func, field) in &self.aggregations {
             let value = func.apply(events, field.as_deref());
+            result.insert(alias.clone(), value);
+        }
+        result
+    }
+
+    /// Apply aggregations to SharedEvent slice (avoids cloning in hot paths)
+    pub fn apply_shared(&self, events: &[SharedEvent]) -> AggResult {
+        let mut result = IndexMap::new();
+        for (alias, func, field) in &self.aggregations {
+            let value = func.apply_shared(events, field.as_deref());
             result.insert(alias.clone(), value);
         }
         result

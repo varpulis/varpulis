@@ -4,6 +4,7 @@
 
 use crate::aggregation::Aggregator;
 use crate::attention::AttentionWindow;
+use crate::event::SharedEvent;
 use crate::join::JoinBuffer;
 use crate::pattern::PatternEngine;
 use crate::sase::SaseEngine;
@@ -11,10 +12,10 @@ use crate::window::{
     CountWindow, PartitionedSlidingWindow, PartitionedTumblingWindow, SlidingCountWindow,
     SlidingWindow, TumblingWindow,
 };
-use crate::Event;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 use varpulis_core::ast::ConfigValue;
 use varpulis_core::Value;
 
@@ -122,7 +123,7 @@ pub(crate) struct MergeSource {
 /// Runtime operations that can be applied to a stream
 pub(crate) enum RuntimeOp {
     /// Filter with closure (for sequence filters with context)
-    WhereClosure(Box<dyn Fn(&Event) -> bool + Send + Sync>),
+    WhereClosure(Box<dyn Fn(&SharedEvent) -> bool + Send + Sync>),
     /// Filter with expression (evaluated at runtime with user functions)
     WhereExpr(varpulis_core::ast::Expr),
     /// Window with optional partition support
@@ -163,7 +164,7 @@ pub(crate) struct SelectConfig {
 pub(crate) struct StreamProcessResult {
     pub alerts: Vec<Alert>,
     /// Output events to feed to dependent streams (with stream name as event_type)
-    pub output_events: Vec<Event>,
+    pub output_events: Vec<SharedEvent>,
 }
 
 /// State for partitioned windows - maintains separate windows per partition key
@@ -182,7 +183,7 @@ impl PartitionedWindowState {
         }
     }
 
-    pub fn add(&mut self, event: Event) -> Option<Vec<Event>> {
+    pub fn add(&mut self, event: SharedEvent) -> Option<Vec<SharedEvent>> {
         let key = event
             .get(&self.partition_key)
             .map(|v| format!("{}", v))
@@ -193,7 +194,7 @@ impl PartitionedWindowState {
             .entry(key)
             .or_insert_with(|| CountWindow::new(self.window_size));
 
-        window.add(event)
+        window.add_shared(event)
     }
 }
 
@@ -215,7 +216,7 @@ impl PartitionedSlidingCountWindowState {
         }
     }
 
-    pub fn add(&mut self, event: Event) -> Option<Vec<Event>> {
+    pub fn add(&mut self, event: SharedEvent) -> Option<Vec<SharedEvent>> {
         let key = event
             .get(&self.partition_key)
             .map(|v| format!("{}", v))
@@ -226,7 +227,7 @@ impl PartitionedSlidingCountWindowState {
             .entry(key)
             .or_insert_with(|| SlidingCountWindow::new(self.window_size, self.slide_size));
 
-        window.add(event)
+        window.add_shared(event)
     }
 }
 
@@ -244,22 +245,22 @@ impl PartitionedAggregatorState {
         }
     }
 
-    pub fn apply(&mut self, events: &[Event]) -> Vec<(String, IndexMap<String, Value>)> {
-        // Group events by partition key
-        let mut partitions: HashMap<String, Vec<Event>> = HashMap::new();
+    pub fn apply(&mut self, events: &[SharedEvent]) -> Vec<(String, IndexMap<String, Value>)> {
+        // Group events by partition key - use Arc::clone to avoid deep clones
+        let mut partitions: HashMap<String, Vec<SharedEvent>> = HashMap::new();
 
         for event in events {
             let key = event
                 .get(&self.partition_key)
                 .map(|v| format!("{}", v))
                 .unwrap_or_else(|| "default".to_string());
-            partitions.entry(key).or_default().push(event.clone());
+            partitions.entry(key).or_default().push(Arc::clone(event));
         }
 
-        // Apply aggregator to each partition
+        // Apply aggregator to each partition using apply_shared
         let mut results = Vec::new();
         for (key, partition_events) in partitions {
-            let result = self.aggregator_template.apply(&partition_events);
+            let result = self.aggregator_template.apply_shared(&partition_events);
             results.push((key, result));
         }
 
