@@ -1289,10 +1289,9 @@ mod tests {
         engine.process(&create_event("A", vec![]));
         assert_eq!(engine.active_count(), 1);
 
-        // Check timeouts without actual timeout - should keep pattern
+        // Check timeouts without actual timeout - pattern without deadline stays active
         engine.check_timeouts();
-        // Pattern without deadline stays active
-        assert!(engine.active_count() >= 0); // Just verify it doesn't crash
+        assert_eq!(engine.active_count(), 1);
     }
 
     // ==========================================================================
