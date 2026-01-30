@@ -468,4 +468,135 @@ mod tests {
         let contents = std::fs::read_to_string(temp_file.path()).unwrap();
         assert!(contents.contains("MultiEvent"));
     }
+
+    // ==========================================================================
+    // Additional FileSink Tests
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_file_sink_path() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let expected_path = temp_file.path().to_path_buf();
+        let sink = FileSink::new("test", temp_file.path()).unwrap();
+
+        assert_eq!(sink.path(), &expected_path);
+    }
+
+    #[tokio::test]
+    async fn test_file_sink_multiple_events() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let sink = FileSink::new("test", temp_file.path()).unwrap();
+
+        // Write multiple events
+        for i in 0..5 {
+            let event = Event::new("Event").with_field("id", i as i64);
+            sink.send(&event).await.unwrap();
+        }
+        sink.flush().await.unwrap();
+
+        // Read and verify all events are written
+        let contents = std::fs::read_to_string(temp_file.path()).unwrap();
+        let lines: Vec<&str> = contents.lines().collect();
+        assert_eq!(lines.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn test_file_sink_multiple_alerts() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let sink = FileSink::new("test", temp_file.path()).unwrap();
+
+        for i in 0..3 {
+            let alert = Alert {
+                alert_type: format!("alert_{}", i),
+                severity: "info".to_string(),
+                message: format!("Message {}", i),
+                data: IndexMap::new(),
+            };
+            sink.send_alert(&alert).await.unwrap();
+        }
+        sink.flush().await.unwrap();
+
+        let contents = std::fs::read_to_string(temp_file.path()).unwrap();
+        assert!(contents.contains("alert_0"));
+        assert!(contents.contains("alert_1"));
+        assert!(contents.contains("alert_2"));
+    }
+
+    // ==========================================================================
+    // Additional ConsoleSink Tests
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_console_sink_alert_with_data() {
+        let sink = ConsoleSink::new("test");
+        let mut data = IndexMap::new();
+        data.insert("field1".to_string(), Value::Int(123));
+        data.insert("field2".to_string(), Value::Str("value".to_string()));
+
+        let alert = Alert {
+            alert_type: "test_alert".to_string(),
+            severity: "critical".to_string(),
+            message: "Test with data".to_string(),
+            data,
+        };
+        assert!(sink.send_alert(&alert).await.is_ok());
+    }
+
+    // ==========================================================================
+    // Additional MultiSink Tests
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_multi_sink_three_sinks() {
+        let temp1 = NamedTempFile::new().unwrap();
+        let temp2 = NamedTempFile::new().unwrap();
+
+        let multi = MultiSink::new("triple")
+            .with_sink(Box::new(ConsoleSink::new("console")))
+            .with_sink(Box::new(FileSink::new("file1", temp1.path()).unwrap()))
+            .with_sink(Box::new(FileSink::new("file2", temp2.path()).unwrap()));
+
+        let event = Event::new("TripleEvent");
+        multi.send(&event).await.unwrap();
+        multi.flush().await.unwrap();
+        multi.close().await.unwrap();
+
+        // Verify both files got the event
+        let contents1 = std::fs::read_to_string(temp1.path()).unwrap();
+        let contents2 = std::fs::read_to_string(temp2.path()).unwrap();
+        assert!(contents1.contains("TripleEvent"));
+        assert!(contents2.contains("TripleEvent"));
+    }
+
+    #[tokio::test]
+    async fn test_multi_sink_alert_broadcast() {
+        let temp = NamedTempFile::new().unwrap();
+
+        let multi = MultiSink::new("alert_multi")
+            .with_sink(Box::new(ConsoleSink::new("console")))
+            .with_sink(Box::new(FileSink::new("file", temp.path()).unwrap()));
+
+        let alert = Alert {
+            alert_type: "broadcast_alert".to_string(),
+            severity: "warning".to_string(),
+            message: "Broadcast test".to_string(),
+            data: IndexMap::new(),
+        };
+        multi.send_alert(&alert).await.unwrap();
+        multi.flush().await.unwrap();
+
+        let contents = std::fs::read_to_string(temp.path()).unwrap();
+        assert!(contents.contains("broadcast_alert"));
+    }
+
+    // ==========================================================================
+    // Error Handling Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_file_sink_invalid_path() {
+        // Trying to create a file in a non-existent directory should fail
+        let result = FileSink::new("test", "/nonexistent/path/file.json");
+        assert!(result.is_err());
+    }
 }
