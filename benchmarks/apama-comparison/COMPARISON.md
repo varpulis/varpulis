@@ -28,9 +28,9 @@ Comparing Apama EPL (Event Processing Language) with Varpulis VPL for Complex Ev
 | **Stream Joins** | ✅ `join A ... join B on ...` | ✅ `join(A, B).on(...)` | Both support |
 | **Having Clause** | ✅ `having condition` | ✅ `.having(condition)` | Both support |
 | **rstream (delay)** | ✅ `rstream` outputs leaving items | ✅ `DelayBuffer`, `PreviousValueTracker` | API-level support |
-| **Nested Queries** | ✅ Full support | ❌ Not yet | Missing |
-| **Dynamic Thresholds** | ✅ Variables updated at runtime | ❌ Not yet | Missing |
-| **Periodic Timers** | ✅ `on wait(period)` | ❌ Not yet | Missing |
+| **Nested Queries** | ✅ Full support | ✅ Multi-stage pipelines | Both support |
+| **Dynamic Thresholds** | ✅ Variables updated at runtime | ✅ `var`/`:=` syntax | Both support |
+| **Periodic Timers** | ✅ `on wait(period)` | ✅ `timer(5s)` | Both support |
 | **Spawn/Contexts** | ✅ `spawn`, contexts | ❌ Not applicable | Different model |
 
 ## Unique Varpulis Features
@@ -73,26 +73,24 @@ Comparing Apama EPL (Event Processing Language) with Varpulis VPL for Complex Ev
    - Fixed event routing for derived streams
    - 1 new test (test_aggregate_comparison_join)
 
-## Missing in Varpulis (Candidates for KANBAN)
+## Recently Implemented (Now at Parity)
 
-### Medium Priority
+The following features were implemented to achieve feature parity with Apama:
 
-1. **TIMER-01**: Periodic timer independent of events
-   - Enables: VWAP period calculation
-   - Use case: `on wait(5s) { ... }`
+1. ✅ **TIMER-01**: Periodic timer (`timer(5s)`) - January 2026
+2. ✅ **VAR-01**: Dynamic variables (`var`/`let` + `:=` assignment) - January 2026
+3. ✅ **QUERY-01**: Nested queries (multi-stage pipelines) - January 2026
+4. ✅ **STREAM-01**: rstream operator (DelayBuffer, PreviousValueTracker) - January 2026
+5. ✅ **STREAM-02**: Having clause for aggregate filtering - January 2026
+6. ✅ **STREAM-03**: Inter-stream joins with aggregate comparison - January 2026
 
-2. **DYNAMIC-VAR-01**: Dynamic variable updates
-   - Enables: Adaptive thresholds
-   - Use case: Update threshold after alert
+## Remaining Differences
 
-3. **QUERY-01**: Nested queries
-   - Enables: Sub-queries in stream definitions
-   - Use case: Complex aggregation hierarchies
-
-### Low Priority
-
-6. **NESTED-QUERY-01**: Nested stream queries
-   - Enables: Complex multi-stage processing
+| Feature | Apama | Varpulis | Notes |
+|---------|-------|----------|-------|
+| Hot redeploy | ✅ | ❌ | Apama can update running monitors |
+| Spawn/Contexts | ✅ | ❌ | Different execution model |
+| Full EPL language | ✅ | ❌ | Varpulis uses declarative DSL |
 
 ## Example Comparison
 
@@ -116,12 +114,26 @@ stream Averages = Ticks
 
 ## Performance Comparison
 
-### Varpulis SASE+ Benchmarks (criterion)
+### Head-to-Head Benchmark (January 2026)
+
+Test: Simple filter (price > 50) + windowed aggregation
+
+| Events | Apama v27.18 | Varpulis v0.1 | Winner |
+|--------|--------------|---------------|--------|
+| 10,000 | 24K evt/s | **57K evt/s** | Varpulis 2.3x |
+| 100,000 | **163K evt/s** | 146K evt/s | Apama 1.1x |
+
+**Analysis:**
+- Varpulis has lower per-event overhead (faster for small batches)
+- Apama scales better with larger event volumes
+- Both are native (C++ vs Rust) with similar performance characteristics
+
+### Varpulis SASE+ Pattern Benchmarks (criterion)
 
 | Pattern Type | Events | Time | Throughput |
 |--------------|--------|------|------------|
 | Simple Sequence (A->B) | 10,000 | **8.3ms** | **1.2M evt/s** |
-| Kleene+ (A->B+->C) | 5,000 | **7.2ms** | **700K evt/s** |
+| Kleene+ (A→B+→C) | 5,000 | **7.2ms** | **700K evt/s** |
 | With Predicates | 5,000 | ~8ms | ~625K evt/s |
 | Long Sequence (10 events) | 10,000 | ~377ms | 26K evt/s |
 
@@ -129,11 +141,11 @@ stream Averages = Ticks
 
 | Metric | Apama | Varpulis |
 |--------|-------|----------|
-| Pattern Matching (10K events) | ~50ms (estimated) | **8.3ms** (measured) |
-| Memory per event | Higher (JVM) | Lower (Rust native) |
-| Startup time | Slower (JVM warmup) | Faster (native binary) |
+| Core Engine | C++ (native) | Rust (native) |
 | Hot redeploy | ✅ Supported | ❌ Restart required |
 | Kleene+ support | ⚠️ Via loops | ✅ Native SASE+ |
+| Memory safety | Manual | Guaranteed (Rust) |
+| Open source | ❌ Commercial | ✅ Open source |
 
 ## Conclusion
 

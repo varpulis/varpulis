@@ -1,0 +1,52 @@
+/**
+ * Benchmark monitor - Pattern matching and aggregation
+ */
+
+event Tick {
+    string symbol;
+    float price;
+    integer volume;
+}
+
+event BenchmarkStart {}
+event BenchmarkEnd {}
+
+monitor Benchmark {
+    integer eventCount := 0;
+    float startTime;
+
+    action onload() {
+        // Simple filter benchmark
+        on all Tick(symbol=*, price>50.0, volume=*) as t {
+            eventCount := eventCount + 1;
+        }
+
+        // Signal when benchmark completes
+        on BenchmarkEnd() as e {
+            log "=== Apama Benchmark Results ===" at INFO;
+            log "Events processed: " + eventCount.toString() at INFO;
+        }
+
+        on BenchmarkStart() {
+            startTime := currentTime;
+            eventCount := 0;
+            log "Benchmark started" at INFO;
+        }
+    }
+}
+
+// Sequence pattern benchmark
+monitor SequenceBenchmark {
+    integer matchCount := 0;
+
+    action onload() {
+        // A -> B sequence within 1 second
+        on all Tick(symbol="A") as a -> Tick(symbol="B") as b within(1.0) {
+            matchCount := matchCount + 1;
+        }
+
+        on BenchmarkEnd() as e {
+            log "Sequence matches: " + matchCount.toString() at INFO;
+        }
+    }
+}

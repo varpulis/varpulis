@@ -43,3 +43,5 @@ demos/varpulis-demos/dist/
 benchmarks/flink-comparison/results/
 benchmarks/flink-comparison/test-harness/dependency-reduced-pom.xml
 apama-samples/
+benchmarks/apama-comparison/data/*.evt
+benchmarks/apama-comparison/data/*.jsonl
