@@ -23,3 +23,8 @@ pub use event::Event;
 pub use metrics::Metrics;
 pub use sink::{ConsoleSink, FileSink, HttpSink, MultiSink, Sink};
 pub use stream::Stream;
+pub use window::{
+    CountWindow, DelayBuffer, PartitionedDelayBuffer, PartitionedPreviousValueTracker,
+    PartitionedSlidingWindow, PartitionedTumblingWindow, PreviousValueTracker, SlidingCountWindow,
+    SlidingWindow, TumblingWindow,
+};

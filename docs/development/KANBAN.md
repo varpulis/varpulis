@@ -336,12 +336,18 @@ python run_scenario.py scenarios/fraud_scenario.yaml
 
 ### A faire
 
-- [ ] **STREAM-01**: Operateur rstream (delay/previous value)
+- [x] **STREAM-01**: Operateur rstream (delay/previous value)
   - **Description**: Output les elements qui quittent la window (delay de 1)
   - **Use case**: Comparer valeur actuelle vs precedente (ex: avg change > threshold)
   - **Apama**: `from a in avg retain 1 select rstream a`
   - **Complexite**: Medium
   - **Priorite**: HIGH - Necessaire pour beaucoup de patterns
+  - **Implementation**:
+    - `DelayBuffer<T>` - buffer generique qui retarde de N elements
+    - `PreviousValueTracker<T>` - optimise pour comparaison current vs previous
+    - `PartitionedDelayBuffer<T>` - version partitionnee
+    - `PartitionedPreviousValueTracker<T>` - version partitionnee
+    - 15 tests unitaires dans `window.rs`
 
 - [ ] **STREAM-02**: Clause having pour filtrer apres aggregation
   - **Description**: Filtrer sur les resultats d'aggregation

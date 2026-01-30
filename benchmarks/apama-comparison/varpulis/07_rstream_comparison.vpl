@@ -1,0 +1,54 @@
+# Varpulis rstream (delay) feature demonstration
+# Compares current vs previous aggregate values
+#
+# This is now possible with:
+# - DelayBuffer<T> for generic delay
+# - PreviousValueTracker<T> for current/previous comparison
+
+event Tick:
+    symbol: str
+    price: float
+
+event PriceChangeAlert:
+    symbol: str
+    current_avg: float
+    previous_avg: float
+    change: float
+
+# Calculate moving average
+stream TickAverage = Tick
+    .partition_by(symbol)
+    .window(10, sliding: 1)
+    .aggregate(
+        symbol: last(symbol),
+        avg_price: avg(price)
+    )
+
+# Note: VPL syntax for rstream comparison is still TODO
+# But the Rust API now supports this pattern:
+#
+# // Create tracker for each symbol
+# let mut tracker: PartitionedPreviousValueTracker<f64> =
+#     PartitionedPreviousValueTracker::new();
+#
+# // For each new average:
+# tracker.update(&symbol, avg_price);
+#
+# // Compare current vs previous
+# if let Some((curr, prev)) = tracker.get_pair(&symbol) {
+#     let change = (curr - prev).abs();
+#     if change > threshold {
+#         emit_alert(symbol, *curr, *prev, change);
+#     }
+# }
+
+# Future VPL syntax (proposal):
+# stream Alerts = TickAverage
+#     .rstream(1)  # delay by 1
+#     .compare(|curr, prev| curr.avg_price - prev.avg_price)
+#     .where(|diff| diff.abs() > 1.0)
+#     .emit(
+#         event_type: "PriceChangeAlert",
+#         symbol: symbol,
+#         change: diff
+#     )

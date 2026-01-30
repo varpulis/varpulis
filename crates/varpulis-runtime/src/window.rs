@@ -1,4 +1,10 @@
 //! Window implementations for stream processing
+//!
+//! Includes:
+//! - Time-based windows (tumbling, sliding)
+//! - Count-based windows
+//! - Partitioned windows
+//! - Delay buffers (rstream equivalent)
 
 use crate::event::Event;
 use chrono::{DateTime, Duration, Utc};
@@ -263,6 +269,261 @@ impl PartitionedSlidingWindow {
     }
 }
 
+// =============================================================================
+// DELAY BUFFER (rstream equivalent)
+// =============================================================================
+
+/// A delay buffer that outputs items as they are pushed out by newer items.
+///
+/// This is equivalent to Apama's `rstream` operator:
+/// - `retain 1 select rstream a` delays output by 1 item
+/// - When a new item arrives, the oldest item is output
+///
+/// Use cases:
+/// - Compare current value with previous value
+/// - Detect changes between consecutive aggregations
+/// - Implement "previous" reference in expressions
+///
+/// # Example
+/// ```ignore
+/// let mut delay = DelayBuffer::new(1);
+///
+/// // First item: nothing output (buffer filling)
+/// assert_eq!(delay.push(10), None);
+///
+/// // Second item: first item output
+/// assert_eq!(delay.push(20), Some(10));
+///
+/// // Third item: second item output
+/// assert_eq!(delay.push(30), Some(20));
+/// ```
+#[derive(Debug, Clone)]
+pub struct DelayBuffer<T> {
+    buffer: VecDeque<T>,
+    delay: usize,
+}
+
+impl<T: Clone> DelayBuffer<T> {
+    /// Create a new delay buffer with specified delay count.
+    ///
+    /// A delay of 1 means the previous item is output when a new item arrives.
+    pub fn new(delay: usize) -> Self {
+        Self {
+            buffer: VecDeque::with_capacity(delay + 1),
+            delay: delay.max(1), // Minimum delay of 1
+        }
+    }
+
+    /// Push a new item and potentially output a delayed item.
+    ///
+    /// Returns `Some(item)` if there's an item to output (buffer was full),
+    /// or `None` if the buffer is still filling up.
+    pub fn push(&mut self, item: T) -> Option<T> {
+        self.buffer.push_back(item);
+
+        if self.buffer.len() > self.delay {
+            self.buffer.pop_front()
+        } else {
+            None
+        }
+    }
+
+    /// Get the current item (most recent) without removing it.
+    pub fn current(&self) -> Option<&T> {
+        self.buffer.back()
+    }
+
+    /// Get the previous item (one before current) without removing it.
+    pub fn previous(&self) -> Option<&T> {
+        if self.buffer.len() >= 2 {
+            self.buffer.get(self.buffer.len() - 2)
+        } else {
+            None
+        }
+    }
+
+    /// Get the oldest item in the buffer (the one that would be output next).
+    pub fn oldest(&self) -> Option<&T> {
+        self.buffer.front()
+    }
+
+    /// Check if the buffer is full (ready to output items).
+    pub fn is_ready(&self) -> bool {
+        self.buffer.len() >= self.delay
+    }
+
+    /// Get the current number of items in the buffer.
+    pub fn len(&self) -> usize {
+        self.buffer.len()
+    }
+
+    /// Check if the buffer is empty.
+    pub fn is_empty(&self) -> bool {
+        self.buffer.is_empty()
+    }
+
+    /// Clear the buffer.
+    pub fn clear(&mut self) {
+        self.buffer.clear();
+    }
+
+    /// Flush all items from the buffer, returning them in order.
+    pub fn flush(&mut self) -> Vec<T> {
+        self.buffer.drain(..).collect()
+    }
+}
+
+/// A specialized delay buffer for comparing current vs previous values.
+///
+/// This is optimized for the common pattern:
+/// ```ignore
+/// // Apama:
+/// // from a in averages from p in (from a in averages retain 1 select rstream a)
+/// // where a > p + threshold
+///
+/// // Varpulis:
+/// let mut tracker = PreviousValueTracker::new();
+/// tracker.update(current_avg);
+/// if let Some(prev) = tracker.previous() {
+///     if current > prev + threshold { ... }
+/// }
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct PreviousValueTracker<T> {
+    current: Option<T>,
+    previous: Option<T>,
+}
+
+impl<T: Clone> PreviousValueTracker<T> {
+    /// Create a new tracker.
+    pub fn new() -> Self {
+        Self {
+            current: None,
+            previous: None,
+        }
+    }
+
+    /// Update with a new value, shifting current to previous.
+    pub fn update(&mut self, value: T) {
+        self.previous = self.current.take();
+        self.current = Some(value);
+    }
+
+    /// Get the current value.
+    pub fn current(&self) -> Option<&T> {
+        self.current.as_ref()
+    }
+
+    /// Get the previous value.
+    pub fn previous(&self) -> Option<&T> {
+        self.previous.as_ref()
+    }
+
+    /// Check if we have both current and previous values (ready for comparison).
+    pub fn has_both(&self) -> bool {
+        self.current.is_some() && self.previous.is_some()
+    }
+
+    /// Get both values as a tuple if both are available.
+    pub fn get_pair(&self) -> Option<(&T, &T)> {
+        match (&self.current, &self.previous) {
+            (Some(curr), Some(prev)) => Some((curr, prev)),
+            _ => None,
+        }
+    }
+
+    /// Reset the tracker.
+    pub fn reset(&mut self) {
+        self.current = None;
+        self.previous = None;
+    }
+}
+
+/// A partitioned delay buffer that maintains separate buffers per partition key.
+#[derive(Debug)]
+pub struct PartitionedDelayBuffer<T> {
+    delay: usize,
+    buffers: std::collections::HashMap<String, DelayBuffer<T>>,
+}
+
+impl<T: Clone> PartitionedDelayBuffer<T> {
+    /// Create a new partitioned delay buffer.
+    pub fn new(delay: usize) -> Self {
+        Self {
+            delay,
+            buffers: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Push an item for a specific partition.
+    pub fn push(&mut self, key: &str, item: T) -> Option<T> {
+        let buffer = self
+            .buffers
+            .entry(key.to_string())
+            .or_insert_with(|| DelayBuffer::new(self.delay));
+        buffer.push(item)
+    }
+
+    /// Get the current value for a partition.
+    pub fn current(&self, key: &str) -> Option<&T> {
+        self.buffers.get(key).and_then(|b| b.current())
+    }
+
+    /// Get the previous value for a partition.
+    pub fn previous(&self, key: &str) -> Option<&T> {
+        self.buffers.get(key).and_then(|b| b.previous())
+    }
+
+    /// Check if a partition buffer is ready.
+    pub fn is_ready(&self, key: &str) -> bool {
+        self.buffers.get(key).is_some_and(|b| b.is_ready())
+    }
+}
+
+/// A partitioned previous value tracker.
+#[derive(Debug, Default)]
+pub struct PartitionedPreviousValueTracker<T> {
+    trackers: std::collections::HashMap<String, PreviousValueTracker<T>>,
+}
+
+impl<T: Clone> PartitionedPreviousValueTracker<T> {
+    /// Create a new partitioned tracker.
+    pub fn new() -> Self {
+        Self {
+            trackers: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Update the value for a specific partition.
+    pub fn update(&mut self, key: &str, value: T) {
+        let tracker = self
+            .trackers
+            .entry(key.to_string())
+            .or_insert_with(PreviousValueTracker::new);
+        tracker.update(value);
+    }
+
+    /// Get the current value for a partition.
+    pub fn current(&self, key: &str) -> Option<&T> {
+        self.trackers.get(key).and_then(|t| t.current())
+    }
+
+    /// Get the previous value for a partition.
+    pub fn previous(&self, key: &str) -> Option<&T> {
+        self.trackers.get(key).and_then(|t| t.previous())
+    }
+
+    /// Check if a partition has both values.
+    pub fn has_both(&self, key: &str) -> bool {
+        self.trackers.get(key).is_some_and(|t| t.has_both())
+    }
+
+    /// Get both values for a partition.
+    pub fn get_pair(&self, key: &str) -> Option<(&T, &T)> {
+        self.trackers.get(key).and_then(|t| t.get_pair())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -488,5 +749,287 @@ mod tests {
         let result = window.add(Event::new("Test").with_field("batch", 2i64));
         assert!(result.is_some());
         assert_eq!(result.unwrap().len(), 2);
+    }
+
+    // ==========================================================================
+    // DelayBuffer Tests (rstream equivalent)
+    // ==========================================================================
+
+    #[test]
+    fn test_delay_buffer_basic() {
+        let mut delay: DelayBuffer<i32> = DelayBuffer::new(1);
+
+        // First item: buffer filling
+        assert_eq!(delay.push(10), None);
+        assert!(!delay.is_empty());
+        assert_eq!(delay.len(), 1);
+
+        // Second item: first item output
+        assert_eq!(delay.push(20), Some(10));
+        assert_eq!(delay.len(), 1);
+
+        // Third item: second item output
+        assert_eq!(delay.push(30), Some(20));
+        assert_eq!(delay.len(), 1);
+    }
+
+    #[test]
+    fn test_delay_buffer_delay_2() {
+        let mut delay: DelayBuffer<i32> = DelayBuffer::new(2);
+
+        // First two items: buffer filling
+        assert_eq!(delay.push(10), None);
+        assert_eq!(delay.push(20), None);
+        assert_eq!(delay.len(), 2);
+
+        // Third item: first item output
+        assert_eq!(delay.push(30), Some(10));
+
+        // Fourth item: second item output
+        assert_eq!(delay.push(40), Some(20));
+    }
+
+    #[test]
+    fn test_delay_buffer_current_previous() {
+        let mut delay: DelayBuffer<i32> = DelayBuffer::new(2);
+
+        delay.push(10);
+        delay.push(20);
+
+        assert_eq!(delay.current(), Some(&20));
+        assert_eq!(delay.previous(), Some(&10));
+        assert_eq!(delay.oldest(), Some(&10));
+    }
+
+    #[test]
+    fn test_delay_buffer_is_ready() {
+        let mut delay: DelayBuffer<i32> = DelayBuffer::new(3);
+
+        assert!(!delay.is_ready());
+        delay.push(1);
+        assert!(!delay.is_ready());
+        delay.push(2);
+        assert!(!delay.is_ready());
+        delay.push(3);
+        assert!(delay.is_ready());
+    }
+
+    #[test]
+    fn test_delay_buffer_flush() {
+        let mut delay: DelayBuffer<i32> = DelayBuffer::new(2);
+
+        delay.push(10);
+        delay.push(20);
+        delay.push(30);
+
+        let flushed = delay.flush();
+        assert_eq!(flushed, vec![20, 30]);
+        assert!(delay.is_empty());
+    }
+
+    #[test]
+    fn test_delay_buffer_clear() {
+        let mut delay: DelayBuffer<i32> = DelayBuffer::new(2);
+
+        delay.push(10);
+        delay.push(20);
+
+        delay.clear();
+        assert!(delay.is_empty());
+        assert_eq!(delay.len(), 0);
+    }
+
+    #[test]
+    fn test_delay_buffer_with_events() {
+        let mut delay: DelayBuffer<Event> = DelayBuffer::new(1);
+
+        let e1 = Event::new("Test").with_field("value", 100i64);
+        let e2 = Event::new("Test").with_field("value", 200i64);
+
+        assert!(delay.push(e1.clone()).is_none());
+        let output = delay.push(e2);
+        assert!(output.is_some());
+        assert_eq!(output.unwrap().get_int("value"), Some(100));
+    }
+
+    // ==========================================================================
+    // PreviousValueTracker Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_previous_value_tracker_basic() {
+        let mut tracker: PreviousValueTracker<f64> = PreviousValueTracker::new();
+
+        // Initially empty
+        assert!(tracker.current().is_none());
+        assert!(tracker.previous().is_none());
+        assert!(!tracker.has_both());
+
+        // First value
+        tracker.update(10.0);
+        assert_eq!(tracker.current(), Some(&10.0));
+        assert!(tracker.previous().is_none());
+        assert!(!tracker.has_both());
+
+        // Second value
+        tracker.update(20.0);
+        assert_eq!(tracker.current(), Some(&20.0));
+        assert_eq!(tracker.previous(), Some(&10.0));
+        assert!(tracker.has_both());
+
+        // Third value
+        tracker.update(30.0);
+        assert_eq!(tracker.current(), Some(&30.0));
+        assert_eq!(tracker.previous(), Some(&20.0));
+    }
+
+    #[test]
+    fn test_previous_value_tracker_get_pair() {
+        let mut tracker: PreviousValueTracker<i32> = PreviousValueTracker::new();
+
+        // No pair yet
+        assert!(tracker.get_pair().is_none());
+
+        tracker.update(1);
+        assert!(tracker.get_pair().is_none());
+
+        tracker.update(2);
+        let pair = tracker.get_pair();
+        assert!(pair.is_some());
+        let (curr, prev) = pair.unwrap();
+        assert_eq!(*curr, 2);
+        assert_eq!(*prev, 1);
+    }
+
+    #[test]
+    fn test_previous_value_tracker_reset() {
+        let mut tracker: PreviousValueTracker<i32> = PreviousValueTracker::new();
+
+        tracker.update(1);
+        tracker.update(2);
+        assert!(tracker.has_both());
+
+        tracker.reset();
+        assert!(!tracker.has_both());
+        assert!(tracker.current().is_none());
+        assert!(tracker.previous().is_none());
+    }
+
+    #[test]
+    fn test_previous_value_tracker_threshold_comparison() {
+        let mut tracker: PreviousValueTracker<f64> = PreviousValueTracker::new();
+        let threshold = 5.0;
+
+        tracker.update(100.0);
+        tracker.update(107.0);
+
+        if let Some((curr, prev)) = tracker.get_pair() {
+            let diff = curr - prev;
+            assert!(diff > threshold, "Should detect change > threshold");
+        }
+    }
+
+    // ==========================================================================
+    // PartitionedDelayBuffer Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_partitioned_delay_buffer() {
+        let mut buffer: PartitionedDelayBuffer<i32> = PartitionedDelayBuffer::new(1);
+
+        // Push to partition "a"
+        assert_eq!(buffer.push("a", 10), None);
+        assert_eq!(buffer.push("a", 20), Some(10));
+
+        // Push to partition "b" - independent
+        assert_eq!(buffer.push("b", 100), None);
+        assert_eq!(buffer.push("b", 200), Some(100));
+
+        // Check current values
+        assert_eq!(buffer.current("a"), Some(&20));
+        assert_eq!(buffer.current("b"), Some(&200));
+    }
+
+    #[test]
+    fn test_partitioned_delay_buffer_previous() {
+        let mut buffer: PartitionedDelayBuffer<i32> = PartitionedDelayBuffer::new(2);
+
+        buffer.push("x", 1);
+        buffer.push("x", 2);
+
+        assert_eq!(buffer.current("x"), Some(&2));
+        assert_eq!(buffer.previous("x"), Some(&1));
+        assert!(buffer.is_ready("x"));
+        assert!(!buffer.is_ready("y")); // non-existent partition
+    }
+
+    // ==========================================================================
+    // PartitionedPreviousValueTracker Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_partitioned_previous_tracker() {
+        let mut tracker: PartitionedPreviousValueTracker<f64> =
+            PartitionedPreviousValueTracker::new();
+
+        // Update IBM
+        tracker.update("IBM", 100.0);
+        tracker.update("IBM", 105.0);
+
+        // Update MSFT
+        tracker.update("MSFT", 200.0);
+        tracker.update("MSFT", 198.0);
+
+        // Check IBM
+        assert!(tracker.has_both("IBM"));
+        let (curr, prev) = tracker.get_pair("IBM").unwrap();
+        assert_eq!(*curr, 105.0);
+        assert_eq!(*prev, 100.0);
+
+        // Check MSFT
+        assert!(tracker.has_both("MSFT"));
+        let (curr, prev) = tracker.get_pair("MSFT").unwrap();
+        assert_eq!(*curr, 198.0);
+        assert_eq!(*prev, 200.0);
+
+        // Non-existent partition
+        assert!(!tracker.has_both("AAPL"));
+    }
+
+    #[test]
+    fn test_partitioned_previous_tracker_avg_change_detection() {
+        // Simulate Apama streams example:
+        // Alert when average price changes by more than THRESHOLD
+        let mut tracker: PartitionedPreviousValueTracker<f64> =
+            PartitionedPreviousValueTracker::new();
+        let threshold = 1.0;
+
+        // Simulate averages arriving over time
+        let averages = vec![
+            ("ibm", 100.0),
+            ("msft", 50.0),
+            ("ibm", 100.5), // small change
+            ("msft", 52.5), // big change > threshold
+            ("ibm", 102.5), // big change > threshold
+        ];
+
+        let mut alerts = Vec::new();
+
+        for (symbol, avg) in averages {
+            tracker.update(symbol, avg);
+
+            if let Some((curr, prev)) = tracker.get_pair(symbol) {
+                let diff = (curr - prev).abs();
+                if diff > threshold {
+                    alerts.push((symbol.to_string(), diff));
+                }
+            }
+        }
+
+        assert_eq!(alerts.len(), 2);
+        assert_eq!(alerts[0].0, "msft");
+        assert!((alerts[0].1 - 2.5).abs() < 0.001);
+        assert_eq!(alerts[1].0, "ibm");
+        assert!((alerts[1].1 - 2.0).abs() < 0.001);
     }
 }
