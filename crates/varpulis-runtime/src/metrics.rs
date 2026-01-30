@@ -232,4 +232,108 @@ mod tests {
         let server = MetricsServer::new(metrics, "127.0.0.1:0");
         assert_eq!(server.addr, "127.0.0.1:0");
     }
+
+    #[test]
+    fn test_metrics_stream_queue_size() {
+        let metrics = Metrics::new();
+        metrics
+            .stream_queue_size
+            .with_label_values(&["stream1"])
+            .set(100.0);
+        metrics
+            .stream_queue_size
+            .with_label_values(&["stream2"])
+            .set(50.0);
+
+        let output = metrics.gather();
+        assert!(output.contains("varpulis_stream_queue_size"));
+    }
+
+    #[test]
+    fn test_metrics_active_streams() {
+        let metrics = Metrics::new();
+        metrics.set_stream_count(10);
+
+        let output = metrics.gather();
+        assert!(output.contains("varpulis_active_streams"));
+    }
+
+    #[test]
+    fn test_metrics_latency_buckets() {
+        let metrics = Metrics::new();
+
+        // Record latencies in different buckets
+        metrics.record_processing("fast", 0.0001); // < 0.1ms
+        metrics.record_processing("fast", 0.0005); // < 0.5ms
+        metrics.record_processing("medium", 0.01); // 10ms
+        metrics.record_processing("slow", 0.5); // 500ms
+
+        let output = metrics.gather();
+        assert!(output.contains("varpulis_processing_latency_seconds_bucket"));
+    }
+
+    #[test]
+    fn test_metrics_event_types() {
+        let metrics = Metrics::new();
+
+        metrics.record_event("TemperatureReading");
+        metrics.record_event("TemperatureReading");
+        metrics.record_event("HumidityReading");
+        metrics.record_event("Alert");
+
+        let output = metrics.gather();
+        assert!(output.contains("TemperatureReading"));
+        assert!(output.contains("HumidityReading"));
+        assert!(output.contains("Alert"));
+    }
+
+    #[test]
+    fn test_metrics_alert_severities() {
+        let metrics = Metrics::new();
+
+        metrics.record_alert("temperature_high", "critical");
+        metrics.record_alert("humidity_low", "warning");
+        metrics.record_alert("system_health", "info");
+
+        let output = metrics.gather();
+        assert!(output.contains("critical"));
+        assert!(output.contains("warning"));
+        assert!(output.contains("info"));
+    }
+
+    #[test]
+    fn test_metrics_clone() {
+        let metrics1 = Metrics::new();
+        metrics1.record_event("TestEvent");
+
+        let metrics2 = metrics1.clone();
+        metrics2.record_event("AnotherEvent");
+
+        // Both should see all events (they share the same registry)
+        let output = metrics2.gather();
+        assert!(output.contains("TestEvent"));
+        assert!(output.contains("AnotherEvent"));
+    }
+
+    #[test]
+    fn test_metrics_server_with_string() {
+        let metrics = Metrics::new();
+        let addr = String::from("0.0.0.0:9090");
+        let server = MetricsServer::new(metrics, addr);
+        assert_eq!(server.addr, "0.0.0.0:9090");
+    }
+
+    #[test]
+    fn test_metrics_many_streams() {
+        let metrics = Metrics::new();
+
+        for i in 0..20 {
+            let stream_name = format!("stream_{}", i);
+            metrics.record_processing(&stream_name, 0.001 * i as f64);
+        }
+
+        let output = metrics.gather();
+        assert!(output.contains("stream_0"));
+        assert!(output.contains("stream_19"));
+    }
 }
