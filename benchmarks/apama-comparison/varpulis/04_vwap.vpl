@@ -1,0 +1,40 @@
+# Equivalent to Apama vwap/vwap.mon
+# Volume Weighted Average Price calculation
+# VWAP = sum(price * volume) / sum(volume)
+
+event Trade:
+    stock_name: str
+    price: float
+    volume: float
+
+event VWAPUpdate:
+    stock_name: str
+    vwap: float
+    cumulative_pv: float
+    cumulative_v: float
+
+stream Trades from Trade
+
+# Calculate VWAP for ACME stock over 5-second window
+stream ACMEVwap = Trades
+    .where(stock_name == "ACME")
+    .window(5s)
+    .aggregate(
+        stock_name: last(stock_name),
+        cumulative_pv: sum(price * volume),
+        cumulative_v: sum(volume)
+    )
+    .where(cumulative_v > 0.0)
+    .emit(
+        event_type: "VWAPUpdate",
+        stock_name: stock_name,
+        vwap: cumulative_pv / cumulative_v,
+        cumulative_pv: cumulative_pv,
+        cumulative_v: cumulative_v
+    )
+
+# Note: Varpulis limitations for full VWAP comparison:
+# - Cannot track previous VWAP (no delay/rstream operator)
+# - Cannot compare current vs previous VWAP for % change
+# - No dynamic watch events (VwapWatch in Apama)
+# - No periodic timer independent of events

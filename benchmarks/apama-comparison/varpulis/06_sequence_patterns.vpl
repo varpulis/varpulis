@@ -1,0 +1,82 @@
+# Varpulis SASE+ Sequence Patterns
+# This is an area where Varpulis excels with its SASE+ engine
+
+event NewsItem:
+    subject: str
+    content: str
+
+event StockTick:
+    symbol: str
+    price: float
+
+event TradingAlert:
+    symbol: str
+    news_content: str
+    price: float
+
+# News followed by stock tick within 30 seconds
+# Uses SASE+ temporal sequence pattern
+stream NewsImpact = NewsItem as news
+    -> StockTick where symbol == news.subject as tick
+    .within(30s)
+    .emit(
+        event_type: "TradingAlert",
+        symbol: tick.symbol,
+        news_content: news.content,
+        price: tick.price
+    )
+
+# =========================================================================
+# Login/Transaction Fraud Detection
+# =========================================================================
+
+event Login:
+    user_id: str
+    ip: str
+
+event Transaction:
+    user_id: str
+    amount: float
+    ip: str
+
+event FraudAlert:
+    user_id: str
+    amount: float
+    login_ip: str
+    tx_ip: str
+
+# Login followed by high-value transaction from different IP
+stream FraudDetection = Login as login
+    -> Transaction where user_id == login.user_id and amount > 10000.0 and ip != login.ip as tx
+    .within(5m)
+    .emit(
+        event_type: "FraudAlert",
+        user_id: tx.user_id,
+        amount: tx.amount,
+        login_ip: login.ip,
+        tx_ip: tx.ip
+    )
+
+# =========================================================================
+# Price Movement Pattern (Kleene+)
+# =========================================================================
+
+event PriceSpike:
+    symbol: str
+    start_price: float
+    end_price: float
+    magnitude: float
+
+# Reusable pattern declaration
+pattern RisingPrices = SEQ(
+    StockTick as first,
+    StockTick+ where price > first.price as middle,
+    StockTick where price > middle.price as last
+) within 60s partition by symbol
+
+# Note: SASE+ patterns are Varpulis's strength:
+# + Temporal sequences with "within" constraints
+# + Kleene+ for variable-length matches
+# + Inter-event references (news.subject == tick.symbol)
+# + Efficient NFA-based matching
+# + Negation patterns (supported)

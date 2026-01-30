@@ -1,0 +1,48 @@
+# Equivalent to Apama timedwindows/timed.mon
+# Track total value of trades in a 6-second window
+# Alert when exceeding threshold
+
+event Order:
+    symbol: str
+    price: float
+    volume: int
+
+event TradeAlert:
+    symbol: str
+    total_traded: float
+
+stream Orders from Order
+
+# IBM trade volume in 6-second window
+stream IBMVolume = Orders
+    .where(symbol == "ibm")
+    .window(6s)
+    .aggregate(
+        symbol: last(symbol),
+        total_traded: sum(price * volume)
+    )
+    .where(total_traded > 10000.0)
+    .emit(
+        event_type: "TradeAlert",
+        symbol: symbol,
+        total_traded: total_traded
+    )
+
+# MSFT trade volume in 6-second window
+stream MSFTVolume = Orders
+    .where(symbol == "msft")
+    .window(6s)
+    .aggregate(
+        symbol: last(symbol),
+        total_traded: sum(price * volume)
+    )
+    .where(total_traded > 10000.0)
+    .emit(
+        event_type: "TradeAlert",
+        symbol: symbol,
+        total_traded: total_traded
+    )
+
+# Note: Varpulis limitations:
+# - No dynamic threshold update (Apama updates threshold after alert)
+# - Needs separate streams per symbol (partition_by could simplify)

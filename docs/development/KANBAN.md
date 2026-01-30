@@ -330,6 +330,62 @@ python run_scenario.py scenarios/fraud_scenario.yaml
 
 ---
 
+## PRIORITE MOYENNE - Feature Parity avec Apama
+
+> **Source**: Analyse comparative avec Apama EPL (benchmarks/apama-comparison)
+
+### A faire
+
+- [ ] **STREAM-01**: Operateur rstream (delay/previous value)
+  - **Description**: Output les elements qui quittent la window (delay de 1)
+  - **Use case**: Comparer valeur actuelle vs precedente (ex: avg change > threshold)
+  - **Apama**: `from a in avg retain 1 select rstream a`
+  - **Complexite**: Medium
+  - **Priorite**: HIGH - Necessaire pour beaucoup de patterns
+
+- [ ] **STREAM-02**: Clause having pour filtrer apres aggregation
+  - **Description**: Filtrer sur les resultats d'aggregation
+  - **Use case**: `having last(price) > first(price) + threshold`
+  - **Apama**: `having condition`
+  - **Complexite**: Low
+  - **Priorite**: MEDIUM
+
+- [ ] **STREAM-03**: Jointures inter-streams avec comparaison d'aggregats
+  - **Description**: Joindre deux streams et comparer leurs aggregats
+  - **Use case**: Comparer avg actuel avec avg precedent
+  - **Apama**: `from cur in avg join prev in prevaverages on ...`
+  - **Complexite**: High
+  - **Priorite**: MEDIUM
+
+- [ ] **TIMER-01**: Timer periodique independant des evenements
+  - **Description**: Declencher actions a intervalles fixes
+  - **Use case**: Calculer VWAP toutes les 5 secondes
+  - **Apama**: `on wait(period) { ... }`
+  - **Complexite**: Medium
+  - **Priorite**: LOW
+
+- [ ] **VAR-01**: Variables dynamiques modifiables au runtime
+  - **Description**: Mettre a jour seuils/variables apres traitement
+  - **Use case**: Augmenter threshold apres alerte
+  - **Apama**: `threshold := alertPrice + 10000.0;`
+  - **Complexite**: Medium
+  - **Priorite**: LOW
+
+- [ ] **QUERY-01**: Requetes imbriquees (nested queries)
+  - **Description**: Sous-requetes dans les streams
+  - **Use case**: Multi-stage processing
+  - **Complexite**: High
+  - **Priorite**: LOW
+
+### Notes
+
+Les exemples Apama compares sont dans `/benchmarks/apama-comparison/`:
+- `apama/` - Exemples EPL originaux
+- `varpulis/` - Implementations equivalentes VPL
+- `COMPARISON.md` - Matrice de comparaison detaillee
+
+---
+
 ## PRIORITE BASSE - Tooling VS Code
 
 ### A faire
