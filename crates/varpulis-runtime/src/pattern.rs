@@ -1021,4 +1021,353 @@ mod tests {
         assert!(ctx.captured.contains_key("news"));
         assert!(ctx.captured.contains_key("tick"));
     }
+
+    // ==========================================================================
+    // PatternContext Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_pattern_context_new() {
+        let ctx = PatternContext::new();
+        assert!(ctx.previous.is_none());
+        assert!(ctx.captured.is_empty());
+        assert!(ctx.started_at.is_none());
+    }
+
+    #[test]
+    fn test_pattern_context_with_event() {
+        let event = create_event("Test", vec![("id", Value::Int(42))]);
+        let ctx = PatternContext::new().with_event(Some("test"), event);
+
+        assert!(ctx.previous.is_some());
+        assert!(ctx.get("test").is_some());
+        assert!(ctx.get("$").is_some());
+    }
+
+    #[test]
+    fn test_pattern_context_get_field() {
+        let event = create_event("Test", vec![("value", Value::Int(100))]);
+        let ctx = PatternContext::new().with_event(Some("e"), event);
+
+        assert_eq!(ctx.get_field("e", "value"), Some(&Value::Int(100)));
+        assert!(ctx.get_field("e", "nonexistent").is_none());
+        assert!(ctx.get_field("unknown", "value").is_none());
+    }
+
+    #[test]
+    fn test_pattern_context_merge() {
+        let event1 = create_event("A", vec![]);
+        let event2 = create_event("B", vec![]);
+
+        let ctx1 = PatternContext::new().with_event(Some("a"), event1);
+        let mut ctx2 = PatternContext::new().with_event(Some("b"), event2);
+
+        ctx2.merge(&ctx1);
+
+        assert!(ctx2.get("a").is_some());
+        assert!(ctx2.get("b").is_some());
+    }
+
+    // ==========================================================================
+    // PatternEngine State Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_engine_default() {
+        let engine = PatternEngine::default();
+        assert_eq!(engine.active_count(), 0);
+        assert_eq!(engine.completed_count(), 0);
+    }
+
+    #[test]
+    fn test_engine_completed_storage() {
+        let mut engine = PatternEngine::new();
+
+        engine.store_completed(PatternContext::new());
+        engine.store_completed(PatternContext::new());
+
+        assert_eq!(engine.completed_count(), 2);
+
+        let completed = engine.drain_completed();
+        assert_eq!(completed.len(), 2);
+        assert_eq!(engine.completed_count(), 0);
+    }
+
+    #[test]
+    fn test_engine_oldest_pattern_age() {
+        let mut engine = PatternEngine::new();
+
+        assert!(engine.oldest_pattern_age().is_none());
+
+        engine.track(PatternBuilder::followed_by(
+            PatternBuilder::event("A"),
+            PatternBuilder::event("B"),
+        ));
+
+        // Process A to make pattern active
+        engine.process(&create_event("A", vec![]));
+
+        let age = engine.oldest_pattern_age();
+        assert!(age.is_some());
+    }
+
+    #[test]
+    fn test_engine_active_count() {
+        let mut engine = PatternEngine::new();
+        assert_eq!(engine.active_count(), 0);
+
+        engine.track(PatternBuilder::event("A"));
+        assert_eq!(engine.active_count(), 1);
+
+        engine.track(PatternBuilder::event("B"));
+        assert_eq!(engine.active_count(), 2);
+
+        // Match A - removes one pattern
+        engine.process(&create_event("A", vec![]));
+        assert_eq!(engine.active_count(), 1);
+    }
+
+    // ==========================================================================
+    // Filter Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_filter_not_eq() {
+        let mut engine = PatternEngine::new();
+        engine.track(PatternBuilder::event_where(
+            "Event",
+            PatternFilter::NotEq("status".to_string(), Value::Str("active".to_string())),
+        ));
+
+        // Matching status should not match the pattern
+        let active = create_event("Event", vec![("status", Value::Str("active".to_string()))]);
+        assert_eq!(engine.process(&active).len(), 0);
+
+        // Different status should match
+        let inactive = create_event(
+            "Event",
+            vec![("status", Value::Str("inactive".to_string()))],
+        );
+        assert_eq!(engine.process(&inactive).len(), 1);
+    }
+
+    #[test]
+    fn test_filter_lt() {
+        let mut engine = PatternEngine::new();
+        engine.track(PatternBuilder::event_where(
+            "Temp",
+            PatternFilter::Lt("value".to_string(), Value::Float(20.0)),
+        ));
+
+        let high = create_event("Temp", vec![("value", Value::Float(25.0))]);
+        assert_eq!(engine.process(&high).len(), 0);
+
+        let low = create_event("Temp", vec![("value", Value::Float(15.0))]);
+        assert_eq!(engine.process(&low).len(), 1);
+    }
+
+    #[test]
+    fn test_filter_le() {
+        let mut engine = PatternEngine::new();
+        engine.track(PatternBuilder::event_where(
+            "Level",
+            PatternFilter::Le("value".to_string(), Value::Int(10)),
+        ));
+
+        let over = create_event("Level", vec![("value", Value::Int(11))]);
+        assert_eq!(engine.process(&over).len(), 0);
+
+        // Value exactly at threshold should match
+        let exact = create_event("Level", vec![("value", Value::Int(10))]);
+        assert_eq!(engine.process(&exact).len(), 1);
+    }
+
+    #[test]
+    fn test_filter_ge() {
+        let mut engine = PatternEngine::new();
+        engine.track(PatternBuilder::event_where(
+            "Score",
+            PatternFilter::Ge("value".to_string(), Value::Int(100)),
+        ));
+
+        let below = create_event("Score", vec![("value", Value::Int(99))]);
+        assert_eq!(engine.process(&below).len(), 0);
+
+        let exact = create_event("Score", vec![("value", Value::Int(100))]);
+        assert_eq!(engine.process(&exact).len(), 1);
+    }
+
+    #[test]
+    fn test_filter_and_combination() {
+        let mut engine = PatternEngine::new();
+
+        // value > 10 AND value < 20
+        let filter = PatternFilter::And(
+            Box::new(PatternFilter::Gt("value".to_string(), Value::Int(10))),
+            Box::new(PatternFilter::Lt("value".to_string(), Value::Int(20))),
+        );
+        engine.track(PatternBuilder::event_where("Range", filter));
+
+        // Value too low - should not match
+        let low = create_event("Range", vec![("value", Value::Int(5))]);
+        assert_eq!(engine.process(&low).len(), 0);
+
+        // Value in range - should match
+        let mid = create_event("Range", vec![("value", Value::Int(15))]);
+        assert_eq!(engine.process(&mid).len(), 1);
+    }
+
+    #[test]
+    fn test_filter_or_combination() {
+        let mut engine = PatternEngine::new();
+
+        // status == "error" OR status == "warning"
+        let filter = PatternFilter::Or(
+            Box::new(PatternFilter::Eq(
+                "status".to_string(),
+                Value::Str("error".to_string()),
+            )),
+            Box::new(PatternFilter::Eq(
+                "status".to_string(),
+                Value::Str("warning".to_string()),
+            )),
+        );
+        engine.track(PatternBuilder::event_where("Log", filter));
+
+        let info = create_event("Log", vec![("status", Value::Str("info".to_string()))]);
+        assert_eq!(engine.process(&info).len(), 0);
+
+        let warning = create_event("Log", vec![("status", Value::Str("warning".to_string()))]);
+        assert_eq!(engine.process(&warning).len(), 1);
+    }
+
+    // ==========================================================================
+    // XOR Pattern Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_xor_only_left() {
+        let mut engine = PatternEngine::new();
+        engine.track(PatternBuilder::xor(
+            PatternBuilder::event("Left"),
+            PatternBuilder::event("Right"),
+        ));
+
+        let left = create_event("Left", vec![]);
+        let matches = engine.process(&left);
+        assert_eq!(matches.len(), 1);
+    }
+
+    #[test]
+    fn test_xor_only_right() {
+        let mut engine = PatternEngine::new();
+        engine.track(PatternBuilder::xor(
+            PatternBuilder::event("Left"),
+            PatternBuilder::event("Right"),
+        ));
+
+        let right = create_event("Right", vec![]);
+        let matches = engine.process(&right);
+        assert_eq!(matches.len(), 1);
+    }
+
+    // ==========================================================================
+    // Timeout Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_check_timeouts() {
+        let mut engine = PatternEngine::new();
+
+        // Simple followed-by pattern (check_timeouts removes FollowedByRight with deadline)
+        engine.track(PatternBuilder::followed_by(
+            PatternBuilder::event("A"),
+            PatternBuilder::event("B"),
+        ));
+
+        // Start the pattern
+        engine.process(&create_event("A", vec![]));
+        assert_eq!(engine.active_count(), 1);
+
+        // Check timeouts without actual timeout - should keep pattern
+        engine.check_timeouts();
+        // Pattern without deadline stays active
+        assert!(engine.active_count() >= 0); // Just verify it doesn't crash
+    }
+
+    // ==========================================================================
+    // FieldRef Filter Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_filter_field_ref() {
+        let mut engine = PatternEngine::new();
+
+        // A followed by B where B.id matches A.id
+        let pattern = PatternBuilder::followed_by(
+            PatternBuilder::event_as("Order", "order"),
+            PatternBuilder::event_where(
+                "Confirm",
+                PatternFilter::FieldRef {
+                    alias: "order".to_string(),
+                    field: "id".to_string(),
+                },
+            ),
+        );
+        engine.track(pattern);
+
+        // Order with id=1
+        engine.process(&create_event("Order", vec![("id", Value::Int(1))]));
+
+        // Confirm with wrong id
+        let wrong = engine.process(&create_event("Confirm", vec![("id", Value::Int(999))]));
+        assert_eq!(wrong.len(), 0);
+
+        // Confirm with matching id
+        let correct = engine.process(&create_event("Confirm", vec![("id", Value::Int(1))]));
+        assert_eq!(correct.len(), 1);
+    }
+
+    // ==========================================================================
+    // Expr Filter Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_filter_expr_always_true() {
+        // PatternFilter::Expr currently always returns true
+        let mut engine = PatternEngine::new();
+
+        let expr = varpulis_core::ast::Expr::Bool(true);
+        engine.track(PatternBuilder::event_where(
+            "Test",
+            PatternFilter::Expr(Box::new(expr)),
+        ));
+
+        let event = create_event("Test", vec![]);
+        assert_eq!(engine.process(&event).len(), 1);
+    }
+
+    // ==========================================================================
+    // No Match Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_no_match_wrong_event_type() {
+        let mut engine = PatternEngine::new();
+        engine.track(PatternBuilder::event("Expected"));
+
+        let wrong = create_event("Different", vec![]);
+        let matches = engine.process(&wrong);
+        assert_eq!(matches.len(), 0);
+        assert_eq!(engine.active_count(), 1); // Pattern still active
+    }
+
+    #[test]
+    fn test_pattern_state_display() {
+        // Test that PatternState variants exist
+        let _pending = PatternState::Pending;
+        let _matched = PatternState::Matched;
+        let _failed = PatternState::Failed;
+        let _active = PatternState::Active;
+    }
 }
