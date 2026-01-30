@@ -147,4 +147,93 @@ mod tests {
         // Next call should return None (channel closed)
         assert!(stream.next().await.is_none());
     }
+
+    #[tokio::test]
+    async fn test_stream_sender_name() {
+        let (sender, _stream) = channel("sender_test", 10);
+        assert_eq!(sender.name, "sender_test");
+    }
+
+    #[tokio::test]
+    async fn test_stream_buffer_order() {
+        let (_sender, mut stream) = channel("test", 10);
+
+        // Push events in specific order
+        stream.push_back(Event::new("A"));
+        stream.push_back(Event::new("B"));
+        stream.push_back(Event::new("C"));
+
+        // Should receive in FIFO order
+        assert_eq!(stream.next().await.unwrap().event_type, "A");
+        assert_eq!(stream.next().await.unwrap().event_type, "B");
+        assert_eq!(stream.next().await.unwrap().event_type, "C");
+    }
+
+    #[tokio::test]
+    async fn test_stream_sender_closed_error() {
+        let (sender, stream) = channel("test", 10);
+        drop(stream); // Close receiver
+
+        let event = Event::new("Test");
+        let result = sender.send(event).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_stream_large_buffer() {
+        let (sender, mut stream) = channel("test", 1000);
+
+        // Send many events
+        for i in 0..100 {
+            sender
+                .send(Event::new("Event").with_field("seq", i as i64))
+                .await
+                .unwrap();
+        }
+
+        // Receive all events
+        for i in 0..100 {
+            let event = stream.next().await.unwrap();
+            assert_eq!(event.get_int("seq"), Some(i));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_stream_interleaved_buffer_and_channel() {
+        let (sender, mut stream) = channel("test", 10);
+
+        // Push one to buffer
+        stream.push_back(Event::new("Buf1"));
+
+        // Send one via channel
+        sender.send(Event::new("Chan1")).await.unwrap();
+
+        // Push another to buffer
+        stream.push_back(Event::new("Buf2"));
+
+        // Send another via channel
+        sender.send(Event::new("Chan2")).await.unwrap();
+
+        // Buffer events first (in order pushed)
+        assert_eq!(stream.next().await.unwrap().event_type, "Buf1");
+        assert_eq!(stream.next().await.unwrap().event_type, "Buf2");
+
+        // Then channel events (in order sent)
+        assert_eq!(stream.next().await.unwrap().event_type, "Chan1");
+        assert_eq!(stream.next().await.unwrap().event_type, "Chan2");
+    }
+
+    #[test]
+    fn test_stream_sender_new_directly() {
+        let (tx, _rx) = mpsc::channel(10);
+        let sender = StreamSender::new("direct", tx);
+        assert_eq!(sender.name, "direct");
+    }
+
+    #[test]
+    fn test_stream_new_directly() {
+        let (_tx, rx) = mpsc::channel(10);
+        let stream = Stream::new("direct_stream", rx);
+        assert_eq!(stream.name, "direct_stream");
+    }
 }
