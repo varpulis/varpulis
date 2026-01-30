@@ -6,14 +6,15 @@
 //! - Partitioned windows
 //! - Delay buffers (rstream equivalent)
 
-use crate::event::Event;
+use crate::event::{Event, SharedEvent};
 use chrono::{DateTime, Duration, Utc};
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 /// A tumbling window that collects events over a fixed duration
 pub struct TumblingWindow {
     duration: Duration,
-    events: Vec<Event>,
+    events: Vec<SharedEvent>,
     window_start: Option<DateTime<Utc>>,
 }
 
@@ -26,7 +27,8 @@ impl TumblingWindow {
         }
     }
 
-    pub fn add(&mut self, event: Event) -> Option<Vec<Event>> {
+    /// Add a shared event to the window, returning completed window if triggered.
+    pub fn add_shared(&mut self, event: SharedEvent) -> Option<Vec<SharedEvent>> {
         let event_time = event.timestamp;
 
         // Initialize window start on first event
@@ -50,8 +52,25 @@ impl TumblingWindow {
         }
     }
 
-    pub fn flush(&mut self) -> Vec<Event> {
+    /// Add an event to the window (wraps in Arc).
+    #[allow(dead_code)]
+    pub fn add(&mut self, event: Event) -> Option<Vec<Event>> {
+        self.add_shared(Arc::new(event))
+            .map(|events| events.into_iter().map(|e| (*e).clone()).collect())
+    }
+
+    /// Flush all events as SharedEvent references.
+    pub fn flush_shared(&mut self) -> Vec<SharedEvent> {
         std::mem::take(&mut self.events)
+    }
+
+    /// Flush all events (clones for backward compatibility).
+    #[allow(dead_code)]
+    pub fn flush(&mut self) -> Vec<Event> {
+        self.flush_shared()
+            .into_iter()
+            .map(|e| (*e).clone())
+            .collect()
     }
 }
 
@@ -59,7 +78,7 @@ impl TumblingWindow {
 pub struct SlidingWindow {
     window_size: Duration,
     slide_interval: Duration,
-    events: VecDeque<Event>,
+    events: VecDeque<SharedEvent>,
     last_emit: Option<DateTime<Utc>>,
 }
 
@@ -73,7 +92,8 @@ impl SlidingWindow {
         }
     }
 
-    pub fn add(&mut self, event: Event) -> Option<Vec<Event>> {
+    /// Add a shared event, returning window contents if slide interval reached.
+    pub fn add_shared(&mut self, event: SharedEvent) -> Option<Vec<SharedEvent>> {
         let event_time = event.timestamp;
         self.events.push_back(event);
 
@@ -99,21 +119,35 @@ impl SlidingWindow {
 
         if should_emit {
             self.last_emit = Some(event_time);
-            Some(self.events.iter().cloned().collect())
+            Some(self.events.iter().map(Arc::clone).collect())
         } else {
             None
         }
     }
 
+    /// Add an event (wraps in Arc).
+    #[allow(dead_code)]
+    pub fn add(&mut self, event: Event) -> Option<Vec<Event>> {
+        self.add_shared(Arc::new(event))
+            .map(|events| events.into_iter().map(|e| (*e).clone()).collect())
+    }
+
+    /// Get current window contents as shared references.
+    pub fn current_shared(&self) -> Vec<SharedEvent> {
+        self.events.iter().map(Arc::clone).collect()
+    }
+
+    /// Get current window contents (clones for backward compatibility).
+    #[allow(dead_code)]
     pub fn current(&self) -> Vec<Event> {
-        self.events.iter().cloned().collect()
+        self.events.iter().map(|e| (**e).clone()).collect()
     }
 }
 
 /// A count-based window that emits after collecting N events
 pub struct CountWindow {
     count: usize,
-    events: Vec<Event>,
+    events: Vec<SharedEvent>,
 }
 
 impl CountWindow {
@@ -124,7 +158,8 @@ impl CountWindow {
         }
     }
 
-    pub fn add(&mut self, event: Event) -> Option<Vec<Event>> {
+    /// Add a shared event, returning completed window if count reached.
+    pub fn add_shared(&mut self, event: SharedEvent) -> Option<Vec<SharedEvent>> {
         self.events.push(event);
 
         if self.events.len() >= self.count {
@@ -136,8 +171,25 @@ impl CountWindow {
         }
     }
 
-    pub fn flush(&mut self) -> Vec<Event> {
+    /// Add an event (wraps in Arc).
+    #[allow(dead_code)]
+    pub fn add(&mut self, event: Event) -> Option<Vec<Event>> {
+        self.add_shared(Arc::new(event))
+            .map(|events| events.into_iter().map(|e| (*e).clone()).collect())
+    }
+
+    /// Flush all events as SharedEvent references.
+    pub fn flush_shared(&mut self) -> Vec<SharedEvent> {
         std::mem::take(&mut self.events)
+    }
+
+    /// Flush all events (clones for backward compatibility).
+    #[allow(dead_code)]
+    pub fn flush(&mut self) -> Vec<Event> {
+        self.flush_shared()
+            .into_iter()
+            .map(|e| (*e).clone())
+            .collect()
     }
 
     /// Get current count of events in buffer (for debugging)
@@ -150,7 +202,7 @@ impl CountWindow {
 pub struct SlidingCountWindow {
     window_size: usize,
     slide_size: usize,
-    events: VecDeque<Event>,
+    events: VecDeque<SharedEvent>,
     events_since_emit: usize,
 }
 
@@ -164,7 +216,8 @@ impl SlidingCountWindow {
         }
     }
 
-    pub fn add(&mut self, event: Event) -> Option<Vec<Event>> {
+    /// Add a shared event, returning window contents if slide interval reached.
+    pub fn add_shared(&mut self, event: SharedEvent) -> Option<Vec<SharedEvent>> {
         self.events.push_back(event);
         self.events_since_emit += 1;
 
@@ -177,10 +230,17 @@ impl SlidingCountWindow {
         // Emit if we have enough events and slide interval reached
         if self.events.len() >= self.window_size && self.events_since_emit >= self.slide_size {
             self.events_since_emit = 0;
-            Some(self.events.iter().cloned().collect())
+            Some(self.events.iter().map(Arc::clone).collect())
         } else {
             None
         }
+    }
+
+    /// Add an event (wraps in Arc).
+    #[allow(dead_code)]
+    pub fn add(&mut self, event: Event) -> Option<Vec<Event>> {
+        self.add_shared(Arc::new(event))
+            .map(|events| events.into_iter().map(|e| (*e).clone()).collect())
     }
 
     /// Get current count of events in buffer (for debugging)
@@ -205,7 +265,8 @@ impl PartitionedTumblingWindow {
         }
     }
 
-    pub fn add(&mut self, event: Event) -> Option<Vec<Event>> {
+    /// Add a shared event to the appropriate partition window.
+    pub fn add_shared(&mut self, event: SharedEvent) -> Option<Vec<SharedEvent>> {
         let key = event
             .get(&self.partition_key)
             .map(|v| format!("{}", v))
@@ -216,15 +277,32 @@ impl PartitionedTumblingWindow {
             .entry(key)
             .or_insert_with(|| TumblingWindow::new(self.duration));
 
-        window.add(event)
+        window.add_shared(event)
     }
 
-    pub fn flush(&mut self) -> Vec<Event> {
+    /// Add an event (wraps in Arc).
+    #[allow(dead_code)]
+    pub fn add(&mut self, event: Event) -> Option<Vec<Event>> {
+        self.add_shared(Arc::new(event))
+            .map(|events| events.into_iter().map(|e| (*e).clone()).collect())
+    }
+
+    /// Flush all partition windows as SharedEvent references.
+    pub fn flush_shared(&mut self) -> Vec<SharedEvent> {
         let mut all_events = Vec::new();
         for window in self.windows.values_mut() {
-            all_events.extend(window.flush());
+            all_events.extend(window.flush_shared());
         }
         all_events
+    }
+
+    /// Flush all partition windows (clones for backward compatibility).
+    #[allow(dead_code)]
+    pub fn flush(&mut self) -> Vec<Event> {
+        self.flush_shared()
+            .into_iter()
+            .map(|e| (*e).clone())
+            .collect()
     }
 }
 
@@ -246,7 +324,8 @@ impl PartitionedSlidingWindow {
         }
     }
 
-    pub fn add(&mut self, event: Event) -> Option<Vec<Event>> {
+    /// Add a shared event to the appropriate partition window.
+    pub fn add_shared(&mut self, event: SharedEvent) -> Option<Vec<SharedEvent>> {
         let key = event
             .get(&self.partition_key)
             .map(|v| format!("{}", v))
@@ -257,15 +336,32 @@ impl PartitionedSlidingWindow {
             .entry(key)
             .or_insert_with(|| SlidingWindow::new(self.window_size, self.slide_interval));
 
-        window.add(event)
+        window.add_shared(event)
     }
 
-    pub fn current_all(&self) -> Vec<Event> {
+    /// Add an event (wraps in Arc).
+    #[allow(dead_code)]
+    pub fn add(&mut self, event: Event) -> Option<Vec<Event>> {
+        self.add_shared(Arc::new(event))
+            .map(|events| events.into_iter().map(|e| (*e).clone()).collect())
+    }
+
+    /// Get all current events from all partitions as shared references.
+    pub fn current_all_shared(&self) -> Vec<SharedEvent> {
         let mut all_events = Vec::new();
         for window in self.windows.values() {
-            all_events.extend(window.current());
+            all_events.extend(window.current_shared());
         }
         all_events
+    }
+
+    /// Get all current events from all partitions (clones for backward compatibility).
+    #[allow(dead_code)]
+    pub fn current_all(&self) -> Vec<Event> {
+        self.current_all_shared()
+            .into_iter()
+            .map(|e| (*e).clone())
+            .collect()
     }
 }
 

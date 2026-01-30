@@ -20,7 +20,7 @@ pub mod timer;
 pub mod window;
 
 pub use engine::Engine;
-pub use event::Event;
+pub use event::{Event, SharedEvent};
 pub use metrics::Metrics;
 pub use sink::{ConsoleSink, FileSink, HttpSink, MultiSink, Sink};
 pub use stream::Stream;
