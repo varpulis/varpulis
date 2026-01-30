@@ -21,7 +21,7 @@ use types::{
     AttentionWindowConfig, EmitConfig, EmitExprConfig, LogConfig, MergeSource,
     PartitionedAggregatorState, PartitionedSlidingCountWindowState, PartitionedWindowState,
     PatternConfig, PrintConfig, RuntimeOp, RuntimeSource, SelectConfig, StreamDefinition,
-    StreamProcessResult, WindowType,
+    StreamProcessResult, TimerConfig, WindowType,
 };
 
 use crate::aggregation::Aggregator;
@@ -71,6 +71,10 @@ pub struct Engine {
     patterns: HashMap<String, NamedPattern>,
     /// Configuration blocks (e.g., mqtt, kafka)
     configs: HashMap<String, EngineConfig>,
+    /// Mutable variables accessible across events
+    variables: HashMap<String, Value>,
+    /// Tracks which variables are declared as mutable (var vs let)
+    mutable_vars: std::collections::HashSet<String>,
     /// Alert sender
     alert_tx: mpsc::Sender<Alert>,
     /// Metrics
@@ -88,6 +92,8 @@ impl Engine {
             functions: HashMap::new(),
             patterns: HashMap::new(),
             configs: HashMap::new(),
+            variables: HashMap::new(),
+            mutable_vars: std::collections::HashSet::new(),
             alert_tx,
             events_processed: 0,
             alerts_generated: 0,
@@ -108,6 +114,28 @@ impl Engine {
     /// Get a configuration block by name
     pub fn get_config(&self, name: &str) -> Option<&EngineConfig> {
         self.configs.get(name)
+    }
+
+    /// Get a variable value by name
+    pub fn get_variable(&self, name: &str) -> Option<&Value> {
+        self.variables.get(name)
+    }
+
+    /// Set a variable value (must be mutable or new)
+    pub fn set_variable(&mut self, name: &str, value: Value) -> Result<(), String> {
+        if self.variables.contains_key(name) && !self.mutable_vars.contains(name) {
+            return Err(format!(
+                "Cannot assign to immutable variable '{}'. Use 'var' instead of 'let' to declare mutable variables.",
+                name
+            ));
+        }
+        self.variables.insert(name.to_string(), value);
+        Ok(())
+    }
+
+    /// Get all variables (for debugging/testing)
+    pub fn variables(&self) -> &HashMap<String, Value> {
+        &self.variables
     }
 
     /// Enable Prometheus metrics
@@ -213,6 +241,67 @@ impl Engine {
                     info!("Import statement: {} (alias: {:?})", path, alias);
                     // TODO: Load and merge imported file
                 }
+                Stmt::VarDecl {
+                    mutable,
+                    name,
+                    value,
+                    ..
+                } => {
+                    // Evaluate the initial value, using existing variables as bindings
+                    let dummy_event = Event::new("__init__");
+                    let empty_ctx = SequenceContext::new();
+                    let initial_value = evaluator::eval_expr_with_functions(
+                        value,
+                        &dummy_event,
+                        &empty_ctx,
+                        &self.functions,
+                        &self.variables,
+                    )
+                    .ok_or_else(|| {
+                        format!("Failed to evaluate initial value for variable '{}'", name)
+                    })?;
+
+                    info!(
+                        "Registered {} variable: {} = {:?}",
+                        if *mutable { "mutable" } else { "immutable" },
+                        name,
+                        initial_value
+                    );
+
+                    self.variables.insert(name.clone(), initial_value);
+                    if *mutable {
+                        self.mutable_vars.insert(name.clone());
+                    }
+                }
+                Stmt::Assignment { name, value } => {
+                    // Evaluate the new value, using existing variables as bindings
+                    let dummy_event = Event::new("__assign__");
+                    let empty_ctx = SequenceContext::new();
+                    let new_value = evaluator::eval_expr_with_functions(
+                        value,
+                        &dummy_event,
+                        &empty_ctx,
+                        &self.functions,
+                        &self.variables,
+                    )
+                    .ok_or_else(|| format!("Failed to evaluate assignment value for '{}'", name))?;
+
+                    // Check if variable is mutable
+                    if self.variables.contains_key(name) && !self.mutable_vars.contains(name) {
+                        return Err(format!(
+                            "Cannot assign to immutable variable '{}'. Use 'var' instead of 'let'.",
+                            name
+                        ));
+                    }
+
+                    // If variable doesn't exist, treat as implicit mutable declaration
+                    if !self.variables.contains_key(name) {
+                        self.mutable_vars.insert(name.clone());
+                    }
+
+                    info!("Assigned variable: {} = {:?}", name, new_value);
+                    self.variables.insert(name.clone(), new_value);
+                }
                 _ => {
                     debug!("Skipping statement: {:?}", stmt.node);
                 }
@@ -292,30 +381,50 @@ impl Engine {
                     "Registering join stream {} from sources: {:?}",
                     name, sources
                 );
-                // For join sources, we need to register for the underlying event types
-                // of the source streams, not the stream names themselves
-                // Also build a mapping from event_type -> source_name for routing
+                // For join sources, we register based on whether the source is a derived stream or an event type
+                // - Derived streams (with operations like aggregate, window, etc.) output events with stream name as event_type
+                // - Simple event streams need to receive the raw event type
                 for source in &sources {
-                    // Check if source is a registered stream
                     if let Some(stream_def) = self.streams.get(source) {
-                        // Get the underlying event type from the stream
-                        let event_type = match &stream_def.source {
-                            RuntimeSource::EventType(et) => et.clone(),
-                            RuntimeSource::Stream(s) => s.clone(),
-                            _ => source.clone(),
-                        };
-                        info!(
-                            "Join source '{}' resolved to event type '{}'",
-                            source, event_type
-                        );
-                        self.event_sources
-                            .entry(event_type.clone())
-                            .or_default()
-                            .push(name.to_string());
-                        // Store mapping for later use during event routing
-                        event_type_to_source.insert(event_type, source.clone());
+                        // Source is a registered stream
+                        // Check if it has any transforming operations (aggregate, window, select, etc.)
+                        let has_operations = !stream_def.operations.is_empty();
+
+                        if has_operations {
+                            // Derived stream with operations - register for the stream name
+                            // because its output events have event_type = stream name
+                            info!(
+                                "Join source '{}' is a derived stream, registering for stream name",
+                                source
+                            );
+                            self.event_sources
+                                .entry(source.clone())
+                                .or_default()
+                                .push(name.to_string());
+                            event_type_to_source.insert(source.clone(), source.clone());
+                        } else {
+                            // Simple passthrough stream - register for underlying event type
+                            let event_type = match &stream_def.source {
+                                RuntimeSource::EventType(et) => et.clone(),
+                                RuntimeSource::Stream(s) => s.clone(),
+                                _ => source.clone(),
+                            };
+                            info!(
+                                "Join source '{}' is a passthrough stream, registering for event type '{}'",
+                                source, event_type
+                            );
+                            self.event_sources
+                                .entry(event_type.clone())
+                                .or_default()
+                                .push(name.to_string());
+                            event_type_to_source.insert(event_type, source.clone());
+                        }
                     } else {
-                        // Source stream not yet registered, use as-is (might be event type)
+                        // Source stream not yet registered, assume it's an event type name
+                        info!(
+                            "Join source '{}' not found as stream, treating as event type",
+                            source
+                        );
                         self.event_sources
                             .entry(source.clone())
                             .or_default()
@@ -349,6 +458,49 @@ impl Engine {
                     merge_sources.len()
                 );
                 RuntimeSource::Merge(merge_sources)
+            }
+            StreamSource::Timer(decl) => {
+                // Extract interval from duration expression
+                let interval_ns = match &decl.interval {
+                    varpulis_core::ast::Expr::Duration(ns) => *ns,
+                    _ => {
+                        warn!("Timer interval must be a duration, defaulting to 1s");
+                        1_000_000_000u64 // 1 second default
+                    }
+                };
+
+                // Extract optional initial delay
+                let initial_delay_ns =
+                    decl.initial_delay
+                        .as_ref()
+                        .and_then(|expr| match expr.as_ref() {
+                            varpulis_core::ast::Expr::Duration(ns) => Some(*ns),
+                            _ => None,
+                        });
+
+                // Create timer event type based on stream name
+                let timer_event_type = format!("Timer_{}", name);
+
+                // Register this stream to receive timer events
+                self.event_sources
+                    .entry(timer_event_type.clone())
+                    .or_default()
+                    .push(name.to_string());
+
+                info!(
+                    "Registering timer stream {} with interval {}ms{}",
+                    name,
+                    interval_ns / 1_000_000,
+                    initial_delay_ns
+                        .map(|d| format!(", initial_delay {}ms", d / 1_000_000))
+                        .unwrap_or_default()
+                );
+
+                RuntimeSource::Timer(TimerConfig {
+                    interval_ns,
+                    initial_delay_ns,
+                    timer_event_type,
+                })
             }
         };
 
@@ -754,6 +906,10 @@ impl Engine {
                         name: def.name.clone(),
                         matcher: def.matcher.clone(),
                     }));
+                }
+                StreamOp::Having(expr) => {
+                    // Having filter - applied after aggregation
+                    runtime_ops.push(RuntimeOp::Having(expr.clone()));
                 }
                 _ => {
                     debug!("Skipping operation: {:?}", op);
@@ -1338,6 +1494,27 @@ impl Engine {
                         })
                         .collect();
                 }
+                RuntimeOp::Having(expr) => {
+                    // Having filter - applied after aggregation to filter results
+                    let ctx = SequenceContext::new();
+                    current_events.retain(|event| {
+                        evaluator::eval_expr_with_functions(
+                            expr,
+                            event,
+                            &ctx,
+                            functions,
+                            &HashMap::new(),
+                        )
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                    });
+                    if current_events.is_empty() {
+                        return Ok(StreamProcessResult {
+                            alerts,
+                            output_events: vec![],
+                        });
+                    }
+                }
                 RuntimeOp::Select(config) => {
                     // Transform events by evaluating expressions and creating new fields
                     let ctx = SequenceContext::new();
@@ -1671,6 +1848,27 @@ impl Engine {
                         })
                         .collect();
                 }
+                RuntimeOp::Having(expr) => {
+                    // Having filter - applied after aggregation to filter results
+                    let ctx = SequenceContext::new();
+                    current_events.retain(|event| {
+                        evaluator::eval_expr_with_functions(
+                            expr,
+                            event,
+                            &ctx,
+                            functions,
+                            &HashMap::new(),
+                        )
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                    });
+                    if current_events.is_empty() {
+                        return Ok(StreamProcessResult {
+                            alerts,
+                            output_events: vec![],
+                        });
+                    }
+                }
                 RuntimeOp::Select(config) => {
                     let ctx = SequenceContext::new();
                     current_events = current_events
@@ -1799,5 +1997,21 @@ impl Engine {
     /// Get all registered function names
     pub fn function_names(&self) -> Vec<&str> {
         self.functions.keys().map(|s| s.as_str()).collect()
+    }
+
+    /// Get all timer configurations for spawning timer tasks
+    /// Returns: Vec<(interval_ns, initial_delay_ns, timer_event_type)>
+    pub fn get_timers(&self) -> Vec<(u64, Option<u64>, String)> {
+        let mut timers = Vec::new();
+        for stream in self.streams.values() {
+            if let RuntimeSource::Timer(config) = &stream.source {
+                timers.push((
+                    config.interval_ns,
+                    config.initial_delay_ns,
+                    config.timer_event_type.clone(),
+                ));
+            }
+        }
+        timers
     }
 }

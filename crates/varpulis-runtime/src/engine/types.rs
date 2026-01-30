@@ -83,6 +83,8 @@ pub(crate) enum RuntimeSource {
     Join(Vec<String>),
     /// Merge multiple event types with optional filters
     Merge(Vec<MergeSource>),
+    /// Periodic timer source
+    Timer(TimerConfig),
 }
 
 impl RuntimeSource {
@@ -93,8 +95,21 @@ impl RuntimeSource {
             RuntimeSource::Stream(s) => format!("stream:{}", s),
             RuntimeSource::Join(sources) => format!("join:{}", sources.join(",")),
             RuntimeSource::Merge(sources) => format!("merge:{} sources", sources.len()),
+            RuntimeSource::Timer(config) => {
+                format!("timer:{}ms", config.interval_ns / 1_000_000)
+            }
         }
     }
+}
+
+/// Configuration for a periodic timer source
+pub(crate) struct TimerConfig {
+    /// Interval between timer fires in nanoseconds
+    pub interval_ns: u64,
+    /// Optional initial delay before first fire in nanoseconds
+    pub initial_delay_ns: Option<u64>,
+    /// Event type name for timer events (e.g., "Timer_MyStream")
+    pub timer_event_type: String,
 }
 
 /// A source in a merge construct with optional filter
@@ -119,6 +134,8 @@ pub(crate) enum RuntimeOp {
     Aggregate(Aggregator),
     /// Partitioned aggregate - maintains separate aggregators per partition key
     PartitionedAggregate(PartitionedAggregatorState),
+    /// Having filter - filter aggregation results (post-aggregate filtering)
+    Having(varpulis_core::ast::Expr),
     /// Select/projection with computed fields
     Select(SelectConfig),
     Emit(EmitConfig),

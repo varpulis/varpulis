@@ -81,6 +81,8 @@ pub enum Stmt {
     Break,
     /// Continue statement
     Continue,
+    /// Variable assignment: `name := value`
+    Assignment { name: String, value: Expr },
     /// SASE+ Pattern declaration: `pattern Name = SEQ(A, B+) within 1h partition by user_id`
     PatternDecl {
         name: String,
@@ -148,6 +150,17 @@ pub enum StreamSource {
     Join(Vec<JoinClause>),
     /// Sequence construct: `sequence(step1: Event1, step2: Event2 where cond, ...)`
     Sequence(SequenceDecl),
+    /// Periodic timer source: `timer(5s)` or `timer(5s, initial_delay: 1s)`
+    Timer(TimerDecl),
+}
+
+/// Timer declaration for periodic event generation
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TimerDecl {
+    /// Interval between timer fires (duration expression)
+    pub interval: Expr,
+    /// Optional initial delay before first fire
+    pub initial_delay: Option<Box<Expr>>,
 }
 
 /// Sequence declaration for temporal event correlation
@@ -201,6 +214,8 @@ pub enum StreamOp {
     Window(WindowArgs),
     /// Aggregation: `.aggregate(...)`
     Aggregate(Vec<AggItem>),
+    /// Having: `.having(cond)` - filter after aggregation
+    Having(Expr),
     /// Partitioning: `.partition_by(key)`
     PartitionBy(Expr),
     /// Ordering: `.order_by(...)`

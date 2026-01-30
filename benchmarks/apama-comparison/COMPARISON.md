@@ -26,8 +26,8 @@ Comparing Apama EPL (Event Processing Language) with Varpulis VPL for Complex Ev
 | **Negation** | ✅ `not A` | ✅ `NOT A` in pattern | Both support |
 | **Inter-event Refs** | ✅ `a.field == b.field` | ✅ `where a.field == b.field` | Both support |
 | **Stream Joins** | ✅ `join A ... join B on ...` | ✅ `join(A, B).on(...)` | Both support |
-| **Having Clause** | ✅ `having condition` | ❌ Not yet | Missing |
-| **rstream (delay)** | ✅ `rstream` outputs leaving items | ❌ Not yet | Missing |
+| **Having Clause** | ✅ `having condition` | ✅ `.having(condition)` | Both support |
+| **rstream (delay)** | ✅ `rstream` outputs leaving items | ✅ `DelayBuffer`, `PreviousValueTracker` | API-level support |
 | **Nested Queries** | ✅ Full support | ❌ Not yet | Missing |
 | **Dynamic Thresholds** | ✅ Variables updated at runtime | ❌ Not yet | Missing |
 | **Periodic Timers** | ✅ `on wait(period)` | ❌ Not yet | Missing |
@@ -52,31 +52,42 @@ Comparing Apama EPL (Event Processing Language) with Varpulis VPL for Complex Ev
 | **rstream** | Output leaving window (delay operator) |
 | **Hot Redeploy** | Runtime code updates |
 
+## Recently Implemented
+
+### Completed
+
+1. **STREAM-01**: rstream operator for delay/comparison ✅
+   - `DelayBuffer<T>` - generic delay buffer
+   - `PreviousValueTracker<T>` - current vs previous comparison
+   - Partitioned versions for grouped data
+   - 17 tests in window.rs
+
+2. **STREAM-02**: Having clause for aggregate filtering ✅
+   - `.having(condition)` in VPL syntax
+   - Filters aggregation results
+   - 4 tests (2 parser, 2 runtime)
+
+3. **STREAM-03**: Inter-stream joins with aggregate comparison ✅
+   - Join two aggregated streams: `join(EMA12, EMA26)`
+   - Compare aggregate values: `.where(EMA12.ema > EMA26.ema)`
+   - Fixed event routing for derived streams
+   - 1 new test (test_aggregate_comparison_join)
+
 ## Missing in Varpulis (Candidates for KANBAN)
-
-### High Priority
-
-1. **STREAM-JOIN-01**: Stream-to-stream joins with window alignment
-   - Current: Basic join supported
-   - Missing: Cross-stream aggregation comparison
-
-2. **STREAM-RSTREAM-01**: rstream operator for delay/comparison
-   - Enables: Compare current vs previous aggregate
-   - Use case: Detect when average changes by threshold
-
-3. **STREAM-HAVING-01**: Having clause for aggregate filtering
-   - Enables: Filter after aggregation
-   - Use case: `having last(price) > first(price) + threshold`
 
 ### Medium Priority
 
-4. **TIMER-01**: Periodic timer independent of events
+1. **TIMER-01**: Periodic timer independent of events
    - Enables: VWAP period calculation
    - Use case: `on wait(5s) { ... }`
 
-5. **DYNAMIC-VAR-01**: Dynamic variable updates
+2. **DYNAMIC-VAR-01**: Dynamic variable updates
    - Enables: Adaptive thresholds
    - Use case: Update threshold after alert
+
+3. **QUERY-01**: Nested queries
+   - Enables: Sub-queries in stream definitions
+   - Use case: Complex aggregation hierarchies
 
 ### Low Priority
 

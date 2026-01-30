@@ -290,6 +290,95 @@ async fn test_join_no_match_returns_empty() {
 }
 
 #[tokio::test]
+async fn test_aggregate_comparison_join() {
+    // Test joining two aggregated streams and comparing their values
+    // This is the core use case for STREAM-03
+    let (alert_tx, mut alert_rx) = mpsc::channel(100);
+    let mut engine = Engine::new(alert_tx);
+
+    // Simpler test: just join two aggregated streams and emit their values
+    let vpl = r#"
+        event Sensor:
+            sensor_id: str
+            value: float
+
+        # Aggregate stream 1 - fast average (3 samples)
+        stream FastAvg = Sensor
+            .partition_by(sensor_id)
+            .window(3)
+            .aggregate(
+                sensor_id: last(sensor_id),
+                fast_avg: avg(value)
+            )
+
+        # Aggregate stream 2 - slow average (5 samples)
+        stream SlowAvg = Sensor
+            .partition_by(sensor_id)
+            .window(5)
+            .aggregate(
+                sensor_id: last(sensor_id),
+                slow_avg: avg(value)
+            )
+
+        # Join aggregated streams - no filter, just emit the joined result
+        stream Combined = join(FastAvg, SlowAvg)
+            .on(FastAvg.sensor_id == SlowAvg.sensor_id)
+            .window(1m)
+            .select(
+                sensor_id: FastAvg.sensor_id,
+                fast: FastAvg.fast_avg,
+                slow: SlowAvg.slow_avg
+            )
+            .emit(
+                event_type: "Combined",
+                sensor_id: sensor_id,
+                fast_avg: fast,
+                slow_avg: slow
+            )
+    "#;
+
+    let program = varpulis_parser::parse(vpl).expect("Failed to parse VPL");
+    engine.load(&program).expect("Failed to load program");
+
+    // Send sensor readings
+    for i in 0..15 {
+        let event = Event::new("Sensor")
+            .with_field("sensor_id", "temp_1")
+            .with_field("value", 100.0 + (i as f64 * 5.0));
+        engine.process(event).await.expect("Failed to process");
+    }
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    // Count combined alerts
+    let mut combined_count = 0;
+    while let Ok(alert) = alert_rx.try_recv() {
+        if alert.alert_type == "Combined" {
+            combined_count += 1;
+            // Debug: print alert
+            println!("Combined alert: {:?}", alert.data);
+            // Verify the alert has expected fields
+            assert!(alert.data.contains_key("sensor_id"));
+            assert!(alert.data.contains_key("fast_avg"));
+            assert!(alert.data.contains_key("slow_avg"));
+        }
+    }
+
+    // Should have multiple combined alerts after both windows are full
+    // FastAvg outputs after 3 events, SlowAvg outputs after 5 events
+    // First join should happen after event 5
+    assert!(
+        combined_count > 0,
+        "Expected combined alerts, got {}",
+        combined_count
+    );
+    println!(
+        "Aggregate comparison join produced {} combined alerts",
+        combined_count
+    );
+}
+
+#[tokio::test]
 async fn test_macd_example_produces_signals() {
     // End-to-end test simulating the financial_markets.vpl MACD pattern
     let (alert_tx, mut alert_rx) = mpsc::channel(100);
@@ -357,13 +446,19 @@ async fn test_macd_example_produces_signals() {
     while let Ok(alert) = alert_rx.try_recv() {
         if alert.alert_type == "MACD" {
             macd_count += 1;
+            println!("MACD alert {}: {:?}", macd_count, alert.data);
             // Verify the MACD has expected fields
             assert!(alert.data.contains_key("symbol"));
             assert!(alert.data.contains_key("macd_line"));
         }
     }
 
-    // After JoinBuffer is implemented, we should see MACD alerts
-    // For now, we expect 0 until implementation is complete
+    // After implementing aggregate-to-aggregate joins, we should see MACD alerts
+    // With 30 events: EMA12 produces after 12, EMA26 produces after 26
+    // So first join possible at event 26, giving ~5 potential matches
+    assert!(
+        macd_count > 0,
+        "Expected MACD alerts after aggregate join implementation"
+    );
     println!("MACD alerts received: {}", macd_count);
 }

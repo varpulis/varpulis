@@ -1,0 +1,72 @@
+# Varpulis having clause demonstration
+# Filters aggregation results based on a condition
+#
+# Equivalent to Apama EPL streams-having.mon:
+#   from t in ticks partition by symbol
+#   within 10.0 select avg(t.price) as avg_price
+#   having avg_price > 100.0
+
+event Tick:
+    symbol: str
+    price: float
+    volume: int
+
+event HighAveragePrice:
+    symbol: str
+    average_price: float
+    tick_count: int
+
+event HighVolumeSymbol:
+    symbol: str
+    total_volume: int
+    trade_count: int
+
+# Example 1: Filter symbols with average price > 100
+# Similar to Apama EPL having clause
+stream HighPriceSymbols = Tick
+    .partition_by(symbol)
+    .window(10)
+    .aggregate(
+        symbol: last(symbol),
+        avg_price: avg(price),
+        tick_count: count()
+    )
+    .having(avg_price > 100.0)
+    .emit(
+        symbol: symbol,
+        average_price: avg_price,
+        tick_count: tick_count
+    )
+
+# Example 2: Find high-volume symbols (total volume > 10000)
+stream HighVolumeSymbols = Tick
+    .partition_by(symbol)
+    .window(5m)
+    .aggregate(
+        symbol: last(symbol),
+        total_vol: sum(volume),
+        trade_cnt: count()
+    )
+    .having(total_vol > 10000)
+    .emit(
+        symbol: symbol,
+        total_volume: total_vol,
+        trade_count: trade_cnt
+    )
+
+# Example 3: Filter groups with minimum count
+# Only emit results where we have at least 5 data points
+stream ReliableAverages = Tick
+    .partition_by(symbol)
+    .window(1m)
+    .aggregate(
+        symbol: last(symbol),
+        avg_price: avg(price),
+        sample_count: count()
+    )
+    .having(sample_count >= 5)
+    .emit(
+        symbol: symbol,
+        average_price: avg_price,
+        sample_count: sample_count
+    )

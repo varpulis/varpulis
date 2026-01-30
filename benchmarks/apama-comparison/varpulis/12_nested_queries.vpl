@@ -1,0 +1,96 @@
+// Nested Queries Example
+//
+// Demonstrates multi-stage event processing pipelines where each stream
+// operates on the output of the previous stream (nested queries).
+
+// =============================================================================
+// Stage 1: Raw event ingestion
+// =============================================================================
+
+stream RawTicks from Tick
+
+// =============================================================================
+// Stage 2: Filter to specific symbols
+// =============================================================================
+
+stream IBMTicks = RawTicks
+    .where(symbol == "IBM")
+
+stream AAPLTicks = RawTicks
+    .where(symbol == "AAPL")
+
+// =============================================================================
+// Stage 3: Aggregate filtered streams
+// =============================================================================
+
+// Calculate rolling average for IBM
+stream IBMAvg = IBMTicks
+    .window(10, sliding: 1)
+    .aggregate(
+        avg_price: avg(price),
+        min_price: min(price),
+        max_price: max(price),
+        tick_count: count()
+    )
+
+// Calculate rolling average for AAPL
+stream AAPLAvg = AAPLTicks
+    .window(10, sliding: 1)
+    .aggregate(
+        avg_price: avg(price),
+        min_price: min(price),
+        max_price: max(price),
+        tick_count: count()
+    )
+
+// =============================================================================
+// Stage 4: Alert on significant changes (operates on aggregated data)
+// =============================================================================
+
+stream IBMAlerts = IBMAvg
+    .where(max_price - min_price > 5.0)
+    .emit(
+        alert_type: "Volatility",
+        severity: "warning",
+        message: "High volatility detected for IBM",
+        symbol: "IBM",
+        spread: max_price - min_price
+    )
+
+// =============================================================================
+// Deep Pipeline Example: 5 stages
+// =============================================================================
+
+stream Level1 from SensorReading
+stream Level2 = Level1.where(quality > 0.5)
+stream Level3 = Level2.where(value > 10.0)
+stream Level4 = Level3.window(20).aggregate(avg_value: avg(value))
+stream Level5 = Level4.having(avg_value > 15.0)
+    .emit(
+        alert_type: "HighAverage",
+        severity: "info",
+        message: "Average sensor value exceeded threshold"
+    )
+
+// =============================================================================
+// Parallel Branches from Single Source
+// =============================================================================
+
+stream Trades from Trade
+
+// Branch 1: Large trades
+stream LargeTrades = Trades
+    .where(amount > 10000.0)
+
+// Branch 2: Small trades
+stream SmallTrades = Trades
+    .where(amount < 100.0)
+
+// Each branch can have further nested processing
+stream LargeTradeStats = LargeTrades
+    .window(5)
+    .aggregate(total: sum(amount), count: count())
+
+stream SmallTradeStats = SmallTrades
+    .window(100)
+    .aggregate(total: sum(amount), count: count())

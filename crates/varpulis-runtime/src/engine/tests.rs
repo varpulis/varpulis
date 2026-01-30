@@ -1729,3 +1729,92 @@ async fn test_engine_import_statement() {
     let alert = rx.try_recv().expect("Should have alert");
     assert_eq!(alert.data.get("ok"), Some(&Value::Str("yes".to_string())));
 }
+
+#[tokio::test]
+async fn test_engine_having_filter() {
+    // Test having clause - filters aggregation results
+    let source = r#"
+        stream HighVolume = Trade
+            .window(3)
+            .aggregate(
+                trade_count: count(),
+                total_volume: sum(volume)
+            )
+            .having(trade_count > 2)
+            .emit(count: trade_count, volume: total_volume)
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    // First two trades - window not full yet, no output
+    engine
+        .process(Event::new("Trade").with_field("volume", 100i64))
+        .await
+        .unwrap();
+    engine
+        .process(Event::new("Trade").with_field("volume", 200i64))
+        .await
+        .unwrap();
+    assert!(rx.try_recv().is_err());
+
+    // Third trade - window complete, count=3 > 2, having passes
+    engine
+        .process(Event::new("Trade").with_field("volume", 300i64))
+        .await
+        .unwrap();
+    let alert = rx.try_recv().expect("Should have alert after 3 trades");
+    assert_eq!(alert.alert_type, "stream_output");
+    assert_eq!(alert.data.get("count"), Some(&Value::Int(3)));
+    // sum() returns Float
+    assert_eq!(alert.data.get("volume"), Some(&Value::Float(600.0)));
+}
+
+#[tokio::test]
+async fn test_engine_having_filter_blocks() {
+    // Test having clause blocks when condition is false
+    let source = r#"
+        stream FilteredAgg = Reading
+            .window(2)
+            .aggregate(
+                avg_value: avg(value)
+            )
+            .having(avg_value > 100.0)
+            .emit(average: avg_value)
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    // Two readings with low average (50.0) - having should filter out
+    engine
+        .process(Event::new("Reading").with_field("value", 40i64))
+        .await
+        .unwrap();
+    engine
+        .process(Event::new("Reading").with_field("value", 60i64))
+        .await
+        .unwrap();
+    // avg=50, which is NOT > 100, so no output
+    assert!(
+        rx.try_recv().is_err(),
+        "Should have no alert when avg < 100"
+    );
+
+    // Two more readings with high average (150.0)
+    engine
+        .process(Event::new("Reading").with_field("value", 140i64))
+        .await
+        .unwrap();
+    engine
+        .process(Event::new("Reading").with_field("value", 160i64))
+        .await
+        .unwrap();
+    // avg=150, which IS > 100, so we should get output
+    let alert = rx.try_recv().expect("Should have alert when avg > 100");
+    assert_eq!(alert.alert_type, "stream_output");
+}

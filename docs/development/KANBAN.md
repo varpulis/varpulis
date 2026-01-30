@@ -1,6 +1,6 @@
 # Varpulis CEP - Kanban
 
-> Derniere mise a jour: 2026-01-30
+> Derniere mise a jour: 2026-01-30 (STREAM-02, STREAM-03, TIMER-01, VAR-01, QUERY-01 complete)
 
 ## Vue d'ensemble
 
@@ -349,39 +349,81 @@ python run_scenario.py scenarios/fraud_scenario.yaml
     - `PartitionedPreviousValueTracker<T>` - version partitionnee
     - 15 tests unitaires dans `window.rs`
 
-- [ ] **STREAM-02**: Clause having pour filtrer apres aggregation
+- [x] **STREAM-02**: Clause having pour filtrer apres aggregation
   - **Description**: Filtrer sur les resultats d'aggregation
   - **Use case**: `having last(price) > first(price) + threshold`
   - **Apama**: `having condition`
   - **Complexite**: Low
   - **Priorite**: MEDIUM
+  - **Implementation**:
+    - `StreamOp::Having(Expr)` dans AST (ast.rs)
+    - `RuntimeOp::Having(Expr)` dans types.rs
+    - `having_op` dans grammaire pest (varpulis.pest)
+    - Parser support dans pest_parser.rs
+    - Execution: filtre les events apres aggregation
+    - 4 nouveaux tests (2 parser, 2 runtime)
 
-- [ ] **STREAM-03**: Jointures inter-streams avec comparaison d'aggregats
+- [x] **STREAM-03**: Jointures inter-streams avec comparaison d'aggregats
   - **Description**: Joindre deux streams et comparer leurs aggregats
   - **Use case**: Comparer avg actuel avec avg precedent
   - **Apama**: `from cur in avg join prev in prevaverages on ...`
   - **Complexite**: High
   - **Priorite**: MEDIUM
+  - **Implementation**:
+    - Fix event routing pour derived streams (aggregated, filtered)
+    - Les streams avec operations produisent des events avec event_type = nom du stream
+    - Les streams passthrough utilisent l'event type sous-jacent
+    - JoinBuffer correle les events de sources multiples
+    - Support pour expressions de comparaison: `EMA12.ema > EMA26.ema`
+    - 1 nouveau test (test_aggregate_comparison_join)
+    - Example: `09_aggregate_join.vpl`
 
-- [ ] **TIMER-01**: Timer periodique independant des evenements
+- [x] **TIMER-01**: Timer periodique independant des evenements
   - **Description**: Declencher actions a intervalles fixes
-  - **Use case**: Calculer VWAP toutes les 5 secondes
+  - **Use case**: Calculer VWAP toutes les 5 secondes, heartbeats
   - **Apama**: `on wait(period) { ... }`
   - **Complexite**: Medium
   - **Priorite**: LOW
+  - **Implementation**:
+    - `StreamSource::Timer(TimerDecl)` dans AST (ast.rs)
+    - `RuntimeSource::Timer(TimerConfig)` dans types.rs
+    - `timer_source` dans grammaire pest (varpulis.pest)
+    - Syntaxe: `timer(5s)` ou `timer(5s, initial_delay: 1s)`
+    - Module `timer.rs` avec `spawn_timer()` et `TimerManager`
+    - `Engine::get_timers()` pour recuperer configs timer
+    - 8 nouveaux tests (2 parser, 6 runtime)
+    - Example: `10_timer_source.vpl`
 
-- [ ] **VAR-01**: Variables dynamiques modifiables au runtime
+- [x] **VAR-01**: Variables dynamiques modifiables au runtime
   - **Description**: Mettre a jour seuils/variables apres traitement
   - **Use case**: Augmenter threshold apres alerte
   - **Apama**: `threshold := alertPrice + 10000.0;`
   - **Complexite**: Medium
   - **Priorite**: LOW
+  - **Implementation**:
+    - `Stmt::Assignment { name, value }` dans AST (ast.rs)
+    - `assignment_stmt` dans grammaire pest (varpulis.pest)
+    - `var_keyword` rule pour capturer let/var correctement
+    - `variables` et `mutable_vars` fields dans Engine
+    - Methodes: `get_variable()`, `set_variable()`, `variables()`
+    - Variables accessibles dans evaluations via bindings
+    - 17 nouveaux tests (4 parser, 13 runtime)
+    - Example: `11_variables.vpl`
 
-- [ ] **QUERY-01**: Requetes imbriquees (nested queries)
+- [x] **QUERY-01**: Requetes imbriquees (nested queries)
   - **Description**: Sous-requetes dans les streams
   - **Use case**: Multi-stage processing
   - **Complexite**: High
   - **Priorite**: LOW
+  - **Implementation**:
+    - Deja supporte via `StreamSource::Ident` dans AST
+    - `RuntimeSource::Stream` dans engine/types.rs
+    - Resolution automatique: stream -> event type sous-jacent
+    - Support pipelines multi-etages (5+ niveaux testes)
+    - Support branches paralleles depuis meme source
+    - Support diamond pattern (A->B, A->C puis join)
+    - 13 nouveaux tests (3 parser, 10 runtime)
+    - Example: `12_nested_queries.vpl`
 
 ### Notes
 
@@ -467,6 +509,7 @@ cargo tarpaulin --out Html
 | `crates/varpulis-runtime/src/attention.rs` | Attention mechanism |
 | `crates/varpulis-runtime/src/engine/mod.rs` | Runtime engine |
 | `crates/varpulis-runtime/src/connector.rs` | Connecteurs MQTT/HTTP |
+| `crates/varpulis-runtime/src/timer.rs` | Timers periodiques |
 | `tests/mqtt/simulator.py` | Simulateur d'evenements Python |
 | `vscode-varpulis/syntaxes/varpulis.tmLanguage.json` | TextMate grammar |
 
@@ -476,7 +519,7 @@ cargo tarpaulin --out Html
 
 | Metrique | Valeur | Cible | Statut |
 |----------|--------|-------|--------|
-| **Tests totaux** | **650** | 100+ | Excellent |
+| **Tests totaux** | **782** | 100+ | Excellent |
 | **Tests CLI** | **76** | - | Excellent |
 | **Couverture** | 62.92% | 80% | Needs work |
 | **Clippy warnings** | 0 | 0 | Excellent |
