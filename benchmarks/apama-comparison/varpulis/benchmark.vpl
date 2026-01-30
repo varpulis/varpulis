@@ -1,0 +1,11 @@
+event Tick:
+    symbol: str
+    price: float
+    volume: int
+
+# Simple filter - count events with price > 50
+stream FilterBench = Tick
+    .where(price > 50.0)
+    .window(100)
+    .aggregate(event_count: count())
+    .emit(event_type: "FilterResult", count: event_count)
