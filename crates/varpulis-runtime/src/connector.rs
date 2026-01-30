@@ -939,4 +939,253 @@ mod tests {
         let sink = ConnectorRegistry::create_from_config(&config);
         assert!(sink.is_err());
     }
+
+    // ==========================================================================
+    // ConsoleSource Tests
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_console_source_lifecycle() {
+        let mut source = ConsoleSource::new("test_console");
+        assert_eq!(source.name(), "test_console");
+        assert!(!source.is_running());
+
+        let (tx, _rx) = tokio::sync::mpsc::channel(10);
+        let result = source.start(tx).await;
+        assert!(result.is_ok());
+        assert!(source.is_running());
+
+        let result = source.stop().await;
+        assert!(result.is_ok());
+        assert!(!source.is_running());
+    }
+
+    // ==========================================================================
+    // ConsoleSink Tests
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_console_sink_compact() {
+        let sink = ConsoleSink::new("compact_sink").compact();
+        let event = Event::new("TestEvent").with_field("value", 123i64);
+
+        // Should not fail
+        let result = sink.send(&event).await;
+        assert!(result.is_ok());
+
+        // flush and close should work
+        assert!(sink.flush().await.is_ok());
+        assert!(sink.close().await.is_ok());
+    }
+
+    #[test]
+    fn test_console_sink_name() {
+        let sink = ConsoleSink::new("my_sink");
+        assert_eq!(sink.name(), "my_sink");
+    }
+
+    // ==========================================================================
+    // HttpSink Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_http_sink_creation() {
+        let sink = HttpSink::new("http_sink", "http://example.com/webhook")
+            .with_header("Authorization", "Bearer token123")
+            .with_header("X-Custom", "value");
+
+        assert_eq!(sink.name(), "http_sink");
+        assert_eq!(sink.url, "http://example.com/webhook");
+        assert_eq!(sink.headers.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_http_sink_flush_and_close() {
+        let sink = HttpSink::new("test", "http://localhost:9999");
+        // flush and close should work even without connection
+        assert!(sink.flush().await.is_ok());
+        assert!(sink.close().await.is_ok());
+    }
+
+    // ==========================================================================
+    // KafkaSource Tests
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_kafka_source_lifecycle() {
+        let config = KafkaConfig::new("localhost:9092", "test-topic");
+        let mut source = KafkaSource::new("kafka_src", config);
+
+        assert_eq!(source.name(), "kafka_src");
+        assert!(!source.is_running());
+
+        // Start should fail (stub implementation)
+        let (tx, _rx) = tokio::sync::mpsc::channel(10);
+        let result = source.start(tx).await;
+        assert!(result.is_err());
+
+        // But stop should work
+        let result = source.stop().await;
+        assert!(result.is_ok());
+    }
+
+    // ==========================================================================
+    // KafkaSink Tests
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_kafka_sink_operations() {
+        let config = KafkaConfig::new("localhost:9092", "events");
+        let sink = KafkaSink::new("kafka_sink", config);
+
+        assert_eq!(sink.name(), "kafka_sink");
+
+        // Send should fail (stub implementation)
+        let event = Event::new("Test");
+        let result = sink.send(&event).await;
+        assert!(result.is_err());
+
+        // But flush and close should work
+        assert!(sink.flush().await.is_ok());
+        assert!(sink.close().await.is_ok());
+    }
+
+    // ==========================================================================
+    // MqttConfig Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_mqtt_config_with_qos() {
+        let config = MqttConfig::new("broker", "topic")
+            .with_qos(0)
+            .with_client_id("client-123");
+
+        assert_eq!(config.qos, 0);
+        assert_eq!(config.client_id, Some("client-123".to_string()));
+
+        // QoS should be capped at 2
+        let config = MqttConfig::new("broker", "topic").with_qos(5);
+        assert_eq!(config.qos, 2);
+    }
+
+    #[test]
+    fn test_mqtt_config_defaults() {
+        let config = MqttConfig::new("mqtt.local", "sensors/#");
+
+        assert_eq!(config.broker, "mqtt.local");
+        assert_eq!(config.port, 1883);
+        assert_eq!(config.topic, "sensors/#");
+        assert_eq!(config.client_id, None);
+        assert_eq!(config.username, None);
+        assert_eq!(config.password, None);
+        assert_eq!(config.qos, 1);
+    }
+
+    // ==========================================================================
+    // MqttSource Tests
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_mqtt_source_lifecycle() {
+        let config = MqttConfig::new("localhost", "test/#");
+        let mut source = MqttSource::new("mqtt_src", config);
+
+        assert_eq!(source.name(), "mqtt_src");
+        assert!(!source.is_running());
+
+        // Start will fail without mqtt feature
+        let (tx, _rx) = tokio::sync::mpsc::channel(10);
+        let _result = source.start(tx).await;
+
+        // Stop should work
+        let result = source.stop().await;
+        assert!(result.is_ok());
+    }
+
+    // ==========================================================================
+    // MqttSink Tests
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_mqtt_sink_operations() {
+        let config = MqttConfig::new("localhost", "events");
+        let sink = MqttSink::new("mqtt_sink", config);
+
+        assert_eq!(sink.name(), "mqtt_sink");
+
+        // flush and close should work
+        assert!(sink.flush().await.is_ok());
+        assert!(sink.close().await.is_ok());
+    }
+
+    // ==========================================================================
+    // Registry Tests
+    // ==========================================================================
+
+    #[tokio::test]
+    async fn test_registry_with_sources() {
+        let mut registry = ConnectorRegistry::new();
+        registry.register_source("console", Box::new(ConsoleSource::new("console")));
+
+        let source = registry.get_source("console");
+        assert!(source.is_some());
+
+        if let Some(source) = source {
+            assert_eq!(source.name(), "console");
+        }
+
+        assert!(registry.get_source("unknown").is_none());
+    }
+
+    #[test]
+    fn test_registry_default() {
+        let registry = ConnectorRegistry::default();
+        assert!(registry.get_sink("anything").is_none());
+    }
+
+    #[test]
+    fn test_create_from_config_http() {
+        let config = ConnectorConfig::new("http", "http://example.com");
+        let sink = ConnectorRegistry::create_from_config(&config);
+        assert!(sink.is_ok());
+    }
+
+    #[test]
+    fn test_create_from_config_kafka() {
+        let config = ConnectorConfig::new("kafka", "localhost:9092").with_topic("events");
+        let sink = ConnectorRegistry::create_from_config(&config);
+        assert!(sink.is_ok());
+    }
+
+    #[test]
+    fn test_create_from_config_mqtt() {
+        let config = ConnectorConfig::new("mqtt", "mqtt.local").with_topic("sensors");
+        let sink = ConnectorRegistry::create_from_config(&config);
+        assert!(sink.is_ok());
+    }
+
+    // ==========================================================================
+    // ConnectorError Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_connector_error_display() {
+        let err = ConnectorError::ConnectionFailed("timeout".to_string());
+        assert!(err.to_string().contains("Connection failed"));
+
+        let err = ConnectorError::SendFailed("buffer full".to_string());
+        assert!(err.to_string().contains("Send failed"));
+
+        let err = ConnectorError::ReceiveFailed("channel closed".to_string());
+        assert!(err.to_string().contains("Receive failed"));
+
+        let err = ConnectorError::ConfigError("missing field".to_string());
+        assert!(err.to_string().contains("Configuration error"));
+
+        let err = ConnectorError::NotConnected;
+        assert!(err.to_string().contains("Not connected"));
+
+        let err = ConnectorError::NotAvailable("kafka".to_string());
+        assert!(err.to_string().contains("Connector not available"));
+    }
 }

@@ -607,4 +607,297 @@ mod tests {
         tracker.process(&make_event("X", vec![]));
         assert_eq!(tracker.active_count(), 1);
     }
+
+    // ==========================================================================
+    // Negation Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_sequence_with_negation() {
+        let steps = vec![
+            SequenceStep {
+                event_type: "Order".to_string(),
+                filter: None,
+                alias: Some("order".to_string()),
+                timeout: None,
+                match_all: false,
+            },
+            SequenceStep {
+                event_type: "Shipped".to_string(),
+                filter: None,
+                alias: Some("shipped".to_string()),
+                timeout: None,
+                match_all: false,
+            },
+        ];
+
+        // Negation: Cancel event invalidates the sequence
+        let mut tracker = SequenceTracker::new(steps, false).with_negation(NegationCondition {
+            event_type: "Cancel".to_string(),
+            filter: None,
+        });
+
+        // Start order
+        tracker.process(&make_event("Order", vec![("id", Value::Int(1))]));
+        assert_eq!(tracker.active_count(), 1);
+
+        // Cancel order - should invalidate
+        tracker.process(&make_event("Cancel", vec![]));
+        assert_eq!(tracker.active_count(), 0);
+
+        // Shipped - no active correlation
+        let completed = tracker.process(&make_event("Shipped", vec![]));
+        assert!(completed.is_empty());
+    }
+
+    #[test]
+    fn test_sequence_negation_with_filter() {
+        let steps = vec![
+            SequenceStep {
+                event_type: "Order".to_string(),
+                filter: None,
+                alias: Some("order".to_string()),
+                timeout: None,
+                match_all: false,
+            },
+            SequenceStep {
+                event_type: "Shipped".to_string(),
+                filter: None,
+                alias: None,
+                timeout: None,
+                match_all: false,
+            },
+        ];
+
+        // Negation only if Cancel.order_id matches order.id
+        let negation = NegationCondition {
+            event_type: "Cancel".to_string(),
+            filter: Some(Box::new(|event, ctx| {
+                if let Some(order) = ctx.get("order") {
+                    event.get_int("order_id") == order.get_int("id")
+                } else {
+                    false
+                }
+            })),
+        };
+
+        let mut tracker = SequenceTracker::new(steps, false).with_negation(negation);
+
+        // Start order with id=1
+        tracker.process(&make_event("Order", vec![("id", Value::Int(1))]));
+        assert_eq!(tracker.active_count(), 1);
+
+        // Cancel for different order - should NOT invalidate
+        tracker.process(&make_event("Cancel", vec![("order_id", Value::Int(999))]));
+        assert_eq!(tracker.active_count(), 1);
+
+        // Cancel for same order - should invalidate
+        tracker.process(&make_event("Cancel", vec![("order_id", Value::Int(1))]));
+        assert_eq!(tracker.active_count(), 0);
+    }
+
+    #[test]
+    fn test_sequence_add_negation() {
+        let steps = vec![
+            SequenceStep {
+                event_type: "A".to_string(),
+                filter: None,
+                alias: None,
+                timeout: None,
+                match_all: false,
+            },
+            SequenceStep {
+                event_type: "B".to_string(),
+                filter: None,
+                alias: None,
+                timeout: None,
+                match_all: false,
+            },
+        ];
+
+        let mut tracker = SequenceTracker::new(steps, false);
+        tracker.add_negation(NegationCondition {
+            event_type: "X".to_string(),
+            filter: None,
+        });
+
+        tracker.process(&make_event("A", vec![]));
+        assert_eq!(tracker.active_count(), 1);
+
+        tracker.process(&make_event("X", vec![]));
+        assert_eq!(tracker.active_count(), 0);
+    }
+
+    // ==========================================================================
+    // Timeout Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_sequence_cleanup_timeouts() {
+        let steps = vec![
+            SequenceStep {
+                event_type: "A".to_string(),
+                filter: None,
+                alias: None,
+                timeout: None,
+                match_all: true,
+            },
+            SequenceStep {
+                event_type: "B".to_string(),
+                filter: None,
+                alias: None,
+                timeout: Some(Duration::from_millis(1)), // Very short timeout
+                match_all: false,
+            },
+        ];
+
+        let mut tracker = SequenceTracker::new(steps, true);
+
+        // Start correlation
+        tracker.process(&make_event("A", vec![]));
+        assert_eq!(tracker.active_count(), 1);
+
+        // Wait for timeout
+        std::thread::sleep(Duration::from_millis(10));
+
+        // Cleanup should remove timed out correlations
+        let cleaned = tracker.cleanup_timeouts();
+        assert_eq!(cleaned, 1);
+        assert_eq!(tracker.active_count(), 0);
+    }
+
+    #[test]
+    fn test_sequence_timeout_during_process() {
+        let steps = vec![
+            SequenceStep {
+                event_type: "A".to_string(),
+                filter: None,
+                alias: None,
+                timeout: None,
+                match_all: true,
+            },
+            SequenceStep {
+                event_type: "B".to_string(),
+                filter: None,
+                alias: None,
+                timeout: Some(Duration::from_millis(1)),
+                match_all: false,
+            },
+        ];
+
+        let mut tracker = SequenceTracker::new(steps, true);
+
+        tracker.process(&make_event("A", vec![]));
+        assert_eq!(tracker.active_count(), 1);
+
+        // Wait for timeout
+        std::thread::sleep(Duration::from_millis(10));
+
+        // Processing any event should also clean up timeouts
+        tracker.process(&make_event("B", vec![]));
+        // The timed out correlation is removed during process
+        assert_eq!(tracker.active_count(), 0);
+    }
+
+    // ==========================================================================
+    // Context Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_sequence_context_creation() {
+        let ctx = SequenceContext::new();
+        assert!(ctx.previous.is_none());
+        assert!(ctx.captured.is_empty());
+    }
+
+    #[test]
+    fn test_sequence_context_with_captured() {
+        let event = make_event("TestEvent", vec![("value", Value::Int(42))]);
+        let ctx = SequenceContext::new().with_captured("test".to_string(), event);
+
+        assert!(ctx.get("test").is_some());
+        assert!(ctx.get("$").is_some()); // Previous should also be set
+        assert!(ctx.get("unknown").is_none());
+    }
+
+    // ==========================================================================
+    // Active Correlation Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_active_correlation_default() {
+        let corr = ActiveCorrelation::default();
+        assert_eq!(corr.current_step, 0);
+        assert!(!corr.is_timed_out());
+    }
+
+    #[test]
+    fn test_active_correlation_advance() {
+        let mut corr = ActiveCorrelation::new();
+        let event = make_event("A", vec![]);
+
+        corr.advance(event, Some("a"));
+        assert_eq!(corr.current_step, 1);
+        assert!(corr.context.get("a").is_some());
+    }
+
+    #[test]
+    fn test_active_correlation_set_timeout() {
+        let mut corr = ActiveCorrelation::new();
+        assert!(!corr.is_timed_out());
+
+        corr.set_timeout(Duration::from_millis(1));
+        std::thread::sleep(Duration::from_millis(10));
+
+        assert!(corr.is_timed_out());
+    }
+
+    // ==========================================================================
+    // Empty Steps Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_sequence_empty_steps() {
+        let mut tracker = SequenceTracker::new(vec![], false);
+
+        let completed = tracker.process(&make_event("A", vec![]));
+        assert!(completed.is_empty());
+        assert_eq!(tracker.active_count(), 0);
+    }
+
+    // ==========================================================================
+    // Filter Rejection Test
+    // ==========================================================================
+
+    #[test]
+    fn test_sequence_first_step_filter_rejection() {
+        let steps = vec![
+            SequenceStep {
+                event_type: "A".to_string(),
+                filter: Some(Box::new(|event, _ctx| {
+                    event.get_int("value").unwrap_or(0) > 10
+                })),
+                alias: None,
+                timeout: None,
+                match_all: false,
+            },
+            SequenceStep {
+                event_type: "B".to_string(),
+                filter: None,
+                alias: None,
+                timeout: None,
+                match_all: false,
+            },
+        ];
+
+        let mut tracker = SequenceTracker::new(steps, false);
+
+        // Event with value <= 10 should not start correlation
+        tracker.process(&make_event("A", vec![("value", Value::Int(5))]));
+        assert_eq!(tracker.active_count(), 0);
+
+        // Event with value > 10 should start
+        tracker.process(&make_event("A", vec![("value", Value::Int(15))]));
+        assert_eq!(tracker.active_count(), 1);
+    }
 }
