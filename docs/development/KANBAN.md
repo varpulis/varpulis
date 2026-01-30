@@ -1,6 +1,6 @@
 # Varpulis CEP - Kanban
 
-> Derniere mise a jour: 2026-01-29
+> Derniere mise a jour: 2026-01-30
 
 ## Vue d'ensemble
 
@@ -280,7 +280,7 @@ python run_scenario.py scenarios/fraud_scenario.yaml
 
 ## PRIORITE MOYENNE - Couverture de Tests
 
-> **Couverture actuelle**: 62.92% (cible: 80%)
+> **Couverture actuelle**: 62.92% (cible: 80%) | **721 tests**
 
 ### En cours
 
@@ -302,6 +302,12 @@ python run_scenario.py scenarios/fraud_scenario.yaml
     - [x] Tests window module (CountWindow, SlidingCountWindow, PartitionedWindows)
     - [x] Tests join module (3-way join, max events, common key detection, continuous correlation)
     - [x] Tests attention module (transforms, embeddings, stats, history)
+    - [x] Tests connector module (Console, HTTP, Kafka, MQTT sources/sinks, registry, errors)
+    - [x] Tests metrics module (gauges, histograms, cloning, multiple streams)
+    - [x] Tests sequence module (negation, timeouts, context, correlations)
+    - [x] Tests sink module (file sink, multi-sink broadcast, error handling)
+    - [x] Tests stream module (buffer ordering, sender errors, interleaved operations)
+    - [x] Tests pattern module (context, filters, XOR, FieldRef, timeouts)
 
 ### En cours
 
