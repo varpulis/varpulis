@@ -1,0 +1,46 @@
+# Equivalent to Apama streams.mon
+# Calculate moving average of last 10 prices per symbol
+# Alert when average changes (Varpulis can't do delta comparison yet)
+
+event Tick:
+    symbol: str
+    price: float
+
+event PriceAverage:
+    symbol: str
+    avg_price: float
+
+stream Ticks from Tick
+
+# IBM stream with sliding window of 10
+stream IBMAvg = Ticks
+    .where(symbol == "ibm")
+    .window(10, sliding: 1)
+    .aggregate(
+        symbol: last(symbol),
+        avg_price: avg(price)
+    )
+    .emit(
+        event_type: "PriceAverage",
+        symbol: symbol,
+        avg_price: avg_price
+    )
+
+# MSFT stream with sliding window of 10
+stream MSFTAvg = Ticks
+    .where(symbol == "msft")
+    .window(10, sliding: 1)
+    .aggregate(
+        symbol: last(symbol),
+        avg_price: avg(price)
+    )
+    .emit(
+        event_type: "PriceAverage",
+        symbol: symbol,
+        avg_price: avg_price
+    )
+
+# Note: Varpulis limitations:
+# - Cannot compare current vs previous average (no rstream)
+# - Cannot join streams together
+# - partition_by could simplify to single stream

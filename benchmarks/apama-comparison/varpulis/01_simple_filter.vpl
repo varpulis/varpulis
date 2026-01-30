@@ -1,0 +1,16 @@
+# Equivalent to Apama simple.mon
+# Filter Tick events where price > 10.0
+
+event Tick:
+    name: str
+    price: float
+
+stream Ticks from Tick
+
+stream HighPriceTicks = Ticks
+    .where(price > 10.0)
+    .emit(
+        event_type: "Tick",
+        name: name,
+        price: price
+    )

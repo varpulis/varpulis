@@ -1,0 +1,55 @@
+# Equivalent to Apama groups/groups.mon
+# Monitor sensor temperature with statistics
+# Alert when temperature exceeds threshold
+
+event SensorUpdate:
+    id: int
+    temperature: float
+
+event SensorAlert:
+    id: int
+    temperature: float
+    mean: float
+
+event SensorStats:
+    id: int
+    mean: float
+    stddev: float
+    count: int
+
+stream SensorUpdates from SensorUpdate
+
+# Simple threshold alert - all sensors
+stream TempAlerts = SensorUpdates
+    .where(temperature > 100.0)
+    .emit(
+        event_type: "SensorAlert",
+        id: id,
+        temperature: temperature,
+        mean: 0.0
+    )
+
+# Per-sensor statistics using partition_by (if available)
+# This calculates stats for each sensor independently
+stream SensorStatistics = SensorUpdates
+    .partition_by(id)
+    .window(600s)
+    .aggregate(
+        id: last(id),
+        mean: avg(temperature),
+        stddev: stddev(temperature),
+        count: count()
+    )
+    .emit(
+        event_type: "SensorStats",
+        id: id,
+        mean: mean,
+        stddev: stddev,
+        count: count
+    )
+
+# Note: Varpulis capabilities:
+# + partition_by is supported
+# + stddev() aggregate is available (as of Varpulis latest)
+# - No join between streams (can't annotate alert with latest temp)
+# - No nested queries

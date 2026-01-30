@@ -42,3 +42,4 @@ demos/varpulis-demos/dist/
 # Benchmark results (generated)
 benchmarks/flink-comparison/results/
 benchmarks/flink-comparison/test-harness/dependency-reduced-pom.xml
+apama-samples/

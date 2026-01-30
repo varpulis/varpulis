@@ -1,0 +1,35 @@
+/**
+ * A simple monitor - used to initially show functionality of
+ * a new installation.
+ *
+ * The Event Correlator monitors for Tick events and if such an event is
+ * received whose price is greater than 10.0 - it forwards (sends)
+ * that event.
+ *
+ * $Copyright (c) 2013-2016 Cumulocity GmbH, Duesseldorf, Germany and/or its affiliates and/or their licensors.$ 
+ * Use, reproduction, transfer, publication or disclosure is prohibited except as specifically provided for in your License Agreement with Cumulocity GmbH. 
+ *
+ */
+
+/**
+ * The event type (global) that we will use
+ */
+event Tick { 
+	string name; 
+	float price; 
+}
+
+/**
+ * The monitor itself
+ */
+monitor simplePrint { 
+
+	action onload()
+	{ 
+		on all Tick(*, >10.0) as t 
+		{
+			send Tick(t.name, t.price) to "output";
+		} 
+	} 
+}
+
