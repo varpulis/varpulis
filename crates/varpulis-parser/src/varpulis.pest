@@ -36,6 +36,7 @@ statement = {
     | return_stmt
     | break_stmt
     | continue_stmt
+    | assignment_stmt
     | expr_stmt
 }
 
@@ -57,6 +58,7 @@ stream_source = {
     merge_source
     | join_source
     | sequence_source
+    | timer_source
     | all_source
     | aliased_source
     | identifier
@@ -65,6 +67,8 @@ stream_source = {
 merge_source = { "merge" ~ "(" ~ inline_stream_list ~ ")" }
 join_source = { "join" ~ "(" ~ join_clause_list ~ ")" }
 sequence_source = { "sequence" ~ "(" ~ sequence_decl ~ ")" }
+timer_source = { "timer" ~ "(" ~ timer_args ~ ")" }
+timer_args = { expr ~ ("," ~ named_arg)? }
 all_source = { "all" ~ identifier ~ ("as" ~ identifier)? }
 aliased_source = { identifier ~ "as" ~ identifier }
 
@@ -93,7 +97,7 @@ within_suffix = { "." ~ "within" ~ "(" ~ expr ~ ")" }
 stream_op = { dot_op | followed_by_op }
 
 dot_op = { "." ~ (
-    where_op | select_op | window_op | aggregate_op | partition_by_op
+    where_op | select_op | window_op | aggregate_op | having_op | partition_by_op
     | order_by_op | limit_op | distinct_op | map_op | filter_op
     | tap_op | print_op | log_op | emit_op | to_op | pattern_op
     | attention_window_op | concurrent_op | process_op | on_error_op
@@ -129,6 +133,7 @@ where_op = { "where" ~ "(" ~ expr ~ ")" }
 select_op = { "select" ~ "(" ~ select_list ~ ")" }
 window_op = { "window" ~ "(" ~ window_args ~ ")" }
 aggregate_op = { "aggregate" ~ "(" ~ agg_list ~ ")" }
+having_op = { "having" ~ "(" ~ expr ~ ")" }
 partition_by_op = { "partition_by" ~ "(" ~ expr ~ ")" }
 order_by_op = { "order_by" ~ "(" ~ order_list ~ ")" }
 limit_op = { "limit" ~ "(" ~ expr ~ ")" }
@@ -266,7 +271,8 @@ named_type = { identifier }
 // Variable and Constant Declaration
 // ============================================================================
 
-var_decl = { ("let" | "var") ~ identifier ~ type_annotation? ~ "=" ~ expr }
+var_decl = { var_keyword ~ identifier ~ type_annotation? ~ "=" ~ expr }
+var_keyword = { "let" | "var" }
 const_decl = { "const" ~ identifier ~ type_annotation? ~ "=" ~ expr }
 
 // ============================================================================
@@ -291,6 +297,7 @@ while_stmt = { "while" ~ expr ~ ":" ~ block }
 return_stmt = { "return" ~ expr? }
 break_stmt = { "break" }
 continue_stmt = { "continue" }
+assignment_stmt = { identifier ~ ":=" ~ expr }
 
 expr_stmt = { expr }
 

@@ -1,0 +1,36 @@
+// Dynamic Variables Example
+//
+// Demonstrates mutable variables similar to Apama's runtime state
+// Variables persist across events and can be updated during execution
+
+// Declare mutable threshold variable (can be reassigned)
+var alert_threshold: float = 100.0
+
+// Declare immutable constant (cannot be reassigned)
+let max_retries: int = 3
+
+// Variables can reference other variables
+var min_threshold: float = alert_threshold / 2.0
+
+// Variables can be updated with expressions
+alert_threshold := alert_threshold * 1.1  # Increase threshold by 10%
+
+// Counter example - track state across program execution
+var event_count: int = 0
+var total_value: float = 0.0
+
+// Boolean flags
+var is_active: bool = true
+
+// String messages
+var status: str = "initialized"
+
+// Example: Using variables in stream expressions
+// (Note: Full runtime variable access in streams is a future enhancement)
+stream monitored = Sensor
+    .where(value > alert_threshold)
+    .emit(
+        event_type: "alert",
+        threshold: alert_threshold,
+        min_threshold: min_threshold
+    )

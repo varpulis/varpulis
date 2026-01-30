@@ -1,0 +1,21 @@
+// Timer Source Example
+//
+// Demonstrates periodic timer events similar to Apama's "on wait(period)"
+// Timers generate events at regular intervals independent of incoming events
+
+// Simple heartbeat timer - fires every 5 seconds
+stream heartbeat = timer(5s)
+    .emit(type: "heartbeat", timestamp: timestamp)
+
+// Status check timer with initial delay - waits 10s before first fire, then every 30s
+stream status_check = timer(30s, initial_delay: 10s)
+    .emit(type: "status_check", sequence: 1)
+
+// High-frequency monitoring timer for metrics collection
+stream metrics_collector = timer(100ms)
+    .emit(type: "metrics_tick")
+
+// Example: Using timer with aggregate to compute periodic summaries
+// This timer-driven stream would be used with joins in a real scenario
+stream minute_boundary = timer(1m)
+    .emit(type: "minute_tick", minute: timestamp)

@@ -1,0 +1,99 @@
+# Varpulis inter-stream aggregate join demonstration
+# Joins two aggregated streams and compares their values
+#
+# This pattern is similar to Apama EPL:
+#   from cur in avg join prev in prevaverages on cur.symbol = prev.symbol
+#   where cur.avg_price > prev.avg_price
+
+event OHLCV:
+    symbol: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+    timeframe: str
+
+event MACDSignal:
+    symbol: str
+    macd_line: float
+    signal: str
+
+event CrossoverAlert:
+    symbol: str
+    fast_avg: float
+    slow_avg: float
+    trend: str
+
+# Example 1: MACD calculation - join two EMAs with different windows
+# EMA12 (fast) and EMA26 (slow) are joined to calculate MACD line
+stream EMA12 = OHLCV
+    .where(timeframe == "1m")
+    .partition_by(symbol)
+    .window(12)
+    .aggregate(
+        symbol: last(symbol),
+        ema_12: ema(close, 12)
+    )
+
+stream EMA26 = OHLCV
+    .where(timeframe == "1m")
+    .partition_by(symbol)
+    .window(26)
+    .aggregate(
+        symbol: last(symbol),
+        ema_26: ema(close, 26)
+    )
+
+stream MACD = join(EMA12, EMA26)
+    .on(EMA12.symbol == EMA26.symbol)
+    .window(1m)
+    .select(
+        symbol: EMA12.symbol,
+        macd_line: EMA12.ema_12 - EMA26.ema_26,
+        signal: if EMA12.ema_12 > EMA26.ema_26 then "bullish" else "bearish"
+    )
+    .emit(
+        symbol: symbol,
+        macd_line: macd_line,
+        signal: signal
+    )
+
+# Example 2: Crossover detection - fast average crosses above slow average
+# This is useful for trading signals and anomaly detection
+event Tick:
+    sensor_id: str
+    value: float
+
+stream FastAvg = Tick
+    .partition_by(sensor_id)
+    .window(5)
+    .aggregate(
+        sensor_id: last(sensor_id),
+        fast_avg: avg(value)
+    )
+
+stream SlowAvg = Tick
+    .partition_by(sensor_id)
+    .window(20)
+    .aggregate(
+        sensor_id: last(sensor_id),
+        slow_avg: avg(value)
+    )
+
+# Join and compare the two averages
+stream Crossover = join(FastAvg, SlowAvg)
+    .on(FastAvg.sensor_id == SlowAvg.sensor_id)
+    .window(1m)
+    .select(
+        sensor_id: FastAvg.sensor_id,
+        fast: FastAvg.fast_avg,
+        slow: SlowAvg.slow_avg,
+        trend: if FastAvg.fast_avg > SlowAvg.slow_avg then "rising" else "falling"
+    )
+    .emit(
+        sensor_id: sensor_id,
+        fast_avg: fast,
+        slow_avg: slow,
+        trend: trend
+    )

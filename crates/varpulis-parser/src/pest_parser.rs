@@ -146,6 +146,12 @@ fn parse_statement(pair: pest::iterators::Pair<Rule>) -> ParseResult<Spanned<Stm
         Rule::return_stmt => parse_return_stmt(inner)?,
         Rule::break_stmt => Stmt::Break,
         Rule::continue_stmt => Stmt::Continue,
+        Rule::assignment_stmt => {
+            let mut inner = inner.into_inner();
+            let name = inner.expect_next("variable name")?.as_str().to_string();
+            let value = parse_expr(inner.expect_next("assignment value")?)?;
+            Stmt::Assignment { name, value }
+        }
         Rule::expr_stmt => Stmt::Expr(parse_expr(inner.into_inner().expect_next("expression")?)?),
         _ => {
             return Err(ParseError::UnexpectedToken {
@@ -424,6 +430,11 @@ fn parse_stream_source(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamS
                 parse_sequence_decl(inner.into_inner().expect_next("sequence declaration")?)?;
             Ok(StreamSource::Sequence(decl))
         }
+        Rule::timer_source => {
+            let timer_args = inner.into_inner().expect_next("timer arguments")?;
+            let decl = parse_timer_decl(timer_args)?;
+            Ok(StreamSource::Timer(decl))
+        }
         Rule::all_source => {
             let mut inner_iter = inner.into_inner();
             let name = inner_iter.expect_next("event name")?.as_str().to_string();
@@ -533,6 +544,29 @@ fn parse_sequence_step(pair: pest::iterators::Pair<Rule>) -> ParseResult<Sequenc
     })
 }
 
+fn parse_timer_decl(pair: pest::iterators::Pair<Rule>) -> ParseResult<TimerDecl> {
+    let mut inner = pair.into_inner();
+
+    // First argument is the interval (duration expression)
+    let interval = parse_expr(inner.expect_next("timer interval")?)?;
+
+    // Optional second argument is initial_delay (named argument)
+    let mut initial_delay = None;
+    for p in inner {
+        if p.as_rule() == Rule::named_arg {
+            let arg = parse_named_arg(p)?;
+            if arg.name == "initial_delay" {
+                initial_delay = Some(Box::new(arg.value));
+            }
+        }
+    }
+
+    Ok(TimerDecl {
+        interval,
+        initial_delay,
+    })
+}
+
 fn parse_stream_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
     let inner = pair.into_inner().expect_next("stream operation")?;
 
@@ -581,6 +615,10 @@ fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
                 }
             }
             Ok(StreamOp::Aggregate(items))
+        }
+        Rule::having_op => {
+            let expr = parse_expr(pair.into_inner().expect_next("having expression")?)?;
+            Ok(StreamOp::Having(expr))
         }
         Rule::map_op => {
             let expr = parse_expr(pair.into_inner().expect_next("map expression")?)?;
@@ -911,7 +949,8 @@ fn parse_type(pair: pest::iterators::Pair<Rule>) -> ParseResult<Type> {
 
 fn parse_var_decl(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
     let mut inner = pair.into_inner();
-    let mutable = inner.expect_next("let or var keyword")?.as_str() == "var";
+    let keyword = inner.expect_next("var_keyword")?.as_str();
+    let mutable = keyword == "var";
     let name = inner.expect_next("variable name")?.as_str().to_string();
 
     let mut ty = None;
@@ -2151,6 +2190,81 @@ mod tests {
     #[test]
     fn test_parse_sase_pattern_decl_not() {
         let result = parse("pattern NoLogout = SEQ(Login, NOT Logout, Transaction)");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_having() {
+        let result = parse(
+            "stream filtered = input.window(1m).aggregate(count: count(), total: sum(value)).having(count > 10)",
+        );
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_having_with_partition() {
+        let result = parse(
+            "stream grouped = input.partition_by(category).window(5m).aggregate(avg_price: avg(price)).having(avg_price > 100.0)",
+        );
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_timer_source() {
+        let result = parse("stream heartbeat = timer(5s).emit(type: \"heartbeat\")");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_timer_source_with_initial_delay() {
+        let result =
+            parse("stream delayed_timer = timer(1m, initial_delay: 10s).emit(type: \"periodic\")");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_var_decl() {
+        let result = parse("var threshold: float = 10.0");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_let_decl() {
+        let result = parse("let max_count: int = 100");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_assignment() {
+        let result = parse("threshold := threshold + 10.0");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_assignment_with_expression() {
+        let result = parse("count := count * 2 + offset");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_nested_stream_reference() {
+        let result = parse("stream Base from Event\nstream Derived = Base.where(x > 0)");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_multi_stage_pipeline() {
+        let result = parse(
+            "stream L1 from Raw\nstream L2 = L1.where(a > 1)\nstream L3 = L2.window(5).aggregate(cnt: count())",
+        );
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_stream_with_operations_chain() {
+        let result = parse(
+            "stream Processed = Source.where(valid).window(10).aggregate(sum: sum(value)).having(sum > 100)",
+        );
         assert!(result.is_ok(), "Failed: {:?}", result.err());
     }
 }

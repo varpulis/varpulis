@@ -16,6 +16,7 @@ pub mod sequence;
 pub mod simulator;
 pub mod sink;
 pub mod stream;
+pub mod timer;
 pub mod window;
 
 pub use engine::Engine;
@@ -23,6 +24,7 @@ pub use event::Event;
 pub use metrics::Metrics;
 pub use sink::{ConsoleSink, FileSink, HttpSink, MultiSink, Sink};
 pub use stream::Stream;
+pub use timer::{spawn_timer, TimerManager};
 pub use window::{
     CountWindow, DelayBuffer, PartitionedDelayBuffer, PartitionedPreviousValueTracker,
     PartitionedSlidingWindow, PartitionedTumblingWindow, PreviousValueTracker, SlidingCountWindow,
