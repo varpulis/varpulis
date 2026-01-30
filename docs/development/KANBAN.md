@@ -14,10 +14,10 @@
 | Engine Refactor | 0 | 0 | **3** |
 | Security | 0 | 0 | **7** |
 | CLI Refactor | 0 | 0 | **2** |
-| Performance | 0 | 1 | **2** |
+| Performance | 0 | 0 | **3** |
 | Couverture | 0 | 2 | 0 |
 | VS Code | 1 | 0 | 0 |
-| **Total** | **4** | **0** | **42** |
+| **Total** | **3** | **2** | **43** |
 
 ---
 
@@ -85,23 +85,22 @@
 
 ---
 
-## PRIORITE HAUTE - Performance
+## TERMINE - Performance
 
-### En cours
+### Termine
 
-- [ ] **PERF-01**: Reduire cloning dans les hot paths
+- [x] **PERF-01**: Reduire cloning dans les hot paths
   - **Severite**: HIGH
   - **Impact**: 427 occurrences de clone/into/collect
   - **Action**: Utiliser `Arc<Event>` pour evenements partages
   - **Fichier**: `crates/varpulis-runtime/src/engine/mod.rs`
   - **Effort**: 2-3 jours
   - **Note**: Necessite refactoring Event, Window, Aggregation
-  - **Progres**:
+  - **Implementation**:
     - [x] SASE+ engine: `SharedEvent` (Arc<Event>) pour StackEntry, Run, MatchResult
-    - [ ] Window module: Vec<Event> -> Vec<SharedEvent>
-    - [ ] Aggregation module: adapter pour SharedEvent
-
-### Termine
+    - [x] Window module: Vec<Event> -> Vec<SharedEvent>
+    - [x] Aggregation module: apply_shared() pour SharedEvent
+    - [x] Engine pipeline: Vec<SharedEvent> partout
 
 - [x] **PERF-02**: Optimiser window cleanup
   - SlidingWindow: position() + drain() au lieu de pop_front() loop
