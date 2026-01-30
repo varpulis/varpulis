@@ -26,7 +26,7 @@ use types::{
 
 use crate::aggregation::Aggregator;
 use crate::attention::{AttentionConfig, AttentionWindow, EmbeddingConfig};
-use crate::event::Event;
+use crate::event::{Event, SharedEvent};
 use crate::join::JoinBuffer;
 use crate::metrics::Metrics;
 use crate::pattern::PatternEngine;
@@ -39,6 +39,7 @@ use crate::window::{
 use chrono::Duration;
 use indexmap::IndexMap;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 use varpulis_core::ast::{
@@ -150,9 +151,11 @@ impl Engine {
         F: Fn(&Event) -> bool + Send + Sync + 'static,
     {
         if let Some(stream) = self.streams.get_mut(stream_name) {
+            // Wrap the closure to accept SharedEvent (dereferences to &Event)
+            let wrapped = move |e: &SharedEvent| filter(e.as_ref());
             stream
                 .operations
-                .insert(0, RuntimeOp::WhereClosure(Box::new(filter)));
+                .insert(0, RuntimeOp::WhereClosure(Box::new(wrapped)));
             Ok(())
         } else {
             Err(format!("Stream '{}' not found", stream_name))
@@ -1157,8 +1160,8 @@ impl Engine {
         self.events_processed += 1;
 
         // Process events with depth limit to prevent infinite loops
-        // Each event carries its depth level
-        let mut pending_events: Vec<(Event, usize)> = vec![(event, 0)];
+        // Each event carries its depth level - use SharedEvent to avoid cloning
+        let mut pending_events: Vec<(SharedEvent, usize)> = vec![(Arc::new(event), 0)];
         const MAX_CHAIN_DEPTH: usize = 10;
 
         // Process events iteratively, feeding output to dependent streams
@@ -1184,7 +1187,7 @@ impl Engine {
                 if let Some(stream) = self.streams.get_mut(&stream_name) {
                     let result = Self::process_stream_with_functions(
                         stream,
-                        current_event.clone(),
+                        Arc::clone(&current_event),
                         &self.functions,
                     )
                     .await?;
@@ -1210,7 +1213,7 @@ impl Engine {
 
     async fn process_stream_with_functions(
         stream: &mut StreamDefinition,
-        event: Event,
+        event: SharedEvent,
         functions: &HashMap<String, UserFunction>,
     ) -> Result<StreamProcessResult, String> {
         // For merge sources, check if the event passes the appropriate filter
@@ -1272,8 +1275,8 @@ impl Engine {
                     event.event_type
                 );
 
-                // Add event to join buffer and try to correlate
-                match join_buffer.add_event(&source_name, event.clone()) {
+                // Add event to join buffer and try to correlate (join still needs owned Event)
+                match join_buffer.add_event(&source_name, (*event).clone()) {
                     Some(correlated_event) => {
                         tracing::debug!(
                             "Join stream {}: Correlated event with {} fields",
@@ -1281,8 +1284,12 @@ impl Engine {
                             correlated_event.data.len()
                         );
                         // Continue processing with the correlated event
-                        return Self::process_join_result(stream, correlated_event, functions)
-                            .await;
+                        return Self::process_join_result(
+                            stream,
+                            Arc::new(correlated_event),
+                            functions,
+                        )
+                        .await;
                     }
                     None => {
                         // No correlation yet - need events from all sources
@@ -1307,9 +1314,10 @@ impl Engine {
         }
 
         // Process through attention window if present - compute and add attention_score
-        let mut enriched_event = event.clone();
+        // We need to enrich the event, so clone and modify
+        let mut enriched_event = (*event).clone();
         if let Some(ref mut attention_window) = stream.attention_window {
-            let result = attention_window.process(event);
+            let result = attention_window.process((*event).clone());
 
             // Compute aggregate attention score (max of all scores)
             let attention_score = if result.scores.is_empty() {
@@ -1344,8 +1352,7 @@ impl Engine {
 
         // Process pattern engine if present
         if let Some(ref mut pattern_engine) = stream.pattern_engine {
-            let event_clone = enriched_event.clone();
-            let matched_patterns = pattern_engine.process(&event_clone);
+            let matched_patterns = pattern_engine.process(&enriched_event);
             if !matched_patterns.is_empty() {
                 // Pattern matched - add matched event types to the event data
                 enriched_event
@@ -1360,7 +1367,8 @@ impl Engine {
             }
         }
 
-        let mut current_events = vec![enriched_event];
+        // Wrap enriched event in Arc for pipeline processing
+        let mut current_events: Vec<SharedEvent> = vec![Arc::new(enriched_event)];
         let mut alerts = Vec::new();
 
         for op in &mut stream.operations {
@@ -1379,7 +1387,7 @@ impl Engine {
                     current_events.retain(|e| {
                         evaluator::eval_expr_with_functions(
                             expr,
-                            e,
+                            e.as_ref(),
                             &ctx,
                             functions,
                             &HashMap::new(),
@@ -1399,32 +1407,32 @@ impl Engine {
                     for event in current_events {
                         match window {
                             WindowType::Tumbling(w) => {
-                                if let Some(completed) = w.add(event) {
+                                if let Some(completed) = w.add_shared(event) {
                                     window_results = completed;
                                 }
                             }
                             WindowType::Sliding(w) => {
-                                if let Some(window_events) = w.add(event) {
+                                if let Some(window_events) = w.add_shared(event) {
                                     window_results = window_events;
                                 }
                             }
                             WindowType::Count(w) => {
-                                if let Some(completed) = w.add(event) {
+                                if let Some(completed) = w.add_shared(event) {
                                     window_results = completed;
                                 }
                             }
                             WindowType::SlidingCount(w) => {
-                                if let Some(window_events) = w.add(event) {
+                                if let Some(window_events) = w.add_shared(event) {
                                     window_results = window_events;
                                 }
                             }
                             WindowType::PartitionedTumbling(w) => {
-                                if let Some(completed) = w.add(event) {
+                                if let Some(completed) = w.add_shared(event) {
                                     window_results = completed;
                                 }
                             }
                             WindowType::PartitionedSliding(w) => {
-                                if let Some(window_events) = w.add(event) {
+                                if let Some(window_events) = w.add_shared(event) {
                                     window_results = window_events;
                                 }
                             }
@@ -1469,13 +1477,16 @@ impl Engine {
                     }
                 }
                 RuntimeOp::Aggregate(aggregator) => {
-                    let result = aggregator.apply(&current_events);
+                    // Dereference SharedEvents for aggregator
+                    let event_refs: Vec<Event> =
+                        current_events.iter().map(|e| (**e).clone()).collect();
+                    let result = aggregator.apply(&event_refs);
                     // Create synthetic event from aggregation result
                     let mut agg_event = Event::new("AggregationResult");
                     for (key, value) in result {
                         agg_event.data.insert(key, value);
                     }
-                    current_events = vec![agg_event];
+                    current_events = vec![Arc::new(agg_event)];
                 }
                 RuntimeOp::PartitionedAggregate(state) => {
                     let results = state.apply(&current_events);
@@ -1490,7 +1501,7 @@ impl Engine {
                             for (key, value) in result {
                                 agg_event.data.insert(key, value);
                             }
-                            agg_event
+                            Arc::new(agg_event)
                         })
                         .collect();
                 }
@@ -1500,7 +1511,7 @@ impl Engine {
                     current_events.retain(|event| {
                         evaluator::eval_expr_with_functions(
                             expr,
-                            event,
+                            event.as_ref(),
                             &ctx,
                             functions,
                             &HashMap::new(),
@@ -1526,7 +1537,7 @@ impl Engine {
                             for (out_name, expr) in &config.fields {
                                 if let Some(value) = evaluator::eval_expr_with_functions(
                                     expr,
-                                    &event,
+                                    event.as_ref(),
                                     &ctx,
                                     functions,
                                     &HashMap::new(),
@@ -1534,7 +1545,7 @@ impl Engine {
                                     new_event.data.insert(out_name.clone(), value);
                                 }
                             }
-                            new_event
+                            Arc::new(new_event)
                         })
                         .collect();
                 }
@@ -1562,9 +1573,12 @@ impl Engine {
                     for event in &current_events {
                         let mut parts = Vec::new();
                         for expr in &config.exprs {
-                            let value =
-                                evaluator::eval_filter_expr(expr, event, &SequenceContext::new())
-                                    .unwrap_or(Value::Null);
+                            let value = evaluator::eval_filter_expr(
+                                expr,
+                                event.as_ref(),
+                                &SequenceContext::new(),
+                            )
+                            .unwrap_or(Value::Null);
                             parts.push(format!("{}", value));
                         }
                         let output = if parts.is_empty() {
@@ -1615,7 +1629,7 @@ impl Engine {
 
                     if let Some(ref mut sase) = stream.sase_engine {
                         for event in &current_events {
-                            let matches = sase.process(event);
+                            let matches = sase.process(event.as_ref());
                             for match_result in matches {
                                 // Create synthetic event from completed sequence
                                 let mut seq_event = Event::new("SequenceMatch");
@@ -1634,7 +1648,7 @@ impl Engine {
                                             .insert(format!("{}_{}", alias, k), v.clone());
                                     }
                                 }
-                                sequence_results.push(seq_event);
+                                sequence_results.push(Arc::new(seq_event));
                             }
                         }
                     }
@@ -1654,7 +1668,7 @@ impl Engine {
                         for (out_name, expr) in &config.fields {
                             if let Some(value) = evaluator::eval_expr_with_functions(
                                 expr,
-                                event,
+                                event.as_ref(),
                                 &ctx,
                                 functions,
                                 &HashMap::new(),
@@ -1700,10 +1714,14 @@ impl Engine {
                     let mut pattern_vars = HashMap::new();
                     pattern_vars.insert("events".to_string(), events_value);
 
+                    // Dereference events for pattern evaluation
+                    let event_refs: Vec<Event> =
+                        current_events.iter().map(|e| (**e).clone()).collect();
+
                     // Evaluate the pattern matcher
                     if let Some(result) = evaluator::eval_pattern_expr(
                         &config.matcher,
-                        &current_events,
+                        &event_refs,
                         &ctx,
                         functions,
                         &pattern_vars,
@@ -1724,11 +1742,13 @@ impl Engine {
 
         // Return remaining events as output for dependent streams
         // Set their event_type to the stream name for routing
-        let output_events: Vec<Event> = current_events
+        // Need to clone and modify since SharedEvent is immutable
+        let output_events: Vec<SharedEvent> = current_events
             .into_iter()
-            .map(|mut e| {
-                e.event_type = stream.name.clone();
-                e
+            .map(|e| {
+                let mut owned = (*e).clone();
+                owned.event_type = stream.name.clone();
+                Arc::new(owned)
             })
             .collect();
 
@@ -1741,10 +1761,10 @@ impl Engine {
     /// Process a join result through the stream operations (skipping join-specific handling)
     async fn process_join_result(
         stream: &mut StreamDefinition,
-        correlated_event: Event,
+        correlated_event: SharedEvent,
         functions: &HashMap<String, UserFunction>,
     ) -> Result<StreamProcessResult, String> {
-        let mut current_events = vec![correlated_event];
+        let mut current_events: Vec<SharedEvent> = vec![correlated_event];
         let mut alerts = Vec::new();
 
         for op in &mut stream.operations {
@@ -1764,7 +1784,7 @@ impl Engine {
                     current_events.retain(|e| {
                         let result = evaluator::eval_expr_with_functions(
                             expr,
-                            e,
+                            e.as_ref(),
                             &ctx,
                             functions,
                             &HashMap::new(),
@@ -1825,12 +1845,15 @@ impl Engine {
                     }
                 }
                 RuntimeOp::Aggregate(aggregator) => {
-                    let result = aggregator.apply(&current_events);
+                    // Dereference SharedEvents for aggregator
+                    let event_refs: Vec<Event> =
+                        current_events.iter().map(|e| (**e).clone()).collect();
+                    let result = aggregator.apply(&event_refs);
                     let mut agg_event = Event::new("AggregationResult");
                     for (key, value) in result {
                         agg_event.data.insert(key, value);
                     }
-                    current_events = vec![agg_event];
+                    current_events = vec![Arc::new(agg_event)];
                 }
                 RuntimeOp::PartitionedAggregate(state) => {
                     let results = state.apply(&current_events);
@@ -1844,7 +1867,7 @@ impl Engine {
                             for (key, value) in result {
                                 agg_event.data.insert(key, value);
                             }
-                            agg_event
+                            Arc::new(agg_event)
                         })
                         .collect();
                 }
@@ -1854,7 +1877,7 @@ impl Engine {
                     current_events.retain(|event| {
                         evaluator::eval_expr_with_functions(
                             expr,
-                            event,
+                            event.as_ref(),
                             &ctx,
                             functions,
                             &HashMap::new(),
@@ -1879,7 +1902,7 @@ impl Engine {
                             for (out_name, expr) in &config.fields {
                                 if let Some(value) = evaluator::eval_expr_with_functions(
                                     expr,
-                                    &event,
+                                    event.as_ref(),
                                     &ctx,
                                     functions,
                                     &HashMap::new(),
@@ -1887,7 +1910,7 @@ impl Engine {
                                     new_event.data.insert(out_name.clone(), value);
                                 }
                             }
-                            new_event
+                            Arc::new(new_event)
                         })
                         .collect();
                 }
@@ -1931,7 +1954,7 @@ impl Engine {
                         for (out_name, expr) in &config.fields {
                             if let Some(value) = evaluator::eval_expr_with_functions(
                                 expr,
-                                event,
+                                event.as_ref(),
                                 &ctx,
                                 functions,
                                 &HashMap::new(),
@@ -1966,11 +1989,13 @@ impl Engine {
         }
 
         // Return remaining events as output for dependent streams
-        let output_events: Vec<Event> = current_events
+        // Clone and modify event_type for routing
+        let output_events: Vec<SharedEvent> = current_events
             .into_iter()
-            .map(|mut e| {
-                e.event_type = stream.name.clone();
-                e
+            .map(|e| {
+                let mut owned = (*e).clone();
+                owned.event_type = stream.name.clone();
+                Arc::new(owned)
             })
             .collect();
 
