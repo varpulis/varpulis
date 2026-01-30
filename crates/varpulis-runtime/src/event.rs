@@ -3,7 +3,13 @@
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use varpulis_core::Value;
+
+/// A shared reference to an Event for efficient passing through pipelines.
+/// Using Arc avoids expensive deep clones when events are processed by
+/// multiple streams, windows, or pattern matchers.
+pub type SharedEvent = Arc<Event>;
 
 /// A runtime event
 #[derive(Debug, Clone, Serialize, Deserialize)]

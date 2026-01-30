@@ -665,18 +665,26 @@ impl SaseEngine {
 
     /// Process an incoming event, returns completed matches
     pub fn process(&mut self, event: &Event) -> Vec<MatchResult> {
+        // PERF-01: Create SharedEvent once and reuse throughout processing
+        // This avoids multiple deep clones when the event is captured by multiple runs
+        let shared_event = Arc::new(event.clone());
+        self.process_shared(shared_event)
+    }
+
+    /// Process a shared event reference (avoids redundant cloning)
+    pub fn process_shared(&mut self, event: SharedEvent) -> Vec<MatchResult> {
         let mut completed = Vec::new();
 
         // Update watermark tracking for event-time processing
         if self.time_semantics == TimeSemantics::EventTime {
-            self.update_watermark(event);
+            self.update_watermark(&event);
         }
 
         // Clean up timed-out runs (uses watermark in EventTime mode)
         self.cleanup_timeouts();
 
         // Check global negations - invalidate runs that match
-        self.check_global_negations(event);
+        self.check_global_negations(&event);
 
         // If using partitioning, route to appropriate partition
         if let Some(ref partition_field) = self.partition_by {
@@ -686,10 +694,10 @@ impl SaseEngine {
                 .unwrap_or_default();
 
             // Process partitioned runs
-            completed.extend(self.process_partition(&partition_key, event));
+            completed.extend(self.process_partition_shared(&partition_key, Arc::clone(&event)));
 
             // Try to start new run in partition
-            if let Some(run) = self.try_start_run(event) {
+            if let Some(run) = self.try_start_run_shared(Arc::clone(&event)) {
                 let partition_runs = self.partitioned_runs.entry(partition_key).or_default();
                 if partition_runs.len() < self.max_runs {
                     partition_runs.push(run);
@@ -697,10 +705,10 @@ impl SaseEngine {
             }
         } else {
             // Non-partitioned processing
-            completed.extend(self.process_runs(event));
+            completed.extend(self.process_runs_shared(Arc::clone(&event)));
 
             // Try to start new run
-            if let Some(run) = self.try_start_run(event) {
+            if let Some(run) = self.try_start_run_shared(Arc::clone(&event)) {
                 if self.runs.len() < self.max_runs {
                     self.runs.push(run);
                 }
@@ -710,7 +718,31 @@ impl SaseEngine {
         completed
     }
 
+    #[allow(dead_code)]
     fn process_partition(&mut self, partition_key: &str, event: &Event) -> Vec<MatchResult> {
+        self.process_partition_shared(partition_key, Arc::new(event.clone()))
+    }
+
+    #[allow(dead_code)]
+    fn process_runs(&mut self, event: &Event) -> Vec<MatchResult> {
+        self.process_runs_shared(Arc::new(event.clone()))
+    }
+
+    #[allow(dead_code)]
+    fn try_start_run(&self, event: &Event) -> Option<Run> {
+        self.try_start_run_shared(Arc::new(event.clone()))
+    }
+
+    // =========================================================================
+    // PERF-01: SharedEvent versions of internal methods
+    // These avoid redundant cloning by accepting pre-wrapped Arc<Event>
+    // =========================================================================
+
+    fn process_partition_shared(
+        &mut self,
+        partition_key: &str,
+        event: SharedEvent,
+    ) -> Vec<MatchResult> {
         let mut completed = Vec::new();
         let max_runs = self.max_runs;
 
@@ -722,7 +754,8 @@ impl SaseEngine {
                     continue;
                 }
 
-                match advance_run(&self.nfa, self.strategy, &mut runs[i], event) {
+                match advance_run_shared(&self.nfa, self.strategy, &mut runs[i], Arc::clone(&event))
+                {
                     RunAdvanceResult::Continue => i += 1,
                     RunAdvanceResult::Complete(result) => {
                         completed.push(result);
@@ -750,7 +783,7 @@ impl SaseEngine {
         completed
     }
 
-    fn process_runs(&mut self, event: &Event) -> Vec<MatchResult> {
+    fn process_runs_shared(&mut self, event: SharedEvent) -> Vec<MatchResult> {
         let mut completed = Vec::new();
         let mut new_runs = Vec::new();
         let mut i = 0;
@@ -763,7 +796,7 @@ impl SaseEngine {
 
             // Clone run to avoid borrow issues, then update
             let mut run = self.runs[i].clone();
-            match advance_run(&self.nfa, self.strategy, &mut run, event) {
+            match advance_run_shared(&self.nfa, self.strategy, &mut run, Arc::clone(&event)) {
                 RunAdvanceResult::Continue => {
                     self.runs[i] = run;
                     i += 1;
@@ -799,14 +832,14 @@ impl SaseEngine {
         completed
     }
 
-    fn try_start_run(&self, event: &Event) -> Option<Run> {
+    fn try_start_run_shared(&self, event: SharedEvent) -> Option<Run> {
         let start_state = &self.nfa.states[self.nfa.start_state];
         let empty_captured: HashMap<String, SharedEvent> = HashMap::new();
 
         // Check if event matches any transition from start
         for &next_id in &start_state.transitions {
             let next_state = &self.nfa.states[next_id];
-            if event_matches_state(&self.nfa, event, next_state, &empty_captured) {
+            if event_matches_state(&self.nfa, &event, next_state, &empty_captured) {
                 let mut run = match self.time_semantics {
                     TimeSemantics::ProcessingTime => Run::new(next_id),
                     TimeSemantics::EventTime => Run::new_with_event_time(next_id, event.timestamp),
@@ -825,27 +858,26 @@ impl SaseEngine {
                     }
                 }
 
-                // Capture event
-                run.push(Arc::new(event.clone()), next_state.alias.clone());
+                // Capture event - use Arc::clone instead of cloning the event
+                run.push(Arc::clone(&event), next_state.alias.clone());
 
                 return Some(run);
             }
         }
 
         // Check epsilon transitions
-        let empty_captured: HashMap<String, SharedEvent> = HashMap::new();
         for &eps_id in &start_state.epsilon_transitions {
             let eps_state = &self.nfa.states[eps_id];
             for &next_id in &eps_state.transitions {
                 let next_state = &self.nfa.states[next_id];
-                if event_matches_state(&self.nfa, event, next_state, &empty_captured) {
+                if event_matches_state(&self.nfa, &event, next_state, &empty_captured) {
                     let mut run = match self.time_semantics {
                         TimeSemantics::ProcessingTime => Run::new(next_id),
                         TimeSemantics::EventTime => {
                             Run::new_with_event_time(next_id, event.timestamp)
                         }
                     };
-                    run.push(Arc::new(event.clone()), next_state.alias.clone());
+                    run.push(Arc::clone(&event), next_state.alias.clone());
                     return Some(run);
                 }
             }
@@ -967,17 +999,29 @@ enum RunAdvanceResult {
 
 // Free functions to avoid borrow checker issues
 
+#[allow(dead_code)]
 fn advance_run(
     nfa: &Nfa,
     strategy: SelectionStrategy,
     run: &mut Run,
     event: &Event,
 ) -> RunAdvanceResult {
+    // Wrap in Arc for the shared version
+    advance_run_shared(nfa, strategy, run, Arc::new(event.clone()))
+}
+
+/// PERF-01: Optimized version that takes SharedEvent to avoid redundant cloning
+fn advance_run_shared(
+    nfa: &Nfa,
+    strategy: SelectionStrategy,
+    run: &mut Run,
+    event: SharedEvent,
+) -> RunAdvanceResult {
     let current_state = &nfa.states[run.current_state];
 
     // Check negation states first
     if current_state.state_type == StateType::Negation
-        && event_matches_state(nfa, event, current_state, &run.captured)
+        && event_matches_state(nfa, &event, current_state, &run.captured)
     {
         return RunAdvanceResult::Invalidate;
     }
@@ -994,9 +1038,9 @@ fn advance_run(
     // Check transitions
     for &next_id in &current_state.transitions {
         let next_state = &nfa.states[next_id];
-        if event_matches_state(nfa, event, next_state, &run.captured) {
+        if event_matches_state(nfa, &event, next_state, &run.captured) {
             run.current_state = next_id;
-            run.push(Arc::new(event.clone()), next_state.alias.clone());
+            run.push(Arc::clone(&event), next_state.alias.clone());
 
             if next_state.state_type == StateType::Accept {
                 return RunAdvanceResult::Complete(MatchResult {
@@ -1045,9 +1089,9 @@ fn advance_run(
 
         for &next_id in &eps_state.transitions {
             let next_state = &nfa.states[next_id];
-            if event_matches_state(nfa, event, next_state, &run.captured) {
+            if event_matches_state(nfa, &event, next_state, &run.captured) {
                 run.current_state = next_id;
-                run.push(Arc::new(event.clone()), next_state.alias.clone());
+                run.push(Arc::clone(&event), next_state.alias.clone());
 
                 if next_state.state_type == StateType::Accept {
                     return RunAdvanceResult::Complete(MatchResult {
