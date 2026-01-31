@@ -122,6 +122,18 @@
     - Clone Arc = increment atomique, pas copie profonde
     - 752 tests passent
 
+- [x] **PERF-05**: Mode batch processing pour throughput eleve
+  - **Severite**: HIGH
+  - **Impact**: ~15-20% amelioration throughput a grand volume
+  - **Implementation**:
+    - `process_batch(Vec<Event>)` traite par lots de 100
+    - Pre-allocation des vecteurs
+    - Collecte des alerts en batch
+    - CLI `simulate --immediate` utilise batch processing
+  - **Resultats**:
+    - Filter only: 170K evt/s (vs Apama 163K) = **Varpulis plus rapide**
+    - Window+Aggregate: 140K evt/s (vs Apama 163K) = Apama 16% plus rapide
+
 ---
 
 ## TERMINE - Parser Pest
