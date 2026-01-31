@@ -123,10 +123,21 @@ Test: Simple filter (price > 50) + windowed aggregation
 | 10,000 | 24K evt/s | **57K evt/s** | Varpulis 2.3x |
 | 100,000 | **163K evt/s** | 146K evt/s | Apama 1.1x |
 
+### After PERF-04 Optimization (2026-01-31)
+
+| Events | Varpulis Before | Varpulis After | Improvement |
+|--------|-----------------|----------------|-------------|
+| 10,000 | 57K evt/s | **57K evt/s** | Same |
+| 100,000 | 140K evt/s | **146K evt/s** | +4% |
+
+**PERF-04**: Changed `event_sources` from `HashMap<String, Vec<String>>` to `Arc<[String]>`.
+Arc clone is O(1) atomic increment vs O(n) deep copy.
+
 **Analysis:**
 - Varpulis has lower per-event overhead (faster for small batches)
 - Apama scales better with larger event volumes
 - Both are native (C++ vs Rust) with similar performance characteristics
+- Gap reduced from 16% to ~12% after PERF-04
 
 ### Varpulis SASE+ Pattern Benchmarks (criterion)
 
