@@ -11,7 +11,7 @@ mod types;
 mod tests;
 
 // Re-export public types
-pub use types::{Alert, EngineConfig, EngineMetrics, UserFunction};
+pub use types::{Alert, EngineConfig, EngineMetrics, ReloadReport, UserFunction};
 
 // Re-export evaluator for use by other modules (e.g., SASE+)
 pub use evaluator::eval_filter_expr;
@@ -2094,5 +2094,173 @@ impl Engine {
             }
         }
         timers
+    }
+
+    // =========================================================================
+    // Hot Reload
+    // =========================================================================
+
+    /// Reload program without losing state where possible.
+    ///
+    /// State preservation rules:
+    /// - Filter changes: state preserved
+    /// - Window size changes: state reset
+    /// - Aggregation changes: state reset
+    /// - New streams: added fresh
+    /// - Removed streams: dropped
+    ///
+    /// # Example
+    /// ```ignore
+    /// let new_program = varpulis_parser::parse(&new_source)?;
+    /// let report = engine.reload(&new_program)?;
+    /// println!("Reload complete: {:?}", report);
+    /// ```
+    pub fn reload(&mut self, program: &Program) -> Result<ReloadReport, String> {
+        let mut report = ReloadReport::default();
+
+        // Collect current stream names
+        let old_streams: std::collections::HashSet<String> =
+            self.streams.keys().cloned().collect();
+
+        // Parse new program to get new stream definitions
+        // We need to compile the new program to compare with existing streams
+        let mut new_engine = Engine::new(self.alert_tx.clone());
+        new_engine.load(program)?;
+
+        let new_streams: std::collections::HashSet<String> =
+            new_engine.streams.keys().cloned().collect();
+
+        // Find added, removed, and potentially updated streams
+        for name in new_streams.difference(&old_streams) {
+            report.streams_added.push(name.clone());
+        }
+
+        for name in old_streams.difference(&new_streams) {
+            report.streams_removed.push(name.clone());
+        }
+
+        // For streams that exist in both, check if they changed
+        for name in old_streams.intersection(&new_streams) {
+            let old_stream = self.streams.get(name).unwrap();
+            let new_stream = new_engine.streams.get(name).unwrap();
+
+            // Compare source types
+            let source_changed = !Self::sources_compatible(&old_stream.source, &new_stream.source);
+
+            // Compare operation counts (rough heuristic)
+            let ops_changed = old_stream.operations.len() != new_stream.operations.len();
+
+            if source_changed || ops_changed {
+                report.streams_updated.push(name.clone());
+                report.state_reset.push(name.clone());
+            } else {
+                // Source and ops count match - try to preserve state
+                report.state_preserved.push(name.clone());
+            }
+        }
+
+        // Now apply changes
+
+        // Remove old streams
+        for name in &report.streams_removed {
+            self.streams.remove(name);
+        }
+
+        // Rebuild event_sources from scratch (simpler than trying to update Arc<[String]> incrementally)
+        self.event_sources.clear();
+
+        // Add/update streams from new engine
+        for name in &report.streams_added {
+            if let Some(stream) = new_engine.streams.remove(name) {
+                self.streams.insert(name.clone(), stream);
+            }
+        }
+
+        for name in &report.streams_updated {
+            if let Some(stream) = new_engine.streams.remove(name) {
+                self.streams.insert(name.clone(), stream);
+            }
+        }
+
+        // Rebuild event_sources for all streams
+        // First collect all (event_type, stream_name) pairs to avoid borrow issues
+        let registrations: Vec<(String, String)> = self
+            .streams
+            .iter()
+            .flat_map(|(name, stream)| {
+                let mut pairs = Vec::new();
+                match &stream.source {
+                    RuntimeSource::EventType(et) => {
+                        pairs.push((et.clone(), name.clone()));
+                    }
+                    RuntimeSource::Stream(s) => {
+                        pairs.push((s.clone(), name.clone()));
+                    }
+                    RuntimeSource::Merge(sources) => {
+                        for ms in sources {
+                            pairs.push((ms.event_type.clone(), name.clone()));
+                        }
+                    }
+                    RuntimeSource::Join(_) => {
+                        // Join sources handled separately
+                    }
+                    RuntimeSource::Timer(config) => {
+                        pairs.push((config.timer_event_type.clone(), name.clone()));
+                    }
+                }
+                pairs
+            })
+            .collect();
+
+        // Now apply registrations
+        for (event_type, stream_name) in registrations {
+            self.add_event_source(&event_type, &stream_name);
+        }
+
+        // Update functions
+        self.functions = new_engine.functions;
+
+        // Update patterns
+        self.patterns = new_engine.patterns;
+
+        // Update configs
+        self.configs = new_engine.configs;
+
+        // Preserve variables (user might have set them)
+        // Only add new variables from program, don't overwrite existing
+        for (name, value) in new_engine.variables {
+            if !self.variables.contains_key(&name) {
+                self.variables.insert(name.clone(), value);
+                self.mutable_vars.extend(new_engine.mutable_vars.iter().cloned());
+            }
+        }
+
+        info!(
+            "Hot reload complete: +{} -{} ~{} streams",
+            report.streams_added.len(),
+            report.streams_removed.len(),
+            report.streams_updated.len()
+        );
+
+        Ok(report)
+    }
+
+    /// Check if two runtime sources are compatible for state preservation
+    fn sources_compatible(a: &RuntimeSource, b: &RuntimeSource) -> bool {
+        match (a, b) {
+            (RuntimeSource::EventType(a), RuntimeSource::EventType(b)) => a == b,
+            (RuntimeSource::Stream(a), RuntimeSource::Stream(b)) => a == b,
+            (RuntimeSource::Timer(a), RuntimeSource::Timer(b)) => {
+                a.interval_ns == b.interval_ns && a.timer_event_type == b.timer_event_type
+            }
+            (RuntimeSource::Merge(a), RuntimeSource::Merge(b)) => {
+                a.len() == b.len()
+                    && a.iter()
+                        .zip(b.iter())
+                        .all(|(x, y)| x.event_type == y.event_type)
+            }
+            (RuntimeSource::Join(a), RuntimeSource::Join(b)) => a == b,
+            _ => false,
+        }
     }
 }

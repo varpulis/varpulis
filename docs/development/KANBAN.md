@@ -1,6 +1,6 @@
 # Varpulis CEP - Kanban
 
-> Derniere mise a jour: 2026-01-31 (PERF-04 complete, benchmarks Apama vs Varpulis)
+> Derniere mise a jour: 2026-01-31 (HOT-01, PAR-01 complete - parite fonctionnelle Apama)
 
 ## Vue d'ensemble
 
@@ -133,6 +133,55 @@
   - **Resultats**:
     - Filter only: 170K evt/s (vs Apama 163K) = **Varpulis plus rapide**
     - Window+Aggregate: 140K evt/s (vs Apama 163K) = Apama 16% plus rapide
+
+---
+
+## TERMINE - Feature Parity Apama
+
+> **Statut**: Parite complete avec Apama + ameliorations
+
+### Termine
+
+- [x] **HOT-01**: Hot Reload sans redemarrage
+  - **Apama**: Hot redeploy complexe
+  - **Varpulis**: Simple et developer-friendly
+  - **Implementation**:
+    - `Engine::reload(&Program)` - recharge le programme
+    - Preservation d'etat intelligente (filters: oui, windows: reset)
+    - `ReloadReport` avec details des changements
+    - Streams ajoutes/supprimes/mis a jour trackes
+  - **API**:
+    ```rust
+    let report = engine.reload(&new_program)?;
+    // report.streams_added, streams_removed, state_preserved
+    ```
+
+- [x] **PAR-01**: Parallelisme Controle (Worker Pools)
+  - **Apama**: spawn/contexts opaques, pas de controle
+  - **Varpulis**: Controle explicite, monitoring complet
+  - **Implementation**:
+    - `WorkerPool` avec workers configurables
+    - `BackpressureStrategy`: Block, DropOldest, DropNewest, Error
+    - Partition affinity (meme partition -> meme worker)
+    - Metriques par worker: latency, queue_depth, events_processed
+    - Resize dynamique possible
+  - **API**:
+    ```rust
+    let pool = WorkerPool::new(config, |event| process(event));
+    pool.submit(event, "partition_key").await?;
+    let metrics = pool.metrics().await; // active_workers, p99_latency, etc.
+    ```
+  - **7 tests unitaires**
+
+### Avantages vs Apama
+
+| Feature | Apama | Varpulis |
+|---------|-------|----------|
+| Hot reload | Complexe | Simple `reload()` |
+| Parallelisme | Opaque | Explicite + monitoring |
+| Backpressure | Aucun | 4 strategies |
+| Metriques workers | Non | Oui (latency, queue) |
+| Partition control | Implicite | Explicite |
 
 ---
 

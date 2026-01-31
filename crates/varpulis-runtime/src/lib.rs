@@ -18,8 +18,9 @@ pub mod sink;
 pub mod stream;
 pub mod timer;
 pub mod window;
+pub mod worker_pool;
 
-pub use engine::Engine;
+pub use engine::{Engine, ReloadReport};
 pub use event::{Event, SharedEvent};
 pub use metrics::Metrics;
 pub use sink::{ConsoleSink, FileSink, HttpSink, MultiSink, Sink};
@@ -29,4 +30,8 @@ pub use window::{
     CountWindow, DelayBuffer, PartitionedDelayBuffer, PartitionedPreviousValueTracker,
     PartitionedSlidingWindow, PartitionedTumblingWindow, PreviousValueTracker, SlidingCountWindow,
     SlidingWindow, TumblingWindow,
+};
+pub use worker_pool::{
+    BackpressureError, BackpressureStrategy, WorkerPool, WorkerPoolConfig, WorkerPoolMetrics,
+    WorkerState, WorkerStatus,
 };
