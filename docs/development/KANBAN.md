@@ -1,6 +1,6 @@
 # Varpulis CEP - Kanban
 
-> Derniere mise a jour: 2026-01-31 (HOT-01, PAR-01 complete - parite fonctionnelle Apama)
+> Derniere mise a jour: 2026-01-31 (IMP-01 to IMP-04 complete - programmation imperative complete)
 
 ## Vue d'ensemble
 
@@ -14,10 +14,11 @@
 | Engine Refactor | 0 | 0 | **3** |
 | Security | 0 | 0 | **7** |
 | CLI Refactor | 0 | 0 | **2** |
-| Performance | 0 | 0 | **3** |
+| Performance | 0 | 0 | **5** |
+| Imperative | 0 | 0 | **4** |
 | Couverture | 0 | 2 | 0 |
 | VS Code | 1 | 0 | 0 |
-| **Total** | **3** | **2** | **43** |
+| **Total** | **1** | **2** | **51** |
 
 ---
 
@@ -182,6 +183,105 @@
 | Backpressure | Aucun | 4 strategies |
 | Metriques workers | Non | Oui (latency, queue) |
 | Partition control | Implicite | Explicite |
+
+---
+
+## TERMINE - Programmation Imperative
+
+> **Statut**: Parite complete avec Apama EPL pour programmation imperative
+
+### Termine
+
+- [x] **IMP-01**: For/While loops dans evaluator
+  - `eval_stmt()` et `eval_stmts()` pour evaluation de statements
+  - Support `Stmt::For` avec iteration sur array, map, et range
+  - Support `Stmt::While` avec limite de securite (10K iterations)
+  - Support `Stmt::Break` et `Stmt::Continue` pour controle de boucle
+  - Support `Stmt::Return` pour sortie anticipee de fonction
+  - 4 tests unitaires
+
+- [x] **IMP-02**: If/else statements dans evaluator
+  - Support `Stmt::If` avec elif_branches et else_branch
+  - Support complet pour conditionnels imbriques
+  - 2 tests unitaires
+
+- [x] **IMP-03**: Operations Array/Map
+  - Litteraux array: `[1, 2, 3]`
+  - Litteraux map: `{"key": value}`
+  - Acces par index: `arr[i]`, `map["key"]`, `str[i]`
+  - Slicing: `arr[1:3]`, `str[0:5]`
+  - Range expressions: `0..10`, `0..=10`
+  - Fonctions: push, pop, reverse, sort, contains, first, last
+  - Fonctions map: keys, values, get, set
+  - 9 tests unitaires
+
+- [x] **IMP-04**: Fonctions built-in
+  - **Math**: abs, sqrt, floor, ceil, round, pow, log, log10, exp, sin, cos, tan
+  - **Array**: len, sum, avg, min, max, range, sort, reverse, contains
+  - **String**: trim, lower/uppercase, split, join, replace, starts_with, ends_with, substring
+  - **Type**: type_of, is_null, is_int, is_float, is_string, is_bool, is_array, is_map
+  - **Conversion**: to_string, to_int, to_float
+  - 6 tests unitaires
+
+### Operateurs ajoutes
+
+| Operateur | Syntaxe | Description |
+|-----------|---------|-------------|
+| Modulo | `a % b` | Reste de division |
+| Power | `a ** b` | Puissance |
+| In | `x in arr` | Appartenance |
+| NotIn | `x not in arr` | Non-appartenance |
+| Xor | `a xor b` | Ou exclusif |
+| Null coalescing | `expr ?? default` | Valeur par defaut si null |
+
+### Comparaison avec Apama EPL
+
+| Feature | Apama EPL | Varpulis VPL |
+|---------|-----------|--------------|
+| For loop | `for i in items { }` | `for i in items:` |
+| While loop | `while cond { }` | `while cond:` |
+| If/elif/else | `if/else` | `if/elif/else:` |
+| Break/Continue | Oui | Oui |
+| Return | Oui | Oui |
+| Array literal | `[1, 2, 3]` | `[1, 2, 3]` |
+| Map literal | `{"k": v}` | `{"k": v}` |
+| Index access | `arr[i]` | `arr[i]` |
+| Slicing | Non | `arr[1:3]` |
+| Range | Non | `0..10` |
+| Null coalescing | Non | `expr ?? default` |
+| Math functions | Oui | Oui (+ log, exp, trig) |
+| Type checking | Limite | type_of, is_* functions |
+
+### Example VPL vs Apama EPL
+
+**Apama EPL:**
+```epl
+action computeStats(sequence<float> prices) returns dictionary<string, float> {
+    float sum := 0.0;
+    float min := prices[0];
+    float max := prices[0];
+    integer i := 0;
+    while i < prices.size() {
+        sum := sum + prices[i];
+        if prices[i] < min { min := prices[i]; }
+        if prices[i] > max { max := prices[i]; }
+        i := i + 1;
+    }
+    return {"avg": sum / prices.size().toFloat(), "min": min, "max": max};
+}
+```
+
+**Varpulis VPL:**
+```vpl
+fn compute_stats(prices: [float]) -> {str: float}:
+    return {
+        "avg": avg(prices),
+        "min": min(prices),
+        "max": max(prices)
+    }
+```
+
+**Avantage Varpulis**: Fonctions built-in reduisent le code de 15 lignes a 5.
 
 ---
 
