@@ -236,6 +236,7 @@ impl WorkerPool {
     }
 
     /// Dispatcher task that routes events to workers
+    #[allow(clippy::too_many_arguments)]
     async fn dispatcher_task<F>(
         mut rx: mpsc::Receiver<PartitionedEvent>,
         mut shutdown_rx: mpsc::Receiver<()>,
