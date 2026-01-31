@@ -64,8 +64,8 @@ pub struct NamedPattern {
 pub struct Engine {
     /// Registered stream definitions
     streams: HashMap<String, StreamDefinition>,
-    /// Event type to stream mapping
-    event_sources: HashMap<String, Vec<String>>,
+    /// Event type to stream mapping (Arc for zero-cost sharing in hot path)
+    event_sources: HashMap<String, Arc<[String]>>,
     /// User-defined functions
     functions: HashMap<String, UserFunction>,
     /// Named patterns for reuse
@@ -100,6 +100,20 @@ impl Engine {
             alerts_generated: 0,
             metrics: None,
         }
+    }
+
+    /// Add a stream to the event sources for a given event type.
+    /// Uses Arc internally to avoid Vec cloning in the hot path.
+    fn add_event_source(&mut self, event_type: &str, stream_name: &str) {
+        let existing = self.event_sources.remove(event_type);
+        let mut streams: Vec<String> = existing
+            .map(|arc| arc.iter().cloned().collect())
+            .unwrap_or_default();
+        if !streams.contains(&stream_name.to_string()) {
+            streams.push(stream_name.to_string());
+        }
+        self.event_sources
+            .insert(event_type.to_string(), streams.into());
     }
 
     /// Get a named pattern by name
@@ -328,47 +342,32 @@ impl Engine {
 
         let runtime_source = match source {
             StreamSource::From(event_type) => {
-                self.event_sources
-                    .entry(event_type.clone())
-                    .or_default()
-                    .push(name.to_string());
+                self.add_event_source(event_type, name);
                 RuntimeSource::EventType(event_type.clone())
             }
             StreamSource::Ident(stream_name) => {
                 // Register for the stream source event type
-                self.event_sources
-                    .entry(stream_name.clone())
-                    .or_default()
-                    .push(name.to_string());
+                self.add_event_source(stream_name, name);
                 RuntimeSource::Stream(stream_name.clone())
             }
             StreamSource::IdentWithAlias {
                 name: event_type, ..
             } => {
                 // Register for the event type (alias is handled in sequence)
-                self.event_sources
-                    .entry(event_type.clone())
-                    .or_default()
-                    .push(name.to_string());
+                self.add_event_source(event_type, name);
                 RuntimeSource::EventType(event_type.clone())
             }
             StreamSource::AllWithAlias {
                 name: event_type, ..
             } => {
                 // Register for the event type (all + alias handled in sequence)
-                self.event_sources
-                    .entry(event_type.clone())
-                    .or_default()
-                    .push(name.to_string());
+                self.add_event_source(event_type, name);
                 RuntimeSource::EventType(event_type.clone())
             }
             StreamSource::Sequence(decl) => {
                 // Register for all event types in the sequence
                 for step in &decl.steps {
-                    self.event_sources
-                        .entry(step.event_type.clone())
-                        .or_default()
-                        .push(name.to_string());
+                    self.add_event_source(&step.event_type, name);
                 }
                 // Use first event type as the primary source
                 let first_type = decl
@@ -400,10 +399,7 @@ impl Engine {
                                 "Join source '{}' is a derived stream, registering for stream name",
                                 source
                             );
-                            self.event_sources
-                                .entry(source.clone())
-                                .or_default()
-                                .push(name.to_string());
+                            self.add_event_source(source, name);
                             event_type_to_source.insert(source.clone(), source.clone());
                         } else {
                             // Simple passthrough stream - register for underlying event type
@@ -416,10 +412,7 @@ impl Engine {
                                 "Join source '{}' is a passthrough stream, registering for event type '{}'",
                                 source, event_type
                             );
-                            self.event_sources
-                                .entry(event_type.clone())
-                                .or_default()
-                                .push(name.to_string());
+                            self.add_event_source(&event_type, name);
                             event_type_to_source.insert(event_type, source.clone());
                         }
                     } else {
@@ -428,10 +421,7 @@ impl Engine {
                             "Join source '{}' not found as stream, treating as event type",
                             source
                         );
-                        self.event_sources
-                            .entry(source.clone())
-                            .or_default()
-                            .push(name.to_string());
+                        self.add_event_source(source, name);
                         event_type_to_source.insert(source.clone(), source.clone());
                     }
                 }
@@ -449,10 +439,7 @@ impl Engine {
 
                 // Register for all source event types
                 for ms in &merge_sources {
-                    let streams = self.event_sources.entry(ms.event_type.clone()).or_default();
-                    if !streams.contains(&name.to_string()) {
-                        streams.push(name.to_string());
-                    }
+                    self.add_event_source(&ms.event_type, name);
                 }
 
                 info!(
@@ -485,10 +472,7 @@ impl Engine {
                 let timer_event_type = format!("Timer_{}", name);
 
                 // Register this stream to receive timer events
-                self.event_sources
-                    .entry(timer_event_type.clone())
-                    .or_default()
-                    .push(name.to_string());
+                self.add_event_source(&timer_event_type, name);
 
                 info!(
                     "Registering timer stream {} with interval {}ms{}",
@@ -509,10 +493,7 @@ impl Engine {
 
         // Register for all event types in sequence (avoid duplicates)
         for event_type in &sequence_event_types {
-            let streams = self.event_sources.entry(event_type.clone()).or_default();
-            if !streams.contains(&name.to_string()) {
-                streams.push(name.to_string());
-            }
+            self.add_event_source(event_type, name);
         }
         if !sequence_event_types.is_empty() {
             debug!(
@@ -1176,15 +1157,15 @@ impl Engine {
             }
 
             // Collect stream names to avoid borrowing issues
-            // PERF: This clones the Vec<String>, but avoids borrow conflicts with streams HashMap
-            let stream_names: Vec<String> = self
+            // PERF: Arc<[String]> clone is O(1) - just atomic increment, not deep copy
+            let stream_names: Arc<[String]> = self
                 .event_sources
                 .get(&current_event.event_type)
                 .cloned()
-                .unwrap_or_default();
+                .unwrap_or_else(|| Arc::from([]));
 
-            for stream_name in stream_names {
-                if let Some(stream) = self.streams.get_mut(&stream_name) {
+            for stream_name in stream_names.iter() {
+                if let Some(stream) = self.streams.get_mut(stream_name) {
                     let result = Self::process_stream_with_functions(
                         stream,
                         Arc::clone(&current_event),

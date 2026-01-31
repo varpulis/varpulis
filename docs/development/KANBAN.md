@@ -1,6 +1,6 @@
 # Varpulis CEP - Kanban
 
-> Derniere mise a jour: 2026-01-30 (STREAM-02, STREAM-03, TIMER-01, VAR-01, QUERY-01 complete)
+> Derniere mise a jour: 2026-01-31 (PERF-04 complete, benchmarks Apama vs Varpulis)
 
 ## Vue d'ensemble
 
@@ -111,6 +111,16 @@
   - CountDistinct: stocke u64 hashes au lieu de cloner Values
   - Avg: algorithme single-pass avec fold
   - StdDev: algorithme de Welford (single-pass, stable numeriquement)
+
+- [x] **PERF-04**: Eliminer cloning Vec dans hot path (event_sources)
+  - **Severite**: MEDIUM
+  - **Impact**: Clone Vec<String> pour chaque evenement traite
+  - **Action**: Utiliser `Arc<[String]>` pour partage O(1)
+  - **Implementation**:
+    - `event_sources: HashMap<String, Arc<[String]>>` au lieu de Vec
+    - Helper `add_event_source()` pour mutation propre
+    - Clone Arc = increment atomique, pas copie profonde
+    - 752 tests passent
 
 ---
 
