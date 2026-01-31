@@ -2119,8 +2119,7 @@ impl Engine {
         let mut report = ReloadReport::default();
 
         // Collect current stream names
-        let old_streams: std::collections::HashSet<String> =
-            self.streams.keys().cloned().collect();
+        let old_streams: std::collections::HashSet<String> = self.streams.keys().cloned().collect();
 
         // Parse new program to get new stream definitions
         // We need to compile the new program to compare with existing streams
@@ -2231,7 +2230,8 @@ impl Engine {
         for (name, value) in new_engine.variables {
             if !self.variables.contains_key(&name) {
                 self.variables.insert(name.clone(), value);
-                self.mutable_vars.extend(new_engine.mutable_vars.iter().cloned());
+                self.mutable_vars
+                    .extend(new_engine.mutable_vars.iter().cloned());
             }
         }
 

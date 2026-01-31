@@ -541,7 +541,12 @@ async fn run_simulation(
             if verbose {
                 let start_idx = batch_idx * BATCH_SIZE + 1;
                 let end_idx = (start_idx + chunk.len() - 1).min(total_events);
-                println!("  [batch {}-{}] processing {} events", start_idx, end_idx, chunk.len());
+                println!(
+                    "  [batch {}-{}] processing {} events",
+                    start_idx,
+                    end_idx,
+                    chunk.len()
+                );
             }
             let batch: Vec<_> = chunk.iter().map(|te| te.event.clone()).collect();
             engine

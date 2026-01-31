@@ -248,7 +248,10 @@ impl WorkerPool {
     ) where
         F: Fn(Event) + Send + Sync + Clone + 'static,
     {
-        info!("Worker pool '{}' started with {} workers", pool_name, num_workers);
+        info!(
+            "Worker pool '{}' started with {} workers",
+            pool_name, num_workers
+        );
 
         loop {
             tokio::select! {
@@ -357,21 +360,19 @@ impl WorkerPool {
                 }
                 Ok(())
             }
-            BackpressureStrategy::Error => {
-                match self.dispatch_tx.try_send(partitioned) {
-                    Ok(()) => {
-                        self.events_processed.fetch_add(1, Ordering::Relaxed);
-                        Ok(())
-                    }
-                    Err(_) => {
-                        self.events_dropped.fetch_add(1, Ordering::Relaxed);
-                        Err(BackpressureError {
-                            pool_name: self.config.name.clone(),
-                            queue_depth: self.queue_depth(),
-                        })
-                    }
+            BackpressureStrategy::Error => match self.dispatch_tx.try_send(partitioned) {
+                Ok(()) => {
+                    self.events_processed.fetch_add(1, Ordering::Relaxed);
+                    Ok(())
                 }
-            }
+                Err(_) => {
+                    self.events_dropped.fetch_add(1, Ordering::Relaxed);
+                    Err(BackpressureError {
+                        pool_name: self.config.name.clone(),
+                        queue_depth: self.queue_depth(),
+                    })
+                }
+            },
         }
     }
 
