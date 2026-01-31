@@ -1818,3 +1818,593 @@ async fn test_engine_having_filter_blocks() {
     let alert = rx.try_recv().expect("Should have alert when avg > 100");
     assert_eq!(alert.alert_type, "stream_output");
 }
+
+// ==========================================================================
+// Imperative Programming Tests - For/While Loops (IMP-01)
+// ==========================================================================
+
+#[tokio::test]
+async fn test_imperative_for_loop_sum() {
+    // Test for loop with accumulation
+    let source = r#"
+        fn sum_up_to(n: int) -> int:
+            let total = 0
+            for i in range(n):
+                total := total + i
+            return total
+
+        stream Test = Input
+            .where(sum_up_to(5) == 10)
+            .emit(result: sum_up_to(5))
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    engine.process(Event::new("Input")).await.unwrap();
+    let alert = rx.try_recv().expect("Should have alert");
+    // sum(0..5) = 0+1+2+3+4 = 10
+    assert_eq!(alert.data.get("result"), Some(&Value::Int(10)));
+}
+
+#[tokio::test]
+async fn test_imperative_while_loop() {
+    // Test while loop
+    let source = r#"
+        fn count_until(limit: int) -> int:
+            let i = 0
+            while i < limit:
+                i := i + 1
+            return i
+
+        stream Test = Input
+            .emit(count: count_until(5))
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    engine.process(Event::new("Input")).await.unwrap();
+    let alert = rx.try_recv().expect("Should have alert");
+    assert_eq!(alert.data.get("count"), Some(&Value::Int(5)));
+}
+
+#[tokio::test]
+async fn test_imperative_for_loop_with_break() {
+    // Test for loop with early break
+    let source = r#"
+        fn find_first_over(threshold: int) -> int:
+            for i in range(100):
+                if i > threshold:
+                    return i
+            return -1
+
+        stream Test = Input
+            .emit(found: find_first_over(42))
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    engine.process(Event::new("Input")).await.unwrap();
+    let alert = rx.try_recv().expect("Should have alert");
+    assert_eq!(alert.data.get("found"), Some(&Value::Int(43)));
+}
+
+// ==========================================================================
+// Imperative Programming Tests - If/Else Statements (IMP-02)
+// ==========================================================================
+
+#[tokio::test]
+async fn test_imperative_if_else() {
+    // Test if/else conditional
+    let source = r#"
+        fn classify(x: int) -> str:
+            if x > 100:
+                return "high"
+            elif x > 50:
+                return "medium"
+            else:
+                return "low"
+
+        stream Test = Input
+            .emit(class: classify(value))
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    // Test high value
+    engine
+        .process(Event::new("Input").with_field("value", 150i64))
+        .await
+        .unwrap();
+    let alert = rx.try_recv().expect("Should have alert");
+    assert_eq!(
+        alert.data.get("class"),
+        Some(&Value::Str("high".to_string()))
+    );
+
+    // Test medium value
+    engine
+        .process(Event::new("Input").with_field("value", 75i64))
+        .await
+        .unwrap();
+    let alert = rx.try_recv().expect("Should have alert");
+    assert_eq!(
+        alert.data.get("class"),
+        Some(&Value::Str("medium".to_string()))
+    );
+
+    // Test low value
+    engine
+        .process(Event::new("Input").with_field("value", 25i64))
+        .await
+        .unwrap();
+    let alert = rx.try_recv().expect("Should have alert");
+    assert_eq!(
+        alert.data.get("class"),
+        Some(&Value::Str("low".to_string()))
+    );
+}
+
+#[tokio::test]
+async fn test_imperative_nested_if() {
+    // Test nested if statements
+    let source = r#"
+        fn check(a: int, b: int) -> str:
+            if a > 0:
+                if b > 0:
+                    return "both_positive"
+                else:
+                    return "a_positive"
+            else:
+                return "a_not_positive"
+
+        stream Test = Input
+            .emit(result: check(a, b))
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    engine
+        .process(
+            Event::new("Input")
+                .with_field("a", 5i64)
+                .with_field("b", 3i64),
+        )
+        .await
+        .unwrap();
+    let alert = rx.try_recv().expect("Should have alert");
+    assert_eq!(
+        alert.data.get("result"),
+        Some(&Value::Str("both_positive".to_string()))
+    );
+}
+
+// ==========================================================================
+// Imperative Programming Tests - Array Operations (IMP-03)
+// ==========================================================================
+
+#[tokio::test]
+async fn test_imperative_array_literal() {
+    // Test array literal and length
+    let source = r#"
+        fn array_len() -> int:
+            let arr = [1, 2, 3, 4, 5]
+            return len(arr)
+
+        stream Test = Input
+            .emit(length: array_len())
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    engine.process(Event::new("Input")).await.unwrap();
+    let alert = rx.try_recv().expect("Should have alert");
+    assert_eq!(alert.data.get("length"), Some(&Value::Int(5)));
+}
+
+#[tokio::test]
+async fn test_imperative_array_index() {
+    // Test array indexing
+    let source = r#"
+        fn get_third() -> int:
+            let arr = [10, 20, 30, 40, 50]
+            return arr[2]
+
+        stream Test = Input
+            .emit(value: get_third())
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    engine.process(Event::new("Input")).await.unwrap();
+    let alert = rx.try_recv().expect("Should have alert");
+    assert_eq!(alert.data.get("value"), Some(&Value::Int(30)));
+}
+
+#[tokio::test]
+async fn test_imperative_array_sum() {
+    // Test array sum function
+    let source = r#"
+        fn array_sum() -> float:
+            let arr = [1.0, 2.0, 3.0, 4.0, 5.0]
+            return sum(arr)
+
+        stream Test = Input
+            .emit(total: array_sum())
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    engine.process(Event::new("Input")).await.unwrap();
+    let alert = rx.try_recv().expect("Should have alert");
+    if let Some(Value::Float(total)) = alert.data.get("total") {
+        assert!((total - 15.0).abs() < 0.001, "Sum should be 15.0");
+    } else {
+        panic!("Expected float total");
+    }
+}
+
+#[tokio::test]
+async fn test_imperative_array_push() {
+    // Test array push function
+    let source = r#"
+        fn build_array() -> int:
+            let arr = [1, 2, 3]
+            let arr2 = push(arr, 4)
+            return len(arr2)
+
+        stream Test = Input
+            .emit(length: build_array())
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    engine.process(Event::new("Input")).await.unwrap();
+    let alert = rx.try_recv().expect("Should have alert");
+    assert_eq!(alert.data.get("length"), Some(&Value::Int(4)));
+}
+
+#[tokio::test]
+async fn test_imperative_array_range() {
+    // Test range function
+    let source = r#"
+        fn range_length() -> int:
+            let arr = range(10)
+            return len(arr)
+
+        stream Test = Input
+            .emit(length: range_length())
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    engine.process(Event::new("Input")).await.unwrap();
+    let alert = rx.try_recv().expect("Should have alert");
+    assert_eq!(alert.data.get("length"), Some(&Value::Int(10)));
+}
+
+// ==========================================================================
+// Imperative Programming Tests - Map Operations (IMP-03)
+// ==========================================================================
+
+#[tokio::test]
+async fn test_imperative_map_literal() {
+    // Test map literal
+    let source = r#"
+        fn map_len() -> int:
+            let m = {"a": 1, "b": 2, "c": 3}
+            return len(m)
+
+        stream Test = Input
+            .emit(length: map_len())
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    engine.process(Event::new("Input")).await.unwrap();
+    let alert = rx.try_recv().expect("Should have alert");
+    assert_eq!(alert.data.get("length"), Some(&Value::Int(3)));
+}
+
+#[tokio::test]
+async fn test_imperative_map_access() {
+    // Test map access with index notation
+    let source = r#"
+        fn get_value() -> int:
+            let m = {"key": 42}
+            return m["key"]
+
+        stream Test = Input
+            .emit(value: get_value())
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    engine.process(Event::new("Input")).await.unwrap();
+    let alert = rx.try_recv().expect("Should have alert");
+    assert_eq!(alert.data.get("value"), Some(&Value::Int(42)));
+}
+
+#[tokio::test]
+async fn test_imperative_map_keys() {
+    // Test map keys function
+    let source = r#"
+        fn count_keys() -> int:
+            let m = {"x": 1, "y": 2, "z": 3}
+            return len(keys(m))
+
+        stream Test = Input
+            .emit(count: count_keys())
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    engine.process(Event::new("Input")).await.unwrap();
+    let alert = rx.try_recv().expect("Should have alert");
+    assert_eq!(alert.data.get("count"), Some(&Value::Int(3)));
+}
+
+// ==========================================================================
+// Imperative Programming Tests - Built-in Functions (IMP-04)
+// ==========================================================================
+
+#[tokio::test]
+async fn test_builtin_math_functions() {
+    // Test math built-in functions
+    let source = r#"
+        fn math_ops() -> float:
+            let a = abs(-5)
+            let b = sqrt(16.0)
+            let c = floor(3.7)
+            let d = ceil(3.2)
+            let e = round(3.5)
+            return to_float(a) + b + to_float(c) + to_float(d) + to_float(e)
+
+        stream Test = Input
+            .emit(result: math_ops())
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    engine.process(Event::new("Input")).await.unwrap();
+    let alert = rx.try_recv().expect("Should have alert");
+    // 5 + 4 + 3 + 4 + 4 = 20
+    if let Some(Value::Float(result)) = alert.data.get("result") {
+        assert!((result - 20.0).abs() < 0.001, "Result should be 20.0");
+    } else {
+        panic!("Expected float result");
+    }
+}
+
+#[tokio::test]
+async fn test_builtin_min_max() {
+    // Test min/max functions
+    let source = r#"
+        fn compute_range() -> int:
+            let a = min(10, 5)
+            let b = max(10, 5)
+            return b - a
+
+        stream Test = Input
+            .emit(range: compute_range())
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    engine.process(Event::new("Input")).await.unwrap();
+    let alert = rx.try_recv().expect("Should have alert");
+    // max(10,5) - min(10,5) = 10 - 5 = 5
+    assert_eq!(alert.data.get("range"), Some(&Value::Int(5)));
+}
+
+#[tokio::test]
+async fn test_builtin_string_functions() {
+    // Test string built-in functions
+    let source = r#"
+        fn string_ops() -> str:
+            let s = "  hello  "
+            let trimmed = trim(s)
+            return upper(trimmed)
+
+        stream Test = Input
+            .emit(result: string_ops())
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    engine.process(Event::new("Input")).await.unwrap();
+    let alert = rx.try_recv().expect("Should have alert");
+    assert_eq!(
+        alert.data.get("result"),
+        Some(&Value::Str("HELLO".to_string()))
+    );
+}
+
+#[tokio::test]
+async fn test_builtin_type_checking() {
+    // Test type checking functions
+    let source = r#"
+        fn check_types() -> str:
+            let i = 42
+            let f = 3.14
+            let s = "hello"
+            if is_int(i) and is_float(f) and is_string(s):
+                return "all_correct"
+            else:
+                return "error"
+
+        stream Test = Input
+            .emit(result: check_types())
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    engine.process(Event::new("Input")).await.unwrap();
+    let alert = rx.try_recv().expect("Should have alert");
+    assert_eq!(
+        alert.data.get("result"),
+        Some(&Value::Str("all_correct".to_string()))
+    );
+}
+
+#[tokio::test]
+async fn test_builtin_contains() {
+    // Test contains function
+    let source = r#"
+        fn test_contains() -> bool:
+            let arr = [1, 2, 3, 4, 5]
+            return contains(arr, 3)
+
+        stream Test = Input
+            .emit(found: test_contains())
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    engine.process(Event::new("Input")).await.unwrap();
+    let alert = rx.try_recv().expect("Should have alert");
+    assert_eq!(alert.data.get("found"), Some(&Value::Bool(true)));
+}
+
+#[tokio::test]
+async fn test_builtin_sort() {
+    // Test sort function
+    let source = r#"
+        fn test_sort() -> int:
+            let arr = [5, 2, 8, 1, 9]
+            let sorted = sort(arr)
+            return first(sorted)
+
+        stream Test = Input
+            .emit(first_val: test_sort())
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    engine.process(Event::new("Input")).await.unwrap();
+    let alert = rx.try_recv().expect("Should have alert");
+    assert_eq!(alert.data.get("first_val"), Some(&Value::Int(1)));
+}
+
+// ==========================================================================
+// Imperative Programming Tests - Operators (IMP-01 to IMP-04)
+// ==========================================================================
+
+#[tokio::test]
+async fn test_operator_modulo() {
+    // Test modulo operator
+    let source = r#"
+        fn is_even(n: int) -> bool:
+            return n % 2 == 0
+
+        stream Test = Input
+            .emit(even: is_even(value))
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    engine
+        .process(Event::new("Input").with_field("value", 10i64))
+        .await
+        .unwrap();
+    let alert = rx.try_recv().expect("Should have alert");
+    assert_eq!(alert.data.get("even"), Some(&Value::Bool(true)));
+
+    engine
+        .process(Event::new("Input").with_field("value", 7i64))
+        .await
+        .unwrap();
+    let alert = rx.try_recv().expect("Should have alert");
+    assert_eq!(alert.data.get("even"), Some(&Value::Bool(false)));
+}
+
+#[tokio::test]
+async fn test_operator_in() {
+    // Test 'in' operator
+    let source = r#"
+        fn check_in(x: int) -> bool:
+            let arr = [1, 2, 3, 4, 5]
+            return x in arr
+
+        stream Test = Input
+            .emit(found: check_in(value))
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    engine
+        .process(Event::new("Input").with_field("value", 3i64))
+        .await
+        .unwrap();
+    let alert = rx.try_recv().expect("Should have alert");
+    assert_eq!(alert.data.get("found"), Some(&Value::Bool(true)));
+
+    engine
+        .process(Event::new("Input").with_field("value", 99i64))
+        .await
+        .unwrap();
+    let alert = rx.try_recv().expect("Should have alert");
+    assert_eq!(alert.data.get("found"), Some(&Value::Bool(false)));
+}

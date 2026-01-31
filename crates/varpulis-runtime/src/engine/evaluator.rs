@@ -2,6 +2,16 @@
 //!
 //! This module contains all the expression evaluation logic used at runtime
 //! to evaluate filter expressions, pattern expressions, and user-defined functions.
+//!
+//! ## Imperative Programming Support
+//!
+//! This module supports full imperative programming including:
+//! - For loops: `for x in items { ... }`
+//! - While loops: `while condition { ... }`
+//! - If/elif/else statements
+//! - Break/Continue for loop control
+//! - Return statements for early exit
+//! - Variable declarations and assignments
 
 use crate::attention::AttentionWindow;
 use crate::sequence::SequenceContext;
@@ -9,9 +19,256 @@ use crate::Event;
 use indexmap::IndexMap;
 use std::collections::HashMap;
 use tracing::debug;
-use varpulis_core::Value;
+use varpulis_core::span::Spanned;
+use varpulis_core::{Stmt, Value};
 
 use super::UserFunction;
+
+// =============================================================================
+// Control Flow
+// =============================================================================
+
+/// Result of statement execution, supporting control flow
+#[derive(Debug, Clone)]
+pub enum StmtResult {
+    /// Continue to next statement
+    Continue,
+    /// Break out of loop
+    Break,
+    /// Continue to next iteration
+    ContinueLoop,
+    /// Return from function with optional value
+    Return(Option<Value>),
+}
+
+// =============================================================================
+// Statement Evaluation
+// =============================================================================
+
+/// Evaluate a sequence of statements, returning the final value or control flow result
+pub fn eval_stmts(
+    stmts: &[Spanned<Stmt>],
+    event: &Event,
+    ctx: &SequenceContext,
+    functions: &HashMap<String, UserFunction>,
+    bindings: &mut HashMap<String, Value>,
+) -> (StmtResult, Option<Value>) {
+    let mut last_value = None;
+
+    for stmt in stmts {
+        let (result, value) = eval_stmt(&stmt.node, event, ctx, functions, bindings);
+        last_value = value;
+
+        match result {
+            StmtResult::Continue => {}
+            StmtResult::Break | StmtResult::ContinueLoop | StmtResult::Return(_) => {
+                return (result, last_value);
+            }
+        }
+    }
+
+    (StmtResult::Continue, last_value)
+}
+
+/// Evaluate a single statement
+pub fn eval_stmt(
+    stmt: &Stmt,
+    event: &Event,
+    ctx: &SequenceContext,
+    functions: &HashMap<String, UserFunction>,
+    bindings: &mut HashMap<String, Value>,
+) -> (StmtResult, Option<Value>) {
+    match stmt {
+        // Expression statement - evaluate and return value
+        Stmt::Expr(expr) => {
+            let value = eval_expr_with_functions(expr, event, ctx, functions, bindings);
+            (StmtResult::Continue, value)
+        }
+
+        // Variable declaration
+        Stmt::VarDecl {
+            mutable: _,
+            name,
+            ty: _,
+            value,
+        } => {
+            let val = eval_expr_with_functions(value, event, ctx, functions, bindings);
+            if let Some(v) = val {
+                bindings.insert(name.clone(), v);
+            }
+            (StmtResult::Continue, None)
+        }
+
+        // Constant declaration (treated as immutable variable)
+        Stmt::ConstDecl { name, ty: _, value } => {
+            let val = eval_expr_with_functions(value, event, ctx, functions, bindings);
+            if let Some(v) = val {
+                bindings.insert(name.clone(), v);
+            }
+            (StmtResult::Continue, None)
+        }
+
+        // Variable assignment
+        Stmt::Assignment { name, value } => {
+            let val = eval_expr_with_functions(value, event, ctx, functions, bindings);
+            if let Some(v) = val {
+                bindings.insert(name.clone(), v);
+            }
+            (StmtResult::Continue, None)
+        }
+
+        // For loop
+        Stmt::For { var, iter, body } => {
+            let iter_val = eval_expr_with_functions(iter, event, ctx, functions, bindings);
+
+            if let Some(Value::Array(items)) = iter_val {
+                for item in items {
+                    bindings.insert(var.clone(), item);
+                    let (result, _) = eval_stmts(body, event, ctx, functions, bindings);
+
+                    match result {
+                        StmtResult::Break => break,
+                        StmtResult::ContinueLoop => continue,
+                        StmtResult::Return(v) => return (StmtResult::Return(v), None),
+                        StmtResult::Continue => {}
+                    }
+                }
+            } else if let Some(Value::Map(map)) = iter_val {
+                // Iterate over map entries as [key, value] pairs
+                for (key, value) in map {
+                    let pair = Value::Array(vec![Value::Str(key), value]);
+                    bindings.insert(var.clone(), pair);
+                    let (result, _) = eval_stmts(body, event, ctx, functions, bindings);
+
+                    match result {
+                        StmtResult::Break => break,
+                        StmtResult::ContinueLoop => continue,
+                        StmtResult::Return(v) => return (StmtResult::Return(v), None),
+                        StmtResult::Continue => {}
+                    }
+                }
+            }
+            // Also support iterating over ranges (0..n)
+            else if let Some(Value::Int(n)) = iter_val {
+                for i in 0..n {
+                    bindings.insert(var.clone(), Value::Int(i));
+                    let (result, _) = eval_stmts(body, event, ctx, functions, bindings);
+
+                    match result {
+                        StmtResult::Break => break,
+                        StmtResult::ContinueLoop => continue,
+                        StmtResult::Return(v) => return (StmtResult::Return(v), None),
+                        StmtResult::Continue => {}
+                    }
+                }
+            }
+
+            (StmtResult::Continue, None)
+        }
+
+        // While loop
+        Stmt::While { cond, body } => {
+            let max_iterations = 10_000; // Safety limit
+            let mut iterations = 0;
+
+            loop {
+                iterations += 1;
+                if iterations > max_iterations {
+                    debug!("While loop exceeded max iterations ({})", max_iterations);
+                    break;
+                }
+
+                let cond_val = eval_expr_with_functions(cond, event, ctx, functions, bindings);
+                if !cond_val.and_then(|v| v.as_bool()).unwrap_or(false) {
+                    break;
+                }
+
+                let (result, _) = eval_stmts(body, event, ctx, functions, bindings);
+
+                match result {
+                    StmtResult::Break => break,
+                    StmtResult::ContinueLoop => continue,
+                    StmtResult::Return(v) => return (StmtResult::Return(v), None),
+                    StmtResult::Continue => {}
+                }
+            }
+
+            (StmtResult::Continue, None)
+        }
+
+        // If statement
+        Stmt::If {
+            cond,
+            then_branch,
+            elif_branches,
+            else_branch,
+        } => {
+            let cond_val = eval_expr_with_functions(cond, event, ctx, functions, bindings);
+
+            if cond_val.and_then(|v| v.as_bool()).unwrap_or(false) {
+                return eval_stmts(then_branch, event, ctx, functions, bindings);
+            }
+
+            // Check elif branches
+            for (elif_cond, elif_body) in elif_branches {
+                let elif_val = eval_expr_with_functions(elif_cond, event, ctx, functions, bindings);
+                if elif_val.and_then(|v| v.as_bool()).unwrap_or(false) {
+                    return eval_stmts(elif_body, event, ctx, functions, bindings);
+                }
+            }
+
+            // Else branch
+            if let Some(else_body) = else_branch {
+                return eval_stmts(else_body, event, ctx, functions, bindings);
+            }
+
+            (StmtResult::Continue, None)
+        }
+
+        // Break statement
+        Stmt::Break => (StmtResult::Break, None),
+
+        // Continue statement
+        Stmt::Continue => (StmtResult::ContinueLoop, None),
+
+        // Return statement
+        Stmt::Return(expr) => {
+            let value = expr
+                .as_ref()
+                .and_then(|e| eval_expr_with_functions(e, event, ctx, functions, bindings));
+            (StmtResult::Return(value.clone()), value)
+        }
+
+        // Other statements (StreamDecl, EventDecl, etc.) are not executed at runtime
+        _ => (StmtResult::Continue, None),
+    }
+}
+
+/// Execute a user-defined function with proper statement evaluation
+pub fn call_user_function(
+    func: &UserFunction,
+    args: &[Value],
+    event: &Event,
+    ctx: &SequenceContext,
+    functions: &HashMap<String, UserFunction>,
+) -> Option<Value> {
+    // Bind parameters to argument values
+    let mut bindings = HashMap::new();
+    for (i, (param_name, _)) in func.params.iter().enumerate() {
+        if let Some(val) = args.get(i) {
+            bindings.insert(param_name.clone(), val.clone());
+        }
+    }
+
+    // Execute function body
+    let (result, last_value) = eval_stmts(&func.body, event, ctx, functions, &mut bindings);
+
+    // Return value from explicit return or last expression
+    match result {
+        StmtResult::Return(v) => v,
+        _ => last_value,
+    }
+}
 
 /// Evaluate a filter expression at runtime
 pub fn eval_filter_expr(
@@ -243,7 +500,6 @@ pub fn eval_expr_with_functions(
     bindings: &HashMap<String, Value>,
 ) -> Option<Value> {
     use varpulis_core::ast::{BinOp, Expr};
-    use varpulis_core::Stmt;
 
     match expr {
         Expr::Ident(name) => {
@@ -253,10 +509,143 @@ pub fn eval_expr_with_functions(
                 .cloned()
                 .or_else(|| event.get(name).cloned())
         }
+        Expr::Null => Some(Value::Null),
         Expr::Int(n) => Some(Value::Int(*n)),
         Expr::Float(f) => Some(Value::Float(*f)),
         Expr::Str(s) => Some(Value::Str(s.clone())),
         Expr::Bool(b) => Some(Value::Bool(*b)),
+        Expr::Duration(ns) => Some(Value::Duration(*ns)),
+
+        // Array literal: [1, 2, 3]
+        Expr::Array(items) => {
+            let values: Vec<Value> = items
+                .iter()
+                .filter_map(|e| eval_expr_with_functions(e, event, ctx, functions, bindings))
+                .collect();
+            Some(Value::Array(values))
+        }
+
+        // Map literal: { "key": value, ... }
+        Expr::Map(entries) => {
+            let mut map = IndexMap::new();
+            for (key, value_expr) in entries {
+                if let Some(value) =
+                    eval_expr_with_functions(value_expr, event, ctx, functions, bindings)
+                {
+                    map.insert(key.clone(), value);
+                }
+            }
+            Some(Value::Map(map))
+        }
+
+        // Index access: arr[0] or map["key"]
+        Expr::Index {
+            expr: container,
+            index,
+        } => {
+            let container_val =
+                eval_expr_with_functions(container, event, ctx, functions, bindings)?;
+            let index_val = eval_expr_with_functions(index, event, ctx, functions, bindings)?;
+
+            match (&container_val, &index_val) {
+                (Value::Array(arr), Value::Int(idx)) => {
+                    let idx = if *idx < 0 {
+                        (arr.len() as i64 + idx) as usize
+                    } else {
+                        *idx as usize
+                    };
+                    arr.get(idx).cloned()
+                }
+                (Value::Map(m), Value::Str(key)) => m.get(key).cloned(),
+                (Value::Str(s), Value::Int(idx)) => {
+                    let chars: Vec<char> = s.chars().collect();
+                    let idx = if *idx < 0 {
+                        (chars.len() as i64 + idx) as usize
+                    } else {
+                        *idx as usize
+                    };
+                    chars.get(idx).map(|c| Value::Str(c.to_string()))
+                }
+                _ => None,
+            }
+        }
+
+        // Slice: arr[1:3] or str[0:5]
+        Expr::Slice {
+            expr: container,
+            start,
+            end,
+        } => {
+            let container_val =
+                eval_expr_with_functions(container, event, ctx, functions, bindings)?;
+            let start_val = start
+                .as_ref()
+                .and_then(|e| eval_expr_with_functions(e, event, ctx, functions, bindings))
+                .and_then(|v| v.as_int())
+                .unwrap_or(0) as usize;
+
+            match container_val {
+                Value::Array(arr) => {
+                    let end_val = end
+                        .as_ref()
+                        .and_then(|e| eval_expr_with_functions(e, event, ctx, functions, bindings))
+                        .and_then(|v| v.as_int())
+                        .unwrap_or(arr.len() as i64) as usize;
+                    let end_val = end_val.min(arr.len());
+                    if start_val <= end_val {
+                        Some(Value::Array(arr[start_val..end_val].to_vec()))
+                    } else {
+                        Some(Value::Array(vec![]))
+                    }
+                }
+                Value::Str(s) => {
+                    let chars: Vec<char> = s.chars().collect();
+                    let end_val = end
+                        .as_ref()
+                        .and_then(|e| eval_expr_with_functions(e, event, ctx, functions, bindings))
+                        .and_then(|v| v.as_int())
+                        .unwrap_or(chars.len() as i64) as usize;
+                    let end_val = end_val.min(chars.len());
+                    if start_val <= end_val {
+                        Some(Value::Str(chars[start_val..end_val].iter().collect()))
+                    } else {
+                        Some(Value::Str(String::new()))
+                    }
+                }
+                _ => None,
+            }
+        }
+
+        // Range: 0..10 or 0..=10
+        Expr::Range {
+            start,
+            end,
+            inclusive,
+        } => {
+            let start_val = eval_expr_with_functions(start, event, ctx, functions, bindings)
+                .and_then(|v| v.as_int())?;
+            let end_val = eval_expr_with_functions(end, event, ctx, functions, bindings)
+                .and_then(|v| v.as_int())?;
+
+            let range: Vec<Value> = if *inclusive {
+                (start_val..=end_val).map(Value::Int).collect()
+            } else {
+                (start_val..end_val).map(Value::Int).collect()
+            };
+            Some(Value::Array(range))
+        }
+
+        // Null coalescing: expr ?? default
+        Expr::Coalesce { expr: e, default } => {
+            let val = eval_expr_with_functions(e, event, ctx, functions, bindings);
+            match val {
+                Some(Value::Null) | None => {
+                    eval_expr_with_functions(default, event, ctx, functions, bindings)
+                }
+                v => v,
+            }
+        }
+
         Expr::Member {
             expr: object,
             member,
@@ -306,33 +695,14 @@ pub fn eval_expr_with_functions(
                     })
                     .collect();
 
-                // Check user-defined functions first
+                // Check user-defined functions first - use full statement evaluation
                 if let Some(user_fn) = functions.get(func_name) {
-                    // Bind parameters to argument values
-                    let mut fn_bindings = HashMap::new();
-                    for (i, (param_name, _)) in user_fn.params.iter().enumerate() {
-                        if let Some(val) = arg_values.get(i) {
-                            fn_bindings.insert(param_name.clone(), val.clone());
-                        }
-                    }
-
-                    // Evaluate function body (last expression in body)
-                    if let Some(last_stmt) = user_fn.body.last() {
-                        if let Stmt::Expr(body_expr) = &last_stmt.node {
-                            return eval_expr_with_functions(
-                                body_expr,
-                                event,
-                                ctx,
-                                functions,
-                                &fn_bindings,
-                            );
-                        }
-                    }
-                    return None;
+                    return call_user_function(user_fn, &arg_values, event, ctx, functions);
                 }
 
-                // Built-in functions (same as eval_filter_expr)
+                // Built-in functions
                 match func_name.as_str() {
+                    // Math functions
                     "abs" => arg_values.first().and_then(|v| match v {
                         Value::Int(n) => Some(Value::Int(n.abs())),
                         Value::Float(f) => Some(Value::Float(f.abs())),
@@ -341,6 +711,62 @@ pub fn eval_expr_with_functions(
                     "sqrt" => arg_values.first().and_then(|v| match v {
                         Value::Int(n) => Some(Value::Float((*n as f64).sqrt())),
                         Value::Float(f) => Some(Value::Float(f.sqrt())),
+                        _ => None,
+                    }),
+                    "floor" => arg_values.first().and_then(|v| match v {
+                        Value::Float(f) => Some(Value::Int(f.floor() as i64)),
+                        Value::Int(n) => Some(Value::Int(*n)),
+                        _ => None,
+                    }),
+                    "ceil" => arg_values.first().and_then(|v| match v {
+                        Value::Float(f) => Some(Value::Int(f.ceil() as i64)),
+                        Value::Int(n) => Some(Value::Int(*n)),
+                        _ => None,
+                    }),
+                    "round" => arg_values.first().and_then(|v| match v {
+                        Value::Float(f) => Some(Value::Int(f.round() as i64)),
+                        Value::Int(n) => Some(Value::Int(*n)),
+                        _ => None,
+                    }),
+                    "pow" if arg_values.len() == 2 => match (&arg_values[0], &arg_values[1]) {
+                        (Value::Int(a), Value::Int(b)) => {
+                            Some(Value::Int((*a as f64).powi(*b as i32) as i64))
+                        }
+                        (Value::Float(a), Value::Int(b)) => Some(Value::Float(a.powi(*b as i32))),
+                        (Value::Float(a), Value::Float(b)) => Some(Value::Float(a.powf(*b))),
+                        (Value::Int(a), Value::Float(b)) => {
+                            Some(Value::Float((*a as f64).powf(*b)))
+                        }
+                        _ => None,
+                    },
+                    "log" => arg_values.first().and_then(|v| match v {
+                        Value::Int(n) => Some(Value::Float((*n as f64).ln())),
+                        Value::Float(f) => Some(Value::Float(f.ln())),
+                        _ => None,
+                    }),
+                    "log10" => arg_values.first().and_then(|v| match v {
+                        Value::Int(n) => Some(Value::Float((*n as f64).log10())),
+                        Value::Float(f) => Some(Value::Float(f.log10())),
+                        _ => None,
+                    }),
+                    "exp" => arg_values.first().and_then(|v| match v {
+                        Value::Int(n) => Some(Value::Float((*n as f64).exp())),
+                        Value::Float(f) => Some(Value::Float(f.exp())),
+                        _ => None,
+                    }),
+                    "sin" => arg_values.first().and_then(|v| match v {
+                        Value::Int(n) => Some(Value::Float((*n as f64).sin())),
+                        Value::Float(f) => Some(Value::Float(f.sin())),
+                        _ => None,
+                    }),
+                    "cos" => arg_values.first().and_then(|v| match v {
+                        Value::Int(n) => Some(Value::Float((*n as f64).cos())),
+                        Value::Float(f) => Some(Value::Float(f.cos())),
+                        _ => None,
+                    }),
+                    "tan" => arg_values.first().and_then(|v| match v {
+                        Value::Int(n) => Some(Value::Float((*n as f64).tan())),
+                        Value::Float(f) => Some(Value::Float(f.tan())),
                         _ => None,
                     }),
                     "min" if arg_values.len() == 2 => match (&arg_values[0], &arg_values[1]) {
@@ -357,6 +783,277 @@ pub fn eval_expr_with_functions(
                         (Value::Float(a), Value::Int(b)) => Some(Value::Float(a.max(*b as f64))),
                         _ => None,
                     },
+
+                    // Array/Collection functions
+                    "len" => arg_values.first().and_then(|v| match v {
+                        Value::Str(s) => Some(Value::Int(s.len() as i64)),
+                        Value::Array(a) => Some(Value::Int(a.len() as i64)),
+                        Value::Map(m) => Some(Value::Int(m.len() as i64)),
+                        _ => None,
+                    }),
+                    "first" => arg_values.first().and_then(|v| match v {
+                        Value::Array(a) => a.first().cloned(),
+                        _ => None,
+                    }),
+                    "last" => arg_values.first().and_then(|v| match v {
+                        Value::Array(a) => a.last().cloned(),
+                        _ => None,
+                    }),
+                    "push" if arg_values.len() == 2 => {
+                        if let Value::Array(mut arr) = arg_values[0].clone() {
+                            arr.push(arg_values[1].clone());
+                            Some(Value::Array(arr))
+                        } else {
+                            None
+                        }
+                    }
+                    "pop" => arg_values.first().and_then(|v| match v {
+                        Value::Array(arr) => {
+                            let mut arr = arr.clone();
+                            arr.pop().map(|_| Value::Array(arr))
+                        }
+                        _ => None,
+                    }),
+                    "reverse" => arg_values.first().and_then(|v| match v {
+                        Value::Array(arr) => {
+                            let mut arr = arr.clone();
+                            arr.reverse();
+                            Some(Value::Array(arr))
+                        }
+                        Value::Str(s) => Some(Value::Str(s.chars().rev().collect())),
+                        _ => None,
+                    }),
+                    "sort" => arg_values.first().and_then(|v| match v {
+                        Value::Array(arr) => {
+                            let mut arr = arr.clone();
+                            arr.sort_by(|a, b| match (a, b) {
+                                (Value::Int(x), Value::Int(y)) => x.cmp(y),
+                                (Value::Float(x), Value::Float(y)) => {
+                                    x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal)
+                                }
+                                (Value::Str(x), Value::Str(y)) => x.cmp(y),
+                                _ => std::cmp::Ordering::Equal,
+                            });
+                            Some(Value::Array(arr))
+                        }
+                        _ => None,
+                    }),
+                    "contains" if arg_values.len() == 2 => match (&arg_values[0], &arg_values[1]) {
+                        (Value::Array(arr), val) => Some(Value::Bool(arr.contains(val))),
+                        (Value::Str(s), Value::Str(sub)) => {
+                            Some(Value::Bool(s.contains(sub.as_str())))
+                        }
+                        (Value::Map(m), Value::Str(key)) => Some(Value::Bool(m.contains_key(key))),
+                        _ => None,
+                    },
+                    "keys" => arg_values.first().and_then(|v| match v {
+                        Value::Map(m) => Some(Value::Array(
+                            m.keys().map(|k| Value::Str(k.clone())).collect(),
+                        )),
+                        _ => None,
+                    }),
+                    "values" => arg_values.first().and_then(|v| match v {
+                        Value::Map(m) => Some(Value::Array(m.values().cloned().collect())),
+                        _ => None,
+                    }),
+                    "get" if arg_values.len() == 2 => match (&arg_values[0], &arg_values[1]) {
+                        (Value::Array(arr), Value::Int(idx)) => arr.get(*idx as usize).cloned(),
+                        (Value::Map(m), Value::Str(key)) => m.get(key).cloned(),
+                        _ => None,
+                    },
+                    "set" if arg_values.len() == 3 => {
+                        match (&arg_values[0], &arg_values[1], &arg_values[2]) {
+                            (Value::Array(arr), Value::Int(idx), val) => {
+                                let mut arr = arr.clone();
+                                let idx = *idx as usize;
+                                if idx < arr.len() {
+                                    arr[idx] = val.clone();
+                                }
+                                Some(Value::Array(arr))
+                            }
+                            (Value::Map(m), Value::Str(key), val) => {
+                                let mut m = m.clone();
+                                m.insert(key.clone(), val.clone());
+                                Some(Value::Map(m))
+                            }
+                            _ => None,
+                        }
+                    }
+                    "range" if !arg_values.is_empty() => {
+                        let (start, end) = if arg_values.len() >= 2 {
+                            match (&arg_values[0], &arg_values[1]) {
+                                (Value::Int(s), Value::Int(e)) => (*s, *e),
+                                _ => return None,
+                            }
+                        } else if let Value::Int(n) = &arg_values[0] {
+                            (0, *n)
+                        } else {
+                            return None;
+                        };
+                        Some(Value::Array((start..end).map(Value::Int).collect()))
+                    }
+                    "sum" => arg_values.first().and_then(|v| match v {
+                        Value::Array(arr) => {
+                            let sum: f64 = arr
+                                .iter()
+                                .filter_map(|v| match v {
+                                    Value::Int(n) => Some(*n as f64),
+                                    Value::Float(f) => Some(*f),
+                                    _ => None,
+                                })
+                                .sum();
+                            Some(Value::Float(sum))
+                        }
+                        _ => None,
+                    }),
+                    "avg" => arg_values.first().and_then(|v| match v {
+                        Value::Array(arr) => {
+                            let nums: Vec<f64> = arr
+                                .iter()
+                                .filter_map(|v| match v {
+                                    Value::Int(n) => Some(*n as f64),
+                                    Value::Float(f) => Some(*f),
+                                    _ => None,
+                                })
+                                .collect();
+                            if nums.is_empty() {
+                                Some(Value::Float(0.0))
+                            } else {
+                                Some(Value::Float(nums.iter().sum::<f64>() / nums.len() as f64))
+                            }
+                        }
+                        _ => None,
+                    }),
+
+                    // String functions
+                    "to_string" => arg_values.first().map(|v| Value::Str(format!("{}", v))),
+                    "to_int" => arg_values.first().and_then(|v| match v {
+                        Value::Int(n) => Some(Value::Int(*n)),
+                        Value::Float(f) => Some(Value::Int(*f as i64)),
+                        Value::Str(s) => s.parse::<i64>().ok().map(Value::Int),
+                        Value::Bool(b) => Some(Value::Int(if *b { 1 } else { 0 })),
+                        _ => None,
+                    }),
+                    "to_float" => arg_values.first().and_then(|v| match v {
+                        Value::Int(n) => Some(Value::Float(*n as f64)),
+                        Value::Float(f) => Some(Value::Float(*f)),
+                        Value::Str(s) => s.parse::<f64>().ok().map(Value::Float),
+                        _ => None,
+                    }),
+                    "trim" => arg_values.first().and_then(|v| match v {
+                        Value::Str(s) => Some(Value::Str(s.trim().to_string())),
+                        _ => None,
+                    }),
+                    "lower" | "lowercase" => arg_values.first().and_then(|v| match v {
+                        Value::Str(s) => Some(Value::Str(s.to_lowercase())),
+                        _ => None,
+                    }),
+                    "upper" | "uppercase" => arg_values.first().and_then(|v| match v {
+                        Value::Str(s) => Some(Value::Str(s.to_uppercase())),
+                        _ => None,
+                    }),
+                    "split" if arg_values.len() == 2 => match (&arg_values[0], &arg_values[1]) {
+                        (Value::Str(s), Value::Str(sep)) => Some(Value::Array(
+                            s.split(sep.as_str())
+                                .map(|p| Value::Str(p.to_string()))
+                                .collect(),
+                        )),
+                        _ => None,
+                    },
+                    "join" if arg_values.len() == 2 => match (&arg_values[0], &arg_values[1]) {
+                        (Value::Array(arr), Value::Str(sep)) => {
+                            let strs: Vec<String> = arr.iter().map(|v| format!("{}", v)).collect();
+                            Some(Value::Str(strs.join(sep)))
+                        }
+                        _ => None,
+                    },
+                    "replace" if arg_values.len() == 3 => {
+                        match (&arg_values[0], &arg_values[1], &arg_values[2]) {
+                            (Value::Str(s), Value::Str(from), Value::Str(to)) => {
+                                Some(Value::Str(s.replace(from.as_str(), to.as_str())))
+                            }
+                            _ => None,
+                        }
+                    }
+                    "starts_with" if arg_values.len() == 2 => {
+                        match (&arg_values[0], &arg_values[1]) {
+                            (Value::Str(s), Value::Str(prefix)) => {
+                                Some(Value::Bool(s.starts_with(prefix.as_str())))
+                            }
+                            _ => None,
+                        }
+                    }
+                    "ends_with" if arg_values.len() == 2 => {
+                        match (&arg_values[0], &arg_values[1]) {
+                            (Value::Str(s), Value::Str(suffix)) => {
+                                Some(Value::Bool(s.ends_with(suffix.as_str())))
+                            }
+                            _ => None,
+                        }
+                    }
+                    "substring" if arg_values.len() >= 2 => match &arg_values[0] {
+                        Value::Str(s) => {
+                            let start = match &arg_values[1] {
+                                Value::Int(n) => *n as usize,
+                                _ => return None,
+                            };
+                            let end = if arg_values.len() >= 3 {
+                                match &arg_values[2] {
+                                    Value::Int(n) => *n as usize,
+                                    _ => return None,
+                                }
+                            } else {
+                                s.len()
+                            };
+                            let chars: Vec<char> = s.chars().collect();
+                            if start <= end && end <= chars.len() {
+                                Some(Value::Str(chars[start..end].iter().collect()))
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    },
+
+                    // Type checking
+                    "type_of" => arg_values.first().map(|v| {
+                        Value::Str(
+                            match v {
+                                Value::Int(_) => "int",
+                                Value::Float(_) => "float",
+                                Value::Str(_) => "string",
+                                Value::Bool(_) => "bool",
+                                Value::Array(_) => "array",
+                                Value::Map(_) => "map",
+                                Value::Null => "null",
+                                Value::Duration(_) => "duration",
+                                Value::Timestamp(_) => "timestamp",
+                            }
+                            .to_string(),
+                        )
+                    }),
+                    "is_null" => arg_values
+                        .first()
+                        .map(|v| Value::Bool(matches!(v, Value::Null))),
+                    "is_int" => arg_values
+                        .first()
+                        .map(|v| Value::Bool(matches!(v, Value::Int(_)))),
+                    "is_float" => arg_values
+                        .first()
+                        .map(|v| Value::Bool(matches!(v, Value::Float(_)))),
+                    "is_string" => arg_values
+                        .first()
+                        .map(|v| Value::Bool(matches!(v, Value::Str(_)))),
+                    "is_bool" => arg_values
+                        .first()
+                        .map(|v| Value::Bool(matches!(v, Value::Bool(_)))),
+                    "is_array" => arg_values
+                        .first()
+                        .map(|v| Value::Bool(matches!(v, Value::Array(_)))),
+                    "is_map" => arg_values
+                        .first()
+                        .map(|v| Value::Bool(matches!(v, Value::Map(_)))),
+
                     _ => None,
                 }
             } else {
@@ -426,6 +1123,40 @@ pub fn eval_expr_with_functions(
                     (Value::Float(a), Value::Float(b)) => Some(Value::Bool(a >= b)),
                     _ => None,
                 },
+                BinOp::Mod => match (&left_val, &right_val) {
+                    (Value::Int(a), Value::Int(b)) if *b != 0 => Some(Value::Int(a % b)),
+                    (Value::Float(a), Value::Float(b)) if *b != 0.0 => Some(Value::Float(a % b)),
+                    (Value::Int(a), Value::Float(b)) if *b != 0.0 => {
+                        Some(Value::Float(*a as f64 % b))
+                    }
+                    (Value::Float(a), Value::Int(b)) if *b != 0 => {
+                        Some(Value::Float(a % *b as f64))
+                    }
+                    _ => None,
+                },
+                BinOp::Pow => match (&left_val, &right_val) {
+                    (Value::Int(a), Value::Int(b)) => {
+                        Some(Value::Int((*a as f64).powi(*b as i32) as i64))
+                    }
+                    (Value::Float(a), Value::Int(b)) => Some(Value::Float(a.powi(*b as i32))),
+                    (Value::Float(a), Value::Float(b)) => Some(Value::Float(a.powf(*b))),
+                    (Value::Int(a), Value::Float(b)) => Some(Value::Float((*a as f64).powf(*b))),
+                    _ => None,
+                },
+                BinOp::In => match (&left_val, &right_val) {
+                    (val, Value::Array(arr)) => Some(Value::Bool(arr.contains(val))),
+                    (Value::Str(key), Value::Map(m)) => Some(Value::Bool(m.contains_key(key))),
+                    (Value::Str(sub), Value::Str(s)) => Some(Value::Bool(s.contains(sub.as_str()))),
+                    _ => None,
+                },
+                BinOp::NotIn => match (&left_val, &right_val) {
+                    (val, Value::Array(arr)) => Some(Value::Bool(!arr.contains(val))),
+                    (Value::Str(key), Value::Map(m)) => Some(Value::Bool(!m.contains_key(key))),
+                    (Value::Str(sub), Value::Str(s)) => {
+                        Some(Value::Bool(!s.contains(sub.as_str())))
+                    }
+                    _ => None,
+                },
                 BinOp::And => {
                     let a = left_val.as_bool()?;
                     let b = right_val.as_bool()?;
@@ -436,9 +1167,32 @@ pub fn eval_expr_with_functions(
                     let b = right_val.as_bool()?;
                     Some(Value::Bool(a || b))
                 }
+                BinOp::Xor => {
+                    let a = left_val.as_bool()?;
+                    let b = right_val.as_bool()?;
+                    Some(Value::Bool(a ^ b))
+                }
                 _ => None,
             }
         }
+
+        // Unary operations
+        Expr::Unary { op, expr: inner } => {
+            let val = eval_expr_with_functions(inner, event, ctx, functions, bindings)?;
+            match op {
+                varpulis_core::ast::UnaryOp::Neg => match val {
+                    Value::Int(n) => Some(Value::Int(-n)),
+                    Value::Float(f) => Some(Value::Float(-f)),
+                    _ => None,
+                },
+                varpulis_core::ast::UnaryOp::Not => match val {
+                    Value::Bool(b) => Some(Value::Bool(!b)),
+                    _ => None,
+                },
+                _ => None,
+            }
+        }
+
         Expr::If {
             cond,
             then_branch,
