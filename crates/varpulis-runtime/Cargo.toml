@@ -21,11 +21,23 @@ async-trait = "0.1"
 rayon = "1.10"
 hnsw_rs = "0.3"
 reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
+
+# Optional connectors
 rumqttc = { version = "0.24", optional = true }
+rdkafka = { version = "0.36", features = ["cmake-build"], optional = true }
+sqlx = { version = "0.7", features = ["runtime-tokio", "postgres", "mysql", "sqlite"], optional = true }
+redis = { version = "0.25", features = ["tokio-comp", "connection-manager"], optional = true }
 
 [features]
 default = []
 mqtt = ["rumqttc"]
+kafka = ["rdkafka"]
+postgres = ["sqlx"]
+mysql = ["sqlx"]
+sqlite = ["sqlx"]
+database = ["sqlx"]
+redis = ["dep:redis"]
+all-connectors = ["mqtt", "kafka", "database", "redis"]
 
 [dev-dependencies]
 tempfile = "3"
@@ -38,3 +50,8 @@ harness = false
 [[bench]]
 name = "attention_benchmark"
 harness = false
+
+[[bench]]
+name = "imperative_benchmark"
+harness = false
+
