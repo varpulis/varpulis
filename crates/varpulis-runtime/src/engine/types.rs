@@ -56,6 +56,31 @@ pub struct EngineMetrics {
     pub streams_count: usize,
 }
 
+/// Report from a hot reload operation
+#[derive(Debug, Clone, Default)]
+pub struct ReloadReport {
+    /// Streams that were added
+    pub streams_added: Vec<String>,
+    /// Streams that were removed
+    pub streams_removed: Vec<String>,
+    /// Streams that were updated (definition changed)
+    pub streams_updated: Vec<String>,
+    /// Streams whose state was preserved (windows, aggregators)
+    pub state_preserved: Vec<String>,
+    /// Streams whose state had to be reset
+    pub state_reset: Vec<String>,
+    /// Non-fatal warnings during reload
+    pub warnings: Vec<String>,
+}
+
+impl ReloadReport {
+    pub fn is_empty(&self) -> bool {
+        self.streams_added.is_empty()
+            && self.streams_removed.is_empty()
+            && self.streams_updated.is_empty()
+    }
+}
+
 // =============================================================================
 // Internal Types (crate-visible)
 // =============================================================================
