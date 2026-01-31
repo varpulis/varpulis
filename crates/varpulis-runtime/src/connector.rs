@@ -806,6 +806,1042 @@ mod mqtt_impl {
 pub use mqtt_impl::{MqttSink, MqttSource};
 
 // =============================================================================
+// Kafka Connector (full implementation with rdkafka feature)
+// =============================================================================
+
+#[cfg(feature = "kafka")]
+mod kafka_impl {
+    use super::*;
+    use rdkafka::config::ClientConfig;
+    use rdkafka::consumer::{Consumer, StreamConsumer};
+    use rdkafka::producer::{FutureProducer, FutureRecord};
+    use rdkafka::Message;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    /// Kafka source connector with rdkafka
+    pub struct KafkaSourceImpl {
+        name: String,
+        config: KafkaConfig,
+        running: Arc<AtomicBool>,
+    }
+
+    impl KafkaSourceImpl {
+        pub fn new(name: &str, config: KafkaConfig) -> Self {
+            Self {
+                name: name.to_string(),
+                config,
+                running: Arc::new(AtomicBool::new(false)),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl SourceConnector for KafkaSourceImpl {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        async fn start(&mut self, tx: mpsc::Sender<Event>) -> Result<(), ConnectorError> {
+            let group_id = self
+                .config
+                .group_id
+                .clone()
+                .unwrap_or_else(|| format!("varpulis-{}", uuid::Uuid::new_v4()));
+
+            let consumer: StreamConsumer = ClientConfig::new()
+                .set("bootstrap.servers", &self.config.brokers)
+                .set("group.id", &group_id)
+                .set("enable.auto.commit", "true")
+                .set("auto.offset.reset", "latest")
+                .create()
+                .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
+
+            consumer
+                .subscribe(&[&self.config.topic])
+                .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
+
+            self.running.store(true, Ordering::SeqCst);
+            let running = self.running.clone();
+            let name = self.name.clone();
+
+            tokio::spawn(async move {
+                info!("Kafka source {} started, consuming from topic", name);
+
+                use futures::StreamExt;
+                let mut stream = consumer.stream();
+
+                while running.load(Ordering::SeqCst) {
+                    match tokio::time::timeout(Duration::from_millis(100), stream.next()).await {
+                        Ok(Some(Ok(msg))) => {
+                            if let Some(payload) = msg.payload() {
+                                match serde_json::from_slice::<serde_json::Value>(payload) {
+                                    Ok(json) => {
+                                        let event_type = json
+                                            .get("event_type")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("KafkaEvent")
+                                            .to_string();
+
+                                        let mut event = Event::new(&event_type);
+
+                                        if let Some(obj) = json.as_object() {
+                                            for (key, value) in obj {
+                                                if key != "event_type" {
+                                                    if let Some(v) =
+                                                        crate::connector::json_to_value(value)
+                                                    {
+                                                        event = event.with_field(key, v);
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        if tx.send(event).await.is_err() {
+                                            warn!("Kafka source {}: channel closed", name);
+                                            break;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        warn!("Kafka source {}: failed to parse JSON: {}", name, e);
+                                    }
+                                }
+                            }
+                        }
+                        Ok(Some(Err(e))) => {
+                            error!("Kafka source {} error: {}", name, e);
+                        }
+                        Ok(None) => break,
+                        Err(_) => {} // Timeout, continue
+                    }
+                }
+
+                info!("Kafka source {} stopped", name);
+            });
+
+            Ok(())
+        }
+
+        async fn stop(&mut self) -> Result<(), ConnectorError> {
+            self.running.store(false, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn is_running(&self) -> bool {
+            self.running.load(Ordering::SeqCst)
+        }
+    }
+
+    /// Kafka sink connector with rdkafka
+    pub struct KafkaSinkImpl {
+        name: String,
+        config: KafkaConfig,
+        producer: FutureProducer,
+    }
+
+    impl KafkaSinkImpl {
+        pub fn new(name: &str, config: KafkaConfig) -> Result<Self, ConnectorError> {
+            let producer: FutureProducer = ClientConfig::new()
+                .set("bootstrap.servers", &config.brokers)
+                .set("message.timeout.ms", "5000")
+                .create()
+                .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
+
+            Ok(Self {
+                name: name.to_string(),
+                config,
+                producer,
+            })
+        }
+    }
+
+    #[async_trait]
+    impl SinkConnector for KafkaSinkImpl {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        async fn send(&self, event: &Event) -> Result<(), ConnectorError> {
+            let payload = serde_json::to_string(event)
+                .map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
+
+            let record = FutureRecord::to(&self.config.topic)
+                .payload(&payload)
+                .key(&event.event_type);
+
+            self.producer
+                .send(record, Duration::from_secs(5))
+                .await
+                .map_err(|(e, _)| ConnectorError::SendFailed(e.to_string()))?;
+
+            Ok(())
+        }
+
+        async fn flush(&self) -> Result<(), ConnectorError> {
+            self.producer
+                .flush(Duration::from_secs(5))
+                .map_err(|e| ConnectorError::SendFailed(format!("Flush failed: {}", e)))
+        }
+
+        async fn close(&self) -> Result<(), ConnectorError> {
+            self.flush().await
+        }
+    }
+}
+
+#[cfg(feature = "kafka")]
+pub use kafka_impl::{KafkaSinkImpl as KafkaSinkFull, KafkaSourceImpl as KafkaSourceFull};
+
+// =============================================================================
+// REST API Client (for calling external APIs)
+// =============================================================================
+
+/// REST API client configuration
+#[derive(Debug, Clone)]
+pub struct RestApiConfig {
+    pub base_url: String,
+    pub headers: IndexMap<String, String>,
+    pub timeout_ms: u64,
+    pub retry_count: u32,
+}
+
+impl RestApiConfig {
+    pub fn new(base_url: &str) -> Self {
+        Self {
+            base_url: base_url.to_string(),
+            headers: IndexMap::new(),
+            timeout_ms: 5000,
+            retry_count: 3,
+        }
+    }
+
+    pub fn with_header(mut self, key: &str, value: &str) -> Self {
+        self.headers.insert(key.to_string(), value.to_string());
+        self
+    }
+
+    pub fn with_bearer_token(mut self, token: &str) -> Self {
+        self.headers
+            .insert("Authorization".to_string(), format!("Bearer {}", token));
+        self
+    }
+
+    pub fn with_api_key(mut self, key: &str, value: &str) -> Self {
+        self.headers.insert(key.to_string(), value.to_string());
+        self
+    }
+
+    pub fn with_timeout(mut self, timeout_ms: u64) -> Self {
+        self.timeout_ms = timeout_ms;
+        self
+    }
+}
+
+/// REST API client for calling external APIs
+pub struct RestApiClient {
+    #[allow(dead_code)]
+    name: String,
+    config: RestApiConfig,
+    client: reqwest::Client,
+}
+
+impl RestApiClient {
+    pub fn new(name: &str, config: RestApiConfig) -> Result<Self, ConnectorError> {
+        let mut headers = reqwest::header::HeaderMap::new();
+        for (key, value) in &config.headers {
+            headers.insert(
+                reqwest::header::HeaderName::from_bytes(key.as_bytes())
+                    .map_err(|e| ConnectorError::ConfigError(e.to_string()))?,
+                reqwest::header::HeaderValue::from_str(value)
+                    .map_err(|e| ConnectorError::ConfigError(e.to_string()))?,
+            );
+        }
+
+        let client = reqwest::Client::builder()
+            .default_headers(headers)
+            .timeout(std::time::Duration::from_millis(config.timeout_ms))
+            .build()
+            .map_err(|e| ConnectorError::ConfigError(e.to_string()))?;
+
+        Ok(Self {
+            name: name.to_string(),
+            config,
+            client,
+        })
+    }
+
+    /// GET request returning JSON as Event
+    pub async fn get(&self, path: &str) -> Result<Event, ConnectorError> {
+        let url = format!("{}{}", self.config.base_url, path);
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| ConnectorError::ReceiveFailed(e.to_string()))?;
+
+        if !response.status().is_success() {
+            return Err(ConnectorError::ReceiveFailed(format!(
+                "HTTP {}: {}",
+                response.status(),
+                url
+            )));
+        }
+
+        let json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| ConnectorError::ReceiveFailed(e.to_string()))?;
+
+        Ok(json_to_event("ApiResponse", &json))
+    }
+
+    /// POST request with Event data
+    pub async fn post(&self, path: &str, event: &Event) -> Result<Event, ConnectorError> {
+        let url = format!("{}{}", self.config.base_url, path);
+        let response = self
+            .client
+            .post(&url)
+            .json(event)
+            .send()
+            .await
+            .map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
+
+        if !response.status().is_success() {
+            return Err(ConnectorError::SendFailed(format!(
+                "HTTP {}: {}",
+                response.status(),
+                url
+            )));
+        }
+
+        let json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| ConnectorError::ReceiveFailed(e.to_string()))?;
+
+        Ok(json_to_event("ApiResponse", &json))
+    }
+
+    /// PUT request with Event data
+    pub async fn put(&self, path: &str, event: &Event) -> Result<Event, ConnectorError> {
+        let url = format!("{}{}", self.config.base_url, path);
+        let response = self
+            .client
+            .put(&url)
+            .json(event)
+            .send()
+            .await
+            .map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
+
+        if !response.status().is_success() {
+            return Err(ConnectorError::SendFailed(format!(
+                "HTTP {}: {}",
+                response.status(),
+                url
+            )));
+        }
+
+        let json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| ConnectorError::ReceiveFailed(e.to_string()))?;
+
+        Ok(json_to_event("ApiResponse", &json))
+    }
+
+    /// DELETE request
+    pub async fn delete(&self, path: &str) -> Result<(), ConnectorError> {
+        let url = format!("{}{}", self.config.base_url, path);
+        let response = self
+            .client
+            .delete(&url)
+            .send()
+            .await
+            .map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
+
+        if !response.status().is_success() {
+            return Err(ConnectorError::SendFailed(format!(
+                "HTTP {}: {}",
+                response.status(),
+                url
+            )));
+        }
+
+        Ok(())
+    }
+}
+
+/// REST API sink that POSTs events to an endpoint
+pub struct RestApiSink {
+    name: String,
+    client: RestApiClient,
+    path: String,
+}
+
+impl RestApiSink {
+    pub fn new(name: &str, config: RestApiConfig, path: &str) -> Result<Self, ConnectorError> {
+        Ok(Self {
+            name: name.to_string(),
+            client: RestApiClient::new(name, config)?,
+            path: path.to_string(),
+        })
+    }
+}
+
+#[async_trait]
+impl SinkConnector for RestApiSink {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    async fn send(&self, event: &Event) -> Result<(), ConnectorError> {
+        self.client.post(&self.path, event).await?;
+        Ok(())
+    }
+
+    async fn flush(&self) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+
+    async fn close(&self) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+}
+
+// =============================================================================
+// Database Connector (PostgreSQL/MySQL/SQLite with sqlx)
+// =============================================================================
+
+/// Database configuration
+#[derive(Debug, Clone)]
+pub struct DatabaseConfig {
+    pub connection_string: String,
+    pub table: String,
+    pub max_connections: u32,
+}
+
+impl DatabaseConfig {
+    pub fn new(connection_string: &str, table: &str) -> Self {
+        Self {
+            connection_string: connection_string.to_string(),
+            table: table.to_string(),
+            max_connections: 5,
+        }
+    }
+
+    pub fn with_max_connections(mut self, max: u32) -> Self {
+        self.max_connections = max;
+        self
+    }
+}
+
+#[cfg(feature = "database")]
+mod database_impl {
+    use super::*;
+    use sqlx::any::{AnyPool, AnyPoolOptions};
+    use sqlx::Row;
+
+    /// Database source that polls for new events
+    pub struct DatabaseSource {
+        name: String,
+        config: DatabaseConfig,
+        pool: Option<AnyPool>,
+        running: bool,
+        last_id: i64,
+    }
+
+    impl DatabaseSource {
+        pub fn new(name: &str, config: DatabaseConfig) -> Self {
+            Self {
+                name: name.to_string(),
+                config,
+                pool: None,
+                running: false,
+                last_id: 0,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl SourceConnector for DatabaseSource {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        async fn start(&mut self, tx: mpsc::Sender<Event>) -> Result<(), ConnectorError> {
+            let pool = AnyPoolOptions::new()
+                .max_connections(self.config.max_connections)
+                .connect(&self.config.connection_string)
+                .await
+                .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
+
+            self.pool = Some(pool.clone());
+            self.running = true;
+
+            let table = self.config.table.clone();
+            let name = self.name.clone();
+            let mut last_id = self.last_id;
+
+            tokio::spawn(async move {
+                info!("Database source {} started, polling table {}", name, table);
+
+                while let Ok(_) = tx.reserve().await {
+                    let query = format!(
+                        "SELECT * FROM {} WHERE id > {} ORDER BY id LIMIT 100",
+                        table, last_id
+                    );
+
+                    match sqlx::query(&query).fetch_all(&pool).await {
+                        Ok(rows) => {
+                            for row in rows {
+                                let id: i64 = row.try_get("id").unwrap_or(0);
+                                last_id = last_id.max(id);
+
+                                let event_type: String = row
+                                    .try_get("event_type")
+                                    .unwrap_or_else(|_| "DatabaseEvent".to_string());
+
+                                let mut event = Event::new(&event_type);
+
+                                // Try to get common columns
+                                if let Ok(data) = row.try_get::<String, _>("data") {
+                                    if let Ok(json) =
+                                        serde_json::from_str::<serde_json::Value>(&data)
+                                    {
+                                        if let Some(obj) = json.as_object() {
+                                            for (key, value) in obj {
+                                                if let Some(v) = json_to_value(value) {
+                                                    event = event.with_field(key, v);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if tx.send(event).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!("Database source {} query error: {}", name, e);
+                        }
+                    }
+
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+
+                info!("Database source {} stopped", name);
+            });
+
+            Ok(())
+        }
+
+        async fn stop(&mut self) -> Result<(), ConnectorError> {
+            self.running = false;
+            if let Some(pool) = self.pool.take() {
+                pool.close().await;
+            }
+            Ok(())
+        }
+
+        fn is_running(&self) -> bool {
+            self.running
+        }
+    }
+
+    /// Database sink that inserts events
+    pub struct DatabaseSink {
+        name: String,
+        config: DatabaseConfig,
+        pool: AnyPool,
+    }
+
+    impl DatabaseSink {
+        pub async fn new(name: &str, config: DatabaseConfig) -> Result<Self, ConnectorError> {
+            let pool = AnyPoolOptions::new()
+                .max_connections(config.max_connections)
+                .connect(&config.connection_string)
+                .await
+                .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
+
+            Ok(Self {
+                name: name.to_string(),
+                config,
+                pool,
+            })
+        }
+    }
+
+    #[async_trait]
+    impl SinkConnector for DatabaseSink {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        async fn send(&self, event: &Event) -> Result<(), ConnectorError> {
+            let data = serde_json::to_string(event)
+                .map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
+
+            let query = format!(
+                "INSERT INTO {} (event_type, data, timestamp) VALUES ($1, $2, $3)",
+                self.config.table
+            );
+
+            sqlx::query(&query)
+                .bind(&event.event_type)
+                .bind(&data)
+                .bind(event.timestamp)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
+
+            Ok(())
+        }
+
+        async fn flush(&self) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+
+        async fn close(&self) -> Result<(), ConnectorError> {
+            self.pool.close().await;
+            Ok(())
+        }
+    }
+}
+
+#[cfg(feature = "database")]
+pub use database_impl::{DatabaseSink, DatabaseSource};
+
+#[cfg(not(feature = "database"))]
+pub struct DatabaseSource {
+    name: String,
+    #[allow(dead_code)]
+    config: DatabaseConfig,
+}
+
+#[cfg(not(feature = "database"))]
+impl DatabaseSource {
+    pub fn new(name: &str, config: DatabaseConfig) -> Self {
+        Self {
+            name: name.to_string(),
+            config,
+        }
+    }
+}
+
+#[cfg(not(feature = "database"))]
+#[async_trait]
+impl SourceConnector for DatabaseSource {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    async fn start(&mut self, _tx: mpsc::Sender<Event>) -> Result<(), ConnectorError> {
+        Err(ConnectorError::NotAvailable(
+            "Database connector requires 'database' feature".to_string(),
+        ))
+    }
+
+    async fn stop(&mut self) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+
+    fn is_running(&self) -> bool {
+        false
+    }
+}
+
+#[cfg(not(feature = "database"))]
+pub struct DatabaseSink {
+    name: String,
+    #[allow(dead_code)]
+    config: DatabaseConfig,
+}
+
+#[cfg(not(feature = "database"))]
+impl DatabaseSink {
+    pub fn new(name: &str, config: DatabaseConfig) -> Self {
+        Self {
+            name: name.to_string(),
+            config,
+        }
+    }
+}
+
+#[cfg(not(feature = "database"))]
+#[async_trait]
+impl SinkConnector for DatabaseSink {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    async fn send(&self, _event: &Event) -> Result<(), ConnectorError> {
+        Err(ConnectorError::NotAvailable(
+            "Database connector requires 'database' feature".to_string(),
+        ))
+    }
+
+    async fn flush(&self) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+
+    async fn close(&self) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+}
+
+// =============================================================================
+// Redis Connector
+// =============================================================================
+
+/// Redis configuration
+#[derive(Debug, Clone)]
+pub struct RedisConfig {
+    pub url: String,
+    pub channel: String,
+    pub key_prefix: Option<String>,
+}
+
+impl RedisConfig {
+    pub fn new(url: &str, channel: &str) -> Self {
+        Self {
+            url: url.to_string(),
+            channel: channel.to_string(),
+            key_prefix: None,
+        }
+    }
+
+    pub fn with_key_prefix(mut self, prefix: &str) -> Self {
+        self.key_prefix = Some(prefix.to_string());
+        self
+    }
+}
+
+#[cfg(feature = "redis")]
+mod redis_impl {
+    use super::*;
+    use redis::aio::ConnectionManager;
+    use redis::AsyncCommands;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    /// Redis source that subscribes to a channel
+    pub struct RedisSource {
+        name: String,
+        config: RedisConfig,
+        running: Arc<AtomicBool>,
+    }
+
+    impl RedisSource {
+        pub fn new(name: &str, config: RedisConfig) -> Self {
+            Self {
+                name: name.to_string(),
+                config,
+                running: Arc::new(AtomicBool::new(false)),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl SourceConnector for RedisSource {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        async fn start(&mut self, tx: mpsc::Sender<Event>) -> Result<(), ConnectorError> {
+            let client = redis::Client::open(self.config.url.as_str())
+                .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
+
+            let mut pubsub = client
+                .get_async_pubsub()
+                .await
+                .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
+
+            pubsub
+                .subscribe(&self.config.channel)
+                .await
+                .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
+
+            self.running.store(true, Ordering::SeqCst);
+            let running = self.running.clone();
+            let name = self.name.clone();
+
+            tokio::spawn(async move {
+                info!("Redis source {} started, subscribed to channel", name);
+
+                use futures::StreamExt;
+                let mut stream = pubsub.on_message();
+
+                while running.load(Ordering::SeqCst) {
+                    match tokio::time::timeout(std::time::Duration::from_millis(100), stream.next())
+                        .await
+                    {
+                        Ok(Some(msg)) => {
+                            let payload: String = match msg.get_payload() {
+                                Ok(p) => p,
+                                Err(e) => {
+                                    warn!("Redis source {}: failed to get payload: {}", name, e);
+                                    continue;
+                                }
+                            };
+
+                            match serde_json::from_str::<serde_json::Value>(&payload) {
+                                Ok(json) => {
+                                    let event_type = json
+                                        .get("event_type")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("RedisEvent")
+                                        .to_string();
+
+                                    let event = json_to_event(&event_type, &json);
+
+                                    if tx.send(event).await.is_err() {
+                                        break;
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!("Redis source {}: failed to parse JSON: {}", name, e);
+                                }
+                            }
+                        }
+                        Ok(None) => break,
+                        Err(_) => {} // Timeout
+                    }
+                }
+
+                info!("Redis source {} stopped", name);
+            });
+
+            Ok(())
+        }
+
+        async fn stop(&mut self) -> Result<(), ConnectorError> {
+            self.running.store(false, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn is_running(&self) -> bool {
+            self.running.load(Ordering::SeqCst)
+        }
+    }
+
+    /// Redis sink that publishes to a channel or sets keys
+    pub struct RedisSink {
+        name: String,
+        config: RedisConfig,
+        conn: ConnectionManager,
+    }
+
+    impl RedisSink {
+        pub async fn new(name: &str, config: RedisConfig) -> Result<Self, ConnectorError> {
+            let client = redis::Client::open(config.url.as_str())
+                .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
+
+            let conn = ConnectionManager::new(client)
+                .await
+                .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
+
+            Ok(Self {
+                name: name.to_string(),
+                config,
+                conn,
+            })
+        }
+
+        /// Set a key-value pair
+        pub async fn set(&mut self, key: &str, value: &str) -> Result<(), ConnectorError> {
+            let full_key = match &self.config.key_prefix {
+                Some(prefix) => format!("{}:{}", prefix, key),
+                None => key.to_string(),
+            };
+
+            self.conn
+                .set::<_, _, ()>(&full_key, value)
+                .await
+                .map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
+
+            Ok(())
+        }
+
+        /// Get a value by key
+        pub async fn get(&mut self, key: &str) -> Result<Option<String>, ConnectorError> {
+            let full_key = match &self.config.key_prefix {
+                Some(prefix) => format!("{}:{}", prefix, key),
+                None => key.to_string(),
+            };
+
+            let value: Option<String> = self
+                .conn
+                .get(&full_key)
+                .await
+                .map_err(|e| ConnectorError::ReceiveFailed(e.to_string()))?;
+
+            Ok(value)
+        }
+    }
+
+    #[async_trait]
+    impl SinkConnector for RedisSink {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        async fn send(&self, event: &Event) -> Result<(), ConnectorError> {
+            let payload = serde_json::to_string(event)
+                .map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
+
+            let mut conn = self.conn.clone();
+            conn.publish::<_, _, ()>(&self.config.channel, &payload)
+                .await
+                .map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
+
+            Ok(())
+        }
+
+        async fn flush(&self) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+
+        async fn close(&self) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+    }
+}
+
+#[cfg(feature = "redis")]
+pub use redis_impl::{RedisSink, RedisSource};
+
+#[cfg(not(feature = "redis"))]
+pub struct RedisSource {
+    name: String,
+    #[allow(dead_code)]
+    config: RedisConfig,
+}
+
+#[cfg(not(feature = "redis"))]
+impl RedisSource {
+    pub fn new(name: &str, config: RedisConfig) -> Self {
+        Self {
+            name: name.to_string(),
+            config,
+        }
+    }
+}
+
+#[cfg(not(feature = "redis"))]
+#[async_trait]
+impl SourceConnector for RedisSource {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    async fn start(&mut self, _tx: mpsc::Sender<Event>) -> Result<(), ConnectorError> {
+        Err(ConnectorError::NotAvailable(
+            "Redis connector requires 'redis' feature".to_string(),
+        ))
+    }
+
+    async fn stop(&mut self) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+
+    fn is_running(&self) -> bool {
+        false
+    }
+}
+
+#[cfg(not(feature = "redis"))]
+pub struct RedisSink {
+    name: String,
+    #[allow(dead_code)]
+    config: RedisConfig,
+}
+
+#[cfg(not(feature = "redis"))]
+impl RedisSink {
+    pub fn new(name: &str, config: RedisConfig) -> Self {
+        Self {
+            name: name.to_string(),
+            config,
+        }
+    }
+}
+
+#[cfg(not(feature = "redis"))]
+#[async_trait]
+impl SinkConnector for RedisSink {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    async fn send(&self, _event: &Event) -> Result<(), ConnectorError> {
+        Err(ConnectorError::NotAvailable(
+            "Redis connector requires 'redis' feature".to_string(),
+        ))
+    }
+
+    async fn flush(&self) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+
+    async fn close(&self) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+}
+
+// =============================================================================
+// Helper Functions
+// =============================================================================
+
+/// Convert JSON value to Event
+fn json_to_event(event_type: &str, json: &serde_json::Value) -> Event {
+    let mut event = Event::new(event_type);
+
+    if let Some(obj) = json.as_object() {
+        for (key, value) in obj {
+            if key != "event_type" {
+                if let Some(v) = json_to_value(value) {
+                    event = event.with_field(key, v);
+                }
+            }
+        }
+    }
+
+    event
+}
+
+/// Convert serde_json::Value to varpulis Value
+fn json_to_value(json: &serde_json::Value) -> Option<varpulis_core::Value> {
+    use varpulis_core::Value;
+
+    match json {
+        serde_json::Value::Null => Some(Value::Null),
+        serde_json::Value::Bool(b) => Some(Value::Bool(*b)),
+        serde_json::Value::Number(n) => n
+            .as_i64()
+            .map(Value::Int)
+            .or_else(|| n.as_f64().map(Value::Float)),
+        serde_json::Value::String(s) => Some(Value::Str(s.clone())),
+        serde_json::Value::Array(arr) => {
+            let values: Vec<Value> = arr.iter().filter_map(json_to_value).collect();
+            Some(Value::Array(values))
+        }
+        serde_json::Value::Object(obj) => {
+            let mut map = indexmap::IndexMap::new();
+            for (key, value) in obj {
+                if let Some(v) = json_to_value(value) {
+                    map.insert(key.clone(), v);
+                }
+            }
+            Some(Value::Map(map))
+        }
+    }
+}
+
+// =============================================================================
 // Connector Registry
 // =============================================================================
 
@@ -858,6 +1894,28 @@ impl ConnectorRegistry {
                 Ok(Box::new(MqttSink::new(
                     "mqtt",
                     MqttConfig::new(&config.url, &topic),
+                )))
+            }
+            "rest" | "api" => {
+                let path = config
+                    .topic
+                    .clone()
+                    .unwrap_or_else(|| "/events".to_string());
+                let api_config = RestApiConfig::new(&config.url);
+                Ok(Box::new(RestApiSink::new("rest", api_config, &path)?))
+            }
+            "redis" => {
+                let channel = config.topic.clone().unwrap_or_else(|| "events".to_string());
+                Ok(Box::new(RedisSink::new(
+                    "redis",
+                    RedisConfig::new(&config.url, &channel),
+                )))
+            }
+            "database" | "postgres" | "mysql" | "sqlite" => {
+                let table = config.topic.clone().unwrap_or_else(|| "events".to_string());
+                Ok(Box::new(DatabaseSink::new(
+                    "database",
+                    DatabaseConfig::new(&config.url, &table),
                 )))
             }
             _ => Err(ConnectorError::ConfigError(format!(
