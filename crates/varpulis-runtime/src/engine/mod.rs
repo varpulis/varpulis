@@ -1192,6 +1192,81 @@ impl Engine {
         Ok(())
     }
 
+    /// Process a batch of events for improved throughput.
+    /// More efficient than calling process() repeatedly because:
+    /// - Pre-allocates SharedEvents in bulk
+    /// - Collects alerts and sends in batches
+    /// - Amortizes async overhead
+    pub async fn process_batch(&mut self, events: Vec<Event>) -> Result<(), String> {
+        if events.is_empty() {
+            return Ok(());
+        }
+
+        let batch_size = events.len();
+        self.events_processed += batch_size as u64;
+
+        // Pre-allocate pending events with capacity for batch + some derived events
+        let mut pending_events: Vec<(SharedEvent, usize)> =
+            Vec::with_capacity(batch_size + batch_size / 4);
+
+        // Convert all events to SharedEvents upfront
+        for event in events {
+            pending_events.push((Arc::new(event), 0));
+        }
+
+        const MAX_CHAIN_DEPTH: usize = 10;
+
+        // Collect alerts to send in batch
+        let mut alerts_batch: Vec<Alert> = Vec::with_capacity(batch_size / 10);
+
+        // Process all events
+        while let Some((current_event, depth)) = pending_events.pop() {
+            if depth >= MAX_CHAIN_DEPTH {
+                debug!(
+                    "Max chain depth reached for event type: {}",
+                    current_event.event_type
+                );
+                continue;
+            }
+
+            // Get stream names (Arc clone is O(1))
+            let stream_names: Arc<[String]> = self
+                .event_sources
+                .get(&current_event.event_type)
+                .cloned()
+                .unwrap_or_else(|| Arc::from([]));
+
+            for stream_name in stream_names.iter() {
+                if let Some(stream) = self.streams.get_mut(stream_name) {
+                    let result = Self::process_stream_with_functions(
+                        stream,
+                        Arc::clone(&current_event),
+                        &self.functions,
+                    )
+                    .await?;
+
+                    // Collect alerts for batch sending
+                    self.alerts_generated += result.alerts.len() as u64;
+                    alerts_batch.extend(result.alerts);
+
+                    // Queue output events
+                    for output_event in result.output_events {
+                        pending_events.push((output_event, depth + 1));
+                    }
+                }
+            }
+        }
+
+        // Send all alerts in batch
+        for alert in alerts_batch {
+            if let Err(e) = self.alert_tx.send(alert).await {
+                warn!("Failed to send alert: {}", e);
+            }
+        }
+
+        Ok(())
+    }
+
     async fn process_stream_with_functions(
         stream: &mut StreamDefinition,
         event: SharedEvent,

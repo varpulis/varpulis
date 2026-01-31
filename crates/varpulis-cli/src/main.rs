@@ -533,13 +533,19 @@ async fn run_simulation(
 
     // Process events
     if immediate {
-        // Immediate mode - no timing
-        for (i, timed_event) in events.iter().enumerate() {
+        // Immediate mode - use batch processing for better throughput
+        const BATCH_SIZE: usize = 100;
+        let total_events = events.len();
+
+        for (batch_idx, chunk) in events.chunks(BATCH_SIZE).enumerate() {
             if verbose {
-                println!("  [{:3}] {} {{ ... }}", i + 1, timed_event.event.event_type);
+                let start_idx = batch_idx * BATCH_SIZE + 1;
+                let end_idx = (start_idx + chunk.len() - 1).min(total_events);
+                println!("  [batch {}-{}] processing {} events", start_idx, end_idx, chunk.len());
             }
+            let batch: Vec<_> = chunk.iter().map(|te| te.event.clone()).collect();
             engine
-                .process(timed_event.event.clone())
+                .process_batch(batch)
                 .await
                 .map_err(|e| anyhow::anyhow!("Process error: {}", e))?;
         }
