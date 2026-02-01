@@ -5,7 +5,8 @@
 
 use crate::event::Event;
 use chrono::{DateTime, Duration, Utc};
-use std::collections::HashMap;
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
 use tracing::{debug, trace};
 
 /// Type alias for timestamped events stored by key value
@@ -26,6 +27,13 @@ pub struct JoinBuffer {
     window_duration: Duration,
     /// Maximum events to keep per source/key (prevents unbounded growth)
     max_events_per_key: usize,
+    /// Expiry queue for O(log n) garbage collection
+    /// Contains (expiry_time, source, key) tuples ordered by expiry_time
+    expiry_queue: BinaryHeap<Reverse<(DateTime<Utc>, String, String)>>,
+    /// Last GC time to avoid running on every event
+    last_gc: Option<DateTime<Utc>>,
+    /// Minimum interval between GC runs (default: 100ms of window duration)
+    gc_interval: Duration,
 }
 
 impl JoinBuffer {
@@ -45,12 +53,19 @@ impl JoinBuffer {
             buffers.insert(source.clone(), HashMap::new());
         }
 
+        // GC interval is 10% of window duration, minimum 10ms, maximum 1 second
+        let gc_interval_ms = (window_duration.num_milliseconds() / 10).clamp(10, 1000);
+        let gc_interval = Duration::milliseconds(gc_interval_ms);
+
         Self {
             buffers,
             sources,
             join_keys,
             window_duration,
             max_events_per_key: 1000, // Default limit
+            expiry_queue: BinaryHeap::new(),
+            last_gc: None,
+            gc_interval,
         }
     }
 
@@ -106,7 +121,7 @@ impl JoinBuffer {
             key_value
         );
 
-        // Clean up expired events first
+        // Clean up expired events (uses expiry queue for O(log n) instead of O(n))
         self.cleanup_expired(event.timestamp);
 
         // Add event to the appropriate buffer
@@ -119,6 +134,14 @@ impl JoinBuffer {
             }
 
             key_events.push((event.timestamp, event.clone()));
+
+            // Add to expiry queue for efficient GC
+            let expiry_time = event.timestamp + self.window_duration;
+            self.expiry_queue.push(Reverse((
+                expiry_time,
+                source_name.to_string(),
+                key_value.clone(),
+            )));
         }
 
         // Try to correlate events
@@ -208,20 +231,44 @@ impl JoinBuffer {
     }
 
     /// Remove events that have expired (outside the window)
+    ///
+    /// Uses an expiry queue for O(log n) cleanup instead of O(n) iteration over all keys.
+    /// Only runs periodically based on gc_interval to avoid overhead on every event.
     fn cleanup_expired(&mut self, current_time: DateTime<Utc>) {
+        // Check if enough time has passed since last GC
+        if let Some(last_gc) = self.last_gc {
+            if current_time - last_gc < self.gc_interval {
+                return;
+            }
+        }
+        self.last_gc = Some(current_time);
+
         let cutoff = current_time - self.window_duration;
 
-        for source_buffer in self.buffers.values_mut() {
-            for key_events in source_buffer.values_mut() {
-                // Use binary search to find the cutoff point for efficiency
-                let cutoff_idx = key_events.partition_point(|(ts, _)| *ts < cutoff);
-                if cutoff_idx > 0 {
-                    key_events.drain(..cutoff_idx);
-                }
+        // Process only expired entries from the queue - O(k log n) where k is expired entries
+        while let Some(Reverse((expiry_time, _, _))) = self.expiry_queue.peek() {
+            if *expiry_time > current_time {
+                // No more expired entries
+                break;
             }
 
-            // Remove empty key entries
-            source_buffer.retain(|_, events| !events.is_empty());
+            // Pop the expired entry
+            let Reverse((_, source, key)) = self.expiry_queue.pop().unwrap();
+
+            // Clean up the specific key in the specific source buffer
+            if let Some(source_buffer) = self.buffers.get_mut(&source) {
+                if let Some(key_events) = source_buffer.get_mut(&key) {
+                    // Use binary search to find expired events
+                    let cutoff_idx = key_events.partition_point(|(ts, _)| *ts < cutoff);
+                    if cutoff_idx > 0 {
+                        key_events.drain(..cutoff_idx);
+                    }
+                    // Remove the key entry if empty
+                    if key_events.is_empty() {
+                        source_buffer.remove(&key);
+                    }
+                }
+            }
         }
     }
 

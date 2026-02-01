@@ -114,15 +114,18 @@ fn product_with_optional_rec(
         table.get_or_create(n.var, new_lo, new_hi)
     } else if n.var == var {
         // Node already decides on this variable
-        // Each path can now have var or not have var
-        // LO paths: keep as is (without var) OR add var
-        // HI paths: already have var, keep as is OR... (they already have var)
+        // n.lo = sets that don't contain var
+        // n.hi = sets that contain var
         //
-        // Actually: union of (lo, hi) for new_lo (without var),
-        // and union of (lo, hi) for new_hi (with var)
-        // This means: every combination can either have var or not
-        let union_lo_hi = union_refs(n.lo, n.hi, table);
-        table.get_or_create(var, union_lo_hi, union_lo_hi)
+        // After product_with_optional(var):
+        // - Sets without var can stay without var → n.lo
+        // - Sets without var can add var → go to HI
+        // - Sets with var keep var → stay in HI
+        //
+        // new_lo = n.lo (sets that chose not to add var)
+        // new_hi = union(n.lo, n.hi) (sets with var: originally had it OR added it)
+        let new_hi = union_refs(n.lo, n.hi, table);
+        table.get_or_create(var, n.lo, new_hi)
     } else {
         // n.var > var: we need to insert var above this node
         // Every existing combination can now have var or not
@@ -443,6 +446,24 @@ mod tests {
 
         assert_eq!(result.count(), 1);
         assert!(result.contains(&[1]));
+    }
+
+    #[test]
+    fn test_product_with_optional_same_variable() {
+        // singleton(0).product_with_optional(0) should return {{0}}
+        // NOT {{}, {0}} - the empty set should NOT be added
+        //
+        // Semantics: {{0}} × {∅, {0}} = {{0} ∪ ∅, {0} ∪ {0}} = {{0}, {0}} = {{0}}
+        let singleton = Zdd::singleton(0);
+        let result = singleton.product_with_optional(0);
+
+        assert_eq!(
+            result.count(),
+            1,
+            "Should only contain {{{{0}}}}, not {{{{}}}} and {{{{0}}}}"
+        );
+        assert!(result.contains(&[0]));
+        assert!(!result.contains(&[]), "Empty set should NOT be in result");
     }
 
     #[test]

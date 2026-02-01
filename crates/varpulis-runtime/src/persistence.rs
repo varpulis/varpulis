@@ -594,7 +594,7 @@ mod tests {
             .insert("count".to_string(), varpulis_core::Value::Int(42));
         event
             .data
-            .insert("value".to_string(), varpulis_core::Value::Float(3.14));
+            .insert("value".to_string(), varpulis_core::Value::Float(1.5));
         event.data.insert(
             "name".to_string(),
             varpulis_core::Value::Str("test".to_string()),
@@ -605,7 +605,7 @@ mod tests {
 
         assert_eq!(restored.event_type, "TestEvent");
         assert_eq!(restored.get_int("count"), Some(42));
-        assert_eq!(restored.get_float("value"), Some(3.14));
+        assert_eq!(restored.get_float("value"), Some(1.5));
         assert_eq!(restored.get_str("name"), Some("test"));
     }
 }

@@ -6,7 +6,6 @@
 use crate::aggregation::{
     AggBinOp, Avg, Count, CountDistinct, Ema, ExprAggregate, First, Last, Max, Min, StdDev, Sum,
 };
-use crate::pattern::{PatternBuilder, PatternExpr};
 use crate::sase::{CompareOp, Predicate, SasePattern};
 use std::time::Duration;
 use tracing::warn;
@@ -104,78 +103,6 @@ pub fn compile_agg_expr(
             warn!("Unsupported aggregate expression: {:?}", expr);
             None
         }
-    }
-}
-
-/// Convert an AST expression to a PatternExpr for the pattern engine
-pub fn expr_to_pattern(expr: &varpulis_core::ast::Expr) -> Option<PatternExpr> {
-    use varpulis_core::ast::{BinOp, Expr, UnaryOp};
-
-    match expr {
-        // Identifier = event type
-        Expr::Ident(name) => Some(PatternBuilder::event(name)),
-
-        // Binary operators: ->, and, or, xor
-        Expr::Binary { op, left, right } => {
-            let left_pattern = expr_to_pattern(left)?;
-            let right_pattern = expr_to_pattern(right)?;
-
-            match op {
-                BinOp::FollowedBy => Some(PatternBuilder::followed_by(left_pattern, right_pattern)),
-                BinOp::And => Some(PatternBuilder::and(left_pattern, right_pattern)),
-                BinOp::Or => Some(PatternBuilder::or(left_pattern, right_pattern)),
-                BinOp::Xor => Some(PatternBuilder::xor(left_pattern, right_pattern)),
-                _ => None,
-            }
-        }
-
-        // Unary not
-        Expr::Unary {
-            op: UnaryOp::Not,
-            expr: inner,
-        } => {
-            let inner_pattern = expr_to_pattern(inner)?;
-            Some(PatternBuilder::not(inner_pattern))
-        }
-
-        // Call expression: could be all(A) or within(A, 30s) or event with filter
-        Expr::Call { func, args } => {
-            if let Expr::Ident(func_name) = func.as_ref() {
-                match func_name.as_str() {
-                    "all" => {
-                        if let Some(varpulis_core::ast::Arg::Positional(inner)) = args.first() {
-                            let inner_pattern = expr_to_pattern(inner)?;
-                            return Some(PatternBuilder::all(inner_pattern));
-                        }
-                    }
-                    "within" => {
-                        // within(pattern, duration)
-                        if args.len() >= 2 {
-                            if let (
-                                Some(varpulis_core::ast::Arg::Positional(inner)),
-                                Some(varpulis_core::ast::Arg::Positional(dur_expr)),
-                            ) = (args.first(), args.get(1))
-                            {
-                                let inner_pattern = expr_to_pattern(inner)?;
-                                if let Expr::Duration(ns) = dur_expr {
-                                    let duration = std::time::Duration::from_nanos(*ns);
-                                    return Some(PatternBuilder::within(inner_pattern, duration));
-                                }
-                            }
-                        }
-                    }
-                    _ => {
-                        // Treat as event type with filter
-                        // For now, just treat as simple event
-                        return Some(PatternBuilder::event(func_name));
-                    }
-                }
-            }
-            None
-        }
-
-        // Lambda expressions in patterns are complex - skip for now
-        _ => None,
     }
 }
 

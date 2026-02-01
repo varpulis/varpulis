@@ -29,7 +29,6 @@ use crate::attention::{AttentionConfig, AttentionWindow, EmbeddingConfig};
 use crate::event::{Event, SharedEvent};
 use crate::join::JoinBuffer;
 use crate::metrics::Metrics;
-use crate::pattern::PatternEngine;
 use crate::sase::SaseEngine;
 use crate::sequence::SequenceContext;
 use crate::window::{
@@ -505,9 +504,6 @@ impl Engine {
         // Extract attention window config from operations if present
         let attention_window = self.extract_attention_window(&runtime_ops);
 
-        // Extract pattern engine from operations if present
-        let pattern_engine = self.extract_pattern_engine(&runtime_ops);
-
         // Create JoinBuffer for Join sources
         let join_buffer = if let StreamSource::Join(clauses) = source {
             let join_sources: Vec<String> = clauses.iter().map(|c| c.source.clone()).collect();
@@ -534,7 +530,6 @@ impl Engine {
                 source: runtime_source,
                 operations: runtime_ops,
                 attention_window,
-                pattern_engine,
                 sase_engine,
                 join_buffer,
                 event_type_to_source,
@@ -986,22 +981,6 @@ impl Engine {
         None
     }
 
-    /// Extract and create PatternEngine from runtime operations
-    fn extract_pattern_engine(&self, ops: &[RuntimeOp]) -> Option<PatternEngine> {
-        for op in ops {
-            if let RuntimeOp::Pattern(config) = op {
-                // Try to convert the matcher expression to a PatternExpr
-                if let Some(pattern_expr) = compiler::expr_to_pattern(&config.matcher) {
-                    tracing::debug!("Created pattern engine for pattern: {}", config.name);
-                    let mut engine = PatternEngine::new();
-                    engine.track(pattern_expr);
-                    return Some(engine);
-                }
-            }
-        }
-        None
-    }
-
     /// Extract join keys from join clauses and operations
     /// Returns a map of source_name -> join_key_field
     fn extract_join_keys(
@@ -1404,23 +1383,6 @@ impl Engine {
                 "attention_matches".to_string(),
                 Value::Int(result.scores.len() as i64),
             );
-        }
-
-        // Process pattern engine if present
-        if let Some(ref mut pattern_engine) = stream.pattern_engine {
-            let matched_patterns = pattern_engine.process(&enriched_event);
-            if !matched_patterns.is_empty() {
-                // Pattern matched - add matched event types to the event data
-                enriched_event
-                    .data
-                    .insert("pattern_matched".to_string(), Value::Bool(true));
-                let total_events: usize =
-                    matched_patterns.iter().map(|ctx| ctx.captured.len()).sum();
-                enriched_event.data.insert(
-                    "pattern_events_count".to_string(),
-                    Value::Int(total_events as i64),
-                );
-            }
         }
 
         // Wrap enriched event in Arc for pipeline processing
