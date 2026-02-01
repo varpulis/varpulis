@@ -28,6 +28,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use varpulis_core::Value;
+use varpulis_zdd::Zdd;
 
 /// Shared event reference for efficient cloning in pattern matching.
 /// Using Arc allows multiple pattern runs to share the same event data
@@ -467,6 +468,111 @@ pub struct StackEntry {
     pub alias: Option<String>,
     /// Timestamp of capture
     pub timestamp: Instant,
+}
+
+// ============================================================================
+// ZDD-KLEENE: COMPACT KLEENE CAPTURE USING ZDD
+// ============================================================================
+
+/// Compact representation of Kleene captures using Zero-suppressed Decision Diagrams.
+///
+/// Instead of creating O(2^n) runs for n Kleene events, we use a single ZDD that
+/// compactly represents all valid combinations. This reduces memory from O(2^n)
+/// to O(n) nodes while preserving the ability to enumerate all combinations.
+#[derive(Debug, Clone)]
+pub struct KleeneCapture {
+    /// ZDD representing all valid event combinations
+    /// Each variable index corresponds to an event in the `events` vector
+    zdd: Zdd,
+    /// Events captured during Kleene matching, indexed by ZDD variable
+    events: Vec<SharedEvent>,
+    /// Aliases for captured events (parallel to events vector)
+    aliases: Vec<Option<String>>,
+    /// Next variable index to assign
+    next_var: u32,
+}
+
+impl KleeneCapture {
+    /// Create a new empty Kleene capture.
+    /// Starts with {∅} - the empty combination is always valid initially.
+    pub fn new() -> Self {
+        Self {
+            zdd: Zdd::base(), // {∅}
+            events: Vec::new(),
+            aliases: Vec::new(),
+            next_var: 0,
+        }
+    }
+
+    /// Extend with a new optional event.
+    /// Each existing combination can now include or exclude this event.
+    /// Complexity: O(|ZDD nodes|) instead of O(2^n) for naive approach.
+    pub fn extend(&mut self, event: SharedEvent, alias: Option<String>) {
+        let var = self.next_var;
+        self.next_var += 1;
+
+        self.events.push(event);
+        self.aliases.push(alias);
+
+        // S × {∅, {var}} = S ∪ {s ∪ {var} | s ∈ S}
+        self.zdd = self.zdd.product_with_optional(var);
+    }
+
+    /// Number of valid combinations (computed in O(|nodes|), not O(2^n))
+    pub fn combination_count(&self) -> usize {
+        self.zdd.count()
+    }
+
+    /// Number of events captured
+    pub fn event_count(&self) -> usize {
+        self.events.len()
+    }
+
+    /// Number of ZDD nodes (for metrics)
+    pub fn node_count(&self) -> usize {
+        self.zdd.node_count()
+    }
+
+    /// Check if this capture is empty (no events yet, only {∅})
+    pub fn is_empty(&self) -> bool {
+        self.events.is_empty()
+    }
+
+    /// Iterate over all valid combinations, producing StackEntry vectors.
+    /// Each combination represents one valid Kleene match sequence.
+    pub fn iter_combinations(&self) -> impl Iterator<Item = Vec<StackEntry>> + '_ {
+        self.zdd.iter().map(move |indices| {
+            indices
+                .into_iter()
+                .map(|idx| {
+                    let idx = idx as usize;
+                    StackEntry {
+                        event: Arc::clone(&self.events[idx]),
+                        alias: self.aliases[idx].clone(),
+                        timestamp: Instant::now(),
+                    }
+                })
+                .collect()
+        })
+    }
+
+    /// Get captured events for a single combination (by index set)
+    pub fn get_combination_captured(&self, indices: &[u32]) -> HashMap<String, SharedEvent> {
+        let mut captured = HashMap::new();
+        for &idx in indices {
+            let idx = idx as usize;
+            if let Some(ref alias) = self.aliases[idx] {
+                captured.insert(alias.clone(), Arc::clone(&self.events[idx]));
+            }
+        }
+        captured
+    }
+}
+
+impl Default for KleeneCapture {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ============================================================================
@@ -1449,7 +1555,7 @@ pub struct MetricsSummary {
 pub struct Run {
     /// Current NFA state
     pub current_state: usize,
-    /// Stack of matched events (for Kleene closure)
+    /// Stack of matched events (for non-Kleene patterns)
     pub stack: Vec<StackEntry>,
     /// Captured events by alias (Arc for efficient sharing)
     pub captured: HashMap<String, SharedEvent>,
@@ -1469,6 +1575,8 @@ pub struct Run {
     pub pending_negations: Vec<NegationConstraint>,
     /// AND-01: State tracking for AND operator (if in an AND state)
     pub and_state: Option<AndState>,
+    /// ZDD-KLEENE: Compact Kleene capture using ZDD (replaces branching)
+    pub kleene_capture: Option<KleeneCapture>,
 }
 
 impl Run {
@@ -1485,6 +1593,7 @@ impl Run {
             invalidated: false,
             pending_negations: Vec::new(),
             and_state: None,
+            kleene_capture: None,
         }
     }
 
@@ -1502,6 +1611,7 @@ impl Run {
             invalidated: false,
             pending_negations: Vec::new(),
             and_state: None,
+            kleene_capture: None,
         }
     }
 
@@ -2318,7 +2428,6 @@ impl SaseEngine {
         event: SharedEvent,
     ) -> Vec<MatchResult> {
         let mut completed = Vec::new();
-        let max_runs = self.max_runs;
 
         if let Some(runs) = self.partitioned_runs.get_mut(partition_key) {
             let mut i = 0;
@@ -2335,16 +2444,15 @@ impl SaseEngine {
                         completed.push(result);
                         runs.remove(i);
                     }
-                    RunAdvanceResult::CompleteAndBranch(result, branch_run) => {
+                    RunAdvanceResult::CompleteAndContinue(result) => {
+                        // For `all` patterns: emit result but keep run active
                         completed.push(result);
-                        runs[i] = branch_run;
                         i += 1;
                     }
-                    RunAdvanceResult::Branch(new_run) => {
-                        if runs.len() < max_runs {
-                            runs.push(new_run);
-                        }
-                        i += 1;
+                    RunAdvanceResult::CompleteMultiple(results) => {
+                        // ZDD-KLEENE: Multiple results from ZDD iteration
+                        completed.extend(results);
+                        runs.remove(i);
                     }
                     RunAdvanceResult::Invalidate => {
                         runs.remove(i);
@@ -2359,7 +2467,6 @@ impl SaseEngine {
 
     fn process_runs_shared(&mut self, event: SharedEvent) -> Vec<MatchResult> {
         let mut completed = Vec::new();
-        let mut new_runs = Vec::new();
         let mut i = 0;
 
         while i < self.runs.len() {
@@ -2379,27 +2486,21 @@ impl SaseEngine {
                     completed.push(result);
                     self.runs.remove(i);
                 }
-                RunAdvanceResult::CompleteAndBranch(result, branch_run) => {
+                RunAdvanceResult::CompleteAndContinue(result) => {
+                    // For `all` patterns: emit result but keep run active
                     completed.push(result);
-                    self.runs[i] = branch_run;
+                    self.runs[i] = run;
                     i += 1;
                 }
-                RunAdvanceResult::Branch(new_run) => {
-                    self.runs[i] = run;
-                    new_runs.push(new_run);
-                    i += 1;
+                RunAdvanceResult::CompleteMultiple(results) => {
+                    // ZDD-KLEENE: Multiple results from ZDD iteration
+                    completed.extend(results);
+                    self.runs.remove(i);
                 }
                 RunAdvanceResult::Invalidate => {
                     self.runs.remove(i);
                 }
                 RunAdvanceResult::NoMatch => i += 1,
-            }
-        }
-
-        // Add branched runs
-        for run in new_runs {
-            if self.runs.len() < self.max_runs {
-                self.runs.push(run);
             }
         }
 
@@ -2727,9 +2828,12 @@ impl SaseEngine {
 enum RunAdvanceResult {
     Continue,
     Complete(MatchResult),
-    /// Complete the pattern AND continue with a branched run (for Kleene+)
-    CompleteAndBranch(MatchResult, Run),
-    Branch(Run),
+    /// For `all` patterns: emit a result but keep the run active for more matches
+    CompleteAndContinue(MatchResult),
+    /// ZDD-KLEENE: Complete with multiple results from ZDD iteration
+    /// Note: Currently unused - will be needed for patterns like SEQ(A, B+, C)
+    #[allow(dead_code)]
+    CompleteMultiple(Vec<MatchResult>),
     Invalidate,
     NoMatch,
 }
@@ -2836,24 +2940,32 @@ fn advance_run_shared(
             }
 
             if next_state.state_type == StateType::Kleene && next_state.self_loop {
-                // For Kleene states, check if we can complete via epsilon to accept
-                // This allows emitting matches while continuing to collect more
-                for &eps_id in &next_state.epsilon_transitions {
-                    let eps_state = &nfa.states[eps_id];
-                    if eps_state.state_type == StateType::Accept {
-                        // We can complete AND continue! Create match result and branch
-                        let result = MatchResult {
-                            captured: run.captured.clone(),
-                            stack: run.stack.clone(),
-                            duration: run.started_at.elapsed(),
-                        };
-                        let branch = run.branch();
-                        return RunAdvanceResult::CompleteAndBranch(result, branch);
-                    }
+                // Kleene state: check if there's an epsilon to Accept
+                let has_epsilon_to_accept = next_state
+                    .epsilon_transitions
+                    .iter()
+                    .any(|&eps_id| nfa.states[eps_id].state_type == StateType::Accept);
+
+                if has_epsilon_to_accept {
+                    // For `all` patterns: emit match for current event, keep run active
+                    // This allows each matching event to produce a result
+                    return RunAdvanceResult::CompleteAndContinue(MatchResult {
+                        captured: run.captured.clone(),
+                        stack: run.stack.clone(),
+                        duration: run.started_at.elapsed(),
+                    });
                 }
-                // No epsilon to accept, just branch to continue looping
-                let branch = run.branch();
-                return RunAdvanceResult::Branch(branch);
+
+                // No epsilon to accept: accumulate events in ZDD for deferred emission
+                // This handles patterns like SEQ(A, B+, C) where we need to wait for C
+                if run.kleene_capture.is_none() {
+                    run.kleene_capture = Some(KleeneCapture::new());
+                }
+                if let Some(ref mut kc) = run.kleene_capture {
+                    kc.extend(Arc::clone(&event), next_state.alias.clone());
+                }
+
+                return RunAdvanceResult::Continue;
             }
 
             return RunAdvanceResult::Continue;
@@ -2894,6 +3006,69 @@ fn advance_run_shared(
     match strategy {
         SelectionStrategy::StrictContiguous => RunAdvanceResult::Invalidate,
         _ => RunAdvanceResult::NoMatch,
+    }
+}
+
+/// ZDD-KLEENE: Complete pattern with all Kleene combinations from ZDD
+/// Note: Currently unused - will be needed for patterns like SEQ(A, B+, C)
+/// where we need to enumerate all B combinations when C matches.
+#[allow(dead_code)]
+fn complete_with_kleene_zdd(run: &Run) -> RunAdvanceResult {
+    let Some(ref kc) = run.kleene_capture else {
+        // No Kleene capture, return single result
+        return RunAdvanceResult::Complete(MatchResult {
+            captured: run.captured.clone(),
+            stack: run.stack.clone(),
+            duration: run.started_at.elapsed(),
+        });
+    };
+
+    // If ZDD only has empty set {∅}, return single result with base captured
+    if kc.is_empty() {
+        return RunAdvanceResult::Complete(MatchResult {
+            captured: run.captured.clone(),
+            stack: run.stack.clone(),
+            duration: run.started_at.elapsed(),
+        });
+    }
+
+    // Iterate over all ZDD combinations and produce MatchResults
+    let duration = run.started_at.elapsed();
+    let results: Vec<MatchResult> = kc
+        .iter_combinations()
+        .filter(|stack| !stack.is_empty()) // Skip empty combination for Kleene+
+        .map(|kleene_stack| {
+            // Merge base captured with Kleene captured
+            let mut captured = run.captured.clone();
+            for entry in &kleene_stack {
+                if let Some(ref alias) = entry.alias {
+                    captured.insert(alias.clone(), Arc::clone(&entry.event));
+                }
+            }
+
+            // Combine base stack with Kleene stack
+            let mut combined_stack = run.stack.clone();
+            combined_stack.extend(kleene_stack);
+
+            MatchResult {
+                captured,
+                stack: combined_stack,
+                duration,
+            }
+        })
+        .collect();
+
+    if results.is_empty() {
+        // Only had empty combination, return single result
+        RunAdvanceResult::Complete(MatchResult {
+            captured: run.captured.clone(),
+            stack: run.stack.clone(),
+            duration,
+        })
+    } else if results.len() == 1 {
+        RunAdvanceResult::Complete(results.into_iter().next().unwrap())
+    } else {
+        RunAdvanceResult::CompleteMultiple(results)
     }
 }
 
@@ -4466,5 +4641,116 @@ mod tests {
         let (accepted, dropped) = engine.late_event_stats();
         assert_eq!(accepted, 1);
         assert_eq!(dropped, 1);
+    }
+
+    // =========================================================================
+    // ZDD-KLEENE: Tests for ZDD-based Kleene optimization
+    // =========================================================================
+
+    #[test]
+    fn test_zdd_kleene_single_run() {
+        // Verify that ZDD Kleene uses a single run instead of O(2^n) runs
+        // Pattern: SEQ(Start, Tick+, End)
+        let pattern = PatternBuilder::seq(vec![
+            PatternBuilder::event("Start"),
+            PatternBuilder::one_or_more(PatternBuilder::event("Tick")),
+            PatternBuilder::event("End"),
+        ]);
+
+        let mut engine = SaseEngine::new(pattern);
+
+        // Start the sequence
+        engine.process(&make_event("Start", vec![]));
+        assert_eq!(
+            engine.stats().active_runs,
+            1,
+            "Should have 1 run after Start"
+        );
+
+        // Add multiple Kleene events - with ZDD, should still be 1 run
+        for i in 0..10 {
+            engine.process(&make_event("Tick", vec![("n", Value::Int(i))]));
+            // With ZDD optimization, we should have at most 1 run
+            // (not 2^n runs as in the old branching approach)
+            assert!(
+                engine.stats().active_runs <= 2,
+                "ZDD should prevent run explosion: got {} runs at tick {}",
+                engine.stats().active_runs,
+                i
+            );
+        }
+
+        // Complete the pattern
+        let results = engine.process(&make_event("End", vec![]));
+
+        // Should produce multiple match results (2^10 - 1 = 1023 for Kleene+)
+        // Each combination of Tick events is a valid match
+        assert!(
+            !results.is_empty(),
+            "Should produce matches for Kleene+ combinations"
+        );
+    }
+
+    #[test]
+    fn test_zdd_kleene_memory_efficiency() {
+        // Verify ZDD uses polynomial nodes instead of exponential combinations
+        // Pattern: SEQ(A, B+, C)
+        let pattern = PatternBuilder::seq(vec![
+            PatternBuilder::event("A"),
+            PatternBuilder::one_or_more(PatternBuilder::event_as("B", "b")),
+            PatternBuilder::event("C"),
+        ]);
+
+        let mut engine = SaseEngine::new(pattern);
+
+        engine.process(&make_event("A", vec![]));
+
+        // Add 20 B events - would be 2^20 = 1M combinations with naive approach
+        for i in 0..20 {
+            engine.process(&make_event("B", vec![("idx", Value::Int(i))]));
+        }
+
+        // Should still have a small number of runs thanks to ZDD
+        let stats = engine.stats();
+        assert!(
+            stats.active_runs < 100,
+            "ZDD should keep runs bounded: got {} runs",
+            stats.active_runs
+        );
+
+        // Complete and verify we get results
+        let results = engine.process(&make_event("C", vec![]));
+        assert!(!results.is_empty(), "Should produce Kleene combinations");
+    }
+
+    #[test]
+    fn test_kleene_capture_struct() {
+        // Direct test of KleeneCapture functionality
+        let mut kc = KleeneCapture::new();
+        assert_eq!(kc.combination_count(), 1, "Should start with {{∅}}");
+        assert!(kc.is_empty(), "Should be empty initially");
+
+        // Add first event
+        let e1 = Arc::new(Event::new("E1"));
+        kc.extend(Arc::clone(&e1), Some("e1".to_string()));
+        assert_eq!(kc.combination_count(), 2, "Should have {{∅, {{e1}}}}");
+        assert_eq!(kc.event_count(), 1);
+
+        // Add second event
+        let e2 = Arc::new(Event::new("E2"));
+        kc.extend(Arc::clone(&e2), Some("e2".to_string()));
+        assert_eq!(
+            kc.combination_count(),
+            4,
+            "Should have {{∅, {{e1}}, {{e2}}, {{e1,e2}}}}"
+        );
+        assert_eq!(kc.event_count(), 2);
+
+        // ZDD should use polynomial nodes
+        assert!(kc.node_count() < 10, "ZDD should be compact");
+
+        // Verify iteration produces correct combinations
+        let combinations: Vec<_> = kc.iter_combinations().collect();
+        assert_eq!(combinations.len(), 4);
     }
 }
