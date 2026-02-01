@@ -1173,10 +1173,10 @@ impl Engine {
                     )
                     .await?;
 
-                    // Send alerts
+                    // Send alerts (non-blocking)
                     for alert in result.alerts {
                         self.alerts_generated += 1;
-                        if let Err(e) = self.alert_tx.send(alert).await {
+                        if let Err(e) = self.alert_tx.try_send(alert) {
                             warn!("Failed to send alert: {}", e);
                         }
                     }
@@ -1257,9 +1257,9 @@ impl Engine {
             }
         }
 
-        // Send all alerts in batch
+        // Send all alerts in batch (non-blocking to avoid async overhead)
         for alert in alerts_batch {
-            if let Err(e) = self.alert_tx.send(alert).await {
+            if let Err(e) = self.alert_tx.try_send(alert) {
                 warn!("Failed to send alert: {}", e);
             }
         }
@@ -1533,10 +1533,8 @@ impl Engine {
                     }
                 }
                 RuntimeOp::Aggregate(aggregator) => {
-                    // Dereference SharedEvents for aggregator
-                    let event_refs: Vec<Event> =
-                        current_events.iter().map(|e| (**e).clone()).collect();
-                    let result = aggregator.apply(&event_refs);
+                    // Use apply_shared to avoid cloning events
+                    let result = aggregator.apply_shared(&current_events);
                     // Create synthetic event from aggregation result
                     let mut agg_event = Event::new("AggregationResult");
                     for (key, value) in result {
@@ -1901,10 +1899,8 @@ impl Engine {
                     }
                 }
                 RuntimeOp::Aggregate(aggregator) => {
-                    // Dereference SharedEvents for aggregator
-                    let event_refs: Vec<Event> =
-                        current_events.iter().map(|e| (**e).clone()).collect();
-                    let result = aggregator.apply(&event_refs);
+                    // Use apply_shared to avoid cloning events
+                    let result = aggregator.apply_shared(&current_events);
                     let mut agg_event = Event::new("AggregationResult");
                     for (key, value) in result {
                         agg_event.data.insert(key, value);

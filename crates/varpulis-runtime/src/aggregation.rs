@@ -42,6 +42,10 @@ impl AggregateFunc for Count {
     fn apply(&self, events: &[Event], _field: Option<&str>) -> Value {
         Value::Int(events.len() as i64)
     }
+
+    fn apply_refs(&self, events: &[&Event], _field: Option<&str>) -> Value {
+        Value::Int(events.len() as i64)
+    }
 }
 
 /// Sum aggregation
@@ -53,6 +57,12 @@ impl AggregateFunc for Sum {
     }
 
     fn apply(&self, events: &[Event], field: Option<&str>) -> Value {
+        let field = field.unwrap_or("value");
+        let sum: f64 = events.iter().filter_map(|e| e.get_float(field)).sum();
+        Value::Float(sum)
+    }
+
+    fn apply_refs(&self, events: &[&Event], field: Option<&str>) -> Value {
         let field = field.unwrap_or("value");
         let sum: f64 = events.iter().filter_map(|e| e.get_float(field)).sum();
         Value::Float(sum)
@@ -71,6 +81,24 @@ impl AggregateFunc for Avg {
         let field = field.unwrap_or("value");
 
         // Single-pass: accumulate sum and count together
+        let (sum, count) =
+            events
+                .iter()
+                .fold((0.0, 0usize), |(sum, count), e| match e.get_float(field) {
+                    Some(v) => (sum + v, count + 1),
+                    None => (sum, count),
+                });
+
+        if count == 0 {
+            Value::Null
+        } else {
+            Value::Float(sum / count as f64)
+        }
+    }
+
+    fn apply_refs(&self, events: &[&Event], field: Option<&str>) -> Value {
+        let field = field.unwrap_or("value");
+
         let (sum, count) =
             events
                 .iter()
@@ -105,6 +133,17 @@ impl AggregateFunc for Min {
             .map(Value::Float)
             .unwrap_or(Value::Null)
     }
+
+    fn apply_refs(&self, events: &[&Event], field: Option<&str>) -> Value {
+        let field = field.unwrap_or("value");
+        events
+            .iter()
+            .filter_map(|e| e.get_float(field))
+            .filter(|x| !x.is_nan())
+            .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .map(Value::Float)
+            .unwrap_or(Value::Null)
+    }
 }
 
 /// Max aggregation
@@ -121,6 +160,17 @@ impl AggregateFunc for Max {
             .iter()
             .filter_map(|e| e.get_float(field))
             .filter(|x| !x.is_nan()) // Filter out NaN values
+            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+            .map(Value::Float)
+            .unwrap_or(Value::Null)
+    }
+
+    fn apply_refs(&self, events: &[&Event], field: Option<&str>) -> Value {
+        let field = field.unwrap_or("value");
+        events
+            .iter()
+            .filter_map(|e| e.get_float(field))
+            .filter(|x| !x.is_nan())
             .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
             .map(Value::Float)
             .unwrap_or(Value::Null)
@@ -162,6 +212,31 @@ impl AggregateFunc for StdDev {
         let variance = m2 / (count - 1) as f64;
         Value::Float(variance.sqrt())
     }
+
+    fn apply_refs(&self, events: &[&Event], field: Option<&str>) -> Value {
+        let field = field.unwrap_or("value");
+
+        let mut count = 0usize;
+        let mut mean = 0.0;
+        let mut m2 = 0.0;
+
+        for event in events {
+            if let Some(x) = event.get_float(field) {
+                count += 1;
+                let delta = x - mean;
+                mean += delta / count as f64;
+                let delta2 = x - mean;
+                m2 += delta * delta2;
+            }
+        }
+
+        if count < 2 {
+            return Value::Null;
+        }
+
+        let variance = m2 / (count - 1) as f64;
+        Value::Float(variance.sqrt())
+    }
 }
 
 /// First value aggregation
@@ -180,6 +255,15 @@ impl AggregateFunc for First {
             .cloned()
             .unwrap_or(Value::Null)
     }
+
+    fn apply_refs(&self, events: &[&Event], field: Option<&str>) -> Value {
+        let field = field.unwrap_or("value");
+        events
+            .first()
+            .and_then(|e| e.get(field))
+            .cloned()
+            .unwrap_or(Value::Null)
+    }
 }
 
 /// Last value aggregation
@@ -191,6 +275,15 @@ impl AggregateFunc for Last {
     }
 
     fn apply(&self, events: &[Event], field: Option<&str>) -> Value {
+        let field = field.unwrap_or("value");
+        events
+            .last()
+            .and_then(|e| e.get(field))
+            .cloned()
+            .unwrap_or(Value::Null)
+    }
+
+    fn apply_refs(&self, events: &[&Event], field: Option<&str>) -> Value {
         let field = field.unwrap_or("value");
         events
             .last()
@@ -217,6 +310,21 @@ impl AggregateFunc for CountDistinct {
             if let Some(value) = event.get(field) {
                 // Compute hash directly without cloning the value
                 // This avoids expensive deep clones for Array/Map values
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                value.hash(&mut hasher);
+                seen_hashes.insert(hasher.finish());
+            }
+        }
+
+        Value::Int(seen_hashes.len() as i64)
+    }
+
+    fn apply_refs(&self, events: &[&Event], field: Option<&str>) -> Value {
+        let field = field.unwrap_or("value");
+        let mut seen_hashes = std::collections::HashSet::new();
+
+        for event in events {
+            if let Some(value) = event.get(field) {
                 let mut hasher = std::collections::hash_map::DefaultHasher::new();
                 value.hash(&mut hasher);
                 seen_hashes.insert(hasher.finish());
@@ -345,6 +453,77 @@ impl AggregateFunc for ExprAggregate {
             _ => Value::Null,
         }
     }
+
+    fn apply_refs(&self, events: &[&Event], _field: Option<&str>) -> Value {
+        let left_val = self.left.apply_refs(events, self.left_field.as_deref());
+        let right_val = self.right.apply_refs(events, self.right_field.as_deref());
+
+        match (left_val, right_val) {
+            (Value::Float(l), Value::Float(r)) => {
+                let result = match self.op {
+                    AggBinOp::Add => l + r,
+                    AggBinOp::Sub => l - r,
+                    AggBinOp::Mul => l * r,
+                    AggBinOp::Div => {
+                        if r != 0.0 {
+                            l / r
+                        } else {
+                            f64::NAN
+                        }
+                    }
+                };
+                Value::Float(result)
+            }
+            (Value::Int(l), Value::Int(r)) => {
+                let result = match self.op {
+                    AggBinOp::Add => l + r,
+                    AggBinOp::Sub => l - r,
+                    AggBinOp::Mul => l * r,
+                    AggBinOp::Div => {
+                        if r != 0 {
+                            l / r
+                        } else {
+                            0
+                        }
+                    }
+                };
+                Value::Int(result)
+            }
+            (Value::Int(l), Value::Float(r)) => {
+                let l = l as f64;
+                let result = match self.op {
+                    AggBinOp::Add => l + r,
+                    AggBinOp::Sub => l - r,
+                    AggBinOp::Mul => l * r,
+                    AggBinOp::Div => {
+                        if r != 0.0 {
+                            l / r
+                        } else {
+                            f64::NAN
+                        }
+                    }
+                };
+                Value::Float(result)
+            }
+            (Value::Float(l), Value::Int(r)) => {
+                let r = r as f64;
+                let result = match self.op {
+                    AggBinOp::Add => l + r,
+                    AggBinOp::Sub => l - r,
+                    AggBinOp::Mul => l * r,
+                    AggBinOp::Div => {
+                        if r != 0.0 {
+                            l / r
+                        } else {
+                            f64::NAN
+                        }
+                    }
+                };
+                Value::Float(result)
+            }
+            _ => Value::Null,
+        }
+    }
 }
 
 impl Ema {
@@ -362,23 +541,37 @@ impl AggregateFunc for Ema {
 
     fn apply(&self, events: &[Event], field: Option<&str>) -> Value {
         let field = field.unwrap_or("value");
-        let values: Vec<f64> = events.iter().filter_map(|e| e.get_float(field)).collect();
-
-        if values.is_empty() {
-            return Value::Null;
-        }
-
         let k = 2.0 / (self.period as f64 + 1.0);
 
-        // Start with first value as initial EMA
-        let mut ema = values[0];
-
-        // Calculate EMA for each subsequent value
-        for value in values.iter().skip(1) {
-            ema = value * k + ema * (1.0 - k);
+        // Single-pass EMA calculation
+        let mut ema: Option<f64> = None;
+        for event in events {
+            if let Some(value) = event.get_float(field) {
+                ema = Some(match ema {
+                    Some(prev) => value * k + prev * (1.0 - k),
+                    None => value,
+                });
+            }
         }
 
-        Value::Float(ema)
+        ema.map(Value::Float).unwrap_or(Value::Null)
+    }
+
+    fn apply_refs(&self, events: &[&Event], field: Option<&str>) -> Value {
+        let field = field.unwrap_or("value");
+        let k = 2.0 / (self.period as f64 + 1.0);
+
+        let mut ema: Option<f64> = None;
+        for event in events {
+            if let Some(value) = event.get_float(field) {
+                ema = Some(match ema {
+                    Some(prev) => value * k + prev * (1.0 - k),
+                    None => value,
+                });
+            }
+        }
+
+        ema.map(Value::Float).unwrap_or(Value::Null)
     }
 }
 

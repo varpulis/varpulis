@@ -27,6 +27,7 @@ warp = { workspace = true }
 futures-util = { workspace = true }
 chrono = { workspace = true }
 indexmap = { workspace = true }
+rayon = "1.10"
 
 [dev-dependencies]
 tempfile = "3.10"
