@@ -11,9 +11,11 @@
 
 use crate::event::Event;
 use hnsw_rs::prelude::*;
+use lru::LruCache;
 use rayon::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
+use std::num::NonZeroUsize;
 #[allow(unused_imports)]
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -372,9 +374,10 @@ pub enum ProjectionType {
 // EMBEDDING CACHE
 // ============================================================================
 
+/// LRU cache for embeddings with TTL support.
+/// Uses `lru` crate for O(1) get/put operations instead of O(n) Vec operations.
 pub struct EmbeddingCache {
-    entries: HashMap<u64, CacheEntry>,
-    access_order: Vec<u64>,
+    cache: LruCache<u64, CacheEntry>,
     config: CacheConfig,
     hits: u64,
     misses: u64,
@@ -387,9 +390,10 @@ struct CacheEntry {
 
 impl EmbeddingCache {
     pub fn new(config: CacheConfig) -> Self {
+        // NonZeroUsize::new returns None for 0, so we use max(1, ...) to ensure valid capacity
+        let capacity = NonZeroUsize::new(config.max_size.max(1)).unwrap();
         Self {
-            entries: HashMap::with_capacity(config.max_size),
-            access_order: Vec::with_capacity(config.max_size),
+            cache: LruCache::new(capacity),
             config,
             hits: 0,
             misses: 0,
@@ -400,15 +404,15 @@ impl EmbeddingCache {
         if !self.config.enabled {
             return None;
         }
-        if let Some(entry) = self.entries.get(&event_hash) {
+        // LruCache::get automatically promotes to most recently used - O(1)
+        if let Some(entry) = self.cache.get(&event_hash) {
+            // Check TTL
             if entry.timestamp.elapsed() > self.config.ttl {
-                self.entries.remove(&event_hash);
-                self.access_order.retain(|&h| h != event_hash);
+                // Entry expired, remove it - O(1)
+                self.cache.pop(&event_hash);
                 self.misses += 1;
                 return None;
             }
-            self.access_order.retain(|&h| h != event_hash);
-            self.access_order.push(event_hash);
             self.hits += 1;
             Some(entry.embedding.clone())
         } else {
@@ -421,23 +425,19 @@ impl EmbeddingCache {
         if !self.config.enabled {
             return;
         }
-        while self.entries.len() >= self.config.max_size && !self.access_order.is_empty() {
-            let oldest = self.access_order.remove(0);
-            self.entries.remove(&oldest);
-        }
-        self.entries.insert(
+        // LruCache::put handles eviction automatically - O(1)
+        self.cache.put(
             event_hash,
             CacheEntry {
                 embedding,
                 timestamp: Instant::now(),
             },
         );
-        self.access_order.push(event_hash);
     }
 
     pub fn stats(&self) -> CacheStats {
         CacheStats {
-            size: self.entries.len(),
+            size: self.cache.len(),
             capacity: self.config.max_size,
             hits: self.hits,
             misses: self.misses,
@@ -450,8 +450,7 @@ impl EmbeddingCache {
     }
 
     pub fn clear(&mut self) {
-        self.entries.clear();
-        self.access_order.clear();
+        self.cache.clear();
     }
 }
 
@@ -480,7 +479,8 @@ pub struct AttentionEngine {
     embedding_engine: EmbeddingEngine,
     cache: EmbeddingCache,
     // History with pre-computed K projections: (event, embedding, k_projections_per_head)
-    history: Vec<(Event, Vec<f32>, Vec<Vec<f32>>)>,
+    // Uses VecDeque for O(1) pop_front instead of O(n) Vec::remove(0)
+    history: VecDeque<(Event, Vec<f32>, Vec<Vec<f32>>)>,
     // HNSW index for O(log n) nearest neighbor search
     hnsw_index: Option<HnswIndex>,
     computations: u64,
@@ -557,7 +557,7 @@ impl AttentionEngine {
             config,
             embedding_engine,
             cache,
-            history: Vec::new(),
+            history: VecDeque::new(),
             hnsw_index,
             computations: 0,
             total_events_processed: 0,
@@ -579,7 +579,7 @@ impl AttentionEngine {
             config,
             embedding_engine,
             cache,
-            history: Vec::new(),
+            history: VecDeque::new(),
             hnsw_index: None,
             computations: 0,
             total_events_processed: 0,
@@ -611,12 +611,14 @@ impl AttentionEngine {
             hnsw.insert(&embedding, idx);
         }
 
-        self.history.push((event, embedding.clone(), k_projections));
+        self.history
+            .push_back((event, embedding.clone(), k_projections));
         self.total_events_processed += 1;
 
         // Handle history overflow - need to rebuild HNSW index
+        // Using pop_front() is O(1) vs remove(0) which was O(n)
         if self.history.len() > self.config.max_history {
-            self.history.remove(0);
+            self.history.pop_front();
             // Rebuild HNSW with new indices
             if let Some(ref mut hnsw) = self.hnsw_index {
                 let embeddings: Vec<(usize, Vec<f32>)> = self
@@ -852,11 +854,13 @@ impl AttentionEngine {
                         .project(&embedding, head, ProjectionType::Key)
                 })
                 .collect();
-            self.history.push((event.clone(), embedding, k_projections));
+            self.history
+                .push_back((event.clone(), embedding, k_projections));
             self.total_events_processed += 1;
         }
+        // O(1) pop_front instead of O(n) remove(0)
         while self.history.len() > self.config.max_history {
-            self.history.remove(0);
+            self.history.pop_front();
         }
 
         results

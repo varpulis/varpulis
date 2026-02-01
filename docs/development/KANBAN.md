@@ -1,14 +1,18 @@
 # Varpulis CEP - Kanban
 
-> Derniere mise a jour: 2026-01-31 (IMP-01 to IMP-04 complete - programmation imperative complete)
+> Derniere mise a jour: 2026-02-01 (Engine cleanup: pattern.rs removed, SASE+ is now the only engine)
 
 ## Vue d'ensemble
 
 | Categorie | A faire | En cours | Termine |
 |-----------|---------|----------|----------|
 | Parser Pest | 0 | 0 | **8** |
-| SASE+ | 0 | 0 | **10** |
+| SASE+ Core | 0 | 0 | **10** |
+| SASE+ Improvements | 1 | 0 | **6** |
+| ZDD | 0 | 0 | **2** |
 | Attention | 0 | 0 | **4** |
+| Runtime Optimization | 0 | 0 | **6** |
+| Engine Cleanup | 0 | 0 | **1** |
 | Benchmarks | 0 | 0 | **2** |
 | Test Infra | 0 | 0 | **4** |
 | Engine Refactor | 0 | 0 | **3** |
@@ -18,7 +22,187 @@
 | Imperative | 0 | 0 | **4** |
 | Couverture | 0 | 2 | 0 |
 | VS Code | 1 | 0 | 0 |
-| **Total** | **1** | **2** | **51** |
+| **Total** | **2** | **2** | **64** |
+
+---
+
+## TERMINE - SASE+ Improvements
+
+> **Statut**: 6 taches terminees - corrections de correctness et ameliorations production-ready
+> **Reference**: Voir `SASE_IMPROVMENT.md` pour analyse complete
+
+### P1 - Correctness (Haute priorite) - TERMINE
+
+- [x] **NEG-01**: Negation temporelle incomplete
+  - **Probleme**: La negation passait immediatement via epsilon sans attendre la fenetre
+  - **Solution implementee**:
+    - `NegationConstraint` struct avec deadlines processing-time et event-time
+    - `pending_negations: Vec<NegationConstraint>` dans Run
+    - Confirmation via `confirm_negations_processing_time()` et `confirm_negations_event_time()`
+    - NFA compile ne cree plus d'epsilon vers continue_state
+  - **Tests**: `test_negation_with_predicate`, negation invalidation tests
+
+- [x] **AND-01**: Operateur AND semantiquement incorrect
+  - **Probleme**: AND(A,B) ne gerait pas A et B arrivant dans n'importe quel ordre
+  - **Solution implementee**:
+    - `AndState` struct avec `completed: HashSet<usize>` et `captures: HashMap`
+    - `AndConfig` et `AndBranch` pour configuration au compile-time
+    - `StateType::And` variant dans NFA
+    - `advance_and_state()` pour traitement runtime
+  - **Tests**: `test_and_matches_in_any_order`, `test_and_matches_reverse_order`, `test_and_with_aliases`
+
+- [x] **BP-01**: Absence de backpressure
+  - **Probleme**: Runs excedentaires silencieusement ignores
+  - **Solution implementee**:
+    - `BackpressureStrategy`: Drop, Error, EvictOldest, EvictLeastProgress, Sample
+    - `ProcessResult` avec warnings (`ProcessWarning` enum)
+    - `ProcessStats` pour metriques par appel
+    - `extended_stats()` pour metriques cumulees
+    - `handle_backpressure()` et `handle_backpressure_partitioned()`
+  - **Tests**: `test_backpressure_drop_strategy`, `test_backpressure_evict_oldest`, `test_backpressure_evict_least_progress`
+
+### P2 - Performance (Priorite moyenne) - TERMINE
+
+- [x] **IDX-01**: Indexation des evenements
+  - **Probleme**: O(n*m) comparaisons par evenement
+  - **Solution implementee**:
+    - `EventTypeIndex` struct avec `state_index: HashMap<String, Vec<usize>>`
+    - `wildcard_states` et `and_states` pour cas speciaux
+    - `from_nfa()` pour construction depuis NFA
+    - `has_interest()` pour rejection rapide des events non pertinents
+    - `get_candidate_states()` pour lookup O(1)
+  - **Tests**: `test_has_interest_positive`, `test_has_interest_with_negation`, `test_event_type_index_with_and`
+
+- [x] **ET-01**: Gestion event-time fragile
+  - **Probleme**: `unwrap_or_default()` masquait erreurs, pas de late events
+  - **Solution implementee**:
+    - `EventTimeConfig` avec `max_out_of_orderness`, `allowed_lateness`, `emit_late_events`
+    - `EventTimeManager` pour gestion robuste du watermark
+    - `EventTimeResult` enum: OnTime, Late, TooLate
+    - `compute_deadline()` static method pour calcul safe
+    - Late events: `take_late_events()`, `late_event_stats()`
+    - Watermark never recedes
+  - **Tests**: `test_event_time_manager_late_events`, `test_event_time_manager_watermark_never_recedes`, `test_compute_deadline_safe`
+
+- [x] **MET-01**: Metriques insuffisantes
+  - **Probleme**: Seulement 3 stats basiques exposees
+  - **Solution implementee**:
+    - `SaseMetrics` avec compteurs atomiques: events_processed, events_matched, events_ignored, events_late_*, runs_*, matches_emitted
+    - `LatencyHistogram` avec buckets exponentiels (<1µs to >1s)
+    - `percentile()` et `mean()` pour statistiques latence
+    - `to_prometheus()` pour export format Prometheus
+    - `MetricsSummary` pour acces simplifie
+    - `process_instrumented()` pour processing avec metriques completes
+    - Peak runs tracking
+  - **Tests**: `test_latency_histogram_*`, `test_sase_metrics_*`, `test_process_instrumented_*`
+
+### P3 - Scalabilite (Priorite basse)
+
+- [ ] **SE-01**: Shared Execution (future)
+  - **Prerequis**: ZDD, IDX-01 (done)
+  - **Description**: Partager prefixes communs entre patterns
+  - **Gain**: ~50-97% reduction memoire selon patterns
+
+---
+
+## TERMINE - Runtime Optimization
+
+> **Statut**: 6 taches terminees - tous les P0, P2, P3 issues de RUNTIME_ANALYSIS.md
+> **Reference**: Voir `RUNTIME_ANALYSIS.md` pour analyse complete
+
+### P0 - Bloquants pour production
+
+- [x] **ATT-PROJ**: Pre-calcul projections Key
+  - **Probleme**: K projections recalculees a chaque compute_attention()
+  - **Solution implementee**: Pre-calcul a l'ajout dans history tuple
+  - **Fichier**: attention.rs lines 600-606
+  - **Statut**: DEJA FAIT
+
+- [x] **ATT-LRU**: Cache LRU O(n) -> O(1)
+  - **Probleme**: EmbeddingCache utilise HashMap + Vec pour LRU, retain() est O(n)
+  - **Solution implementee**: Crate `lru` pour O(1) get/put
+  - **Fichier**: attention.rs EmbeddingCache struct
+  - **Tests**: 46 attention tests passent
+
+- [x] **ATT-HIST**: History removal O(n) -> O(1)
+  - **Probleme**: `history.remove(0)` est O(n) sur Vec
+  - **Solution implementee**: `VecDeque` pour O(1) pop_front/push_back
+  - **Fichier**: attention.rs AttentionEngine::history field
+  - **Tests**: 46 attention tests passent
+
+- [x] **SINK-ASYNC**: FileSink bloque runtime async
+  - **Probleme**: std::fs::File::write bloque le worker thread tokio
+  - **Solution implementee**: `AsyncFileSink` avec tokio::fs et buffer 64KB
+  - **Fichier**: sink.rs
+  - **Tests**: 8 nouveaux tests AsyncFileSink
+
+### P2 - Performance
+
+- [x] **JOIN-GC**: Cleanup O(n) -> O(log n)
+  - **Probleme**: cleanup_expired itere sur toutes les cles a chaque event
+  - **Solution implementee**: BinaryHeap expiry queue + gc_interval throttling
+  - **Fichier**: join.rs JoinBuffer::cleanup_expired
+  - **Tests**: 18 join tests passent
+
+### P3 - Architecture
+
+- [x] **SINK-RETRY**: HttpSink sans retry
+  - **Probleme**: Erreurs HTTP ignorees, events perdus silencieusement
+  - **Solution implementee**: `HttpSinkWithRetry` avec backoff exponentiel
+  - **Features**: max_retries, initial_delay, max_delay, timeout configurable
+  - **Fichier**: sink.rs HttpSinkWithRetry
+  - **Tests**: 5 nouveaux tests
+
+---
+
+## TERMINE - Engine Cleanup
+
+> **Statut**: Consolidation complete - SASE+ est le seul moteur de pattern matching
+
+### Consolidation
+
+- [x] **PATTERN-DEL**: Suppression de pattern.rs
+  - **Contexte**: DELTA_ANALYSIS.md identifiait deux moteurs de patterns:
+    - `pattern.rs`: Moteur AST recursif style Apama (PatternEngine, PatternExpr)
+    - `sase.rs`: Moteur NFA SASE+ (SaseEngine, SasePattern)
+  - **Decision**: SASE+ couvre tous les cas d'usage avec de meilleures performances
+  - **Changements**:
+    - Suppression `pub mod pattern;` de lib.rs
+    - Suppression `PatternEngine` import de engine/mod.rs et engine/types.rs
+    - Suppression `expr_to_pattern()` de engine/compiler.rs
+    - Suppression champ `pattern_engine` de StreamDefinition
+    - Suppression bloc de processing pattern_engine dans process_stream()
+    - Suppression fichier pattern.rs (1200+ lignes)
+  - **Note**: `RuntimeOp::Pattern` conserve pour evaluation d'expressions inline
+  - **Tests**: 578 tests passent apres suppression
+
+---
+
+## TERMINE - ZDD (Zero-suppressed Decision Diagrams)
+
+> **Statut**: Crate `varpulis-zdd` implementee avec 85 tests (73 unit + 12 doc)
+
+### Termine
+
+- [x] **ZDD-01**: Implementer crate varpulis-zdd
+  - **Description**: ZDD pour representation compacte des combinaisons Kleene
+  - **Composants**:
+    - `ZddRef`: Empty, Base, Node terminals
+    - `ZddNode`: Decision nodes avec var, lo, hi
+    - `UniqueTable`: Canonicalization avec zero-suppression
+    - Operations: union, intersection, difference, product
+    - `product_with_optional`: Operation cle pour Kleene O(n) vs O(2^n)
+    - `ZddIterator`: Iteration lazy sur combinaisons
+    - Export DOT pour visualisation
+  - **Tests**: 73 unit tests + 12 doc tests
+  - **Performance**: 2^25 combinaisons avec <1000 nodes
+
+- [x] **ZDD-02**: Fix bug product_with_optional same variable
+  - **Bug**: Quand `n.var == var`, le code mettait `union(lo, hi)` sur les deux branches
+  - **Symptome**: `singleton(0).product_with_optional(0)` retournait `{{}, {0}}` au lieu de `{{0}}`
+  - **Fix**: `table.get_or_create(var, n.lo, new_hi)` au lieu de `table.get_or_create(var, union_lo_hi, union_lo_hi)`
+  - **Note**: Bug ne se declenchait jamais en usage Kleene sequentiel (variables monotones)
+  - **Test**: `test_product_with_optional_same_variable` ajoute
 
 ---
 

@@ -10,7 +10,6 @@ pub mod event;
 pub mod event_file;
 pub mod join;
 pub mod metrics;
-pub mod pattern;
 pub mod persistence;
 pub mod sase;
 pub mod sequence;

@@ -6,7 +6,6 @@ use crate::aggregation::Aggregator;
 use crate::attention::AttentionWindow;
 use crate::event::SharedEvent;
 use crate::join::JoinBuffer;
-use crate::pattern::PatternEngine;
 use crate::sase::SaseEngine;
 use crate::window::{
     CountWindow, PartitionedSlidingWindow, PartitionedTumblingWindow, SlidingCountWindow,
@@ -92,8 +91,6 @@ pub(crate) struct StreamDefinition {
     pub operations: Vec<RuntimeOp>,
     /// Attention window for correlation scoring
     pub attention_window: Option<AttentionWindow>,
-    /// Pattern engine for Apama-style pattern matching (lambdas)
-    pub pattern_engine: Option<PatternEngine>,
     /// SASE+ pattern matching engine (NFA-based, primary engine for sequences)
     pub sase_engine: Option<SaseEngine>,
     /// Join buffer for correlating events from multiple sources
@@ -294,6 +291,7 @@ impl PartitionedAggregatorState {
 }
 
 /// Configuration for pattern matching
+#[allow(dead_code)]
 pub(crate) struct PatternConfig {
     pub name: String,
     pub matcher: varpulis_core::ast::Expr,
