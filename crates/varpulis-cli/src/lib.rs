@@ -4,6 +4,7 @@
 //! organized into dedicated modules for security, WebSocket handling, and more.
 
 pub mod auth;
+pub mod config;
 pub mod security;
 pub mod websocket;
 

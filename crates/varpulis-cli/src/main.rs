@@ -22,6 +22,7 @@ use varpulis_runtime::simulator::{Simulator, SimulatorConfig};
 
 // Import our new modules
 use varpulis_cli::auth::{self, AuthConfig};
+use varpulis_cli::config::Config;
 use varpulis_cli::security;
 use varpulis_cli::websocket::{self, ServerState};
 
@@ -31,6 +32,10 @@ use varpulis_cli::websocket::{self, ServerState};
 #[command(version = "0.1.0")]
 #[command(about = "Varpulis - Modern streaming analytics engine", long_about = None)]
 struct Cli {
+    /// Path to configuration file (YAML or TOML)
+    #[arg(short, long, global = true, env = "VARPULIS_CONFIG")]
+    config: Option<PathBuf>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -148,6 +153,17 @@ enum Commands {
         #[arg(long)]
         partition_by: Option<String>,
     },
+
+    /// Generate example configuration file
+    ConfigGen {
+        /// Output format (yaml, toml)
+        #[arg(short, long, default_value = "yaml")]
+        format: String,
+
+        /// Output file path (prints to stdout if not specified)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
 }
 
 #[tokio::main]
@@ -249,6 +265,19 @@ async fn main() -> Result<()> {
             workers,
             partition_by,
         } => {
+            // Load config file if specified
+            let config = if let Some(ref config_path) = cli.config {
+                Some(Config::load(config_path).map_err(|e| anyhow::anyhow!("{}", e))?)
+            } else {
+                None
+            };
+
+            // Merge config file settings with CLI arguments
+            let workers = workers.or(config.as_ref().and_then(|c| c.processing.workers));
+            let partition_by = partition_by.or(config
+                .as_ref()
+                .and_then(|c| c.processing.partition_by.clone()));
+
             run_simulation(
                 &program,
                 &events,
@@ -259,6 +288,21 @@ async fn main() -> Result<()> {
                 partition_by.as_deref(),
             )
             .await?;
+        }
+
+        Commands::ConfigGen { format, output } => {
+            let content = match format.to_lowercase().as_str() {
+                "yaml" | "yml" => Config::example_yaml(),
+                "toml" => Config::example_toml(),
+                _ => anyhow::bail!("Unsupported format: {}. Use 'yaml' or 'toml'", format),
+            };
+
+            if let Some(path) = output {
+                std::fs::write(&path, &content)?;
+                println!("Configuration written to: {}", path.display());
+            } else {
+                println!("{}", content);
+            }
         }
     }
 
