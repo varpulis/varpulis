@@ -5,6 +5,7 @@ members = [
     "crates/varpulis-parser",
     "crates/varpulis-runtime",
     "crates/varpulis-cli",
+    "crates/varpulis-zdd",
 ]
 
 [workspace.package]
