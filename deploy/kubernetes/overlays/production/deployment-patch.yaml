@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: varpulis
+spec:
+  replicas: 3
+  template:
+    spec:
+      containers:
+        - name: varpulis
+          args:
+            - "run"
+            - "/app/queries/queries.vql"
+            - "--workers"
+            - "8"
+          env:
+            - name: RUST_LOG
+              value: "warn,varpulis=info"
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "4000m"
+          volumeMounts:
+            - name: queries
+              mountPath: /app/queries
+              readOnly: true
+            - name: state
+              mountPath: /app/state
+      volumes:
+        - name: queries
+          configMap:
+            name: varpulis-config
+        - name: state
+          persistentVolumeClaim:
+            claimName: varpulis-state
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: varpulis

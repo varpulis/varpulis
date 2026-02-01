@@ -1,0 +1,29 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: varpulis
+
+namePrefix: prod-
+
+resources:
+  - ../../base
+  - pvc.yaml
+
+patches:
+  - path: deployment-patch.yaml
+    target:
+      kind: Deployment
+      name: varpulis
+  - path: hpa-patch.yaml
+    target:
+      kind: HorizontalPodAutoscaler
+      name: varpulis
+
+images:
+  - name: varpulis/varpulis
+    newTag: v0.1.0
+
+labels:
+  - pairs:
+      environment: production
+    includeSelectors: false
