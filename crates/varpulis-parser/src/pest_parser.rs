@@ -1197,6 +1197,7 @@ fn parse_expr_inner(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
     match pair.as_rule() {
         Rule::expr => parse_expr(pair),
         Rule::lambda_expr => parse_lambda_expr(pair),
+        Rule::range_expr => parse_range_expr(pair),
         Rule::or_expr => parse_or_expr(pair),
         Rule::and_expr => parse_and_expr(pair),
         Rule::not_expr => parse_not_expr(pair),
@@ -1513,16 +1514,18 @@ fn parse_filter_unary_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Exp
     let mut inner = pair.into_inner();
     let first = inner.expect_next("unary operator or expression")?;
 
-    if first.as_str() == "-" {
-        let expr = parse_filter_postfix_expr(inner.expect_next("expression after negation")?)?;
+    // Check if first is a unary operator or the expression itself
+    if first.as_rule() == Rule::filter_unary_op {
+        let op_str = first.as_str();
+        let expr =
+            parse_filter_postfix_expr(inner.expect_next("expression after unary operator")?)?;
+        let op = match op_str {
+            "-" => UnaryOp::Neg,
+            "~" => UnaryOp::BitNot,
+            _ => unreachable!("Grammar only allows - or ~"),
+        };
         Ok(Expr::Unary {
-            op: UnaryOp::Neg,
-            expr: Box::new(expr),
-        })
-    } else if first.as_str() == "~" {
-        let expr = parse_filter_postfix_expr(inner.expect_next("expression after bitwise not")?)?;
-        Ok(Expr::Unary {
-            op: UnaryOp::BitNot,
+            op,
             expr: Box::new(expr),
         })
     } else {
@@ -1600,6 +1603,23 @@ fn parse_filter_primary_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<E
     }
 }
 
+fn parse_range_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
+    let mut inner = pair.into_inner();
+    let left = parse_expr_inner(inner.expect_next("range start")?)?;
+
+    if let Some(op_pair) = inner.next() {
+        let inclusive = op_pair.as_str() == "..=";
+        let right = parse_expr_inner(inner.expect_next("range end")?)?;
+        Ok(Expr::Range {
+            start: Box::new(left),
+            end: Box::new(right),
+            inclusive,
+        })
+    } else {
+        Ok(left)
+    }
+}
+
 fn parse_or_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
     let mut inner = pair.into_inner();
     let mut left = parse_expr_inner(inner.expect_next("or expression operand")?)?;
@@ -1652,7 +1672,8 @@ fn parse_comparison_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr>
     let left = parse_expr_inner(inner.expect_next("comparison left operand")?)?;
 
     if let Some(op_pair) = inner.next() {
-        let op = match op_pair.as_str() {
+        let op_str = op_pair.as_str();
+        let op = match op_str {
             "==" => BinOp::Eq,
             "!=" => BinOp::NotEq,
             "<" => BinOp::Lt,
@@ -1661,6 +1682,7 @@ fn parse_comparison_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr>
             ">=" => BinOp::Ge,
             "in" => BinOp::In,
             "is" => BinOp::Is,
+            s if s.contains("not") && s.contains("in") => BinOp::NotIn,
             _ => BinOp::Eq,
         };
         let right = parse_expr_inner(inner.expect_next("comparison right operand")?)?;
@@ -1788,18 +1810,18 @@ fn parse_unary_expr(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
     let mut inner = pair.into_inner();
     let first = inner.expect_next("unary operator or expression")?;
 
-    match first.as_str() {
-        "-" => {
-            let expr = parse_expr_inner(inner.expect_next("expression after negation")?)?;
+    // Check if first is a unary operator or the expression itself
+    match first.as_rule() {
+        Rule::unary_op => {
+            let op_str = first.as_str();
+            let expr = parse_expr_inner(inner.expect_next("expression after unary operator")?)?;
+            let op = match op_str {
+                "-" => UnaryOp::Neg,
+                "~" => UnaryOp::BitNot,
+                _ => unreachable!("Grammar only allows - or ~"),
+            };
             Ok(Expr::Unary {
-                op: UnaryOp::Neg,
-                expr: Box::new(expr),
-            })
-        }
-        "~" => {
-            let expr = parse_expr_inner(inner.expect_next("expression after bitwise not")?)?;
-            Ok(Expr::Unary {
-                op: UnaryOp::BitNot,
+                op,
                 expr: Box::new(expr),
             })
         }
@@ -1842,6 +1864,36 @@ fn parse_postfix_suffix(expr: Expr, pair: pest::iterators::Pair<Rule>) -> ParseR
             Ok(Expr::OptionalMember {
                 expr: Box::new(expr),
                 member,
+            })
+        }
+        Rule::slice_access => {
+            // Parse slice: [start:end], [:end], [start:], [:]
+            let slice_range = inner.into_inner().expect_next("slice range")?;
+            let slice_inner = slice_range.into_inner();
+
+            let mut start = None;
+            let mut end = None;
+
+            for p in slice_inner {
+                match p.as_rule() {
+                    Rule::slice_start => {
+                        start = Some(Box::new(parse_expr_inner(
+                            p.into_inner().expect_next("slice start expression")?,
+                        )?));
+                    }
+                    Rule::slice_end => {
+                        end = Some(Box::new(parse_expr_inner(
+                            p.into_inner().expect_next("slice end expression")?,
+                        )?));
+                    }
+                    _ => {}
+                }
+            }
+
+            Ok(Expr::Slice {
+                expr: Box::new(expr),
+                start,
+                end,
             })
         }
         Rule::index_access => {

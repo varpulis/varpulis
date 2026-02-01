@@ -56,7 +56,7 @@ pub struct EventFile {
 pub struct EventFileParser;
 
 impl EventFileParser {
-    /// Parse an event file from a string
+    /// Parse an event file from a string (supports both .evt and JSONL formats)
     pub fn parse(source: &str) -> Result<Vec<TimedEvent>, String> {
         let mut events = Vec::new();
         let mut current_batch_time: u64 = 0;
@@ -87,9 +87,14 @@ impl EventFileParser {
                 (current_batch_time, line)
             };
 
-            // Parse event: EventType { field: value, ... }
-            let event = Self::parse_event_line(event_line)
-                .map_err(|e| format!("Error at line {}: {}", line_num + 1, e))?;
+            // Parse event - try JSONL first, then .evt format
+            let event = if event_line.starts_with('{') {
+                Self::parse_jsonl_line(event_line)
+                    .map_err(|e| format!("Error at line {}: {}", line_num + 1, e))?
+            } else {
+                Self::parse_event_line(event_line)
+                    .map_err(|e| format!("Error at line {}: {}", line_num + 1, e))?
+            };
 
             events.push(TimedEvent {
                 event,
@@ -311,6 +316,137 @@ impl EventFileParser {
             name: path.to_string_lossy().to_string(),
             events,
         })
+    }
+
+    /// Parse a single line (either .evt format or JSONL)
+    pub fn parse_line(line: &str) -> Result<Option<Event>, String> {
+        let line = line.trim();
+
+        // Skip empty lines and comments
+        if line.is_empty() || line.starts_with('#') || line.starts_with("//") {
+            return Ok(None);
+        }
+
+        // Skip BATCH directives (timing not supported in streaming mode)
+        if line.starts_with("BATCH") || line.starts_with('@') {
+            return Ok(None);
+        }
+
+        // Try JSONL format first: {"event_type": "X", "data": {...}}
+        if line.starts_with('{') {
+            return Self::parse_jsonl_line(line).map(Some);
+        }
+
+        // Fall back to .evt format: EventType { field: value, ... }
+        Self::parse_event_line(line).map(Some)
+    }
+
+    /// Parse a JSONL line
+    fn parse_jsonl_line(line: &str) -> Result<Event, String> {
+        let json: serde_json::Value =
+            serde_json::from_str(line).map_err(|e| format!("Invalid JSON: {}", e))?;
+
+        let event_type = json
+            .get("event_type")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "Missing event_type field".to_string())?;
+
+        let mut event = Event::new(event_type);
+
+        if let Some(data) = json.get("data").and_then(|v| v.as_object()) {
+            for (key, value) in data {
+                event.data.insert(key.clone(), Self::json_to_value(value));
+            }
+        }
+
+        Ok(event)
+    }
+
+    /// Convert serde_json::Value to varpulis Value
+    fn json_to_value(v: &serde_json::Value) -> Value {
+        match v {
+            serde_json::Value::Null => Value::Null,
+            serde_json::Value::Bool(b) => Value::Bool(*b),
+            serde_json::Value::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    Value::Int(i)
+                } else if let Some(f) = n.as_f64() {
+                    Value::Float(f)
+                } else {
+                    Value::Null
+                }
+            }
+            serde_json::Value::String(s) => Value::Str(s.clone()),
+            serde_json::Value::Array(arr) => {
+                Value::Array(arr.iter().map(Self::json_to_value).collect())
+            }
+            serde_json::Value::Object(obj) => {
+                let map: indexmap::IndexMap<String, Value> = obj
+                    .iter()
+                    .map(|(k, v)| (k.clone(), Self::json_to_value(v)))
+                    .collect();
+                Value::Map(map)
+            }
+        }
+    }
+}
+
+/// Streaming event file reader - reads events one at a time without loading entire file
+pub struct StreamingEventReader<R: std::io::BufRead> {
+    reader: R,
+    line_buffer: String,
+    events_read: usize,
+}
+
+impl<R: std::io::BufRead> StreamingEventReader<R> {
+    pub fn new(reader: R) -> Self {
+        Self {
+            reader,
+            line_buffer: String::new(),
+            events_read: 0,
+        }
+    }
+
+    /// Get count of events read so far
+    pub fn events_read(&self) -> usize {
+        self.events_read
+    }
+}
+
+impl StreamingEventReader<std::io::BufReader<std::fs::File>> {
+    /// Create a streaming reader from a file path with large buffer for performance
+    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, String> {
+        let file = std::fs::File::open(path.as_ref())
+            .map_err(|e| format!("Failed to open file: {}", e))?;
+        // Use 64KB buffer for better I/O performance
+        Ok(Self::new(std::io::BufReader::with_capacity(
+            64 * 1024,
+            file,
+        )))
+    }
+}
+
+impl<R: std::io::BufRead> Iterator for StreamingEventReader<R> {
+    type Item = Result<Event, String>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            self.line_buffer.clear();
+            match self.reader.read_line(&mut self.line_buffer) {
+                Ok(0) => return None, // EOF
+                Ok(_) => {
+                    match EventFileParser::parse_line(&self.line_buffer) {
+                        Ok(Some(event)) => {
+                            self.events_read += 1;
+                            return Some(Ok(event));
+                        }
+                        Ok(None) => continue, // Skip empty/comment lines
+                        Err(e) => return Some(Err(e)),
+                    }
+                }
+                Err(e) => return Some(Err(format!("Read error: {}", e))),
+            }
+        }
     }
 }
 

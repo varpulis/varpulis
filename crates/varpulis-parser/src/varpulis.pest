@@ -118,7 +118,8 @@ filter_not_expr = { "not"? ~ filter_comparison_expr }
 filter_comparison_expr = { filter_additive_expr ~ (comparison_op ~ filter_additive_expr)? }
 filter_additive_expr = { filter_multiplicative_expr ~ (additive_op ~ filter_multiplicative_expr)* }
 filter_multiplicative_expr = { filter_unary_expr ~ (multiplicative_op ~ filter_unary_expr)* }
-filter_unary_expr = { ("-" | "~")? ~ filter_postfix_expr }
+filter_unary_op = { "-" | "~" }
+filter_unary_expr = { filter_unary_op? ~ filter_postfix_expr }
 filter_postfix_expr = { filter_primary_expr ~ filter_postfix_suffix* }
 filter_postfix_suffix = { 
     // Member access only if not followed by "(" (which would make it a stream op call)
@@ -323,14 +324,18 @@ import_stmt = { "import" ~ string ~ ("as" ~ identifier)? }
 // Expressions (PEG handles precedence via rule ordering)
 // ============================================================================
 
-expr = { lambda_expr | or_expr }
+expr = { lambda_expr | range_expr }
 
 // Lambda: (x) => expr or x => expr or (x) => { statements }
-lambda_expr = { 
+lambda_expr = {
     (("(" ~ identifier_list? ~ ")") | identifier) ~ "=>" ~ (lambda_block | expr)
 }
 lambda_block = { "{" ~ statement* ~ expr? ~ "}" }
 identifier_list = { identifier ~ ("," ~ identifier)* }
+
+// Range: 1..5 (exclusive) or 1..=5 (inclusive)
+range_expr = { or_expr ~ (range_op ~ or_expr)? }
+range_op = { "..=" | ".." }
 
 // Logical operators
 or_expr = { and_expr ~ ("or" ~ and_expr)* }
@@ -355,19 +360,28 @@ multiplicative_expr = { power_expr ~ (multiplicative_op ~ power_expr)* }
 power_expr = { unary_expr ~ ("**" ~ power_expr)? }
 
 // Unary
-unary_expr = { ("-" | "~")? ~ postfix_expr }
+unary_op = { "-" | "~" }
+unary_expr = { unary_op? ~ postfix_expr }
 
 // Postfix: member access, indexing, calls
 postfix_expr = { primary_expr ~ postfix_suffix* }
-postfix_suffix = { 
-    member_access 
-    | optional_member_access 
-    | index_access 
-    | call_args 
+postfix_suffix = {
+    member_access
+    | optional_member_access
+    | slice_access
+    | index_access
+    | call_args
 }
 
 member_access = { "." ~ identifier }
 optional_member_access = { "?." ~ identifier }
+// Slice syntax: arr[1:3], arr[:3], arr[1:], arr[:]
+// Must come before index_access because it's more specific
+slice_access = { "[" ~ slice_range ~ "]" }
+slice_range = { slice_start? ~ ":" ~ slice_end? }
+slice_start = { additive_expr }
+slice_end = { additive_expr }
+// Index access: arr[0]
 index_access = { "[" ~ expr ~ "]" }
 call_args = { "(" ~ arg_list? ~ ")" }
 

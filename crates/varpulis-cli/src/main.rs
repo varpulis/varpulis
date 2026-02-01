@@ -2,7 +2,10 @@
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use rayon::prelude::*;
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{info, Level};
@@ -13,7 +16,7 @@ use varpulis_core::ast::{Program, Stmt};
 use varpulis_parser::parse;
 use varpulis_runtime::engine::{Alert, Engine};
 use varpulis_runtime::event::Event;
-use varpulis_runtime::event_file::{EventFileParser, EventFilePlayer};
+use varpulis_runtime::event_file::{EventFileParser, EventFilePlayer, StreamingEventReader};
 use varpulis_runtime::metrics::{Metrics, MetricsServer};
 use varpulis_runtime::simulator::{Simulator, SimulatorConfig};
 
@@ -132,6 +135,18 @@ enum Commands {
         /// Verbose output (show each event)
         #[arg(short, long)]
         verbose: bool,
+
+        /// Preload all events into memory (faster but uses more memory)
+        #[arg(long)]
+        preload: bool,
+
+        /// Number of worker threads for parallel processing (default: number of CPU cores)
+        #[arg(long, short = 'w')]
+        workers: Option<usize>,
+
+        /// Field to use for partitioning events (default: first string field)
+        #[arg(long)]
+        partition_by: Option<String>,
     },
 }
 
@@ -230,8 +245,20 @@ async fn main() -> Result<()> {
             events,
             immediate,
             verbose,
+            preload,
+            workers,
+            partition_by,
         } => {
-            run_simulation(&program, &events, immediate, verbose).await?;
+            run_simulation(
+                &program,
+                &events,
+                immediate,
+                verbose,
+                preload,
+                workers,
+                partition_by.as_deref(),
+            )
+            .await?;
         }
     }
 
@@ -479,33 +506,62 @@ async fn run_simulation(
     events_path: &PathBuf,
     immediate: bool,
     verbose: bool,
+    preload: bool,
+    workers: Option<usize>,
+    partition_by: Option<&str>,
 ) -> Result<()> {
+    // Determine number of workers
+    let num_workers = workers.unwrap_or_else(|| {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+    });
+
+    // Configure rayon thread pool
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(num_workers)
+        .build_global()
+        .ok(); // Ignore if already initialized
+
+    let mode_str = if !immediate {
+        "timed"
+    } else if preload {
+        if num_workers > 1 {
+            "immediate (preload, parallel)"
+        } else {
+            "immediate (preload)"
+        }
+    } else if num_workers > 1 {
+        "immediate (streaming, parallel)"
+    } else {
+        "immediate (streaming)"
+    };
+
     println!("Varpulis Event Simulation");
     println!("============================");
     println!("Program: {}", program_path.display());
     println!("Events:  {}", events_path.display());
-    println!("Mode:    {}", if immediate { "immediate" } else { "timed" });
+    println!("Mode:    {}", mode_str);
+    println!("Workers: {}", num_workers);
+    if let Some(key) = partition_by {
+        println!("Partition: {}", key);
+    }
     println!();
 
     // Load and parse program
     let program_source = std::fs::read_to_string(program_path)?;
     let program = parse(&program_source).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
+    let program = Arc::new(program);
     info!(
         "Loaded program with {} statements",
         program.statements.len()
     );
 
-    // Load and parse events
-    let events_source = std::fs::read_to_string(events_path)?;
-    let events = EventFileParser::parse(&events_source)
-        .map_err(|e| anyhow::anyhow!("Event file error: {}", e))?;
-    info!("Loaded {} events from file", events.len());
+    // Create alert channel (shared across all engines)
+    let (alert_tx, mut alert_rx) = mpsc::channel::<Alert>(1000 * num_workers);
 
-    // Create alert channel
-    let (alert_tx, mut alert_rx) = mpsc::channel::<Alert>(100);
-
-    // Create and load engine
-    let mut engine = Engine::new(alert_tx);
+    // Create initial engine to show metrics
+    let mut engine = Engine::new(alert_tx.clone());
     engine
         .load(&program)
         .map_err(|e| anyhow::anyhow!("Load error: {}", e))?;
@@ -520,9 +576,11 @@ async fn run_simulation(
 
     tokio::spawn(async move {
         while let Some(alert) = alert_rx.recv().await {
-            println!("ALERT: {} - {}", alert.alert_type, alert.message);
-            for (k, v) in &alert.data {
-                println!("   {}: {}", k, v);
+            if verbose {
+                println!("ALERT: {} - {}", alert.alert_type, alert.message);
+                for (k, v) in &alert.data {
+                    println!("   {}: {}", k, v);
+                }
             }
             alerts_clone.write().await.push(alert);
         }
@@ -531,10 +589,101 @@ async fn run_simulation(
     println!("Starting simulation...\n");
     let start = std::time::Instant::now();
 
-    // Process events
-    if immediate {
-        // Immediate mode - use batch processing for better throughput
-        const BATCH_SIZE: usize = 100;
+    // Shared counter for total events processed across all workers
+    let total_events_processed = Arc::new(AtomicU64::new(0));
+
+    // Process events based on mode
+    if immediate && preload && num_workers > 1 {
+        // Parallel preload mode - partition events and process in parallel
+        let events_source = std::fs::read_to_string(events_path)?;
+        let events = EventFileParser::parse(&events_source)
+            .map_err(|e| anyhow::anyhow!("Event file error: {}", e))?;
+        let total_events = events.len();
+        info!("Preloaded {} events from file", total_events);
+
+        // Partition events by key
+        let partition_key = partition_by.unwrap_or("symbol");
+        let mut partitions: HashMap<u64, Vec<Event>> = HashMap::new();
+
+        for timed_event in events {
+            let event = timed_event.event;
+            // Get partition key value and hash it to a partition number
+            let key_hash = if let Some(val) = event.get(partition_key) {
+                use std::hash::{Hash, Hasher};
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                format!("{}", val).hash(&mut hasher);
+                hasher.finish() % num_workers as u64
+            } else {
+                // If no partition key, use event type hash
+                use std::hash::{Hash, Hasher};
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                event.event_type.hash(&mut hasher);
+                hasher.finish() % num_workers as u64
+            };
+            partitions.entry(key_hash).or_default().push(event);
+        }
+
+        if verbose {
+            println!(
+                "  Partitioned {} events into {} partitions:",
+                total_events,
+                partitions.len()
+            );
+            for (k, v) in &partitions {
+                println!("    Partition {}: {} events", k, v.len());
+            }
+        }
+
+        // Process partitions in parallel using spawn_blocking + rayon
+        let program_arc = program.clone();
+        let alert_tx_arc = alert_tx.clone();
+        let total_counter = total_events_processed.clone();
+
+        let partition_vec: Vec<_> = partitions.into_iter().collect();
+
+        // Use spawn_blocking to move rayon work off the tokio runtime
+        tokio::task::spawn_blocking(move || {
+            // Use rayon's parallel iterator for true CPU parallelism
+            partition_vec
+                .into_par_iter()
+                .for_each(|(partition_id, events)| {
+                    // Create a new tokio runtime for this rayon thread (outside main runtime)
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .expect("Failed to create tokio runtime");
+
+                    rt.block_on(async {
+                        let mut worker_engine = Engine::new(alert_tx_arc.clone());
+                        if let Err(e) = worker_engine.load(&program_arc) {
+                            eprintln!("Worker {}: Failed to load program: {}", partition_id, e);
+                            return;
+                        }
+
+                        const BATCH_SIZE: usize = 5000;
+                        for chunk in events.chunks(BATCH_SIZE) {
+                            let batch: Vec<_> = chunk.to_vec();
+                            if let Err(e) = worker_engine.process_batch(batch).await {
+                                eprintln!("Worker {}: Process error: {}", partition_id, e);
+                                return;
+                            }
+                        }
+
+                        let worker_metrics = worker_engine.metrics();
+                        total_counter.fetch_add(worker_metrics.events_processed, Ordering::Relaxed);
+                    });
+                });
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("Spawn blocking failed: {}", e))?;
+    } else if immediate && preload {
+        // Single-threaded preload mode
+        let events_source = std::fs::read_to_string(events_path)?;
+        let events = EventFileParser::parse(&events_source)
+            .map_err(|e| anyhow::anyhow!("Event file error: {}", e))?;
+        info!("Preloaded {} events from file", events.len());
+
+        const BATCH_SIZE: usize = 1000;
         let total_events = events.len();
 
         for (batch_idx, chunk) in events.chunks(BATCH_SIZE).enumerate() {
@@ -554,8 +703,147 @@ async fn run_simulation(
                 .await
                 .map_err(|e| anyhow::anyhow!("Process error: {}", e))?;
         }
+    } else if immediate && num_workers > 1 {
+        // Parallel streaming mode
+        const BATCH_SIZE: usize = 50000; // Larger batches for parallel mode
+
+        let mut event_reader = StreamingEventReader::from_file(events_path)
+            .map_err(|e| anyhow::anyhow!("Failed to open event file: {}", e))?;
+
+        let partition_key = partition_by.unwrap_or("symbol");
+        let mut batch_count = 0;
+
+        loop {
+            // Read a large batch
+            let mut events: Vec<Event> = Vec::with_capacity(BATCH_SIZE);
+            for _ in 0..BATCH_SIZE {
+                match event_reader.next() {
+                    Some(Ok(event)) => events.push(event),
+                    Some(Err(e)) => return Err(anyhow::anyhow!("Parse error: {}", e)),
+                    None => break,
+                }
+            }
+
+            if events.is_empty() {
+                break;
+            }
+
+            batch_count += 1;
+            if verbose {
+                println!(
+                    "  [batch {}] processing {} events (total read: {})",
+                    batch_count,
+                    events.len(),
+                    event_reader.events_read()
+                );
+            }
+
+            // Partition events
+            let mut partitions: HashMap<u64, Vec<Event>> = HashMap::new();
+            for event in events {
+                let key_hash = if let Some(val) = event.get(partition_key) {
+                    use std::hash::{Hash, Hasher};
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    format!("{}", val).hash(&mut hasher);
+                    hasher.finish() % num_workers as u64
+                } else {
+                    use std::hash::{Hash, Hasher};
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    event.event_type.hash(&mut hasher);
+                    hasher.finish() % num_workers as u64
+                };
+                partitions.entry(key_hash).or_default().push(event);
+            }
+
+            // Process partitions in parallel using spawn_blocking + rayon
+            let program_arc = program.clone();
+            let alert_tx_arc = alert_tx.clone();
+            let total_counter = total_events_processed.clone();
+
+            let partition_vec: Vec<_> = partitions.into_iter().collect();
+
+            tokio::task::spawn_blocking(move || {
+                partition_vec
+                    .into_par_iter()
+                    .for_each(|(partition_id, partition_events)| {
+                        let rt = tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .expect("Failed to create tokio runtime");
+
+                        rt.block_on(async {
+                            let mut worker_engine = Engine::new(alert_tx_arc.clone());
+                            if let Err(e) = worker_engine.load(&program_arc) {
+                                eprintln!("Worker {}: Failed to load program: {}", partition_id, e);
+                                return;
+                            }
+
+                            if let Err(e) = worker_engine.process_batch(partition_events).await {
+                                eprintln!("Worker {}: Process error: {}", partition_id, e);
+                                return;
+                            }
+
+                            let worker_metrics = worker_engine.metrics();
+                            total_counter
+                                .fetch_add(worker_metrics.events_processed, Ordering::Relaxed);
+                        });
+                    });
+            })
+            .await
+            .ok();
+        }
+
+        info!("Streamed {} events from file", event_reader.events_read());
+    } else if immediate {
+        // Single-threaded streaming mode
+        const BATCH_SIZE: usize = 10000;
+
+        let mut event_reader = StreamingEventReader::from_file(events_path)
+            .map_err(|e| anyhow::anyhow!("Failed to open event file: {}", e))?;
+
+        let mut batch: Vec<Event> = Vec::with_capacity(BATCH_SIZE);
+        let mut batch_count = 0;
+
+        loop {
+            // Fill batch from streaming reader (batch is empty after std::mem::take)
+            batch.reserve(BATCH_SIZE);
+            for _ in 0..BATCH_SIZE {
+                match event_reader.next() {
+                    Some(Ok(event)) => batch.push(event),
+                    Some(Err(e)) => return Err(anyhow::anyhow!("Parse error: {}", e)),
+                    None => break,
+                }
+            }
+
+            if batch.is_empty() {
+                break;
+            }
+
+            batch_count += 1;
+            if verbose {
+                println!(
+                    "  [batch {}] processing {} events (total read: {})",
+                    batch_count,
+                    batch.len(),
+                    event_reader.events_read()
+                );
+            }
+
+            // Use std::mem::take to move batch without cloning
+            engine
+                .process_batch(std::mem::take(&mut batch))
+                .await
+                .map_err(|e| anyhow::anyhow!("Process error: {}", e))?;
+        }
+
+        info!("Streamed {} events from file", event_reader.events_read());
     } else {
-        // Timed mode - respect BATCH delays
+        // Timed mode - load all events for timing control
+        let events_source = std::fs::read_to_string(events_path)?;
+        let events = EventFileParser::parse(&events_source)
+            .map_err(|e| anyhow::anyhow!("Event file error: {}", e))?;
+        info!("Loaded {} events from file (timed mode)", events.len());
+
         let (event_tx, mut event_rx) = mpsc::channel(100);
         let player = EventFilePlayer::new(events.clone(), event_tx);
 
@@ -590,17 +878,25 @@ async fn run_simulation(
 
     // Summary
     let elapsed = start.elapsed();
-    let final_metrics = engine.metrics();
+
+    // Get total events processed (from parallel counter or single engine)
+    let events_processed = if num_workers > 1 && immediate {
+        total_events_processed.load(Ordering::Relaxed)
+    } else {
+        engine.metrics().events_processed
+    };
+
     let alerts_count = alerts.read().await.len();
 
     println!("\nSimulation Complete");
     println!("======================");
     println!("Duration:         {:?}", elapsed);
-    println!("Events processed: {}", final_metrics.events_processed);
+    println!("Events processed: {}", events_processed);
+    println!("Workers used:     {}", num_workers);
     println!("Alerts generated: {}", alerts_count);
     println!(
         "Event rate:       {:.1} events/sec",
-        final_metrics.events_processed as f64 / elapsed.as_secs_f64()
+        events_processed as f64 / elapsed.as_secs_f64()
     );
 
     if alerts_count > 0 {
@@ -850,11 +1146,65 @@ async fn run_server(
             },
         );
 
-    // Health check route (no auth required)
-    let health_route =
-        warp::path("health").map(|| warp::reply::json(&serde_json::json!({"status": "ok"})));
+    // Health check routes (no auth required) - for Kubernetes probes
 
-    let routes = ws_route.or(health_route).recover(auth::handle_rejection);
+    // Liveness probe: /health - is the process alive?
+    let health_state = state.clone();
+    let health_route = warp::path("health").and(warp::get()).and_then(move || {
+        let state = health_state.clone();
+        async move {
+            let state = state.read().await;
+            let uptime = state.start_time.elapsed().as_secs_f64();
+            let response = serde_json::json!({
+                "status": "healthy",
+                "uptime_seconds": uptime,
+                "version": env!("CARGO_PKG_VERSION"),
+            });
+            Ok::<_, warp::Rejection>(warp::reply::json(&response))
+        }
+    });
+
+    // Readiness probe: /ready - is the engine ready to process events?
+    let ready_state = state.clone();
+    let ready_route = warp::path("ready").and(warp::get()).and_then(move || {
+        let state = ready_state.clone();
+        async move {
+            let state = state.read().await;
+            let engine_loaded = state.engine.is_some();
+            let streams_count = state.streams.len();
+
+            if engine_loaded {
+                let metrics = state.engine.as_ref().unwrap().metrics();
+                let response = serde_json::json!({
+                    "status": "ready",
+                    "engine_loaded": true,
+                    "streams_count": streams_count,
+                    "events_processed": metrics.events_processed,
+                    "alerts_generated": metrics.alerts_generated,
+                });
+                Ok::<_, warp::Rejection>(warp::reply::with_status(
+                    warp::reply::json(&response),
+                    warp::http::StatusCode::OK,
+                ))
+            } else {
+                let response = serde_json::json!({
+                    "status": "not_ready",
+                    "engine_loaded": false,
+                    "reason": "No VPL program loaded",
+                });
+                Ok::<_, warp::Rejection>(warp::reply::with_status(
+                    warp::reply::json(&response),
+                    warp::http::StatusCode::SERVICE_UNAVAILABLE,
+                ))
+            }
+        }
+    });
+
+    // Combined routes
+    let routes = ws_route
+        .or(health_route)
+        .or(ready_route)
+        .recover(auth::handle_rejection);
 
     // Parse bind address - NO unwrap()!
     let bind_addr: std::net::IpAddr = bind

@@ -1,0 +1,47 @@
+# Dockerfile for running Kafka integration tests
+# Includes all build dependencies for rdkafka
+
+FROM rust:latest
+
+# Install build dependencies for rdkafka
+RUN apt-get update && apt-get install -y \
+    cmake \
+    libclang-dev \
+    libcurl4-openssl-dev \
+    libssl-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create app directory
+WORKDIR /app
+
+# Copy manifests first for better caching
+COPY Cargo.toml Cargo.lock ./
+COPY crates/varpulis-core/Cargo.toml crates/varpulis-core/
+COPY crates/varpulis-parser/Cargo.toml crates/varpulis-parser/
+COPY crates/varpulis-runtime/Cargo.toml crates/varpulis-runtime/
+COPY crates/varpulis-cli/Cargo.toml crates/varpulis-cli/
+
+# Create dummy source files to cache dependencies
+RUN mkdir -p crates/varpulis-core/src && echo "pub fn dummy() {}" > crates/varpulis-core/src/lib.rs && \
+    mkdir -p crates/varpulis-parser/src && echo "pub fn dummy() {}" > crates/varpulis-parser/src/lib.rs && \
+    mkdir -p crates/varpulis-runtime/src && echo "pub fn dummy() {}" > crates/varpulis-runtime/src/lib.rs && \
+    mkdir -p crates/varpulis-cli/src && echo "fn main() {}" > crates/varpulis-cli/src/main.rs
+
+# Build dependencies (this layer is cached)
+RUN cargo build -p varpulis-runtime --features kafka 2>/dev/null || true
+
+# Copy actual source code
+COPY crates/ crates/
+
+# Touch source files to ensure rebuild
+RUN touch crates/*/src/*.rs
+
+# Build with kafka feature
+RUN cargo build -p varpulis-runtime --features kafka
+
+# Copy test files
+COPY crates/varpulis-runtime/tests/ crates/varpulis-runtime/tests/
+
+# Default command runs the tests
+CMD ["cargo", "test", "-p", "varpulis-runtime", "--features", "kafka", "kafka", "--", "--ignored", "--nocapture"]
