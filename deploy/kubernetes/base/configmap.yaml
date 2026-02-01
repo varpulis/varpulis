@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: varpulis-config
+  namespace: varpulis
+  labels:
+    app.kubernetes.io/name: varpulis
+    app.kubernetes.io/component: cep-engine
+data:
+  # Example query file - replace with your actual queries
+  queries.vql: |
+    -- Varpulis Query Language (VQL) example queries
+    -- Add your CEP patterns here
+
+    -- Simple event passthrough
+    @output
+    FROM Event AS e
+    SELECT e.* AS passthrough;
+
+    -- Example pattern: Detect high-value transactions
+    -- @output
+    -- FROM Transaction AS t
+    -- WHERE t.amount > 10000
+    -- SELECT t.* AS high_value_alert;

@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: varpulis-state
+  namespace: varpulis
+  labels:
+    app.kubernetes.io/name: varpulis
+    app.kubernetes.io/component: cep-engine
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 10Gi

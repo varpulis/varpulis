@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: varpulis
+  namespace: varpulis
+  labels:
+    app.kubernetes.io/name: varpulis
+    app.kubernetes.io/component: cep-engine
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+    - name: metrics
+      port: 9090
+      targetPort: metrics
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: varpulis
+---
+# Headless service for stateful workloads
+apiVersion: v1
+kind: Service
+metadata:
+  name: varpulis-headless
+  namespace: varpulis
+  labels:
+    app.kubernetes.io/name: varpulis
+    app.kubernetes.io/component: cep-engine
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: varpulis

@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: varpulis
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: varpulis
+          env:
+            - name: RUST_LOG
+              value: "debug,varpulis=trace"
+            - name: RUST_BACKTRACE
+              value: "full"
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "1000m"

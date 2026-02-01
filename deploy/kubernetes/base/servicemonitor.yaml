@@ -1,0 +1,24 @@
+# ServiceMonitor for Prometheus Operator
+# Requires prometheus-operator to be installed in the cluster
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: varpulis
+  namespace: varpulis
+  labels:
+    app.kubernetes.io/name: varpulis
+    app.kubernetes.io/component: cep-engine
+    # Add this label to match your Prometheus operator's serviceMonitorSelector
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: varpulis
+  namespaceSelector:
+    matchNames:
+      - varpulis
+  endpoints:
+    - port: metrics
+      interval: 15s
+      path: /metrics
+      scheme: http

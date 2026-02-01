@@ -1,0 +1,106 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: varpulis
+  namespace: varpulis
+  labels:
+    app.kubernetes.io/name: varpulis
+    app.kubernetes.io/component: cep-engine
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: varpulis
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: varpulis
+        app.kubernetes.io/component: cep-engine
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: varpulis
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: varpulis
+          image: varpulis/varpulis:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - "run"
+            - "/app/queries/queries.vql"
+            - "--workers"
+            - "4"
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          env:
+            - name: RUST_LOG
+              value: "info,varpulis=debug"
+            - name: RUST_BACKTRACE
+              value: "1"
+            # Kafka configuration (if using Kafka connector)
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                configMapKeyRef:
+                  name: varpulis-config
+                  key: kafka.bootstrap.servers
+                  optional: true
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "2000m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: queries
+              mountPath: /app/queries
+              readOnly: true
+            - name: state
+              mountPath: /app/state
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: queries
+          configMap:
+            name: varpulis-config
+        - name: state
+          emptyDir: {}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: varpulis
+                topologyKey: kubernetes.io/hostname
