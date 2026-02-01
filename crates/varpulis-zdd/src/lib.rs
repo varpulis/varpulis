@@ -56,6 +56,7 @@
 //! - [`Zdd::iter()`] - Lazy iteration over all sets
 //! - [`Zdd::to_dot()`] - Export to Graphviz for visualization
 
+pub mod arena;
 mod debug;
 mod iter;
 mod node;
@@ -64,6 +65,7 @@ mod refs;
 mod table;
 mod zdd;
 
+pub use arena::{ArenaStats, GcStats, SharedArena, ZddArena, ZddHandle};
 pub use iter::ZddIterator;
 pub use node::ZddNode;
 pub use refs::ZddRef;
