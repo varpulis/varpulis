@@ -7,6 +7,7 @@ description = "Runtime execution engine for Varpulis"
 [dependencies]
 varpulis-core = { path = "../varpulis-core" }
 varpulis-parser = { path = "../varpulis-parser" }
+varpulis-zdd = { path = "../varpulis-zdd" }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
