@@ -28,7 +28,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use varpulis_core::Value;
-use varpulis_zdd::Zdd;
+use varpulis_zdd::{ZddArena, ZddHandle};
 
 /// Shared event reference for efficient cloning in pattern matching.
 /// Using Arc allows multiple pattern runs to share the same event data
@@ -479,11 +479,17 @@ pub struct StackEntry {
 /// Instead of creating O(2^n) runs for n Kleene events, we use a single ZDD that
 /// compactly represents all valid combinations. This reduces memory from O(2^n)
 /// to O(n) nodes while preserving the ability to enumerate all combinations.
+///
+/// Uses ZddArena for efficient operations:
+/// - No table cloning during product_with_optional
+/// - Persistent operation caches
+/// - Cached counts
 #[derive(Debug, Clone)]
 pub struct KleeneCapture {
-    /// ZDD representing all valid event combinations
-    /// Each variable index corresponds to an event in the `events` vector
-    zdd: Zdd,
+    /// Arena for ZDD operations (provides shared table + caches)
+    arena: ZddArena,
+    /// Handle to the current ZDD representing all valid event combinations
+    handle: ZddHandle,
     /// Events captured during Kleene matching, indexed by ZDD variable
     events: Vec<SharedEvent>,
     /// Aliases for captured events (parallel to events vector)
@@ -496,8 +502,11 @@ impl KleeneCapture {
     /// Create a new empty Kleene capture.
     /// Starts with {∅} - the empty combination is always valid initially.
     pub fn new() -> Self {
+        let arena = ZddArena::new();
+        let handle = arena.base(); // {∅}
         Self {
-            zdd: Zdd::base(), // {∅}
+            arena,
+            handle,
             events: Vec::new(),
             aliases: Vec::new(),
             next_var: 0,
@@ -515,12 +524,12 @@ impl KleeneCapture {
         self.aliases.push(alias);
 
         // S × {∅, {var}} = S ∪ {s ∪ {var} | s ∈ S}
-        self.zdd = self.zdd.product_with_optional(var);
+        self.handle = self.arena.product_with_optional(self.handle, var);
     }
 
     /// Number of valid combinations (computed in O(|nodes|), not O(2^n))
-    pub fn combination_count(&self) -> usize {
-        self.zdd.count()
+    pub fn combination_count(&mut self) -> usize {
+        self.arena.count(self.handle)
     }
 
     /// Number of events captured
@@ -530,7 +539,7 @@ impl KleeneCapture {
 
     /// Number of ZDD nodes (for metrics)
     pub fn node_count(&self) -> usize {
-        self.zdd.node_count()
+        self.arena.node_count()
     }
 
     /// Check if this capture is empty (no events yet, only {∅})
@@ -541,7 +550,7 @@ impl KleeneCapture {
     /// Iterate over all valid combinations, producing StackEntry vectors.
     /// Each combination represents one valid Kleene match sequence.
     pub fn iter_combinations(&self) -> impl Iterator<Item = Vec<StackEntry>> + '_ {
-        self.zdd.iter().map(move |indices| {
+        self.arena.iter(self.handle).map(move |indices| {
             indices
                 .into_iter()
                 .map(|idx| {
