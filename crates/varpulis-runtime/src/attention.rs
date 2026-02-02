@@ -390,8 +390,8 @@ struct CacheEntry {
 
 impl EmbeddingCache {
     pub fn new(config: CacheConfig) -> Self {
-        // NonZeroUsize::new returns None for 0, so we use max(1, ...) to ensure valid capacity
-        let capacity = NonZeroUsize::new(config.max_size.max(1)).unwrap();
+        // SAFETY: .max(1) guarantees value >= 1, so NonZeroUsize::new cannot fail
+        let capacity = NonZeroUsize::new(config.max_size.max(1)).unwrap_or(NonZeroUsize::MIN);
         Self {
             cache: LruCache::new(capacity),
             config,
