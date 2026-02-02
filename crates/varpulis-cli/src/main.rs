@@ -23,6 +23,7 @@ use varpulis_runtime::simulator::{Simulator, SimulatorConfig};
 // Import our new modules
 use varpulis_cli::auth::{self, AuthConfig};
 use varpulis_cli::config::Config;
+use varpulis_cli::rate_limit;
 use varpulis_cli::security;
 use varpulis_cli::websocket::{self, ServerState};
 
@@ -121,6 +122,10 @@ enum Commands {
         /// Path to TLS private key file (PEM format). Required when --tls-cert is provided
         #[arg(long, env = "VARPULIS_TLS_KEY")]
         tls_key: Option<PathBuf>,
+
+        /// Rate limit in requests per second per client (0 = disabled)
+        #[arg(long, env = "VARPULIS_RATE_LIMIT", default_value = "0")]
+        rate_limit: u32,
     },
 
     /// Simulate events from an event file (.evt)
@@ -221,6 +226,7 @@ async fn main() -> Result<()> {
             api_key,
             tls_cert,
             tls_key,
+            rate_limit,
         } => {
             // Use security module to validate workdir - NO unwrap()!
             let workdir =
@@ -230,6 +236,13 @@ async fn main() -> Result<()> {
             let auth_config = match api_key {
                 Some(key) => AuthConfig::with_api_key(key),
                 None => AuthConfig::disabled(),
+            };
+
+            // Create rate limit config
+            let rate_limit_config = if rate_limit > 0 {
+                rate_limit::RateLimitConfig::new(rate_limit)
+            } else {
+                rate_limit::RateLimitConfig::disabled()
             };
 
             // Validate TLS configuration
@@ -252,6 +265,7 @@ async fn main() -> Result<()> {
                 workdir,
                 auth_config,
                 tls_config,
+                rate_limit_config,
             )
             .await?;
         }
@@ -1095,6 +1109,7 @@ async fn run_demo(
 // Server Mode - WebSocket API for VSCode Extension
 // =============================================================================
 
+#[allow(clippy::too_many_arguments)]
 async fn run_server(
     port: u16,
     enable_metrics: bool,
@@ -1103,6 +1118,7 @@ async fn run_server(
     workdir: PathBuf,
     auth_config: AuthConfig,
     tls_config: Option<(PathBuf, PathBuf)>,
+    rate_limit_config: rate_limit::RateLimitConfig,
 ) -> Result<()> {
     let tls_enabled = tls_config.is_some();
     let protocol = if tls_enabled { "wss" } else { "ws" };
@@ -1121,6 +1137,14 @@ async fn run_server(
             "enabled (API key required)"
         } else {
             "disabled"
+        }
+    );
+    println!(
+        "Rate Limit: {}",
+        if rate_limit_config.enabled {
+            format!("{} req/s per client", rate_limit_config.requests_per_second)
+        } else {
+            "disabled".to_string()
         }
     );
     if enable_metrics {
@@ -1156,6 +1180,9 @@ async fn run_server(
     // Create auth config Arc for sharing
     let auth_config = Arc::new(auth_config);
 
+    // Create rate limiter
+    let rate_limiter = Arc::new(rate_limit::RateLimiter::new(rate_limit_config));
+
     // WebSocket route
     let state_filter = warp::any().map({
         let state = state.clone();
@@ -1167,14 +1194,16 @@ async fn run_server(
         move || broadcast_tx.clone()
     });
 
-    // WebSocket route with optional authentication
+    // WebSocket route with authentication and rate limiting
     let ws_route = warp::path("ws")
         .and(auth::with_auth(auth_config.clone()))
+        .and(rate_limit::with_rate_limit(rate_limiter.clone()))
         .and(warp::ws())
         .and(state_filter)
         .and(broadcast_filter)
         .map(
             |_auth: (),
+             _rate_limit: rate_limit::RateLimitHeaders,
              ws: warp::ws::Ws,
              state: Arc<RwLock<ServerState>>,
              broadcast_tx: Arc<tokio::sync::broadcast::Sender<String>>| {
