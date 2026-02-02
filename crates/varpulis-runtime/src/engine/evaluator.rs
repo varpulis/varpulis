@@ -1006,11 +1006,8 @@ pub fn eval_expr_with_functions(
                                 s.len()
                             };
                             let chars: Vec<char> = s.chars().collect();
-                            if start <= end && end <= chars.len() {
-                                Some(Value::Str(chars[start..end].iter().collect()))
-                            } else {
-                                None
-                            }
+                            (start <= end && end <= chars.len())
+                                .then(|| Value::Str(chars[start..end].iter().collect()))
                         }
                         _ => None,
                     },

@@ -117,12 +117,10 @@ impl SlidingWindow {
             Some(last) => event_time >= last + self.slide_interval,
         };
 
-        if should_emit {
+        should_emit.then(|| {
             self.last_emit = Some(event_time);
-            Some(self.events.iter().map(Arc::clone).collect())
-        } else {
-            None
-        }
+            self.events.iter().map(Arc::clone).collect()
+        })
     }
 
     /// Add an event (wraps in Arc).
@@ -162,13 +160,7 @@ impl CountWindow {
     pub fn add_shared(&mut self, event: SharedEvent) -> Option<Vec<SharedEvent>> {
         self.events.push(event);
 
-        if self.events.len() >= self.count {
-            // Window is full, emit all events and reset
-            let completed = std::mem::take(&mut self.events);
-            Some(completed)
-        } else {
-            None
-        }
+        (self.events.len() >= self.count).then(|| std::mem::take(&mut self.events))
     }
 
     /// Add an event (wraps in Arc).
@@ -228,12 +220,12 @@ impl SlidingCountWindow {
         }
 
         // Emit if we have enough events and slide interval reached
-        if self.events.len() >= self.window_size && self.events_since_emit >= self.slide_size {
-            self.events_since_emit = 0;
-            Some(self.events.iter().map(Arc::clone).collect())
-        } else {
-            None
-        }
+        (self.events.len() >= self.window_size && self.events_since_emit >= self.slide_size).then(
+            || {
+                self.events_since_emit = 0;
+                self.events.iter().map(Arc::clone).collect()
+            },
+        )
     }
 
     /// Add an event (wraps in Arc).

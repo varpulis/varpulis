@@ -356,13 +356,9 @@ impl SourceConnector for HttpWebhookSource {
             .map_err(|e| ConnectorError::ConfigError(format!("Invalid bind address: {}", e)))?;
 
         // Rate limiter state (simple token bucket)
-        let rate_limiter = if config.rate_limit > 0 {
-            Some(std::sync::Arc::new(tokio::sync::Mutex::new(
-                RateLimiter::new(config.rate_limit),
-            )))
-        } else {
-            None
-        };
+        let rate_limiter = (config.rate_limit > 0).then(|| {
+            std::sync::Arc::new(tokio::sync::Mutex::new(RateLimiter::new(config.rate_limit)))
+        });
 
         // Clone paths as owned strings for 'static lifetime
         let event_path: &'static str = Box::leak(
@@ -382,11 +378,11 @@ impl SourceConnector for HttpWebhookSource {
 
         // Clone for filters
         let tx_single = tx.clone();
-        let tx_batch = tx.clone();
+        let tx_batch = tx;
         let api_key = config.api_key.clone();
         let api_key_batch = api_key.clone();
         let rate_limiter_single = rate_limiter.clone();
-        let rate_limiter_batch = rate_limiter.clone();
+        let rate_limiter_batch = rate_limiter;
         let max_batch = config.max_batch_size;
 
         // API key validation filter
@@ -536,7 +532,7 @@ impl SourceConnector for HttpWebhookSource {
             info!("  Rate limit: {} req/s", config.rate_limit);
         }
 
-        let name_clone = name.clone();
+        let name_clone = name;
         tokio::spawn(async move {
             let (_, server) = warp::serve(routes).bind_with_graceful_shutdown(addr, async {
                 shutdown_rx.await.ok();

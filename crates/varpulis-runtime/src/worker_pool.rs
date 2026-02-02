@@ -208,7 +208,7 @@ impl WorkerPool {
         let workers_clone = workers.clone();
         let partition_affinity_clone = partition_affinity.clone();
         let latencies_clone = latencies.clone();
-        let processor_clone = processor.clone();
+        let processor_clone = processor;
         let pool_name = config.name.clone();
         let num_workers = config.workers;
 
