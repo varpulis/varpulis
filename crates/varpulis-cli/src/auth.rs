@@ -284,10 +284,15 @@ pub enum AuthRejection {
 
 impl warp::reject::Reject for AuthRejection {}
 
-/// Handle authentication rejections
+/// Handle authentication and rate limit rejections
 pub async fn handle_rejection(
     err: warp::Rejection,
 ) -> Result<impl warp::Reply, std::convert::Infallible> {
+    // Check for rate limit rejection first
+    if let Some(reply) = crate::rate_limit::handle_rate_limit_rejection(&err) {
+        return Ok(reply);
+    }
+
     let (code, message) = if err.find::<AuthRejection>().is_some() {
         let auth_err = err.find::<AuthRejection>().unwrap();
         match auth_err {
