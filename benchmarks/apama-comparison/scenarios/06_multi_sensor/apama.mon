@@ -1,0 +1,82 @@
+/**
+ * Scenario 6: Multi-Sensor Correlation
+ * Correlate temperature and pressure sensors to detect anomalies
+ */
+
+using com.apama.aggregates.mean;
+using com.apama.aggregates.stddev;
+using com.apama.aggregates.count;
+using com.apama.aggregates.last;
+
+event TemperatureReading {
+    string sensor_id;
+    string location;
+    float value;
+}
+
+event PressureReading {
+    string sensor_id;
+    string location;
+    float value;
+}
+
+event CorrelatedAnomaly {
+    string location;
+    float temp_avg;
+    float temp_std;
+    float pressure_avg;
+    float pressure_std;
+    float correlation_score;
+}
+
+event TempStats {
+    string location;
+    float temp_avg;
+    float temp_std;
+}
+
+event PressureStats {
+    string location;
+    float pressure_avg;
+    float pressure_std;
+}
+
+monitor MultiSensorCorrelation {
+    action onload() {
+        // Temperature anomaly stream
+        stream<TempStats> tempAnomalies :=
+            from t in all TemperatureReading()
+                partition by t.location
+                retain 100
+                group by t.location
+                having stddev(t.value) > 5.0
+                select TempStats(t.location, mean(t.value), stddev(t.value));
+
+        // Pressure anomaly stream
+        stream<PressureStats> pressureAnomalies :=
+            from p in all PressureReading()
+                partition by p.location
+                retain 100
+                group by p.location
+                having stddev(p.value) > 10.0
+                select PressureStats(p.location, mean(p.value), stddev(p.value));
+
+        // Join streams to find correlated anomalies
+        from t in tempAnomalies
+        join p in pressureAnomalies on t.location = p.location
+        within 30.0
+        {
+            float score := (t.temp_std / 10.0) * (p.pressure_std / 20.0);
+            if score > 0.5 {
+                send CorrelatedAnomaly(
+                    t.location,
+                    t.temp_avg,
+                    t.temp_std,
+                    p.pressure_avg,
+                    p.pressure_std,
+                    score
+                ) to "output";
+            }
+        }
+    }
+}

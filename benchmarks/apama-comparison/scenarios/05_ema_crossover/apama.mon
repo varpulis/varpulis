@@ -1,0 +1,63 @@
+/**
+ * Scenario 5: EMA Crossover Trading Signal
+ * Detect when fast EMA (12-period) crosses above slow EMA (26-period)
+ *
+ * Note: Apama streams syntax for this pattern
+ */
+
+using com.apama.aggregates.mean;
+using com.apama.aggregates.last;
+
+event StockTick {
+    string symbol;
+    float price;
+    integer volume;
+}
+
+event CrossoverSignal {
+    string symbol;
+    float fast_ema;
+    float slow_ema;
+    string signal;
+    float strength;
+}
+
+monitor EMACrossover {
+    // EMA state per symbol
+    dictionary<string, float> fastEMA;
+    dictionary<string, float> slowEMA;
+    constant float FAST_ALPHA := 2.0 / 13.0;  // 12-period EMA
+    constant float SLOW_ALPHA := 2.0 / 27.0;  // 26-period EMA
+
+    action onload() {
+        on all StockTick() as tick {
+            string sym := tick.symbol;
+            float price := tick.price;
+
+            // Initialize or update EMAs
+            if not fastEMA.hasKey(sym) {
+                fastEMA[sym] := price;
+                slowEMA[sym] := price;
+            } else {
+                // EMA formula: EMA = alpha * price + (1 - alpha) * prevEMA
+                fastEMA[sym] := FAST_ALPHA * price + (1.0 - FAST_ALPHA) * fastEMA[sym];
+                slowEMA[sym] := SLOW_ALPHA * price + (1.0 - SLOW_ALPHA) * slowEMA[sym];
+
+                float diff := fastEMA[sym] - slowEMA[sym];
+                if diff.abs() > 0.5 {
+                    string signal := "sell";
+                    if diff > 0.0 {
+                        signal := "buy";
+                    }
+                    send CrossoverSignal(
+                        sym,
+                        fastEMA[sym],
+                        slowEMA[sym],
+                        signal,
+                        diff.abs()
+                    ) to "output";
+                }
+            }
+        }
+    }
+}

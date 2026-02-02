@@ -1,0 +1,73 @@
+# Scenario 6: Multi-Sensor Correlation
+# Correlate readings from temperature and pressure sensors to detect anomalies
+# Alert when both sensors show abnormal values in same time window
+#
+# Tests: Multiple event types, stream joins, windowed correlation
+
+event TemperatureReading:
+    sensor_id: str
+    location: str
+    value: float
+    ts: timestamp
+
+event PressureReading:
+    sensor_id: str
+    location: str
+    value: float
+    ts: timestamp
+
+event CorrelatedAnomaly:
+    location: str
+    temp_avg: float
+    temp_std: float
+    pressure_avg: float
+    pressure_std: float
+    correlation_score: float
+
+# Temperature anomaly detection
+stream TempStats = TemperatureReading
+    .partition_by(location)
+    .window(100)
+    .aggregate(
+        location: last(location),
+        temp_avg: avg(value),
+        temp_std: stddev(value),
+        temp_count: count()
+    )
+    .having(temp_std > 5.0)  # High variance indicates anomaly
+
+# Pressure anomaly detection
+stream PressureStats = PressureReading
+    .partition_by(location)
+    .window(100)
+    .aggregate(
+        location: last(location),
+        pressure_avg: avg(value),
+        pressure_std: stddev(value),
+        pressure_count: count()
+    )
+    .having(pressure_std > 10.0)  # High variance indicates anomaly
+
+# Correlate the two anomaly streams
+stream CorrelatedAnomalies = join(TempStats, PressureStats)
+    .on(TempStats.location == PressureStats.location)
+    .window(30s)
+    .select(
+        location: TempStats.location,
+        temp_avg: TempStats.temp_avg,
+        temp_std: TempStats.temp_std,
+        pressure_avg: PressureStats.pressure_avg,
+        pressure_std: PressureStats.pressure_std,
+        # Correlation score based on normalized standard deviations
+        score: (TempStats.temp_std / 10.0) * (PressureStats.pressure_std / 20.0)
+    )
+    .where(score > 0.5)  # Strong correlation
+    .emit(
+        event_type: "CorrelatedAnomaly",
+        location: location,
+        temp_avg: temp_avg,
+        temp_std: temp_std,
+        pressure_avg: pressure_avg,
+        pressure_std: pressure_std,
+        correlation_score: score
+    )

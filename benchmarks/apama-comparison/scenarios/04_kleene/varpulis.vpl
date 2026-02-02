@@ -1,0 +1,36 @@
+# Scenario 4: Kleene+ Pattern Benchmark
+# Detect rising price sequences: First tick, one or more higher ticks, then final tick
+# This is where SASE+ excels - Apama requires manual loops
+#
+# SASE+ pattern: SEQ(Start, Rising+, End)
+
+event StockTick:
+    symbol: str
+    price: float
+    volume: int
+    ts: timestamp
+
+event PriceSpike:
+    symbol: str
+    start_price: float
+    end_price: float
+    spike_count: int
+    duration_ms: int
+
+# Kleene+ pattern: First -> (Rising)+ -> End
+# This native SASE+ syntax is much simpler than Apama's loop-based equivalent
+pattern RisingSequence = SEQ(
+    StockTick as first,
+    StockTick+ where price > first.price as rising,
+    StockTick where price > rising.price as last
+) within 60s partition by symbol
+
+stream PriceSpikes = RisingSequence
+    .emit(
+        event_type: "PriceSpike",
+        symbol: last.symbol,
+        start_price: first.price,
+        end_price: last.price,
+        spike_count: len(rising),
+        duration_ms: last.ts - first.ts
+    )

@@ -1,0 +1,21 @@
+# Scenario 1: Simple Filter Benchmark
+# Filter stock ticks where price > threshold
+#
+# Apama equivalent: on all StockTick(*, >50.0)
+
+event StockTick:
+    symbol: str
+    price: float
+    volume: int
+
+event FilteredTick:
+    symbol: str
+    price: float
+
+stream Filtered = StockTick
+    .where(price > 50.0)
+    .emit(
+        event_type: "FilteredTick",
+        symbol: symbol,
+        price: price
+    )

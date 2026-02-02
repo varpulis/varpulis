@@ -1,0 +1,56 @@
+# Scenario 5: EMA Crossover Trading Signal
+# Detect when fast EMA (12-period) crosses above slow EMA (26-period)
+# Classic MACD-style signal detection
+#
+# This demonstrates join of aggregated streams
+
+event StockTick:
+    symbol: str
+    price: float
+    volume: int
+    ts: timestamp
+
+event CrossoverSignal:
+    symbol: str
+    fast_ema: float
+    slow_ema: float
+    signal: str
+    strength: float
+
+# Fast EMA (12 periods)
+stream FastEMA = StockTick
+    .partition_by(symbol)
+    .window(12)
+    .aggregate(
+        symbol: last(symbol),
+        ema_fast: ema(price, 12)
+    )
+
+# Slow EMA (26 periods)
+stream SlowEMA = StockTick
+    .partition_by(symbol)
+    .window(26)
+    .aggregate(
+        symbol: last(symbol),
+        ema_slow: ema(price, 26)
+    )
+
+# Join and detect crossovers
+stream Crossover = join(FastEMA, SlowEMA)
+    .on(FastEMA.symbol == SlowEMA.symbol)
+    .window(2)
+    .select(
+        symbol: FastEMA.symbol,
+        fast: FastEMA.ema_fast,
+        slow: SlowEMA.ema_slow,
+        diff: FastEMA.ema_fast - SlowEMA.ema_slow
+    )
+    .where(abs(diff) > 0.5)  # Only significant crossovers
+    .emit(
+        event_type: "CrossoverSignal",
+        symbol: symbol,
+        fast_ema: fast,
+        slow_ema: slow,
+        signal: if fast > slow then "buy" else "sell",
+        strength: abs(diff)
+    )
