@@ -1,11 +1,36 @@
 # Varpulis CEP - Kanban
 
-> Derniere mise a jour: 2026-02-01 (Engine cleanup: pattern.rs removed, SASE+ is now the only engine)
+> Derniere mise a jour: 2026-02-02 (Production Readiness Audit completed)
+
+## Production Readiness Score: 7.8/10
+
+| Critere | Score | Statut |
+|---------|-------|--------|
+| Code Quality | 8/10 | Clippy clean, 4 unsafe blocks |
+| Test Coverage | 6/10 | 62.92% (cible 80%) |
+| Error Handling | 7/10 | ~200 unwraps runtime (cible <50) |
+| Security | 9/10 | TLS/Auth implementes |
+| Performance | 8/10 | ZDD optimise, 300-500K evt/s |
+| Documentation | 8/10 | Exemples complets, benchmarks |
+
+### Blockers for Production
+
+1. **~200 unwrap() in runtime** - Risque de panic en production
+2. **Test coverage 62.92%** - En dessous du seuil 80%
+
+### Monetization Tiers
+
+| Tier | Readiness | Work Remaining |
+|------|-----------|----------------|
+| **Community** (Open Source) | READY | Disponible maintenant |
+| **Enterprise** (On-prem + Support) | 5-10 jours | Rate limiting, hot reload, tracing |
+| **SaaS** (Managed Service) | 20-30 jours | Multi-tenant, HA, connectors |
 
 ## Vue d'ensemble
 
 | Categorie | A faire | En cours | Termine |
 |-----------|---------|----------|----------|
+| **Production Readiness** | 2 | 0 | 0 |
 | Parser Pest | 0 | 0 | **8** |
 | SASE+ Core | 0 | 0 | **10** |
 | SASE+ Improvements | 1 | 0 | **6** |
@@ -13,7 +38,7 @@
 | Attention | 0 | 0 | **4** |
 | Runtime Optimization | 0 | 0 | **6** |
 | Engine Cleanup | 0 | 0 | **1** |
-| Benchmarks | 0 | 0 | **2** |
+| Benchmarks | 0 | 0 | **3** |
 | Test Infra | 0 | 0 | **4** |
 | Engine Refactor | 0 | 0 | **3** |
 | Security | 0 | 0 | **7** |
@@ -22,7 +47,54 @@
 | Imperative | 0 | 0 | **4** |
 | Couverture | 0 | 2 | 0 |
 | VS Code | 1 | 0 | 0 |
-| **Total** | **2** | **2** | **64** |
+| **Total** | **4** | **2** | **65** |
+
+---
+
+## HAUTE PRIORITE - Production Readiness
+
+> **Objectif**: Atteindre 9/10 pour monetisation Enterprise
+
+### A faire
+
+- [ ] **PROD-01**: Reduire unwrap() dans runtime (~200 → <50)
+  - **Severite**: CRITICAL
+  - **Impact**: Risque de panic en production
+  - **Fichiers prioritaires**:
+    - `sase.rs` - Gestion evenements NFA
+    - `engine/mod.rs` - Pipeline principal
+    - `connector.rs` - Sources/sinks externes
+  - **Action**: Remplacer par `ok_or_else()`, `?`, `unwrap_or_default()`
+  - **Effort**: 2-3 jours
+
+- [ ] **PROD-02**: Rate Limiting pour WebSocket API
+  - **Severite**: HIGH
+  - **Impact**: Protection contre DoS, equite multi-tenant
+  - **Implementation**:
+    - Token bucket algorithm par client
+    - Configurable via `--rate-limit`
+    - Headers: `X-RateLimit-Remaining`, `X-RateLimit-Reset`
+  - **Effort**: 1 jour
+
+### Roadmap Monetisation
+
+```
+Phase 1 (3-5 jours) - Enterprise Ready
+├── PROD-01: Unwrap reduction
+├── PROD-02: Rate limiting
+└── Metriques Prometheus (deja fait)
+
+Phase 2 (1-2 semaines) - Enterprise+
+├── COV-01: Test coverage 80%
+├── Hot reload via API
+└── Distributed tracing (OpenTelemetry)
+
+Phase 3 (3-4 semaines) - SaaS Ready
+├── Multi-tenant isolation
+├── Kubernetes operator
+├── Additional connectors (Pulsar, RabbitMQ)
+└── High availability (Raft consensus)
+```
 
 ---
 
@@ -570,6 +642,10 @@ fn compute_stats(prices: [float]) -> {str: float}:
   - Single event, batch processing
   - Comparaison sequentiel vs parallel
   - Cache embedding warm/cold
+- [x] **BENCH-03**: Comparaison Apama (`APAMA_COMPARISON_2026.md`)
+  - ZDD vs Apama manual state machines
+  - Kleene+ benchmark: 400x faster than naive, 25000x memory compression
+  - Code comparison: 22 lines VPL vs 63 lines Apama EPL
 
 ### Resultats SASE+ (10K events)
 
@@ -578,6 +654,14 @@ fn compute_stats(prices: [float]) -> {str: float}:
 | Simple seq (A->B) | 31ms | **320K evt/s** |
 | Kleene+ (A->B+->C) | 25ms | **200K evt/s** |
 | Long seq (10 events) | 377ms | 26K evt/s |
+
+### ZDD Advantage (Kleene+ patterns)
+
+| B Events | Combinations | ZDD Nodes | Memory Ratio |
+|----------|--------------|-----------|--------------|
+| 10       | 1,023        | ~20       | 51x          |
+| 20       | 1,048,575    | ~40       | 26214x       |
+| 30       | 1,073,741,823| ~60       | 17895697x    |
 
 ---
 
@@ -873,6 +957,7 @@ cargo tarpaulin --out Html
 
 | Metrique | Valeur | Cible | Statut |
 |----------|--------|-------|--------|
+| **Production Score** | **7.8/10** | 9/10 | In Progress |
 | **Tests totaux** | **782** | 100+ | Excellent |
 | **Tests CLI** | **76** | - | Excellent |
 | **Couverture** | 62.92% | 80% | Needs work |
@@ -880,7 +965,10 @@ cargo tarpaulin --out Html
 | **Unsafe blocks** | 4 | <10 | Excellent |
 | **Unwrap parser** | 0 | 0 | Excellent |
 | **Unwrap CLI** | **0** | 0 | Excellent |
-| **Unwrap runtime** | ~200 | <50 | Needs work |
+| **Unwrap runtime** | ~200 | <50 | **BLOCKER** |
+| **Security (TLS/Auth)** | Done | Done | Excellent |
+| **ZDD Memory** | O(n²) | - | Excellent |
+| **Throughput** | 300-500K/s | - | Excellent |
 
 ---
 
@@ -920,9 +1008,24 @@ Version 0.1.0
 
 ## Prochaines etapes recommandees
 
-1. **Securite d'abord**: Implementer authentification et TLS avant deployment
-2. **Performance**: Reduire cloning pour ameliorer throughput
-3. **Qualite**: Augmenter couverture de tests a 80%
-4. **Tooling**: Ameliorer experience developpeur avec tree-sitter
+### Priorite Immediate (Monetisation)
 
-**Estimation pour production-ready**: ~10 jours de travail
+1. **PROD-01**: Reduire ~200 unwrap() dans runtime → <50 (2-3 jours)
+2. **PROD-02**: Rate limiting WebSocket API (1 jour)
+3. **COV-01/02**: Augmenter test coverage 62.92% → 80% (3-5 jours)
+
+### Deja Complete
+
+- [x] Securite: TLS/WSS (SEC-05) et Auth API Key (SEC-04)
+- [x] Performance: ZDD optimization, Arc<Event>, batch processing
+- [x] Benchmarks: Comparaison Apama avec ZDD advantage documentee
+
+### Estimations Monetisation
+
+| Tier | Effort | Revenue Potential |
+|------|--------|-------------------|
+| **Community** | READY | Brand awareness, adoption |
+| **Enterprise** | 5-10 jours | License fees, support contracts |
+| **SaaS** | 20-30 jours | Recurring revenue, usage-based |
+
+**Recommendation**: Focus PROD-01 + PROD-02 pour Enterprise tier en 1 semaine.
