@@ -2458,11 +2458,6 @@ impl SaseEngine {
                         completed.push(result);
                         i += 1;
                     }
-                    RunAdvanceResult::CompleteMultiple(results) => {
-                        // ZDD-KLEENE: Multiple results from ZDD iteration
-                        completed.extend(results);
-                        runs.remove(i);
-                    }
                     RunAdvanceResult::Invalidate => {
                         runs.remove(i);
                     }
@@ -2500,11 +2495,6 @@ impl SaseEngine {
                     completed.push(result);
                     self.runs[i] = run;
                     i += 1;
-                }
-                RunAdvanceResult::CompleteMultiple(results) => {
-                    // ZDD-KLEENE: Multiple results from ZDD iteration
-                    completed.extend(results);
-                    self.runs.remove(i);
                 }
                 RunAdvanceResult::Invalidate => {
                     self.runs.remove(i);
@@ -2839,10 +2829,6 @@ enum RunAdvanceResult {
     Complete(MatchResult),
     /// For `all` patterns: emit a result but keep the run active for more matches
     CompleteAndContinue(MatchResult),
-    /// ZDD-KLEENE: Complete with multiple results from ZDD iteration
-    /// Note: Currently unused - will be needed for patterns like SEQ(A, B+, C)
-    #[allow(dead_code)]
-    CompleteMultiple(Vec<MatchResult>),
     Invalidate,
     NoMatch,
 }
@@ -3015,69 +3001,6 @@ fn advance_run_shared(
     match strategy {
         SelectionStrategy::StrictContiguous => RunAdvanceResult::Invalidate,
         _ => RunAdvanceResult::NoMatch,
-    }
-}
-
-/// ZDD-KLEENE: Complete pattern with all Kleene combinations from ZDD
-/// Note: Currently unused - will be needed for patterns like SEQ(A, B+, C)
-/// where we need to enumerate all B combinations when C matches.
-#[allow(dead_code)]
-fn complete_with_kleene_zdd(run: &Run) -> RunAdvanceResult {
-    let Some(ref kc) = run.kleene_capture else {
-        // No Kleene capture, return single result
-        return RunAdvanceResult::Complete(MatchResult {
-            captured: run.captured.clone(),
-            stack: run.stack.clone(),
-            duration: run.started_at.elapsed(),
-        });
-    };
-
-    // If ZDD only has empty set {∅}, return single result with base captured
-    if kc.is_empty() {
-        return RunAdvanceResult::Complete(MatchResult {
-            captured: run.captured.clone(),
-            stack: run.stack.clone(),
-            duration: run.started_at.elapsed(),
-        });
-    }
-
-    // Iterate over all ZDD combinations and produce MatchResults
-    let duration = run.started_at.elapsed();
-    let results: Vec<MatchResult> = kc
-        .iter_combinations()
-        .filter(|stack| !stack.is_empty()) // Skip empty combination for Kleene+
-        .map(|kleene_stack| {
-            // Merge base captured with Kleene captured
-            let mut captured = run.captured.clone();
-            for entry in &kleene_stack {
-                if let Some(ref alias) = entry.alias {
-                    captured.insert(alias.clone(), Arc::clone(&entry.event));
-                }
-            }
-
-            // Combine base stack with Kleene stack
-            let mut combined_stack = run.stack.clone();
-            combined_stack.extend(kleene_stack);
-
-            MatchResult {
-                captured,
-                stack: combined_stack,
-                duration,
-            }
-        })
-        .collect();
-
-    if results.is_empty() {
-        // Only had empty combination, return single result
-        RunAdvanceResult::Complete(MatchResult {
-            captured: run.captured.clone(),
-            stack: run.stack.clone(),
-            duration,
-        })
-    } else if results.len() == 1 {
-        RunAdvanceResult::Complete(results.into_iter().next().unwrap())
-    } else {
-        RunAdvanceResult::CompleteMultiple(results)
     }
 }
 
