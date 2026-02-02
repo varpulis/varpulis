@@ -338,6 +338,11 @@ impl EmbeddingEngine {
             let chunks = emb_len / 4;
             for c in 0..chunks {
                 let base = c * 4;
+                // SAFETY: Loop bounds guarantee:
+                // - base + 3 < chunks * 4 <= emb_len <= embedding.len()
+                // - row_start + base + 3 < i * embedding_dim + emb_len <= projection.len()
+                //   (projection has size embedding_dim * head_dim, accessed row-major)
+                // All indices are within bounds.
                 unsafe {
                     sum += *projection.get_unchecked(row_start + base)
                         * *embedding.get_unchecked(base);
@@ -352,6 +357,8 @@ impl EmbeddingEngine {
 
             // Handle remainder
             for j in (chunks * 4)..emb_len {
+                // SAFETY: j is in [chunks*4, emb_len), so j < emb_len <= embedding.len().
+                // row_start + j < i * embedding_dim + emb_len <= projection.len().
                 unsafe {
                     sum += *projection.get_unchecked(row_start + j) * *embedding.get_unchecked(j);
                 }
@@ -1079,6 +1086,9 @@ fn dot_product_simd(a: &[f32], b: &[f32]) -> f32 {
     // Process 8 elements at a time (loop unrolling)
     for i in 0..chunks {
         let base = i * 8;
+        // SAFETY: Loop bounds guarantee base + 7 < chunks * 8 <= len.
+        // chunks = len / 8, so base + 7 = i*8 + 7 < chunks*8 = (len/8)*8 <= len.
+        // Both a and b have length >= len (min of their lengths), so all indices valid.
         unsafe {
             sum0 += *a.get_unchecked(base) * *b.get_unchecked(base);
             sum1 += *a.get_unchecked(base + 1) * *b.get_unchecked(base + 1);
@@ -1094,6 +1104,8 @@ fn dot_product_simd(a: &[f32], b: &[f32]) -> f32 {
     // Handle remainder
     let base = chunks * 8;
     for i in 0..remainder {
+        // SAFETY: remainder = len % 8, so base + i = chunks*8 + i where i < remainder.
+        // Thus base + i < chunks*8 + remainder = len. Both slices have length >= len.
         unsafe {
             sum0 += *a.get_unchecked(base + i) * *b.get_unchecked(base + i);
         }
