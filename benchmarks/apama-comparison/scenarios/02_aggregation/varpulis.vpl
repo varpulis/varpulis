@@ -1,0 +1,34 @@
+# Scenario 2: Windowed Aggregation Benchmark
+# Calculate VWAP (Volume Weighted Average Price) over sliding window
+#
+# Apama equivalent: from t in trades retain 100 select sum(t.price * t.volume) / sum(t.volume)
+
+event Trade:
+    symbol: str
+    price: float
+    volume: float
+    ts: timestamp
+
+event VWAPUpdate:
+    symbol: str
+    vwap: float
+    total_volume: float
+    trade_count: int
+
+stream VWAP = Trade
+    .partition_by(symbol)
+    .window(100)
+    .aggregate(
+        symbol: last(symbol),
+        total_pv: sum(price * volume),
+        total_volume: sum(volume),
+        trade_count: count()
+    )
+    .where(total_volume > 0.0)
+    .emit(
+        event_type: "VWAPUpdate",
+        symbol: symbol,
+        vwap: total_pv / total_volume,
+        total_volume: total_volume,
+        trade_count: trade_count
+    )

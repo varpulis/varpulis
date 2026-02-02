@@ -1,0 +1,23 @@
+/**
+ * Scenario 1: Simple Filter Benchmark
+ * Filter stock ticks where price > threshold
+ */
+
+event StockTick {
+    string symbol;
+    float price;
+    integer volume;
+}
+
+event FilteredTick {
+    string symbol;
+    float price;
+}
+
+monitor FilterBenchmark {
+    action onload() {
+        on all StockTick(*, >50.0, *) as t {
+            send FilteredTick(t.symbol, t.price) to "output";
+        }
+    }
+}

@@ -1,0 +1,63 @@
+/**
+ * Scenario 4: Kleene+ Pattern Benchmark
+ * Detect rising price sequences
+ *
+ * Note: Apama doesn't have native Kleene+ support like SASE+
+ * This requires manual tracking with loops or state machines
+ */
+
+event StockTick {
+    string symbol;
+    float price;
+    integer volume;
+}
+
+event PriceSpike {
+    string symbol;
+    float start_price;
+    float end_price;
+    integer spike_count;
+}
+
+monitor RisingSequenceDetector {
+    // Track state per symbol
+    dictionary<string, float> startPrices;
+    dictionary<string, float> lastPrices;
+    dictionary<string, integer> counts;
+    dictionary<string, float> startTimes;
+
+    action onload() {
+        on all StockTick() as tick {
+            string sym := tick.symbol;
+
+            if not startPrices.hasKey(sym) {
+                // Start new sequence
+                startPrices[sym] := tick.price;
+                lastPrices[sym] := tick.price;
+                counts[sym] := 0;
+                startTimes[sym] := currentTime;
+            } else {
+                if tick.price > lastPrices[sym] {
+                    // Rising - continue sequence
+                    lastPrices[sym] := tick.price;
+                    counts[sym] := counts[sym] + 1;
+                } else {
+                    // Sequence broken - emit if we had rises
+                    if counts[sym] > 0 {
+                        send PriceSpike(
+                            sym,
+                            startPrices[sym],
+                            lastPrices[sym],
+                            counts[sym]
+                        ) to "output";
+                    }
+                    // Reset
+                    startPrices[sym] := tick.price;
+                    lastPrices[sym] := tick.price;
+                    counts[sym] := 0;
+                    startTimes[sym] := currentTime;
+                }
+            }
+        }
+    }
+}

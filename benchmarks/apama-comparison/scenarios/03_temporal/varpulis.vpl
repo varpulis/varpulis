@@ -1,0 +1,37 @@
+# Scenario 3: Temporal Sequence Pattern Benchmark
+# Detect Login followed by high-value Transaction from different IP
+#
+# Apama equivalent: on Login as l -> Transaction(...) within(300.0)
+
+event Login:
+    user_id: str
+    ip: str
+    device: str
+    ts: timestamp
+
+event Transaction:
+    user_id: str
+    amount: float
+    ip: str
+    merchant: str
+    ts: timestamp
+
+event FraudAlert:
+    user_id: str
+    login_ip: str
+    tx_ip: str
+    amount: float
+    time_delta_ms: int
+
+# SASE+ temporal sequence: Login -> Transaction within 5 minutes
+stream FraudDetection = Login as login
+    -> Transaction where user_id == login.user_id and amount > 5000.0 and ip != login.ip as tx
+    .within(5m)
+    .emit(
+        event_type: "FraudAlert",
+        user_id: login.user_id,
+        login_ip: login.ip,
+        tx_ip: tx.ip,
+        amount: tx.amount,
+        time_delta_ms: tx.ts - login.ts
+    )

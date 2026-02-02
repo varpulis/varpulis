@@ -1,0 +1,33 @@
+/**
+ * Scenario 2: Windowed Aggregation Benchmark
+ * Calculate VWAP (Volume Weighted Average Price) over sliding window
+ */
+
+event Trade {
+    string symbol;
+    float price;
+    float volume;
+}
+
+event VWAPUpdate {
+    string symbol;
+    float vwap;
+    float total_volume;
+    integer trade_count;
+}
+
+monitor VWAPBenchmark {
+    stream<Trade> trades := all Trade() partition by symbol;
+
+    action onload() {
+        // VWAP calculation with window of 100 trades
+        from t in trades retain 100
+        partition by t.symbol
+        select Trade(t.symbol, sum(t.price * t.volume), sum(t.volume)) as agg {
+            if agg.volume > 0.0 {
+                float vwap := agg.price / agg.volume;
+                send VWAPUpdate(agg.symbol, vwap, agg.volume, 0) to "output";
+            }
+        }
+    }
+}
