@@ -3026,7 +3026,9 @@ fn advance_and_state(
     let total_branches = config.branches.len();
 
     {
-        let and_state = run.and_state.as_ref().unwrap();
+        let Some(and_state) = run.and_state.as_ref() else {
+            return RunAdvanceResult::Continue;
+        };
 
         for (idx, branch) in config.branches.iter().enumerate() {
             if and_state.is_branch_completed(idx) {
@@ -3050,7 +3052,9 @@ fn advance_and_state(
     // Process the match if found
     if let Some((idx, alias)) = matched_branch {
         // Complete this branch
-        let and_state = run.and_state.as_mut().unwrap();
+        let Some(and_state) = run.and_state.as_mut() else {
+            return RunAdvanceResult::Continue;
+        };
         and_state.complete_branch(idx, Arc::clone(&event));
 
         // Capture with alias if present
@@ -3063,8 +3067,7 @@ fn advance_and_state(
         let all_completed = run
             .and_state
             .as_ref()
-            .unwrap()
-            .all_completed(total_branches);
+            .is_some_and(|s| s.all_completed(total_branches));
 
         if all_completed {
             run.current_state = config.join_state;

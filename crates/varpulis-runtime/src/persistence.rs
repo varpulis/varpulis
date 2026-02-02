@@ -382,10 +382,11 @@ impl StateStore for RocksDbStore {
             .get(latest_key.as_bytes())
             .map_err(|e| StoreError::IoError(e.to_string()))?
         {
-            if id_bytes.len() == 8 {
-                let id = u64::from_le_bytes(id_bytes.try_into().unwrap());
-                return self.load_checkpoint(id);
-            }
+            let Ok(bytes) = <[u8; 8]>::try_from(id_bytes.as_ref()) else {
+                return Ok(None);
+            };
+            let id = u64::from_le_bytes(bytes);
+            return self.load_checkpoint(id);
         }
         Ok(None)
     }

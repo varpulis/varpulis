@@ -252,8 +252,10 @@ impl JoinBuffer {
                 break;
             }
 
-            // Pop the expired entry
-            let Reverse((_, source, key)) = self.expiry_queue.pop().unwrap();
+            // Pop the expired entry (safe: we just peeked it above)
+            let Some(Reverse((_, source, key))) = self.expiry_queue.pop() else {
+                break;
+            };
 
             // Clean up the specific key in the specific source buffer
             if let Some(source_buffer) = self.buffers.get_mut(&source) {
