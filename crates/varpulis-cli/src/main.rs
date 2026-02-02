@@ -1004,11 +1004,7 @@ async fn run_demo(
     let program = parse(demo_program).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
 
     // Create prometheus metrics if enabled
-    let prom_metrics = if enable_metrics {
-        Some(Metrics::new())
-    } else {
-        None
-    };
+    let prom_metrics = enable_metrics.then(Metrics::new);
 
     let mut engine = Engine::new(alert_tx);
     if let Some(ref m) = prom_metrics {
@@ -1139,7 +1135,7 @@ async fn run_server(
     let state = Arc::new(RwLock::new(ServerState::new(alert_tx.clone(), workdir)));
 
     // Create metrics if enabled
-    let _prom_metrics = if enable_metrics {
+    let _prom_metrics = enable_metrics.then(|| {
         let metrics = Metrics::new();
         let server = MetricsServer::new(metrics.clone(), format!("127.0.0.1:{}", metrics_port));
         tokio::spawn(async move {
@@ -1147,10 +1143,8 @@ async fn run_server(
                 tracing::error!("Metrics server error: {}", e);
             }
         });
-        Some(metrics)
-    } else {
-        None
-    };
+        metrics
+    });
 
     // Broadcast channel for alerts to all connected clients
     let (broadcast_tx, _) = tokio::sync::broadcast::channel::<String>(100);
