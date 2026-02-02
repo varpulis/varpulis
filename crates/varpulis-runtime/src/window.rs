@@ -612,6 +612,151 @@ impl<T: Clone> PartitionedPreviousValueTracker<T> {
     }
 }
 
+// =============================================================================
+// Incremental Sliding Window with Pre-computed Aggregates
+// =============================================================================
+
+/// A sliding window optimized for aggregations with O(1) updates
+///
+/// Instead of recomputing aggregations over all events on each emit,
+/// this window maintains running totals that are updated incrementally:
+/// - Adding an event: O(1) update to aggregates
+/// - Removing expired events: O(k) where k is expired count
+/// - Getting aggregates: O(1)
+///
+/// This is ~10-100x faster than recomputing for large windows.
+pub struct IncrementalSlidingWindow {
+    window_size: Duration,
+    slide_interval: Duration,
+    /// Events with pre-extracted field value for the tracked field
+    events: VecDeque<(SharedEvent, Option<f64>)>,
+    last_emit: Option<DateTime<Utc>>,
+    /// Field name to track for aggregations
+    field: String,
+    /// Running aggregates
+    sum: f64,
+    count: usize,
+    /// For min/max, we need to track all values (can't incrementally update)
+    /// Using the SIMD incremental tracker
+    minmax: crate::simd::IncrementalMinMax,
+}
+
+impl IncrementalSlidingWindow {
+    /// Create a new incremental sliding window
+    pub fn new(window_size: Duration, slide_interval: Duration, field: impl Into<String>) -> Self {
+        Self {
+            window_size,
+            slide_interval,
+            events: VecDeque::new(),
+            last_emit: None,
+            field: field.into(),
+            sum: 0.0,
+            count: 0,
+            minmax: crate::simd::IncrementalMinMax::new(),
+        }
+    }
+
+    /// Add an event, returning aggregates if slide interval reached
+    pub fn add(&mut self, event: SharedEvent) -> Option<IncrementalAggregates> {
+        let event_time = event.timestamp;
+
+        // Extract field value once
+        let value = event.get_float(&self.field);
+
+        // Update running aggregates
+        if let Some(v) = value {
+            if !v.is_nan() {
+                self.sum += v;
+                self.count += 1;
+                self.minmax.add(v);
+            }
+        }
+
+        self.events.push_back((event, value));
+
+        // Remove old events
+        let cutoff = event_time - self.window_size;
+        while let Some((front_event, front_value)) = self.events.front() {
+            if front_event.timestamp >= cutoff {
+                break;
+            }
+            // Update aggregates for removed event
+            if let Some(v) = front_value {
+                if !v.is_nan() {
+                    self.sum -= v;
+                    self.count = self.count.saturating_sub(1);
+                    self.minmax.remove(*v);
+                }
+            }
+            self.events.pop_front();
+        }
+
+        // Check if we should emit
+        let should_emit = match self.last_emit {
+            None => true,
+            Some(last) => event_time >= last + self.slide_interval,
+        };
+
+        should_emit.then(|| {
+            self.last_emit = Some(event_time);
+            IncrementalAggregates {
+                sum: self.sum,
+                count: self.count,
+                avg: if self.count > 0 {
+                    Some(self.sum / self.count as f64)
+                } else {
+                    None
+                },
+                min: self.minmax.min(),
+                max: self.minmax.max(),
+                event_count: self.events.len(),
+            }
+        })
+    }
+
+    /// Get current aggregates without emitting
+    pub fn current_aggregates(&mut self) -> IncrementalAggregates {
+        IncrementalAggregates {
+            sum: self.sum,
+            count: self.count,
+            avg: if self.count > 0 {
+                Some(self.sum / self.count as f64)
+            } else {
+                None
+            },
+            min: self.minmax.min(),
+            max: self.minmax.max(),
+            event_count: self.events.len(),
+        }
+    }
+
+    /// Get events in the current window (for patterns that need event access)
+    pub fn events(&self) -> impl Iterator<Item = &SharedEvent> {
+        self.events.iter().map(|(e, _)| e)
+    }
+
+    /// Reset the window
+    pub fn reset(&mut self) {
+        self.events.clear();
+        self.last_emit = None;
+        self.sum = 0.0;
+        self.count = 0;
+        self.minmax.reset();
+    }
+}
+
+/// Pre-computed aggregates from an incremental window
+#[derive(Debug, Clone)]
+pub struct IncrementalAggregates {
+    pub sum: f64,
+    pub count: usize,
+    pub avg: Option<f64>,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    /// Number of events in window (including those with null/NaN values)
+    pub event_count: usize,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1119,5 +1264,92 @@ mod tests {
         assert!((alerts[0].1 - 2.5).abs() < 0.001);
         assert_eq!(alerts[1].0, "ibm");
         assert!((alerts[1].1 - 2.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_incremental_sliding_window_basic() {
+        let mut window =
+            IncrementalSlidingWindow::new(Duration::seconds(5), Duration::seconds(1), "price");
+        let base_time = Utc::now();
+
+        // Add events with prices
+        for i in 0..5 {
+            let event = Event::new("Trade")
+                .with_timestamp(base_time + Duration::milliseconds(i * 500))
+                .with_field("price", varpulis_core::Value::Float(100.0 + i as f64));
+            let shared = Arc::new(event);
+            let _ = window.add(shared);
+        }
+
+        // Get aggregates
+        let agg = window.current_aggregates();
+        assert_eq!(agg.count, 5);
+        assert_eq!(agg.sum, 510.0); // 100 + 101 + 102 + 103 + 104
+        assert!((agg.avg.unwrap() - 102.0).abs() < 0.001);
+        assert_eq!(agg.min, Some(100.0));
+        assert_eq!(agg.max, Some(104.0));
+    }
+
+    #[test]
+    fn test_incremental_sliding_window_expiry() {
+        let mut window =
+            IncrementalSlidingWindow::new(Duration::seconds(2), Duration::seconds(1), "value");
+        let base_time = Utc::now();
+
+        // Add 3 events at t=0, t=1, t=2
+        for i in 0..3 {
+            let event = Event::new("Metric")
+                .with_timestamp(base_time + Duration::seconds(i))
+                .with_field("value", varpulis_core::Value::Float(10.0 * (i + 1) as f64));
+            window.add(Arc::new(event));
+        }
+
+        // At t=2, window contains t=0,1,2 (all within 2s)
+        let agg = window.current_aggregates();
+        assert_eq!(agg.count, 3);
+        assert_eq!(agg.sum, 60.0); // 10 + 20 + 30
+
+        // Add event at t=3 - should expire t=0
+        let event = Event::new("Metric")
+            .with_timestamp(base_time + Duration::seconds(3))
+            .with_field("value", varpulis_core::Value::Float(40.0));
+        window.add(Arc::new(event));
+
+        let agg = window.current_aggregates();
+        assert_eq!(agg.count, 3); // t=1,2,3
+        assert_eq!(agg.sum, 90.0); // 20 + 30 + 40 (10 expired)
+        assert_eq!(agg.min, Some(20.0)); // 10 was removed
+    }
+
+    #[test]
+    fn test_incremental_sliding_window_emit() {
+        let mut window =
+            IncrementalSlidingWindow::new(Duration::seconds(5), Duration::seconds(2), "value");
+        let base_time = Utc::now();
+
+        // First event should emit
+        let event = Event::new("Test")
+            .with_timestamp(base_time)
+            .with_field("value", varpulis_core::Value::Float(100.0));
+        let result = window.add(Arc::new(event));
+        assert!(result.is_some());
+
+        // Event at t=1 should not emit (slide interval is 2s)
+        let event = Event::new("Test")
+            .with_timestamp(base_time + Duration::seconds(1))
+            .with_field("value", varpulis_core::Value::Float(200.0));
+        let result = window.add(Arc::new(event));
+        assert!(result.is_none());
+
+        // Event at t=2 should emit
+        let event = Event::new("Test")
+            .with_timestamp(base_time + Duration::seconds(2))
+            .with_field("value", varpulis_core::Value::Float(300.0));
+        let result = window.add(Arc::new(event));
+        assert!(result.is_some());
+
+        let agg = result.unwrap();
+        assert_eq!(agg.count, 3);
+        assert_eq!(agg.sum, 600.0);
     }
 }

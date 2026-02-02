@@ -13,6 +13,7 @@ pub mod metrics;
 pub mod persistence;
 pub mod sase;
 pub mod sequence;
+pub mod simd;
 pub mod simulator;
 pub mod sink;
 pub mod stream;
@@ -28,9 +29,10 @@ pub use sink::{ConsoleSink, FileSink, HttpSink, MultiSink, Sink};
 pub use stream::Stream;
 pub use timer::{spawn_timer, TimerManager};
 pub use window::{
-    CountWindow, DelayBuffer, PartitionedDelayBuffer, PartitionedPreviousValueTracker,
-    PartitionedSlidingWindow, PartitionedTumblingWindow, PreviousValueTracker, SlidingCountWindow,
-    SlidingWindow, TumblingWindow,
+    CountWindow, DelayBuffer, IncrementalAggregates, IncrementalSlidingWindow,
+    PartitionedDelayBuffer, PartitionedPreviousValueTracker, PartitionedSlidingWindow,
+    PartitionedTumblingWindow, PreviousValueTracker, SlidingCountWindow, SlidingWindow,
+    TumblingWindow,
 };
 pub use worker_pool::{
     BackpressureError, BackpressureStrategy, WorkerPool, WorkerPoolConfig, WorkerPoolMetrics,

@@ -48,7 +48,7 @@ impl AggregateFunc for Count {
     }
 }
 
-/// Sum aggregation
+/// Sum aggregation (SIMD-optimized)
 pub struct Sum;
 
 impl AggregateFunc for Sum {
@@ -58,18 +58,22 @@ impl AggregateFunc for Sum {
 
     fn apply(&self, events: &[Event], field: Option<&str>) -> Value {
         let field = field.unwrap_or("value");
-        let sum: f64 = events.iter().filter_map(|e| e.get_float(field)).sum();
-        Value::Float(sum)
+        Value::Float(crate::simd::simd_sum(events, field))
     }
 
     fn apply_refs(&self, events: &[&Event], field: Option<&str>) -> Value {
         let field = field.unwrap_or("value");
-        let sum: f64 = events.iter().filter_map(|e| e.get_float(field)).sum();
-        Value::Float(sum)
+        // Extract values to contiguous array for SIMD
+        let values: Vec<f64> = events
+            .iter()
+            .filter_map(|e| e.get_float(field))
+            .filter(|v| !v.is_nan())
+            .collect();
+        Value::Float(crate::simd::sum_f64(&values))
     }
 }
 
-/// Average aggregation (single-pass algorithm)
+/// Average aggregation (SIMD-optimized)
 pub struct Avg;
 
 impl AggregateFunc for Avg {
@@ -79,43 +83,30 @@ impl AggregateFunc for Avg {
 
     fn apply(&self, events: &[Event], field: Option<&str>) -> Value {
         let field = field.unwrap_or("value");
-
-        // Single-pass: accumulate sum and count together
-        let (sum, count) =
-            events
-                .iter()
-                .fold((0.0, 0usize), |(sum, count), e| match e.get_float(field) {
-                    Some(v) => (sum + v, count + 1),
-                    None => (sum, count),
-                });
-
-        if count == 0 {
-            Value::Null
-        } else {
-            Value::Float(sum / count as f64)
+        match crate::simd::simd_avg(events, field) {
+            Some(avg) => Value::Float(avg),
+            None => Value::Null,
         }
     }
 
     fn apply_refs(&self, events: &[&Event], field: Option<&str>) -> Value {
         let field = field.unwrap_or("value");
+        // Extract values to contiguous array for SIMD
+        let values: Vec<f64> = events
+            .iter()
+            .filter_map(|e| e.get_float(field))
+            .filter(|v| !v.is_nan())
+            .collect();
 
-        let (sum, count) =
-            events
-                .iter()
-                .fold((0.0, 0usize), |(sum, count), e| match e.get_float(field) {
-                    Some(v) => (sum + v, count + 1),
-                    None => (sum, count),
-                });
-
-        if count == 0 {
+        if values.is_empty() {
             Value::Null
         } else {
-            Value::Float(sum / count as f64)
+            Value::Float(crate::simd::sum_f64(&values) / values.len() as f64)
         }
     }
 }
 
-/// Min aggregation
+/// Min aggregation (SIMD-optimized)
 pub struct Min;
 
 impl AggregateFunc for Min {
@@ -125,28 +116,27 @@ impl AggregateFunc for Min {
 
     fn apply(&self, events: &[Event], field: Option<&str>) -> Value {
         let field = field.unwrap_or("value");
-        events
-            .iter()
-            .filter_map(|e| e.get_float(field))
-            .filter(|x| !x.is_nan()) // Filter out NaN values
-            .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-            .map(Value::Float)
-            .unwrap_or(Value::Null)
+        match crate::simd::simd_min(events, field) {
+            Some(min) => Value::Float(min),
+            None => Value::Null,
+        }
     }
 
     fn apply_refs(&self, events: &[&Event], field: Option<&str>) -> Value {
         let field = field.unwrap_or("value");
-        events
+        let values: Vec<f64> = events
             .iter()
             .filter_map(|e| e.get_float(field))
-            .filter(|x| !x.is_nan())
-            .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-            .map(Value::Float)
-            .unwrap_or(Value::Null)
+            .filter(|v| !v.is_nan())
+            .collect();
+        match crate::simd::min_f64(&values) {
+            Some(min) => Value::Float(min),
+            None => Value::Null,
+        }
     }
 }
 
-/// Max aggregation
+/// Max aggregation (SIMD-optimized)
 pub struct Max;
 
 impl AggregateFunc for Max {
@@ -156,24 +146,23 @@ impl AggregateFunc for Max {
 
     fn apply(&self, events: &[Event], field: Option<&str>) -> Value {
         let field = field.unwrap_or("value");
-        events
-            .iter()
-            .filter_map(|e| e.get_float(field))
-            .filter(|x| !x.is_nan()) // Filter out NaN values
-            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-            .map(Value::Float)
-            .unwrap_or(Value::Null)
+        match crate::simd::simd_max(events, field) {
+            Some(max) => Value::Float(max),
+            None => Value::Null,
+        }
     }
 
     fn apply_refs(&self, events: &[&Event], field: Option<&str>) -> Value {
         let field = field.unwrap_or("value");
-        events
+        let values: Vec<f64> = events
             .iter()
             .filter_map(|e| e.get_float(field))
-            .filter(|x| !x.is_nan())
-            .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-            .map(Value::Float)
-            .unwrap_or(Value::Null)
+            .filter(|v| !v.is_nan())
+            .collect();
+        match crate::simd::max_f64(&values) {
+            Some(max) => Value::Float(max),
+            None => Value::Null,
+        }
     }
 }
 
