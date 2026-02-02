@@ -53,6 +53,7 @@ fn generate_trades(count: usize) -> Vec<Event> {
 }
 
 /// Generate fraud detection events (Login and Transaction)
+#[allow(dead_code)]
 fn generate_fraud_events(count: usize) -> Vec<Event> {
     let mut events = Vec::with_capacity(count);
     let ips = ["192.168.1.1", "192.168.1.2", "10.0.0.1", "10.0.0.2"];
