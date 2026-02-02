@@ -43,7 +43,9 @@ fn sum_f64_scalar(values: &[f64]) -> f64 {
 
     for i in 0..chunks {
         let base = i * 4;
-        // SAFETY: base + 3 < chunks * 4 <= values.len()
+        // SAFETY: Loop bounds guarantee base + 3 < chunks * 4 <= values.len().
+        // chunks = values.len() / 4, so base + 3 = i*4 + 3 < chunks*4 = (len/4)*4 <= len.
+        // All indices are within bounds.
         unsafe {
             sum0 += *values.get_unchecked(base);
             sum1 += *values.get_unchecked(base + 1);
@@ -55,7 +57,9 @@ fn sum_f64_scalar(values: &[f64]) -> f64 {
     // Handle remainder
     let base = chunks * 4;
     for i in 0..remainder {
-        // SAFETY: base + i < values.len()
+        // SAFETY: remainder = len % 4, so base + i = chunks*4 + i where i < remainder.
+        // Thus base + i < chunks*4 + remainder = chunks*4 + (len % 4) = len.
+        // All indices are within bounds.
         unsafe {
             sum0 += *values.get_unchecked(base + i);
         }
@@ -66,11 +70,15 @@ fn sum_f64_scalar(values: &[f64]) -> f64 {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
+/// SAFETY: Caller must ensure AVX2 is available (checked via is_x86_feature_detected!).
+/// This function uses AVX2 intrinsics for 4-way parallel f64 summation.
 unsafe fn sum_f64_avx2(values: &[f64]) -> f64 {
     let mut sum_vec = _mm256_setzero_pd();
     let chunks = values.len() / 4;
 
     for i in 0..chunks {
+        // SAFETY: i * 4 + 3 < chunks * 4 <= values.len(), so pointer arithmetic is in bounds.
+        // _mm256_loadu_pd handles unaligned loads safely.
         let ptr = values.as_ptr().add(i * 4);
         let v = _mm256_loadu_pd(ptr);
         sum_vec = _mm256_add_pd(sum_vec, v);
@@ -78,12 +86,14 @@ unsafe fn sum_f64_avx2(values: &[f64]) -> f64 {
 
     // Horizontal sum of the vector
     let mut result = [0.0f64; 4];
+    // SAFETY: result is a 4-element array, correctly sized for 256-bit store.
     _mm256_storeu_pd(result.as_mut_ptr(), sum_vec);
     let mut total = result[0] + result[1] + result[2] + result[3];
 
     // Handle remainder
     let base = chunks * 4;
     for i in base..values.len() {
+        // SAFETY: Loop range is [base, len), so i is always in bounds.
         total += *values.get_unchecked(i);
     }
 
@@ -125,11 +135,14 @@ fn min_f64_scalar(values: &[f64]) -> f64 {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
+/// SAFETY: Caller must ensure AVX2 is available and values is non-empty.
+/// Uses AVX2 intrinsics for 4-way parallel minimum computation.
 unsafe fn min_f64_avx2(values: &[f64]) -> f64 {
     let mut min_vec = _mm256_set1_pd(f64::INFINITY);
     let chunks = values.len() / 4;
 
     for i in 0..chunks {
+        // SAFETY: i * 4 + 3 < chunks * 4 <= values.len(), pointer arithmetic in bounds.
         let ptr = values.as_ptr().add(i * 4);
         let v = _mm256_loadu_pd(ptr);
         min_vec = _mm256_min_pd(min_vec, v);
@@ -137,12 +150,14 @@ unsafe fn min_f64_avx2(values: &[f64]) -> f64 {
 
     // Horizontal min
     let mut result = [0.0f64; 4];
+    // SAFETY: result is correctly sized for 256-bit store.
     _mm256_storeu_pd(result.as_mut_ptr(), min_vec);
     let mut min = result[0].min(result[1]).min(result[2]).min(result[3]);
 
     // Handle remainder
     let base = chunks * 4;
     for i in base..values.len() {
+        // SAFETY: Loop range [base, len) ensures i is in bounds.
         let v = *values.get_unchecked(i);
         if v < min {
             min = v;
@@ -187,11 +202,14 @@ fn max_f64_scalar(values: &[f64]) -> f64 {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
+/// SAFETY: Caller must ensure AVX2 is available and values is non-empty.
+/// Uses AVX2 intrinsics for 4-way parallel maximum computation.
 unsafe fn max_f64_avx2(values: &[f64]) -> f64 {
     let mut max_vec = _mm256_set1_pd(f64::NEG_INFINITY);
     let chunks = values.len() / 4;
 
     for i in 0..chunks {
+        // SAFETY: i * 4 + 3 < chunks * 4 <= values.len(), pointer arithmetic in bounds.
         let ptr = values.as_ptr().add(i * 4);
         let v = _mm256_loadu_pd(ptr);
         max_vec = _mm256_max_pd(max_vec, v);
@@ -199,12 +217,14 @@ unsafe fn max_f64_avx2(values: &[f64]) -> f64 {
 
     // Horizontal max
     let mut result = [0.0f64; 4];
+    // SAFETY: result is correctly sized for 256-bit store.
     _mm256_storeu_pd(result.as_mut_ptr(), max_vec);
     let mut max = result[0].max(result[1]).max(result[2]).max(result[3]);
 
     // Handle remainder
     let base = chunks * 4;
     for i in base..values.len() {
+        // SAFETY: Loop range [base, len) ensures i is in bounds.
         let v = *values.get_unchecked(i);
         if v > max {
             max = v;
@@ -219,7 +239,7 @@ unsafe fn max_f64_avx2(values: &[f64]) -> f64 {
 // =============================================================================
 
 /// SIMD-optimized greater-than comparison
-/// Returns a bitmask where bit i is set if values[i] > threshold
+/// Returns a bitmask where bit `i` is set if `values[i] > threshold`
 #[inline]
 pub fn compare_gt_f64(values: &[f64], threshold: f64) -> Vec<bool> {
     let mut result = vec![false; values.len()];
@@ -242,17 +262,22 @@ pub fn compare_gt_f64(values: &[f64], threshold: f64) -> Vec<bool> {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
+/// SAFETY: Caller must ensure AVX2 is available.
+/// result must have length >= values.len().
+/// Uses AVX2 intrinsics for 4-way parallel greater-than comparison.
 unsafe fn compare_gt_f64_avx2(values: &[f64], threshold: f64, result: &mut [bool]) {
     let thresh_vec = _mm256_set1_pd(threshold);
     let chunks = values.len() / 4;
 
     for i in 0..chunks {
+        // SAFETY: i * 4 + 3 < chunks * 4 <= values.len(), pointer in bounds.
         let ptr = values.as_ptr().add(i * 4);
         let v = _mm256_loadu_pd(ptr);
         let cmp = _mm256_cmp_pd(v, thresh_vec, _CMP_GT_OQ);
         let mask = _mm256_movemask_pd(cmp);
 
         let base = i * 4;
+        // SAFETY: base + 3 < chunks * 4 <= result.len() (result has same len as values).
         *result.get_unchecked_mut(base) = (mask & 1) != 0;
         *result.get_unchecked_mut(base + 1) = (mask & 2) != 0;
         *result.get_unchecked_mut(base + 2) = (mask & 4) != 0;
@@ -262,6 +287,7 @@ unsafe fn compare_gt_f64_avx2(values: &[f64], threshold: f64, result: &mut [bool
     // Handle remainder
     let base = chunks * 4;
     for i in base..values.len() {
+        // SAFETY: i is in [base, values.len()), both slices have same length.
         *result.get_unchecked_mut(i) = *values.get_unchecked(i) > threshold;
     }
 }
@@ -289,17 +315,22 @@ pub fn compare_lt_f64(values: &[f64], threshold: f64) -> Vec<bool> {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
+/// SAFETY: Caller must ensure AVX2 is available.
+/// result must have length >= values.len().
+/// Uses AVX2 intrinsics for 4-way parallel less-than comparison.
 unsafe fn compare_lt_f64_avx2(values: &[f64], threshold: f64, result: &mut [bool]) {
     let thresh_vec = _mm256_set1_pd(threshold);
     let chunks = values.len() / 4;
 
     for i in 0..chunks {
+        // SAFETY: i * 4 + 3 < chunks * 4 <= values.len(), pointer in bounds.
         let ptr = values.as_ptr().add(i * 4);
         let v = _mm256_loadu_pd(ptr);
         let cmp = _mm256_cmp_pd(v, thresh_vec, _CMP_LT_OQ);
         let mask = _mm256_movemask_pd(cmp);
 
         let base = i * 4;
+        // SAFETY: base + 3 < chunks * 4 <= result.len() (result has same len as values).
         *result.get_unchecked_mut(base) = (mask & 1) != 0;
         *result.get_unchecked_mut(base + 1) = (mask & 2) != 0;
         *result.get_unchecked_mut(base + 2) = (mask & 4) != 0;
@@ -309,6 +340,7 @@ unsafe fn compare_lt_f64_avx2(values: &[f64], threshold: f64, result: &mut [bool
     // Handle remainder
     let base = chunks * 4;
     for i in base..values.len() {
+        // SAFETY: i is in [base, values.len()), both slices have same length.
         *result.get_unchecked_mut(i) = *values.get_unchecked(i) < threshold;
     }
 }

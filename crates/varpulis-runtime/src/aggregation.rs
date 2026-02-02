@@ -1,19 +1,124 @@
-//! Aggregation functions for stream processing
+//! Aggregation functions for stream processing.
+//!
+//! This module provides aggregation functions used in windowed stream processing.
+//! Aggregations compute summary statistics over collections of events.
+//!
+//! # Available Aggregations
+//!
+//! | Function | Description | SIMD Optimized |
+//! |----------|-------------|----------------|
+//! | [`Count`] | Count events | No |
+//! | [`Sum`] | Sum of field values | Yes (AVX2) |
+//! | [`Avg`] | Average of field values | Yes (AVX2) |
+//! | [`Min`] | Minimum value | Yes (AVX2) |
+//! | [`Max`] | Maximum value | Yes (AVX2) |
+//! | [`StdDev`] | Standard deviation (Welford's) | No |
+//! | [`First`] | First value in window | No |
+//! | [`Last`] | Last value in window | No |
+//! | [`CountDistinct`] | Count unique values | No |
+//! | [`Ema`] | Exponential moving average | No |
+//!
+//! # Performance
+//!
+//! Aggregations use SIMD (AVX2) vectorization when available on x86_64:
+//! - `Sum`, `Avg`, `Min`, `Max` achieve ~4x speedup with AVX2
+//! - Fallback to 4-way loop unrolling on other architectures
+//!
+//! # Example
+//!
+//! ```rust,ignore
+//! use varpulis_runtime::aggregation::{AggregateFunc, Sum, Avg, Count};
+//! use varpulis_runtime::Event;
+//!
+//! let events = vec![
+//!     Event::new("Reading").with_field("value", 10.0),
+//!     Event::new("Reading").with_field("value", 20.0),
+//!     Event::new("Reading").with_field("value", 30.0),
+//! ];
+//!
+//! let sum = Sum.apply(&events, Some("value"));  // 60.0
+//! let avg = Avg.apply(&events, Some("value"));  // 20.0
+//! let count = Count.apply(&events, None);       // 3
+//! ```
+//!
+//! # Custom Aggregations
+//!
+//! Implement the [`AggregateFunc`] trait for custom aggregations:
+//!
+//! ```rust,ignore
+//! use varpulis_runtime::aggregation::AggregateFunc;
+//! use varpulis_runtime::Event;
+//! use varpulis_core::Value;
+//!
+//! struct Median;
+//!
+//! impl AggregateFunc for Median {
+//!     fn name(&self) -> &str { "median" }
+//!
+//!     fn apply(&self, events: &[Event], field: Option<&str>) -> Value {
+//!         let field = field.unwrap_or("value");
+//!         let mut values: Vec<f64> = events
+//!             .iter()
+//!             .filter_map(|e| e.get_float(field))
+//!             .collect();
+//!         values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+//!
+//!         if values.is_empty() {
+//!             Value::Null
+//!         } else {
+//!             Value::Float(values[values.len() / 2])
+//!         }
+//!     }
+//! }
+//! ```
 
 use crate::event::{Event, SharedEvent};
 use indexmap::IndexMap;
 use std::hash::{Hash, Hasher};
 use varpulis_core::Value;
 
-/// Result of an aggregation
+/// Result type for aggregation outputs.
+///
+/// Maps aggregation names to their computed values.
 pub type AggResult = IndexMap<String, Value>;
 
-/// Aggregation function trait
+/// Trait for implementing aggregation functions.
+///
+/// Aggregation functions compute summary values over collections of events.
+/// They are used in windowed stream processing to produce aggregate results.
+///
+/// # Required Methods
+///
+/// - [`name`](Self::name): Returns the aggregation function name
+/// - [`apply`](Self::apply): Computes the aggregation over owned events
+///
+/// # Optional Methods
+///
+/// - [`apply_shared`](Self::apply_shared): Optimized for `Arc<Event>` (avoids cloning)
+/// - [`apply_refs`](Self::apply_refs): For reference slices (internal use)
+///
+/// # Thread Safety
+///
+/// Implementations must be `Send + Sync` to work with parallel processing.
 pub trait AggregateFunc: Send + Sync {
+    /// Returns the name of this aggregation function (e.g., "sum", "avg").
     fn name(&self) -> &str;
+
+    /// Apply the aggregation to a slice of events.
+    ///
+    /// # Arguments
+    ///
+    /// - `events`: Slice of events to aggregate
+    /// - `field`: Optional field name to aggregate (defaults to "value")
+    ///
+    /// # Returns
+    ///
+    /// The aggregated value, or `Value::Null` if no valid values found.
     fn apply(&self, events: &[Event], field: Option<&str>) -> Value;
 
-    /// Apply aggregation to SharedEvent slice (avoids cloning in hot paths)
+    /// Apply aggregation to shared events (avoids cloning in hot paths).
+    ///
+    /// Override this for better performance when events are wrapped in `Arc`.
     fn apply_shared(&self, events: &[SharedEvent], field: Option<&str>) -> Value {
         // Default implementation: create temporary references
         // Aggregations only read, so we can iterate and dereference
