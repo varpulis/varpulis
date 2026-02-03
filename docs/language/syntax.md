@@ -143,6 +143,44 @@ stream FraudDetection = Trades
     )
 ```
 
+## Contexts (Multi-Threaded Execution)
+
+Contexts declare isolated execution domains, each running on a dedicated OS thread.
+
+### Context Declaration
+
+```varpulis
+# Basic context
+context ingestion
+
+# With CPU affinity (Linux)
+context analytics (cores: [2, 3])
+context alerts (cores: [4])
+```
+
+### Assigning Streams to Contexts
+
+```varpulis
+stream FastFilter = RawEvents
+    .context(ingestion)
+    .where(value > 0)
+    .emit(sensor_id: sensor_id, value: value)
+```
+
+### Cross-Context Emit
+
+```varpulis
+# Send events to a different context
+stream Processed = RawEvents
+    .context(ingestion)
+    .where(priority > 5)
+    .emit(context: analytics, data: data)
+```
+
+When no contexts are declared, the engine runs in single-threaded mode with zero overhead.
+
+See the [Contexts Guide](../guides/contexts.md) for a full tutorial.
+
 ## Parallelization
 
 ```varpulis

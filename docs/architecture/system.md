@@ -34,6 +34,12 @@
 │  │ Observability│  │ Parallelism  │  │  Checkpoint  │       │
 │  │    Layer     │  │   Manager    │  │   Manager    │       │
 │  └──────────────┘  └──────────────┘  └──────────────┘       │
+│                                                             │
+│  ┌──────────────┐  ┌──────────────┐                         │
+│  │   Context    │  │  Multi-      │                         │
+│  │ Orchestrator │  │  Tenant Mgr  │                         │
+│  │(thread isol.)│  │  (SaaS API)  │                         │
+│  └──────────────┘  └──────────────┘                         │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -85,6 +91,13 @@ Event Sources → Ingestion → Embedding → Pattern Matching → Aggregation �
 
 ### Parallelism Manager
 - See [parallelism.md](parallelism.md)
+
+### Context Orchestrator
+- Named execution contexts with OS thread isolation
+- CPU affinity pinning via `core_affinity`
+- Cross-context routing via bounded `mpsc` channels
+- Zero overhead when no contexts are declared
+- See [contexts guide](../guides/contexts.md)
 
 ### Observability Layer
 - See [observability.md](observability.md)

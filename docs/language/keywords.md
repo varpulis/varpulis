@@ -11,6 +11,7 @@
 | `var` | Declares a mutable variable |
 | `const` | Declares a global constant |
 | `fn` | Declares a function |
+| `context` | Declares an execution context for multi-threaded parallelism |
 | `config` | Configuration block |
 
 ## Control Flow

@@ -1,6 +1,6 @@
 # Varpulis CEP - Complex Event Processing Engine
 
-[![Tests](https://img.shields.io/badge/tests-1040%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-1068%20passing-brightgreen)]()
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange)]()
 [![Release](https://img.shields.io/badge/release-v0.1.0-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
@@ -13,6 +13,7 @@
 - **SASE+ Pattern Matching**: Advanced pattern detection with Kleene closures, negation, AND/OR
 - **Real-time Analytics**: Window aggregations, joins, and transformations with SIMD optimization
 - **Attention Window**: AI-powered anomaly detection
+- **Context-Based Parallelism**: Named execution contexts with OS thread isolation and CPU affinity
 - **Multi-tenant SaaS**: REST API for pipeline management with usage metering and quotas
 - **Connectors**: MQTT (production), HTTP webhooks, Kafka (connector framework)
 - **VS Code Extension**: LSP server with diagnostics, hover docs, completion, and React Flow visual editor
@@ -214,6 +215,26 @@ stream Anomalies = Metrics
     .emit(anomaly: true, score: attention_score)
 ```
 
+### Context-Based Parallelism
+
+```varpulis
+# Declare isolated execution contexts with CPU affinity
+context ingestion (cores: [0, 1])
+context analytics (cores: [2, 3])
+
+# Assign streams to contexts
+stream RawEvents = SensorReading
+    .context(ingestion)
+    .where(value > 0)
+    .emit(context: analytics, sensor_id: sensor_id, value: value)
+
+# Cross-context events arrive via bounded channels
+stream Stats = RawEvents
+    .context(analytics)
+    .window(1m)
+    .aggregate(avg_value: avg(value), count: count())
+```
+
 ### Imperative Programming
 
 ```varpulis
@@ -273,6 +294,7 @@ npm install && npm run compile
 - [CLI Reference](docs/reference/cli-reference.md)
 - [Production Deployment](docs/PRODUCTION_DEPLOYMENT.md)
 - [Architecture](docs/architecture/)
+- [Context-Based Parallelism](docs/guides/contexts.md)
 - [Performance Tuning](docs/guides/performance-tuning.md)
 - [SASE+ Patterns Guide](docs/guides/sase-patterns.md)
 - [Interactive Demos](demos/README.md)
@@ -280,7 +302,7 @@ npm install && npm run compile
 ## Testing
 
 ```bash
-# All tests (1040+)
+# All tests (1068+)
 cargo test --workspace
 
 # Specific crate

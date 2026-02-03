@@ -67,6 +67,38 @@ processing:
 
 ---
 
+## Context-Based Parallelism
+
+For multi-core scaling, use named contexts to distribute streams across OS threads:
+
+```vpl
+context ingestion (cores: [0, 1])
+context analytics (cores: [2, 3])
+context alerts (cores: [4])
+
+stream FastFilter = RawEvents
+    .context(ingestion)
+    .where(value > 0)
+    .emit(context: analytics, data: data)
+
+stream HeavyCompute = FastFilter
+    .context(analytics)
+    .window(1m)
+    .aggregate(avg: avg(value), stddev: stddev(value))
+```
+
+### Context Tuning Tips
+
+- **Separate I/O from compute**: Put high-throughput ingestion on its own context
+- **Filter before crossing**: Reduce event volume before cross-context emits
+- **Match NUMA topology**: Pin cooperating contexts to cores on the same NUMA node
+- **Reserve core 0**: System interrupts typically run on core 0
+- **Monitor per-context**: Use Prometheus metrics to identify bottleneck contexts
+
+For a complete guide, see [Context-Based Execution](contexts.md).
+
+---
+
 ## SIMD Optimization
 
 Varpulis uses SIMD (AVX2) for vectorized aggregations on x86_64.
@@ -421,8 +453,15 @@ numactl --hardware
 ### CPU Pinning
 
 ```bash
-# Pin to specific cores
+# Pin entire process to specific cores
 taskset -c 0-7 varpulis simulate ... --workers 8
+```
+
+For finer-grained control, use VarpulisQL contexts with CPU affinity:
+
+```vpl
+context ingest (cores: [0, 1])
+context analyze (cores: [2, 3])
 ```
 
 ### Memory Limits
@@ -443,6 +482,7 @@ cgexec -g memory:varpulis varpulis simulate ...
 
 ### Before Production
 
+- [ ] Consider using contexts for multi-core parallelism
 - [ ] Run with `--workers` matching CPU cores
 - [ ] Enable `--partition-by` for parallel streams
 - [ ] Set appropriate window timeouts
@@ -495,6 +535,7 @@ cgexec -g memory:varpulis varpulis simulate ...
 
 ## See Also
 
+- [Context-Based Execution](contexts.md) - Multi-threaded contexts with CPU affinity
 - [Configuration Guide](configuration.md) - Worker and partitioning config
 - [Troubleshooting](troubleshooting.md) - Debug performance issues
 - [Windows & Aggregations](../reference/windows-aggregations.md) - SIMD details
