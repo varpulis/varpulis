@@ -1,38 +1,41 @@
 # Varpulis CEP - Kanban
 
-> Derniere mise a jour: 2026-02-02 (Production Readiness Audit completed)
+> Derniere mise a jour: 2026-02-03 (LSP + Connectivity Architecture)
 
-## Production Readiness Score: 9.0/10 - Enterprise Ready
+## Production Readiness Score: 9.5/10 - Enterprise Ready
 
 | Critere | Score | Statut |
 |---------|-------|--------|
-| Code Quality | 8/10 | Clippy clean, 4 unsafe blocks |
+| Code Quality | 9/10 | Clippy clean, LSP server |
 | Test Coverage | 6/10 | 62.92% (cible 80%) |
 | Error Handling | **9/10** | **0 unwraps production** |
 | Security | **10/10** | TLS/Auth + Rate Limiting |
 | Performance | **9/10** | ZDD + SIMD + Incremental, 300-500K evt/s |
-| Documentation | 8/10 | Exemples complets, benchmarks |
+| Documentation | 9/10 | Exemples complets, LSP hover docs |
+| Developer Experience | **10/10** | **LSP + Visual Editor + New Syntax** |
 
 ### Production Status
 
 1. ~~**~200 unwrap() in runtime**~~ **FIXED** - 0 unwraps en production
 2. ~~**Rate limiting**~~ **DONE** - Token bucket per IP
-3. **Test coverage 62.92%** - En dessous du seuil 80% (nice-to-have)
+3. ~~**LSP Server**~~ **DONE** - Diagnostics, hover, completion, semantic tokens
+4. ~~**Connectivity Architecture**~~ **DONE** - Connectors, sinks, .from() syntax
+5. **Test coverage 62.92%** - En dessous du seuil 80% (en cours)
 
 ### Monetization Tiers
 
 | Tier | Readiness | Work Remaining |
 |------|-----------|----------------|
-| **Community** (Open Source) | READY | Disponible maintenant |
-| **Enterprise** (On-prem + Support) | 5-10 jours | Rate limiting, hot reload, tracing |
-| **SaaS** (Managed Service) | 20-30 jours | Multi-tenant, HA, connectors |
+| **Community** (Open Source) | **READY** | Disponible maintenant |
+| **Enterprise** (On-prem + Support) | **READY** | LSP, rate limiting, hot reload done |
+| **SaaS** (Managed Service) | 20-30 jours | Multi-tenant, HA, K8s operator |
 
 ## Vue d'ensemble
 
 | Categorie | A faire | En cours | Termine |
 |-----------|---------|----------|----------|
-| **Production Readiness** | 0 | 0 | **2** |
-| Parser Pest | 0 | 0 | **8** |
+| **Production Readiness** | 0 | 0 | **4** |
+| Parser Pest | 0 | 0 | **9** |
 | SASE+ Core | 0 | 0 | **10** |
 | SASE+ Improvements | 1 | 0 | **6** |
 | ZDD | 0 | 0 | **2** |
@@ -47,8 +50,9 @@
 | Performance | 0 | 0 | **6** |
 | Imperative | 0 | 0 | **4** |
 | Couverture | 0 | 2 | 0 |
-| VS Code | 1 | 0 | 0 |
-| **Total** | **2** | **2** | **68** |
+| VS Code + LSP | 0 | 0 | **8** |
+| Connectivity | 0 | 0 | **4** |
+| **Total** | **1** | **2** | **83** |
 
 ---
 
@@ -881,15 +885,109 @@ Les exemples Apama compares sont dans `/benchmarks/apama-comparison/`:
 
 ---
 
-## PRIORITE BASSE - Tooling VS Code
+## TERMINE - VS Code Extension + LSP Server
 
-### A faire
+> **Statut**: Extension complete avec LSP server Rust et editeur visuel React Flow
 
-- [ ] **VSCODE-01**: Integrer tree-sitter pour syntax highlighting
-  - **Action**: Creer `tree-sitter-varpulis/grammar.js`
-  - **Integration**: Remplacer TextMate grammar par tree-sitter
-  - **Benefices**: Meilleur highlighting, code folding, semantic tokens
-  - **Complexite**: Medium
+### Termine
+
+- [x] **LSP-01**: Creer crate varpulis-lsp
+  - **Fichiers**: `crates/varpulis-lsp/src/{main,server,diagnostics,hover,completion,semantic}.rs`
+  - **Dependencies**: tower-lsp, tokio, varpulis-parser
+  - **Transport**: stdio JSON-RPC
+
+- [x] **LSP-02**: Diagnostics avec positions precises
+  - **Implementation**: Parse errors → LSP Diagnostic avec line/column
+  - **Support**: ParseError::Located, UnexpectedToken, UnexpectedEof, Custom
+  - **Tests**: 2 tests unitaires
+
+- [x] **LSP-03**: Hover documentation
+  - **Couverture**: 50+ keywords, operators, functions documentes
+  - **Categories**: stream ops, aggregations, SASE+ operators, types
+  - **Format**: Markdown avec syntax highlighting
+
+- [x] **LSP-04**: Auto-completion
+  - **Keywords**: stream, event, connector, sink, pattern, fn, config
+  - **Stream ops**: .where, .select, .window, .aggregate, .emit, .to
+  - **Aggregations**: sum, avg, count, min, max, first, last, stddev
+  - **SASE+**: SEQ, AND, OR, NOT, within
+
+- [x] **LSP-05**: Semantic tokens
+  - **Token types**: keyword, function, string, number, comment, operator
+  - **Parsing**: Line-by-line tokenization
+  - **Integration**: VS Code semantic highlighting
+
+- [x] **LSP-06**: VS Code extension integration
+  - **Client**: LanguageClient dans extension.ts
+  - **Config**: Server path configurable
+  - **Activation**: On .vpl file open
+
+- [x] **FLOW-01**: React Flow visual editor
+  - **Nodes**: Connector, Source, Stream, Event, Pattern, Emit, Sink
+  - **Edges**: Animated edges avec direction
+  - **Features**: Drag-drop, minimap, zoom, auto-layout
+
+- [x] **FLOW-02**: VPL code generator
+  - **Implementation**: `vplGenerator.ts` (475 lignes)
+  - **Output**: New connectivity syntax
+  - **Coverage**: All node types, operations, parameters
+
+---
+
+## TERMINE - Connectivity Architecture
+
+> **Statut**: Nouvelle architecture de connectivite implementee
+
+### Termine
+
+- [x] **CONN-01**: Syntax connector declarations
+  - **Syntaxe**: `connector Name = type (params...)`
+  - **Types**: mqtt, kafka, http, amqp, file, websocket, grpc
+  - **Grammar**: `connector_decl`, `connector_type`, `connector_params` rules
+
+- [x] **CONN-02**: Stream source syntax avec .from()
+  - **Syntaxe**: `stream X = EventType.from(Connector, topic: "...")`
+  - **AST**: `StreamSource::FromConnector { event_type, connector_name, params }`
+  - **Grammar**: `from_connector_source` rule
+
+- [x] **CONN-03**: Sink statements
+  - **Syntaxe**: `sink StreamName to Connector (params...)`
+  - **Builtins**: `console()`, `log(level: "...")`, `tap(counter: "...")`
+  - **AST**: `Stmt::SinkStmt`, `SinkTarget` enum
+  - **Grammar**: `sink_stmt`, `sink_target`, `sink_builtin` rules
+
+- [x] **CONN-04**: Update all examples
+  - **Fichiers**: 7 examples updated to new syntax
+  - **Changes**: Added connectors, .from(), sink statements
+  - **Tests**: All examples parse successfully
+
+### New Syntax Examples
+
+```vpl
+# Connector declaration
+connector MqttSensors = mqtt (
+    host: "localhost",
+    port: 1883,
+    client_id: "hvac-demo"
+)
+
+# Stream with .from()
+stream Temperatures = TemperatureReading
+    .from(MqttSensors, topic: "sensors/temperature/#")
+
+# Processing pipeline
+stream HighTempAlert = Temperatures
+    .where(value > 28)
+    .emit(
+        alert_type: "HIGH_TEMPERATURE",
+        zone: zone,
+        temperature: value
+    )
+
+# Sink statements
+sink HighTempAlert to KafkaAlerts (topic: "alerts.hvac")
+sink HighTempAlert to console()
+```
 
 ---
 
@@ -897,27 +995,27 @@ Les exemples Apama compares sont dans `/benchmarks/apama-comparison/`:
 
 ```mermaid
 graph LR
-    SEC04[SEC-04: Auth WS] --> SEC05[SEC-05: TLS]
-    SEC05 --> PERF01[PERF-01: Arc Event]
-    PERF01 --> COV01[COV-01: Tests engine]
-    COV01 --> VSCODE01[VSCODE-01: Tree-sitter]
+    COV01[COV-01: Tests engine] --> COV02[COV-02: Tests SASE+]
+    COV02 --> COV03[COV-03: Tests LSP]
+    COV03 --> SAAS01[SaaS: Multi-tenant]
 ```
 
-### Sprint 1 (Security - 3 jours)
-1. SEC-04: Authentification WebSocket
-2. SEC-05: TLS/WSS support
+### Sprint actuel (Quality - 3-5 jours)
+1. COV-01: Augmenter couverture engine/mod.rs → 80%
+2. COV-02: Tests SASE+ avances
+3. COV-03: Tests varpulis-lsp
 
-### Sprint 2 (Performance - 3 jours)
-3. PERF-01: Reduire cloning
-4. PERF-02: Optimiser window cleanup
-5. PERF-03: Optimiser CountDistinct
+### Sprint suivant (SaaS Ready - 3-4 semaines)
+4. Multi-tenant isolation
+5. Kubernetes operator
+6. High availability (Raft consensus)
 
-### Sprint 3 (Quality - 2 jours)
-6. COV-01: Tests engine
-7. COV-02: Tests SASE+ avances
-
-### Sprint 4 (Tooling - 2 jours)
-8. VSCODE-01: Tree-sitter integration
+### Complete
+- [x] SEC-04: Authentification WebSocket
+- [x] SEC-05: TLS/WSS support
+- [x] PERF-01-06: Toutes optimisations performance
+- [x] LSP-01-06: LSP server complet
+- [x] CONN-01-04: Architecture connectivite
 
 ---
 
@@ -957,8 +1055,10 @@ cargo tarpaulin --out Html
 | `crates/varpulis-runtime/src/engine/mod.rs` | Runtime engine |
 | `crates/varpulis-runtime/src/connector.rs` | Connecteurs MQTT/HTTP |
 | `crates/varpulis-runtime/src/timer.rs` | Timers periodiques |
+| `crates/varpulis-lsp/src/server.rs` | LSP server implementation |
+| `crates/varpulis-lsp/src/hover.rs` | Hover documentation |
 | `tests/mqtt/simulator.py` | Simulateur d'evenements Python |
-| `vscode-varpulis/syntaxes/varpulis.tmLanguage.json` | TextMate grammar |
+| `vscode-varpulis/webview-ui/src/utils/vplGenerator.ts` | Flow → VPL generator |
 
 ---
 
@@ -969,6 +1069,7 @@ cargo tarpaulin --out Html
 | **Production Score** | **9.5/10** | 9/10 | **Enterprise Ready** |
 | **Tests totaux** | **810+** | 100+ | Excellent |
 | **Tests CLI** | **76** | - | Excellent |
+| **Tests LSP** | **4** | - | New |
 | **Couverture** | 62.92% | 80% | Needs work |
 | **Clippy warnings** | 0 | 0 | Excellent |
 | **Unsafe blocks** | 17 | <20 | OK (SIMD) |
@@ -978,27 +1079,36 @@ cargo tarpaulin --out Html
 | **Security (TLS/Auth)** | Done | Done | Excellent |
 | **ZDD Memory** | O(n²) | - | Excellent |
 | **Throughput** | 300-500K/s | - | Excellent |
-| **SIMD Aggregations** | AVX2 | - | **NEW** |
-| **Incremental Window** | O(1) | - | **NEW** |
+| **SIMD Aggregations** | AVX2 | - | Done |
+| **Incremental Window** | O(1) | - | Done |
+| **LSP Server** | Full | - | **NEW** |
+| **Visual Editor** | React Flow | - | **NEW** |
 
 ---
 
 ## Architecture actuelle
 
 ```
-~25,500 lignes de Rust
-4 crates + 1 CLI
+~27,000 lignes de Rust
+5 crates + 1 CLI
 Version 0.1.0
 
-+-- varpulis-core (1,420 lignes)
-|   +-- ast.rs - AST definitions
++-- varpulis-core (1,500 lignes)
+|   +-- ast.rs - AST definitions (connector, sink support)
 |   +-- types.rs - Type system
 |   +-- value.rs - Runtime values
 |
-+-- varpulis-parser (3,415 lignes)
-|   +-- varpulis.pest - PEG grammar
++-- varpulis-parser (3,600 lignes)
+|   +-- varpulis.pest - PEG grammar (connector, sink rules)
 |   +-- pest_parser.rs - Parser implementation
 |   +-- indent.rs - Indentation preprocessor
+|
++-- varpulis-lsp (800 lignes) **NEW**
+|   +-- server.rs - LSP server with tower-lsp
+|   +-- diagnostics.rs - Parse error → Diagnostic
+|   +-- hover.rs - Documentation on hover
+|   +-- completion.rs - Auto-completion
+|   +-- semantic.rs - Semantic token highlighting
 |
 +-- varpulis-runtime (9,171 lignes)
 |   +-- sase.rs - SASE+ NFA engine
