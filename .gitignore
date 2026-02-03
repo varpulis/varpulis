@@ -39,6 +39,11 @@ tests/e2e/.playwright/
 demos/varpulis-demos/node_modules/
 demos/varpulis-demos/dist/
 
+# VS Code extension build artifacts
+vscode-varpulis/bin/
+vscode-varpulis/webview-ui/dist/
+vscode-varpulis/node_modules/
+
 # Benchmark results (generated)
 benchmarks/flink-comparison/results/
 benchmarks/flink-comparison/test-harness/dependency-reduced-pom.xml
