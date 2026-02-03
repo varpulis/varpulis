@@ -9,8 +9,19 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  audit:
+    name: Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - run: cargo audit
+
   build:
     name: Build ${{ matrix.target }}
+    needs: audit
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

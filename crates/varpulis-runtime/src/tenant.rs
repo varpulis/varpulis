@@ -579,6 +579,7 @@ impl TenantManager {
         );
         tenant.usage.events_processed = snapshot.events_processed;
         tenant.usage.alerts_generated = snapshot.alerts_generated;
+        tenant.usage.events_in_window = snapshot.events_in_window;
 
         let mut pipeline_failures = Vec::new();
         for ps in snapshot.pipelines {
@@ -667,6 +668,10 @@ pub struct TenantSnapshot {
     pub events_processed: u64,
     pub alerts_generated: u64,
     pub pipelines: Vec<PipelineSnapshot>,
+    #[serde(default)]
+    pub created_at_ms: Option<i64>,
+    #[serde(default)]
+    pub events_in_window: u64,
 }
 
 /// Serializable snapshot of a pipeline
@@ -701,6 +706,8 @@ impl Tenant {
             events_processed: self.usage.events_processed,
             alerts_generated: self.usage.alerts_generated,
             pipelines: self.pipelines.values().map(|p| p.snapshot()).collect(),
+            created_at_ms: Some(chrono::Utc::now().timestamp_millis()),
+            events_in_window: self.usage.events_in_window,
         }
     }
 }
@@ -1105,6 +1112,72 @@ mod tests {
     }
 
     #[test]
+    fn test_tenant_snapshot_created_at_and_window() {
+        let mut mgr = TenantManager::new();
+        let id = mgr
+            .create_tenant("Window Corp".into(), "window-key".into(), TenantQuota::default())
+            .unwrap();
+
+        let tenant = mgr.get_tenant_mut(&id).unwrap();
+        tenant.usage.events_in_window = 42;
+        tenant.usage.events_processed = 100;
+
+        let snapshot = tenant.snapshot();
+
+        // created_at_ms should be populated
+        assert!(snapshot.created_at_ms.is_some());
+        let ts = snapshot.created_at_ms.unwrap();
+        // Should be a reasonable recent timestamp (after 2024-01-01)
+        assert!(ts > 1_704_067_200_000);
+
+        // events_in_window should be captured
+        assert_eq!(snapshot.events_in_window, 42);
+
+        // Round-trip through JSON
+        let json = serde_json::to_vec(&snapshot).unwrap();
+        let restored: TenantSnapshot = serde_json::from_slice(&json).unwrap();
+        assert_eq!(restored.events_in_window, 42);
+        assert_eq!(restored.created_at_ms, snapshot.created_at_ms);
+
+        // Restore tenant and verify events_in_window is carried over
+        let restored_tenant =
+            TenantManager::restore_tenant_from_snapshot(restored).unwrap();
+        assert_eq!(restored_tenant.usage.events_in_window, 42);
+        assert_eq!(restored_tenant.usage.events_processed, 100);
+    }
+
+    #[test]
+    fn test_tenant_snapshot_backwards_compat() {
+        // Simulate old JSON without the new fields
+        let old_json = r#"{
+            "id": "compat-tenant",
+            "name": "Compat Corp",
+            "api_key": "compat-key",
+            "quota": {
+                "max_pipelines": 10,
+                "max_events_per_second": 10000,
+                "max_streams_per_pipeline": 50
+            },
+            "events_processed": 55,
+            "alerts_generated": 3,
+            "pipelines": []
+        }"#;
+
+        let snapshot: TenantSnapshot = serde_json::from_str(old_json).unwrap();
+        assert_eq!(snapshot.id, "compat-tenant");
+        assert_eq!(snapshot.events_processed, 55);
+        // New fields should default
+        assert_eq!(snapshot.created_at_ms, None);
+        assert_eq!(snapshot.events_in_window, 0);
+
+        // Should restore fine
+        let tenant = TenantManager::restore_tenant_from_snapshot(snapshot).unwrap();
+        assert_eq!(tenant.name, "Compat Corp");
+        assert_eq!(tenant.usage.events_processed, 55);
+        assert_eq!(tenant.usage.events_in_window, 0);
+    }
+
+    #[test]
     fn test_recovery_with_invalid_vpl() {
         use crate::persistence::MemoryStore;
 
@@ -1124,6 +1197,8 @@ mod tests {
                 source: "this is not valid VPL {{{{".into(),
                 status: PipelineStatus::Running,
             }],
+            created_at_ms: None,
+            events_in_window: 0,
         };
 
         let data = serde_json::to_vec(&snapshot).unwrap();

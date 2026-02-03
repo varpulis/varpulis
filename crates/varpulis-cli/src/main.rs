@@ -23,6 +23,7 @@ use varpulis_runtime::simulator::{Simulator, SimulatorConfig};
 // Import our new modules
 use varpulis_cli::api;
 use varpulis_cli::auth::{self, AuthConfig};
+use varpulis_cli::client::VarpulisClient;
 use varpulis_cli::config::Config;
 use varpulis_cli::rate_limit;
 use varpulis_cli::security;
@@ -173,6 +174,62 @@ enum Commands {
         /// Output file path (prints to stdout if not specified)
         #[arg(short, long)]
         output: Option<PathBuf>,
+    },
+
+    /// Deploy a pipeline to a remote Varpulis server
+    Deploy {
+        /// Server URL (e.g. http://localhost:9000)
+        #[arg(long, env = "VARPULIS_SERVER")]
+        server: String,
+
+        /// Tenant API key
+        #[arg(long, env = "VARPULIS_API_KEY")]
+        api_key: String,
+
+        /// Path to the .vpl file
+        #[arg(short, long)]
+        file: PathBuf,
+
+        /// Pipeline name
+        #[arg(short, long)]
+        name: String,
+    },
+
+    /// List pipelines on a remote Varpulis server
+    Pipelines {
+        /// Server URL (e.g. http://localhost:9000)
+        #[arg(long, env = "VARPULIS_SERVER")]
+        server: String,
+
+        /// Tenant API key
+        #[arg(long, env = "VARPULIS_API_KEY")]
+        api_key: String,
+    },
+
+    /// Delete a pipeline from a remote Varpulis server
+    Undeploy {
+        /// Server URL (e.g. http://localhost:9000)
+        #[arg(long, env = "VARPULIS_SERVER")]
+        server: String,
+
+        /// Tenant API key
+        #[arg(long, env = "VARPULIS_API_KEY")]
+        api_key: String,
+
+        /// Pipeline ID to delete
+        #[arg(long)]
+        pipeline_id: String,
+    },
+
+    /// Show usage statistics from a remote Varpulis server
+    Status {
+        /// Server URL (e.g. http://localhost:9000)
+        #[arg(long, env = "VARPULIS_SERVER")]
+        server: String,
+
+        /// Tenant API key
+        #[arg(long, env = "VARPULIS_API_KEY")]
+        api_key: String,
     },
 }
 
@@ -325,6 +382,80 @@ async fn main() -> Result<()> {
                 println!("{}", content);
             }
         }
+
+        Commands::Deploy {
+            server,
+            api_key,
+            file,
+            name,
+        } => {
+            let source = std::fs::read_to_string(&file)?;
+            let client = VarpulisClient::new(&server, &api_key);
+            match client.deploy_pipeline(&name, &source).await {
+                Ok(resp) => {
+                    println!("Pipeline deployed successfully!");
+                    println!("  ID:     {}", resp.id);
+                    println!("  Name:   {}", resp.name);
+                    println!("  Status: {}", resp.status);
+                }
+                Err(e) => {
+                    anyhow::bail!("Deploy failed: {}", e);
+                }
+            }
+        }
+
+        Commands::Pipelines { server, api_key } => {
+            let client = VarpulisClient::new(&server, &api_key);
+            match client.list_pipelines().await {
+                Ok(resp) => {
+                    println!("Pipelines ({} total):", resp.total);
+                    if resp.pipelines.is_empty() {
+                        println!("  (none)");
+                    }
+                    for p in &resp.pipelines {
+                        println!("  {} | {} | {}", p.id, p.name, p.status);
+                    }
+                }
+                Err(e) => {
+                    anyhow::bail!("Failed to list pipelines: {}", e);
+                }
+            }
+        }
+
+        Commands::Undeploy {
+            server,
+            api_key,
+            pipeline_id,
+        } => {
+            let client = VarpulisClient::new(&server, &api_key);
+            match client.delete_pipeline(&pipeline_id).await {
+                Ok(()) => {
+                    println!("Pipeline {} deleted.", pipeline_id);
+                }
+                Err(e) => {
+                    anyhow::bail!("Undeploy failed: {}", e);
+                }
+            }
+        }
+
+        Commands::Status { server, api_key } => {
+            let client = VarpulisClient::new(&server, &api_key);
+            match client.get_usage().await {
+                Ok(usage) => {
+                    println!("Tenant: {}", usage.tenant_id);
+                    println!("  Events processed:  {}", usage.events_processed);
+                    println!("  Alerts generated:  {}", usage.alerts_generated);
+                    println!("  Active pipelines:  {}", usage.active_pipelines);
+                    println!("  Quota:");
+                    println!("    Max pipelines:          {}", usage.quota.max_pipelines);
+                    println!("    Max events/sec:         {}", usage.quota.max_events_per_second);
+                    println!("    Max streams/pipeline:   {}", usage.quota.max_streams_per_pipeline);
+                }
+                Err(e) => {
+                    anyhow::bail!("Failed to get status: {}", e);
+                }
+            }
+        }
     }
 
     Ok(())
@@ -355,8 +486,23 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
     println!("\nProgram loaded successfully!");
     println!("   Streams registered: {}", metrics.streams_count);
 
-    // Check for MQTT config
+    // Check for MQTT config (deprecated path — kept for backward compatibility)
     let mqtt_config = engine.get_config("mqtt");
+    if mqtt_config.is_some() {
+        eprintln!(
+            "WARNING: 'config mqtt {{ ... }}' is deprecated. \
+             Use the connector syntax instead:\n\
+             \n\
+             connector MyMqtt = mqtt (\n\
+                 broker: \"localhost\",\n\
+                 port: 1883,\n\
+                 topic: \"events/#\"\n\
+             )\n\
+             \n\
+             stream Events = SensorReading\n\
+                 .from(MyMqtt, topic: \"sensors/#\")\n"
+        );
+    }
 
     if let Some(config) = mqtt_config {
         // Use unwrap_or instead of unwrap() for safe defaults
@@ -491,15 +637,17 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
         println!("   Runtime: {:.1}s", start.elapsed().as_secs_f64());
     } else {
         // No MQTT config - just show that we loaded successfully
-        println!("\nNo 'config mqtt' block found in program.");
-        println!("   Add a config block to connect to MQTT:");
+        println!("\nNo connector configuration found in program.");
+        println!("   To connect to MQTT, use the connector syntax:");
         println!("   ");
-        println!("   config mqtt {{");
+        println!("   connector MyMqtt = mqtt (");
         println!("       broker: \"localhost\",");
         println!("       port: 1883,");
-        println!("       input_topic: \"varpulis/events/#\",");
-        println!("       output_topic: \"varpulis/alerts\"");
-        println!("   }}");
+        println!("       topic: \"varpulis/events/#\"");
+        println!("   )");
+        println!("   ");
+        println!("   stream Events = SensorReading");
+        println!("       .from(MyMqtt, topic: \"sensors/#\")");
 
         // Spawn alert handler anyway for demo mode
         tokio::spawn(async move {
@@ -1254,11 +1402,10 @@ async fn run_server(
         let state = ready_state.clone();
         async move {
             let state = state.read().await;
-            let engine_loaded = state.engine.is_some();
             let streams_count = state.streams.len();
 
-            if engine_loaded {
-                let metrics = state.engine.as_ref().unwrap().metrics();
+            if let Some(engine) = state.engine.as_ref() {
+                let metrics = engine.metrics();
                 let response = serde_json::json!({
                     "status": "ready",
                     "engine_loaded": true,
@@ -1310,7 +1457,8 @@ async fn run_server(
         }
     }
 
-    let api_routes = api::api_routes(tenant_manager);
+    let admin_key = auth_config.api_key().map(|s| s.to_string());
+    let api_routes = api::api_routes(tenant_manager, admin_key);
 
     // Combined routes
     let routes = ws_route

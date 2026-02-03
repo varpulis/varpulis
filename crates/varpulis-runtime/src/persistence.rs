@@ -60,28 +60,68 @@ pub struct SerializableEvent {
 }
 
 /// Serializable value type
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum SerializableValue {
     Int(i64),
     Float(f64),
     Bool(bool),
     String(String),
     Null,
+    Timestamp(i64),
+    Duration(u64),
+    Array(Vec<SerializableValue>),
+    Map(Vec<(String, SerializableValue)>),
+}
+
+/// Convert a `varpulis_core::Value` to a `SerializableValue`
+fn value_to_serializable(v: &varpulis_core::Value) -> SerializableValue {
+    match v {
+        varpulis_core::Value::Int(i) => SerializableValue::Int(*i),
+        varpulis_core::Value::Float(f) => SerializableValue::Float(*f),
+        varpulis_core::Value::Bool(b) => SerializableValue::Bool(*b),
+        varpulis_core::Value::Str(s) => SerializableValue::String(s.clone()),
+        varpulis_core::Value::Null => SerializableValue::Null,
+        varpulis_core::Value::Timestamp(ts) => SerializableValue::Timestamp(*ts),
+        varpulis_core::Value::Duration(d) => SerializableValue::Duration(*d),
+        varpulis_core::Value::Array(arr) => {
+            SerializableValue::Array(arr.iter().map(value_to_serializable).collect())
+        }
+        varpulis_core::Value::Map(map) => SerializableValue::Map(
+            map.iter()
+                .map(|(k, v)| (k.clone(), value_to_serializable(v)))
+                .collect(),
+        ),
+    }
+}
+
+/// Convert a `SerializableValue` back to a `varpulis_core::Value`
+fn serializable_to_value(sv: SerializableValue) -> varpulis_core::Value {
+    match sv {
+        SerializableValue::Int(i) => varpulis_core::Value::Int(i),
+        SerializableValue::Float(f) => varpulis_core::Value::Float(f),
+        SerializableValue::Bool(b) => varpulis_core::Value::Bool(b),
+        SerializableValue::String(s) => varpulis_core::Value::Str(s),
+        SerializableValue::Null => varpulis_core::Value::Null,
+        SerializableValue::Timestamp(ts) => varpulis_core::Value::Timestamp(ts),
+        SerializableValue::Duration(d) => varpulis_core::Value::Duration(d),
+        SerializableValue::Array(arr) => {
+            varpulis_core::Value::Array(arr.into_iter().map(serializable_to_value).collect())
+        }
+        SerializableValue::Map(entries) => {
+            let mut map = indexmap::IndexMap::new();
+            for (k, v) in entries {
+                map.insert(k, serializable_to_value(v));
+            }
+            varpulis_core::Value::Map(map)
+        }
+    }
 }
 
 impl From<&Event> for SerializableEvent {
     fn from(event: &Event) -> Self {
         let mut fields = HashMap::new();
         for (k, v) in &event.data {
-            let sv = match v {
-                varpulis_core::Value::Int(i) => SerializableValue::Int(*i),
-                varpulis_core::Value::Float(f) => SerializableValue::Float(*f),
-                varpulis_core::Value::Bool(b) => SerializableValue::Bool(*b),
-                varpulis_core::Value::Str(s) => SerializableValue::String(s.clone()),
-                varpulis_core::Value::Null => SerializableValue::Null,
-                _ => SerializableValue::Null, // Arrays, maps, timestamps simplified to null for now
-            };
-            fields.insert(k.clone(), sv);
+            fields.insert(k.clone(), value_to_serializable(v));
         }
         Self {
             event_type: event.event_type.clone(),
@@ -97,14 +137,7 @@ impl From<SerializableEvent> for Event {
         event.timestamp = chrono::DateTime::from_timestamp_millis(se.timestamp_ms)
             .unwrap_or_else(chrono::Utc::now);
         for (k, v) in se.fields {
-            let value = match v {
-                SerializableValue::Int(i) => varpulis_core::Value::Int(i),
-                SerializableValue::Float(f) => varpulis_core::Value::Float(f),
-                SerializableValue::Bool(b) => varpulis_core::Value::Bool(b),
-                SerializableValue::String(s) => varpulis_core::Value::Str(s),
-                SerializableValue::Null => varpulis_core::Value::Null,
-            };
-            event.data.insert(k, value);
+            event.data.insert(k, serializable_to_value(v));
         }
         event
     }
@@ -782,5 +815,90 @@ mod tests {
         assert_eq!(restored.get_int("count"), Some(42));
         assert_eq!(restored.get_float("value"), Some(1.5));
         assert_eq!(restored.get_str("name"), Some("test"));
+    }
+
+    #[test]
+    fn test_serializable_event_complex_values() {
+        let mut event = Event::new("ComplexEvent");
+
+        // Timestamp (nanoseconds since epoch)
+        event
+            .data
+            .insert("ts".to_string(), varpulis_core::Value::Timestamp(1_700_000_000_000_000_000));
+
+        // Duration (nanoseconds)
+        event
+            .data
+            .insert("dur".to_string(), varpulis_core::Value::Duration(5_000_000_000));
+
+        // Array
+        event.data.insert(
+            "tags".to_string(),
+            varpulis_core::Value::Array(vec![
+                varpulis_core::Value::Str("a".to_string()),
+                varpulis_core::Value::Int(1),
+            ]),
+        );
+
+        // Map
+        let mut inner_map = indexmap::IndexMap::new();
+        inner_map.insert("nested_key".to_string(), varpulis_core::Value::Float(3.14));
+        inner_map.insert("flag".to_string(), varpulis_core::Value::Bool(true));
+        event
+            .data
+            .insert("meta".to_string(), varpulis_core::Value::Map(inner_map));
+
+        // Round-trip through SerializableEvent
+        let serializable: SerializableEvent = (&event).into();
+
+        // Verify serializable intermediate values
+        assert!(matches!(
+            serializable.fields.get("ts"),
+            Some(SerializableValue::Timestamp(1_700_000_000_000_000_000))
+        ));
+        assert!(matches!(
+            serializable.fields.get("dur"),
+            Some(SerializableValue::Duration(5_000_000_000))
+        ));
+        assert!(matches!(
+            serializable.fields.get("tags"),
+            Some(SerializableValue::Array(_))
+        ));
+        assert!(matches!(
+            serializable.fields.get("meta"),
+            Some(SerializableValue::Map(_))
+        ));
+
+        let restored: Event = serializable.into();
+
+        // Verify restored values
+        assert_eq!(
+            restored.data.get("ts"),
+            Some(&varpulis_core::Value::Timestamp(1_700_000_000_000_000_000))
+        );
+        assert_eq!(
+            restored.data.get("dur"),
+            Some(&varpulis_core::Value::Duration(5_000_000_000))
+        );
+
+        // Verify array round-trip
+        match restored.data.get("tags") {
+            Some(varpulis_core::Value::Array(arr)) => {
+                assert_eq!(arr.len(), 2);
+                assert_eq!(arr[0], varpulis_core::Value::Str("a".to_string()));
+                assert_eq!(arr[1], varpulis_core::Value::Int(1));
+            }
+            other => panic!("Expected Array, got {:?}", other),
+        }
+
+        // Verify map round-trip
+        match restored.data.get("meta") {
+            Some(varpulis_core::Value::Map(m)) => {
+                assert_eq!(m.len(), 2);
+                assert_eq!(m.get("nested_key"), Some(&varpulis_core::Value::Float(3.14)));
+                assert_eq!(m.get("flag"), Some(&varpulis_core::Value::Bool(true)));
+            }
+            other => panic!("Expected Map, got {:?}", other),
+        }
     }
 }
