@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+CLUSTER_NAME="varpulis-test"
+IMAGE_NAME="varpulis-local:latest"
+NAMESPACE="varpulis-k3d"
+
+usage() {
+    echo "Usage: $0 [--rebuild] [--teardown]"
+    echo ""
+    echo "Flags:"
+    echo "  --rebuild    Delete existing cluster and rebuild from scratch"
+    echo "  --teardown   Delete the cluster and exit"
+    echo ""
+    echo "With no flags, creates the cluster if it doesn't exist."
+    exit 1
+}
+
+teardown() {
+    echo "==> Tearing down k3d cluster '$CLUSTER_NAME'..."
+    k3d cluster delete "$CLUSTER_NAME" 2>/dev/null || true
+    echo "==> Cluster deleted."
+}
+
+build_image() {
+    echo "==> Building Docker image '$IMAGE_NAME'..."
+    docker build -t "$IMAGE_NAME" -f "$REPO_ROOT/deploy/docker/Dockerfile" "$REPO_ROOT"
+    echo "==> Image built."
+}
+
+create_cluster() {
+    echo "==> Creating k3d cluster '$CLUSTER_NAME'..."
+    k3d cluster create "$CLUSTER_NAME" \
+        --port "9000:9000@loadbalancer" \
+        --wait
+    echo "==> Cluster created."
+}
+
+import_image() {
+    echo "==> Importing image '$IMAGE_NAME' into cluster..."
+    k3d image import "$IMAGE_NAME" --cluster "$CLUSTER_NAME"
+    echo "==> Image imported."
+}
+
+deploy() {
+    echo "==> Creating namespace '$NAMESPACE'..."
+    kubectl create namespace "$NAMESPACE" 2>/dev/null || true
+
+    echo "==> Deploying via kustomize..."
+    kubectl apply -k "$REPO_ROOT/deploy/kubernetes/overlays/k3d"
+
+    echo "==> Waiting for deployment rollout..."
+    kubectl rollout status deployment/k3d-varpulis \
+        --namespace "$NAMESPACE" \
+        --timeout=120s
+
+    echo "==> Deployment complete."
+}
+
+# Parse arguments
+REBUILD=false
+TEARDOWN=false
+
+for arg in "$@"; do
+    case "$arg" in
+        --rebuild)  REBUILD=true ;;
+        --teardown) TEARDOWN=true ;;
+        --help|-h)  usage ;;
+        *)          echo "Unknown argument: $arg"; usage ;;
+    esac
+done
+
+# Teardown only
+if [ "$TEARDOWN" = true ]; then
+    teardown
+    exit 0
+fi
+
+# Rebuild: teardown first
+if [ "$REBUILD" = true ]; then
+    teardown
+fi
+
+# Check if cluster exists
+if k3d cluster list 2>/dev/null | grep -q "$CLUSTER_NAME"; then
+    echo "==> Cluster '$CLUSTER_NAME' already exists."
+    if [ "$REBUILD" = false ]; then
+        echo "    Use --rebuild to recreate. Updating deployment only."
+        build_image
+        import_image
+        deploy
+        exit 0
+    fi
+fi
+
+# Full setup
+build_image
+create_cluster
+import_image
+deploy
+
+echo ""
+echo "==> k3d cluster '$CLUSTER_NAME' is ready."
+echo "    API endpoint: http://localhost:9000"
+echo "    Admin key:    k3d-test-admin-key"
+echo ""
+echo "    Run integration tests:"
+echo "      ./tests/k3d/run_tests.sh --port-forward"
