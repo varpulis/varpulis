@@ -1,0 +1,75 @@
+version: "3.8"
+
+services:
+  # Varpulis CEP Server (SaaS mode)
+  varpulis:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    container_name: varpulis-server
+    command: ["server", "--bind", "0.0.0.0:8080", "--api-key", "${VARPULIS_API_KEY:-default-dev-key}"]
+    ports:
+      - "8080:8080"   # HTTP/WebSocket API
+      - "9090:9090"   # Prometheus metrics
+    environment:
+      - VARPULIS_API_KEY=${VARPULIS_API_KEY:-default-dev-key}
+      - VARPULIS_RATE_LIMIT=${VARPULIS_RATE_LIMIT:-1000}
+      - RUST_LOG=${RUST_LOG:-info}
+    volumes:
+      - varpulis-data:/app/data
+      - varpulis-state:/app/state
+      - ./queries:/app/queries:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - varpulis-net
+
+  # Prometheus - Metrics collection
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: varpulis-prometheus
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+    restart: unless-stopped
+    networks:
+      - varpulis-net
+
+  # Grafana - Monitoring dashboard
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: varpulis-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-varpulis}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    restart: unless-stopped
+    networks:
+      - varpulis-net
+
+volumes:
+  varpulis-data:
+  varpulis-state:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  varpulis-net:
+    driver: bridge
