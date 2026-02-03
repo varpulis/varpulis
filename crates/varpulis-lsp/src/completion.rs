@@ -638,3 +638,109 @@ fn completion_item(
         ..Default::default()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_stream_operation_completions_after_dot() {
+        let text = "stream X = Event.from(Connector).\n";
+        let position = Position {
+            line: 0,
+            character: 33,
+        };
+        let completions = get_completions(text, position);
+        let labels: Vec<&str> = completions.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels.contains(&"where"));
+        assert!(labels.contains(&"emit"));
+        assert!(labels.contains(&"window"));
+    }
+
+    #[test]
+    fn test_top_level_completions() {
+        let text = "";
+        let position = Position {
+            line: 0,
+            character: 0,
+        };
+        let completions = get_completions(text, position);
+        let labels: Vec<&str> = completions.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels.contains(&"stream"));
+        assert!(labels.contains(&"event"));
+        assert!(labels.contains(&"pattern"));
+        assert!(labels.contains(&"fn"));
+    }
+
+    #[test]
+    fn test_aggregation_completions_in_aggregate() {
+        let text = "stream X = Y.aggregate(";
+        let position = Position {
+            line: 0,
+            character: 23,
+        };
+        let completions = get_completions(text, position);
+        let labels: Vec<&str> = completions.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels.contains(&"sum"));
+        assert!(labels.contains(&"avg"));
+        assert!(labels.contains(&"count"));
+        assert!(labels.contains(&"min"));
+        assert!(labels.contains(&"max"));
+    }
+
+    #[test]
+    fn test_type_completions_after_colon() {
+        let text = "event X:\n    field:";
+        let position = Position {
+            line: 1,
+            character: 10,
+        };
+        let completions = get_completions(text, position);
+        let labels: Vec<&str> = completions.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels.contains(&"int"));
+        assert!(labels.contains(&"float"));
+        assert!(labels.contains(&"str"));
+        assert!(labels.contains(&"timestamp"));
+    }
+
+    #[test]
+    fn test_pattern_completions() {
+        let text = "pattern X = SEQ(";
+        let position = Position {
+            line: 0,
+            character: 16,
+        };
+        let completions = get_completions(text, position);
+        let labels: Vec<&str> = completions.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels.contains(&"SEQ"));
+        assert!(labels.contains(&"AND"));
+        assert!(labels.contains(&"OR"));
+        assert!(labels.contains(&"NOT"));
+    }
+
+    #[test]
+    fn test_window_completions() {
+        let text = "stream X = Y.window(";
+        let position = Position {
+            line: 0,
+            character: 20,
+        };
+        let completions = get_completions(text, position);
+        let labels: Vec<&str> = completions.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels.contains(&"tumbling"));
+        assert!(labels.contains(&"sliding"));
+    }
+
+    #[test]
+    fn test_completion_item_has_snippet_format() {
+        let item = completion_item(
+            "test",
+            CompletionItemKind::FUNCTION,
+            "Test item",
+            "test($1)",
+            Some("test(arg)"),
+        );
+        assert_eq!(item.insert_text_format, Some(InsertTextFormat::SNIPPET));
+        assert_eq!(item.insert_text, Some("test($1)".to_string()));
+    }
+}
