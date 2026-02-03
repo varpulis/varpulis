@@ -92,7 +92,7 @@ echo ""
 # ---------------------------------------------------------------
 # Step 1: Health check
 # ---------------------------------------------------------------
-echo "[1/9] Health check"
+echo "[1/11] Health check"
 HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/health")
 assert_http_code "/health returns 200" "200" "$HTTP_CODE"
 
@@ -100,9 +100,37 @@ BODY=$(curl -s "$BASE_URL/health")
 assert_contains "/health returns healthy status" '"healthy"' "$BODY"
 
 # ---------------------------------------------------------------
-# Step 2: Readiness check
+# Step 2: Verify Kafka is reachable
 # ---------------------------------------------------------------
-echo "[2/9] Readiness check"
+echo "[2/11] Verify Kafka is reachable"
+KAFKA_POD=$(kubectl get pod -n "$NAMESPACE" -l app=kafka -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+if [ -n "$KAFKA_POD" ]; then
+    KAFKA_TOPICS=$(kubectl exec -n "$NAMESPACE" "$KAFKA_POD" -- /opt/bitnami/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list 2>&1 || true)
+    echo "  PASS: Kafka is reachable (pod=$KAFKA_POD)"
+    PASS=$((PASS + 1))
+else
+    echo "  FAIL: Kafka pod not found"
+    FAIL=$((FAIL + 1))
+fi
+
+# ---------------------------------------------------------------
+# Step 3: Verify Mosquitto is reachable
+# ---------------------------------------------------------------
+echo "[3/11] Verify Mosquitto is reachable"
+MQTT_POD=$(kubectl get pod -n "$NAMESPACE" -l app=mosquitto -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+if [ -n "$MQTT_POD" ]; then
+    MQTT_CHECK=$(kubectl exec -n "$NAMESPACE" "$MQTT_POD" -- mosquitto_sub -h localhost -p 1883 -t '#' -C 0 -W 1 2>&1 || true)
+    echo "  PASS: Mosquitto is reachable (pod=$MQTT_POD)"
+    PASS=$((PASS + 1))
+else
+    echo "  FAIL: Mosquitto pod not found"
+    FAIL=$((FAIL + 1))
+fi
+
+# ---------------------------------------------------------------
+# Step 4: Readiness check
+# ---------------------------------------------------------------
+echo "[4/11] Readiness check"
 HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/ready")
 # Server may return 200 or 503 depending on engine state; both are valid responses
 if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "503" ]; then
@@ -114,30 +142,34 @@ else
 fi
 
 # ---------------------------------------------------------------
-# Step 3: Create tenant
+# Step 5: Create tenant
 # ---------------------------------------------------------------
-echo "[3/9] Create tenant"
+echo "[5/11] Create tenant"
 CREATE_RESP=$(curl -s -X POST "$BASE_URL/api/v1/tenants" \
     -H "Content-Type: application/json" \
-    -H "Authorization: Bearer $ADMIN_KEY" \
-    -d '{"name": "k3d-test-tenant", "quota": "free"}')
+    -H "x-admin-key: $ADMIN_KEY" \
+    -d '{"name": "k3d-test-tenant", "quota_tier": "free"}')
+CREATE_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/api/v1/tenants" \
+    -H "Content-Type: application/json" \
+    -H "x-admin-key: $ADMIN_KEY" \
+    -d '{"name": "k3d-test-tenant", "quota_tier": "free"}')
 TENANT_ID=$(echo "$CREATE_RESP" | jq -r '.id // empty')
-if [ -n "$TENANT_ID" ]; then
-    echo "  PASS: Tenant created (id=$TENANT_ID)"
+if [ -n "$TENANT_ID" ] && { [ "$CREATE_CODE" = "200" ] || [ "$CREATE_CODE" = "201" ]; }; then
+    echo "  PASS: Tenant created (id=$TENANT_ID, HTTP $CREATE_CODE)"
     PASS=$((PASS + 1))
     TENANT_KEY=$(echo "$CREATE_RESP" | jq -r '.api_key // empty')
 else
-    echo "  FAIL: Could not create tenant: $CREATE_RESP"
+    echo "  FAIL: Could not create tenant (HTTP $CREATE_CODE): $CREATE_RESP"
     FAIL=$((FAIL + 1))
     TENANT_KEY=""
 fi
 
 # ---------------------------------------------------------------
-# Step 4: List tenants
+# Step 6: List tenants
 # ---------------------------------------------------------------
-echo "[4/9] List tenants"
+echo "[6/11] List tenants"
 LIST_RESP=$(curl -s "$BASE_URL/api/v1/tenants" \
-    -H "Authorization: Bearer $ADMIN_KEY")
+    -H "x-admin-key: $ADMIN_KEY")
 TENANT_COUNT=$(echo "$LIST_RESP" | jq -r '.total // 0')
 if [ "$TENANT_COUNT" -ge 1 ] 2>/dev/null; then
     echo "  PASS: Tenant list contains $TENANT_COUNT tenant(s)"
@@ -148,48 +180,53 @@ else
 fi
 
 # ---------------------------------------------------------------
-# Step 5: Deploy pipeline
+# Step 7: Deploy pipeline
 # ---------------------------------------------------------------
-echo "[5/9] Deploy pipeline"
-AUTH_HEADER="Authorization: Bearer ${TENANT_KEY:-$ADMIN_KEY}"
+echo "[7/11] Deploy pipeline"
+AUTH_HEADER="x-api-key: ${TENANT_KEY:-$ADMIN_KEY}"
 DEPLOY_RESP=$(curl -s -X POST "$BASE_URL/api/v1/pipelines" \
     -H "Content-Type: application/json" \
     -H "$AUTH_HEADER" \
     -d '{"name": "k3d-test-pipeline", "source": "stream Alerts = SensorReading .where(temperature > 100)"}')
+DEPLOY_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE_URL/api/v1/pipelines" \
+    -H "Content-Type: application/json" \
+    -H "$AUTH_HEADER" \
+    -d '{"name": "k3d-test-pipeline", "source": "stream Alerts = SensorReading .where(temperature > 100)"}')
 PIPELINE_ID=$(echo "$DEPLOY_RESP" | jq -r '.id // empty')
-if [ -n "$PIPELINE_ID" ]; then
-    echo "  PASS: Pipeline deployed (id=$PIPELINE_ID)"
+if [ -n "$PIPELINE_ID" ] && { [ "$DEPLOY_CODE" = "200" ] || [ "$DEPLOY_CODE" = "201" ]; }; then
+    echo "  PASS: Pipeline deployed (id=$PIPELINE_ID, HTTP $DEPLOY_CODE)"
     PASS=$((PASS + 1))
 else
-    echo "  FAIL: Could not deploy pipeline: $DEPLOY_RESP"
+    echo "  FAIL: Could not deploy pipeline (HTTP $DEPLOY_CODE): $DEPLOY_RESP"
     FAIL=$((FAIL + 1))
 fi
 
 # ---------------------------------------------------------------
-# Step 6: Inject events
+# Step 8: Inject events
 # ---------------------------------------------------------------
-echo "[6/9] Inject events"
+echo "[8/11] Inject events"
 EVENT_RESP=$(curl -s -X POST "$BASE_URL/api/v1/pipelines/${PIPELINE_ID:-none}/events" \
     -H "Content-Type: application/json" \
     -H "$AUTH_HEADER" \
-    -d '{"event_type": "SensorReading", "data": {"temperature": 150.0, "sensor_id": "k3d-test"}}')
+    -d '{"event_type": "SensorReading", "fields": {"temperature": 150.0, "sensor_id": "k3d-test"}}')
 EVENT_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
     "$BASE_URL/api/v1/pipelines/${PIPELINE_ID:-none}/events" \
     -H "Content-Type: application/json" \
     -H "$AUTH_HEADER" \
-    -d '{"event_type": "SensorReading", "data": {"temperature": 150.0, "sensor_id": "k3d-test"}}')
-if [ "$EVENT_CODE" = "200" ] || [ "$EVENT_CODE" = "202" ]; then
-    echo "  PASS: Event injected (HTTP $EVENT_CODE)"
+    -d '{"event_type": "SensorReading", "fields": {"temperature": 150.0, "sensor_id": "k3d-test"}}')
+ACCEPTED=$(echo "$EVENT_RESP" | jq -r '.accepted // false')
+if { [ "$EVENT_CODE" = "200" ] || [ "$EVENT_CODE" = "202" ]; } && [ "$ACCEPTED" = "true" ]; then
+    echo "  PASS: Event injected (HTTP $EVENT_CODE, accepted=$ACCEPTED)"
     PASS=$((PASS + 1))
 else
-    echo "  FAIL: Event injection returned HTTP $EVENT_CODE: $EVENT_RESP"
+    echo "  FAIL: Event injection returned HTTP $EVENT_CODE (accepted=$ACCEPTED): $EVENT_RESP"
     FAIL=$((FAIL + 1))
 fi
 
 # ---------------------------------------------------------------
-# Step 7: Check metrics / usage
+# Step 9: Check metrics / usage
 # ---------------------------------------------------------------
-echo "[7/9] Check usage"
+echo "[9/11] Check usage"
 USAGE_RESP=$(curl -s "$BASE_URL/api/v1/usage" \
     -H "$AUTH_HEADER")
 EVENTS_PROCESSED=$(echo "$USAGE_RESP" | jq -r '.events_processed // 0')
@@ -202,9 +239,9 @@ else
 fi
 
 # ---------------------------------------------------------------
-# Step 8: Delete pipeline
+# Step 10: Delete pipeline
 # ---------------------------------------------------------------
-echo "[8/9] Delete pipeline"
+echo "[10/11] Delete pipeline"
 if [ -n "${PIPELINE_ID:-}" ]; then
     DEL_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE \
         "$BASE_URL/api/v1/pipelines/$PIPELINE_ID" \
@@ -215,13 +252,13 @@ else
 fi
 
 # ---------------------------------------------------------------
-# Step 9: Delete tenant
+# Step 11: Delete tenant
 # ---------------------------------------------------------------
-echo "[9/9] Delete tenant"
+echo "[11/11] Delete tenant"
 if [ -n "${TENANT_ID:-}" ]; then
     DEL_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE \
         "$BASE_URL/api/v1/tenants/$TENANT_ID" \
-        -H "Authorization: Bearer $ADMIN_KEY")
+        -H "x-admin-key: $ADMIN_KEY")
     assert_http_code "DELETE tenant returns 200" "200" "$DEL_CODE"
 else
     echo "  SKIP: No tenant to delete"

@@ -17,6 +17,7 @@ spec:
             - "k3d-test-admin-key"
             - "--state-dir"
             - "/app/state"
+            - "--metrics"
           ports:
             - name: http
               containerPort: 9000

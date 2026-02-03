@@ -1,0 +1,24 @@
+services:
+  # MQTT Broker
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: quickstart-mqtt
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
+    restart: unless-stopped
+
+  # Simple event generator
+  generator:
+    image: python:3.11-slim
+    container_name: quickstart-generator
+    depends_on:
+      mosquitto:
+        condition: service_started
+    volumes:
+      - ./generator.py:/app/generator.py:ro
+    working_dir: /app
+    command: >
+      bash -c "pip install -q paho-mqtt && sleep 3 && python generator.py --broker mosquitto --rate 1"
+    restart: unless-stopped

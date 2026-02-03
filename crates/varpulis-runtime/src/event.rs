@@ -16,7 +16,8 @@ pub type SharedEvent = Arc<Event>;
 pub struct Event {
     /// Event type name
     pub event_type: String,
-    /// Timestamp of the event
+    /// Timestamp of the event (defaults to current server time if not provided)
+    #[serde(default = "Utc::now")]
     pub timestamp: DateTime<Utc>,
     /// Event payload
     pub data: IndexMap<String, Value>,
@@ -64,6 +65,7 @@ pub struct TemperatureReading {
     pub sensor_id: String,
     pub zone: String,
     pub value: f64,
+    #[serde(default = "Utc::now")]
     pub timestamp: DateTime<Utc>,
 }
 
@@ -83,6 +85,7 @@ pub struct HumidityReading {
     pub sensor_id: String,
     pub zone: String,
     pub value: f64,
+    #[serde(default = "Utc::now")]
     pub timestamp: DateTime<Utc>,
 }
 
@@ -104,6 +107,7 @@ pub struct HVACStatus {
     pub power_consumption: f64,
     pub fan_speed: i64,
     pub compressor_pressure: f64,
+    #[serde(default = "Utc::now")]
     pub timestamp: DateTime<Utc>,
 }
 
