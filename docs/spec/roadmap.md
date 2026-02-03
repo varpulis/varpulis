@@ -31,6 +31,7 @@
 - [ ] Embedding engine (rule-based)
 - [ ] Deterministic attention mechanism
 - [ ] HVAC degradation detection demo
+- [x] Context-based multi-threaded execution (named contexts, CPU affinity, cross-context channels)
 - [ ] Declarative parallelization
 - [ ] Automatic supervision and restart
 - [ ] State backend: RocksDB

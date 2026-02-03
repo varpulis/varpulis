@@ -73,6 +73,7 @@ stream Alert = SomeEvent
 - [`reference/windows-aggregations.md`](reference/windows-aggregations.md) - Windows and aggregations
 
 ### Guides
+- [`guides/contexts.md`](guides/contexts.md) - **Context-based multi-threaded execution**
 - [`guides/performance-tuning.md`](guides/performance-tuning.md) - Optimization
 - [`guides/configuration.md`](guides/configuration.md) - Configuration options
 - [`guides/sase-patterns.md`](guides/sase-patterns.md) - Pattern matching guide
@@ -113,5 +114,5 @@ docker compose -f deploy/docker/docker-compose.saas.yml up -d
 
 **Version**: 0.1.0
 **Parser**: Pest PEG
-**Tests**: 1040+
+**Tests**: 1068+
 **License**: MIT

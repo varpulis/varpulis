@@ -65,6 +65,9 @@ Detection rules on event sequences.
 ### Aggregations
 Reduction functions on windows (sum, avg, count, etc.).
 
+### Contexts
+Named execution domains that run on dedicated OS threads. Enable multi-core parallelism with CPU affinity and cross-context communication via bounded channels.
+
 ## See Also
 
 - [Complete Syntax](syntax.md)

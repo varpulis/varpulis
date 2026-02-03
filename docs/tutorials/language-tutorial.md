@@ -10,6 +10,7 @@ A comprehensive guide to writing VarpulisQL programs, from basic event processin
 4. [Part 4: SASE+ Advanced](#part-4-sase-advanced) - Kleene, negation, AND/OR
 5. [Part 5: Attention Windows](#part-5-attention-windows)
 6. [Part 6: Joins](#part-6-joins)
+7. [Part 7: Contexts](#part-7-contexts) - Multi-threaded execution with CPU affinity
 
 ---
 
@@ -629,6 +630,71 @@ stream AllSensors = merge(
 
 ---
 
+## Part 7: Contexts
+
+Contexts let you run streams on dedicated OS threads for true multi-core parallelism.
+
+### Declaring Contexts
+
+```vpl
+// Declare named execution contexts
+context ingestion
+context analytics (cores: [2, 3])
+context alerts (cores: [4])
+```
+
+Each context gets its own OS thread with a single-threaded Tokio runtime. The optional `cores` parameter pins the thread to specific CPU cores (Linux only).
+
+### Assigning Streams
+
+Use `.context()` to assign a stream to a context:
+
+```vpl
+context fast (cores: [0])
+context slow (cores: [1])
+
+stream RawFilter = SensorReading
+    .context(fast)
+    .where(value > 0)
+    .emit(sensor_id: sensor_id, value: value)
+
+stream HeavyAnalytics = SensorReading
+    .context(slow)
+    .window(5m)
+    .aggregate(avg: avg(value), stddev: stddev(value))
+```
+
+### Cross-Context Communication
+
+Send events from one context to another using `context:` in `.emit()`:
+
+```vpl
+context ingest (cores: [0])
+context analyze (cores: [1])
+
+// Filter in the ingest context, forward to analyze
+stream Filtered = RawEvent
+    .context(ingest)
+    .where(priority > 5)
+    .emit(context: analyze, data: data, priority: priority)
+
+// Aggregate in the analyze context
+stream Stats = Filtered
+    .context(analyze)
+    .window(1m)
+    .aggregate(count: count(), avg_priority: avg(priority))
+```
+
+Cross-context events are delivered via bounded `mpsc` channels.
+
+### Backward Compatibility
+
+Programs without `context` declarations run exactly as before -- single-threaded with zero overhead. Contexts are purely opt-in.
+
+For a complete tutorial with a multi-stage IoT pipeline, see the [Contexts Guide](../guides/contexts.md).
+
+---
+
 ## Best Practices
 
 ### 1. Start Simple
@@ -708,6 +774,7 @@ varpulis simulate -p program.vpl -e test_events.evt --verbose
 | Aggregate | `aggregate { funcs }` | Compute aggregations |
 | Pattern | `pattern A -> B` | Sequence detection |
 | Partition | `partition by field` | Process per-key |
+| Context | `.context(name)` | Assign to execution context |
 | Emit | `emit alert(...)` | Output alert |
 | Emit | `emit log(...)` | Output log message |
 

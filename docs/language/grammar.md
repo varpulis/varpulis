@@ -15,7 +15,7 @@ This grammar uses simplified EBNF notation:
 ### Keywords
 
 ```
-STREAM EVENT TYPE LET VAR CONST FN CONFIG
+STREAM EVENT TYPE LET VAR CONST FN CONFIG CONTEXT
 IF ELSE ELIF MATCH FOR WHILE BREAK CONTINUE RETURN
 FROM WHERE SELECT JOIN MERGE WINDOW AGGREGATE PARTITION_BY ORDER_BY LIMIT DISTINCT EMIT TO
 PATTERN ATTENTION_WINDOW ATTENTION_SCORE
@@ -55,7 +55,8 @@ IDENTIFIER  : [a-zA-Z_][a-zA-Z0-9_]*
 ```ebnf
 program         ::= statement*
 
-statement       ::= stream_decl
+statement       ::= context_decl
+                  | stream_decl
                   | event_decl
                   | type_decl
                   | var_decl
@@ -67,6 +68,12 @@ statement       ::= stream_decl
 ### Declarations
 
 ```ebnf
+context_decl    ::= 'context' IDENTIFIER context_params?
+
+context_params  ::= '(' context_param (',' context_param)* ')'
+
+context_param   ::= 'cores' ':' '[' INTEGER (',' INTEGER)* ']'
+
 stream_decl     ::= 'stream' IDENTIFIER (':' type)? '=' stream_expr
                   | 'stream' IDENTIFIER 'from' IDENTIFIER
 
@@ -121,7 +128,8 @@ stream_list     ::= stream_decl (',' stream_decl)*
 
 join_clause     ::= stream_decl ('on' expr)?
 
-stream_op       ::= '.where' '(' expr ')'
+stream_op       ::= '.context' '(' IDENTIFIER ')'
+                  | '.where' '(' expr ')'
                   | '.select' '(' select_list ')'
                   | '.window' '(' window_args ')'
                   | '.aggregate' '(' agg_list ')'

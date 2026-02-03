@@ -1,6 +1,51 @@
 # Parallelization and Supervision
 
-## Parallelization Model
+## Context-Based Multi-Threading
+
+Contexts provide OS-level thread isolation for stream processing. Each context runs on a dedicated thread with a single-threaded Tokio runtime, eliminating lock contention within a context.
+
+```
+                    ┌─────────────────────┐
+                    │ ContextOrchestrator  │
+                    │   (event router)    │
+                    └──────────┬──────────┘
+                               │
+           ┌───────────────────┼───────────────────┐
+           │                   │                   │
+  ┌────────▼────────┐ ┌───────▼────────┐ ┌────────▼────────┐
+  │  Thread: ingest │ │ Thread: analyze│ │  Thread: alert  │
+  │  Tokio RT       │ │ Tokio RT       │ │  Tokio RT       │
+  │  Engine         │ │ Engine         │ │  Engine         │
+  │  cores: [0,1]   │ │ cores: [2,3]   │ │  cores: [4]     │
+  └────────┬────────┘ └───────┬────────┘ └────────┬────────┘
+           └────── mpsc channels ──────────────────┘
+```
+
+```varpulis
+context ingest (cores: [0, 1])
+context analyze (cores: [2, 3])
+context alert (cores: [4])
+
+stream RawEvents = Sensor
+    .context(ingest)
+    .emit(context: analyze, data: data)
+
+stream Stats = RawEvents
+    .context(analyze)
+    .window(1m)
+    .aggregate(avg: avg(value))
+    .emit(context: alert, avg: avg)
+```
+
+Key properties:
+- **No shared state**: All state is thread-local within a context
+- **Bounded channels**: Cross-context communication via `mpsc` channels with backpressure
+- **CPU affinity**: Optional pinning to specific cores (Linux only, via `core_affinity`)
+- **Zero overhead**: Programs without `context` declarations run single-threaded
+
+See the [Contexts Guide](../guides/contexts.md) for a full tutorial.
+
+## Worker Pool Parallelization Model
 
 ```
                     ┌─────────────┐
