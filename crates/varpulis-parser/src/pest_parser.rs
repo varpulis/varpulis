@@ -2482,4 +2482,130 @@ mod tests {
         );
         assert!(result.is_ok(), "Failed: {:?}", result.err());
     }
+
+    // =========================================================================
+    // Connectivity Architecture Tests
+    // =========================================================================
+
+    #[test]
+    fn test_parse_connector_mqtt() {
+        let result = parse(
+            r#"connector MqttBroker = mqtt (
+                host: "localhost",
+                port: 1883,
+                client_id: "varpulis"
+            )"#,
+        );
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_connector_kafka() {
+        let result = parse(
+            r#"connector KafkaCluster = kafka (
+                brokers: ["kafka1:9092", "kafka2:9092"],
+                group_id: "my-group"
+            )"#,
+        );
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_connector_http() {
+        let result = parse(
+            r#"connector ApiEndpoint = http (
+                base_url: "https://api.example.com"
+            )"#,
+        );
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_stream_with_from_connector() {
+        let result = parse(
+            r#"stream Temperatures = TemperatureReading.from(MqttSensors, topic: "sensors/temp/#")"#,
+        );
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_stream_with_from_and_operations() {
+        let result = parse(
+            r#"stream HighTemp = TemperatureReading
+                .from(MqttSensors, topic: "sensors/#")
+                .where(value > 30)
+                .emit(alert: "high_temp")"#,
+        );
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_sink_to_connector() {
+        let result = parse(r#"sink Alerts to KafkaCluster (topic: "alerts")"#);
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_sink_to_console() {
+        let result = parse("sink DebugStream to console()");
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_sink_to_log() {
+        let result = parse(r#"sink ErrorStream to log(level: "error")"#);
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_sink_to_tap() {
+        let result = parse(r#"sink MetricsStream to tap(counter: "events_total")"#);
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_full_connectivity_pipeline() {
+        let result = parse(
+            r#"
+            connector MqttSensors = mqtt (host: "localhost", port: 1883)
+            connector KafkaAlerts = kafka (brokers: ["kafka:9092"])
+
+            event TemperatureReading:
+                sensor_id: str
+                value: float
+                ts: timestamp
+
+            stream Temperatures = TemperatureReading.from(MqttSensors, topic: "sensors/#")
+
+            stream HighTempAlert = Temperatures
+                .where(value > 30)
+                .emit(alert_type: "HIGH_TEMP", temperature: value)
+
+            sink HighTempAlert to KafkaAlerts (topic: "alerts")
+            sink HighTempAlert to console()
+            "#,
+        );
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_emit_as_type() {
+        let result = parse(
+            r#"stream Alerts = Temperatures
+                .where(value > 30)
+                .emit as AlertEvent(severity: "high", temp: value)"#,
+        );
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_stream_with_to_connector() {
+        let result = parse(
+            r#"stream Output = Input
+                .where(x > 0)
+                .emit(y: x * 2)
+                .to(KafkaOutput, topic: "output")"#,
+        );
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
 }
