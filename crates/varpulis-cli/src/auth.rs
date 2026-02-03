@@ -202,7 +202,7 @@ fn url_decode(s: &str) -> String {
 }
 
 /// Constant-time string comparison to prevent timing attacks
-fn constant_time_compare(a: &str, b: &str) -> bool {
+pub fn constant_time_compare(a: &str, b: &str) -> bool {
     if a.len() != b.len() {
         return false;
     }

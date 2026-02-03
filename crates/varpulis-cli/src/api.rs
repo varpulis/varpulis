@@ -3,9 +3,10 @@
 //! Provides RESTful endpoints for deploying and managing CEP pipelines
 //! in a multi-tenant environment.
 
+use crate::auth::constant_time_compare;
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
-use varpulis_runtime::tenant::{SharedTenantManager, TenantError};
+use varpulis_runtime::tenant::{SharedTenantManager, TenantError, TenantQuota};
 use varpulis_runtime::Event;
 use warp::http::StatusCode;
 use warp::{Filter, Rejection, Reply};
@@ -83,14 +84,59 @@ pub struct QuotaInfo {
 }
 
 // =============================================================================
+// Tenant Admin Request/Response types
+// =============================================================================
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct CreateTenantRequest {
+    pub name: String,
+    #[serde(default)]
+    pub quota_tier: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TenantResponse {
+    pub id: String,
+    pub name: String,
+    pub api_key: String,
+    pub quota: QuotaInfo,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TenantListResponse {
+    pub tenants: Vec<TenantResponse>,
+    pub total: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TenantDetailResponse {
+    pub id: String,
+    pub name: String,
+    pub api_key: String,
+    pub quota: QuotaInfo,
+    pub usage: TenantUsageInfo,
+    pub pipeline_count: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TenantUsageInfo {
+    pub events_processed: u64,
+    pub alerts_generated: u64,
+    pub active_pipelines: usize,
+}
+
+// =============================================================================
 // API Routes
 // =============================================================================
 
 /// Build the complete API route tree
 pub fn api_routes(
     manager: SharedTenantManager,
+    admin_key: Option<String>,
 ) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
     let api = warp::path("api").and(warp::path("v1"));
+
+    let admin_routes = tenant_admin_routes(manager.clone(), admin_key);
 
     let deploy = api
         .and(warp::path("pipelines"))
@@ -175,6 +221,7 @@ pub fn api_routes(
         .or(metrics)
         .or(reload)
         .or(usage)
+        .or(admin_routes)
 }
 
 // =============================================================================
@@ -562,6 +609,218 @@ async fn handle_usage(
 }
 
 // =============================================================================
+// Tenant Admin Routes
+// =============================================================================
+
+fn with_admin_key() -> impl Filter<Extract = (String,), Error = Rejection> + Clone {
+    warp::header::<String>("x-admin-key")
+}
+
+fn with_admin_key_config(
+    admin_key: Option<String>,
+) -> impl Filter<Extract = (Option<String>,), Error = Infallible> + Clone {
+    warp::any().map(move || admin_key.clone())
+}
+
+/// Build tenant admin route tree (CRUD for tenants)
+pub fn tenant_admin_routes(
+    manager: SharedTenantManager,
+    admin_key: Option<String>,
+) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
+    let api = warp::path("api").and(warp::path("v1")).and(warp::path("tenants"));
+
+    let create = api
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(with_admin_key())
+        .and(warp::body::json())
+        .and(with_manager(manager.clone()))
+        .and(with_admin_key_config(admin_key.clone()))
+        .and_then(handle_create_tenant);
+
+    let list_tenants = api
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(with_admin_key())
+        .and(with_manager(manager.clone()))
+        .and(with_admin_key_config(admin_key.clone()))
+        .and_then(handle_list_tenants);
+
+    let get_tenant = api
+        .and(warp::path::param::<String>())
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(with_admin_key())
+        .and(with_manager(manager.clone()))
+        .and(with_admin_key_config(admin_key.clone()))
+        .and_then(handle_get_tenant);
+
+    let delete_tenant = api
+        .and(warp::path::param::<String>())
+        .and(warp::path::end())
+        .and(warp::delete())
+        .and(with_admin_key())
+        .and(with_manager(manager.clone()))
+        .and(with_admin_key_config(admin_key))
+        .and_then(handle_delete_tenant);
+
+    create.or(list_tenants).or(get_tenant).or(delete_tenant)
+}
+
+fn validate_admin_key(provided: &str, configured: &Option<String>) -> Result<(), warp::reply::Response> {
+    match configured {
+        None => Err(error_response(
+            StatusCode::FORBIDDEN,
+            "admin_disabled",
+            "Admin API is disabled (no --api-key configured)",
+        )),
+        Some(key) => {
+            if constant_time_compare(key, provided) {
+                Ok(())
+            } else {
+                Err(error_response(
+                    StatusCode::UNAUTHORIZED,
+                    "invalid_admin_key",
+                    "Invalid admin key",
+                ))
+            }
+        }
+    }
+}
+
+fn quota_from_tier(tier: Option<&str>) -> TenantQuota {
+    match tier {
+        Some("free") => TenantQuota::free(),
+        Some("pro") => TenantQuota::pro(),
+        Some("enterprise") => TenantQuota::enterprise(),
+        _ => TenantQuota::default(),
+    }
+}
+
+async fn handle_create_tenant(
+    admin_key: String,
+    body: CreateTenantRequest,
+    manager: SharedTenantManager,
+    configured_key: Option<String>,
+) -> Result<impl Reply, Infallible> {
+    if let Err(resp) = validate_admin_key(&admin_key, &configured_key) {
+        return Ok(resp);
+    }
+
+    let api_key = uuid::Uuid::new_v4().to_string();
+    let quota = quota_from_tier(body.quota_tier.as_deref());
+
+    let mut mgr = manager.write().await;
+    match mgr.create_tenant(body.name.clone(), api_key.clone(), quota.clone()) {
+        Ok(tenant_id) => {
+            let resp = TenantResponse {
+                id: tenant_id.as_str().to_string(),
+                name: body.name,
+                api_key,
+                quota: QuotaInfo {
+                    max_pipelines: quota.max_pipelines,
+                    max_events_per_second: quota.max_events_per_second,
+                    max_streams_per_pipeline: quota.max_streams_per_pipeline,
+                },
+            };
+            Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::CREATED).into_response())
+        }
+        Err(e) => Ok(tenant_error_response(e)),
+    }
+}
+
+async fn handle_list_tenants(
+    admin_key: String,
+    manager: SharedTenantManager,
+    configured_key: Option<String>,
+) -> Result<impl Reply, Infallible> {
+    if let Err(resp) = validate_admin_key(&admin_key, &configured_key) {
+        return Ok(resp);
+    }
+
+    let mgr = manager.read().await;
+    let tenants: Vec<TenantResponse> = mgr
+        .list_tenants()
+        .iter()
+        .map(|t| TenantResponse {
+            id: t.id.as_str().to_string(),
+            name: t.name.clone(),
+            api_key: t.api_key.clone(),
+            quota: QuotaInfo {
+                max_pipelines: t.quota.max_pipelines,
+                max_events_per_second: t.quota.max_events_per_second,
+                max_streams_per_pipeline: t.quota.max_streams_per_pipeline,
+            },
+        })
+        .collect();
+    let total = tenants.len();
+    let resp = TenantListResponse { tenants, total };
+    Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+}
+
+async fn handle_get_tenant(
+    tenant_id_str: String,
+    admin_key: String,
+    manager: SharedTenantManager,
+    configured_key: Option<String>,
+) -> Result<impl Reply, Infallible> {
+    if let Err(resp) = validate_admin_key(&admin_key, &configured_key) {
+        return Ok(resp);
+    }
+
+    let mgr = manager.read().await;
+    let tenant_id = varpulis_runtime::TenantId::new(&tenant_id_str);
+    match mgr.get_tenant(&tenant_id) {
+        Some(t) => {
+            let resp = TenantDetailResponse {
+                id: t.id.as_str().to_string(),
+                name: t.name.clone(),
+                api_key: t.api_key.clone(),
+                quota: QuotaInfo {
+                    max_pipelines: t.quota.max_pipelines,
+                    max_events_per_second: t.quota.max_events_per_second,
+                    max_streams_per_pipeline: t.quota.max_streams_per_pipeline,
+                },
+                usage: TenantUsageInfo {
+                    events_processed: t.usage.events_processed,
+                    alerts_generated: t.usage.alerts_generated,
+                    active_pipelines: t.usage.active_pipelines,
+                },
+                pipeline_count: t.pipelines.len(),
+            };
+            Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+        }
+        None => Ok(error_response(
+            StatusCode::NOT_FOUND,
+            "tenant_not_found",
+            "Tenant not found",
+        )),
+    }
+}
+
+async fn handle_delete_tenant(
+    tenant_id_str: String,
+    admin_key: String,
+    manager: SharedTenantManager,
+    configured_key: Option<String>,
+) -> Result<impl Reply, Infallible> {
+    if let Err(resp) = validate_admin_key(&admin_key, &configured_key) {
+        return Ok(resp);
+    }
+
+    let mut mgr = manager.write().await;
+    let tenant_id = varpulis_runtime::TenantId::new(&tenant_id_str);
+    match mgr.remove_tenant(&tenant_id) {
+        Ok(()) => Ok(warp::reply::with_status(
+            warp::reply::json(&serde_json::json!({"deleted": true})),
+            StatusCode::OK,
+        )
+        .into_response()),
+        Err(e) => Ok(tenant_error_response(e)),
+    }
+}
+
+// =============================================================================
 // Helpers
 // =============================================================================
 
@@ -645,7 +904,7 @@ mod tests {
     #[tokio::test]
     async fn test_deploy_pipeline() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr);
+        let routes = api_routes(mgr, None);
 
         let resp = warp::test::request()
             .method("POST")
@@ -667,7 +926,7 @@ mod tests {
     #[tokio::test]
     async fn test_deploy_invalid_api_key() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr);
+        let routes = api_routes(mgr, None);
 
         let resp = warp::test::request()
             .method("POST")
@@ -686,7 +945,7 @@ mod tests {
     #[tokio::test]
     async fn test_deploy_invalid_vpl() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr);
+        let routes = api_routes(mgr, None);
 
         let resp = warp::test::request()
             .method("POST")
@@ -705,7 +964,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_pipelines() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr);
+        let routes = api_routes(mgr, None);
 
         let resp = warp::test::request()
             .method("GET")
@@ -723,7 +982,7 @@ mod tests {
     #[tokio::test]
     async fn test_usage_endpoint() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr);
+        let routes = api_routes(mgr, None);
 
         let resp = warp::test::request()
             .method("GET")
@@ -749,7 +1008,7 @@ mod tests {
             tenant.pipelines.keys().next().unwrap().clone()
         };
 
-        let routes = api_routes(mgr);
+        let routes = api_routes(mgr, None);
 
         let resp = warp::test::request()
             .method("POST")
@@ -812,5 +1071,204 @@ mod tests {
 
         let resp = tenant_error_response(TenantError::ParseError("bad".into()));
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // =========================================================================
+    // Tenant Admin API tests
+    // =========================================================================
+
+    fn setup_admin_routes(
+        admin_key: Option<&str>,
+    ) -> (
+        SharedTenantManager,
+        impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone,
+    ) {
+        let mgr = Arc::new(RwLock::new(TenantManager::new()));
+        let key = admin_key.map(|k| k.to_string());
+        let routes = api_routes(mgr.clone(), key);
+        (mgr, routes)
+    }
+
+    #[tokio::test]
+    async fn test_create_tenant() {
+        let (_mgr, routes) = setup_admin_routes(Some("admin-secret"));
+
+        let resp = warp::test::request()
+            .method("POST")
+            .path("/api/v1/tenants")
+            .header("x-admin-key", "admin-secret")
+            .json(&CreateTenantRequest {
+                name: "Acme Corp".into(),
+                quota_tier: None,
+            })
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let body: TenantResponse = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body.name, "Acme Corp");
+        assert!(!body.api_key.is_empty());
+        assert!(!body.id.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_tenants_admin() {
+        let (_mgr, routes) = setup_admin_routes(Some("admin-secret"));
+
+        // Create two tenants
+        for name in &["Tenant A", "Tenant B"] {
+            warp::test::request()
+                .method("POST")
+                .path("/api/v1/tenants")
+                .header("x-admin-key", "admin-secret")
+                .json(&CreateTenantRequest {
+                    name: name.to_string(),
+                    quota_tier: None,
+                })
+                .reply(&routes)
+                .await;
+        }
+
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/api/v1/tenants")
+            .header("x-admin-key", "admin-secret")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: TenantListResponse = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body.total, 2);
+    }
+
+    #[tokio::test]
+    async fn test_get_tenant_admin() {
+        let (_mgr, routes) = setup_admin_routes(Some("admin-secret"));
+
+        // Create a tenant
+        let create_resp = warp::test::request()
+            .method("POST")
+            .path("/api/v1/tenants")
+            .header("x-admin-key", "admin-secret")
+            .json(&CreateTenantRequest {
+                name: "Detail Corp".into(),
+                quota_tier: Some("pro".into()),
+            })
+            .reply(&routes)
+            .await;
+
+        let created: TenantResponse = serde_json::from_slice(create_resp.body()).unwrap();
+
+        let resp = warp::test::request()
+            .method("GET")
+            .path(&format!("/api/v1/tenants/{}", created.id))
+            .header("x-admin-key", "admin-secret")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: TenantDetailResponse = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body.name, "Detail Corp");
+        assert_eq!(body.pipeline_count, 0);
+        // Pro tier quotas
+        assert_eq!(body.quota.max_pipelines, 20);
+    }
+
+    #[tokio::test]
+    async fn test_delete_tenant_admin() {
+        let (_mgr, routes) = setup_admin_routes(Some("admin-secret"));
+
+        // Create then delete
+        let create_resp = warp::test::request()
+            .method("POST")
+            .path("/api/v1/tenants")
+            .header("x-admin-key", "admin-secret")
+            .json(&CreateTenantRequest {
+                name: "Doomed".into(),
+                quota_tier: None,
+            })
+            .reply(&routes)
+            .await;
+        let created: TenantResponse = serde_json::from_slice(create_resp.body()).unwrap();
+
+        let resp = warp::test::request()
+            .method("DELETE")
+            .path(&format!("/api/v1/tenants/{}", created.id))
+            .header("x-admin-key", "admin-secret")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // Verify tenant is gone
+        let list_resp = warp::test::request()
+            .method("GET")
+            .path("/api/v1/tenants")
+            .header("x-admin-key", "admin-secret")
+            .reply(&routes)
+            .await;
+        let body: TenantListResponse = serde_json::from_slice(list_resp.body()).unwrap();
+        assert_eq!(body.total, 0);
+    }
+
+    #[tokio::test]
+    async fn test_invalid_admin_key() {
+        let (_mgr, routes) = setup_admin_routes(Some("admin-secret"));
+
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/api/v1/tenants")
+            .header("x-admin-key", "wrong-key")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_no_admin_key_configured() {
+        let (_mgr, routes) = setup_admin_routes(None);
+
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/api/v1/tenants")
+            .header("x-admin-key", "anything")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_create_tenant_tier_selection() {
+        let (_mgr, routes) = setup_admin_routes(Some("admin-secret"));
+
+        // Free tier
+        let resp = warp::test::request()
+            .method("POST")
+            .path("/api/v1/tenants")
+            .header("x-admin-key", "admin-secret")
+            .json(&CreateTenantRequest {
+                name: "Free User".into(),
+                quota_tier: Some("free".into()),
+            })
+            .reply(&routes)
+            .await;
+        let body: TenantResponse = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body.quota.max_pipelines, 2); // free tier
+
+        // Enterprise tier
+        let resp = warp::test::request()
+            .method("POST")
+            .path("/api/v1/tenants")
+            .header("x-admin-key", "admin-secret")
+            .json(&CreateTenantRequest {
+                name: "Enterprise User".into(),
+                quota_tier: Some("enterprise".into()),
+            })
+            .reply(&routes)
+            .await;
+        let body: TenantResponse = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body.quota.max_pipelines, 1000); // enterprise tier
     }
 }

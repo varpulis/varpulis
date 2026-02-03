@@ -34,6 +34,7 @@ create_cluster() {
     echo "==> Creating k3d cluster '$CLUSTER_NAME'..."
     k3d cluster create "$CLUSTER_NAME" \
         --port "9000:9000@loadbalancer" \
+        --port "3000:3000@loadbalancer" \
         --wait
     echo "==> Cluster created."
 }
@@ -48,11 +49,34 @@ deploy() {
     echo "==> Creating namespace '$NAMESPACE'..."
     kubectl create namespace "$NAMESPACE" 2>/dev/null || true
 
-    echo "==> Deploying via kustomize..."
+    echo "==> Deploying Varpulis via kustomize..."
     kubectl apply -k "$REPO_ROOT/deploy/kubernetes/overlays/k3d"
 
-    echo "==> Waiting for deployment rollout..."
+    echo "==> Deploying infrastructure (Kafka, Mosquitto, Prometheus, Grafana)..."
+    kubectl apply -f "$REPO_ROOT/deploy/kubernetes/overlays/k3d/infra/" --namespace "$NAMESPACE"
+
+    echo "==> Waiting for Varpulis deployment rollout..."
     kubectl rollout status deployment/k3d-varpulis \
+        --namespace "$NAMESPACE" \
+        --timeout=120s
+
+    echo "==> Waiting for Kafka deployment rollout..."
+    kubectl rollout status deployment/kafka \
+        --namespace "$NAMESPACE" \
+        --timeout=120s
+
+    echo "==> Waiting for Mosquitto deployment rollout..."
+    kubectl rollout status deployment/mosquitto \
+        --namespace "$NAMESPACE" \
+        --timeout=120s
+
+    echo "==> Waiting for Prometheus deployment rollout..."
+    kubectl rollout status deployment/prometheus \
+        --namespace "$NAMESPACE" \
+        --timeout=120s
+
+    echo "==> Waiting for Grafana deployment rollout..."
+    kubectl rollout status deployment/grafana \
         --namespace "$NAMESPACE" \
         --timeout=120s
 
@@ -103,8 +127,14 @@ deploy
 
 echo ""
 echo "==> k3d cluster '$CLUSTER_NAME' is ready."
-echo "    API endpoint: http://localhost:9000"
+echo "    Varpulis API: http://localhost:9000"
+echo "    Grafana:      http://localhost:3000 (anonymous admin, no login required)"
 echo "    Admin key:    k3d-test-admin-key"
+echo ""
+echo "    Internal endpoints (within cluster):"
+echo "      Kafka:      kafka.${NAMESPACE}.svc.cluster.local:9092"
+echo "      MQTT:       mosquitto.${NAMESPACE}.svc.cluster.local:1883"
+echo "      Prometheus: prometheus.${NAMESPACE}.svc.cluster.local:9090"
 echo ""
 echo "    Run integration tests:"
 echo "      ./tests/k3d/run_tests.sh --port-forward"
