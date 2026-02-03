@@ -771,8 +771,8 @@ mod tests {
             varpulis_core::Value::Int(42)
         );
         assert_eq!(
-            json_to_runtime_value(&serde_json::json!(3.14)),
-            varpulis_core::Value::Float(3.14)
+            json_to_runtime_value(&serde_json::json!(1.23)),
+            varpulis_core::Value::Float(1.23)
         );
         assert_eq!(
             json_to_runtime_value(&serde_json::json!("hello")),
