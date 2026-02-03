@@ -61,7 +61,7 @@ pub fn get_semantic_tokens(text: &str) -> Vec<SemanticToken> {
 
         // Handle comments - find the character position of #
         if let Some(comment_char_pos) = char_indices.iter().position(|(_, c)| *c == '#') {
-            let comment_byte_start = char_indices[comment_char_pos].0;
+            let _comment_byte_start = char_indices[comment_char_pos].0;
             let comment_char_len = char_indices.len() - comment_char_pos;
 
             let delta_line = line_num - prev_line;
@@ -233,8 +233,7 @@ fn match_token(s: &str) -> Option<(usize, u32)> {
 
     // Check if followed by ( to confirm it's a function call
     for func in functions {
-        if s.starts_with(func) {
-            let after = &s[func.len()..];
+        if let Some(after) = s.strip_prefix(func) {
             if !after.starts_with(|c: char| c.is_alphanumeric() || c == '_') {
                 // Check if it's followed by ( (possibly with whitespace)
                 let trimmed = after.trim_start();
@@ -279,12 +278,12 @@ fn match_token(s: &str) -> Option<(usize, u32)> {
     }
 
     // Strings
-    if s.starts_with('"') {
-        let end = s[1..].find('"').map(|i| i + 2).unwrap_or(s.len());
+    if let Some(rest) = s.strip_prefix('"') {
+        let end = rest.find('"').map(|i| i + 2).unwrap_or(s.len());
         return Some((end, TOKEN_STRING));
     }
-    if s.starts_with('\'') {
-        let end = s[1..].find('\'').map(|i| i + 2).unwrap_or(s.len());
+    if let Some(rest) = s.strip_prefix('\'') {
+        let end = rest.find('\'').map(|i| i + 2).unwrap_or(s.len());
         return Some((end, TOKEN_STRING));
     }
 
@@ -299,12 +298,14 @@ fn match_token(s: &str) -> Option<(usize, u32)> {
         }
 
         // Decimal part
-        if len < chars.len() && chars[len] == '.' {
-            if len + 1 < chars.len() && chars[len + 1].is_ascii_digit() {
+        if len < chars.len()
+            && chars[len] == '.'
+            && len + 1 < chars.len()
+            && chars[len + 1].is_ascii_digit()
+        {
+            len += 1;
+            while len < chars.len() && chars[len].is_ascii_digit() {
                 len += 1;
-                while len < chars.len() && chars[len].is_ascii_digit() {
-                    len += 1;
-                }
             }
         }
 
