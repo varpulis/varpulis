@@ -2,6 +2,7 @@
 //!
 //! Provides tenant-scoped engine instances with resource limits and usage tracking.
 
+use crate::context::ContextOrchestrator;
 use crate::engine::{Alert, Engine};
 use crate::event::Event;
 use crate::persistence::{StateStore, StoreError};
@@ -144,6 +145,8 @@ pub struct Pipeline {
     pub created_at: Instant,
     /// Pipeline status
     pub status: PipelineStatus,
+    /// Optional context orchestrator for multi-threaded execution
+    pub orchestrator: Option<ContextOrchestrator>,
 }
 
 /// Pipeline status
@@ -259,10 +262,31 @@ impl Tenant {
 
         // Create a new engine
         let (alert_tx, alert_rx) = mpsc::channel(1000);
+        let alert_tx_for_ctx = alert_tx.clone();
         let mut engine = Engine::new(alert_tx);
         engine
             .load(&program)
             .map_err(|e| TenantError::EngineError(e.to_string()))?;
+
+        // Build context orchestrator if the program declares contexts
+        let orchestrator = if engine.has_contexts() {
+            match ContextOrchestrator::build(
+                engine.context_map(),
+                &program,
+                alert_tx_for_ctx,
+                1000,
+            ) {
+                Ok(orch) => Some(orch),
+                Err(e) => {
+                    return Err(TenantError::EngineError(format!(
+                        "Failed to build context orchestrator: {}",
+                        e
+                    )));
+                }
+            }
+        } else {
+            None
+        };
 
         let id = Uuid::new_v4().to_string();
         let pipeline = Pipeline {
@@ -273,6 +297,7 @@ impl Tenant {
             alert_rx,
             created_at: Instant::now(),
             status: PipelineStatus::Running,
+            orchestrator,
         };
 
         self.pipelines.insert(id.clone(), pipeline);
@@ -313,11 +338,21 @@ impl Tenant {
             )));
         }
 
-        pipeline
-            .engine
-            .process(event)
-            .await
-            .map_err(|e| TenantError::EngineError(e.to_string()))?;
+        if let Some(ref orchestrator) = pipeline.orchestrator {
+            // Route through context orchestrator
+            let shared_event = std::sync::Arc::new(event);
+            orchestrator
+                .process(shared_event)
+                .await
+                .map_err(|e| TenantError::EngineError(e.to_string()))?;
+        } else {
+            // Direct engine processing (no contexts, zero overhead)
+            pipeline
+                .engine
+                .process(event)
+                .await
+                .map_err(|e| TenantError::EngineError(e.to_string()))?;
+        }
 
         Ok(())
     }
@@ -619,6 +654,7 @@ impl TenantManager {
             alert_rx,
             created_at: Instant::now(),
             status: snapshot.status,
+            orchestrator: None,
         })
     }
 }

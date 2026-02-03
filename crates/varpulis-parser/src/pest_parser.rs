@@ -108,6 +108,7 @@ fn format_rule_name(rule: &Rule) -> String {
         Rule::type_expr => "type".to_string(),
         Rule::expr => "expression".to_string(),
         Rule::statement => "statement".to_string(),
+        Rule::context_decl => "context declaration".to_string(),
         Rule::stream_decl => "stream declaration".to_string(),
         Rule::pattern_decl => "pattern declaration".to_string(),
         Rule::event_decl => "event declaration".to_string(),
@@ -131,6 +132,7 @@ fn parse_statement(pair: pest::iterators::Pair<Rule>) -> ParseResult<Spanned<Stm
     let inner = pair.into_inner().expect_next("statement body")?;
 
     let stmt = match inner.as_rule() {
+        Rule::context_decl => parse_context_decl(inner)?,
         Rule::connector_decl => parse_connector_decl(inner)?,
         Rule::sink_stmt => parse_sink_stmt(inner)?,
         Rule::stream_decl => parse_stream_decl(inner)?,
@@ -165,6 +167,34 @@ fn parse_statement(pair: pest::iterators::Pair<Rule>) -> ParseResult<Spanned<Stm
     };
 
     Ok(Spanned::new(stmt, span))
+}
+
+// ============================================================================
+// Context Declaration Parsing
+// ============================================================================
+
+fn parse_context_decl(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
+    let mut inner = pair.into_inner();
+    let name = inner.expect_next("context name")?.as_str().to_string();
+    let mut cores = None;
+
+    for p in inner {
+        if p.as_rule() == Rule::context_params {
+            for param in p.into_inner() {
+                if param.as_rule() == Rule::context_param {
+                    // Parse cores: [0, 1, 2]
+                    let core_ids: Vec<usize> = param
+                        .into_inner()
+                        .filter(|p| p.as_rule() == Rule::integer)
+                        .map(|p| p.as_str().parse::<usize>().unwrap_or(0))
+                        .collect();
+                    cores = Some(core_ids);
+                }
+            }
+        }
+    }
+
+    Ok(Stmt::ContextDecl { name, cores })
 }
 
 // ============================================================================
@@ -715,6 +745,14 @@ fn parse_stream_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
 
 fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
     match pair.as_rule() {
+        Rule::context_op => {
+            let name = pair
+                .into_inner()
+                .expect_next("context name")?
+                .as_str()
+                .to_string();
+            Ok(StreamOp::Context(name))
+        }
         Rule::where_op => {
             let expr = parse_expr(pair.into_inner().expect_next("where expression")?)?;
             Ok(StreamOp::Where(expr))
@@ -764,6 +802,7 @@ fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
         Rule::emit_op => {
             let mut output_type = None;
             let mut fields = Vec::new();
+            let mut target_context = None;
             for p in pair.into_inner() {
                 match p.as_rule() {
                     Rule::emit_type_cast => {
@@ -776,7 +815,15 @@ fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
                     }
                     Rule::named_arg_list => {
                         for arg in p.into_inner() {
-                            fields.push(parse_named_arg(arg)?);
+                            let parsed = parse_named_arg(arg)?;
+                            // Extract `context: ctx_name` as target_context
+                            if parsed.name == "context" {
+                                if let Expr::Ident(ctx_name) = &parsed.value {
+                                    target_context = Some(ctx_name.clone());
+                                    continue;
+                                }
+                            }
+                            fields.push(parsed);
                         }
                     }
                     _ => {}
@@ -785,6 +832,7 @@ fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
             Ok(StreamOp::Emit {
                 output_type,
                 fields,
+                target_context,
             })
         }
         Rule::print_op => {

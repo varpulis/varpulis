@@ -21,7 +21,8 @@ DEDENT = { "\u{00AB}DEDENT\u{00BB}" }
 program = { SOI ~ statement* ~ EOI }
 
 statement = {
-    connector_decl
+    context_decl
+    | connector_decl
     | sink_stmt
     | stream_decl
     | pattern_decl
@@ -41,6 +42,15 @@ statement = {
     | assignment_stmt
     | expr_stmt
 }
+
+// ============================================================================
+// Context Declaration
+// ============================================================================
+
+// context ingestion (cores: [0, 1])
+context_decl = { "context" ~ identifier ~ context_params? }
+context_params = { "(" ~ context_param ~ ("," ~ context_param)* ~ ")" }
+context_param = { "cores" ~ ":" ~ "[" ~ integer ~ ("," ~ integer)* ~ "]" }
 
 // ============================================================================
 // Connector Declaration
@@ -139,7 +149,7 @@ within_suffix = { "." ~ "within" ~ "(" ~ expr ~ ")" }
 stream_op = { dot_op | followed_by_op }
 
 dot_op = { "." ~ (
-    where_op | select_op | window_op | aggregate_op | having_op | partition_by_op
+    context_op | where_op | select_op | window_op | aggregate_op | having_op | partition_by_op
     | order_by_op | limit_op | distinct_op | map_op | filter_op
     | tap_op | print_op | log_op | emit_op | to_op | pattern_op
     | attention_window_op | concurrent_op | process_op | on_error_op
@@ -172,6 +182,7 @@ filter_postfix_suffix = {
 }
 filter_primary_expr = { literal | identifier | "(" ~ filter_expr ~ ")" }
 
+context_op = { "context" ~ "(" ~ identifier ~ ")" }
 where_op = { "where" ~ "(" ~ expr ~ ")" }
 select_op = { "select" ~ "(" ~ select_list ~ ")" }
 window_op = { "window" ~ "(" ~ window_args ~ ")" }

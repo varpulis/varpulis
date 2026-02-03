@@ -26,6 +26,7 @@ use types::{
 
 use crate::aggregation::Aggregator;
 use crate::attention::{AttentionConfig, AttentionWindow, EmbeddingConfig};
+use crate::context::ContextMap;
 use crate::event::{Event, SharedEvent};
 use crate::join::JoinBuffer;
 use crate::metrics::Metrics;
@@ -82,6 +83,8 @@ pub struct Engine {
     alerts_generated: u64,
     /// Prometheus metrics
     metrics: Option<Metrics>,
+    /// Context assignments for multi-threaded execution
+    context_map: ContextMap,
 }
 
 impl Engine {
@@ -98,6 +101,7 @@ impl Engine {
             events_processed: 0,
             alerts_generated: 0,
             metrics: None,
+            context_map: ContextMap::new(),
         }
     }
 
@@ -150,6 +154,16 @@ impl Engine {
     /// Get all variables (for debugging/testing)
     pub fn variables(&self) -> &HashMap<String, Value> {
         &self.variables
+    }
+
+    /// Get the context map (for orchestrator setup)
+    pub fn context_map(&self) -> &ContextMap {
+        &self.context_map
+    }
+
+    /// Check if the loaded program declares any contexts
+    pub fn has_contexts(&self) -> bool {
+        self.context_map.has_contexts()
     }
 
     /// Enable Prometheus metrics
@@ -214,6 +228,12 @@ impl Engine {
                     self.functions.insert(name.clone(), user_fn);
                 }
                 Stmt::Config { name, items } => {
+                    warn!(
+                        "DEPRECATED: 'config {}' block syntax is deprecated. \
+                         Use 'connector' declarations instead: \
+                         connector MyConn = {} (...)",
+                        name, name
+                    );
                     let mut values = HashMap::new();
                     for item in items {
                         if let ConfigItem::Value(key, val) = item {
@@ -318,6 +338,17 @@ impl Engine {
                     info!("Assigned variable: {} = {:?}", name, new_value);
                     self.variables.insert(name.clone(), new_value);
                 }
+                Stmt::ContextDecl { name, cores } => {
+                    use crate::context::ContextConfig;
+                    info!(
+                        "Registered context: {} (cores: {:?})",
+                        name, cores
+                    );
+                    self.context_map.register_context(ContextConfig {
+                        name: name.clone(),
+                        cores: cores.clone(),
+                    });
+                }
                 _ => {
                     debug!("Skipping statement: {:?}", stmt.node);
                 }
@@ -332,6 +363,19 @@ impl Engine {
         source: &StreamSource,
         ops: &[StreamOp],
     ) -> Result<(), String> {
+        // Extract context assignments from stream ops
+        for (emit_idx, op) in ops.iter().enumerate() {
+            match op {
+                StreamOp::Context(ctx_name) => {
+                    self.context_map.assign_stream(name.to_string(), ctx_name.clone());
+                }
+                StreamOp::Emit { target_context: Some(ctx), .. } => {
+                    self.context_map.add_cross_context_emit(name.to_string(), emit_idx, ctx.clone());
+                }
+                _ => {}
+            }
+        }
+
         // Check if we have sequence operations and build SASE+ engine
         let (runtime_ops, sase_engine, sequence_event_types) =
             self.compile_ops_with_sequences(source, ops)?;
@@ -642,6 +686,11 @@ impl Engine {
                     }
                     continue;
                 }
+                StreamOp::Context(_) => {
+                    // Context assignment is metadata, not a runtime operation.
+                    // Handled by the engine's load() method via context_map.
+                    continue;
+                }
                 _ => {}
             }
 
@@ -785,6 +834,7 @@ impl Engine {
                 StreamOp::Emit {
                     output_type: _,
                     fields: args,
+                    target_context: _,
                 } => {
                     // Check if any args have complex expressions (not just strings or idents)
                     let has_complex_expr = args.iter().any(|arg| {
@@ -1302,6 +1352,7 @@ impl Engine {
                 return Ok(StreamProcessResult {
                     alerts: vec![],
                     output_events: vec![],
+                    cross_context_events: vec![],
                 });
             }
             // Log which merge source matched (uses ms.name)
@@ -1354,6 +1405,7 @@ impl Engine {
                         return Ok(StreamProcessResult {
                             alerts: vec![],
                             output_events: vec![],
+                            cross_context_events: vec![],
                         });
                     }
                 }
@@ -1362,6 +1414,7 @@ impl Engine {
                 return Ok(StreamProcessResult {
                     alerts: vec![],
                     output_events: vec![],
+                    cross_context_events: vec![],
                 });
             }
         }
@@ -1415,6 +1468,7 @@ impl Engine {
                         return Ok(StreamProcessResult {
                             alerts,
                             output_events: vec![],
+                            cross_context_events: vec![],
                         });
                     }
                 }
@@ -1435,6 +1489,7 @@ impl Engine {
                         return Ok(StreamProcessResult {
                             alerts,
                             output_events: vec![],
+                            cross_context_events: vec![],
                         });
                     }
                 }
@@ -1479,6 +1534,7 @@ impl Engine {
                         return Ok(StreamProcessResult {
                             alerts,
                             output_events: vec![],
+                            cross_context_events: vec![],
                         });
                     }
                 }
@@ -1494,6 +1550,7 @@ impl Engine {
                         return Ok(StreamProcessResult {
                             alerts,
                             output_events: vec![],
+                            cross_context_events: vec![],
                         });
                     }
                 }
@@ -1509,6 +1566,7 @@ impl Engine {
                         return Ok(StreamProcessResult {
                             alerts,
                             output_events: vec![],
+                            cross_context_events: vec![],
                         });
                     }
                 }
@@ -1557,6 +1615,7 @@ impl Engine {
                         return Ok(StreamProcessResult {
                             alerts,
                             output_events: vec![],
+                            cross_context_events: vec![],
                         });
                     }
                 }
@@ -1691,6 +1750,7 @@ impl Engine {
                         return Ok(StreamProcessResult {
                             alerts,
                             output_events: vec![],
+                            cross_context_events: vec![],
                         });
                     }
                     current_events = sequence_results;
@@ -1767,6 +1827,7 @@ impl Engine {
                             return Ok(StreamProcessResult {
                                 alerts,
                                 output_events: vec![],
+                                cross_context_events: vec![],
                             });
                         }
                     }
@@ -1789,6 +1850,7 @@ impl Engine {
         Ok(StreamProcessResult {
             alerts,
             output_events,
+            cross_context_events: vec![],
         })
     }
 
@@ -1809,6 +1871,7 @@ impl Engine {
                         return Ok(StreamProcessResult {
                             alerts,
                             output_events: vec![],
+                            cross_context_events: vec![],
                         });
                     }
                 }
@@ -1840,6 +1903,7 @@ impl Engine {
                         return Ok(StreamProcessResult {
                             alerts,
                             output_events: vec![],
+                            cross_context_events: vec![],
                         });
                     }
                 }
@@ -1860,6 +1924,7 @@ impl Engine {
                         return Ok(StreamProcessResult {
                             alerts,
                             output_events: vec![],
+                            cross_context_events: vec![],
                         });
                     }
                 }
@@ -1875,6 +1940,7 @@ impl Engine {
                         return Ok(StreamProcessResult {
                             alerts,
                             output_events: vec![],
+                            cross_context_events: vec![],
                         });
                     }
                 }
@@ -1921,6 +1987,7 @@ impl Engine {
                         return Ok(StreamProcessResult {
                             alerts,
                             output_events: vec![],
+                            cross_context_events: vec![],
                         });
                     }
                 }
@@ -2034,6 +2101,7 @@ impl Engine {
         Ok(StreamProcessResult {
             alerts,
             output_events,
+            cross_context_events: vec![],
         })
     }
 
@@ -2200,6 +2268,9 @@ impl Engine {
 
         // Update configs
         self.configs = new_engine.configs;
+
+        // Update context map
+        self.context_map = new_engine.context_map;
 
         // Preserve variables (user might have set them)
         // Only add new variables from program, don't overwrite existing

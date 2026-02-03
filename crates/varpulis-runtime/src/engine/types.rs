@@ -187,6 +187,9 @@ pub(crate) struct StreamProcessResult {
     pub alerts: Vec<Alert>,
     /// Output events to feed to dependent streams (with stream name as event_type)
     pub output_events: Vec<SharedEvent>,
+    /// Events destined for a different context: (target_context, event)
+    #[allow(dead_code)]
+    pub cross_context_events: Vec<(String, SharedEvent)>,
 }
 
 /// State for partitioned windows - maintains separate windows per partition key
