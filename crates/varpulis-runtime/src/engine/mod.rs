@@ -344,6 +344,21 @@ impl Engine {
                 self.add_event_source(event_type, name);
                 RuntimeSource::EventType(event_type.clone())
             }
+            StreamSource::FromConnector {
+                event_type,
+                connector_name,
+                params: _,
+            } => {
+                // EventType.from(Connector, topic: "...", ...)
+                // Register for the event type, connector info will be used at runtime
+                info!(
+                    "Registering stream {} from connector {} for event type {}",
+                    name, connector_name, event_type
+                );
+                self.add_event_source(event_type, name);
+                // TODO: Store connector_name for runtime connection management
+                RuntimeSource::EventType(event_type.clone())
+            }
             StreamSource::Ident(stream_name) => {
                 // Register for the stream source event type
                 self.add_event_source(stream_name, name);
@@ -767,7 +782,10 @@ impl Engine {
                         .collect();
                     runtime_ops.push(RuntimeOp::Select(SelectConfig { fields }));
                 }
-                StreamOp::Emit(args) => {
+                StreamOp::Emit {
+                    output_type: _,
+                    fields: args,
+                } => {
                     // Check if any args have complex expressions (not just strings or idents)
                     let has_complex_expr = args.iter().any(|arg| {
                         !matches!(

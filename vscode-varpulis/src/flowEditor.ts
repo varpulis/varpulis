@@ -88,8 +88,36 @@ export class FlowEditorProvider implements vscode.CustomTextEditorProvider {
     }
 
     private getHtmlForWebview(webview: vscode.Webview): string {
-        const nonce = getNonce();
-        return getInlineEditorHtml(webview, nonce);
+        // Try to load React Flow webview from dist
+        const distPath = vscode.Uri.joinPath(this.context.extensionUri, 'webview-ui', 'dist');
+
+        try {
+            const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(distPath, 'assets', 'index.js'));
+            const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(distPath, 'assets', 'index.css'));
+            const nonce = getNonce();
+
+            return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}'; img-src ${webview.cspSource} data:; font-src ${webview.cspSource};">
+    <link rel="stylesheet" href="${styleUri}">
+    <title>Varpulis Flow Editor</title>
+</head>
+<body>
+    <div id="root"></div>
+    <script nonce="${nonce}">
+        window.vscode = acquireVsCodeApi();
+    </script>
+    <script nonce="${nonce}" type="module" src="${scriptUri}"></script>
+</body>
+</html>`;
+        } catch {
+            // Fallback to inline editor
+            const nonce = getNonce();
+            return getInlineEditorHtml(webview, nonce);
+        }
     }
 
     private async saveDocument(document: vscode.TextDocument, content: string): Promise<void> {
@@ -213,8 +241,40 @@ export class FlowEditorPanel {
     }
 
     private _getHtmlForWebview(): string {
-        const nonce = getNonce();
-        return getInlineEditorHtml(this._panel.webview, nonce);
+        const webview = this._panel.webview;
+
+        // Try to load React Flow webview from dist
+        const distPath = vscode.Uri.joinPath(this._extensionUri, 'webview-ui', 'dist');
+        const indexHtmlUri = vscode.Uri.joinPath(distPath, 'index.html');
+
+        try {
+            // Check if React Flow build exists by constructing URIs
+            const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(distPath, 'assets', 'index.js'));
+            const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(distPath, 'assets', 'index.css'));
+            const nonce = getNonce();
+
+            return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}'; img-src ${webview.cspSource} data:; font-src ${webview.cspSource};">
+    <link rel="stylesheet" href="${styleUri}">
+    <title>Varpulis Flow Editor</title>
+</head>
+<body>
+    <div id="root"></div>
+    <script nonce="${nonce}">
+        window.vscode = acquireVsCodeApi();
+    </script>
+    <script nonce="${nonce}" type="module" src="${scriptUri}"></script>
+</body>
+</html>`;
+        } catch {
+            // Fallback to inline editor
+            const nonce = getNonce();
+            return getInlineEditorHtml(webview, nonce);
+        }
     }
 
     private async _exportVPL(vplCode: string): Promise<void> {

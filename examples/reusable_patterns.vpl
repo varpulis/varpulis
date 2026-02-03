@@ -5,16 +5,30 @@
 #
 # Syntax: pattern Name = SEQ(...) [within duration] [partition by key]
 
-# Event definitions
+# =============================================================================
+# CONNECTOR DEFINITIONS
+# =============================================================================
+
+connector AuthKafka = kafka (
+    brokers: ["kafka:9092"],
+    group_id: "patterns-demo"
+)
+
+# =============================================================================
+# EVENT DEFINITIONS
+# =============================================================================
+
 event Login:
     user_id: str
     ip_address: str
     device: str
     location: str
+    ts: timestamp
 
 event Logout:
     user_id: str
     session_duration: int
+    ts: timestamp
 
 event Transaction:
     user_id: str
@@ -22,11 +36,26 @@ event Transaction:
     status: str
     merchant: str
     currency: str
+    ts: timestamp
 
 event Alert:
     user_id: str
     alert_type: str
     severity: str
+    ts: timestamp
+
+# =============================================================================
+# BASE STREAMS
+# =============================================================================
+
+stream LoginStream = Login
+    .from(AuthKafka, topic: "auth.logins")
+
+stream LogoutStream = Logout
+    .from(AuthKafka, topic: "auth.logouts")
+
+stream TransactionStream = Transaction
+    .from(AuthKafka, topic: "finance.transactions")
 
 # =============================================================================
 # REUSABLE PATTERN DECLARATIONS
@@ -81,8 +110,8 @@ pattern MultiLocationAccess = SEQ(
 # stream Alerts = apply(LoginThenFailedTx).emit(...)
 
 # Current working syntax - equivalent to LoginThenFailedTx pattern:
-stream SuspiciousActivity = Login as login
-    -> Transaction where user_id == login.user_id and status == "failed" as failed_tx
+stream SuspiciousActivity = LoginStream as login
+    -> TransactionStream where user_id == login.user_id and status == "failed" as failed_tx
     .within(10m)
     .emit(
         alert_type: "LOGIN_THEN_FAILED_TX",
@@ -91,6 +120,10 @@ stream SuspiciousActivity = Login as login
         failed_amount: failed_tx.amount,
         severity: if failed_tx.amount > 1000 then "high" else "medium"
     )
+
+# Output suspicious activity alerts
+sink SuspiciousActivity to AuthKafka (topic: "security.alerts")
+sink SuspiciousActivity to console()
 
 # Runtime configuration
 config:

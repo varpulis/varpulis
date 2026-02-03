@@ -1,271 +1,339 @@
+import { useCallback, useState, useMemo, useEffect } from 'react';
 import {
-    Background,
-    Connection,
-    Controls,
-    Edge,
-    MiniMap,
-    Node,
-    ReactFlow,
-    ReactFlowProvider,
-    addEdge,
-    useEdgesState,
-    useNodesState,
-    useReactFlow,
+  ReactFlow,
+  MiniMap,
+  Controls,
+  Background,
+  useNodesState,
+  useEdgesState,
+  addEdge,
+  Connection,
+  BackgroundVariant,
+  ReactFlowProvider,
+  useReactFlow,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { useCallback, useEffect, useRef, useState } from 'react';
 
+import {
+  FlowNode,
+  FlowEdge,
+  ConnectorType,
+  PatternType,
+  SinkType,
+  createDefaultConnectorData,
+  createDefaultEventData,
+  createDefaultSourceData,
+  createDefaultStreamData,
+  createDefaultPatternData,
+  createDefaultEmitData,
+  createDefaultSinkData,
+} from './types/flow';
 import Sidebar from './components/Sidebar';
-import Toolbar from './components/Toolbar';
+import VplPreview from './components/VplPreview';
 import { nodeTypes } from './nodes';
-import ConnectorPanel from './panels/ConnectorPanel';
-import type { ConnectorConfig } from './types';
-import { generateVPL } from './utils/vplGenerator';
+import AnimatedEdge from './edges/AnimatedEdge';
+import Toolbar from './components/Toolbar';
+import { generateVpl } from './utils/vplGenerator';
+import { parseVpl } from './utils/vplParser';
 
-const initialNodes: Node[] = [];
-const initialEdges: Edge[] = [];
+// VS Code API type
+interface VsCodeApi {
+  postMessage: (message: unknown) => void;
+  getState: () => unknown;
+  setState: (state: unknown) => void;
+}
 
-let nodeId = 0;
-const getNodeId = () => `node_${nodeId++}`;
+declare global {
+  interface Window {
+    vscode?: VsCodeApi;
+  }
+}
 
-function FlowEditor() {
-    const reactFlowWrapper = useRef<HTMLDivElement>(null);
-    const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-    const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
-    const [selectedNode, setSelectedNode] = useState<Node | null>(null);
-    const [showConnectorPanel, setShowConnectorPanel] = useState(false);
-    const [connectorMode, setConnectorMode] = useState<'source' | 'sink'>('source');
-    const { screenToFlowPosition } = useReactFlow();
+const vscode = window.vscode;
 
-    // VSCode API for communication
-    const vscodeRef = useRef<ReturnType<typeof acquireVsCodeApi> | null>(null);
+const initialNodes: FlowNode[] = [];
+const initialEdges: FlowEdge[] = [];
 
-    useEffect(() => {
-        // Try to acquire VSCode API (will fail in standalone mode)
-        try {
-            if (typeof acquireVsCodeApi !== 'undefined') {
-                vscodeRef.current = acquireVsCodeApi();
+const edgeTypes = {
+  animated: AnimatedEdge,
+};
 
-                // Restore state if available
-                const state = vscodeRef.current.getState() as { nodes?: Node[]; edges?: Edge[] } | null;
-                if (state?.nodes) {
-                    setNodes(state.nodes);
-                    nodeId = state.nodes.length;
-                }
-                if (state?.edges) {
-                    setEdges(state.edges);
-                }
-            }
-        } catch {
-            console.log('Running in standalone mode');
-        }
-    }, [setNodes, setEdges]);
+// Valid node types
+const VALID_NODE_TYPES = ['connector', 'event', 'source', 'stream', 'pattern', 'emit', 'sink'] as const;
 
-    // Save state when nodes/edges change
-    useEffect(() => {
-        if (vscodeRef.current) {
-            vscodeRef.current.setState({ nodes, edges });
-        }
-    }, [nodes, edges]);
+interface DragData {
+  type: string;
+  subtype?: string;
+}
 
-    const onConnect = useCallback(
-        (params: Connection) => setEdges((eds) => addEdge({ ...params, animated: true }, eds)),
-        [setEdges]
+function createNodeData(type: string, subtype?: string) {
+  switch (type) {
+    case 'connector':
+      return createDefaultConnectorData((subtype || 'mqtt') as ConnectorType);
+    case 'event':
+      return createDefaultEventData();
+    case 'source':
+      return createDefaultSourceData();
+    case 'stream':
+      return createDefaultStreamData();
+    case 'pattern': {
+      const data = createDefaultPatternData();
+      if (subtype) {
+        data.patternType = subtype as PatternType;
+        data.label = `${subtype} Pattern`;
+      }
+      return data;
+    }
+    case 'emit':
+      return createDefaultEmitData();
+    case 'sink':
+      return createDefaultSinkData((subtype || 'console') as SinkType);
+    default:
+      return { label: 'Unknown' };
+  }
+}
+
+function Flow() {
+  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+  const [selectedNode, setSelectedNode] = useState<FlowNode | null>(null);
+  const { screenToFlowPosition } = useReactFlow();
+
+  const onConnect = useCallback(
+    (connection: Connection) => {
+      setEdges((eds) => addEdge({ ...connection, type: 'animated' }, eds));
+    },
+    [setEdges]
+  );
+
+  const onDragOver = useCallback((event: React.DragEvent) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+  }, []);
+
+  const onDrop = useCallback(
+    (event: React.DragEvent) => {
+      event.preventDefault();
+
+      const rawData = event.dataTransfer.getData('application/reactflow');
+      if (!rawData) return;
+
+      let dragData: DragData;
+      try {
+        dragData = JSON.parse(rawData);
+      } catch {
+        // Fallback for simple string (old format)
+        dragData = { type: rawData };
+      }
+
+      // Validate node type
+      if (!dragData.type || !VALID_NODE_TYPES.includes(dragData.type as typeof VALID_NODE_TYPES[number])) {
+        console.warn('Invalid node type dropped:', dragData.type);
+        return;
+      }
+
+      const position = screenToFlowPosition({
+        x: event.clientX,
+        y: event.clientY,
+      });
+
+      const newNode: FlowNode = {
+        id: `${dragData.type}-${Date.now()}`,
+        type: dragData.type,
+        position,
+        data: createNodeData(dragData.type, dragData.subtype),
+      };
+
+      setNodes((nds) => nds.concat(newNode));
+    },
+    [setNodes, screenToFlowPosition]
+  );
+
+  const onNodeClick = useCallback((_event: React.MouseEvent, node: FlowNode) => {
+    setSelectedNode(node);
+    setNodes((nds) =>
+      nds.map((n) => ({
+        ...n,
+        selected: n.id === node.id,
+      }))
     );
+  }, [setNodes]);
 
-    const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
-        setSelectedNode(node);
-        if (node.type === 'source' || node.type === 'sink') {
-            setConnectorMode(node.type as 'source' | 'sink');
-            setShowConnectorPanel(true);
-        }
-    }, []);
-
-    const onDragOver = useCallback((event: React.DragEvent) => {
-        event.preventDefault();
-        event.dataTransfer.dropEffect = 'move';
-    }, []);
-
-    const onDrop = useCallback(
-        (event: React.DragEvent) => {
-            event.preventDefault();
-
-            const type = event.dataTransfer.getData('application/reactflow-type');
-            const dataStr = event.dataTransfer.getData('application/reactflow-data');
-
-            if (!type) return;
-
-            const position = screenToFlowPosition({
-                x: event.clientX,
-                y: event.clientY,
-            });
-
-            const extraData = dataStr ? JSON.parse(dataStr) : {};
-
-            const newNode: Node = {
-                id: getNodeId(),
-                type,
-                position,
-                data: {
-                    label: `${type.charAt(0).toUpperCase() + type.slice(1)} ${nodeId}`,
-                    ...extraData
-                },
-            };
-
-            setNodes((nds) => nds.concat(newNode));
-        },
-        [screenToFlowPosition, setNodes]
+  const onPaneClick = useCallback(() => {
+    setSelectedNode(null);
+    setNodes((nds) =>
+      nds.map((n) => ({
+        ...n,
+        selected: false,
+      }))
     );
+  }, [setNodes]);
 
-    const onDragStart = useCallback((event: React.DragEvent, nodeType: string, data?: Record<string, unknown>) => {
-        event.dataTransfer.setData('application/reactflow-type', nodeType);
-        event.dataTransfer.setData('application/reactflow-data', JSON.stringify(data || {}));
-        event.dataTransfer.effectAllowed = 'move';
-    }, []);
-
-    const handleAddNode = useCallback((type: string) => {
-        const newNode: Node = {
-            id: getNodeId(),
-            type,
-            position: { x: 250 + Math.random() * 100, y: 100 + Math.random() * 100 },
-            data: { label: `${type.charAt(0).toUpperCase() + type.slice(1)} ${nodeId}` },
-        };
-        setNodes((nds) => nds.concat(newNode));
-    }, [setNodes]);
-
-    const handleSave = useCallback(() => {
-        const flow = { nodes, edges, metadata: { name: 'flow', version: '1.0' } };
-        const json = JSON.stringify(flow, null, 2);
-
-        if (vscodeRef.current) {
-            vscodeRef.current.postMessage({ type: 'save', data: json });
-        } else {
-            // Standalone mode: download as file
-            const blob = new Blob([json], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'flow.json';
-            a.click();
-            URL.revokeObjectURL(url);
+  const updateNodeData = useCallback(
+    (nodeId: string, data: Partial<FlowNode['data']>) => {
+      setNodes((nds) =>
+        nds.map((node) => {
+          if (node.id === nodeId) {
+            return { ...node, data: { ...node.data, ...data } };
+          }
+          return node;
+        })
+      );
+      // Also update selectedNode if it's the one being edited
+      setSelectedNode((prev) => {
+        if (prev && prev.id === nodeId) {
+          return { ...prev, data: { ...prev.data, ...data } };
         }
-    }, [nodes, edges]);
+        return prev;
+      });
+    },
+    [setNodes]
+  );
 
-    const handleExport = useCallback(() => {
-        const vplCode = generateVPL(nodes, edges);
+  const vplCode = useMemo(() => generateVpl(nodes, edges), [nodes, edges]);
 
-        if (vscodeRef.current) {
-            vscodeRef.current.postMessage({ type: 'export', data: vplCode });
-        } else {
-            // Standalone mode: download as file
-            const blob = new Blob([vplCode], { type: 'text/plain' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'flow.vpl';
-            a.click();
-            URL.revokeObjectURL(url);
-        }
-    }, [nodes, edges]);
+  // VS Code message handling
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      const message = event.data;
+      switch (message.type) {
+        case 'load':
+          try {
+            const state = JSON.parse(message.data);
+            if (state.nodes) setNodes(state.nodes);
+            if (state.edges) setEdges(state.edges);
+          } catch {
+            // Ignore parse errors
+          }
+          break;
+        case 'loadVPL':
+          try {
+            const parsed = parseVpl(message.data);
+            setNodes(parsed.nodes);
+            setEdges(parsed.edges);
+          } catch {
+            // Ignore parse errors
+          }
+          break;
+      }
+    };
 
-    const handleRun = useCallback(() => {
-        const vplCode = generateVPL(nodes, edges);
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [setNodes, setEdges]);
 
-        if (vscodeRef.current) {
-            vscodeRef.current.postMessage({ type: 'run', data: vplCode });
-        } else {
-            console.log('Generated VPL:\n', vplCode);
-            alert('VPL code generated! Check console.');
-        }
-    }, [nodes, edges]);
+  const handleSave = useCallback(() => {
+    if (vscode) {
+      vscode.postMessage({
+        type: 'save',
+        data: JSON.stringify({ nodes, edges }, null, 2),
+      });
+    }
+  }, [nodes, edges]);
 
-    const handleClear = useCallback(() => {
-        if (confirm('Clear all nodes and edges?')) {
-            setNodes([]);
-            setEdges([]);
-            nodeId = 0;
-        }
-    }, [setNodes, setEdges]);
+  const handleExport = useCallback(() => {
+    if (vscode) {
+      vscode.postMessage({
+        type: 'export',
+        data: vplCode,
+      });
+    }
+  }, [vplCode]);
 
-    const handleConnectorSave = useCallback((config: ConnectorConfig) => {
-        if (selectedNode) {
-            setNodes((nds) =>
-                nds.map((node) =>
-                    node.id === selectedNode.id
-                        ? { ...node, data: { ...node.data, label: config.name, connector: config } }
-                        : node
-                )
-            );
-        }
-        setShowConnectorPanel(false);
-        setSelectedNode(null);
-    }, [selectedNode, setNodes]);
+  const handleRun = useCallback(() => {
+    if (vscode) {
+      vscode.postMessage({
+        type: 'run',
+        data: vplCode,
+      });
+    }
+  }, [vplCode]);
 
-    return (
-        <div className="h-screen flex flex-col bg-vscode-bg text-vscode-fg">
-            <Toolbar
-                onAddNode={handleAddNode}
-                onSave={handleSave}
-                onExport={handleExport}
-                onRun={handleRun}
-                onClear={handleClear}
+  const handleImportVPL = useCallback(() => {
+    if (vscode) {
+      vscode.postMessage({ type: 'importVPL' });
+    }
+  }, []);
+
+  const handleClear = useCallback(() => {
+    setNodes([]);
+    setEdges([]);
+    setSelectedNode(null);
+  }, [setNodes, setEdges]);
+
+  const handleAddNode = useCallback(
+    (type: string, subtype?: string) => {
+      const newNode: FlowNode = {
+        id: `${type}-${Date.now()}`,
+        type,
+        position: { x: 300 + Math.random() * 100, y: 150 + Math.random() * 100 },
+        data: createNodeData(type, subtype),
+      };
+      setNodes((nds) => nds.concat(newNode));
+    },
+    [setNodes]
+  );
+
+  return (
+    <div className="app-container">
+      <Toolbar
+        onAddNode={handleAddNode}
+        onSave={handleSave}
+        onExport={handleExport}
+        onRun={handleRun}
+        onClear={handleClear}
+        onImport={handleImportVPL}
+      />
+      <div className="main-content">
+        <Sidebar />
+        <div className="flow-container">
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onConnect={onConnect}
+            onDragOver={onDragOver}
+            onDrop={onDrop}
+            onNodeClick={onNodeClick}
+            onPaneClick={onPaneClick}
+            nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
+            defaultEdgeOptions={{ type: 'animated' }}
+            fitView
+          >
+            <Controls />
+            <MiniMap
+              nodeColor={(node) => {
+                const colors: Record<string, string> = {
+                  connector: '#00bcd4',
+                  event: '#f59e0b',
+                  source: '#22c55e',
+                  stream: '#6366f1',
+                  pattern: '#ec4899',
+                  emit: '#8b5cf6',
+                  sink: '#eab308',
+                };
+                return colors[node.type || ''] || '#888';
+              }}
             />
-
-            <div className="flex-1 flex overflow-hidden">
-                <Sidebar onDragStart={onDragStart} />
-
-                <div ref={reactFlowWrapper} className="flex-1">
-                    <ReactFlow
-                        nodes={nodes}
-                        edges={edges}
-                        onNodesChange={onNodesChange}
-                        onEdgesChange={onEdgesChange}
-                        onConnect={onConnect}
-                        onNodeClick={onNodeClick}
-                        onDrop={onDrop}
-                        onDragOver={onDragOver}
-                        nodeTypes={nodeTypes}
-                        fitView
-                        className="bg-vscode-bg"
-                    >
-                        <Controls className="!bg-vscode-bg !border-vscode-border" />
-                        <MiniMap
-                            className="!bg-black/30"
-                            nodeColor={(node) => {
-                                switch (node.type) {
-                                    case 'source': return '#22c55e';
-                                    case 'sink': return '#eab308';
-                                    case 'event': return '#f59e0b';
-                                    case 'stream': return '#6366f1';
-                                    case 'pattern': return '#14b8a6';
-                                    default: return '#6b7280';
-                                }
-                            }}
-                        />
-                        <Background color="#444" gap={20} />
-                    </ReactFlow>
-                </div>
-            </div>
-
-            {showConnectorPanel && (
-                <ConnectorPanel
-                    connector={selectedNode?.data?.connector as ConnectorConfig | undefined}
-                    mode={connectorMode}
-                    onSave={handleConnectorSave}
-                    onCancel={() => {
-                        setShowConnectorPanel(false);
-                        setSelectedNode(null);
-                    }}
-                />
-            )}
+            <Background variant={BackgroundVariant.Dots} gap={12} size={1} />
+          </ReactFlow>
         </div>
-    );
+        <VplPreview
+          code={vplCode}
+          selectedNode={selectedNode}
+          onUpdateNode={updateNodeData}
+        />
+      </div>
+    </div>
+  );
 }
 
 export default function App() {
-    return (
-        <ReactFlowProvider>
-            <FlowEditor />
-        </ReactFlowProvider>
-    );
+  return (
+    <ReactFlowProvider>
+      <Flow />
+    </ReactFlowProvider>
+  );
 }

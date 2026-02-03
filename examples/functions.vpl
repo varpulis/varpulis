@@ -3,6 +3,73 @@
 # Demonstrates how to write and use reusable functions
 
 # =============================================================================
+# CONNECTOR DEFINITIONS
+# =============================================================================
+
+connector DataKafka = kafka (
+    brokers: ["kafka:9092"],
+    group_id: "functions-demo"
+)
+
+# =============================================================================
+# EVENT DEFINITIONS
+# =============================================================================
+
+event Alert:
+    severity: str
+    message: str
+    ts: timestamp
+
+event Measurement:
+    value: float
+    weight: float
+    type: str
+    ts: timestamp
+
+event Order:
+    id: str
+    order_id: str
+    amount: float
+    status: str
+    ts: timestamp
+
+event Payment:
+    order_id: str
+    amount: float
+    ts: timestamp
+
+event SensorReading:
+    sensor_id: str
+    value: float
+    ts: timestamp
+
+event Event:
+    value: int
+    ts: timestamp
+
+# =============================================================================
+# BASE STREAMS
+# =============================================================================
+
+stream AlertStream = Alert
+    .from(DataKafka, topic: "alerts")
+
+stream MeasurementStream = Measurement
+    .from(DataKafka, topic: "measurements")
+
+stream OrderStream = Order
+    .from(DataKafka, topic: "orders")
+
+stream PaymentStream = Payment
+    .from(DataKafka, topic: "payments")
+
+stream SensorStream = SensorReading
+    .from(DataKafka, topic: "sensors")
+
+stream EventStream = Event
+    .from(DataKafka, topic: "events")
+
+# =============================================================================
 # FUNCTION DECLARATIONS
 # =============================================================================
 
@@ -36,12 +103,12 @@ fn format_alert(event_type: str, message: str) -> str:
 # =============================================================================
 
 # Use function in filter condition
-stream CriticalAlerts = Alert
+stream CriticalAlerts = AlertStream
     .where(is_critical(severity))
     .emit(status: "critical_detected")
 
 # Use function in computed values
-stream ScoredEvents = Measurement
+stream ScoredEvents = MeasurementStream
     .where(calculate_score(value, weight) > 0.8)
     .emit(
         score: calculate_score(value, weight),
@@ -49,9 +116,9 @@ stream ScoredEvents = Measurement
     )
 
 # Use function for validation in sequences
-stream ValidatedOrders = Order as order
+stream ValidatedOrders = OrderStream as order
     .where(is_valid_order(amount, status))
-    -> Payment where order_id == order.id
+    -> PaymentStream where order_id == order.id
     .emit(
         order_id: order.id,
         amount: order.amount
@@ -72,7 +139,7 @@ stream ValidatedOrders = Order as order
 # - stddev(field)  : Standard deviation
 # - ema(field, n)  : Exponential moving average (period n)
 
-stream Statistics = SensorReading
+stream Statistics = SensorStream
     .window(5m)
     .aggregate(
         total: sum(value),
@@ -93,15 +160,22 @@ stream Statistics = SensorReading
 # =============================================================================
 
 # Lambda syntax for inline transformations
-stream Mapped = Event
+stream Mapped = EventStream
     .map(x => x.value * 2)
     .filter(x => x > 100)
     .emit(result: value)
 
 # Lambda with multiple fields
-stream Transformed = Measurement
+stream Transformed = MeasurementStream
     .map(m => {
         normalized: m.value / 100,
         category: m.type
     })
     .emit(normalized: normalized, category: category)
+
+# =============================================================================
+# SINK STATEMENTS
+# =============================================================================
+
+sink CriticalAlerts to DataKafka (topic: "critical-alerts")
+sink Statistics to console()

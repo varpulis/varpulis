@@ -1,0 +1,139 @@
+# Varpulis HVAC Quick Start - Using New Connectivity Design
+# Get started with Varpulis in 5 minutes
+#
+# This simplified example demonstrates the new syntax:
+# - Connector declarations with explicit configuration
+# - Streams with EventType.from(Connector, topic: "...")
+# - Sink statements with .to() or separate sink declarations
+# - No redundant event_type in .emit()
+
+# =============================================================================
+# Step 1: Define Connectors
+# =============================================================================
+
+connector MqttSensors = mqtt (
+    host: "localhost",
+    port: 1883,
+    client_id: "hvac-quickstart"
+)
+
+connector KafkaAlerts = kafka (
+    brokers: ["kafka:9092"],
+    group_id: "hvac-alerts"
+)
+
+# =============================================================================
+# Step 2: Define your events
+# =============================================================================
+
+event TemperatureReading:
+    sensor_id: str
+    zone: str
+    value: float
+    ts: timestamp
+
+event HumidityReading:
+    sensor_id: str
+    zone: str
+    value: float
+    ts: timestamp
+
+# =============================================================================
+# Step 3: Create base streams from events using .from()
+# =============================================================================
+
+stream Temperatures = TemperatureReading
+    .from(MqttSensors, topic: "sensors/temp/#")
+
+stream Humidity = HumidityReading
+    .from(MqttSensors, topic: "sensors/humidity/#")
+
+# =============================================================================
+# Step 4: Simple threshold alerts
+# =============================================================================
+
+# Alert when temperature exceeds 28C
+stream HighTempAlert = Temperatures
+    .where(value > 28)
+    .emit(
+        alert_type: "HIGH_TEMPERATURE",
+        severity: "warning",
+        zone: zone,
+        sensor: sensor_id,
+        temperature: value
+    )
+
+# Alert when temperature drops below 16C
+stream LowTempAlert = Temperatures
+    .where(value < 16)
+    .emit(
+        alert_type: "LOW_TEMPERATURE",
+        severity: "warning",
+        zone: zone,
+        sensor: sensor_id,
+        temperature: value
+    )
+
+# Alert when humidity is outside comfort range (30-70%)
+stream HumidityAlert = Humidity
+    .where(value < 30 or value > 70)
+    .emit(
+        alert_type: "HUMIDITY_ANOMALY",
+        severity: if value < 20 or value > 80 then "critical" else "warning",
+        zone: zone,
+        humidity: value
+    )
+
+# =============================================================================
+# Step 5: Windowed aggregations (average over time)
+# =============================================================================
+
+# Calculate 5-minute average temperature per zone
+stream ZoneAvgTemp = Temperatures
+    .partition_by(zone)
+    .window(5m)
+    .aggregate(
+        zone: last(zone),
+        avg_temp: avg(value),
+        min_temp: min(value),
+        max_temp: max(value),
+        readings: count()
+    )
+
+# Alert if zone average stays high
+stream ZoneOverheating = ZoneAvgTemp
+    .where(avg_temp > 26)
+    .emit(
+        alert_type: "ZONE_OVERHEATING",
+        severity: "critical",
+        zone: zone,
+        avg_temperature: avg_temp,
+        max_temperature: max_temp
+    )
+
+# =============================================================================
+# Step 6: Combine streams and output
+# =============================================================================
+
+# Merge all alerts into a single stream
+stream AllAlerts = merge(
+    HighTempAlert,
+    LowTempAlert,
+    HumidityAlert,
+    ZoneOverheating
+)
+
+# Send alerts to Kafka and console
+sink AllAlerts to KafkaAlerts (topic: "alerts.hvac")
+sink AllAlerts to console()
+
+# =============================================================================
+# That's it! Run with:
+#   varpulis run --file examples/hvac_quickstart.vpl
+#
+# Key syntax changes from old version:
+# - connector Name = type (params...)  instead of config block
+# - EventType.from(Connector, topic)   instead of stream from EventType
+# - sink X to Connector (params)       instead of .to("mqtt://...")
+# - Stream name IS the output type     no redundant event_type in emit
+# =============================================================================

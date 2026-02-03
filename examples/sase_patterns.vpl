@@ -9,13 +9,54 @@
 # - Aggregation patterns
 
 # =============================================================================
-# Base Streams (event types are inferred)
+# Connector Definitions
 # =============================================================================
 
-stream Logins from Login
-stream Transactions from Transaction
-stream Logouts from Logout
-stream PasswordChanges from PasswordChange
+connector SecurityKafka = kafka (
+    brokers: ["kafka:9092"],
+    group_id: "sase-patterns"
+)
+
+# =============================================================================
+# Event Definitions
+# =============================================================================
+
+event Login:
+    user_id: str
+    ip_address: str
+    country: str
+    ts: timestamp
+
+event Transaction:
+    user_id: str
+    amount: float
+    category: str
+    status: str
+    ts: timestamp
+
+event Logout:
+    user_id: str
+    ts: timestamp
+
+event PasswordChange:
+    user_id: str
+    ts: timestamp
+
+# =============================================================================
+# Base Streams
+# =============================================================================
+
+stream Logins = Login
+    .from(SecurityKafka, topic: "auth.logins")
+
+stream Transactions = Transaction
+    .from(SecurityKafka, topic: "finance.transactions")
+
+stream Logouts = Logout
+    .from(SecurityKafka, topic: "auth.logouts")
+
+stream PasswordChanges = PasswordChange
+    .from(SecurityKafka, topic: "auth.password-changes")
 
 # =============================================================================
 # PATTERN 1: Simple Sequence (A -> B)

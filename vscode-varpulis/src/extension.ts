@@ -1,16 +1,24 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { VarpulisEngine } from './engine';
 import { FlowEditorPanel, FlowEditorProvider } from './flowEditor';
 import { AlertsTreeProvider } from './views/alerts';
 import { EventsTreeProvider } from './views/events';
 import { MetricsTreeProvider } from './views/metrics';
 import { StreamsTreeProvider } from './views/streams';
+import {
+    LanguageClient,
+    LanguageClientOptions,
+    ServerOptions,
+    TransportKind
+} from 'vscode-languageclient/node';
 
 let engine: VarpulisEngine | undefined;
 let outputChannel: vscode.OutputChannel;
 let statusBarItem: vscode.StatusBarItem;
+let languageClient: LanguageClient | undefined;
 
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
     console.log('Varpulis extension activated');
 
     // Create output channel
@@ -57,7 +65,87 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('varpulis.showStatus', showStatus)
     );
 
-    // Register diagnostics
+    // Start Language Server if enabled
+    const config = vscode.workspace.getConfiguration('varpulis');
+    const enableLsp = config.get<boolean>('enableLsp', true);
+
+    if (enableLsp) {
+        try {
+            await startLanguageServer(context);
+            outputChannel.appendLine('Language Server started');
+        } catch (error) {
+            outputChannel.appendLine(`Failed to start Language Server: ${error}`);
+            outputChannel.appendLine('Falling back to basic language features');
+            registerFallbackProviders(context);
+        }
+    } else {
+        registerFallbackProviders(context);
+    }
+
+    // Auto-start engine if configured
+    if (config.get('autoStart')) {
+        startEngine(streamsProvider, eventsProvider, alertsProvider, metricsProvider);
+    }
+
+    outputChannel.appendLine('Varpulis extension ready');
+}
+
+async function startLanguageServer(context: vscode.ExtensionContext) {
+    const config = vscode.workspace.getConfiguration('varpulis');
+    let serverPath = config.get<string>('lspServerPath', '');
+
+    // If no path specified, try to find it
+    if (!serverPath) {
+        // First, check if bundled with extension
+        const bundledPath = context.asAbsolutePath(path.join('bin', 'varpulis-lsp'));
+        const fs = require('fs');
+        if (fs.existsSync(bundledPath)) {
+            serverPath = bundledPath;
+        } else if (fs.existsSync(bundledPath + '.exe')) {
+            serverPath = bundledPath + '.exe';
+        } else {
+            // Fall back to system PATH
+            serverPath = 'varpulis-lsp';
+        }
+    }
+
+    outputChannel.appendLine(`Starting LSP server: ${serverPath}`);
+
+    const serverOptions: ServerOptions = {
+        run: {
+            command: serverPath,
+            transport: TransportKind.stdio
+        },
+        debug: {
+            command: serverPath,
+            transport: TransportKind.stdio,
+            options: {
+                env: { ...process.env, RUST_LOG: 'varpulis_lsp=debug' }
+            }
+        }
+    };
+
+    const clientOptions: LanguageClientOptions = {
+        documentSelector: [{ scheme: 'file', language: 'varpulis' }],
+        synchronize: {
+            fileEvents: vscode.workspace.createFileSystemWatcher('**/*.{vpl,varpulis}')
+        },
+        outputChannel: outputChannel
+    };
+
+    languageClient = new LanguageClient(
+        'varpulis-lsp',
+        'VarpulisQL Language Server',
+        serverOptions,
+        clientOptions
+    );
+
+    await languageClient.start();
+    context.subscriptions.push(languageClient);
+}
+
+function registerFallbackProviders(context: vscode.ExtensionContext) {
+    // Register diagnostics (fallback when LSP is not available)
     const diagnosticCollection = vscode.languages.createDiagnosticCollection('varpulis');
     context.subscriptions.push(diagnosticCollection);
 
@@ -92,17 +180,12 @@ export function activate(context: vscode.ExtensionContext) {
             provideHover: provideHover
         })
     );
-
-    // Auto-start engine if configured
-    const config = vscode.workspace.getConfiguration('varpulis');
-    if (config.get('autoStart')) {
-        startEngine(streamsProvider, eventsProvider, alertsProvider, metricsProvider);
-    }
-
-    outputChannel.appendLine('Varpulis extension ready');
 }
 
-export function deactivate() {
+export async function deactivate(): Promise<void> {
+    if (languageClient) {
+        await languageClient.stop();
+    }
     if (engine) {
         engine.stop();
     }

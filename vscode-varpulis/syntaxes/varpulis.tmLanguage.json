@@ -10,7 +10,16 @@
             "include": "#strings"
         },
         {
+            "include": "#timestamp-literals"
+        },
+        {
             "include": "#numbers"
+        },
+        {
+            "include": "#sase-patterns"
+        },
+        {
+            "include": "#pattern-declaration"
         },
         {
             "include": "#keywords"
@@ -26,6 +35,9 @@
         },
         {
             "include": "#stream-operations"
+        },
+        {
+            "include": "#lambda"
         },
         {
             "include": "#identifiers"
@@ -71,6 +83,14 @@
                 }
             ]
         },
+        "timestamp-literals": {
+            "patterns": [
+                {
+                    "name": "constant.other.timestamp.varpulis",
+                    "match": "@\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:?\\d{2})?)?"
+                }
+            ]
+        },
         "numbers": {
             "patterns": [
                 {
@@ -84,6 +104,45 @@
                 {
                     "name": "constant.numeric.duration.varpulis",
                     "match": "\\b\\d+(ms|s|m|h|d)\\b"
+                }
+            ]
+        },
+        "sase-patterns": {
+            "patterns": [
+                {
+                    "name": "keyword.operator.sase.varpulis",
+                    "match": "\\b(SEQ|AND|OR|NOT)\\b"
+                },
+                {
+                    "comment": "Kleene operators after identifiers",
+                    "name": "keyword.operator.kleene.varpulis",
+                    "match": "(?<=[a-zA-Z_0-9)])([+*?])(?![a-zA-Z_0-9])"
+                },
+                {
+                    "name": "keyword.control.within.varpulis",
+                    "match": "\\bwithin\\b"
+                }
+            ]
+        },
+        "pattern-declaration": {
+            "patterns": [
+                {
+                    "name": "keyword.declaration.pattern.varpulis",
+                    "match": "\\bpattern\\b"
+                }
+            ]
+        },
+        "lambda": {
+            "patterns": [
+                {
+                    "comment": "Lambda parameter list with arrow",
+                    "match": "(\\|)([^|]*)(\\|)\\s*(=>)",
+                    "captures": {
+                        "1": { "name": "punctuation.definition.parameters.begin.varpulis" },
+                        "2": { "name": "variable.parameter.varpulis" },
+                        "3": { "name": "punctuation.definition.parameters.end.varpulis" },
+                        "4": { "name": "keyword.operator.arrow.varpulis" }
+                    }
                 }
             ]
         },
@@ -114,8 +173,18 @@
         "types": {
             "patterns": [
                 {
+                    "comment": "Stream generic type: Stream<T>",
+                    "match": "\\b(Stream)(<)([A-Za-z_][A-Za-z0-9_]*)(>)",
+                    "captures": {
+                        "1": { "name": "storage.type.stream.varpulis" },
+                        "2": { "name": "punctuation.definition.typeparameters.begin.varpulis" },
+                        "3": { "name": "entity.name.type.varpulis" },
+                        "4": { "name": "punctuation.definition.typeparameters.end.varpulis" }
+                    }
+                },
+                {
                     "name": "storage.type.varpulis",
-                    "match": "\\b(string|str|int|float|bool|timestamp|duration|list|map|any)\\b"
+                    "match": "\\b(string|str|int|float|bool|timestamp|duration|list|map|any|Stream)\\b"
                 },
                 {
                     "name": "entity.name.type.varpulis",
@@ -158,6 +227,14 @@
         "operators": {
             "patterns": [
                 {
+                    "name": "keyword.operator.optional-chaining.varpulis",
+                    "match": "\\?\\."
+                },
+                {
+                    "name": "keyword.operator.null-coalescing.varpulis",
+                    "match": "\\?\\?"
+                },
+                {
                     "name": "keyword.operator.comparison.varpulis",
                     "match": "(==|!=|<=|>=|<|>)"
                 },
@@ -172,6 +249,10 @@
                 {
                     "name": "keyword.operator.arrow.varpulis",
                     "match": "(=>|->)"
+                },
+                {
+                    "name": "keyword.operator.range-inclusive.varpulis",
+                    "match": "\\.\\.="
                 },
                 {
                     "name": "keyword.operator.range.varpulis",
