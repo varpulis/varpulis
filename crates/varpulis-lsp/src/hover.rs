@@ -1,5 +1,7 @@
 //! Hover documentation provider
 
+#![allow(clippy::useless_format)]
+
 use tower_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind, Position};
 
 /// Get hover documentation for a position in the document
