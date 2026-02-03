@@ -127,6 +127,10 @@ enum Commands {
         /// Rate limit in requests per second per client (0 = disabled)
         #[arg(long, env = "VARPULIS_RATE_LIMIT", default_value = "0")]
         rate_limit: u32,
+
+        /// Directory for persistent state (enables state recovery on restart)
+        #[arg(long, env = "VARPULIS_STATE_DIR")]
+        state_dir: Option<PathBuf>,
     },
 
     /// Simulate events from an event file (.evt)
@@ -228,6 +232,7 @@ async fn main() -> Result<()> {
             tls_cert,
             tls_key,
             rate_limit,
+            state_dir,
         } => {
             // Use security module to validate workdir - NO unwrap()!
             let workdir =
@@ -267,6 +272,7 @@ async fn main() -> Result<()> {
                 auth_config,
                 tls_config,
                 rate_limit_config,
+                state_dir,
             )
             .await?;
         }
@@ -1120,6 +1126,7 @@ async fn run_server(
     auth_config: AuthConfig,
     tls_config: Option<(PathBuf, PathBuf)>,
     rate_limit_config: rate_limit::RateLimitConfig,
+    state_dir: Option<PathBuf>,
 ) -> Result<()> {
     let tls_enabled = tls_config.is_some();
     let protocol = if tls_enabled { "wss" } else { "ws" };
@@ -1148,6 +1155,13 @@ async fn run_server(
             format!("{} req/s per client", rate_limit_config.requests_per_second)
         } else {
             "disabled".to_string()
+        }
+    );
+    println!(
+        "State:     {}",
+        match &state_dir {
+            Some(dir) => format!("{}", dir.display()),
+            None => "in-memory (no persistence)".to_string(),
         }
     );
     if enable_metrics {
@@ -1271,7 +1285,15 @@ async fn run_server(
     });
 
     // REST API routes (multi-tenant pipeline management)
-    let tenant_manager = varpulis_runtime::shared_tenant_manager();
+    let tenant_manager = if let Some(ref state_dir) = state_dir {
+        std::fs::create_dir_all(state_dir)?;
+        let store: Arc<dyn varpulis_runtime::StateStore> =
+            Arc::new(varpulis_runtime::FileStore::open(state_dir)?);
+        info!("State persistence enabled: {}", state_dir.display());
+        varpulis_runtime::shared_tenant_manager_with_store(store)
+    } else {
+        varpulis_runtime::shared_tenant_manager()
+    };
 
     // Auto-provision a default tenant if an API key is configured
     if auth_config.is_required() {

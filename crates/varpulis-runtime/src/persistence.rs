@@ -473,6 +473,127 @@ impl StateStore for RocksDbStore {
     }
 }
 
+/// File-system based state store
+///
+/// Stores key-value pairs as files in a directory. Keys containing ":"
+/// are mapped to subdirectories (e.g., "tenant:abc" → "tenant/abc").
+/// Writes are atomic via temp file + rename.
+pub struct FileStore {
+    dir: std::path::PathBuf,
+}
+
+impl FileStore {
+    /// Open or create a file-based store at the given directory
+    pub fn open(dir: impl AsRef<std::path::Path>) -> Result<Self, StoreError> {
+        let dir = dir.as_ref().to_path_buf();
+        std::fs::create_dir_all(&dir).map_err(|e| StoreError::IoError(e.to_string()))?;
+        Ok(Self { dir })
+    }
+
+    fn key_to_path(&self, key: &str) -> std::path::PathBuf {
+        // Map ":" separators to directory separators
+        let path_str = key.replace(':', std::path::MAIN_SEPARATOR_STR);
+        self.dir.join(path_str)
+    }
+}
+
+impl StateStore for FileStore {
+    fn save_checkpoint(&self, checkpoint: &Checkpoint) -> Result<(), StoreError> {
+        let key = format!("checkpoint:{}", checkpoint.id);
+        let data = bincode::serialize(checkpoint)
+            .map_err(|e| StoreError::SerializationError(e.to_string()))?;
+        self.put(&key, &data)
+    }
+
+    fn load_latest_checkpoint(&self) -> Result<Option<Checkpoint>, StoreError> {
+        let checkpoints = self.list_checkpoints()?;
+        if let Some(id) = checkpoints.last() {
+            self.load_checkpoint(*id)
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn load_checkpoint(&self, id: u64) -> Result<Option<Checkpoint>, StoreError> {
+        let key = format!("checkpoint:{}", id);
+        if let Some(data) = self.get(&key)? {
+            let checkpoint: Checkpoint = bincode::deserialize(&data)
+                .map_err(|e| StoreError::SerializationError(e.to_string()))?;
+            Ok(Some(checkpoint))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn list_checkpoints(&self) -> Result<Vec<u64>, StoreError> {
+        let checkpoint_dir = self.dir.join("checkpoint");
+        if !checkpoint_dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut ids: Vec<u64> = Vec::new();
+        let entries =
+            std::fs::read_dir(&checkpoint_dir).map_err(|e| StoreError::IoError(e.to_string()))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| StoreError::IoError(e.to_string()))?;
+            if let Some(name) = entry.file_name().to_str() {
+                if name != "latest" {
+                    if let Ok(id) = name.parse::<u64>() {
+                        ids.push(id);
+                    }
+                }
+            }
+        }
+        ids.sort();
+        Ok(ids)
+    }
+
+    fn prune_checkpoints(&self, keep: usize) -> Result<usize, StoreError> {
+        let checkpoints = self.list_checkpoints()?;
+        let to_delete = checkpoints.len().saturating_sub(keep);
+        for id in checkpoints.iter().take(to_delete) {
+            let key = format!("checkpoint:{}", id);
+            self.delete(&key)?;
+        }
+        Ok(to_delete)
+    }
+
+    fn put(&self, key: &str, value: &[u8]) -> Result<(), StoreError> {
+        let path = self.key_to_path(key);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| StoreError::IoError(e.to_string()))?;
+        }
+
+        // Atomic write: write to temp file, then rename
+        let tmp_path = path.with_extension("tmp");
+        std::fs::write(&tmp_path, value).map_err(|e| StoreError::IoError(e.to_string()))?;
+        std::fs::rename(&tmp_path, &path).map_err(|e| StoreError::IoError(e.to_string()))?;
+        Ok(())
+    }
+
+    fn get(&self, key: &str) -> Result<Option<Vec<u8>>, StoreError> {
+        let path = self.key_to_path(key);
+        match std::fs::read(&path) {
+            Ok(data) => Ok(Some(data)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(StoreError::IoError(e.to_string())),
+        }
+    }
+
+    fn delete(&self, key: &str) -> Result<(), StoreError> {
+        let path = self.key_to_path(key);
+        match std::fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(StoreError::IoError(e.to_string())),
+        }
+    }
+
+    fn flush(&self) -> Result<(), StoreError> {
+        Ok(()) // File writes are already flushed on close
+    }
+}
+
 /// Checkpoint manager that handles periodic checkpointing
 pub struct CheckpointManager {
     store: Arc<dyn StateStore>,
@@ -585,6 +706,59 @@ mod tests {
         let checkpoints = store.list_checkpoints().unwrap();
         assert_eq!(checkpoints.len(), 2);
         assert_eq!(checkpoints, vec![4, 5]);
+    }
+
+    #[test]
+    fn test_file_store_put_get_delete() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FileStore::open(dir.path()).unwrap();
+
+        // Put and get
+        store.put("test:key1", b"hello world").unwrap();
+        let val = store.get("test:key1").unwrap();
+        assert_eq!(val, Some(b"hello world".to_vec()));
+
+        // Get missing key
+        let val = store.get("test:missing").unwrap();
+        assert!(val.is_none());
+
+        // Delete
+        store.delete("test:key1").unwrap();
+        let val = store.get("test:key1").unwrap();
+        assert!(val.is_none());
+
+        // Delete missing key (should not error)
+        store.delete("test:missing").unwrap();
+    }
+
+    #[test]
+    fn test_file_store_atomic_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = FileStore::open(dir.path()).unwrap();
+
+        // Write data
+        store.put("data:file1", b"version 1").unwrap();
+        assert_eq!(
+            store.get("data:file1").unwrap(),
+            Some(b"version 1".to_vec())
+        );
+
+        // Overwrite (atomic via temp+rename)
+        store.put("data:file1", b"version 2").unwrap();
+        assert_eq!(
+            store.get("data:file1").unwrap(),
+            Some(b"version 2".to_vec())
+        );
+
+        // Verify no .tmp files left behind
+        let data_dir = dir.path().join("data");
+        if data_dir.exists() {
+            for entry in std::fs::read_dir(&data_dir).unwrap() {
+                let entry = entry.unwrap();
+                let name = entry.file_name().to_string_lossy().to_string();
+                assert!(!name.ends_with(".tmp"), "tmp file left behind: {}", name);
+            }
+        }
     }
 
     #[test]
