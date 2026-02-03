@@ -139,13 +139,14 @@ pub use worker_pool::{
 
 // Multi-tenant SaaS support
 pub use tenant::{
-    shared_tenant_manager, Pipeline, PipelineStatus, SharedTenantManager, Tenant, TenantError,
-    TenantId, TenantManager, TenantQuota, TenantUsage,
+    shared_tenant_manager, shared_tenant_manager_with_store, Pipeline, PipelineSnapshot,
+    PipelineStatus, SharedTenantManager, Tenant, TenantError, TenantId, TenantManager,
+    TenantQuota, TenantSnapshot, TenantUsage,
 };
 
 // Persistence exports (always available, RocksDB impl requires "persistence" feature)
 #[cfg(feature = "persistence")]
 pub use persistence::RocksDbStore;
 pub use persistence::{
-    Checkpoint, CheckpointConfig, CheckpointManager, MemoryStore, StateStore, StoreError,
+    Checkpoint, CheckpointConfig, CheckpointManager, FileStore, MemoryStore, StateStore, StoreError,
 };

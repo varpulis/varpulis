@@ -4,14 +4,17 @@
 
 use crate::engine::{Alert, Engine};
 use crate::event::Event;
+use crate::persistence::{StateStore, StoreError};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{mpsc, RwLock};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 /// Unique identifier for a tenant
-#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TenantId(pub String);
 
 impl TenantId {
@@ -35,7 +38,7 @@ impl std::fmt::Display for TenantId {
 }
 
 /// Resource limits for a tenant
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TenantQuota {
     /// Maximum number of pipelines
     pub max_pipelines: usize,
@@ -144,7 +147,7 @@ pub struct Pipeline {
 }
 
 /// Pipeline status
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PipelineStatus {
     Running,
     Stopped,
@@ -348,6 +351,8 @@ pub struct TenantManager {
     tenants: HashMap<TenantId, Tenant>,
     /// API key → TenantId lookup
     api_key_index: HashMap<String, TenantId>,
+    /// Optional persistent state store
+    store: Option<Arc<dyn StateStore>>,
 }
 
 impl TenantManager {
@@ -355,6 +360,16 @@ impl TenantManager {
         Self {
             tenants: HashMap::new(),
             api_key_index: HashMap::new(),
+            store: None,
+        }
+    }
+
+    /// Create a new tenant manager backed by a state store
+    pub fn with_store(store: Arc<dyn StateStore>) -> Self {
+        Self {
+            tenants: HashMap::new(),
+            api_key_index: HashMap::new(),
+            store: Some(store),
         }
     }
 
@@ -375,6 +390,7 @@ impl TenantManager {
         let tenant = Tenant::new(id.clone(), name, api_key.clone(), quota);
         self.tenants.insert(id.clone(), tenant);
         self.api_key_index.insert(api_key, id.clone());
+        self.persist_if_needed(&id);
         Ok(id)
     }
 
@@ -400,6 +416,11 @@ impl TenantManager {
             .remove(id)
             .ok_or_else(|| TenantError::NotFound(id.to_string()))?;
         self.api_key_index.remove(&tenant.api_key);
+        if let Some(ref store) = self.store {
+            if let Err(e) = Self::delete_tenant_state(store.as_ref(), id) {
+                warn!("Failed to delete persisted state for tenant {}: {}", id, e);
+            }
+        }
         Ok(())
     }
 
@@ -411,6 +432,193 @@ impl TenantManager {
     /// Get total number of tenants
     pub fn tenant_count(&self) -> usize {
         self.tenants.len()
+    }
+
+    /// Persist a tenant's current state to the store (if configured)
+    pub fn persist_if_needed(&self, tenant_id: &TenantId) {
+        if let Some(ref store) = self.store {
+            if let Some(tenant) = self.tenants.get(tenant_id) {
+                if let Err(e) = Self::persist_tenant_to_store(store.as_ref(), tenant) {
+                    warn!("Failed to persist tenant {}: {}", tenant_id, e);
+                }
+            }
+        }
+    }
+
+    /// Recover all tenants from the state store
+    ///
+    /// Returns the number of tenants successfully recovered.
+    pub fn recover(&mut self) -> Result<usize, StoreError> {
+        let store = match &self.store {
+            Some(s) => Arc::clone(s),
+            None => return Ok(0),
+        };
+
+        // Load tenant index
+        let index_data = match store.get("tenants:index")? {
+            Some(data) => data,
+            None => return Ok(0),
+        };
+
+        let tenant_ids: Vec<String> = serde_json::from_slice(&index_data)
+            .map_err(|e| StoreError::SerializationError(e.to_string()))?;
+
+        let mut recovered = 0;
+        let mut failed = 0;
+
+        for tid in &tenant_ids {
+            let key = format!("tenant:{}", tid);
+            let data = match store.get(&key)? {
+                Some(d) => d,
+                None => {
+                    warn!("Tenant {} listed in index but not found in store", tid);
+                    failed += 1;
+                    continue;
+                }
+            };
+
+            let snapshot: TenantSnapshot = match serde_json::from_slice(&data) {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!("Failed to deserialize tenant {}: {}", tid, e);
+                    failed += 1;
+                    continue;
+                }
+            };
+
+            match Self::restore_tenant_from_snapshot(snapshot) {
+                Ok(tenant) => {
+                    let tenant_id = tenant.id.clone();
+                    self.api_key_index
+                        .insert(tenant.api_key.clone(), tenant_id.clone());
+                    let pipeline_count = tenant.pipelines.len();
+                    self.tenants.insert(tenant_id.clone(), tenant);
+                    info!(
+                        "Recovered tenant {} with {} pipeline(s)",
+                        tenant_id, pipeline_count
+                    );
+                    recovered += 1;
+                }
+                Err(e) => {
+                    warn!("Failed to restore tenant {}: {}", tid, e);
+                    failed += 1;
+                }
+            }
+        }
+
+        if failed > 0 {
+            warn!(
+                "Recovery complete: {} recovered, {} failed",
+                recovered, failed
+            );
+        }
+
+        Ok(recovered)
+    }
+
+    fn persist_tenant_to_store(store: &dyn StateStore, tenant: &Tenant) -> Result<(), StoreError> {
+        let snapshot = tenant.snapshot();
+        let data = serde_json::to_vec(&snapshot)
+            .map_err(|e| StoreError::SerializationError(e.to_string()))?;
+        let key = format!("tenant:{}", snapshot.id);
+        store.put(&key, &data)?;
+
+        // Update tenant index
+        Self::update_tenant_index_add(store, &snapshot.id)?;
+
+        store.flush()
+    }
+
+    fn delete_tenant_state(store: &dyn StateStore, id: &TenantId) -> Result<(), StoreError> {
+        let key = format!("tenant:{}", id.0);
+        store.delete(&key)?;
+
+        Self::update_tenant_index_remove(store, &id.0)?;
+
+        store.flush()
+    }
+
+    fn update_tenant_index_add(store: &dyn StateStore, tenant_id: &str) -> Result<(), StoreError> {
+        let mut ids = Self::load_tenant_index(store)?;
+        let id_str = tenant_id.to_string();
+        if !ids.contains(&id_str) {
+            ids.push(id_str);
+        }
+        let data = serde_json::to_vec(&ids)
+            .map_err(|e| StoreError::SerializationError(e.to_string()))?;
+        store.put("tenants:index", &data)
+    }
+
+    fn update_tenant_index_remove(
+        store: &dyn StateStore,
+        tenant_id: &str,
+    ) -> Result<(), StoreError> {
+        let mut ids = Self::load_tenant_index(store)?;
+        ids.retain(|id| id != tenant_id);
+        let data = serde_json::to_vec(&ids)
+            .map_err(|e| StoreError::SerializationError(e.to_string()))?;
+        store.put("tenants:index", &data)
+    }
+
+    fn load_tenant_index(store: &dyn StateStore) -> Result<Vec<String>, StoreError> {
+        match store.get("tenants:index")? {
+            Some(data) => serde_json::from_slice(&data)
+                .map_err(|e| StoreError::SerializationError(e.to_string())),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    fn restore_tenant_from_snapshot(snapshot: TenantSnapshot) -> Result<Tenant, TenantError> {
+        let tenant_id = TenantId::new(&snapshot.id);
+
+        let mut tenant = Tenant::new(
+            tenant_id,
+            snapshot.name,
+            snapshot.api_key,
+            snapshot.quota,
+        );
+        tenant.usage.events_processed = snapshot.events_processed;
+        tenant.usage.alerts_generated = snapshot.alerts_generated;
+
+        let mut pipeline_failures = Vec::new();
+        for ps in snapshot.pipelines {
+            match Self::restore_pipeline_from_snapshot(ps.clone()) {
+                Ok(pipeline) => {
+                    tenant.pipelines.insert(pipeline.id.clone(), pipeline);
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to restore pipeline '{}' ({}): {}",
+                        ps.name, ps.id, e
+                    );
+                    pipeline_failures.push(ps.id);
+                }
+            }
+        }
+
+        tenant.usage.active_pipelines = tenant.pipelines.len();
+        Ok(tenant)
+    }
+
+    fn restore_pipeline_from_snapshot(snapshot: PipelineSnapshot) -> Result<Pipeline, TenantError> {
+        let program = varpulis_parser::parse(&snapshot.source)
+            .map_err(|e| TenantError::ParseError(e.to_string()))?;
+
+        let (alert_tx, alert_rx) = mpsc::channel(1000);
+        let mut engine = Engine::new(alert_tx);
+        engine
+            .load(&program)
+            .map_err(|e| TenantError::EngineError(e.to_string()))?;
+
+        Ok(Pipeline {
+            id: snapshot.id,
+            name: snapshot.name,
+            source: snapshot.source,
+            engine,
+            alert_rx,
+            created_at: Instant::now(),
+            status: snapshot.status,
+        })
     }
 }
 
@@ -426,6 +634,75 @@ pub type SharedTenantManager = Arc<RwLock<TenantManager>>;
 /// Create a new shared tenant manager
 pub fn shared_tenant_manager() -> SharedTenantManager {
     Arc::new(RwLock::new(TenantManager::new()))
+}
+
+/// Create a shared tenant manager backed by a state store, recovering any persisted state
+pub fn shared_tenant_manager_with_store(store: Arc<dyn StateStore>) -> SharedTenantManager {
+    let mut mgr = TenantManager::with_store(store);
+    match mgr.recover() {
+        Ok(count) if count > 0 => {
+            info!("Recovered {} tenant(s) from persistent state", count);
+        }
+        Ok(_) => {
+            info!("No persisted tenant state found, starting fresh");
+        }
+        Err(e) => {
+            error!("Failed to recover tenant state: {}", e);
+        }
+    }
+    Arc::new(RwLock::new(mgr))
+}
+
+// =============================================================================
+// Snapshot Types for Persistence
+// =============================================================================
+
+/// Serializable snapshot of a tenant's state
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TenantSnapshot {
+    pub id: String,
+    pub name: String,
+    pub api_key: String,
+    pub quota: TenantQuota,
+    pub events_processed: u64,
+    pub alerts_generated: u64,
+    pub pipelines: Vec<PipelineSnapshot>,
+}
+
+/// Serializable snapshot of a pipeline
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineSnapshot {
+    pub id: String,
+    pub name: String,
+    pub source: String,
+    pub status: PipelineStatus,
+}
+
+impl Pipeline {
+    /// Create a serializable snapshot of this pipeline
+    pub fn snapshot(&self) -> PipelineSnapshot {
+        PipelineSnapshot {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            source: self.source.clone(),
+            status: self.status.clone(),
+        }
+    }
+}
+
+impl Tenant {
+    /// Create a serializable snapshot of this tenant and all its pipelines
+    pub fn snapshot(&self) -> TenantSnapshot {
+        TenantSnapshot {
+            id: self.id.0.clone(),
+            name: self.name.clone(),
+            api_key: self.api_key.clone(),
+            quota: self.quota.clone(),
+            events_processed: self.usage.events_processed,
+            alerts_generated: self.usage.alerts_generated,
+            pipelines: self.pipelines.values().map(|p| p.snapshot()).collect(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -698,5 +975,171 @@ mod tests {
     fn test_tenant_manager_default() {
         let mgr = TenantManager::default();
         assert_eq!(mgr.tenant_count(), 0);
+    }
+
+    #[test]
+    fn test_tenant_snapshot_roundtrip() {
+        let mut mgr = TenantManager::new();
+        let id = mgr
+            .create_tenant("Snap Corp".into(), "snap-key".into(), TenantQuota::pro())
+            .unwrap();
+
+        let tenant = mgr.get_tenant_mut(&id).unwrap();
+        let vpl = "stream A = SensorReading .where(x > 1)";
+        tenant.deploy_pipeline("Pipeline1".into(), vpl.into()).unwrap();
+        tenant.usage.events_processed = 42;
+        tenant.usage.alerts_generated = 7;
+
+        let snapshot = tenant.snapshot();
+        let json = serde_json::to_vec(&snapshot).unwrap();
+        let restored: TenantSnapshot = serde_json::from_slice(&json).unwrap();
+
+        assert_eq!(restored.id, id.0);
+        assert_eq!(restored.name, "Snap Corp");
+        assert_eq!(restored.api_key, "snap-key");
+        assert_eq!(restored.events_processed, 42);
+        assert_eq!(restored.alerts_generated, 7);
+        assert_eq!(restored.pipelines.len(), 1);
+        assert_eq!(restored.pipelines[0].name, "Pipeline1");
+        assert_eq!(restored.pipelines[0].source, vpl);
+        assert_eq!(restored.pipelines[0].status, PipelineStatus::Running);
+        assert_eq!(restored.quota.max_pipelines, TenantQuota::pro().max_pipelines);
+    }
+
+    #[test]
+    fn test_tenant_manager_persistence_and_recovery() {
+        use crate::persistence::MemoryStore;
+
+        let store: Arc<dyn StateStore> = Arc::new(MemoryStore::new());
+        let vpl = "stream A = SensorReading .where(x > 1)";
+
+        // Create tenants and pipelines with persistence
+        let (tenant_id, pipeline_name) = {
+            let mut mgr = TenantManager::with_store(Arc::clone(&store));
+            let id = mgr
+                .create_tenant("Persisted Corp".into(), "persist-key".into(), TenantQuota::default())
+                .unwrap();
+
+            let tenant = mgr.get_tenant_mut(&id).unwrap();
+            tenant.deploy_pipeline("Persistent Pipeline".into(), vpl.into()).unwrap();
+            tenant.usage.events_processed = 100;
+            tenant.usage.alerts_generated = 5;
+            mgr.persist_if_needed(&id);
+
+            (id.0.clone(), "Persistent Pipeline".to_string())
+        };
+
+        // Recover into a new manager
+        let mut mgr2 = TenantManager::with_store(Arc::clone(&store));
+        let recovered = mgr2.recover().unwrap();
+        assert_eq!(recovered, 1);
+        assert_eq!(mgr2.tenant_count(), 1);
+
+        // Verify tenant data
+        let tid = TenantId::new(&tenant_id);
+        let tenant = mgr2.get_tenant(&tid).unwrap();
+        assert_eq!(tenant.name, "Persisted Corp");
+        assert_eq!(tenant.api_key, "persist-key");
+        assert_eq!(tenant.usage.events_processed, 100);
+        assert_eq!(tenant.usage.alerts_generated, 5);
+        assert_eq!(tenant.pipelines.len(), 1);
+
+        let pipeline = tenant.pipelines.values().next().unwrap();
+        assert_eq!(pipeline.name, pipeline_name);
+        assert_eq!(pipeline.source, vpl);
+        assert_eq!(pipeline.status, PipelineStatus::Running);
+
+        // Verify API key index was rebuilt
+        assert_eq!(
+            mgr2.get_tenant_by_api_key("persist-key"),
+            Some(&tid)
+        );
+    }
+
+    #[test]
+    fn test_persistence_survives_restart() {
+        use crate::persistence::MemoryStore;
+
+        let store: Arc<dyn StateStore> = Arc::new(MemoryStore::new());
+        let vpl = "stream A = SensorReading .where(x > 1)";
+
+        // Phase 1: Create data
+        {
+            let mut mgr = TenantManager::with_store(Arc::clone(&store));
+            let id1 = mgr
+                .create_tenant("Tenant A".into(), "key-a".into(), TenantQuota::free())
+                .unwrap();
+            let id2 = mgr
+                .create_tenant("Tenant B".into(), "key-b".into(), TenantQuota::pro())
+                .unwrap();
+
+            let tenant_a = mgr.get_tenant_mut(&id1).unwrap();
+            tenant_a.deploy_pipeline("P1".into(), vpl.into()).unwrap();
+            mgr.persist_if_needed(&id1);
+
+            let tenant_b = mgr.get_tenant_mut(&id2).unwrap();
+            tenant_b.deploy_pipeline("P2".into(), vpl.into()).unwrap();
+            tenant_b.deploy_pipeline("P3".into(), vpl.into()).unwrap();
+            mgr.persist_if_needed(&id2);
+        }
+
+        // Phase 2: Recover (simulating restart)
+        {
+            let mut mgr = TenantManager::with_store(Arc::clone(&store));
+            let recovered = mgr.recover().unwrap();
+            assert_eq!(recovered, 2);
+            assert_eq!(mgr.tenant_count(), 2);
+
+            // Verify tenant A
+            let tid_a = mgr.get_tenant_by_api_key("key-a").unwrap().clone();
+            let tenant_a = mgr.get_tenant(&tid_a).unwrap();
+            assert_eq!(tenant_a.name, "Tenant A");
+            assert_eq!(tenant_a.pipelines.len(), 1);
+
+            // Verify tenant B
+            let tid_b = mgr.get_tenant_by_api_key("key-b").unwrap().clone();
+            let tenant_b = mgr.get_tenant(&tid_b).unwrap();
+            assert_eq!(tenant_b.name, "Tenant B");
+            assert_eq!(tenant_b.pipelines.len(), 2);
+        }
+    }
+
+    #[test]
+    fn test_recovery_with_invalid_vpl() {
+        use crate::persistence::MemoryStore;
+
+        let store: Arc<dyn StateStore> = Arc::new(MemoryStore::new());
+
+        // Manually store a tenant with invalid VPL
+        let snapshot = TenantSnapshot {
+            id: "bad-tenant".into(),
+            name: "Bad Corp".into(),
+            api_key: "bad-key".into(),
+            quota: TenantQuota::default(),
+            events_processed: 0,
+            alerts_generated: 0,
+            pipelines: vec![PipelineSnapshot {
+                id: "bad-pipeline".into(),
+                name: "Bad Pipeline".into(),
+                source: "this is not valid VPL {{{{".into(),
+                status: PipelineStatus::Running,
+            }],
+        };
+
+        let data = serde_json::to_vec(&snapshot).unwrap();
+        store.put("tenant:bad-tenant", &data).unwrap();
+        let index = serde_json::to_vec(&vec!["bad-tenant"]).unwrap();
+        store.put("tenants:index", &index).unwrap();
+
+        // Recovery should succeed (tenant recovered, bad pipeline skipped)
+        let mut mgr = TenantManager::with_store(Arc::clone(&store));
+        let recovered = mgr.recover().unwrap();
+        assert_eq!(recovered, 1);
+
+        let tid = TenantId::new("bad-tenant");
+        let tenant = mgr.get_tenant(&tid).unwrap();
+        assert_eq!(tenant.name, "Bad Corp");
+        // The invalid pipeline should have been skipped
+        assert_eq!(tenant.pipelines.len(), 0);
     }
 }

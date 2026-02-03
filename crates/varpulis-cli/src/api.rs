@@ -213,19 +213,23 @@ async fn handle_deploy(
         }
     };
 
-    let tenant = match mgr.get_tenant_mut(&tenant_id) {
-        Some(t) => t,
-        None => {
-            return Ok(error_response(
-                StatusCode::NOT_FOUND,
-                "tenant_not_found",
-                "Tenant not found",
-            ))
-        }
+    let result = {
+        let tenant = match mgr.get_tenant_mut(&tenant_id) {
+            Some(t) => t,
+            None => {
+                return Ok(error_response(
+                    StatusCode::NOT_FOUND,
+                    "tenant_not_found",
+                    "Tenant not found",
+                ))
+            }
+        };
+        tenant.deploy_pipeline(body.name.clone(), body.source)
     };
 
-    match tenant.deploy_pipeline(body.name.clone(), body.source) {
+    match result {
         Ok(id) => {
+            mgr.persist_if_needed(&tenant_id);
             let resp = DeployPipelineResponse {
                 id,
                 name: body.name,
@@ -351,23 +355,29 @@ async fn handle_delete(
         }
     };
 
-    let tenant = match mgr.get_tenant_mut(&tenant_id) {
-        Some(t) => t,
-        None => {
-            return Ok(error_response(
-                StatusCode::NOT_FOUND,
-                "tenant_not_found",
-                "Tenant not found",
-            ))
-        }
+    let result = {
+        let tenant = match mgr.get_tenant_mut(&tenant_id) {
+            Some(t) => t,
+            None => {
+                return Ok(error_response(
+                    StatusCode::NOT_FOUND,
+                    "tenant_not_found",
+                    "Tenant not found",
+                ))
+            }
+        };
+        tenant.remove_pipeline(&pipeline_id)
     };
 
-    match tenant.remove_pipeline(&pipeline_id) {
-        Ok(()) => Ok(warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({"deleted": true})),
-            StatusCode::OK,
-        )
-        .into_response()),
+    match result {
+        Ok(()) => {
+            mgr.persist_if_needed(&tenant_id);
+            Ok(warp::reply::with_status(
+                warp::reply::json(&serde_json::json!({"deleted": true})),
+                StatusCode::OK,
+            )
+            .into_response())
+        }
         Err(e) => Ok(tenant_error_response(e)),
     }
 }
@@ -482,23 +492,29 @@ async fn handle_reload(
         }
     };
 
-    let tenant = match mgr.get_tenant_mut(&tenant_id) {
-        Some(t) => t,
-        None => {
-            return Ok(error_response(
-                StatusCode::NOT_FOUND,
-                "tenant_not_found",
-                "Tenant not found",
-            ))
-        }
+    let result = {
+        let tenant = match mgr.get_tenant_mut(&tenant_id) {
+            Some(t) => t,
+            None => {
+                return Ok(error_response(
+                    StatusCode::NOT_FOUND,
+                    "tenant_not_found",
+                    "Tenant not found",
+                ))
+            }
+        };
+        tenant.reload_pipeline(&pipeline_id, body.source)
     };
 
-    match tenant.reload_pipeline(&pipeline_id, body.source) {
-        Ok(()) => Ok(warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({"reloaded": true})),
-            StatusCode::OK,
-        )
-        .into_response()),
+    match result {
+        Ok(()) => {
+            mgr.persist_if_needed(&tenant_id);
+            Ok(warp::reply::with_status(
+                warp::reply::json(&serde_json::json!({"reloaded": true})),
+                StatusCode::OK,
+            )
+            .into_response())
+        }
         Err(e) => Ok(tenant_error_response(e)),
     }
 }
