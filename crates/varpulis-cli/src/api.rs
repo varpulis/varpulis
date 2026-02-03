@@ -1,0 +1,800 @@
+//! REST API for SaaS pipeline management
+//!
+//! Provides RESTful endpoints for deploying and managing CEP pipelines
+//! in a multi-tenant environment.
+
+use serde::{Deserialize, Serialize};
+use std::convert::Infallible;
+use varpulis_runtime::tenant::{SharedTenantManager, TenantError};
+use varpulis_runtime::Event;
+use warp::http::StatusCode;
+use warp::{Filter, Rejection, Reply};
+
+// =============================================================================
+// Request/Response types
+// =============================================================================
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct DeployPipelineRequest {
+    pub name: String,
+    pub source: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DeployPipelineResponse {
+    pub id: String,
+    pub name: String,
+    pub status: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PipelineInfo {
+    pub id: String,
+    pub name: String,
+    pub status: String,
+    pub source: String,
+    pub uptime_secs: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PipelineListResponse {
+    pub pipelines: Vec<PipelineInfo>,
+    pub total: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PipelineMetricsResponse {
+    pub pipeline_id: String,
+    pub events_processed: u64,
+    pub alerts_generated: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct InjectEventRequest {
+    pub event_type: String,
+    pub fields: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ReloadPipelineRequest {
+    pub source: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ApiError {
+    pub error: String,
+    pub code: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UsageResponse {
+    pub tenant_id: String,
+    pub events_processed: u64,
+    pub alerts_generated: u64,
+    pub active_pipelines: usize,
+    pub quota: QuotaInfo,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct QuotaInfo {
+    pub max_pipelines: usize,
+    pub max_events_per_second: u64,
+    pub max_streams_per_pipeline: usize,
+}
+
+// =============================================================================
+// API Routes
+// =============================================================================
+
+/// Build the complete API route tree
+pub fn api_routes(
+    manager: SharedTenantManager,
+) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
+    let api = warp::path("api").and(warp::path("v1"));
+
+    let deploy = api
+        .and(warp::path("pipelines"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(with_api_key())
+        .and(warp::body::json())
+        .and(with_manager(manager.clone()))
+        .and_then(handle_deploy);
+
+    let list = api
+        .and(warp::path("pipelines"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(with_api_key())
+        .and(with_manager(manager.clone()))
+        .and_then(handle_list);
+
+    let get_pipeline = api
+        .and(warp::path("pipelines"))
+        .and(warp::path::param::<String>())
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(with_api_key())
+        .and(with_manager(manager.clone()))
+        .and_then(handle_get);
+
+    let delete = api
+        .and(warp::path("pipelines"))
+        .and(warp::path::param::<String>())
+        .and(warp::path::end())
+        .and(warp::delete())
+        .and(with_api_key())
+        .and(with_manager(manager.clone()))
+        .and_then(handle_delete);
+
+    let inject = api
+        .and(warp::path("pipelines"))
+        .and(warp::path::param::<String>())
+        .and(warp::path("events"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(with_api_key())
+        .and(warp::body::json())
+        .and(with_manager(manager.clone()))
+        .and_then(handle_inject);
+
+    let metrics = api
+        .and(warp::path("pipelines"))
+        .and(warp::path::param::<String>())
+        .and(warp::path("metrics"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(with_api_key())
+        .and(with_manager(manager.clone()))
+        .and_then(handle_metrics);
+
+    let reload = api
+        .and(warp::path("pipelines"))
+        .and(warp::path::param::<String>())
+        .and(warp::path("reload"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(with_api_key())
+        .and(warp::body::json())
+        .and(with_manager(manager.clone()))
+        .and_then(handle_reload);
+
+    let usage = api
+        .and(warp::path("usage"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(with_api_key())
+        .and(with_manager(manager.clone()))
+        .and_then(handle_usage);
+
+    deploy
+        .or(list)
+        .or(get_pipeline)
+        .or(delete)
+        .or(inject)
+        .or(metrics)
+        .or(reload)
+        .or(usage)
+}
+
+// =============================================================================
+// Filters
+// =============================================================================
+
+fn with_manager(
+    manager: SharedTenantManager,
+) -> impl Filter<Extract = (SharedTenantManager,), Error = Infallible> + Clone {
+    warp::any().map(move || manager.clone())
+}
+
+fn with_api_key() -> impl Filter<Extract = (String,), Error = Rejection> + Clone {
+    warp::header::<String>("x-api-key")
+}
+
+// =============================================================================
+// Handlers
+// =============================================================================
+
+async fn handle_deploy(
+    api_key: String,
+    body: DeployPipelineRequest,
+    manager: SharedTenantManager,
+) -> Result<impl Reply, Infallible> {
+    let mut mgr = manager.write().await;
+
+    let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
+        Some(id) => id.clone(),
+        None => {
+            return Ok(error_response(
+                StatusCode::UNAUTHORIZED,
+                "invalid_api_key",
+                "Invalid API key",
+            ))
+        }
+    };
+
+    let tenant = match mgr.get_tenant_mut(&tenant_id) {
+        Some(t) => t,
+        None => {
+            return Ok(error_response(
+                StatusCode::NOT_FOUND,
+                "tenant_not_found",
+                "Tenant not found",
+            ))
+        }
+    };
+
+    match tenant.deploy_pipeline(body.name.clone(), body.source) {
+        Ok(id) => {
+            let resp = DeployPipelineResponse {
+                id,
+                name: body.name,
+                status: "running".to_string(),
+            };
+            Ok(
+                warp::reply::with_status(warp::reply::json(&resp), StatusCode::CREATED)
+                    .into_response(),
+            )
+        }
+        Err(e) => Ok(tenant_error_response(e)),
+    }
+}
+
+async fn handle_list(
+    api_key: String,
+    manager: SharedTenantManager,
+) -> Result<impl Reply, Infallible> {
+    let mgr = manager.read().await;
+
+    let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
+        Some(id) => id.clone(),
+        None => {
+            return Ok(error_response(
+                StatusCode::UNAUTHORIZED,
+                "invalid_api_key",
+                "Invalid API key",
+            ))
+        }
+    };
+
+    let tenant = match mgr.get_tenant(&tenant_id) {
+        Some(t) => t,
+        None => {
+            return Ok(error_response(
+                StatusCode::NOT_FOUND,
+                "tenant_not_found",
+                "Tenant not found",
+            ))
+        }
+    };
+
+    let pipelines: Vec<PipelineInfo> = tenant
+        .pipelines
+        .values()
+        .map(|p| PipelineInfo {
+            id: p.id.clone(),
+            name: p.name.clone(),
+            status: p.status.to_string(),
+            source: p.source.clone(),
+            uptime_secs: p.created_at.elapsed().as_secs(),
+        })
+        .collect();
+
+    let total = pipelines.len();
+    let resp = PipelineListResponse { pipelines, total };
+    Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+}
+
+async fn handle_get(
+    pipeline_id: String,
+    api_key: String,
+    manager: SharedTenantManager,
+) -> Result<impl Reply, Infallible> {
+    let mgr = manager.read().await;
+
+    let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
+        Some(id) => id.clone(),
+        None => {
+            return Ok(error_response(
+                StatusCode::UNAUTHORIZED,
+                "invalid_api_key",
+                "Invalid API key",
+            ))
+        }
+    };
+
+    let tenant = match mgr.get_tenant(&tenant_id) {
+        Some(t) => t,
+        None => {
+            return Ok(error_response(
+                StatusCode::NOT_FOUND,
+                "tenant_not_found",
+                "Tenant not found",
+            ))
+        }
+    };
+
+    match tenant.pipelines.get(&pipeline_id) {
+        Some(p) => {
+            let info = PipelineInfo {
+                id: p.id.clone(),
+                name: p.name.clone(),
+                status: p.status.to_string(),
+                source: p.source.clone(),
+                uptime_secs: p.created_at.elapsed().as_secs(),
+            };
+            Ok(warp::reply::with_status(warp::reply::json(&info), StatusCode::OK).into_response())
+        }
+        None => Ok(error_response(
+            StatusCode::NOT_FOUND,
+            "pipeline_not_found",
+            "Pipeline not found",
+        )),
+    }
+}
+
+async fn handle_delete(
+    pipeline_id: String,
+    api_key: String,
+    manager: SharedTenantManager,
+) -> Result<impl Reply, Infallible> {
+    let mut mgr = manager.write().await;
+
+    let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
+        Some(id) => id.clone(),
+        None => {
+            return Ok(error_response(
+                StatusCode::UNAUTHORIZED,
+                "invalid_api_key",
+                "Invalid API key",
+            ))
+        }
+    };
+
+    let tenant = match mgr.get_tenant_mut(&tenant_id) {
+        Some(t) => t,
+        None => {
+            return Ok(error_response(
+                StatusCode::NOT_FOUND,
+                "tenant_not_found",
+                "Tenant not found",
+            ))
+        }
+    };
+
+    match tenant.remove_pipeline(&pipeline_id) {
+        Ok(()) => Ok(warp::reply::with_status(
+            warp::reply::json(&serde_json::json!({"deleted": true})),
+            StatusCode::OK,
+        )
+        .into_response()),
+        Err(e) => Ok(tenant_error_response(e)),
+    }
+}
+
+async fn handle_inject(
+    pipeline_id: String,
+    api_key: String,
+    body: InjectEventRequest,
+    manager: SharedTenantManager,
+) -> Result<impl Reply, Infallible> {
+    let mut mgr = manager.write().await;
+
+    let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
+        Some(id) => id.clone(),
+        None => {
+            return Ok(error_response(
+                StatusCode::UNAUTHORIZED,
+                "invalid_api_key",
+                "Invalid API key",
+            ))
+        }
+    };
+
+    let tenant = match mgr.get_tenant_mut(&tenant_id) {
+        Some(t) => t,
+        None => {
+            return Ok(error_response(
+                StatusCode::NOT_FOUND,
+                "tenant_not_found",
+                "Tenant not found",
+            ))
+        }
+    };
+
+    let mut event = Event::new(&body.event_type);
+    for (key, value) in &body.fields {
+        let v = json_to_runtime_value(value);
+        event = event.with_field(key.as_str(), v);
+    }
+
+    match tenant.process_event(&pipeline_id, event).await {
+        Ok(()) => Ok(warp::reply::with_status(
+            warp::reply::json(&serde_json::json!({"accepted": true})),
+            StatusCode::ACCEPTED,
+        )
+        .into_response()),
+        Err(e) => Ok(tenant_error_response(e)),
+    }
+}
+
+async fn handle_metrics(
+    pipeline_id: String,
+    api_key: String,
+    manager: SharedTenantManager,
+) -> Result<impl Reply, Infallible> {
+    let mgr = manager.read().await;
+
+    let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
+        Some(id) => id.clone(),
+        None => {
+            return Ok(error_response(
+                StatusCode::UNAUTHORIZED,
+                "invalid_api_key",
+                "Invalid API key",
+            ))
+        }
+    };
+
+    let tenant = match mgr.get_tenant(&tenant_id) {
+        Some(t) => t,
+        None => {
+            return Ok(error_response(
+                StatusCode::NOT_FOUND,
+                "tenant_not_found",
+                "Tenant not found",
+            ))
+        }
+    };
+
+    if !tenant.pipelines.contains_key(&pipeline_id) {
+        return Ok(error_response(
+            StatusCode::NOT_FOUND,
+            "pipeline_not_found",
+            "Pipeline not found",
+        ));
+    }
+
+    let resp = PipelineMetricsResponse {
+        pipeline_id,
+        events_processed: tenant.usage.events_processed,
+        alerts_generated: tenant.usage.alerts_generated,
+    };
+    Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+}
+
+async fn handle_reload(
+    pipeline_id: String,
+    api_key: String,
+    body: ReloadPipelineRequest,
+    manager: SharedTenantManager,
+) -> Result<impl Reply, Infallible> {
+    let mut mgr = manager.write().await;
+
+    let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
+        Some(id) => id.clone(),
+        None => {
+            return Ok(error_response(
+                StatusCode::UNAUTHORIZED,
+                "invalid_api_key",
+                "Invalid API key",
+            ))
+        }
+    };
+
+    let tenant = match mgr.get_tenant_mut(&tenant_id) {
+        Some(t) => t,
+        None => {
+            return Ok(error_response(
+                StatusCode::NOT_FOUND,
+                "tenant_not_found",
+                "Tenant not found",
+            ))
+        }
+    };
+
+    match tenant.reload_pipeline(&pipeline_id, body.source) {
+        Ok(()) => Ok(warp::reply::with_status(
+            warp::reply::json(&serde_json::json!({"reloaded": true})),
+            StatusCode::OK,
+        )
+        .into_response()),
+        Err(e) => Ok(tenant_error_response(e)),
+    }
+}
+
+async fn handle_usage(
+    api_key: String,
+    manager: SharedTenantManager,
+) -> Result<impl Reply, Infallible> {
+    let mgr = manager.read().await;
+
+    let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
+        Some(id) => id.clone(),
+        None => {
+            return Ok(error_response(
+                StatusCode::UNAUTHORIZED,
+                "invalid_api_key",
+                "Invalid API key",
+            ))
+        }
+    };
+
+    let tenant = match mgr.get_tenant(&tenant_id) {
+        Some(t) => t,
+        None => {
+            return Ok(error_response(
+                StatusCode::NOT_FOUND,
+                "tenant_not_found",
+                "Tenant not found",
+            ))
+        }
+    };
+
+    let resp = UsageResponse {
+        tenant_id: tenant.id.to_string(),
+        events_processed: tenant.usage.events_processed,
+        alerts_generated: tenant.usage.alerts_generated,
+        active_pipelines: tenant.usage.active_pipelines,
+        quota: QuotaInfo {
+            max_pipelines: tenant.quota.max_pipelines,
+            max_events_per_second: tenant.quota.max_events_per_second,
+            max_streams_per_pipeline: tenant.quota.max_streams_per_pipeline,
+        },
+    };
+    Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+}
+
+// =============================================================================
+// Helpers
+// =============================================================================
+
+fn error_response(status: StatusCode, code: &str, message: &str) -> warp::reply::Response {
+    let body = ApiError {
+        error: message.to_string(),
+        code: code.to_string(),
+    };
+    warp::reply::with_status(warp::reply::json(&body), status).into_response()
+}
+
+fn tenant_error_response(err: TenantError) -> warp::reply::Response {
+    let (status, code) = match &err {
+        TenantError::NotFound(_) => (StatusCode::NOT_FOUND, "not_found"),
+        TenantError::PipelineNotFound(_) => (StatusCode::NOT_FOUND, "pipeline_not_found"),
+        TenantError::QuotaExceeded(_) => (StatusCode::TOO_MANY_REQUESTS, "quota_exceeded"),
+        TenantError::RateLimitExceeded => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
+        TenantError::ParseError(_) => (StatusCode::BAD_REQUEST, "parse_error"),
+        TenantError::EngineError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "engine_error"),
+        TenantError::AlreadyExists(_) => (StatusCode::CONFLICT, "already_exists"),
+    };
+    error_response(status, code, &err.to_string())
+}
+
+fn json_to_runtime_value(v: &serde_json::Value) -> varpulis_core::Value {
+    match v {
+        serde_json::Value::Null => varpulis_core::Value::Null,
+        serde_json::Value::Bool(b) => varpulis_core::Value::Bool(*b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                varpulis_core::Value::Int(i)
+            } else if let Some(f) = n.as_f64() {
+                varpulis_core::Value::Float(f)
+            } else {
+                varpulis_core::Value::Null
+            }
+        }
+        serde_json::Value::String(s) => varpulis_core::Value::Str(s.clone()),
+        serde_json::Value::Array(arr) => {
+            varpulis_core::Value::Array(arr.iter().map(json_to_runtime_value).collect())
+        }
+        serde_json::Value::Object(map) => {
+            let m: indexmap::IndexMap<String, varpulis_core::Value> = map
+                .iter()
+                .map(|(k, v)| (k.clone(), json_to_runtime_value(v)))
+                .collect();
+            varpulis_core::Value::Map(m)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+    use varpulis_runtime::tenant::{TenantManager, TenantQuota};
+
+    async fn setup_test_manager() -> SharedTenantManager {
+        let mut mgr = TenantManager::new();
+        let id = mgr
+            .create_tenant(
+                "Test Corp".into(),
+                "test-key-123".into(),
+                TenantQuota::default(),
+            )
+            .unwrap();
+
+        // Deploy a pipeline
+        let tenant = mgr.get_tenant_mut(&id).unwrap();
+        tenant
+            .deploy_pipeline(
+                "Test Pipeline".into(),
+                "stream A = SensorReading .where(x > 1)".into(),
+            )
+            .unwrap();
+
+        Arc::new(RwLock::new(mgr))
+    }
+
+    #[tokio::test]
+    async fn test_deploy_pipeline() {
+        let mgr = setup_test_manager().await;
+        let routes = api_routes(mgr);
+
+        let resp = warp::test::request()
+            .method("POST")
+            .path("/api/v1/pipelines")
+            .header("x-api-key", "test-key-123")
+            .json(&DeployPipelineRequest {
+                name: "New Pipeline".into(),
+                source: "stream B = Events .where(y > 10)".into(),
+            })
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        let body: DeployPipelineResponse = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body.name, "New Pipeline");
+        assert_eq!(body.status, "running");
+    }
+
+    #[tokio::test]
+    async fn test_deploy_invalid_api_key() {
+        let mgr = setup_test_manager().await;
+        let routes = api_routes(mgr);
+
+        let resp = warp::test::request()
+            .method("POST")
+            .path("/api/v1/pipelines")
+            .header("x-api-key", "wrong-key")
+            .json(&DeployPipelineRequest {
+                name: "Bad".into(),
+                source: "stream X = Y .where(z > 1)".into(),
+            })
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_deploy_invalid_vpl() {
+        let mgr = setup_test_manager().await;
+        let routes = api_routes(mgr);
+
+        let resp = warp::test::request()
+            .method("POST")
+            .path("/api/v1/pipelines")
+            .header("x-api-key", "test-key-123")
+            .json(&DeployPipelineRequest {
+                name: "Bad VPL".into(),
+                source: "this is not valid {{{".into(),
+            })
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_list_pipelines() {
+        let mgr = setup_test_manager().await;
+        let routes = api_routes(mgr);
+
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/api/v1/pipelines")
+            .header("x-api-key", "test-key-123")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: PipelineListResponse = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body.total, 1);
+        assert_eq!(body.pipelines[0].name, "Test Pipeline");
+    }
+
+    #[tokio::test]
+    async fn test_usage_endpoint() {
+        let mgr = setup_test_manager().await;
+        let routes = api_routes(mgr);
+
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/api/v1/usage")
+            .header("x-api-key", "test-key-123")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: UsageResponse = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body.active_pipelines, 1);
+    }
+
+    #[tokio::test]
+    async fn test_inject_event() {
+        let mgr = setup_test_manager().await;
+
+        // Get pipeline ID
+        let pipeline_id = {
+            let m = mgr.read().await;
+            let tid = m.get_tenant_by_api_key("test-key-123").unwrap().clone();
+            let tenant = m.get_tenant(&tid).unwrap();
+            tenant.pipelines.keys().next().unwrap().clone()
+        };
+
+        let routes = api_routes(mgr);
+
+        let resp = warp::test::request()
+            .method("POST")
+            .path(&format!("/api/v1/pipelines/{}/events", pipeline_id))
+            .header("x-api-key", "test-key-123")
+            .json(&InjectEventRequest {
+                event_type: "SensorReading".into(),
+                fields: {
+                    let mut m = serde_json::Map::new();
+                    m.insert(
+                        "x".into(),
+                        serde_json::Value::Number(serde_json::Number::from(42)),
+                    );
+                    m
+                },
+            })
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    }
+
+    #[test]
+    fn test_json_to_runtime_value() {
+        assert_eq!(
+            json_to_runtime_value(&serde_json::json!(null)),
+            varpulis_core::Value::Null
+        );
+        assert_eq!(
+            json_to_runtime_value(&serde_json::json!(true)),
+            varpulis_core::Value::Bool(true)
+        );
+        assert_eq!(
+            json_to_runtime_value(&serde_json::json!(42)),
+            varpulis_core::Value::Int(42)
+        );
+        assert_eq!(
+            json_to_runtime_value(&serde_json::json!(3.14)),
+            varpulis_core::Value::Float(3.14)
+        );
+        assert_eq!(
+            json_to_runtime_value(&serde_json::json!("hello")),
+            varpulis_core::Value::Str("hello".into())
+        );
+    }
+
+    #[test]
+    fn test_error_response_format() {
+        let resp = error_response(StatusCode::BAD_REQUEST, "test_error", "Something failed");
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_tenant_error_mapping() {
+        let resp = tenant_error_response(TenantError::NotFound("t1".into()));
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+        let resp = tenant_error_response(TenantError::RateLimitExceeded);
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        let resp = tenant_error_response(TenantError::ParseError("bad".into()));
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+}

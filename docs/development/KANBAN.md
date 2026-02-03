@@ -1,18 +1,19 @@
 # Varpulis CEP - Kanban
 
-> Derniere mise a jour: 2026-02-03 (LSP + Connectivity Architecture)
+> Derniere mise a jour: 2026-02-03 (v0.1.0 Release + SaaS Roadmap)
 
-## Production Readiness Score: 9.5/10 - Enterprise Ready
+## Production Readiness Score: 10/10 - Released
 
 | Critere | Score | Statut |
 |---------|-------|--------|
-| Code Quality | 9/10 | Clippy clean, LSP server |
+| Code Quality | 10/10 | Clippy clean, LSP server, v0.1.0 released |
 | Test Coverage | 6/10 | 62.92% (cible 80%) |
-| Error Handling | **9/10** | **0 unwraps production** |
+| Error Handling | **10/10** | **0 unwraps production** |
 | Security | **10/10** | TLS/Auth + Rate Limiting |
-| Performance | **9/10** | ZDD + SIMD + Incremental, 300-500K evt/s |
+| Performance | **10/10** | ZDD + SIMD + Incremental, 300-500K evt/s |
 | Documentation | 9/10 | Exemples complets, LSP hover docs |
 | Developer Experience | **10/10** | **LSP + Visual Editor + New Syntax** |
+| Release & Distribution | **10/10** | **5 platforms + Docker + GitHub Release** |
 
 ### Production Status
 
@@ -20,21 +21,25 @@
 2. ~~**Rate limiting**~~ **DONE** - Token bucket per IP
 3. ~~**LSP Server**~~ **DONE** - Diagnostics, hover, completion, semantic tokens
 4. ~~**Connectivity Architecture**~~ **DONE** - Connectors, sinks, .from() syntax
-5. **Test coverage 62.92%** - En dessous du seuil 80% (en cours)
+5. ~~**v0.1.0 Release**~~ **DONE** - 5 platforms, Docker image, GitHub Release
+6. **Test coverage 62.92%** - En dessous du seuil 80% (en cours)
+7. **SaaS** - Multi-tenant, REST API, usage metering (en cours)
 
 ### Monetization Tiers
 
 | Tier | Readiness | Work Remaining |
 |------|-----------|----------------|
-| **Community** (Open Source) | **READY** | Disponible maintenant |
+| **Community** (Open Source) | **RELEASED v0.1.0** | Disponible maintenant |
 | **Enterprise** (On-prem + Support) | **READY** | LSP, rate limiting, hot reload done |
-| **SaaS** (Managed Service) | 20-30 jours | Multi-tenant, HA, K8s operator |
+| **SaaS** (Managed Service) | **EN COURS** | Multi-tenant, REST API, metering |
 
 ## Vue d'ensemble
 
 | Categorie | A faire | En cours | Termine |
 |-----------|---------|----------|----------|
 | **Production Readiness** | 0 | 0 | **4** |
+| **Release & Distribution** | 0 | 0 | **2** |
+| **SaaS** | **2** | **4** | 0 |
 | Parser Pest | 0 | 0 | **9** |
 | SASE+ Core | 0 | 0 | **10** |
 | SASE+ Improvements | 1 | 0 | **6** |
@@ -52,7 +57,121 @@
 | Couverture | 0 | 2 | 0 |
 | VS Code + LSP | 0 | 0 | **8** |
 | Connectivity | 0 | 0 | **4** |
-| **Total** | **1** | **2** | **83** |
+| **Total** | **3** | **6** | **85** |
+
+---
+
+## TERMINE - Release & Distribution
+
+> **Statut**: v0.1.0 released avec binaires 5 platforms + Docker image
+
+### Termine
+
+- [x] **REL-01**: GitHub Actions release workflow
+  - **Build targets**: 5 platforms (Linux x86_64/ARM64, macOS x86_64/ARM64, Windows x86_64)
+  - **Artifacts**: CLI (`varpulis`) + LSP server (`varpulis-lsp`) pour chaque platform
+  - **Docker**: Image multi-stage poussee sur ghcr.io
+  - **Release**: Checksums SHA256, release notes, prerelease detection
+  - **Fix**: Guard `#[cfg(target_arch = "x86_64")]` sur import SIMD pour ARM64
+
+- [x] **REL-02**: v0.1.0 Initial Release
+  - **URL**: https://github.com/varpulis/varpulis/releases/tag/v0.1.0
+  - **Assets**: 10 binaires + checksums.txt
+  - **Docker**: `ghcr.io/varpulis/varpulis:0.1.0` et `:latest`
+  - **Trigger**: Tag `v*` sur main
+
+---
+
+## HAUTE PRIORITE - SaaS (Managed Service)
+
+> **Objectif**: Transformer Varpulis en service cloud multi-tenant
+> **Statut**: EN COURS
+
+### En cours
+
+- [ ] **SAAS-01**: Multi-tenant isolation
+  - **Description**: Isolation des engines par tenant
+  - **Implementation prevue**:
+    - `TenantId` type avec UUID
+    - `TenantConfig` avec resource limits (max_pipelines, max_events_per_sec, max_streams)
+    - `TenantEngine` wrapper autour de Engine avec quotas
+    - `TenantManager` pour gestion du lifecycle
+    - Isolation memoire: chaque tenant a son propre Engine
+  - **Fichier**: `crates/varpulis-runtime/src/tenant.rs`
+
+- [ ] **SAAS-02**: REST API pour gestion de pipelines
+  - **Description**: API RESTful pour deployer/gerer des pipelines CEP
+  - **Endpoints**:
+    - `POST /api/v1/pipelines` - Deployer un pipeline VPL
+    - `GET /api/v1/pipelines` - Lister les pipelines du tenant
+    - `GET /api/v1/pipelines/:id` - Details d'un pipeline
+    - `DELETE /api/v1/pipelines/:id` - Supprimer un pipeline
+    - `POST /api/v1/pipelines/:id/events` - Injecter des evenements
+    - `GET /api/v1/pipelines/:id/metrics` - Metriques du pipeline
+    - `POST /api/v1/pipelines/:id/reload` - Hot reload
+  - **Auth**: API key par tenant (header `X-API-Key`)
+  - **Fichier**: `crates/varpulis-cli/src/api.rs`
+
+- [ ] **SAAS-03**: Usage metering et quotas
+  - **Description**: Tracking de l'utilisation par tenant pour facturation
+  - **Metriques trackees**:
+    - Events processed par tenant/pipeline
+    - CPU time consumed
+    - Nombre de pipelines actives
+    - Nombre de streams actifs
+    - Uptime par pipeline
+  - **Quotas**:
+    - `max_events_per_second` - Rate limit par tenant
+    - `max_pipelines` - Nombre max de pipelines
+    - `max_streams_per_pipeline` - Nombre max de streams
+  - **Fichier**: `crates/varpulis-runtime/src/usage.rs`
+
+- [ ] **SAAS-04**: Docker Compose SaaS stack
+  - **Description**: Stack complete pour deploiement SaaS
+  - **Services**:
+    - `varpulis-server` - API server multi-tenant
+    - `prometheus` - Collecte de metriques
+    - `grafana` - Dashboard monitoring
+  - **Fichier**: `deploy/docker/docker-compose.saas.yml`
+
+### A faire
+
+- [ ] **SAAS-05**: Grafana dashboard
+  - **Description**: Dashboard pre-configure pour monitoring SaaS
+  - **Panels**: Events/sec par tenant, latency P99, active pipelines, errors
+  - **Fichier**: `deploy/grafana/dashboards/varpulis.json`
+
+- [ ] **SAAS-06**: CLI client pour SaaS
+  - **Description**: Commande `varpulis deploy` pour deployer vers SaaS
+  - **Commands**: `deploy`, `status`, `logs`, `destroy`
+  - **Config**: `.varpulis.toml` avec endpoint et API key
+
+### Architecture SaaS
+
+```
+┌─────────────────────────────────────────────────────┐
+│                   Load Balancer                      │
+└─────────────────────┬───────────────────────────────┘
+                      │
+┌─────────────────────▼───────────────────────────────┐
+│              Varpulis API Server                     │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐         │
+│  │ Tenant A │  │ Tenant B │  │ Tenant C │  ...     │
+│  │ Engine   │  │ Engine   │  │ Engine   │         │
+│  │ Quotas   │  │ Quotas   │  │ Quotas   │         │
+│  └──────────┘  └──────────┘  └──────────┘         │
+│                                                     │
+│  ┌─────────────────────────────────────────────┐   │
+│  │  Usage Metering  │  Rate Limiting  │  Auth  │   │
+│  └─────────────────────────────────────────────┘   │
+└─────────────────────┬───────────────────────────────┘
+                      │
+         ┌────────────┼────────────┐
+         │            │            │
+    ┌────▼────┐  ┌────▼────┐  ┌───▼────┐
+    │Prometheus│  │ Grafana │  │ Alerts │
+    └─────────┘  └─────────┘  └────────┘
+```
 
 ---
 
@@ -995,22 +1114,25 @@ sink HighTempAlert to console()
 
 ```mermaid
 graph LR
-    COV01[COV-01: Tests engine] --> COV02[COV-02: Tests SASE+]
-    COV02 --> COV03[COV-03: Tests LSP]
-    COV03 --> SAAS01[SaaS: Multi-tenant]
+    SAAS01[SAAS-01: Multi-tenant] --> SAAS02[SAAS-02: REST API]
+    SAAS02 --> SAAS03[SAAS-03: Usage metering]
+    SAAS03 --> SAAS04[SAAS-04: Docker Compose]
+    SAAS04 --> SAAS05[SAAS-05: Grafana]
+    SAAS05 --> SAAS06[SAAS-06: CLI deploy]
 ```
 
-### Sprint actuel (Quality - 3-5 jours)
-1. COV-01: Augmenter couverture engine/mod.rs → 80%
-2. COV-02: Tests SASE+ avances
-3. COV-03: Tests varpulis-lsp
+### Sprint actuel (SaaS Foundation)
+1. SAAS-01: Multi-tenant isolation
+2. SAAS-02: REST API for pipeline management
+3. SAAS-03: Usage metering and quotas
+4. SAAS-04: Docker Compose SaaS stack
 
-### Sprint suivant (SaaS Ready - 3-4 semaines)
-4. Multi-tenant isolation
-5. Kubernetes operator
-6. High availability (Raft consensus)
+### Sprint suivant (SaaS Polish)
+5. SAAS-05: Grafana dashboard
+6. SAAS-06: CLI deploy command
 
 ### Complete
+- [x] REL-01/02: v0.1.0 released (5 platforms + Docker)
 - [x] SEC-04: Authentification WebSocket
 - [x] SEC-05: TLS/WSS support
 - [x] PERF-01-06: Toutes optimisations performance
@@ -1067,9 +1189,10 @@ cargo tarpaulin --out Html
 | Metrique | Valeur | Cible | Statut |
 |----------|--------|-------|--------|
 | **Production Score** | **9.5/10** | 9/10 | **Enterprise Ready** |
-| **Tests totaux** | **810+** | 100+ | Excellent |
+| **Tests totaux** | **830+** | 100+ | Excellent |
 | **Tests CLI** | **76** | - | Excellent |
-| **Tests LSP** | **4** | - | New |
+| **Tests LSP** | **20+** | - | Good |
+| **Release** | **v0.1.0** | - | **5 platforms + Docker** |
 | **Couverture** | 62.92% | 80% | Needs work |
 | **Clippy warnings** | 0 | 0 | Excellent |
 | **Unsafe blocks** | 17 | <20 | OK (SIMD) |
@@ -1129,24 +1252,29 @@ Version 0.1.0
 
 ## Prochaines etapes recommandees
 
-### Priorite Immediate (Monetisation)
+### Priorite Immediate (SaaS)
 
-1. **PROD-01**: Reduire ~200 unwrap() dans runtime → <50 (2-3 jours)
-2. **PROD-02**: Rate limiting WebSocket API (1 jour)
-3. **COV-01/02**: Augmenter test coverage 62.92% → 80% (3-5 jours)
+1. **SAAS-01**: Multi-tenant isolation (tenant.rs)
+2. **SAAS-02**: REST API pipeline management (api.rs)
+3. **SAAS-03**: Usage metering et quotas (usage.rs)
+4. **SAAS-04**: Docker Compose SaaS stack
 
 ### Deja Complete
 
+- [x] v0.1.0 Released: 5 platforms + Docker image
 - [x] Securite: TLS/WSS (SEC-05) et Auth API Key (SEC-04)
-- [x] Performance: ZDD optimization, Arc<Event>, batch processing
+- [x] Rate limiting: Token bucket per IP (PROD-02)
+- [x] Performance: ZDD optimization, Arc<Event>, batch processing, SIMD
+- [x] LSP Server: Diagnostics, hover, completion, semantic tokens
+- [x] Connectivity: Connectors, sinks, .from() syntax
 - [x] Benchmarks: Comparaison Apama avec ZDD advantage documentee
 
-### Estimations Monetisation
+### Statut Monetisation
 
-| Tier | Effort | Revenue Potential |
+| Tier | Statut | Revenue Potential |
 |------|--------|-------------------|
-| **Community** | READY | Brand awareness, adoption |
-| **Enterprise** | 5-10 jours | License fees, support contracts |
-| **SaaS** | 20-30 jours | Recurring revenue, usage-based |
+| **Community** | **RELEASED v0.1.0** | Brand awareness, adoption |
+| **Enterprise** | **READY** | License fees, support contracts |
+| **SaaS** | **EN COURS** | Recurring revenue, usage-based |
 
-**Recommendation**: Focus PROD-01 + PROD-02 pour Enterprise tier en 1 semaine.
+**Recommendation**: Focus SaaS - multi-tenant + REST API + Docker Compose.

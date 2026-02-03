@@ -114,6 +114,7 @@ pub mod simd;
 pub mod simulator;
 pub mod sink;
 pub mod stream;
+pub mod tenant;
 pub mod timer;
 pub mod window;
 pub mod worker_pool;
@@ -134,6 +135,12 @@ pub use window::{
 pub use worker_pool::{
     BackpressureError, BackpressureStrategy, WorkerPool, WorkerPoolConfig, WorkerPoolMetrics,
     WorkerState, WorkerStatus,
+};
+
+// Multi-tenant SaaS support
+pub use tenant::{
+    shared_tenant_manager, Pipeline, PipelineStatus, SharedTenantManager, Tenant, TenantError,
+    TenantId, TenantManager, TenantQuota, TenantUsage,
 };
 
 // Persistence exports (always available, RocksDB impl requires "persistence" feature)
