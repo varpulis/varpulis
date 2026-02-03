@@ -47,6 +47,11 @@ impl AuthConfig {
     pub fn is_required(&self) -> bool {
         self.enabled
     }
+
+    /// Get the configured API key
+    pub fn api_key(&self) -> Option<&str> {
+        self.api_key.as_deref()
+    }
 }
 
 impl Default for AuthConfig {

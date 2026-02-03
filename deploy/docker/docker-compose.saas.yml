@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   # Varpulis CEP Server (SaaS mode)
   varpulis:
@@ -7,10 +5,11 @@ services:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
     container_name: varpulis-server
-    command: ["server", "--bind", "0.0.0.0:8080", "--api-key", "${VARPULIS_API_KEY:-default-dev-key}"]
+    command: ["server", "--bind", "0.0.0.0", "--port", "9000", "--metrics", "--api-key", "${VARPULIS_API_KEY:-default-dev-key}"]
     ports:
-      - "8080:8080"   # HTTP/WebSocket API
-      - "9090:9090"   # Prometheus metrics
+      - "9000:9000"   # HTTP/WebSocket API
+    expose:
+      - "9090"        # Prometheus metrics (internal only, scraped by Prometheus)
     environment:
       - VARPULIS_API_KEY=${VARPULIS_API_KEY:-default-dev-key}
       - VARPULIS_RATE_LIMIT=${VARPULIS_RATE_LIMIT:-1000}
@@ -20,7 +19,7 @@ services:
       - varpulis-state:/app/state
       - ./queries:/app/queries:ro
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
       interval: 15s
       timeout: 5s
       retries: 3

@@ -1,19 +1,20 @@
 # Varpulis CEP - Kanban
 
-> Derniere mise a jour: 2026-02-03 (v0.1.0 Release + SaaS Roadmap)
+> Derniere mise a jour: 2026-02-03 (SaaS Foundation Complete)
 
 ## Production Readiness Score: 10/10 - Released
 
 | Critere | Score | Statut |
 |---------|-------|--------|
 | Code Quality | 10/10 | Clippy clean, LSP server, v0.1.0 released |
-| Test Coverage | 6/10 | 62.92% (cible 80%) |
+| Test Coverage | 6/10 | 62.92% (cible 80%), 1040+ tests |
 | Error Handling | **10/10** | **0 unwraps production** |
 | Security | **10/10** | TLS/Auth + Rate Limiting |
 | Performance | **10/10** | ZDD + SIMD + Incremental, 300-500K evt/s |
 | Documentation | 9/10 | Exemples complets, LSP hover docs |
 | Developer Experience | **10/10** | **LSP + Visual Editor + New Syntax** |
 | Release & Distribution | **10/10** | **5 platforms + Docker + GitHub Release** |
+| SaaS Infrastructure | **8/10** | Multi-tenant, REST API, Docker Compose, Grafana |
 
 ### Production Status
 
@@ -22,8 +23,9 @@
 3. ~~**LSP Server**~~ **DONE** - Diagnostics, hover, completion, semantic tokens
 4. ~~**Connectivity Architecture**~~ **DONE** - Connectors, sinks, .from() syntax
 5. ~~**v0.1.0 Release**~~ **DONE** - 5 platforms, Docker image, GitHub Release
-6. **Test coverage 62.92%** - En dessous du seuil 80% (en cours)
-7. **SaaS** - Multi-tenant, REST API, usage metering (en cours)
+6. **Test coverage 62.92%** - En dessous du seuil 80% (1040+ tests, en cours)
+7. ~~**SaaS Foundation**~~ **DONE** - Multi-tenant, REST API, usage metering, Docker Compose + Grafana
+8. **State Persistence** - Tenants/pipelines in-memory only, need durability (en cours)
 
 ### Monetization Tiers
 
@@ -31,7 +33,7 @@
 |------|-----------|----------------|
 | **Community** (Open Source) | **RELEASED v0.1.0** | Disponible maintenant |
 | **Enterprise** (On-prem + Support) | **READY** | LSP, rate limiting, hot reload done |
-| **SaaS** (Managed Service) | **EN COURS** | Multi-tenant, REST API, metering |
+| **SaaS** (Managed Service) | **FOUNDATION DONE** | State persistence + tenant registration needed |
 
 ## Vue d'ensemble
 
@@ -39,7 +41,7 @@
 |-----------|---------|----------|----------|
 | **Production Readiness** | 0 | 0 | **4** |
 | **Release & Distribution** | 0 | 0 | **2** |
-| **SaaS** | **2** | **4** | 0 |
+| **SaaS** | **1** | 0 | **5** |
 | Parser Pest | 0 | 0 | **9** |
 | SASE+ Core | 0 | 0 | **10** |
 | SASE+ Improvements | 1 | 0 | **6** |
@@ -57,7 +59,7 @@
 | Couverture | 0 | 2 | 0 |
 | VS Code + LSP | 0 | 0 | **8** |
 | Connectivity | 0 | 0 | **4** |
-| **Total** | **3** | **6** | **85** |
+| **Total** | **3** | **2** | **90** |
 
 ---
 
@@ -82,26 +84,27 @@
 
 ---
 
-## HAUTE PRIORITE - SaaS (Managed Service)
+## TERMINE - SaaS Foundation (Managed Service)
 
 > **Objectif**: Transformer Varpulis en service cloud multi-tenant
-> **Statut**: EN COURS
+> **Statut**: Foundation COMPLETE - Integration tests 15/15 passing
 
-### En cours
+### Termine
 
-- [ ] **SAAS-01**: Multi-tenant isolation
-  - **Description**: Isolation des engines par tenant
-  - **Implementation prevue**:
-    - `TenantId` type avec UUID
-    - `TenantConfig` avec resource limits (max_pipelines, max_events_per_sec, max_streams)
-    - `TenantEngine` wrapper autour de Engine avec quotas
+- [x] **SAAS-01**: Multi-tenant isolation
+  - **Implementation**:
+    - `TenantId` type avec UUID v4
+    - `TenantQuota` avec 3 tiers (free, pro, enterprise)
+    - `TenantUsage` avec rate limiting (token bucket)
     - `TenantManager` pour gestion du lifecycle
+    - `SharedTenantManager` (Arc<RwLock>) pour acces async
     - Isolation memoire: chaque tenant a son propre Engine
+    - Auto-provisioning du tenant default avec `--api-key`
   - **Fichier**: `crates/varpulis-runtime/src/tenant.rs`
+  - **Tests**: 20 tests unitaires
 
-- [ ] **SAAS-02**: REST API pour gestion de pipelines
-  - **Description**: API RESTful pour deployer/gerer des pipelines CEP
-  - **Endpoints**:
+- [x] **SAAS-02**: REST API pour gestion de pipelines
+  - **Endpoints** (tous testes en integration):
     - `POST /api/v1/pipelines` - Deployer un pipeline VPL
     - `GET /api/v1/pipelines` - Lister les pipelines du tenant
     - `GET /api/v1/pipelines/:id` - Details d'un pipeline
@@ -109,42 +112,45 @@
     - `POST /api/v1/pipelines/:id/events` - Injecter des evenements
     - `GET /api/v1/pipelines/:id/metrics` - Metriques du pipeline
     - `POST /api/v1/pipelines/:id/reload` - Hot reload
+    - `GET /api/v1/usage` - Usage tenant
   - **Auth**: API key par tenant (header `X-API-Key`)
   - **Fichier**: `crates/varpulis-cli/src/api.rs`
+  - **Tests**: 9 tests unitaires + 15 tests integration Docker
 
-- [ ] **SAAS-03**: Usage metering et quotas
-  - **Description**: Tracking de l'utilisation par tenant pour facturation
-  - **Metriques trackees**:
-    - Events processed par tenant/pipeline
-    - CPU time consumed
-    - Nombre de pipelines actives
-    - Nombre de streams actifs
-    - Uptime par pipeline
-  - **Quotas**:
-    - `max_events_per_second` - Rate limit par tenant
-    - `max_pipelines` - Nombre max de pipelines
-    - `max_streams_per_pipeline` - Nombre max de streams
-  - **Fichier**: `crates/varpulis-runtime/src/usage.rs`
+- [x] **SAAS-03**: Usage metering et quotas
+  - **Metriques trackees**: events processed, alerts generated, active pipelines, uptime
+  - **Quotas**: max_events_per_second (token bucket), max_pipelines, max_streams_per_pipeline
+  - **Tiers**: Free (2 pipelines, 100 evt/s), Pro (20, 50K), Enterprise (1000, 500K)
+  - **Fichier**: integre dans `tenant.rs`
 
-- [ ] **SAAS-04**: Docker Compose SaaS stack
-  - **Description**: Stack complete pour deploiement SaaS
-  - **Services**:
-    - `varpulis-server` - API server multi-tenant
-    - `prometheus` - Collecte de metriques
-    - `grafana` - Dashboard monitoring
+- [x] **SAAS-04**: Docker Compose SaaS stack
+  - **Services**: varpulis-server, prometheus, grafana
+  - **Features**: Healthcheck, auto-provisioning, metrics scraping
+  - **Ports**: 9000 (API), 9090 (metrics internal), 9091 (Prometheus), 3000 (Grafana)
   - **Fichier**: `deploy/docker/docker-compose.saas.yml`
 
-### A faire
+- [x] **SAAS-05**: Grafana dashboard
+  - **Panels**: Events/sec, Alerts/sec, Processing Latency (p99/p50), Active Streams, Queue Depth, Total Events, Total Alerts
+  - **Datasource**: Prometheus auto-provisioned
+  - **Fichier**: `deploy/docker/grafana/dashboards/varpulis.json`
 
-- [ ] **SAAS-05**: Grafana dashboard
-  - **Description**: Dashboard pre-configure pour monitoring SaaS
-  - **Panels**: Events/sec par tenant, latency P99, active pipelines, errors
-  - **Fichier**: `deploy/grafana/dashboards/varpulis.json`
+### A faire
 
 - [ ] **SAAS-06**: CLI client pour SaaS
   - **Description**: Commande `varpulis deploy` pour deployer vers SaaS
   - **Commands**: `deploy`, `status`, `logs`, `destroy`
   - **Config**: `.varpulis.toml` avec endpoint et API key
+
+### Gaps critiques pour production
+
+- [ ] **SAAS-07**: State persistence
+  - **Description**: Tenants et pipelines sont in-memory. Restart = perte de tout.
+  - **Solution**: Hook tenant/pipeline state into RocksDB persistence (feature deja existante)
+  - **Priorite**: CRITIQUE
+
+- [ ] **SAAS-08**: Tenant registration API
+  - **Description**: `POST /api/v1/tenants` pour onboarding programmatique
+  - **Priorite**: HIGH
 
 ### Architecture SaaS
 
@@ -1121,15 +1127,13 @@ graph LR
     SAAS05 --> SAAS06[SAAS-06: CLI deploy]
 ```
 
-### Sprint actuel (SaaS Foundation)
-1. SAAS-01: Multi-tenant isolation
-2. SAAS-02: REST API for pipeline management
-3. SAAS-03: Usage metering and quotas
-4. SAAS-04: Docker Compose SaaS stack
+### Sprint actuel (SaaS Durability)
+1. SAAS-07: State persistence (tenants/pipelines)
+2. SAAS-08: Tenant registration API
 
 ### Sprint suivant (SaaS Polish)
-5. SAAS-05: Grafana dashboard
-6. SAAS-06: CLI deploy command
+3. SAAS-06: CLI deploy command
+4. COV-01: Test coverage 80%+
 
 ### Complete
 - [x] REL-01/02: v0.1.0 released (5 platforms + Docker)
@@ -1138,6 +1142,7 @@ graph LR
 - [x] PERF-01-06: Toutes optimisations performance
 - [x] LSP-01-06: LSP server complet
 - [x] CONN-01-04: Architecture connectivite
+- [x] SAAS-01-05: SaaS foundation (multi-tenant, REST API, metering, Docker, Grafana)
 
 ---
 
@@ -1189,9 +1194,11 @@ cargo tarpaulin --out Html
 | Metrique | Valeur | Cible | Statut |
 |----------|--------|-------|--------|
 | **Production Score** | **9.5/10** | 9/10 | **Enterprise Ready** |
-| **Tests totaux** | **830+** | 100+ | Excellent |
+| **Tests totaux** | **1040+** | 100+ | Excellent |
 | **Tests CLI** | **76** | - | Excellent |
 | **Tests LSP** | **20+** | - | Good |
+| **Tests Tenant/API** | **29** | - | Good |
+| **Integration Tests** | **15/15** | - | Docker Compose |
 | **Release** | **v0.1.0** | - | **5 platforms + Docker** |
 | **Couverture** | 62.92% | 80% | Needs work |
 | **Clippy warnings** | 0 | 0 | Excellent |
@@ -1233,17 +1240,20 @@ Version 0.1.0
 |   +-- completion.rs - Auto-completion
 |   +-- semantic.rs - Semantic token highlighting
 |
-+-- varpulis-runtime (9,171 lignes)
++-- varpulis-runtime (~10,000 lignes)
 |   +-- sase.rs - SASE+ NFA engine
 |   +-- attention.rs - Attention mechanism
 |   +-- engine/ - Runtime engine (modularise)
+|   +-- tenant.rs - Multi-tenant isolation (20 tests) [NEW]
 |   +-- connector.rs - External connectors
 |   +-- aggregation.rs - Aggregation functions
 |   +-- window.rs - Time windows
 |
-+-- varpulis-cli (~1,100 lignes) [REFACTORED]
-    +-- main.rs - CLI entry point
++-- varpulis-cli (~1,500 lignes) [REFACTORED + SaaS]
+    +-- main.rs - CLI entry point + server
     +-- lib.rs - Library exports
+    +-- api.rs - REST API routes (9 tests)
+    +-- auth.rs - Authentication module (35 tests)
     +-- security.rs - Security module (28 tests)
     +-- websocket.rs - WebSocket module (48 tests)
 ```
@@ -1252,12 +1262,11 @@ Version 0.1.0
 
 ## Prochaines etapes recommandees
 
-### Priorite Immediate (SaaS)
+### Priorite Immediate
 
-1. **SAAS-01**: Multi-tenant isolation (tenant.rs)
-2. **SAAS-02**: REST API pipeline management (api.rs)
-3. **SAAS-03**: Usage metering et quotas (usage.rs)
-4. **SAAS-04**: Docker Compose SaaS stack
+1. **SAAS-07**: State persistence (tenants + pipelines survive restart)
+2. **SAAS-08**: Tenant registration API
+3. **COV-01**: Test coverage 80%+
 
 ### Deja Complete
 
@@ -1268,6 +1277,7 @@ Version 0.1.0
 - [x] LSP Server: Diagnostics, hover, completion, semantic tokens
 - [x] Connectivity: Connectors, sinks, .from() syntax
 - [x] Benchmarks: Comparaison Apama avec ZDD advantage documentee
+- [x] SaaS Foundation: Multi-tenant, REST API, metering, Docker Compose, Grafana (15/15 integration tests)
 
 ### Statut Monetisation
 
@@ -1275,6 +1285,6 @@ Version 0.1.0
 |------|--------|-------------------|
 | **Community** | **RELEASED v0.1.0** | Brand awareness, adoption |
 | **Enterprise** | **READY** | License fees, support contracts |
-| **SaaS** | **EN COURS** | Recurring revenue, usage-based |
+| **SaaS** | **FOUNDATION DONE** | Recurring revenue, usage-based |
 
-**Recommendation**: Focus SaaS - multi-tenant + REST API + Docker Compose.
+**Recommendation**: State persistence is the critical blocker for SaaS production.
