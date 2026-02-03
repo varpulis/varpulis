@@ -21,6 +21,7 @@ use varpulis_runtime::metrics::{Metrics, MetricsServer};
 use varpulis_runtime::simulator::{Simulator, SimulatorConfig};
 
 // Import our new modules
+use varpulis_cli::api;
 use varpulis_cli::auth::{self, AuthConfig};
 use varpulis_cli::config::Config;
 use varpulis_cli::rate_limit;
@@ -1123,9 +1124,11 @@ async fn run_server(
     let tls_enabled = tls_config.is_some();
     let protocol = if tls_enabled { "wss" } else { "ws" };
 
+    let http_protocol = if tls_enabled { "https" } else { "http" };
     println!("Varpulis Server");
     println!("==================");
     println!("WebSocket: {}://{}:{}/ws", protocol, bind, port);
+    println!("REST API:  {}://{}:{}/api/v1/", http_protocol, bind, port);
     println!("Workdir:   {}", workdir.display());
     println!(
         "TLS:       {}",
@@ -1161,7 +1164,7 @@ async fn run_server(
     // Create metrics if enabled
     let _prom_metrics = enable_metrics.then(|| {
         let metrics = Metrics::new();
-        let server = MetricsServer::new(metrics.clone(), format!("127.0.0.1:{}", metrics_port));
+        let server = MetricsServer::new(metrics.clone(), format!("{}:{}", bind, metrics_port));
         tokio::spawn(async move {
             if let Err(e) = server.run().await {
                 tracing::error!("Metrics server error: {}", e);
@@ -1267,10 +1270,31 @@ async fn run_server(
         }
     });
 
+    // REST API routes (multi-tenant pipeline management)
+    let tenant_manager = varpulis_runtime::shared_tenant_manager();
+
+    // Auto-provision a default tenant if an API key is configured
+    if auth_config.is_required() {
+        if let Some(key) = auth_config.api_key() {
+            let mut mgr = tenant_manager.write().await;
+            if mgr.get_tenant_by_api_key(key).is_none() {
+                let _ = mgr.create_tenant(
+                    "default".to_string(),
+                    key.to_string(),
+                    varpulis_runtime::TenantQuota::enterprise(),
+                );
+                info!("Auto-provisioned default tenant with configured API key");
+            }
+        }
+    }
+
+    let api_routes = api::api_routes(tenant_manager);
+
     // Combined routes
     let routes = ws_route
         .or(health_route)
         .or(ready_route)
+        .or(api_routes)
         .recover(auth::handle_rejection);
 
     // Parse bind address - NO unwrap()!

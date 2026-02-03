@@ -33,18 +33,19 @@ stream Alert = SomeEvent
 
 ## Documentation Structure
 
-### 📊 Project Status
+### Project Status
 - [`development/STATUS.md`](development/STATUS.md) - **Current project status**
 - [`development/KANBAN.md`](development/KANBAN.md) - Task tracking
 - [`development/AUDIT_REPORT.md`](development/AUDIT_REPORT.md) - Security audit
+- [`PRODUCTION_DEPLOYMENT.md`](PRODUCTION_DEPLOYMENT.md) - **Production deployment guide**
 
-### 📋 Specifications
+### Specifications
 - [`spec/overview.md`](spec/overview.md) - Project overview and vision
 - [`spec/roadmap.md`](spec/roadmap.md) - Roadmap and development phases
 - [`spec/benchmarks.md`](spec/benchmarks.md) - Performance objectives
 - [`spec/glossary.md`](spec/glossary.md) - Glossary of terms
 
-### 📝 VarpulisQL Language
+### VarpulisQL Language
 - [`language/overview.md`](language/overview.md) - Language philosophy and design
 - [`language/syntax.md`](language/syntax.md) - Complete syntax reference
 - [`language/connectors.md`](language/connectors.md) - Connectors (MQTT, HTTP)
@@ -53,17 +54,28 @@ stream Alert = SomeEvent
 - [`language/operators.md`](language/operators.md) - Operators
 - [`language/grammar.md`](language/grammar.md) - Formal grammar (Pest PEG)
 
-### 🏗️ Architecture
+### Architecture
 - [`architecture/system.md`](architecture/system.md) - System architecture
 - [`architecture/attention-engine.md`](architecture/attention-engine.md) - Attention mechanism
 - [`architecture/state-management.md`](architecture/state-management.md) - State management
 - [`architecture/parallelism.md`](architecture/parallelism.md) - Parallelization
 - [`architecture/observability.md`](architecture/observability.md) - Metrics and traces
 
-### 📚 Examples & Demos
+### Examples & Demos
 - [`examples/hvac-building.md`](examples/hvac-building.md) - HVAC monitoring
 - [`examples/financial-markets.md`](examples/financial-markets.md) - Financial analytics
 - [`../demos/README.md`](../demos/README.md) - **Interactive demos**
+
+---
+
+### Reference
+- [`reference/cli-reference.md`](reference/cli-reference.md) - CLI commands and options
+- [`reference/windows-aggregations.md`](reference/windows-aggregations.md) - Windows and aggregations
+
+### Guides
+- [`guides/performance-tuning.md`](guides/performance-tuning.md) - Optimization
+- [`guides/configuration.md`](guides/configuration.md) - Configuration options
+- [`guides/sase-patterns.md`](guides/sase-patterns.md) - Pattern matching guide
 
 ---
 
@@ -72,13 +84,34 @@ stream Alert = SomeEvent
 | Connector | Input | Output | Status |
 |-----------|-------|--------|--------|
 | **MQTT** | Yes | Yes | Production |
-| **HTTP** | No | Yes | Output only |
-| **Kafka** | No | No | Not implemented |
+| **HTTP** | No | Yes | Webhooks |
+| **Kafka** | Yes | Yes | Connector framework |
 
 See [`language/connectors.md`](language/connectors.md) for details.
 
+## SaaS / REST API
+
+Varpulis includes a multi-tenant REST API for pipeline management:
+
+```bash
+# Start the API server
+varpulis server --port 9000 --api-key "my-key" --metrics
+
+# Deploy a pipeline
+curl -X POST http://localhost:9000/api/v1/pipelines \
+  -H "X-API-Key: my-key" -H "Content-Type: application/json" \
+  -d '{"name": "my-pipeline", "source": "stream X from Y where z > 10"}'
+```
+
+Full SaaS stack with monitoring:
+```bash
+docker compose -f deploy/docker/docker-compose.saas.yml up -d
+# Grafana: http://localhost:3000 | Prometheus: http://localhost:9091
+```
+
 ---
 
-**Version**: 0.1
+**Version**: 0.1.0
 **Parser**: Pest PEG
+**Tests**: 1040+
 **License**: MIT

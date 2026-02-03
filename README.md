@@ -1,7 +1,8 @@
 # Varpulis CEP - Complex Event Processing Engine
 
-[![Tests](https://img.shields.io/badge/tests-539%20passing-brightgreen)]()
-[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange)]()
+[![Tests](https://img.shields.io/badge/tests-1040%20passing-brightgreen)]()
+[![Rust](https://img.shields.io/badge/rust-1.85%2B-orange)]()
+[![Release](https://img.shields.io/badge/release-v0.1.0-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 
 **Varpulis** is a high-performance Complex Event Processing (CEP) engine written in Rust. It provides a domain-specific language (VarpulisQL) for defining event streams, patterns, and real-time analytics.
@@ -9,95 +10,151 @@
 ## Features
 
 - **VarpulisQL Language**: Expressive DSL for stream processing
-- **SASE+ Pattern Matching**: Advanced pattern matching with Kleene closures
-- **Real-time Analytics**: Window aggregations, joins, and transformations
+- **SASE+ Pattern Matching**: Advanced pattern detection with Kleene closures, negation, AND/OR
+- **Real-time Analytics**: Window aggregations, joins, and transformations with SIMD optimization
 - **Attention Window**: AI-powered anomaly detection
-- **Connectors**: MQTT (production), HTTP webhooks, Kafka (planned)
-- **VS Code Extension**: Syntax highlighting and language support
+- **Multi-tenant SaaS**: REST API for pipeline management with usage metering and quotas
+- **Connectors**: MQTT (production), HTTP webhooks, Kafka (connector framework)
+- **VS Code Extension**: LSP server with diagnostics, hover docs, completion, and React Flow visual editor
 
 ## Quick Start
 
 ### Installation
 
 ```bash
-# Clone the repository
+# From GitHub releases (prebuilt binaries for Linux, macOS, Windows)
+# https://github.com/varpulis/varpulis/releases/tag/v0.1.0
+
+# Or build from source
 git clone https://github.com/varpulis/varpulis.git
 cd varpulis
-
-# Build
 cargo build --release
-
-# Run tests
-cargo test --workspace
 ```
 
-### Running with MQTT
+### Docker
 
 ```bash
-# Run your program (connects to MQTT broker defined in config)
-./target/release/varpulis run --file my_patterns.vpl
+# Run with Docker
+docker pull ghcr.io/varpulis/varpulis:latest
+docker run -v ./my_rules.vpl:/app/queries/rules.vpl ghcr.io/varpulis/varpulis run --file /app/queries/rules.vpl
+
+# SaaS stack with Prometheus + Grafana
+docker compose -f deploy/docker/docker-compose.saas.yml up -d
 ```
 
-### Example: Fraud Detection with MQTT
+### Running a Program
+
+```bash
+# Run a VPL file
+varpulis run --file my_patterns.vpl
+
+# Check syntax
+varpulis check my_patterns.vpl
+
+# Start the API server
+varpulis server --port 9000 --api-key "my-secret" --metrics
+```
+
+### Example: HVAC Monitoring
 
 ```varpulis
-# MQTT Configuration - connect to broker
-config mqtt {
-    broker: "localhost",
+# Define a connector
+connector MqttSensors = mqtt (
+    host: "localhost",
     port: 1883,
-    client_id: "fraud-detector",
-    input_topic: "transactions/#",
-    output_topic: "alerts/fraud"
-}
+    client_id: "hvac-monitor"
+)
 
 # Define events
-event Transaction:
-    user_id: str
-    amount: float
-    merchant: str
+event TemperatureReading:
+    sensor_id: str
+    zone: str
+    value: float
     timestamp: timestamp
 
-# Pattern: Multiple high-value transactions within 10 minutes
-pattern SuspiciousActivity = SEQ(
-    Transaction+ as txs where amount > 1000
-) within 10m partition by user_id
-
-# Stream processing with alert (published to MQTT)
-stream FraudAlert = Transaction as tx
-    -> Transaction where amount > tx.amount * 2 as suspicious
+# Stream with filtering and alerting
+stream HighTempAlert = TemperatureReading
+    .from(MqttSensors, topic: "sensors/temperature/#")
+    .where(value > 28)
     .emit(
-        alert_type: "potential_fraud",
-        user_id: tx.user_id,
-        initial_amount: tx.amount,
-        suspicious_amount: suspicious.amount
+        alert_type: "HIGH_TEMPERATURE",
+        zone: zone,
+        temperature: value
     )
+
+# SASE+ pattern: rapid temperature swing
+pattern RapidTempSwing = SEQ(
+    TemperatureReading as t1,
+    TemperatureReading+ as readings where value > t1.value + 5,
+    TemperatureReading as t3 where value < t1.value
+) within 10m partition by zone
+
+# Output
+sink HighTempAlert to console()
 ```
+
+## Examples
+
+| Example | Description | Complexity |
+|---------|-------------|------------|
+| [hvac_quickstart.vpl](examples/hvac_quickstart.vpl) | HVAC monitoring basics | Beginner |
+| [hvac_demo.vpl](examples/hvac_demo.vpl) | Full HVAC with attention-based detection | Advanced |
+
+```bash
+varpulis run --file examples/hvac_quickstart.vpl
+```
+
+## REST API (SaaS Mode)
+
+Varpulis includes a multi-tenant REST API for deploying and managing CEP pipelines programmatically.
+
+```bash
+# Start the server
+varpulis server --port 9000 --api-key "my-key" --metrics
+
+# Deploy a pipeline
+curl -X POST http://localhost:9000/api/v1/pipelines \
+  -H "X-API-Key: my-key" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "temp-monitor", "source": "stream Alerts from SensorReading\n  where temperature > 100\n  emit alert(\"High\", \"temp\")"}'
+
+# List pipelines
+curl http://localhost:9000/api/v1/pipelines -H "X-API-Key: my-key"
+
+# Inject events
+curl -X POST http://localhost:9000/api/v1/pipelines/<id>/events \
+  -H "X-API-Key: my-key" \
+  -H "Content-Type: application/json" \
+  -d '{"event_type": "SensorReading", "fields": {"temperature": 105}}'
+
+# Check usage
+curl http://localhost:9000/api/v1/usage -H "X-API-Key: my-key"
+```
+
+**Endpoints:**
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/pipelines` | Deploy a pipeline |
+| `GET` | `/api/v1/pipelines` | List pipelines |
+| `GET` | `/api/v1/pipelines/:id` | Get pipeline details |
+| `DELETE` | `/api/v1/pipelines/:id` | Delete a pipeline |
+| `POST` | `/api/v1/pipelines/:id/events` | Inject events |
+| `GET` | `/api/v1/pipelines/:id/metrics` | Pipeline metrics |
+| `POST` | `/api/v1/pipelines/:id/reload` | Hot reload pipeline |
+| `GET` | `/api/v1/usage` | Tenant usage stats |
+| `GET` | `/health` | Liveness probe |
+| `GET` | `/ready` | Readiness probe |
 
 ## Connectors
 
-Varpulis supports multiple connectors for event ingestion and output:
+| Connector | Input | Output | Status |
+|-----------|-------|--------|--------|
+| **MQTT** | Yes | Yes | Production |
+| **HTTP** | No | Yes | Webhooks via `.to("http://...")` |
+| **Kafka** | Yes | Yes | Connector framework |
 
-| Connector | Status | Documentation |
-|-----------|--------|---------------|
-| **MQTT** | Production | [docs/language/connectors.md](docs/language/connectors.md) |
-| **HTTP** | Production | Webhooks via `.to("http://...")` |
-| **Kafka** | Planned | `.to("kafka://...")` |
-
-### MQTT Configuration
-
-Add a `config mqtt { }` block at the top of your VPL file:
-
-```varpulis
-config mqtt {
-    broker: "localhost",       # MQTT broker hostname
-    port: 1883,                # MQTT broker port
-    client_id: "my-app",       # Unique client identifier
-    input_topic: "events/#",   # Subscribe pattern (# = wildcard)
-    output_topic: "alerts"     # Publish topic for .emit() results
-}
-```
-
-See [docs/language/connectors.md](docs/language/connectors.md) for complete documentation.
+See [docs/language/connectors.md](docs/language/connectors.md) for details.
 
 ## Architecture
 
@@ -105,11 +162,15 @@ See [docs/language/connectors.md](docs/language/connectors.md) for complete docu
 varpulis/
 ├── crates/
 │   ├── varpulis-core/      # AST, types, values
-│   ├── varpulis-parser/    # Hand-written + Pest parsers
-│   ├── varpulis-runtime/   # Execution engine, SASE+
-│   └── varpulis-cli/       # Command-line interface
-├── vscode-varpulis/        # VS Code extension
-├── tree-sitter-varpulis/   # Tree-sitter grammar
+│   ├── varpulis-parser/    # Pest PEG parser
+│   ├── varpulis-runtime/   # Execution engine, SASE+, multi-tenant
+│   ├── varpulis-cli/       # CLI + REST API server
+│   ├── varpulis-lsp/       # Language Server Protocol
+│   └── varpulis-zdd/       # Zero-suppressed Decision Diagrams
+├── vscode-varpulis/        # VS Code extension + React Flow editor
+├── deploy/
+│   └── docker/             # Dockerfile, docker-compose, Prometheus, Grafana
+├── benchmarks/             # Performance comparisons (Flink, Apama)
 └── docs/                   # Documentation
 ```
 
@@ -123,27 +184,21 @@ stream Filtered = Source
     .select(id, amount, timestamp)
     .window(1h, sliding: 5m)
     .aggregate(total: sum(amount), count: count())
+    .having(total > 1000)
     .emit(result: total / count)
-```
-
-### Sequence Patterns
-
-```varpulis
-# A followed by B followed by C
-stream Sequence = A as a
-    -> B where id == a.id as b
-    -> C where id == b.id as c
-    .emit(matched: true)
 ```
 
 ### SASE+ Patterns
 
 ```varpulis
-# Kleene closure: one or more B events
+# Kleene closure: one or more events
 pattern MultiStep = SEQ(Login, Transaction+, Logout) within 1h
 
 # Negation: A followed by C without B
 pattern NoCancel = SEQ(Order, Shipment) AND NOT Cancel
+
+# AND: events in any order
+pattern BothSensors = AND(TemperatureReading, HumidityReading) within 5m
 ```
 
 ### Attention Window (AI-powered)
@@ -159,60 +214,85 @@ stream Anomalies = Metrics
     .emit(anomaly: true, score: attention_score)
 ```
 
+### Imperative Programming
+
+```varpulis
+fn compute_stats(prices: [float]) -> {str: float}:
+    return {
+        "avg": avg(prices),
+        "min": min(prices),
+        "max": max(prices)
+    }
+```
+
 ## Performance
 
-Run benchmarks:
+| Pattern | 1K events | 10K events | Throughput |
+|---------|-----------|------------|------------|
+| Simple SEQ(A, B) | ~50us | ~500us | 320K evt/s |
+| Kleene SEQ(A, B+, C) | ~100us | ~1ms | 200K evt/s |
+| SIMD aggregations | - | - | 4x speedup |
 
+Run benchmarks:
 ```bash
 cargo bench -p varpulis-runtime
 ```
 
-### Benchmark Results
+## Monitoring
 
-| Pattern | 1K events | 10K events |
-|---------|-----------|------------|
-| Simple SEQ(A, B) | ~50µs | ~500µs |
-| Kleene SEQ(A, B+, C) | ~100µs | ~1ms |
-| With predicates | ~80µs | ~800µs |
+The SaaS stack includes Prometheus and Grafana:
+
+```bash
+# Start the full stack
+docker compose -f deploy/docker/docker-compose.saas.yml up -d
+
+# Grafana: http://localhost:3000 (admin/varpulis)
+# Prometheus: http://localhost:9091
+# Varpulis API: http://localhost:9000
+```
+
+Pre-configured dashboard panels: Events/sec, Alerts/sec, Processing Latency (p99), Active Streams, Queue Depth.
 
 ## VS Code Extension
 
-Install the VS Code extension for:
-- Syntax highlighting
-- Code snippets
-- Language configuration
+Full IDE support with:
+- **LSP Server**: Real-time diagnostics, hover documentation, auto-completion, semantic highlighting
+- **React Flow Editor**: Visual node-based pipeline editor
+- **Syntax Highlighting**: TextMate grammar for `.vpl` files
 
 ```bash
 cd vscode-varpulis
-npm install
-npm run compile
-# Then install in VS Code: Extensions > Install from VSIX
+npm install && npm run compile
+# Install in VS Code: Extensions > Install from VSIX
 ```
 
 ## Documentation
 
 - [Language Syntax](docs/language/syntax.md)
-- [Connectors (MQTT, HTTP, Kafka)](docs/language/connectors.md)
-- [Language Grammar](docs/language/grammar.md)
-- [Built-in Functions](docs/language/builtins.md)
-- [Interactive Demos](demos/README.md)
+- [Connectors](docs/language/connectors.md)
+- [CLI Reference](docs/reference/cli-reference.md)
+- [Production Deployment](docs/PRODUCTION_DEPLOYMENT.md)
 - [Architecture](docs/architecture/)
-- [Examples](examples/)
+- [Performance Tuning](docs/guides/performance-tuning.md)
+- [SASE+ Patterns Guide](docs/guides/sase-patterns.md)
+- [Interactive Demos](demos/README.md)
 
 ## Testing
 
 ```bash
-# All tests
+# All tests (1040+)
 cargo test --workspace
 
-# Parser tests
+# Specific crate
 cargo test -p varpulis-parser
-
-# Runtime tests
 cargo test -p varpulis-runtime
+cargo test -p varpulis-cli
 
-# SASE+ tests
+# SASE+ tests only
 cargo test -p varpulis-runtime sase
+
+# Benchmarks
+cargo bench --bench pattern_benchmark
 ```
 
 ## Contributing
@@ -231,4 +311,4 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 - SASE+ algorithm: Wu, Diao, Rizvi (SIGMOD 2006)
 - Pest parser generator
-- Tree-sitter for syntax highlighting
+- Tower-LSP for Language Server Protocol

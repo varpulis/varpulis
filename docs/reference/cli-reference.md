@@ -169,6 +169,21 @@ varpulis server --port 9000 --api-key "secret" --metrics
 | `GET /health` | Liveness probe (always returns healthy) |
 | `GET /ready` | Readiness probe (returns ready when engine is loaded) |
 
+**REST API (Multi-tenant Pipeline Management):**
+
+Authentication: `X-API-Key` header. When `--api-key` is set, a default tenant is auto-provisioned.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/pipelines` | Deploy a pipeline (`{"name": "...", "source": "..."}`) |
+| `GET` | `/api/v1/pipelines` | List all pipelines for the tenant |
+| `GET` | `/api/v1/pipelines/:id` | Get pipeline details |
+| `DELETE` | `/api/v1/pipelines/:id` | Delete a pipeline |
+| `POST` | `/api/v1/pipelines/:id/events` | Inject events (`{"event_type": "...", "fields": {...}}`) |
+| `GET` | `/api/v1/pipelines/:id/metrics` | Pipeline metrics (events processed, alerts) |
+| `POST` | `/api/v1/pipelines/:id/reload` | Hot reload with new source (`{"source": "..."}`) |
+| `GET` | `/api/v1/usage` | Tenant usage stats and quota |
+
 **WebSocket API Messages:**
 
 ```json
