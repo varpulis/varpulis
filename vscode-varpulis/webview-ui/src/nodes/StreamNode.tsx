@@ -1,57 +1,112 @@
-import { Handle, NodeProps, Position } from '@xyflow/react';
-import { GitBranch } from 'lucide-react';
-import { memo } from 'react';
-import type { StreamDefinition } from '../types';
+import React from 'react';
+import { Handle, Position, NodeProps } from '@xyflow/react';
+import { isStreamNodeData, StreamOperation } from '../types/flow';
 
-interface StreamNodeData {
-    label: string;
-    stream?: StreamDefinition;
-}
+const operationLabels: Record<string, string> = {
+  where: '.where',
+  select: '.select',
+  window: '.window',
+  aggregate: '.aggregate',
+  partition_by: '.partition_by',
+  order_by: '.order_by',
+  limit: '.limit',
+  distinct: '.distinct',
+  map: '.map',
+  filter: '.filter',
+  join: '.join',
+  merge: 'merge',
+};
 
-function StreamNode({ data, selected }: NodeProps<StreamNodeData>) {
-    return (
-        <div
-            className={`px-4 py-3 rounded-lg border-2 border-indigo-500 bg-indigo-900/30 min-w-[180px] ${selected ? 'ring-2 ring-vscode-accent' : ''
-                }`}
-        >
-            <Handle
-                type="target"
-                position={Position.Left}
-                className="!bg-indigo-500 !w-3 !h-3"
-            />
+const renderOperation = (op: StreamOperation, index: number) => {
+  const label = operationLabels[op.type] || op.type;
+  let value = '';
 
-            <div className="flex items-center gap-2 mb-2">
-                <GitBranch className="w-4 h-4 text-indigo-400" />
-                <div className="font-semibold text-sm">{data.label}</div>
-            </div>
+  switch (op.type) {
+    case 'where':
+    case 'filter':
+      value = op.condition || op.lambda || '';
+      break;
+    case 'select':
+      value = op.projections || '';
+      break;
+    case 'window':
+      value = op.windowSize || '';
+      if (op.windowType === 'sliding' && op.slideSize) {
+        value += `, sliding: ${op.slideSize}`;
+      }
+      break;
+    case 'aggregate':
+      value = op.aggregations || '';
+      break;
+    case 'partition_by':
+    case 'order_by':
+      value = op.keys || '';
+      break;
+    case 'limit':
+      value = op.count?.toString() || '';
+      break;
+    case 'map':
+      value = op.lambda || '';
+      break;
+    case 'join':
+      value = `${op.joinType || 'inner'} on ${op.joinOn || '...'}`;
+      break;
+    default:
+      value = '';
+  }
 
-            {data.stream && (
-                <div className="text-xs space-y-1 border-t border-indigo-800/50 pt-2 mt-2">
-                    {data.stream.pattern && (
-                        <div className="bg-black/30 px-2 py-1 rounded font-mono text-indigo-300 text-[10px]">
-                            {data.stream.pattern}
-                        </div>
-                    )}
-                    {data.stream.window && (
-                        <div className="text-gray-400">
-                            <span className="text-indigo-400">window:</span> {data.stream.window}
-                        </div>
-                    )}
-                    {data.stream.filters && data.stream.filters.length > 0 && (
-                        <div className="text-gray-400">
-                            <span className="text-indigo-400">filters:</span> {data.stream.filters.length}
-                        </div>
-                    )}
-                </div>
-            )}
+  return (
+    <div key={index} className="stream-operation">
+      <span className="op-name">{label}</span>
+      {value && <span className="op-value">({value.length > 25 ? value.slice(0, 25) + '...' : value})</span>}
+    </div>
+  );
+};
 
-            <Handle
-                type="source"
-                position={Position.Right}
-                className="!bg-indigo-500 !w-3 !h-3"
-            />
-        </div>
-    );
-}
+export const StreamNode: React.FC<NodeProps> = ({ data, selected }) => {
+  if (!isStreamNodeData(data)) {
+    return <div className="custom-node stream-node error">Invalid Stream</div>;
+  }
 
-export default memo(StreamNode);
+  return (
+    <div className={`custom-node stream-node ${selected ? 'selected' : ''}`}>
+      {/* Input from source or another stream */}
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="data-in"
+        title="Input from Source, Stream, or Pattern"
+      />
+      {/* Secondary input for joins */}
+      <Handle
+        type="target"
+        position={Position.Top}
+        id="join-in"
+        style={{ left: '70%' }}
+        title="Join input (optional)"
+      />
+      <div className="node-header">
+        <span className="node-icon stream">🌊</span>
+        <span className="node-title">{data.label}</span>
+      </div>
+      <div className="node-body">
+        {data.operations.length === 0 ? (
+          <div className="node-prop empty">
+            <span className="prop-value">No operations - click to add</span>
+          </div>
+        ) : (
+          <div className="stream-operations">
+            {data.operations.map((op, i) => renderOperation(op, i))}
+          </div>
+        )}
+      </div>
+      {/* Output to next stream, pattern, or emit */}
+      <Handle
+        type="source"
+        position={Position.Right}
+        id="data-out"
+        title="Output to Stream, Pattern, or Emit"
+      />
+    </div>
+  );
+};

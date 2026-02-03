@@ -3,22 +3,91 @@
 # This example demonstrates:
 # 1. print() - Write to console/stdout
 # 2. log() - Structured logging with levels
-# 3. Connector concepts for external systems
+# 3. Connector configuration for external systems
+# 4. Sink statements for output routing
+
+# =============================================================================
+# CONNECTOR DEFINITIONS
+# =============================================================================
+
+connector KafkaBroker = kafka (
+    brokers: ["broker:9092"],
+    group_id: "varpulis-demo"
+)
+
+connector MqttBroker = mqtt (
+    host: "mqtt.example.com",
+    port: 1883,
+    client_id: "varpulis-debug"
+)
+
+connector AlertWebhook = http (
+    base_url: "https://api.example.com"
+)
+
+# =============================================================================
+# EVENT DEFINITIONS
+# =============================================================================
+
+event SensorReading:
+    sensor_id: str
+    temperature: float
+    ts: timestamp
+
+event Alert:
+    message: str
+    severity: str
+    ts: timestamp
+
+event Event:
+    event_type: str
+    data: str
+    ts: timestamp
+
+event Order:
+    order_id: str
+    amount: float
+    status: str
+    ts: timestamp
+
+event Payment:
+    order_id: str
+    amount: float
+    ts: timestamp
+
+# =============================================================================
+# BASE STREAMS FROM CONNECTORS
+# =============================================================================
+
+stream SensorReadings = SensorReading
+    .from(MqttBroker, topic: "sensors/#")
+
+stream Alerts = Alert
+    .from(KafkaBroker, topic: "alerts")
+
+stream Events = Event
+    .from(KafkaBroker, topic: "events")
+
+stream Orders = Order
+    .from(KafkaBroker, topic: "orders")
+
+stream Payments = Payment
+    .from(KafkaBroker, topic: "payments")
 
 # =============================================================================
 # PRINT - Console output for debugging
 # =============================================================================
 
 # Print all incoming events (useful for debugging)
-stream DebugAllEvents = SensorReading
+stream DebugAllEvents = SensorReadings
     .print()  # Prints: [PRINT] [StreamName] EventType: {data}
 
 # Print specific values
-stream DebugTemperature = SensorReading
+stream DebugTemperature = SensorReadings
     .print("Temperature:", temperature, "at sensor", sensor_id)
 
 # Print in a pipeline (doesn't stop event flow)
-stream MonitoredPipeline = Alert
+stream MonitoredPipeline = Alerts
     .where(severity == "critical")
     .print("Critical alert detected:", message)
     .emit(status: "handled")
@@ -28,69 +97,54 @@ stream MonitoredPipeline = Alert
 # =============================================================================
 
 # Basic info log
-stream LogEvents = Event
+stream LogEvents = Events
     .log(level: "info", message: "Event received")
 
 # Warning log with data field
-stream LogWarnings = Alert
+stream LogWarnings = Alerts
     .where(severity == "warning")
     .log(level: "warn", message: "Warning alert", data: message)
 
 # Error log for critical events
-stream LogErrors = Alert
+stream LogErrors = Alerts
     .where(severity == "critical")
     .log(level: "error", message: "Critical alert triggered")
 
 # Debug log (only visible with RUST_LOG=debug)
-stream DebugLog = Order
+stream DebugLog = Orders
     .log(level: "debug", message: "Order processing")
 
 # =============================================================================
-# CONNECTORS (Conceptual - requires feature flags)
+# SINK STATEMENTS - Output to external systems
 # =============================================================================
 
-# NOTE: Kafka and MQTT connectors are stubs in the current build.
-# To enable full functionality:
-#   cargo build --features kafka,mqtt
+# Send critical alerts to Kafka
+sink MonitoredPipeline to KafkaBroker (topic: "handled-alerts")
 
-# --- KAFKA SOURCE (planned syntax) ---
-# stream FromKafka = kafka("broker:9092", topic: "events", group_id: "varpulis")
-#     .where(event_type == "Order")
-#     .emit(status: "processed")
+# Send alerts to HTTP webhook
+sink LogErrors to AlertWebhook (endpoint: "/alerts", method: "POST")
 
-# --- KAFKA SINK (planned syntax) ---
-# stream ToKafka = Alert
-#     .where(severity == "critical")
-#     .to(kafka("broker:9092", topic: "alerts"))
-
-# --- MQTT SOURCE (planned syntax) ---
-# stream FromMQTT = mqtt("mqtt.example.com:1883", topic: "sensors/#")
-#     .where(temperature > 30)
-#     .emit(alert: "high_temp")
-
-# --- MQTT SINK (planned syntax) ---
-# stream ToMQTT = ProcessedEvent
-#     .to(mqtt("mqtt.example.com:1883", topic: "output"))
-
-# --- HTTP WEBHOOK SINK ---
-# stream ToWebhook = Alert
-#     .where(severity == "critical")
-#     .to(http("https://api.example.com/alerts"))
+# Send to console for debugging
+sink DebugAllEvents to console()
 
 # =============================================================================
 # COMBINING DEBUG WITH PIPELINES
 # =============================================================================
 
 # Full debug pipeline example
-stream FullDebugPipeline = Order as order
+stream FullDebugPipeline = Orders as order
     .log(level: "debug", message: "Order received")
     .print("Processing order:", order_id)
-    -> Payment where order_id == order.id as payment
+    -> Payments where order_id == order.order_id as payment
     .log(level: "info", message: "Payment matched")
     .print("Order", order_id, "paid:", amount)
     .within(5m)
     .emit(
         status: "completed",
-        order_id: order.id,
+        order_id: order.order_id,
         amount: payment.amount
     )
+
+# Output completed orders
+sink FullDebugPipeline to KafkaBroker (topic: "completed-orders")
+sink FullDebugPipeline to console()

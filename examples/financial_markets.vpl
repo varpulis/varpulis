@@ -7,6 +7,19 @@
 # - Multi-timeframe analysis
 
 # =============================================================================
+# Connector Definitions
+# =============================================================================
+
+connector MarketFeed = websocket (
+    url: "wss://market-data.exchange.local/feed"
+)
+
+connector TradingKafka = kafka (
+    brokers: ["kafka:9092"],
+    group_id: "trading-signals"
+)
+
+# =============================================================================
 # Event Definitions
 # =============================================================================
 
@@ -35,12 +48,30 @@ event NewsEvent:
     pre_price: float
     ts: timestamp
 
+event OrderSubmit:
+    id: str
+    symbol: str
+    limit_price: float
+    ts: timestamp
+
+event OrderAck:
+    order_id: str
+    ts: timestamp
+
+event OrderFill:
+    order_id: str
+    price: float
+    ts: timestamp
+
 # =============================================================================
 # Base Streams
 # =============================================================================
 
-stream Ticks from MarketTick
-stream Candles from OHLCV
+stream Ticks = MarketTick
+    .from(MarketFeed, topic: "ticks")
+
+stream Candles = OHLCV
+    .from(MarketFeed, topic: "ohlcv")
 
 # Filter by symbol
 stream BTCTicks = Ticks.where(symbol == "BTC/USD")
@@ -61,7 +92,6 @@ stream SMA20 = OHLCV
         ts: last(ts)
     )
     .emit(
-        event_type: "SMA20",
         symbol: symbol,
         sma_20: sma_20,
         ts: ts
@@ -78,7 +108,6 @@ stream SMA50 = OHLCV
         ts: last(ts)
     )
     .emit(
-        event_type: "SMA50",
         symbol: symbol,
         sma_50: sma_50,
         ts: ts
@@ -131,7 +160,6 @@ stream MACDSignal = MACD
         ts: last(ts)
     )
     .emit(
-        event_type: "MACD",
         symbol: symbol,
         macd_line: macd_line,
         signal_line: signal_line,
@@ -179,7 +207,6 @@ stream RSI = PriceChanges
         ts
     )
     .emit(
-        event_type: "RSI",
         symbol: symbol,
         rsi: rsi,
         avg_gain: avg_gain,
@@ -213,7 +240,6 @@ stream BollingerBands = OHLCV
         ts
     )
     .emit(
-        event_type: "BollingerBands",
         symbol: symbol,
         middle: middle_band,
         upper: upper_band,
@@ -616,6 +642,10 @@ stream AllSignals = merge(
 )
 .tap(counter: "trading_signals_total", labels: [signal_type, direction])
 .emit()
+
+# Output signals to Kafka
+sink AllSignals to TradingKafka (topic: "trading-signals")
+sink AllSignals to console()
 
 # =============================================================================
 # Configuration

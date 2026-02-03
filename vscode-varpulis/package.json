@@ -168,6 +168,16 @@
           "default": "varpulis",
           "description": "Path to the Varpulis CLI executable"
         },
+        "varpulis.lspServerPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the varpulis-lsp executable. If empty, will look for 'varpulis-lsp' in PATH."
+        },
+        "varpulis.enableLsp": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the Language Server Protocol for enhanced IDE features"
+        },
         "varpulis.engineHost": {
           "type": "string",
           "default": "localhost",
@@ -249,6 +259,7 @@
     "@vscode/vsce": "^2.22.0"
   },
   "dependencies": {
-    "ws": "^8.14.0"
+    "ws": "^8.14.0",
+    "vscode-languageclient": "^9.0.1"
   }
 }

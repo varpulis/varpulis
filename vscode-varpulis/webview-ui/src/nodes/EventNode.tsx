@@ -1,53 +1,61 @@
-import { Handle, NodeProps, Position } from '@xyflow/react';
-import { Zap } from 'lucide-react';
-import { memo } from 'react';
-import type { EventDefinition } from '../types';
+import React from 'react';
+import { Handle, Position, NodeProps } from '@xyflow/react';
+import { isEventNodeData } from '../types/flow';
 
-interface EventNodeData {
-    label: string;
-    event?: EventDefinition;
-}
+const typeColors: Record<string, string> = {
+  int: '#4ec9b0',
+  float: '#4ec9b0',
+  bool: '#569cd6',
+  str: '#ce9178',
+  timestamp: '#dcdcaa',
+  duration: '#dcdcaa',
+  list: '#c586c0',
+  map: '#c586c0',
+};
 
-function EventNode({ data, selected }: NodeProps<EventNodeData>) {
-    return (
-        <div
-            className={`px-4 py-3 rounded-lg border-2 border-amber-500 bg-amber-900/30 min-w-[140px] ${selected ? 'ring-2 ring-vscode-accent' : ''
-                }`}
-        >
-            <Handle
-                type="target"
-                position={Position.Left}
-                className="!bg-amber-500 !w-3 !h-3"
-            />
+export const EventNode: React.FC<NodeProps> = ({ data, selected }) => {
+  if (!isEventNodeData(data)) {
+    return <div className="custom-node event-node error">Invalid Event</div>;
+  }
 
-            <div className="flex items-center gap-2 mb-2">
-                <Zap className="w-4 h-4 text-amber-400" />
-                <div className="font-semibold text-sm">{data.label}</div>
-            </div>
-
-            {data.event && data.event.fields.length > 0 && (
-                <div className="text-xs text-gray-400 space-y-0.5 border-t border-amber-800/50 pt-2 mt-2">
-                    {data.event.fields.slice(0, 4).map((field) => (
-                        <div key={field.name} className="flex justify-between">
-                            <span className="text-amber-300">{field.name}</span>
-                            <span className="text-gray-500">{field.type}</span>
-                        </div>
-                    ))}
-                    {data.event.fields.length > 4 && (
-                        <div className="text-gray-500 text-center">
-                            +{data.event.fields.length - 4} more
-                        </div>
-                    )}
-                </div>
-            )}
-
-            <Handle
-                type="source"
-                position={Position.Right}
-                className="!bg-amber-500 !w-3 !h-3"
-            />
-        </div>
-    );
-}
-
-export default memo(EventNode);
+  return (
+    <div className={`custom-node event-node ${selected ? 'selected' : ''}`}>
+      <div className="node-header">
+        <span className="node-icon event">📋</span>
+        <span className="node-title">{data.label}</span>
+        {data.extends && (
+          <span className="event-extends" title={`extends ${data.extends}`}>
+            ← {data.extends}
+          </span>
+        )}
+      </div>
+      <div className="node-body">
+        {data.fields.length === 0 ? (
+          <div className="node-prop empty">
+            <span className="prop-value">No fields - click to add</span>
+          </div>
+        ) : (
+          <div className="event-fields">
+            {data.fields.map((field, i) => (
+              <div key={i} className="event-field">
+                <span className="field-name">{field.name}</span>
+                <span className="field-colon">:</span>
+                <span className="field-type" style={{ color: typeColors[field.type] || '#d4d4d4' }}>
+                  {field.type}
+                  {field.optional && '?'}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      {/* Event types can be referenced by sources */}
+      <Handle
+        type="source"
+        position={Position.Right}
+        id="type-out"
+        title="Event type reference"
+      />
+    </div>
+  );
+};

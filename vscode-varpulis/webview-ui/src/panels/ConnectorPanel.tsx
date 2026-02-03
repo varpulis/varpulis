@@ -1,4 +1,3 @@
-import { Database, FileText, Globe, MessageSquare, Radio, Terminal, X } from 'lucide-react';
 import { useState } from 'react';
 import type { ConnectorConfig, ConnectorType } from '../types';
 
@@ -9,13 +8,13 @@ interface ConnectorPanelProps {
     onCancel: () => void;
 }
 
-const connectorOptions: { type: ConnectorType; label: string; icon: React.ReactNode; modes: ('source' | 'sink')[] }[] = [
-    { type: 'mqtt', label: 'MQTT', icon: <Radio className="w-5 h-5" />, modes: ['source', 'sink'] },
-    { type: 'kafka', label: 'Kafka', icon: <Database className="w-5 h-5" />, modes: ['source', 'sink'] },
-    { type: 'amqp', label: 'AMQP/RabbitMQ', icon: <MessageSquare className="w-5 h-5" />, modes: ['source', 'sink'] },
-    { type: 'file', label: 'File (.evt/.json)', icon: <FileText className="w-5 h-5" />, modes: ['source', 'sink'] },
-    { type: 'http', label: 'HTTP/Webhook', icon: <Globe className="w-5 h-5" />, modes: ['source', 'sink'] },
-    { type: 'console', label: 'Console', icon: <Terminal className="w-5 h-5" />, modes: ['sink'] },
+const connectorOptions: { type: ConnectorType; label: string; icon: string; modes: ('source' | 'sink')[] }[] = [
+    { type: 'mqtt', label: 'MQTT', icon: '📡', modes: ['source', 'sink'] },
+    { type: 'kafka', label: 'Kafka', icon: '🗄️', modes: ['source', 'sink'] },
+    { type: 'amqp', label: 'AMQP/RabbitMQ', icon: '💬', modes: ['source', 'sink'] },
+    { type: 'file', label: 'File (.evt/.json)', icon: '📄', modes: ['source', 'sink'] },
+    { type: 'http', label: 'HTTP/Webhook', icon: '🌐', modes: ['source', 'sink'] },
+    { type: 'console', label: 'Console', icon: '💻', modes: ['sink'] },
 ];
 
 export default function ConnectorPanel({ connector, mode, onSave, onCancel }: ConnectorPanelProps) {
@@ -35,7 +34,7 @@ export default function ConnectorPanel({ connector, mode, onSave, onCancel }: Co
                 <div className="flex items-center justify-between px-4 py-3 border-b border-vscode-border">
                     <h2 className="font-semibold">Configure {mode === 'source' ? 'Source' : 'Sink'}</h2>
                     <button onClick={onCancel} className="p-1 hover:bg-white/10 rounded">
-                        <X className="w-4 h-4" />
+                        <span>✕</span>
                     </button>
                 </div>
 
@@ -53,7 +52,7 @@ export default function ConnectorPanel({ connector, mode, onSave, onCancel }: Co
                                             : 'border-vscode-border hover:border-gray-500'
                                         }`}
                                 >
-                                    {opt.icon}
+                                    <span className="text-xl">{opt.icon}</span>
                                     <span className="text-xs">{opt.label}</span>
                                 </button>
                             ))}
@@ -106,26 +105,6 @@ export default function ConnectorPanel({ connector, mode, onSave, onCancel }: Co
                                     className="w-full px-3 py-2 bg-vscode-input border border-vscode-border rounded text-sm focus:border-vscode-accent outline-none"
                                 />
                             </div>
-                            <div className="grid grid-cols-2 gap-3">
-                                <div>
-                                    <label className="block text-sm text-gray-400 mb-1">Username (optional)</label>
-                                    <input
-                                        type="text"
-                                        value={config.username || ''}
-                                        onChange={e => updateConfig({ username: e.target.value })}
-                                        className="w-full px-3 py-2 bg-vscode-input border border-vscode-border rounded text-sm focus:border-vscode-accent outline-none"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm text-gray-400 mb-1">Password (optional)</label>
-                                    <input
-                                        type="password"
-                                        value={config.password || ''}
-                                        onChange={e => updateConfig({ password: e.target.value })}
-                                        className="w-full px-3 py-2 bg-vscode-input border border-vscode-border rounded text-sm focus:border-vscode-accent outline-none"
-                                    />
-                                </div>
-                            </div>
                         </>
                     )}
 
@@ -152,65 +131,6 @@ export default function ConnectorPanel({ connector, mode, onSave, onCancel }: Co
                                     className="w-full px-3 py-2 bg-vscode-input border border-vscode-border rounded text-sm focus:border-vscode-accent outline-none"
                                 />
                             </div>
-                            {mode === 'source' && (
-                                <div>
-                                    <label className="block text-sm text-gray-400 mb-1">Consumer Group ID</label>
-                                    <input
-                                        type="text"
-                                        value={config.groupId || ''}
-                                        onChange={e => updateConfig({ groupId: e.target.value })}
-                                        placeholder="varpulis-group"
-                                        className="w-full px-3 py-2 bg-vscode-input border border-vscode-border rounded text-sm focus:border-vscode-accent outline-none"
-                                    />
-                                </div>
-                            )}
-                        </>
-                    )}
-
-                    {/* AMQP Configuration */}
-                    {config.type === 'amqp' && (
-                        <>
-                            <div className="grid grid-cols-2 gap-3">
-                                <div>
-                                    <label className="block text-sm text-gray-400 mb-1">Host</label>
-                                    <input
-                                        type="text"
-                                        value={config.host || ''}
-                                        onChange={e => updateConfig({ host: e.target.value })}
-                                        placeholder="localhost"
-                                        className="w-full px-3 py-2 bg-vscode-input border border-vscode-border rounded text-sm focus:border-vscode-accent outline-none"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm text-gray-400 mb-1">Port</label>
-                                    <input
-                                        type="number"
-                                        value={config.port || 5672}
-                                        onChange={e => updateConfig({ port: parseInt(e.target.value) })}
-                                        className="w-full px-3 py-2 bg-vscode-input border border-vscode-border rounded text-sm focus:border-vscode-accent outline-none"
-                                    />
-                                </div>
-                            </div>
-                            <div>
-                                <label className="block text-sm text-gray-400 mb-1">Queue</label>
-                                <input
-                                    type="text"
-                                    value={config.queue || ''}
-                                    onChange={e => updateConfig({ queue: e.target.value })}
-                                    placeholder="events-queue"
-                                    className="w-full px-3 py-2 bg-vscode-input border border-vscode-border rounded text-sm focus:border-vscode-accent outline-none"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-sm text-gray-400 mb-1">Exchange (optional)</label>
-                                <input
-                                    type="text"
-                                    value={config.exchange || ''}
-                                    onChange={e => updateConfig({ exchange: e.target.value })}
-                                    placeholder="amq.topic"
-                                    className="w-full px-3 py-2 bg-vscode-input border border-vscode-border rounded text-sm focus:border-vscode-accent outline-none"
-                                />
-                            </div>
                         </>
                     )}
 
@@ -227,18 +147,6 @@ export default function ConnectorPanel({ connector, mode, onSave, onCancel }: Co
                                     className="w-full px-3 py-2 bg-vscode-input border border-vscode-border rounded text-sm focus:border-vscode-accent outline-none"
                                 />
                             </div>
-                            <div>
-                                <label className="block text-sm text-gray-400 mb-1">Format</label>
-                                <select
-                                    value={config.format || 'evt'}
-                                    onChange={e => updateConfig({ format: e.target.value as 'evt' | 'json' | 'csv' })}
-                                    className="w-full px-3 py-2 bg-vscode-input border border-vscode-border rounded text-sm focus:border-vscode-accent outline-none"
-                                >
-                                    <option value="evt">.evt (Varpulis Events)</option>
-                                    <option value="json">JSON</option>
-                                    <option value="csv">CSV</option>
-                                </select>
-                            </div>
                         </>
                     )}
 
@@ -254,17 +162,6 @@ export default function ConnectorPanel({ connector, mode, onSave, onCancel }: Co
                                     placeholder="https://api.example.com/events"
                                     className="w-full px-3 py-2 bg-vscode-input border border-vscode-border rounded text-sm focus:border-vscode-accent outline-none"
                                 />
-                            </div>
-                            <div>
-                                <label className="block text-sm text-gray-400 mb-1">Method</label>
-                                <select
-                                    value={config.method || 'POST'}
-                                    onChange={e => updateConfig({ method: e.target.value as 'GET' | 'POST' })}
-                                    className="w-full px-3 py-2 bg-vscode-input border border-vscode-border rounded text-sm focus:border-vscode-accent outline-none"
-                                >
-                                    <option value="GET">GET</option>
-                                    <option value="POST">POST</option>
-                                </select>
                             </div>
                         </>
                     )}

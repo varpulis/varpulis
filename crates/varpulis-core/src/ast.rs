@@ -13,6 +13,17 @@ pub struct Program {
 /// Top-level statement
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Stmt {
+    /// Connector declaration: `connector MyMqtt = mqtt (host: "localhost", port: 1883)`
+    ConnectorDecl {
+        name: String,
+        connector_type: String,
+        params: Vec<ConnectorParam>,
+    },
+    /// Sink statement: `sink Alerts to KafkaProd (topic: "alerts")`
+    SinkStmt {
+        stream_name: String,
+        targets: Vec<SinkTarget>,
+    },
     /// Stream declaration: `stream X from Y` or `stream X = Y.where(...)`
     StreamDecl {
         name: String,
@@ -92,6 +103,28 @@ pub enum Stmt {
     },
 }
 
+/// Connector parameter: `host: "localhost"` or `port: 1883`
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConnectorParam {
+    pub name: String,
+    pub value: ConfigValue,
+}
+
+/// Sink target for sink statements
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum SinkTarget {
+    /// Connector with params: `KafkaProd (topic: "alerts")`
+    Connector {
+        connector_name: String,
+        params: Vec<ConnectorParam>,
+    },
+    /// Built-in sink: `console()`, `log(level: "info")`, `tap(counter: "x")`
+    Builtin {
+        sink_type: String,
+        params: Vec<NamedArg>,
+    },
+}
+
 /// SASE+ Pattern Expression for complex event processing
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SasePatternExpr {
@@ -144,6 +177,12 @@ pub enum StreamSource {
     AllWithAlias { name: String, alias: Option<String> },
     /// From event type: `from EventType`
     From(String),
+    /// From connector: `EventType.from(Connector, topic: "...", qos: 1)`
+    FromConnector {
+        event_type: String,
+        connector_name: String,
+        params: Vec<ConnectorParam>,
+    },
     /// Merge multiple streams
     Merge(Vec<InlineStreamDecl>),
     /// Join multiple streams
@@ -234,10 +273,20 @@ pub enum StreamOp {
     Print(Vec<Expr>),
     /// Log with level: `.log(level: "info", message: "...", data: expr)`
     Log(Vec<NamedArg>),
-    /// Emit to sink: `.emit(...)`
-    Emit(Vec<NamedArg>),
-    /// Send to destination: `.to(target)`
-    To(Expr),
+    /// Emit output: `.emit(fields...)` or `.emit as Type (fields...)`
+    Emit {
+        /// Optional type cast: `.emit as Alert (...)`
+        output_type: Option<String>,
+        /// Field mappings
+        fields: Vec<NamedArg>,
+    },
+    /// Send to connector: `.to(Connector, topic: "...", method: "POST")`
+    To {
+        connector_name: String,
+        params: Vec<ConnectorParam>,
+    },
+    /// Send to destination (legacy): `.to(target)`
+    ToExpr(Expr),
     /// Pattern matching: `.pattern(...)`
     Pattern(PatternDef),
     /// Attention window: `.attention_window(...)`

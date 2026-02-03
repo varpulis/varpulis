@@ -21,7 +21,9 @@ DEDENT = { "\u{00AB}DEDENT\u{00BB}" }
 program = { SOI ~ statement* ~ EOI }
 
 statement = {
-    stream_decl
+    connector_decl
+    | sink_stmt
+    | stream_decl
     | pattern_decl
     | event_decl
     | type_decl
@@ -41,6 +43,42 @@ statement = {
 }
 
 // ============================================================================
+// Connector Declaration
+// ============================================================================
+
+// connector MyMqtt = mqtt (host: "localhost", port: 1883)
+connector_decl = {
+    "connector" ~ identifier ~ "=" ~ connector_type ~ "(" ~ connector_params? ~ ")"
+}
+
+connector_type = { "mqtt" | "kafka" | "http" | "amqp" | "file" | "websocket" | "grpc" | identifier }
+
+connector_params = { connector_param ~ ("," ~ connector_param)* }
+connector_param = { identifier ~ ":" ~ config_value }
+
+// ============================================================================
+// Sink Statement
+// ============================================================================
+
+// sink Alerts to KafkaProd (topic: "alerts")
+// sink Alerts to [KafkaProd (topic: "a"), HttpApi (endpoint: "/alerts")]
+// sink Debug to console()
+sink_stmt = {
+    "sink" ~ identifier ~ "to" ~ sink_target
+}
+
+sink_target = {
+    sink_target_list
+    | sink_builtin
+    | sink_connector
+}
+
+sink_target_list = { "[" ~ sink_connector ~ ("," ~ sink_connector)* ~ "]" }
+sink_builtin = { sink_builtin_type ~ "(" ~ named_arg_list? ~ ")" }
+sink_builtin_type = @{ "console" | "log" | "tap" }
+sink_connector = { identifier ~ "(" ~ connector_params? ~ ")" }
+
+// ============================================================================
 // Stream Declaration
 // ============================================================================
 
@@ -55,7 +93,8 @@ stream_expr = { stream_source ~ stream_op* }
 
 // Order matters in PEG - put identifier last as fallback
 stream_source = {
-    merge_source
+    from_connector_source
+    | merge_source
     | join_source
     | sequence_source
     | timer_source
@@ -63,6 +102,9 @@ stream_source = {
     | aliased_source
     | identifier
 }
+
+// EventType.from(Connector, topic: "...", qos: 1)
+from_connector_source = { identifier ~ "." ~ "from" ~ "(" ~ identifier ~ ("," ~ connector_params)? ~ ")" }
 
 merge_source = { "merge" ~ "(" ~ inline_stream_list ~ ")" }
 join_source = { "join" ~ "(" ~ join_clause_list ~ ")" }
@@ -144,8 +186,12 @@ filter_op = { "filter" ~ "(" ~ expr ~ ")" }
 tap_op = { "tap" ~ "(" ~ named_arg_list ~ ")" }
 print_op = { "print" ~ "(" ~ expr_list? ~ ")" }
 log_op = { "log" ~ "(" ~ named_arg_list? ~ ")" }
-emit_op = { "emit" ~ "(" ~ named_arg_list? ~ ")" }
-to_op = { "to" ~ "(" ~ expr ~ ")" }
+// .emit(field1: expr, field2: expr) or .emit as Type (field1: expr)
+emit_op = { "emit" ~ emit_type_cast? ~ "(" ~ named_arg_list? ~ ")" }
+emit_type_cast = { "as" ~ identifier }
+
+// .to(Connector, topic: "...", method: "POST") - inline sink
+to_op = { "to" ~ "(" ~ identifier ~ ("," ~ connector_params)? ~ ")" }
 // Pattern: supports both lambda expressions and sequence patterns
 // .pattern(name: events => expr) or .pattern(name: A -> B -> C)
 pattern_op = { "pattern" ~ "(" ~ pattern_def ~ ")" }
@@ -312,7 +358,8 @@ config_block = {
 }
 config_item = { identifier ~ ":" ~ config_value ~ ","? }
 // Duration before integer for PEG ordering
-config_value = { float | duration | integer | string | boolean | identifier }
+config_value = { config_array | float | duration | integer | string | boolean | identifier }
+config_array = { "[" ~ (config_value ~ ("," ~ config_value)*)? ~ "]" }
 
 // ============================================================================
 // Import

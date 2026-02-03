@@ -8,6 +8,25 @@
 # - Predictive maintenance alerts
 
 # =============================================================================
+# Connector Definitions
+# =============================================================================
+
+connector MqttSensors = mqtt (
+    host: "localhost",
+    port: 1883,
+    client_id: "hvac-demo"
+)
+
+connector KafkaAlerts = kafka (
+    brokers: ["kafka:9092"],
+    group_id: "hvac-demo"
+)
+
+connector BuildingAPI = http (
+    base_url: "http://building-management.local/api"
+)
+
+# =============================================================================
 # Event Definitions
 # =============================================================================
 
@@ -46,10 +65,17 @@ event EnergyMeter:
 # Base Streams
 # =============================================================================
 
-stream Temperatures from TemperatureReading
-stream Humidity from HumidityReading
-stream HVAC from HVACStatus
-stream Energy from EnergyMeter
+stream Temperatures = TemperatureReading
+    .from(MqttSensors, topic: "sensors/temperature/#")
+
+stream Humidity = HumidityReading
+    .from(MqttSensors, topic: "sensors/humidity/#")
+
+stream HVAC = HVACStatus
+    .from(MqttSensors, topic: "hvac/status/#")
+
+stream Energy = EnergyMeter
+    .from(MqttSensors, topic: "meters/energy/#")
 
 # =============================================================================
 # Zone Aggregations
@@ -432,10 +458,10 @@ stream AllAlerts = merge(
         labels: [alert_type, severity, zone]
     )
     .emit()
-    .to([
-        "kafka://hvac-alerts",
-        "http://building-management.local/api/alerts"
-    ])
+
+# Output alerts to external systems
+sink AllAlerts to KafkaAlerts (topic: "hvac-alerts")
+sink AllAlerts to BuildingAPI (endpoint: "/alerts", method: "POST")
 
 # =============================================================================
 # CONFIGURATION

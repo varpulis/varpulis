@@ -1,16 +1,19 @@
-import EventNode from './EventNode';
-import PatternNode from './PatternNode';
-import SinkNode from './SinkNode';
-import SourceNode from './SourceNode';
-import StreamNode from './StreamNode';
+import { ConnectorNode } from './ConnectorNode';
+import { EventNode } from './EventNode';
+import { SourceNode } from './SourceNode';
+import { StreamNode } from './StreamNode';
+import { PatternNode } from './PatternNode';
+import { EmitNode } from './EmitNode';
+import { SinkNode } from './SinkNode';
 
 export const nodeTypes = {
-  source: SourceNode,
-  sink: SinkNode,
+  connector: ConnectorNode,
   event: EventNode,
+  source: SourceNode,
   stream: StreamNode,
   pattern: PatternNode,
+  emit: EmitNode,
+  sink: SinkNode,
 };
 
-export { EventNode, PatternNode, SinkNode, SourceNode, StreamNode };
-
+export { ConnectorNode, EventNode, SourceNode, StreamNode, PatternNode, EmitNode, SinkNode };

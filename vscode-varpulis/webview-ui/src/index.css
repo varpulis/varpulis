@@ -1,33 +1,520 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
 :root {
-  --vscode-editor-background: #1e1e1e;
-  --vscode-editor-foreground: #d4d4d4;
-  --vscode-panel-border: #444;
-  --vscode-focusBorder: #007acc;
-  --vscode-button-background: #0e639c;
-  --vscode-input-background: #3c3c3c;
+  --vscode-font-family: var(--vscode-editor-font-family, 'Segoe UI', sans-serif);
+  --node-bg: var(--vscode-editor-background, #1e1e1e);
+  --node-border: var(--vscode-input-border, #3c3c3c);
+  --node-selected: var(--vscode-focusBorder, #007fd4);
+  --text-color: var(--vscode-editor-foreground, #d4d4d4);
+  --handle-color: var(--vscode-button-background, #0e639c);
+
+  /* Node type colors */
+  --source-color: #22c55e;
+  --sink-color: #eab308;
+  --event-color: #f59e0b;
+  --stream-color: #6366f1;
+  --pattern-color: #ec4899;
+}
+
+* {
+  box-sizing: border-box;
 }
 
 body {
   margin: 0;
   padding: 0;
-  background-color: var(--vscode-editor-background);
-  color: var(--vscode-editor-foreground);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: var(--vscode-font-family);
+  background: var(--vscode-editor-background, #1e1e1e);
+  color: var(--text-color);
+  height: 100vh;
+  overflow: hidden;
 }
+
+#root {
+  width: 100%;
+  height: 100%;
+}
+
+/* ============================================
+   Layout
+   ============================================ */
+
+.app-container {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+}
+
+.main-content {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ============================================
+   Toolbar
+   ============================================ */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: rgba(0, 0, 0, 0.3);
+  border-bottom: 1px solid var(--node-border);
+  gap: 8px;
+}
+
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.toolbar-label {
+  font-size: 12px;
+  color: #888;
+  margin-right: 8px;
+}
+
+.toolbar-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  background: transparent;
+  color: var(--text-color);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.toolbar-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.toolbar-btn.primary {
+  background: #16a34a;
+  color: white;
+}
+
+.toolbar-btn.primary:hover {
+  background: #15803d;
+}
+
+.toolbar-btn.danger {
+  color: #f87171;
+}
+
+.toolbar-btn.danger:hover {
+  background: rgba(248, 113, 113, 0.2);
+}
+
+/* ============================================
+   Sidebar
+   ============================================ */
+
+.sidebar {
+  width: 200px;
+  background: var(--vscode-sideBar-background, #252526);
+  border-right: 1px solid var(--node-border);
+  padding: 10px;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.sidebar h3 {
+  margin: 0 0 10px 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--vscode-sideBarSectionHeader-foreground, #888);
+  letter-spacing: 0.5px;
+}
+
+.sidebar-item {
+  padding: 8px 10px;
+  margin-bottom: 5px;
+  background: var(--node-bg);
+  border: 1px solid var(--node-border);
+  border-radius: 4px;
+  cursor: grab;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.sidebar-item:hover {
+  border-color: var(--node-selected);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.sidebar-item:active {
+  cursor: grabbing;
+}
+
+.sidebar-item .icon {
+  font-size: 14px;
+}
+
+/* ============================================
+   Flow Container
+   ============================================ */
+
+.flow-container {
+  flex: 1;
+  height: 100%;
+  position: relative;
+}
+
+/* ============================================
+   Custom Nodes
+   ============================================ */
+
+.custom-node {
+  min-width: 180px;
+  background: var(--node-bg);
+  border: 2px solid var(--node-border);
+  border-radius: 8px;
+  font-size: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+
+.custom-node.selected {
+  box-shadow: 0 0 0 2px var(--node-selected), 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+/* Node Header */
+.node-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--node-border);
+}
+
+.node-icon {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 3px 6px;
+  border-radius: 3px;
+  letter-spacing: 0.5px;
+}
+
+.node-icon.source {
+  background: rgba(34, 197, 94, 0.2);
+  color: var(--source-color);
+}
+
+.node-icon.sink {
+  background: rgba(234, 179, 8, 0.2);
+  color: var(--sink-color);
+}
+
+.node-icon.event {
+  background: rgba(245, 158, 11, 0.2);
+  color: var(--event-color);
+}
+
+.node-icon.stream {
+  background: rgba(99, 102, 241, 0.2);
+  color: var(--stream-color);
+}
+
+.node-icon.pattern {
+  background: rgba(236, 72, 153, 0.2);
+  color: var(--pattern-color);
+}
+
+.node-title {
+  font-weight: 600;
+  color: var(--text-color);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Node Body */
+.node-body {
+  padding: 8px 12px;
+}
+
+.node-prop {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-size: 11px;
+}
+
+.node-prop:last-child {
+  margin-bottom: 0;
+}
+
+.node-prop .prop-label {
+  color: #888;
+}
+
+.node-prop .prop-value {
+  color: var(--text-color);
+  font-family: monospace;
+}
+
+.node-prop.uri {
+  margin-top: 4px;
+}
+
+.node-prop.uri .prop-value {
+  font-size: 10px;
+  color: #888;
+  word-break: break-all;
+}
+
+/* Node type-specific borders */
+.source-node {
+  border-color: var(--source-color);
+}
+
+.sink-node {
+  border-color: var(--sink-color);
+}
+
+.event-node {
+  border-color: var(--event-color);
+}
+
+.stream-node {
+  border-color: var(--stream-color);
+}
+
+.pattern-node {
+  border-color: var(--pattern-color);
+}
+
+/* Node Fields List (for Event nodes) */
+.node-fields {
+  margin-top: 4px;
+}
+
+.node-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  padding: 2px 0;
+  font-family: monospace;
+}
+
+.node-field .field-name {
+  color: #9cdcfe;
+}
+
+.node-field .field-type {
+  color: #4ec9b0;
+}
+
+/* Pattern Node Specifics */
+.pattern-type {
+  display: inline-block;
+  padding: 2px 6px;
+  background: rgba(236, 72, 153, 0.2);
+  color: var(--pattern-color);
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.pattern-within {
+  font-size: 10px;
+  color: #888;
+  margin-top: 4px;
+}
+
+/* ============================================
+   React Flow Handles
+   ============================================ */
+
+.react-flow__handle {
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--node-bg);
+}
+
+.react-flow__handle-left {
+  left: -6px;
+}
+
+.react-flow__handle-right {
+  right: -6px;
+}
+
+.source-node .react-flow__handle {
+  background: var(--source-color);
+}
+
+.sink-node .react-flow__handle {
+  background: var(--sink-color);
+}
+
+.event-node .react-flow__handle {
+  background: var(--event-color);
+}
+
+.stream-node .react-flow__handle {
+  background: var(--stream-color);
+}
+
+.pattern-node .react-flow__handle {
+  background: var(--pattern-color);
+}
+
+/* ============================================
+   Preview Panel
+   ============================================ */
+
+.preview-panel {
+  width: 300px;
+  background: var(--vscode-sideBar-background, #252526);
+  border-left: 1px solid var(--node-border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+.preview-header {
+  padding: 10px;
+  border-bottom: 1px solid var(--node-border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.preview-header h3 {
+  margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  color: #888;
+  letter-spacing: 0.5px;
+}
+
+.preview-content {
+  flex: 1;
+  overflow: auto;
+  padding: 10px;
+}
+
+.preview-content pre {
+  margin: 0;
+  font-family: var(--vscode-editor-font-family, 'Consolas', monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #9cdcfe;
+}
+
+/* Node Config Panel in Preview */
+.node-config-panel {
+  padding: 10px;
+  border-top: 1px solid var(--node-border);
+}
+
+.node-config-panel h4 {
+  margin: 0 0 10px 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  color: #888;
+}
+
+.config-field {
+  margin-bottom: 10px;
+}
+
+.config-field label {
+  display: block;
+  font-size: 11px;
+  color: #888;
+  margin-bottom: 4px;
+}
+
+.config-field input,
+.config-field select {
+  width: 100%;
+  padding: 6px 8px;
+  background: var(--node-bg);
+  border: 1px solid var(--node-border);
+  border-radius: 4px;
+  color: var(--text-color);
+  font-size: 12px;
+}
+
+.config-field input:focus,
+.config-field select:focus {
+  outline: none;
+  border-color: var(--node-selected);
+}
+
+/* ============================================
+   React Flow Overrides
+   ============================================ */
 
 .react-flow__node {
   font-size: 12px;
 }
 
-.react-flow__handle {
-  width: 10px;
-  height: 10px;
+.react-flow__minimap {
+  background: var(--vscode-sideBar-background, #252526) !important;
+  border-radius: 4px;
+}
+
+.react-flow__minimap-mask {
+  fill: rgba(0, 122, 204, 0.1) !important;
+}
+
+.react-flow__controls {
+  background: var(--node-bg) !important;
+  border: 1px solid var(--node-border) !important;
+  border-radius: 4px !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
+}
+
+.react-flow__controls button {
+  background: var(--node-bg) !important;
+  border-color: var(--node-border) !important;
+  color: var(--text-color) !important;
+}
+
+.react-flow__controls button:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
 }
 
 .react-flow__edge-path {
+  stroke: #666;
   stroke-width: 2;
+}
+
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: var(--node-selected);
+}
+
+.react-flow__background {
+  background: var(--node-bg) !important;
+}
+
+/* Animated Edge */
+.animated-edge {
+  stroke-dasharray: 5;
+  animation: dash 0.5s linear infinite;
+}
+
+@keyframes dash {
+  to {
+    stroke-dashoffset: -10;
+  }
 }

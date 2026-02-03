@@ -131,6 +131,8 @@ fn parse_statement(pair: pest::iterators::Pair<Rule>) -> ParseResult<Spanned<Stm
     let inner = pair.into_inner().expect_next("statement body")?;
 
     let stmt = match inner.as_rule() {
+        Rule::connector_decl => parse_connector_decl(inner)?,
+        Rule::sink_stmt => parse_sink_stmt(inner)?,
         Rule::stream_decl => parse_stream_decl(inner)?,
         Rule::pattern_decl => parse_pattern_decl(inner)?,
         Rule::event_decl => parse_event_decl(inner)?,
@@ -163,6 +165,114 @@ fn parse_statement(pair: pest::iterators::Pair<Rule>) -> ParseResult<Spanned<Stm
     };
 
     Ok(Spanned::new(stmt, span))
+}
+
+// ============================================================================
+// Connector and Sink Parsing
+// ============================================================================
+
+fn parse_connector_decl(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
+    let mut inner = pair.into_inner();
+    let name = inner.expect_next("connector name")?.as_str().to_string();
+    let connector_type = inner.expect_next("connector type")?.as_str().to_string();
+    let mut params = Vec::new();
+
+    for p in inner {
+        if p.as_rule() == Rule::connector_params {
+            params = parse_connector_params(p)?;
+        }
+    }
+
+    Ok(Stmt::ConnectorDecl {
+        name,
+        connector_type,
+        params,
+    })
+}
+
+fn parse_sink_stmt(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
+    let mut inner = pair.into_inner();
+    let stream_name = inner.expect_next("stream name")?.as_str().to_string();
+    let target_pair = inner.expect_next("sink target")?;
+    let targets = parse_sink_target(target_pair)?;
+
+    Ok(Stmt::SinkStmt {
+        stream_name,
+        targets,
+    })
+}
+
+fn parse_sink_target(pair: pest::iterators::Pair<Rule>) -> ParseResult<Vec<SinkTarget>> {
+    let inner = pair.into_inner().expect_next("sink target type")?;
+
+    match inner.as_rule() {
+        Rule::sink_target_list => {
+            let mut targets = Vec::new();
+            for p in inner.into_inner() {
+                if p.as_rule() == Rule::sink_connector {
+                    targets.push(parse_sink_connector(p)?);
+                }
+            }
+            Ok(targets)
+        }
+        Rule::sink_builtin => {
+            let mut inner_iter = inner.into_inner();
+            let type_pair = inner_iter.expect_next("builtin sink type")?;
+            let sink_type = type_pair.as_str().to_string();
+            let mut params = Vec::new();
+            for p in inner_iter {
+                if p.as_rule() == Rule::named_arg_list {
+                    for arg in p.into_inner() {
+                        params.push(parse_named_arg(arg)?);
+                    }
+                }
+            }
+            Ok(vec![SinkTarget::Builtin { sink_type, params }])
+        }
+        Rule::sink_connector => Ok(vec![parse_sink_connector(inner)?]),
+        _ => Err(ParseError::UnexpectedToken {
+            position: 0,
+            expected: "sink target".to_string(),
+            found: format!("{:?}", inner.as_rule()),
+        }),
+    }
+}
+
+fn parse_sink_connector(pair: pest::iterators::Pair<Rule>) -> ParseResult<SinkTarget> {
+    let mut inner = pair.into_inner();
+    let connector_name = inner.expect_next("connector name")?.as_str().to_string();
+    let mut params = Vec::new();
+
+    for p in inner {
+        if p.as_rule() == Rule::connector_params {
+            params = parse_connector_params(p)?;
+        }
+    }
+
+    Ok(SinkTarget::Connector {
+        connector_name,
+        params: params
+            .into_iter()
+            .map(|p| ConnectorParam {
+                name: p.name,
+                value: p.value,
+            })
+            .collect(),
+    })
+}
+
+fn parse_connector_params(pair: pest::iterators::Pair<Rule>) -> ParseResult<Vec<ConnectorParam>> {
+    let mut params = Vec::new();
+    for p in pair.into_inner() {
+        if p.as_rule() == Rule::connector_param {
+            let mut inner = p.into_inner();
+            let name = inner.expect_next("param name")?.as_str().to_string();
+            let value_pair = inner.expect_next("param value")?;
+            let value = parse_config_value(value_pair)?;
+            params.push(ConnectorParam { name, value });
+        }
+    }
+    Ok(params)
 }
 
 fn parse_stream_decl(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
@@ -403,6 +513,25 @@ fn parse_stream_source(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamS
     let inner = pair.into_inner().expect_next("stream source type")?;
 
     match inner.as_rule() {
+        Rule::from_connector_source => {
+            let mut inner_iter = inner.into_inner();
+            let event_type = inner_iter.expect_next("event type")?.as_str().to_string();
+            let connector_name = inner_iter
+                .expect_next("connector name")?
+                .as_str()
+                .to_string();
+            let mut params = Vec::new();
+            for p in inner_iter {
+                if p.as_rule() == Rule::connector_params {
+                    params = parse_connector_params(p)?;
+                }
+            }
+            Ok(StreamSource::FromConnector {
+                event_type,
+                connector_name,
+                params,
+            })
+        }
         Rule::merge_source => {
             let mut streams = Vec::new();
             for p in inner.into_inner() {
@@ -633,13 +762,30 @@ fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
             Ok(StreamOp::Within(expr))
         }
         Rule::emit_op => {
-            let args = pair
-                .into_inner()
-                .filter(|p| p.as_rule() == Rule::named_arg_list)
-                .flat_map(|p| p.into_inner())
-                .map(parse_named_arg)
-                .collect::<ParseResult<Vec<_>>>()?;
-            Ok(StreamOp::Emit(args))
+            let mut output_type = None;
+            let mut fields = Vec::new();
+            for p in pair.into_inner() {
+                match p.as_rule() {
+                    Rule::emit_type_cast => {
+                        output_type = Some(
+                            p.into_inner()
+                                .expect_next("type name")?
+                                .as_str()
+                                .to_string(),
+                        );
+                    }
+                    Rule::named_arg_list => {
+                        for arg in p.into_inner() {
+                            fields.push(parse_named_arg(arg)?);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Ok(StreamOp::Emit {
+                output_type,
+                fields,
+            })
         }
         Rule::print_op => {
             let exprs = pair
@@ -717,8 +863,18 @@ fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
             Ok(StreamOp::Log(args))
         }
         Rule::to_op => {
-            let expr = parse_expr(pair.into_inner().expect_next("to expression")?)?;
-            Ok(StreamOp::To(expr))
+            let mut inner = pair.into_inner();
+            let connector_name = inner.expect_next("connector name")?.as_str().to_string();
+            let mut params = Vec::new();
+            for p in inner {
+                if p.as_rule() == Rule::connector_params {
+                    params = parse_connector_params(p)?;
+                }
+            }
+            Ok(StreamOp::To {
+                connector_name,
+                params,
+            })
         }
         Rule::process_op => {
             let expr = parse_expr(pair.into_inner().expect_next("process expression")?)?;
@@ -1076,6 +1232,13 @@ fn parse_config_value(pair: pest::iterators::Pair<Rule>) -> ParseResult<ConfigVa
     let inner = pair.into_inner().next().unwrap_or(cloned);
 
     match inner.as_rule() {
+        Rule::config_array => {
+            let values: Vec<ConfigValue> = inner
+                .into_inner()
+                .map(parse_config_value)
+                .collect::<ParseResult<Vec<_>>>()?;
+            Ok(ConfigValue::Array(values))
+        }
         Rule::integer => Ok(ConfigValue::Int(inner.as_str().parse().unwrap_or(0))),
         Rule::float => Ok(ConfigValue::Float(inner.as_str().parse().unwrap_or(0.0))),
         Rule::string => {
