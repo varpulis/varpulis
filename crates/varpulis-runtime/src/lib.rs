@@ -102,6 +102,7 @@
 pub mod aggregation;
 pub mod attention;
 pub mod connector;
+pub mod context;
 pub mod engine;
 pub mod event;
 pub mod event_file;
@@ -119,6 +120,7 @@ pub mod timer;
 pub mod window;
 pub mod worker_pool;
 
+pub use context::{ContextConfig, ContextMap, ContextOrchestrator, ContextRuntime};
 pub use engine::{Engine, ReloadReport};
 pub use event::{Event, SharedEvent};
 pub use event_file::StreamingEventReader;

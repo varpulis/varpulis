@@ -60,6 +60,15 @@ pub enum Stmt {
         body: Vec<Spanned<Stmt>>,
     },
     /// Configuration block with name (e.g., `config mqtt { ... }`)
+    ///
+    /// **Deprecated:** Use `connector` declarations instead.
+    /// ```vpl
+    /// connector MyMqtt = mqtt (
+    ///     broker: "localhost",
+    ///     port: 1883,
+    ///     topic: "events/#"
+    /// )
+    /// ```
     Config {
         name: String,
         items: Vec<ConfigItem>,
@@ -100,6 +109,11 @@ pub enum Stmt {
         expr: SasePatternExpr,
         within: Option<Expr>,
         partition_by: Option<Expr>,
+    },
+    /// Context declaration: `context name (cores: [0, 1])`
+    ContextDecl {
+        name: String,
+        cores: Option<Vec<usize>>,
     },
 }
 
@@ -279,6 +293,8 @@ pub enum StreamOp {
         output_type: Option<String>,
         /// Field mappings
         fields: Vec<NamedArg>,
+        /// Optional target context for cross-context emit: `.emit(context: ctx_name, ...)`
+        target_context: Option<String>,
     },
     /// Send to connector: `.to(Connector, topic: "...", method: "POST")`
     To {
@@ -315,6 +331,8 @@ pub enum StreamOp {
     All,
     /// Wait for first path to complete: `.first()`
     First,
+    /// Assign stream to a context: `.context(name)`
+    Context(String),
 }
 
 /// A path in a fork construct
