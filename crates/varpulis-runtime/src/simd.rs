@@ -5,6 +5,7 @@
 //! - Batch comparisons for filtering
 //! - Field extraction to contiguous arrays
 
+#[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
 // =============================================================================
