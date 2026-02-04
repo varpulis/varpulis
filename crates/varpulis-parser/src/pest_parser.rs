@@ -981,7 +981,22 @@ fn parse_select_item(pair: pest::iterators::Pair<Rule>) -> ParseResult<SelectIte
 }
 
 fn parse_window_args(pair: pest::iterators::Pair<Rule>) -> ParseResult<WindowArgs> {
+    let raw = pair.as_str().trim();
+    let is_session = raw.starts_with("session");
+
     let mut inner = pair.into_inner();
+
+    if is_session {
+        // session: <gap_expr>
+        let gap_expr = parse_expr(inner.expect_next("session gap duration")?)?;
+        return Ok(WindowArgs {
+            duration: gap_expr.clone(),
+            sliding: None,
+            policy: None,
+            session_gap: Some(gap_expr),
+        });
+    }
+
     let duration = parse_expr(inner.expect_next("window duration")?)?;
 
     let mut sliding = None;
@@ -1002,6 +1017,7 @@ fn parse_window_args(pair: pest::iterators::Pair<Rule>) -> ParseResult<WindowArg
         duration,
         sliding,
         policy,
+        session_gap: None,
     })
 }
 

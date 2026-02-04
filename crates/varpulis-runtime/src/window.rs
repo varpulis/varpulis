@@ -241,6 +241,125 @@ impl SlidingCountWindow {
     }
 }
 
+/// A session window that groups events separated by gaps of inactivity.
+///
+/// Events are accumulated into a session. When a new event arrives after a gap
+/// exceeding the configured duration, the current session is closed (emitted)
+/// and a new session begins with the incoming event.
+pub struct SessionWindow {
+    gap: Duration,
+    events: Vec<SharedEvent>,
+    last_event_time: Option<DateTime<Utc>>,
+}
+
+impl SessionWindow {
+    pub fn new(gap: Duration) -> Self {
+        Self {
+            gap,
+            events: Vec::new(),
+            last_event_time: None,
+        }
+    }
+
+    /// Add a shared event to the session window.
+    /// Returns the completed session if the gap was exceeded.
+    pub fn add_shared(&mut self, event: SharedEvent) -> Option<Vec<SharedEvent>> {
+        let event_time = event.timestamp;
+        if let Some(last_time) = self.last_event_time {
+            if event_time - last_time > self.gap {
+                // Gap exceeded — close current session, start new one
+                let completed = std::mem::take(&mut self.events);
+                self.events.push(event);
+                self.last_event_time = Some(event_time);
+                return Some(completed);
+            }
+        }
+        // Within session gap (or first event)
+        self.events.push(event);
+        self.last_event_time = Some(event_time);
+        None
+    }
+
+    /// Add an event (wraps in Arc).
+    #[allow(dead_code)]
+    pub fn add(&mut self, event: Event) -> Option<Vec<Event>> {
+        self.add_shared(Arc::new(event))
+            .map(|events| events.into_iter().map(|e| (*e).clone()).collect())
+    }
+
+    /// Flush all events as SharedEvent references.
+    pub fn flush_shared(&mut self) -> Vec<SharedEvent> {
+        self.last_event_time = None;
+        std::mem::take(&mut self.events)
+    }
+
+    /// Flush all events (clones for backward compatibility).
+    #[allow(dead_code)]
+    pub fn flush(&mut self) -> Vec<Event> {
+        self.flush_shared()
+            .into_iter()
+            .map(|e| (*e).clone())
+            .collect()
+    }
+}
+
+/// A partitioned session window that maintains separate sessions per partition key
+pub struct PartitionedSessionWindow {
+    partition_key: String,
+    gap: Duration,
+    windows: std::collections::HashMap<String, SessionWindow>,
+}
+
+impl PartitionedSessionWindow {
+    pub fn new(partition_key: String, gap: Duration) -> Self {
+        Self {
+            partition_key,
+            gap,
+            windows: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Add a shared event to the appropriate partition session.
+    pub fn add_shared(&mut self, event: SharedEvent) -> Option<Vec<SharedEvent>> {
+        let key = event
+            .get(&self.partition_key)
+            .map(|v| format!("{}", v))
+            .unwrap_or_else(|| "default".to_string());
+
+        let window = self
+            .windows
+            .entry(key)
+            .or_insert_with(|| SessionWindow::new(self.gap));
+
+        window.add_shared(event)
+    }
+
+    /// Add an event (wraps in Arc).
+    #[allow(dead_code)]
+    pub fn add(&mut self, event: Event) -> Option<Vec<Event>> {
+        self.add_shared(Arc::new(event))
+            .map(|events| events.into_iter().map(|e| (*e).clone()).collect())
+    }
+
+    /// Flush all partition sessions as SharedEvent references.
+    pub fn flush_shared(&mut self) -> Vec<SharedEvent> {
+        let mut all_events = Vec::new();
+        for window in self.windows.values_mut() {
+            all_events.extend(window.flush_shared());
+        }
+        all_events
+    }
+
+    /// Flush all partition sessions (clones for backward compatibility).
+    #[allow(dead_code)]
+    pub fn flush(&mut self) -> Vec<Event> {
+        self.flush_shared()
+            .into_iter()
+            .map(|e| (*e).clone())
+            .collect()
+    }
+}
+
 /// A partitioned tumbling window that maintains separate windows per partition key
 pub struct PartitionedTumblingWindow {
     partition_key: String,
@@ -1351,5 +1470,145 @@ mod tests {
         let agg = result.unwrap();
         assert_eq!(agg.count, 3);
         assert_eq!(agg.sum, 600.0);
+    }
+
+    // ==========================================================================
+    // SessionWindow Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_session_window_basic() {
+        let mut window = SessionWindow::new(Duration::seconds(5));
+        let base_time = Utc::now();
+
+        // Events within 5s gap — all in same session
+        assert!(window
+            .add(Event::new("Test").with_timestamp(base_time))
+            .is_none());
+        assert!(window
+            .add(Event::new("Test").with_timestamp(base_time + Duration::seconds(2)))
+            .is_none());
+        assert!(window
+            .add(Event::new("Test").with_timestamp(base_time + Duration::seconds(4)))
+            .is_none());
+
+        // Event after 6s gap — closes session
+        let result =
+            window.add(Event::new("Test").with_timestamp(base_time + Duration::seconds(10)));
+        assert!(result.is_some());
+        assert_eq!(
+            result.unwrap().len(),
+            3,
+            "First session should have 3 events"
+        );
+    }
+
+    #[test]
+    fn test_session_window_no_gap() {
+        let mut window = SessionWindow::new(Duration::seconds(10));
+        let base_time = Utc::now();
+
+        // All events within gap — no session closes
+        for i in 0..5 {
+            assert!(window
+                .add(Event::new("Test").with_timestamp(base_time + Duration::seconds(i)))
+                .is_none());
+        }
+
+        // Flush returns all events
+        let flushed = window.flush();
+        assert_eq!(flushed.len(), 5);
+    }
+
+    #[test]
+    fn test_session_window_multiple_sessions() {
+        let mut window = SessionWindow::new(Duration::seconds(3));
+        let base_time = Utc::now();
+
+        // Session 1: t=0, t=1, t=2
+        window.add(Event::new("Test").with_timestamp(base_time));
+        window.add(Event::new("Test").with_timestamp(base_time + Duration::seconds(1)));
+        window.add(Event::new("Test").with_timestamp(base_time + Duration::seconds(2)));
+
+        // Gap of 5s -> session 1 closes
+        let result =
+            window.add(Event::new("Test").with_timestamp(base_time + Duration::seconds(7)));
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().len(), 3);
+
+        // Session 2: t=7, t=8
+        window.add(Event::new("Test").with_timestamp(base_time + Duration::seconds(8)));
+
+        // Gap of 4s -> session 2 closes
+        let result =
+            window.add(Event::new("Test").with_timestamp(base_time + Duration::seconds(12)));
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_session_window_flush() {
+        let mut window = SessionWindow::new(Duration::seconds(5));
+        let base_time = Utc::now();
+
+        window.add(Event::new("Test").with_timestamp(base_time));
+        window.add(Event::new("Test").with_timestamp(base_time + Duration::seconds(1)));
+
+        let flushed = window.flush();
+        assert_eq!(flushed.len(), 2);
+
+        // After flush, window is empty
+        let flushed_again = window.flush();
+        assert_eq!(flushed_again.len(), 0);
+    }
+
+    // ==========================================================================
+    // PartitionedSessionWindow Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_partitioned_session_window() {
+        let mut window = PartitionedSessionWindow::new("region".to_string(), Duration::seconds(5));
+        let base_time = Utc::now();
+
+        // East: t=0, t=2
+        window.add(
+            Event::new("Test")
+                .with_timestamp(base_time)
+                .with_field("region", "east"),
+        );
+        window.add(
+            Event::new("Test")
+                .with_timestamp(base_time + Duration::seconds(2))
+                .with_field("region", "east"),
+        );
+
+        // West: t=0
+        window.add(
+            Event::new("Test")
+                .with_timestamp(base_time)
+                .with_field("region", "west"),
+        );
+
+        // East: gap of 6s -> east session closes
+        let result = window.add(
+            Event::new("Test")
+                .with_timestamp(base_time + Duration::seconds(8))
+                .with_field("region", "east"),
+        );
+        assert!(result.is_some());
+        assert_eq!(
+            result.unwrap().len(),
+            2,
+            "East session should have 2 events"
+        );
+
+        // West still open (no gap exceeded)
+        let result = window.add(
+            Event::new("Test")
+                .with_timestamp(base_time + Duration::seconds(3))
+                .with_field("region", "west"),
+        );
+        assert!(result.is_none(), "West session should still be open");
     }
 }

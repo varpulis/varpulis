@@ -121,7 +121,9 @@ pub mod timer;
 pub mod window;
 pub mod worker_pool;
 
-pub use context::{ContextConfig, ContextMap, ContextOrchestrator, ContextRuntime};
+pub use context::{
+    ContextConfig, ContextMap, ContextOrchestrator, ContextRuntime, DispatchError, EventTypeRouter,
+};
 pub use engine::{Engine, ReloadReport, SourceBinding};
 pub use event::{Event, SharedEvent};
 pub use event_file::StreamingEventReader;
@@ -131,9 +133,9 @@ pub use stream::Stream;
 pub use timer::{spawn_timer, TimerManager};
 pub use window::{
     CountWindow, DelayBuffer, IncrementalAggregates, IncrementalSlidingWindow,
-    PartitionedDelayBuffer, PartitionedPreviousValueTracker, PartitionedSlidingWindow,
-    PartitionedTumblingWindow, PreviousValueTracker, SlidingCountWindow, SlidingWindow,
-    TumblingWindow,
+    PartitionedDelayBuffer, PartitionedPreviousValueTracker, PartitionedSessionWindow,
+    PartitionedSlidingWindow, PartitionedTumblingWindow, PreviousValueTracker, SessionWindow,
+    SlidingCountWindow, SlidingWindow, TumblingWindow,
 };
 pub use worker_pool::{
     BackpressureError, BackpressureStrategy, WorkerPool, WorkerPoolConfig, WorkerPoolMetrics,

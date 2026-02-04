@@ -8,8 +8,8 @@ use crate::event::SharedEvent;
 use crate::join::JoinBuffer;
 use crate::sase::SaseEngine;
 use crate::window::{
-    CountWindow, PartitionedSlidingWindow, PartitionedTumblingWindow, SlidingCountWindow,
-    SlidingWindow, TumblingWindow,
+    CountWindow, PartitionedSessionWindow, PartitionedSlidingWindow, PartitionedTumblingWindow,
+    SessionWindow, SlidingCountWindow, SlidingWindow, TumblingWindow,
 };
 use indexmap::IndexMap;
 use std::collections::HashMap;
@@ -335,6 +335,8 @@ pub(crate) enum WindowType {
     SlidingCount(SlidingCountWindow),
     PartitionedTumbling(PartitionedTumblingWindow),
     PartitionedSliding(PartitionedSlidingWindow),
+    Session(SessionWindow),
+    PartitionedSession(PartitionedSessionWindow),
 }
 
 /// Configuration for simple emit operation

@@ -34,8 +34,8 @@ use crate::metrics::Metrics;
 use crate::sase::SaseEngine;
 use crate::sequence::SequenceContext;
 use crate::window::{
-    CountWindow, PartitionedSlidingWindow, PartitionedTumblingWindow, SlidingCountWindow,
-    SlidingWindow, TumblingWindow,
+    CountWindow, PartitionedSessionWindow, PartitionedSlidingWindow, PartitionedTumblingWindow,
+    SessionWindow, SlidingCountWindow, SlidingWindow, TumblingWindow,
 };
 use chrono::Duration;
 use indexmap::IndexMap;
@@ -962,103 +962,124 @@ impl Engine {
             // Handle non-sequence operations
             match op {
                 StreamOp::Window(args) => {
-                    // Check if this is a count-based or time-based window
-                    match &args.duration {
-                        varpulis_core::ast::Expr::Int(count) => {
-                            // Count-based window
-                            let count = *count as usize;
-
-                            // Get slide amount if specified (default to window size for tumbling)
-                            let slide = args.sliding.as_ref().map(|s| match s {
-                                varpulis_core::ast::Expr::Int(n) => *n as usize,
-                                _ => 1,
-                            });
-
-                            // If we have a partition key, use partitioned window
-                            if let Some(ref key) = partition_key {
-                                if let Some(slide_size) = slide {
-                                    // Partitioned sliding count window
-                                    runtime_ops.push(RuntimeOp::PartitionedSlidingCountWindow(
-                                        PartitionedSlidingCountWindowState::new(
-                                            key.clone(),
-                                            count,
-                                            slide_size,
-                                        ),
-                                    ));
-                                } else {
-                                    // Partitioned tumbling count window
-                                    runtime_ops.push(RuntimeOp::PartitionedWindow(
-                                        PartitionedWindowState::new(key.clone(), count),
-                                    ));
-                                }
-                            } else if let Some(slide_size) = slide {
-                                runtime_ops.push(RuntimeOp::Window(WindowType::SlidingCount(
-                                    SlidingCountWindow::new(count, slide_size),
-                                )));
-                            } else {
-                                runtime_ops.push(RuntimeOp::Window(WindowType::Count(
-                                    CountWindow::new(count),
-                                )));
-                            }
+                    // Check for session window first
+                    if let Some(ref gap_expr) = args.session_gap {
+                        let gap_ns = match gap_expr {
+                            varpulis_core::ast::Expr::Duration(ns) => *ns,
+                            _ => 300_000_000_000, // 5 minute default
+                        };
+                        let gap = Duration::nanoseconds(gap_ns as i64);
+                        if let Some(ref key) = partition_key {
+                            runtime_ops.push(RuntimeOp::Window(WindowType::PartitionedSession(
+                                PartitionedSessionWindow::new(key.clone(), gap),
+                            )));
+                        } else {
+                            runtime_ops.push(RuntimeOp::Window(WindowType::Session(
+                                SessionWindow::new(gap),
+                            )));
                         }
-                        varpulis_core::ast::Expr::Duration(ns) => {
-                            // Time-based window
-                            let duration = Duration::nanoseconds(*ns as i64);
-                            if let Some(ref key) = partition_key {
-                                // Partitioned time-based window
-                                if let Some(sliding) = &args.sliding {
+                    } else {
+                        // Check if this is a count-based or time-based window
+                        match &args.duration {
+                            varpulis_core::ast::Expr::Int(count) => {
+                                // Count-based window
+                                let count = *count as usize;
+
+                                // Get slide amount if specified (default to window size for tumbling)
+                                let slide = args.sliding.as_ref().map(|s| match s {
+                                    varpulis_core::ast::Expr::Int(n) => *n as usize,
+                                    _ => 1,
+                                });
+
+                                // If we have a partition key, use partitioned window
+                                if let Some(ref key) = partition_key {
+                                    if let Some(slide_size) = slide {
+                                        // Partitioned sliding count window
+                                        runtime_ops.push(RuntimeOp::PartitionedSlidingCountWindow(
+                                            PartitionedSlidingCountWindowState::new(
+                                                key.clone(),
+                                                count,
+                                                slide_size,
+                                            ),
+                                        ));
+                                    } else {
+                                        // Partitioned tumbling count window
+                                        runtime_ops.push(RuntimeOp::PartitionedWindow(
+                                            PartitionedWindowState::new(key.clone(), count),
+                                        ));
+                                    }
+                                } else if let Some(slide_size) = slide {
+                                    runtime_ops.push(RuntimeOp::Window(WindowType::SlidingCount(
+                                        SlidingCountWindow::new(count, slide_size),
+                                    )));
+                                } else {
+                                    runtime_ops.push(RuntimeOp::Window(WindowType::Count(
+                                        CountWindow::new(count),
+                                    )));
+                                }
+                            }
+                            varpulis_core::ast::Expr::Duration(ns) => {
+                                // Time-based window
+                                let duration = Duration::nanoseconds(*ns as i64);
+                                if let Some(ref key) = partition_key {
+                                    // Partitioned time-based window
+                                    if let Some(sliding) = &args.sliding {
+                                        let slide_ns = match sliding {
+                                            varpulis_core::ast::Expr::Duration(ns) => *ns,
+                                            _ => 60_000_000_000, // 1 minute default
+                                        };
+                                        let slide = Duration::nanoseconds(slide_ns as i64);
+                                        runtime_ops.push(RuntimeOp::Window(
+                                            WindowType::PartitionedSliding(
+                                                PartitionedSlidingWindow::new(
+                                                    key.clone(),
+                                                    duration,
+                                                    slide,
+                                                ),
+                                            ),
+                                        ));
+                                    } else {
+                                        runtime_ops.push(RuntimeOp::Window(
+                                            WindowType::PartitionedTumbling(
+                                                PartitionedTumblingWindow::new(
+                                                    key.clone(),
+                                                    duration,
+                                                ),
+                                            ),
+                                        ));
+                                    }
+                                } else if let Some(sliding) = &args.sliding {
                                     let slide_ns = match sliding {
                                         varpulis_core::ast::Expr::Duration(ns) => *ns,
                                         _ => 60_000_000_000, // 1 minute default
                                     };
                                     let slide = Duration::nanoseconds(slide_ns as i64);
-                                    runtime_ops.push(RuntimeOp::Window(
-                                        WindowType::PartitionedSliding(
-                                            PartitionedSlidingWindow::new(
-                                                key.clone(),
-                                                duration,
-                                                slide,
-                                            ),
-                                        ),
-                                    ));
+                                    runtime_ops.push(RuntimeOp::Window(WindowType::Sliding(
+                                        SlidingWindow::new(duration, slide),
+                                    )));
                                 } else {
+                                    runtime_ops.push(RuntimeOp::Window(WindowType::Tumbling(
+                                        TumblingWindow::new(duration),
+                                    )));
+                                }
+                            }
+                            _ => {
+                                // Default to 5 minute tumbling window
+                                let duration = Duration::nanoseconds(300_000_000_000);
+                                if let Some(ref key) = partition_key {
                                     runtime_ops.push(RuntimeOp::Window(
                                         WindowType::PartitionedTumbling(
                                             PartitionedTumblingWindow::new(key.clone(), duration),
                                         ),
                                     ));
+                                } else {
+                                    runtime_ops.push(RuntimeOp::Window(WindowType::Tumbling(
+                                        TumblingWindow::new(duration),
+                                    )));
                                 }
-                            } else if let Some(sliding) = &args.sliding {
-                                let slide_ns = match sliding {
-                                    varpulis_core::ast::Expr::Duration(ns) => *ns,
-                                    _ => 60_000_000_000, // 1 minute default
-                                };
-                                let slide = Duration::nanoseconds(slide_ns as i64);
-                                runtime_ops.push(RuntimeOp::Window(WindowType::Sliding(
-                                    SlidingWindow::new(duration, slide),
-                                )));
-                            } else {
-                                runtime_ops.push(RuntimeOp::Window(WindowType::Tumbling(
-                                    TumblingWindow::new(duration),
-                                )));
                             }
                         }
-                        _ => {
-                            // Default to 5 minute tumbling window
-                            let duration = Duration::nanoseconds(300_000_000_000);
-                            if let Some(ref key) = partition_key {
-                                runtime_ops.push(RuntimeOp::Window(
-                                    WindowType::PartitionedTumbling(
-                                        PartitionedTumblingWindow::new(key.clone(), duration),
-                                    ),
-                                ));
-                            } else {
-                                runtime_ops.push(RuntimeOp::Window(WindowType::Tumbling(
-                                    TumblingWindow::new(duration),
-                                )));
-                            }
-                        }
-                    }
+                    } // close else (non-session)
                 }
                 StreamOp::PartitionBy(expr) => {
                     // Extract partition key field name
@@ -1476,10 +1497,20 @@ impl Engine {
     /// Process an incoming event
     pub async fn process(&mut self, event: Event) -> Result<(), String> {
         self.events_processed += 1;
+        self.process_inner(Arc::new(event)).await
+    }
 
+    /// Process a pre-wrapped SharedEvent (zero-copy path for context pipelines)
+    pub async fn process_shared(&mut self, event: SharedEvent) -> Result<(), String> {
+        self.events_processed += 1;
+        self.process_inner(event).await
+    }
+
+    /// Internal processing logic shared by process() and process_shared()
+    async fn process_inner(&mut self, event: SharedEvent) -> Result<(), String> {
         // Process events with depth limit to prevent infinite loops
         // Each event carries its depth level - use SharedEvent to avoid cloning
-        let mut pending_events: Vec<(SharedEvent, usize)> = vec![(Arc::new(event), 0)];
+        let mut pending_events: Vec<(SharedEvent, usize)> = vec![(event, 0)];
         const MAX_CHAIN_DEPTH: usize = 10;
 
         // Process events iteratively, feeding output to dependent streams
@@ -1598,6 +1629,71 @@ impl Engine {
         }
 
         // Send all emitted events in batch (non-blocking to avoid async overhead)
+        for emitted in &emitted_batch {
+            let owned = (**emitted).clone();
+            if let Err(e) = self.output_tx.try_send(owned) {
+                warn!("Failed to send output event: {}", e);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Process a batch of pre-wrapped SharedEvents (zero-copy path for context pipelines)
+    pub async fn process_batch_shared(&mut self, events: Vec<SharedEvent>) -> Result<(), String> {
+        if events.is_empty() {
+            return Ok(());
+        }
+
+        let batch_size = events.len();
+        self.events_processed += batch_size as u64;
+
+        let mut pending_events: Vec<(SharedEvent, usize)> =
+            Vec::with_capacity(batch_size + batch_size / 4);
+
+        for event in events {
+            pending_events.push((event, 0));
+        }
+
+        const MAX_CHAIN_DEPTH: usize = 10;
+
+        let mut emitted_batch: Vec<SharedEvent> = Vec::with_capacity(batch_size / 10);
+
+        while let Some((current_event, depth)) = pending_events.pop() {
+            if depth >= MAX_CHAIN_DEPTH {
+                debug!(
+                    "Max chain depth reached for event type: {}",
+                    current_event.event_type
+                );
+                continue;
+            }
+
+            let stream_names: Arc<[String]> = self
+                .event_sources
+                .get(&current_event.event_type)
+                .cloned()
+                .unwrap_or_else(|| Arc::from([]));
+
+            for stream_name in stream_names.iter() {
+                if let Some(stream) = self.streams.get_mut(stream_name) {
+                    let result = Self::process_stream_with_functions(
+                        stream,
+                        Arc::clone(&current_event),
+                        &self.functions,
+                        &self.sink_cache,
+                    )
+                    .await?;
+
+                    self.output_events_emitted += result.emitted_events.len() as u64;
+                    emitted_batch.extend(result.emitted_events);
+
+                    for output_event in result.output_events {
+                        pending_events.push((output_event, depth + 1));
+                    }
+                }
+            }
+        }
+
         for emitted in &emitted_batch {
             let owned = (**emitted).clone();
             if let Err(e) = self.output_tx.try_send(owned) {
@@ -1816,6 +1912,16 @@ impl Engine {
                             WindowType::PartitionedSliding(w) => {
                                 if let Some(window_events) = w.add_shared(event) {
                                     window_results = window_events;
+                                }
+                            }
+                            WindowType::Session(w) => {
+                                if let Some(completed) = w.add_shared(event) {
+                                    window_results = completed;
+                                }
+                            }
+                            WindowType::PartitionedSession(w) => {
+                                if let Some(completed) = w.add_shared(event) {
+                                    window_results = completed;
                                 }
                             }
                         }

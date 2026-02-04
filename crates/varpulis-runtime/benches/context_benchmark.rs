@@ -5,23 +5,65 @@
 //! 2. Parallel independent streams: single-threaded vs multi-context
 //! 3. Cross-context pipeline: throughput through a chain of contexts
 //! 4. CPU-intensive parallel: windowed aggregation to show parallelism benefit
+//! 5. Dispatch methods: process() vs try_process() vs router.dispatch()
+//!
+//! VPL programs are loaded from `benchmarks/context/*.vpl` files.
 //!
 //! Run with: cargo bench -p varpulis-runtime --bench context_benchmark
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
+use varpulis_core::ast::Program;
 use varpulis_parser::parse;
-use varpulis_runtime::{ContextOrchestrator, Engine, Event};
+use varpulis_runtime::{ContextOrchestrator, DispatchError, Engine, Event};
 
-/// Drain the output channel until no events arrive for `quiet_ms`.
-/// Returns the number of events drained.
-async fn drain_output(rx: &mut mpsc::Receiver<Event>, quiet_ms: u64) -> usize {
+/// Load and parse a VPL program from `benchmarks/context/`.
+fn load_vpl(filename: &str) -> Program {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../benchmarks/context")
+        .join(filename);
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("Failed to load {}: {}", path.display(), e));
+    parse(&source).unwrap_or_else(|e| panic!("Failed to parse {}: {:?}", path.display(), e))
+}
+
+/// Drain the output channel with a brief sleep then non-blocking recv.
+///
+/// Replaces the old timeout-per-event approach which added 3-5ms constant
+/// overhead per iteration. This version sleeps once to let context threads
+/// flush, then drains everything available without blocking.
+async fn drain_output(rx: &mut mpsc::Receiver<Event>) -> usize {
+    tokio::time::sleep(Duration::from_millis(1)).await;
     let mut count = 0;
-    while let Ok(Some(_)) = tokio::time::timeout(Duration::from_millis(quiet_ms), rx.recv()).await {
+    while rx.try_recv().is_ok() {
         count += 1;
+    }
+    count
+}
+
+/// Drain for cross-context pipelines where events traverse multiple async hops.
+///
+/// Retries a few times with short sleeps instead of using a long deadline,
+/// so small batches that finish quickly don't pay a constant 50ms floor.
+async fn drain_output_pipeline(rx: &mut mpsc::Receiver<Event>) -> usize {
+    let mut count = 0;
+    // Retry up to 5 times with 1ms gaps — total max overhead is ~5ms
+    // instead of a fixed 50ms deadline that dominates small batches.
+    for _ in 0..5 {
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        let mut got_any = false;
+        while rx.try_recv().is_ok() {
+            count += 1;
+            got_any = true;
+        }
+        if !got_any && count > 0 {
+            // Had events before but nothing new — pipeline has drained
+            break;
+        }
     }
     count
 }
@@ -75,24 +117,8 @@ fn bench_single_stream_overhead(c: &mut Criterion) {
     group.warm_up_time(Duration::from_secs(2));
     group.measurement_time(Duration::from_secs(8));
 
-    let no_context_source = r#"
-        stream HighTemp = SensorReading
-            .where(temperature > 80.0)
-            .emit(sensor: sensor_id, temp: temperature)
-    "#;
-
-    let with_context_source = r#"
-        context ingest
-
-        stream HighTemp = SensorReading
-            .context(ingest)
-            .where(temperature > 80.0)
-            .emit(sensor: sensor_id, temp: temperature)
-    "#;
-
-    // Pre-parse programs (reused across iterations)
-    let no_ctx_program = parse(no_context_source).unwrap();
-    let ctx_program = parse(with_context_source).unwrap();
+    let no_ctx_program = load_vpl("single_stream_no_context.vpl");
+    let ctx_program = load_vpl("single_stream_with_context.vpl");
 
     for batch_size in [100, 1000, 10000] {
         let events = generate_sensor_events(batch_size);
@@ -151,7 +177,7 @@ fn bench_single_stream_overhead(c: &mut Criterion) {
                             for event in events {
                                 orchestrator.process(Arc::new(event.clone())).await.unwrap();
                             }
-                            drain_output(&mut rx, 3).await;
+                            drain_output(&mut rx).await;
                             total += start.elapsed();
 
                             orchestrator.shutdown();
@@ -170,7 +196,8 @@ fn bench_single_stream_overhead(c: &mut Criterion) {
 // Benchmark 2: Parallel independent streams
 //
 // Lightweight filter+emit workload. Compares single engine vs 2-context
-// orchestrator. Setup/teardown excluded from timing.
+// orchestrator. Parallel benchmark uses multi-producer dispatch to feed
+// both context threads simultaneously.
 // =============================================================================
 
 fn bench_parallel_streams(c: &mut Criterion) {
@@ -178,33 +205,8 @@ fn bench_parallel_streams(c: &mut Criterion) {
     group.warm_up_time(Duration::from_secs(2));
     group.measurement_time(Duration::from_secs(8));
 
-    let sequential_source = r#"
-        stream HighTemp = TempReading
-            .where(temperature > 80.0)
-            .emit(sensor: sensor_id, temp: temperature)
-
-        stream HighPressure = PressureReading
-            .where(pressure > 1050.0)
-            .emit(sensor: sensor_id, press: pressure)
-    "#;
-
-    let parallel_source = r#"
-        context temp_ctx
-        context pressure_ctx
-
-        stream HighTemp = TempReading
-            .context(temp_ctx)
-            .where(temperature > 80.0)
-            .emit(sensor: sensor_id, temp: temperature)
-
-        stream HighPressure = PressureReading
-            .context(pressure_ctx)
-            .where(pressure > 1050.0)
-            .emit(sensor: sensor_id, press: pressure)
-    "#;
-
-    let seq_program = parse(sequential_source).unwrap();
-    let par_program = parse(parallel_source).unwrap();
+    let seq_program = load_vpl("parallel_sequential.vpl");
+    let par_program = load_vpl("parallel_contexts.vpl");
 
     for batch_size in [1000, 10000, 50000] {
         let events = generate_dual_stream_events(batch_size);
@@ -236,7 +238,7 @@ fn bench_parallel_streams(c: &mut Criterion) {
             },
         );
 
-        // Parallel: two contexts
+        // Parallel: two contexts with multi-producer dispatch
         group.bench_with_input(
             BenchmarkId::new("parallel", batch_size),
             &events,
@@ -259,11 +261,35 @@ fn bench_parallel_streams(c: &mut Criterion) {
                             )
                             .unwrap();
 
+                            // Split events by type for concurrent dispatch
+                            let (temp_events, press_events): (Vec<_>, Vec<_>) =
+                                events.iter().partition(|e| e.event_type == "TempReading");
+
+                            let router = orchestrator.router();
+
                             let start = Instant::now();
-                            for event in events {
-                                orchestrator.process(Arc::new(event.clone())).await.unwrap();
-                            }
-                            drain_output(&mut rx, 3).await;
+
+                            let r1 = router.clone();
+                            let temp_owned: Vec<Event> = temp_events.into_iter().cloned().collect();
+                            let h1 = tokio::spawn(async move {
+                                for e in temp_owned {
+                                    r1.dispatch_await(Arc::new(e)).await.ok();
+                                }
+                            });
+
+                            let r2 = router.clone();
+                            let press_owned: Vec<Event> =
+                                press_events.into_iter().cloned().collect();
+                            let h2 = tokio::spawn(async move {
+                                for e in press_owned {
+                                    r2.dispatch_await(Arc::new(e)).await.ok();
+                                }
+                            });
+
+                            h1.await.unwrap();
+                            h2.await.unwrap();
+
+                            drain_output(&mut rx).await;
                             total += start.elapsed();
 
                             orchestrator.shutdown();
@@ -283,6 +309,7 @@ fn bench_parallel_streams(c: &mut Criterion) {
 //
 // 3-context chain: ingest -> compute -> alert.
 // Measures end-to-end latency including cross-context channel hops.
+// Uses deadline-based drain since events traverse multiple async hops.
 // =============================================================================
 
 fn bench_cross_context_pipeline(c: &mut Criterion) {
@@ -290,28 +317,7 @@ fn bench_cross_context_pipeline(c: &mut Criterion) {
     group.warm_up_time(Duration::from_secs(2));
     group.measurement_time(Duration::from_secs(8));
 
-    let pipeline_source = r#"
-        context ingest
-        context compute
-        context alert
-
-        stream Raw = SensorReading
-            .context(ingest)
-            .where(temperature > 0.0)
-            .emit(sensor: sensor_id, temp: temperature)
-
-        stream Computed = Raw
-            .context(compute)
-            .where(temp > 50.0)
-            .emit(device: sensor, value: temp)
-
-        stream Alert = Computed
-            .context(alert)
-            .where(value > 80.0)
-            .emit(critical_device: device, critical_value: value)
-    "#;
-
-    let pipeline_program = parse(pipeline_source).unwrap();
+    let pipeline_program = load_vpl("cross_context_pipeline.vpl");
 
     for batch_size in [100, 1000, 10000] {
         let events = generate_sensor_events(batch_size);
@@ -343,9 +349,7 @@ fn bench_cross_context_pipeline(c: &mut Criterion) {
                             for event in events {
                                 orchestrator.process(Arc::new(event.clone())).await.unwrap();
                             }
-                            // Drain all 3 stages of output; use slightly longer quiet
-                            // period since events must traverse 3 async hops
-                            drain_output(&mut rx, 5).await;
+                            drain_output_pipeline(&mut rx).await;
                             total += start.elapsed();
 
                             orchestrator.shutdown();
@@ -365,6 +369,7 @@ fn bench_cross_context_pipeline(c: &mut Criterion) {
 //
 // Windowed aggregation with partition_by and multiple aggregate functions.
 // This forces real per-event computation so parallelism can pay off.
+// Uses multi-producer dispatch to feed both context threads simultaneously.
 // =============================================================================
 
 fn bench_cpu_intensive_parallel(c: &mut Criterion) {
@@ -372,95 +377,8 @@ fn bench_cpu_intensive_parallel(c: &mut Criterion) {
     group.warm_up_time(Duration::from_secs(2));
     group.measurement_time(Duration::from_secs(10));
 
-    // Sequential: both heavy streams in a single engine
-    let sequential_source = r#"
-        stream TempStats = TempReading
-            .partition_by(sensor_id)
-            .window(10)
-            .aggregate(
-                sensor_id: last(sensor_id),
-                avg_temp: avg(temperature),
-                min_temp: min(temperature),
-                max_temp: max(temperature),
-                reading_count: count()
-            )
-            .where(avg_temp > 60.0)
-            .emit(
-                sensor: sensor_id,
-                average: avg_temp,
-                minimum: min_temp,
-                maximum: max_temp,
-                count: reading_count
-            )
-
-        stream PressureStats = PressureReading
-            .partition_by(sensor_id)
-            .window(10)
-            .aggregate(
-                sensor_id: last(sensor_id),
-                avg_press: avg(pressure),
-                min_press: min(pressure),
-                max_press: max(pressure),
-                reading_count: count()
-            )
-            .where(avg_press > 1020.0)
-            .emit(
-                sensor: sensor_id,
-                average: avg_press,
-                minimum: min_press,
-                maximum: max_press,
-                count: reading_count
-            )
-    "#;
-
-    // Parallel: each heavy stream in its own context thread
-    let parallel_source = r#"
-        context temp_ctx
-        context pressure_ctx
-
-        stream TempStats = TempReading
-            .context(temp_ctx)
-            .partition_by(sensor_id)
-            .window(10)
-            .aggregate(
-                sensor_id: last(sensor_id),
-                avg_temp: avg(temperature),
-                min_temp: min(temperature),
-                max_temp: max(temperature),
-                reading_count: count()
-            )
-            .where(avg_temp > 60.0)
-            .emit(
-                sensor: sensor_id,
-                average: avg_temp,
-                minimum: min_temp,
-                maximum: max_temp,
-                count: reading_count
-            )
-
-        stream PressureStats = PressureReading
-            .context(pressure_ctx)
-            .partition_by(sensor_id)
-            .window(10)
-            .aggregate(
-                sensor_id: last(sensor_id),
-                avg_press: avg(pressure),
-                min_press: min(pressure),
-                max_press: max(pressure),
-                reading_count: count()
-            )
-            .where(avg_press > 1020.0)
-            .emit(
-                sensor: sensor_id,
-                average: avg_press,
-                minimum: min_press,
-                maximum: max_press,
-                count: reading_count
-            )
-    "#;
-
-    let seq_program = parse(sequential_source).unwrap();
-    let par_program = parse(parallel_source).unwrap();
+    let seq_program = load_vpl("cpu_intensive_sequential.vpl");
+    let par_program = load_vpl("cpu_intensive_parallel.vpl");
 
     for batch_size in [1000, 5000, 20000] {
         let events = generate_dual_stream_events(batch_size);
@@ -492,7 +410,7 @@ fn bench_cpu_intensive_parallel(c: &mut Criterion) {
             },
         );
 
-        // Parallel: each stream in its own context
+        // Parallel: each stream in its own context, multi-producer dispatch
         group.bench_with_input(
             BenchmarkId::new("parallel", batch_size),
             &events,
@@ -515,11 +433,188 @@ fn bench_cpu_intensive_parallel(c: &mut Criterion) {
                             )
                             .unwrap();
 
+                            // Split events by type for concurrent dispatch
+                            let (temp_events, press_events): (Vec<_>, Vec<_>) =
+                                events.iter().partition(|e| e.event_type == "TempReading");
+
+                            let router = orchestrator.router();
+
+                            let start = Instant::now();
+
+                            let r1 = router.clone();
+                            let temp_owned: Vec<Event> = temp_events.into_iter().cloned().collect();
+                            let h1 = tokio::spawn(async move {
+                                for e in temp_owned {
+                                    r1.dispatch_await(Arc::new(e)).await.ok();
+                                }
+                            });
+
+                            let r2 = router.clone();
+                            let press_owned: Vec<Event> =
+                                press_events.into_iter().cloned().collect();
+                            let h2 = tokio::spawn(async move {
+                                for e in press_owned {
+                                    r2.dispatch_await(Arc::new(e)).await.ok();
+                                }
+                            });
+
+                            h1.await.unwrap();
+                            h2.await.unwrap();
+
+                            drain_output(&mut rx).await;
+                            total += start.elapsed();
+
+                            orchestrator.shutdown();
+                        }
+                        total
+                    })
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+// =============================================================================
+// Benchmark 5: Dispatch method comparison
+//
+// Compares: process() (async) vs try_process() (non-blocking) vs
+// router.dispatch() (direct non-blocking). Shows the speedup from
+// eliminating async overhead.
+// =============================================================================
+
+fn bench_dispatch_methods(c: &mut Criterion) {
+    let mut group = c.benchmark_group("dispatch_methods");
+    group.warm_up_time(Duration::from_secs(2));
+    group.measurement_time(Duration::from_secs(8));
+
+    let ctx_program = load_vpl("single_stream_with_context.vpl");
+
+    for batch_size in [1000, 10000] {
+        let events = generate_sensor_events(batch_size);
+        group.throughput(Throughput::Elements(batch_size as u64));
+
+        // Async process() — current default, waits on backpressure
+        group.bench_with_input(
+            BenchmarkId::new("process_async", batch_size),
+            &events,
+            |b, events| {
+                let rt = Runtime::new().unwrap();
+                b.iter_custom(|iters| {
+                    rt.block_on(async {
+                        let mut total = Duration::ZERO;
+                        for _ in 0..iters {
+                            let (tx, mut rx) = mpsc::channel(batch_size * 2);
+                            let (tmp_tx, _tmp_rx) = mpsc::channel(100);
+                            let mut tmp_engine = Engine::new(tmp_tx);
+                            tmp_engine.load(&ctx_program).unwrap();
+
+                            let orchestrator = ContextOrchestrator::build(
+                                tmp_engine.context_map(),
+                                &ctx_program,
+                                tx,
+                                batch_size * 2,
+                            )
+                            .unwrap();
+
                             let start = Instant::now();
                             for event in events {
                                 orchestrator.process(Arc::new(event.clone())).await.unwrap();
                             }
-                            drain_output(&mut rx, 5).await;
+                            drain_output(&mut rx).await;
+                            total += start.elapsed();
+
+                            orchestrator.shutdown();
+                        }
+                        total
+                    })
+                });
+            },
+        );
+
+        // try_process() — non-blocking with async fallback
+        group.bench_with_input(
+            BenchmarkId::new("try_process", batch_size),
+            &events,
+            |b, events| {
+                let rt = Runtime::new().unwrap();
+                b.iter_custom(|iters| {
+                    rt.block_on(async {
+                        let mut total = Duration::ZERO;
+                        for _ in 0..iters {
+                            let (tx, mut rx) = mpsc::channel(batch_size * 2);
+                            let (tmp_tx, _tmp_rx) = mpsc::channel(100);
+                            let mut tmp_engine = Engine::new(tmp_tx);
+                            tmp_engine.load(&ctx_program).unwrap();
+
+                            let orchestrator = ContextOrchestrator::build(
+                                tmp_engine.context_map(),
+                                &ctx_program,
+                                tx,
+                                batch_size * 2,
+                            )
+                            .unwrap();
+
+                            let start = Instant::now();
+                            for event in events {
+                                let shared = Arc::new(event.clone());
+                                match orchestrator.try_process(shared) {
+                                    Ok(()) => {}
+                                    Err(DispatchError::ChannelFull(ev)) => {
+                                        orchestrator.process(ev).await.unwrap();
+                                    }
+                                    Err(DispatchError::ChannelClosed(_)) => break,
+                                }
+                            }
+                            drain_output(&mut rx).await;
+                            total += start.elapsed();
+
+                            orchestrator.shutdown();
+                        }
+                        total
+                    })
+                });
+            },
+        );
+
+        // router.dispatch() — direct non-blocking via cloned router handle
+        group.bench_with_input(
+            BenchmarkId::new("router_dispatch", batch_size),
+            &events,
+            |b, events| {
+                let rt = Runtime::new().unwrap();
+                b.iter_custom(|iters| {
+                    rt.block_on(async {
+                        let mut total = Duration::ZERO;
+                        for _ in 0..iters {
+                            let (tx, mut rx) = mpsc::channel(batch_size * 2);
+                            let (tmp_tx, _tmp_rx) = mpsc::channel(100);
+                            let mut tmp_engine = Engine::new(tmp_tx);
+                            tmp_engine.load(&ctx_program).unwrap();
+
+                            let orchestrator = ContextOrchestrator::build(
+                                tmp_engine.context_map(),
+                                &ctx_program,
+                                tx,
+                                batch_size * 2,
+                            )
+                            .unwrap();
+
+                            let router = orchestrator.router();
+
+                            let start = Instant::now();
+                            for event in events {
+                                let shared = Arc::new(event.clone());
+                                match router.dispatch(shared) {
+                                    Ok(()) => {}
+                                    Err(DispatchError::ChannelFull(ev)) => {
+                                        router.dispatch_await(ev).await.unwrap();
+                                    }
+                                    Err(DispatchError::ChannelClosed(_)) => break,
+                                }
+                            }
+                            drain_output(&mut rx).await;
                             total += start.elapsed();
 
                             orchestrator.shutdown();
@@ -540,5 +635,6 @@ criterion_group!(
     bench_parallel_streams,
     bench_cross_context_pipeline,
     bench_cpu_intensive_parallel,
+    bench_dispatch_methods,
 );
 criterion_main!(benches);
