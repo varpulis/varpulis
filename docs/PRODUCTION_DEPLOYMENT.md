@@ -60,31 +60,31 @@ docker build -f deploy/docker/Dockerfile \
 # Basic run with a query file
 docker run -d \
   --name varpulis \
-  -p 8080:8080 \
+  -p 9000:9000 \
   -p 9090:9090 \
   -v /path/to/queries:/app/queries:ro \
   varpulis/varpulis:latest \
-  run /app/queries/queries.vql
+  run /app/queries/queries.vpl
 
 # With configuration file
 docker run -d \
   --name varpulis \
-  -p 8080:8080 \
+  -p 9000:9000 \
   -p 9090:9090 \
   -v /path/to/config.yaml:/app/config.yaml:ro \
   -v /path/to/queries:/app/queries:ro \
   varpulis/varpulis:latest \
   --config /app/config.yaml \
-  run /app/queries/queries.vql
+  run /app/queries/queries.vpl
 
 # With Kafka connector
 docker run -d \
   --name varpulis \
   -e KAFKA_BOOTSTRAP_SERVERS=kafka:9092 \
-  -p 8080:8080 \
+  -p 9000:9000 \
   -v /path/to/queries:/app/queries:ro \
   varpulis/varpulis:latest-kafka \
-  run /app/queries/queries.vql
+  run /app/queries/queries.vpl
 ```
 
 ### Docker Compose Example
@@ -96,17 +96,17 @@ services:
   varpulis:
     image: varpulis/varpulis:latest
     ports:
-      - "8080:8080"   # HTTP webhook
+      - "9000:9000"   # HTTP webhook
       - "9090:9090"   # Prometheus metrics
     volumes:
       - ./queries:/app/queries:ro
       - ./config.yaml:/app/config.yaml:ro
       - varpulis-state:/app/state
-    command: ["--config", "/app/config.yaml", "run", "/app/queries/queries.vql"]
+    command: ["--config", "/app/config.yaml", "run", "/app/queries/queries.vpl"]
     environment:
       - RUST_LOG=info
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -144,7 +144,7 @@ kubectl apply -f deploy/kubernetes/base/
 
 # Apply ConfigMap with your queries
 kubectl create configmap varpulis-queries \
-  --from-file=queries.vql=./your-queries.vql \
+  --from-file=queries.vpl=./your-queries.vpl \
   -n varpulis
 ```
 
@@ -159,11 +159,14 @@ metadata:
   name: varpulis-config
   namespace: varpulis
 data:
-  queries.vql: |
-    @output
-    FROM Transaction AS t
-    WHERE t.amount > 10000
-    SELECT t.* AS high_value_alert;
+  queries.vpl: |
+    event Transaction:
+        amount: float
+        user_id: str
+
+    stream HighValue = Transaction
+        .where(amount > 10000)
+        .emit(alert_type: "high_value", user_id: user_id, amount: amount)
 ```
 
 2. **Create a Secret for sensitive data:**
@@ -211,7 +214,7 @@ varpulis config-gen --format toml > config.toml
 
 ```yaml
 # Path to query file
-query_file: /app/queries/queries.vql
+query_file: /app/queries/queries.vpl
 
 # Server configuration
 server:
@@ -235,7 +238,7 @@ kafka:
 # HTTP webhook input
 http_webhook:
   enabled: true
-  port: 8080
+  port: 9000
   bind: "0.0.0.0"
   api_key: "${VARPULIS_API_KEY}"
   rate_limit: 10000
@@ -280,13 +283,13 @@ Events can be sent via HTTP POST:
 
 ```bash
 # Single event
-curl -X POST http://localhost:8080/event \
+curl -X POST http://localhost:9000/event \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-api-key" \
   -d '{"event_type": "Transaction", "amount": 15000, "user_id": "user123"}'
 
 # Batch events
-curl -X POST http://localhost:8080/events \
+curl -X POST http://localhost:9000/events \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-api-key" \
   -d '[{"event_type": "Transaction", "amount": 100}, {"event_type": "Transaction", "amount": 200}]'
@@ -337,7 +340,7 @@ scrape_configs:
 
 ### Grafana Dashboard
 
-A sample Grafana dashboard JSON is available at `deploy/grafana/varpulis-dashboard.json`.
+A sample Grafana dashboard JSON is available at `deploy/docker/grafana/dashboards/varpulis.json`.
 
 ---
 
@@ -400,7 +403,7 @@ For parallel processing with Kafka:
 
 ```bash
 # Set worker threads via CLI
-varpulis simulate --workers 8 --program queries.vql --events events.evt
+varpulis simulate --workers 8 --program queries.vpl --events events.evt
 
 # Or via config file
 processing:
@@ -431,7 +434,7 @@ For high-throughput scenarios, use batch ingestion:
 
 ```bash
 # Preload mode for event files
-varpulis simulate --preload --immediate --program queries.vql --events events.evt
+varpulis simulate --preload --immediate --program queries.vpl --events events.evt
 ```
 
 ---
@@ -489,7 +492,7 @@ spec:
             matchLabels:
               name: api-gateway
       ports:
-        - port: 8080  # HTTP webhook
+        - port: 9000  # HTTP webhook
   egress:
     - to:
         - namespaceSelector:
@@ -520,7 +523,7 @@ spec:
 docker logs varpulis
 
 # Common causes:
-# - Invalid query syntax: Check your .vql files
+# - Invalid query syntax: Check your .vpl files
 # - Missing config file: Verify mount paths
 # - Port already in use: Change port mapping
 ```
@@ -529,7 +532,7 @@ docker logs varpulis
 
 1. Check if the source is connected:
    ```bash
-   curl http://localhost:8080/health
+   curl http://localhost:9000/health
    ```
 
 2. Verify Kafka connectivity:
@@ -561,7 +564,7 @@ docker logs varpulis
 Enable debug logging:
 
 ```bash
-RUST_LOG=debug varpulis run queries.vql
+RUST_LOG=debug varpulis run queries.vpl
 ```
 
 Or in Kubernetes:
@@ -586,17 +589,23 @@ env:
 ### CLI Commands
 
 ```bash
-# Run a query file
-varpulis run --file queries.vql
+# Run a VPL file
+varpulis run --file queries.vpl
 
 # Check query syntax
-varpulis check queries.vql
+varpulis check queries.vpl
 
-# Start WebSocket server
-varpulis server --port 9000 --metrics
+# Start the API server (multi-tenant SaaS mode)
+varpulis server --port 9000 --api-key "your-key" --metrics --state-dir /var/lib/varpulis/state
 
 # Simulate with event file
-varpulis simulate --program queries.vql --events data.evt --workers 8
+varpulis simulate --program queries.vpl --events data.evt --workers 8
+
+# Deploy a pipeline to a remote server
+varpulis deploy --server http://localhost:9000 --api-key "key" --file queries.vpl --name "my-pipeline"
+
+# List deployed pipelines
+varpulis pipelines --server http://localhost:9000 --api-key "key"
 
 # Generate config template
 varpulis config-gen --format yaml > config.yaml
@@ -608,10 +617,10 @@ varpulis config-gen --format yaml > config.yaml
 # Pull and run
 docker run -d \
   --name varpulis \
-  -p 8080:8080 \
-  -v $(pwd)/queries.vql:/app/queries/queries.vql:ro \
+  -p 9000:9000 \
+  -v $(pwd)/queries.vpl:/app/queries/queries.vpl:ro \
   varpulis/varpulis:latest \
-  run /app/queries/queries.vql
+  run /app/queries/queries.vpl
 ```
 
 ### Kubernetes Quick Start
@@ -627,5 +636,5 @@ kubectl get pods -n varpulis
 kubectl logs -f -l app.kubernetes.io/name=varpulis -n varpulis
 
 # Port forward for testing
-kubectl port-forward svc/varpulis 8080:8080 -n varpulis
+kubectl port-forward svc/varpulis 9000:9000 -n varpulis
 ```

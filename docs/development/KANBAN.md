@@ -11,7 +11,7 @@
 | Error Handling | **10/10** | **0 unwraps production** |
 | Security | **10/10** | TLS/Auth + Rate Limiting |
 | Performance | **10/10** | ZDD + SIMD + Incremental, 300-500K evt/s |
-| Documentation | 9/10 | Exemples complets, LSP hover docs |
+| Documentation | 7/10 | Exemples complets, LSP hover docs, audit in progress |
 | Developer Experience | **10/10** | **LSP + Visual Editor + New Syntax** |
 | Release & Distribution | **10/10** | **5 platforms + Docker + GitHub Release** |
 | SaaS Infrastructure | **8/10** | Multi-tenant, REST API, Docker Compose, Grafana |
@@ -25,7 +25,7 @@
 5. ~~**v0.1.0 Release**~~ **DONE** - 5 platforms, Docker image, GitHub Release
 6. **Test coverage 62.92%** - En dessous du seuil 80% (1040+ tests, en cours)
 7. ~~**SaaS Foundation**~~ **DONE** - Multi-tenant, REST API, usage metering, Docker Compose + Grafana
-8. **State Persistence** - Tenants/pipelines in-memory only, need durability (en cours)
+8. **State Persistence** - Tenant/pipeline state persists via `--state-dir` (FileStore). Engine window/pattern state in-memory only. Checkpoint infrastructure exists, engine integration pending (en cours)
 
 ### Monetization Tiers
 

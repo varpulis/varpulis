@@ -26,7 +26,7 @@
 │                                                             │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
 │  │  Embedding   │  │   State Mgmt │  │ Aggregation  │       │
-│  │   Engine     │  │   (RocksDB/  │  │   Engine     │       │
+│  │   Engine     │  │  (RocksDB*/  │  │   Engine     │       │
 │  │              │  │   In-Memory) │  │              │       │
 │  └──────────────┘  └──────────────┘  └──────────────┘       │
 │                                                             │
@@ -42,6 +42,8 @@
 │  └──────────────┘  └──────────────┘                         │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+*\* RocksDB requires the `persistence` feature flag: `cargo build --features persistence`*
 
 ## Processing Flow
 

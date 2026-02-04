@@ -266,37 +266,35 @@ while condition:
 
 ### MQTT Connector
 
-The MQTT connector allows Varpulis to receive events from and send alerts to an MQTT broker. MQTT support is included by default in the Varpulis CLI.
+The MQTT connector allows Varpulis to receive events from and send alerts to an MQTT broker. MQTT support requires the `mqtt` feature flag.
 
 ```varpulis
-# MQTT configuration block - place at the top of your VPL file
-config mqtt {
-    broker: "localhost",       # MQTT broker hostname or IP
-    port: 1883,                # MQTT broker port (default: 1883)
-    client_id: "varpulis-app", # Unique client identifier
-    input_topic: "events/#",   # Topic pattern to subscribe to (supports wildcards)
-    output_topic: "alerts"     # Topic prefix for output messages
-}
+# Connector declaration - place at the top of your VPL file
+connector MqttBroker = mqtt (
+    host: "localhost",
+    port: 1883,
+    client_id: "varpulis-app"
+)
 
-# Import pattern definitions from another file
-import "patterns.vpl"
+# Bind a stream to receive events from the connector
+stream Events = SensorReading
+    .from(MqttBroker, topic: "events/#")
 ```
 
 The MQTT connector automatically:
-- Subscribes to `input_topic` to receive events
-- Publishes stream `.emit()` results to `output_topic`
+- Subscribes to the specified topic to receive events
+- Publishes stream `.emit()` results via `.to(Connector)`
 - Handles reconnection on connection loss
-- Supports QoS levels 0, 1, and 2
+
+> **Note**: The `config mqtt { }` block syntax is deprecated. Use `connector` declarations with `.from()` and `.to()` instead. See [Connectors](connectors.md).
 
 **Example with streams:**
 ```varpulis
-config mqtt {
-    broker: "localhost",
+connector MqttBroker = mqtt (
+    host: "localhost",
     port: 1883,
-    client_id: "fraud-detector",
-    input_topic: "transactions/#",
-    output_topic: "alerts/fraud"
-}
+    client_id: "fraud-detector"
+)
 
 event Transaction:
     user_id: str
@@ -322,15 +320,19 @@ stream Alerts = DetectedPatterns
     .to("http://webhook.example.com/alerts")
 ```
 
-### Kafka Connector (Not Yet Implemented)
+### Kafka Connector
 
-Kafka support is planned but not yet available. The syntax will be:
+Kafka is available with the `kafka` feature flag. Use connector declarations:
 
 ```varpulis
-# PLANNED - NOT YET IMPLEMENTED
+connector KafkaBroker = kafka (
+    brokers: ["broker:9092"],
+    group_id: "varpulis-consumer"
+)
+
 stream Output = Processed
-    .emit()
-    .to("kafka://broker:9092/topic")
+    .emit(result: value)
+    .to(KafkaBroker)
 ```
 
 ## Configuration
