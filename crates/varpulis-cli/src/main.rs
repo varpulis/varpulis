@@ -469,6 +469,7 @@ async fn main() -> Result<()> {
 
 async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
     use varpulis_runtime::connector::{MqttConfig, MqttSource, SourceConnector};
+    use varpulis_runtime::ContextOrchestrator;
 
     info!("Parsing VarpulisQL program...");
     let mut program = parse(source).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
@@ -477,8 +478,9 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
     // Resolve imports
     resolve_imports(&mut program, base_path)?;
 
-    // Create output event channel
+    // Create output event channel — clone tx before giving it to the engine
     let (output_tx, mut output_rx) = mpsc::channel::<Event>(100);
+    let output_tx_for_ctx = output_tx.clone();
 
     // Create engine
     let mut engine = Engine::new(output_tx);
@@ -489,6 +491,24 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
     let metrics = engine.metrics();
     println!("\nProgram loaded successfully!");
     println!("   Streams registered: {}", metrics.streams_count);
+
+    // Build context orchestrator if the program declares contexts
+    let has_contexts = engine.has_contexts();
+    let orchestrator = if has_contexts {
+        match ContextOrchestrator::build(engine.context_map(), &program, output_tx_for_ctx, 1000) {
+            Ok(orch) => {
+                println!(
+                    "   Contexts: {} ({:?})",
+                    orch.context_names().len(),
+                    orch.context_names()
+                );
+                Some(orch)
+            }
+            Err(e) => anyhow::bail!("Failed to build context orchestrator: {}", e),
+        }
+    } else {
+        None
+    };
 
     // Check for deprecated config mqtt block
     if engine.get_config("mqtt").is_some() {
@@ -628,7 +648,11 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
                 Some(event) = event_rx.recv() => {
                     event_count += 1;
 
-                    if let Err(e) = engine.process(event.clone()).await {
+                    if let Some(ref orchestrator) = orchestrator {
+                        if let Err(e) = orchestrator.process(std::sync::Arc::new(event)).await {
+                            tracing::warn!("Orchestrator error: {}", e);
+                        }
+                    } else if let Err(e) = engine.process(event).await {
                         tracing::warn!("Engine error: {}", e);
                     }
 
@@ -652,6 +676,11 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
                     break;
                 }
             }
+        }
+
+        // Shut down context orchestrator if active
+        if let Some(orch) = orchestrator {
+            orch.shutdown();
         }
 
         // Final stats

@@ -1,0 +1,9 @@
+# Cargo audit configuration
+# See: https://github.com/rustsec/rustsec/tree/main/cargo-audit
+
+[advisories]
+# RUSTSEC-2023-0071: rsa timing side-channel (Marvin Attack)
+# Transitive dependency via sqlx-mysql -> rsa 0.9.x
+# No fix available upstream. Low risk: only applies to RSA PKCS#1 v1.5
+# decryption in MySQL TLS connections, requires attacker on same network.
+ignore = ["RUSTSEC-2023-0071"]

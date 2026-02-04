@@ -87,6 +87,7 @@ fn connector_params_to_config(
 }
 
 /// Adapter: wraps a SinkConnector as a Sink for use in sink_cache
+#[allow(dead_code)]
 struct SinkConnectorAdapter {
     name: String,
     inner: tokio::sync::Mutex<Box<dyn connector::SinkConnector>>,
@@ -115,6 +116,7 @@ impl crate::sink::Sink for SinkConnectorAdapter {
 }
 
 /// Create a sink from a ConnectorConfig, with an optional topic override from .to() params
+#[allow(unused_variables)]
 fn create_sink_from_config(
     name: &str,
     config: &connector::ConnectorConfig,
@@ -1097,7 +1099,7 @@ impl Engine {
                 StreamOp::Emit {
                     output_type: _,
                     fields: args,
-                    target_context: _,
+                    target_context,
                 } => {
                     // Check if any args have complex expressions (not just strings or idents)
                     let has_complex_expr = args.iter().any(|arg| {
@@ -1113,7 +1115,10 @@ impl Engine {
                             .iter()
                             .map(|arg| (arg.name.clone(), arg.value.clone()))
                             .collect();
-                        runtime_ops.push(RuntimeOp::EmitExpr(EmitExprConfig { fields }));
+                        runtime_ops.push(RuntimeOp::EmitExpr(EmitExprConfig {
+                            fields,
+                            target_context: target_context.clone(),
+                        }));
                     } else {
                         // Use simple EmitConfig for string/ident only
                         let fields: Vec<(String, String)> = args
@@ -1127,7 +1132,10 @@ impl Engine {
                                 Some((arg.name.clone(), value))
                             })
                             .collect();
-                        runtime_ops.push(RuntimeOp::Emit(EmitConfig { fields }));
+                        runtime_ops.push(RuntimeOp::Emit(EmitConfig {
+                            fields,
+                            target_context: target_context.clone(),
+                        }));
                     }
                 }
                 StreamOp::Print(exprs) => {
@@ -1639,7 +1647,6 @@ impl Engine {
                 return Ok(StreamProcessResult {
                     emitted_events: vec![],
                     output_events: vec![],
-                    cross_context_events: vec![],
                 });
             }
             // Log which merge source matched (uses ms.name)
@@ -1693,7 +1700,6 @@ impl Engine {
                         return Ok(StreamProcessResult {
                             emitted_events: vec![],
                             output_events: vec![],
-                            cross_context_events: vec![],
                         });
                     }
                 }
@@ -1702,7 +1708,6 @@ impl Engine {
                 return Ok(StreamProcessResult {
                     emitted_events: vec![],
                     output_events: vec![],
-                    cross_context_events: vec![],
                 });
             }
         }
@@ -1756,7 +1761,6 @@ impl Engine {
                         return Ok(StreamProcessResult {
                             emitted_events,
                             output_events: vec![],
-                            cross_context_events: vec![],
                         });
                     }
                 }
@@ -1777,7 +1781,6 @@ impl Engine {
                         return Ok(StreamProcessResult {
                             emitted_events,
                             output_events: vec![],
-                            cross_context_events: vec![],
                         });
                     }
                 }
@@ -1822,7 +1825,6 @@ impl Engine {
                         return Ok(StreamProcessResult {
                             emitted_events,
                             output_events: vec![],
-                            cross_context_events: vec![],
                         });
                     }
                 }
@@ -1838,7 +1840,6 @@ impl Engine {
                         return Ok(StreamProcessResult {
                             emitted_events,
                             output_events: vec![],
-                            cross_context_events: vec![],
                         });
                     }
                 }
@@ -1854,7 +1855,6 @@ impl Engine {
                         return Ok(StreamProcessResult {
                             emitted_events,
                             output_events: vec![],
-                            cross_context_events: vec![],
                         });
                     }
                 }
@@ -1903,7 +1903,6 @@ impl Engine {
                         return Ok(StreamProcessResult {
                             emitted_events,
                             output_events: vec![],
-                            cross_context_events: vec![],
                         });
                     }
                 }
@@ -2037,7 +2036,6 @@ impl Engine {
                         return Ok(StreamProcessResult {
                             emitted_events,
                             output_events: vec![],
-                            cross_context_events: vec![],
                         });
                     }
                     current_events = sequence_results;
@@ -2111,7 +2109,6 @@ impl Engine {
                             return Ok(StreamProcessResult {
                                 emitted_events,
                                 output_events: vec![],
-                                cross_context_events: vec![],
                             });
                         }
                     }
@@ -2150,7 +2147,6 @@ impl Engine {
         Ok(StreamProcessResult {
             emitted_events,
             output_events,
-            cross_context_events: vec![],
         })
     }
 
@@ -2172,7 +2168,6 @@ impl Engine {
                         return Ok(StreamProcessResult {
                             emitted_events,
                             output_events: vec![],
-                            cross_context_events: vec![],
                         });
                     }
                 }
@@ -2204,7 +2199,6 @@ impl Engine {
                         return Ok(StreamProcessResult {
                             emitted_events,
                             output_events: vec![],
-                            cross_context_events: vec![],
                         });
                     }
                 }
@@ -2225,7 +2219,6 @@ impl Engine {
                         return Ok(StreamProcessResult {
                             emitted_events,
                             output_events: vec![],
-                            cross_context_events: vec![],
                         });
                     }
                 }
@@ -2241,7 +2234,6 @@ impl Engine {
                         return Ok(StreamProcessResult {
                             emitted_events,
                             output_events: vec![],
-                            cross_context_events: vec![],
                         });
                     }
                 }
@@ -2288,7 +2280,6 @@ impl Engine {
                         return Ok(StreamProcessResult {
                             emitted_events,
                             output_events: vec![],
-                            cross_context_events: vec![],
                         });
                     }
                 }
@@ -2393,7 +2384,6 @@ impl Engine {
         Ok(StreamProcessResult {
             emitted_events,
             output_events,
-            cross_context_events: vec![],
         })
     }
 

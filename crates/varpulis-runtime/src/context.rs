@@ -10,8 +10,10 @@
 use crate::engine::Engine;
 use crate::event::{Event, SharedEvent};
 use std::collections::HashMap;
-use tokio::sync::mpsc;
+use std::sync::Arc;
+use tokio::sync::{mpsc, watch};
 use tracing::{debug, error, info, warn};
+use varpulis_core::ast::{Program, Stmt, StreamSource};
 
 /// Configuration for a named context
 #[derive(Debug, Clone)]
@@ -86,36 +88,115 @@ impl ContextMap {
     }
 }
 
+/// Filter a program to keep only the streams assigned to a specific context.
+///
+/// Retains all non-stream statements (ContextDecl, ConnectorDecl, VarDecl,
+/// Assignment, FnDecl, EventDecl, PatternDecl, Config) since they may be
+/// needed by any context. Only `StreamDecl` statements are filtered based
+/// on context assignment.
+pub fn filter_program_for_context(
+    program: &Program,
+    context_name: &str,
+    context_map: &ContextMap,
+) -> Program {
+    let filtered_statements = program
+        .statements
+        .iter()
+        .filter(|stmt| {
+            if let Stmt::StreamDecl { name, .. } = &stmt.node {
+                // Keep the stream only if it's assigned to this context
+                match context_map.stream_context(name) {
+                    Some(ctx) => ctx == context_name,
+                    // Unassigned streams are kept in all contexts for backward compat
+                    None => true,
+                }
+            } else {
+                // Keep all non-stream statements
+                true
+            }
+        })
+        .cloned()
+        .collect();
+
+    Program {
+        statements: filtered_statements,
+    }
+}
+
+/// Verify the CPU affinity of the current thread by reading /proc/self/status.
+///
+/// Returns the list of CPU cores the current thread is allowed to run on,
+/// or `None` if the information cannot be read.
+#[cfg(target_os = "linux")]
+pub fn verify_cpu_affinity() -> Option<Vec<usize>> {
+    use std::fs;
+
+    let status = fs::read_to_string("/proc/self/status").ok()?;
+    for line in status.lines() {
+        if line.starts_with("Cpus_allowed_list:") {
+            let list_str = line.split(':').nth(1)?.trim();
+            let mut cores = Vec::new();
+            for part in list_str.split(',') {
+                let part = part.trim();
+                if let Some((start, end)) = part.split_once('-') {
+                    if let (Ok(s), Ok(e)) = (start.parse::<usize>(), end.parse::<usize>()) {
+                        cores.extend(s..=e);
+                    }
+                } else if let Ok(core) = part.parse::<usize>() {
+                    cores.push(core);
+                }
+            }
+            return Some(cores);
+        }
+    }
+    None
+}
+
 /// A self-contained single-threaded runtime for one context.
 ///
 /// Owns its streams, processes events without locks. Receives events from
 /// its inbound channel and forwards cross-context events via outbound channels.
-#[allow(dead_code)]
 pub struct ContextRuntime {
     name: String,
     engine: Engine,
+    /// Main output channel (tenant/CLI)
     output_tx: mpsc::Sender<Event>,
+    /// Inbound events from orchestrator
     event_rx: mpsc::Receiver<SharedEvent>,
-    cross_context_tx: HashMap<String, mpsc::Sender<SharedEvent>>,
+    /// Engine's emitted events receiver
+    engine_output_rx: mpsc::Receiver<Event>,
+    /// Senders to all contexts (including self, for intra-context derived streams)
+    all_context_txs: HashMap<String, mpsc::Sender<SharedEvent>>,
+    /// event_type → context_name routing table
+    ingress_routing: HashMap<String, String>,
+    /// Shutdown signal receiver
+    shutdown_rx: watch::Receiver<bool>,
     events_processed: u64,
     output_events_emitted: u64,
 }
 
 impl ContextRuntime {
     /// Create a new context runtime
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: String,
         engine: Engine,
         output_tx: mpsc::Sender<Event>,
         event_rx: mpsc::Receiver<SharedEvent>,
-        cross_context_tx: HashMap<String, mpsc::Sender<SharedEvent>>,
+        engine_output_rx: mpsc::Receiver<Event>,
+        all_context_txs: HashMap<String, mpsc::Sender<SharedEvent>>,
+        ingress_routing: HashMap<String, String>,
+        shutdown_rx: watch::Receiver<bool>,
     ) -> Self {
         Self {
             name,
             engine,
             output_tx,
             event_rx,
-            cross_context_tx,
+            engine_output_rx,
+            all_context_txs,
+            ingress_routing,
+            shutdown_rx,
             events_processed: 0,
             output_events_emitted: 0,
         }
@@ -128,23 +209,66 @@ impl ContextRuntime {
     pub async fn run(&mut self) {
         info!("Context '{}' runtime started", self.name);
 
-        while let Some(event) = self.event_rx.recv().await {
-            self.events_processed += 1;
+        #[cfg(target_os = "linux")]
+        if let Some(cores) = verify_cpu_affinity() {
+            info!("Context '{}' running on cores {:?}", self.name, cores);
+        }
 
-            // Process the event through the engine
-            // We need to convert SharedEvent back to Event for the engine
-            let owned_event = (*event).clone();
-            match self.engine.process(owned_event).await {
-                Ok(()) => {}
-                Err(e) => {
-                    error!("Context '{}' processing error: {}", self.name, e);
+        loop {
+            tokio::select! {
+                biased;
+
+                _ = self.shutdown_rx.changed() => {
+                    if *self.shutdown_rx.borrow() {
+                        info!("Context '{}' received shutdown signal", self.name);
+                        break;
+                    }
+                }
+
+                event = self.event_rx.recv() => {
+                    match event {
+                        Some(event) => {
+                            self.events_processed += 1;
+
+                            // Process the event through the engine
+                            let owned_event = (*event).clone();
+                            match self.engine.process(owned_event).await {
+                                Ok(()) => {}
+                                Err(e) => {
+                                    error!("Context '{}' processing error: {}", self.name, e);
+                                }
+                            }
+
+                            // Drain engine output events and route them
+                            while let Ok(output_event) = self.engine_output_rx.try_recv() {
+                                self.output_events_emitted += 1;
+
+                                // Route to consuming context if any
+                                if let Some(target_ctx) = self.ingress_routing.get(&output_event.event_type) {
+                                    if let Some(tx) = self.all_context_txs.get(target_ctx) {
+                                        let _ = tx.try_send(Arc::new(output_event.clone()));
+                                    }
+                                }
+
+                                // Always forward to main output channel
+                                let _ = self.output_tx.try_send(output_event);
+                            }
+                        }
+                        None => {
+                            // Channel closed
+                            break;
+                        }
+                    }
                 }
             }
         }
 
+        // Drop cross-context senders so other contexts can shut down too
+        self.all_context_txs.clear();
+
         info!(
-            "Context '{}' runtime stopped (processed {} events)",
-            self.name, self.events_processed
+            "Context '{}' runtime stopped (processed {} events, emitted {} output events)",
+            self.name, self.events_processed, self.output_events_emitted
         );
     }
 }
@@ -162,6 +286,8 @@ pub struct ContextOrchestrator {
     default_context: String,
     /// event_type -> context_name routing table
     ingress_routing: HashMap<String, String>,
+    /// Shutdown signal sender
+    shutdown_tx: watch::Sender<bool>,
 }
 
 impl ContextOrchestrator {
@@ -175,12 +301,15 @@ impl ContextOrchestrator {
     ///    and runs the ContextRuntime event loop
     pub fn build(
         context_map: &ContextMap,
-        program: &varpulis_core::ast::Program,
+        program: &Program,
         output_tx: mpsc::Sender<Event>,
         channel_capacity: usize,
     ) -> Result<Self, String> {
         let mut context_txs: HashMap<String, mpsc::Sender<SharedEvent>> = HashMap::new();
         let mut handles: Vec<std::thread::JoinHandle<()>> = Vec::new();
+
+        // Create shutdown signal
+        let (shutdown_tx, _shutdown_rx) = watch::channel(false);
 
         // Determine default context
         let default_context = context_map
@@ -199,15 +328,12 @@ impl ContextOrchestrator {
         }
 
         // Build ingress routing: event_type -> context_name
-        // This is derived from stream assignments + event sources
         let mut ingress_routing: HashMap<String, String> = HashMap::new();
 
-        // Parse the program to figure out which event types map to which streams,
-        // then use stream_assignments to route to the right context
+        // First pass: route raw event types from stream sources to contexts
         for stmt in &program.statements {
-            if let varpulis_core::ast::Stmt::StreamDecl { name, source, .. } = &stmt.node {
+            if let Stmt::StreamDecl { name, source, .. } = &stmt.node {
                 if let Some(ctx_name) = context_map.stream_context(name) {
-                    // Get the event types this stream consumes
                     let event_types = Self::event_types_from_source(source);
                     for et in event_types {
                         ingress_routing.insert(et, ctx_name.to_string());
@@ -215,6 +341,35 @@ impl ContextOrchestrator {
                 }
             }
         }
+
+        // Second pass: route derived stream output types to consuming contexts
+        for stmt in &program.statements {
+            if let Stmt::StreamDecl { name, source, .. } = &stmt.node {
+                if let Some(ctx_name) = context_map.stream_context(name) {
+                    match source {
+                        StreamSource::Ident(source_stream) | StreamSource::From(source_stream) => {
+                            if context_map.stream_context(source_stream).is_some() {
+                                ingress_routing.insert(source_stream.clone(), ctx_name.to_string());
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        // Third pass: validate cross-context emit targets
+        for ((_stream_name, _emit_idx), target_ctx) in context_map.cross_context_emits() {
+            if !context_txs.contains_key(target_ctx) {
+                warn!(
+                    "Cross-context emit targets unknown context '{}'",
+                    target_ctx
+                );
+            }
+        }
+
+        // Clone context_map for use inside thread spawning
+        let context_map_clone = context_map.clone();
 
         // Spawn a thread for each context
         for (ctx_name, config) in context_map.contexts() {
@@ -226,15 +381,17 @@ impl ContextOrchestrator {
             let ctx_name_clone = ctx_name.clone();
             let cores = config.cores.clone();
 
-            // Build cross-context senders for this context (all other contexts)
-            let cross_tx: HashMap<String, mpsc::Sender<SharedEvent>> = context_txs
+            // Clone all context senders for cross-context forwarding
+            let all_txs: HashMap<String, mpsc::Sender<SharedEvent>> = context_txs
                 .iter()
-                .filter(|(k, _)| *k != ctx_name)
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect();
 
-            // Create a dedicated engine for this context with only its streams
-            let program_clone = program.clone();
+            // Filter the program to only include this context's streams
+            let filtered_program =
+                filter_program_for_context(program, ctx_name, &context_map_clone);
+            let ingress_routing_clone = ingress_routing.clone();
+            let shutdown_rx = shutdown_tx.subscribe();
 
             let handle = std::thread::Builder::new()
                 .name(format!("varpulis-ctx-{}", ctx_name))
@@ -251,10 +408,10 @@ impl ContextOrchestrator {
                         .expect("Failed to create Tokio runtime for context");
 
                     rt.block_on(async move {
-                        // Create engine for this context
-                        let (engine_output_tx, mut _engine_output_rx) = mpsc::channel(1000);
+                        // Create engine for this context with filtered program
+                        let (engine_output_tx, engine_output_rx) = mpsc::channel(1000);
                         let mut engine = Engine::new(engine_output_tx);
-                        if let Err(e) = engine.load(&program_clone) {
+                        if let Err(e) = engine.load(&filtered_program) {
                             error!(
                                 "Failed to load program for context '{}': {}",
                                 ctx_name_clone, e
@@ -267,7 +424,10 @@ impl ContextOrchestrator {
                             engine,
                             ctx_output_tx,
                             rx,
-                            cross_tx,
+                            engine_output_rx,
+                            all_txs,
+                            ingress_routing_clone,
+                            shutdown_rx,
                         );
 
                         ctx_runtime.run().await;
@@ -283,13 +443,11 @@ impl ContextOrchestrator {
             handles,
             default_context,
             ingress_routing,
+            shutdown_tx,
         })
     }
 
     /// Route an incoming event to the correct context.
-    ///
-    /// Uses the ingress routing table to determine which context should
-    /// process the event based on its event type.
     pub async fn process(&self, event: SharedEvent) -> Result<(), String> {
         let ctx_name = self
             .ingress_routing
@@ -310,9 +468,14 @@ impl ContextOrchestrator {
         Ok(())
     }
 
-    /// Shut down all context threads by dropping senders.
+    /// Shut down all context threads.
+    ///
+    /// Sends shutdown signal, drops senders, and waits for threads to finish.
     pub fn shutdown(self) {
-        // Drop all senders to signal context runtimes to stop
+        // Signal all contexts to shut down
+        let _ = self.shutdown_tx.send(true);
+
+        // Drop all senders to unblock any recv() calls
         drop(self.context_txs);
 
         // Wait for all threads to finish
@@ -330,9 +493,13 @@ impl ContextOrchestrator {
         self.context_txs.keys().map(|s| s.as_str()).collect()
     }
 
+    /// Get the ingress routing table (for testing/debugging)
+    pub fn ingress_routing(&self) -> &HashMap<String, String> {
+        &self.ingress_routing
+    }
+
     /// Extract event types consumed by a stream source
-    fn event_types_from_source(source: &varpulis_core::ast::StreamSource) -> Vec<String> {
-        use varpulis_core::ast::StreamSource;
+    fn event_types_from_source(source: &StreamSource) -> Vec<String> {
         match source {
             StreamSource::From(et) => vec![et.clone()],
             StreamSource::Ident(name) => vec![name.clone()],
@@ -429,7 +596,6 @@ mod tests {
 
     #[test]
     fn test_no_context_backward_compat() {
-        // When no contexts are declared, has_contexts() returns false
         let map = ContextMap::new();
         assert!(!map.has_contexts());
     }
@@ -473,8 +639,6 @@ mod tests {
 
     #[test]
     fn test_context_orchestrator_event_types_from_source() {
-        use varpulis_core::ast::StreamSource;
-
         let types = ContextOrchestrator::event_types_from_source(&StreamSource::From(
             "SensorReading".to_string(),
         ));
@@ -484,5 +648,185 @@ mod tests {
             "ProcessedEvents".to_string(),
         ));
         assert_eq!(types, vec!["ProcessedEvents"]);
+    }
+
+    #[test]
+    fn test_filter_program_for_context() {
+        use varpulis_core::span::Spanned;
+
+        let program = Program {
+            statements: vec![
+                Spanned {
+                    node: Stmt::ContextDecl {
+                        name: "ctx1".to_string(),
+                        cores: None,
+                    },
+                    span: varpulis_core::span::Span::dummy(),
+                },
+                Spanned {
+                    node: Stmt::ContextDecl {
+                        name: "ctx2".to_string(),
+                        cores: None,
+                    },
+                    span: varpulis_core::span::Span::dummy(),
+                },
+                Spanned {
+                    node: Stmt::StreamDecl {
+                        name: "StreamA".to_string(),
+                        type_annotation: None,
+                        source: StreamSource::From("EventA".to_string()),
+                        ops: vec![],
+                    },
+                    span: varpulis_core::span::Span::dummy(),
+                },
+                Spanned {
+                    node: Stmt::StreamDecl {
+                        name: "StreamB".to_string(),
+                        type_annotation: None,
+                        source: StreamSource::From("EventB".to_string()),
+                        ops: vec![],
+                    },
+                    span: varpulis_core::span::Span::dummy(),
+                },
+            ],
+        };
+
+        let mut context_map = ContextMap::new();
+        context_map.register_context(ContextConfig {
+            name: "ctx1".to_string(),
+            cores: None,
+        });
+        context_map.register_context(ContextConfig {
+            name: "ctx2".to_string(),
+            cores: None,
+        });
+        context_map.assign_stream("StreamA".to_string(), "ctx1".to_string());
+        context_map.assign_stream("StreamB".to_string(), "ctx2".to_string());
+
+        let filtered = filter_program_for_context(&program, "ctx1", &context_map);
+
+        let stream_count = filtered
+            .statements
+            .iter()
+            .filter(|s| matches!(s.node, Stmt::StreamDecl { .. }))
+            .count();
+        assert_eq!(stream_count, 1, "ctx1 should have exactly 1 stream");
+
+        let has_stream_a = filtered
+            .statements
+            .iter()
+            .any(|s| matches!(&s.node, Stmt::StreamDecl { name, .. } if name == "StreamA"));
+        assert!(has_stream_a, "ctx1 should contain StreamA");
+
+        let has_stream_b = filtered
+            .statements
+            .iter()
+            .any(|s| matches!(&s.node, Stmt::StreamDecl { name, .. } if name == "StreamB"));
+        assert!(!has_stream_b, "ctx1 should NOT contain StreamB");
+
+        let context_decl_count = filtered
+            .statements
+            .iter()
+            .filter(|s| matches!(s.node, Stmt::ContextDecl { .. }))
+            .count();
+        assert_eq!(
+            context_decl_count, 2,
+            "All ContextDecls should be preserved"
+        );
+    }
+
+    #[test]
+    fn test_ingress_routing_includes_derived_types() {
+        use varpulis_core::span::Spanned;
+
+        let program = Program {
+            statements: vec![
+                Spanned {
+                    node: Stmt::ContextDecl {
+                        name: "ingest".to_string(),
+                        cores: None,
+                    },
+                    span: varpulis_core::span::Span::dummy(),
+                },
+                Spanned {
+                    node: Stmt::ContextDecl {
+                        name: "analytics".to_string(),
+                        cores: None,
+                    },
+                    span: varpulis_core::span::Span::dummy(),
+                },
+                Spanned {
+                    node: Stmt::StreamDecl {
+                        name: "RawData".to_string(),
+                        type_annotation: None,
+                        source: StreamSource::From("SensorReading".to_string()),
+                        ops: vec![],
+                    },
+                    span: varpulis_core::span::Span::dummy(),
+                },
+                Spanned {
+                    node: Stmt::StreamDecl {
+                        name: "Analysis".to_string(),
+                        type_annotation: None,
+                        source: StreamSource::Ident("RawData".to_string()),
+                        ops: vec![],
+                    },
+                    span: varpulis_core::span::Span::dummy(),
+                },
+            ],
+        };
+
+        let mut context_map = ContextMap::new();
+        context_map.register_context(ContextConfig {
+            name: "ingest".to_string(),
+            cores: None,
+        });
+        context_map.register_context(ContextConfig {
+            name: "analytics".to_string(),
+            cores: None,
+        });
+        context_map.assign_stream("RawData".to_string(), "ingest".to_string());
+        context_map.assign_stream("Analysis".to_string(), "analytics".to_string());
+
+        let (output_tx, _output_rx) = mpsc::channel(10);
+        let orchestrator =
+            ContextOrchestrator::build(&context_map, &program, output_tx, 100).unwrap();
+
+        let routing = orchestrator.ingress_routing();
+
+        assert_eq!(routing.get("SensorReading"), Some(&"ingest".to_string()));
+        assert_eq!(routing.get("RawData"), Some(&"analytics".to_string()));
+
+        orchestrator.shutdown();
+    }
+
+    #[test]
+    fn test_ingress_routing_cross_context_emits() {
+        let mut context_map = ContextMap::new();
+        context_map.register_context(ContextConfig {
+            name: "ingest".to_string(),
+            cores: None,
+        });
+        context_map.register_context(ContextConfig {
+            name: "analytics".to_string(),
+            cores: None,
+        });
+        context_map.assign_stream("RawData".to_string(), "ingest".to_string());
+        context_map.add_cross_context_emit("RawData".to_string(), 0, "analytics".to_string());
+
+        let emits = context_map.cross_context_emits();
+        assert_eq!(
+            emits.get(&("RawData".to_string(), 0)),
+            Some(&"analytics".to_string())
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_cpu_affinity_verification() {
+        let cores = verify_cpu_affinity();
+        assert!(cores.is_some(), "Should be able to read CPU affinity");
+        let cores = cores.unwrap();
+        assert!(!cores.is_empty(), "Should have at least one allowed core");
     }
 }

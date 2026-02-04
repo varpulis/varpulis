@@ -1877,8 +1877,13 @@ impl DatabaseConfig {
 #[cfg(feature = "database")]
 mod database_impl {
     use super::*;
-    use sqlx::any::{AnyPool, AnyPoolOptions};
-    use sqlx::Row;
+    use sqlx::pool::PoolOptions;
+    use sqlx::{AnyPool, Row};
+
+    /// Ensure default Any drivers are installed (idempotent).
+    fn ensure_drivers() {
+        sqlx::any::install_default_drivers();
+    }
 
     /// Database source that polls for new events
     pub struct DatabaseSource {
@@ -1908,7 +1913,8 @@ mod database_impl {
         }
 
         async fn start(&mut self, tx: mpsc::Sender<Event>) -> Result<(), ConnectorError> {
-            let pool = AnyPoolOptions::new()
+            ensure_drivers();
+            let pool = PoolOptions::<sqlx::Any>::new()
                 .max_connections(self.config.max_connections)
                 .connect(&self.config.connection_string)
                 .await
@@ -1998,7 +2004,8 @@ mod database_impl {
 
     impl DatabaseSink {
         pub async fn new(name: &str, config: DatabaseConfig) -> Result<Self, ConnectorError> {
-            let pool = AnyPoolOptions::new()
+            ensure_drivers();
+            let pool = PoolOptions::<sqlx::Any>::new()
                 .max_connections(config.max_connections)
                 .connect(&config.connection_string)
                 .await
@@ -2030,7 +2037,7 @@ mod database_impl {
             sqlx::query(&query)
                 .bind(&event.event_type)
                 .bind(&data)
-                .bind(event.timestamp)
+                .bind(event.timestamp.to_rfc3339())
                 .execute(&self.pool)
                 .await
                 .map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
@@ -2100,11 +2107,11 @@ pub struct DatabaseSink {
 
 #[cfg(not(feature = "database"))]
 impl DatabaseSink {
-    pub fn new(name: &str, config: DatabaseConfig) -> Self {
-        Self {
+    pub async fn new(name: &str, config: DatabaseConfig) -> Result<Self, ConnectorError> {
+        Ok(Self {
             name: name.to_string(),
             config,
-        }
+        })
     }
 }
 
@@ -2513,7 +2520,7 @@ impl ConnectorRegistry {
     }
 
     /// Create a connector from configuration
-    pub fn create_from_config(
+    pub async fn create_from_config(
         config: &ConnectorConfig,
     ) -> Result<Box<dyn SinkConnector>, ConnectorError> {
         match config.connector_type.as_str() {
@@ -2550,10 +2557,9 @@ impl ConnectorRegistry {
             }
             "database" | "postgres" | "mysql" | "sqlite" => {
                 let table = config.topic.clone().unwrap_or_else(|| "events".to_string());
-                Ok(Box::new(DatabaseSink::new(
-                    "database",
-                    DatabaseConfig::new(&config.url, &table),
-                )))
+                let sink =
+                    DatabaseSink::new("database", DatabaseConfig::new(&config.url, &table)).await?;
+                Ok(Box::new(sink))
             }
             _ => Err(ConnectorError::ConfigError(format!(
                 "Unknown connector type: {}",
@@ -2624,14 +2630,14 @@ mod tests {
         assert!(registry.get_sink("unknown").is_none());
     }
 
-    #[test]
-    fn test_create_from_config() {
+    #[tokio::test]
+    async fn test_create_from_config() {
         let config = ConnectorConfig::new("console", "");
-        let sink = ConnectorRegistry::create_from_config(&config);
+        let sink = ConnectorRegistry::create_from_config(&config).await;
         assert!(sink.is_ok());
 
         let config = ConnectorConfig::new("unknown", "");
-        let sink = ConnectorRegistry::create_from_config(&config);
+        let sink = ConnectorRegistry::create_from_config(&config).await;
         assert!(sink.is_err());
     }
 
@@ -2838,24 +2844,24 @@ mod tests {
         assert!(registry.get_sink("anything").is_none());
     }
 
-    #[test]
-    fn test_create_from_config_http() {
+    #[tokio::test]
+    async fn test_create_from_config_http() {
         let config = ConnectorConfig::new("http", "http://example.com");
-        let sink = ConnectorRegistry::create_from_config(&config);
+        let sink = ConnectorRegistry::create_from_config(&config).await;
         assert!(sink.is_ok());
     }
 
-    #[test]
-    fn test_create_from_config_kafka() {
+    #[tokio::test]
+    async fn test_create_from_config_kafka() {
         let config = ConnectorConfig::new("kafka", "localhost:9092").with_topic("events");
-        let sink = ConnectorRegistry::create_from_config(&config);
+        let sink = ConnectorRegistry::create_from_config(&config).await;
         assert!(sink.is_ok());
     }
 
-    #[test]
-    fn test_create_from_config_mqtt() {
+    #[tokio::test]
+    async fn test_create_from_config_mqtt() {
         let config = ConnectorConfig::new("mqtt", "mqtt.local").with_topic("sensors");
-        let sink = ConnectorRegistry::create_from_config(&config);
+        let sink = ConnectorRegistry::create_from_config(&config).await;
         assert!(sink.is_ok());
     }
 

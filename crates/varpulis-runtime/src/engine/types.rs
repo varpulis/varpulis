@@ -197,9 +197,6 @@ pub(crate) struct StreamProcessResult {
     pub emitted_events: Vec<SharedEvent>,
     /// Output events to feed to dependent streams (with stream name as event_type)
     pub output_events: Vec<SharedEvent>,
-    /// Events destined for a different context: (target_context, event)
-    #[allow(dead_code)]
-    pub cross_context_events: Vec<(String, SharedEvent)>,
 }
 
 /// State for partitioned windows - maintains separate windows per partition key
@@ -341,11 +338,15 @@ pub(crate) enum WindowType {
 }
 
 /// Configuration for simple emit operation
+#[allow(dead_code)]
 pub(crate) struct EmitConfig {
     pub fields: Vec<(String, String)>, // (output_name, source_field or literal)
+    pub target_context: Option<String>,
 }
 
 /// Configuration for emit with expressions
+#[allow(dead_code)]
 pub(crate) struct EmitExprConfig {
     pub fields: Vec<(String, varpulis_core::ast::Expr)>, // (output_name, expression)
+    pub target_context: Option<String>,
 }
