@@ -1,0 +1,12 @@
+# Emit + Process Test Events
+# A single trigger event should produce 6 Pixel events (3x2 grid)
+#
+# Expected output:
+# - Pixel(x:0, y:0, color:0)
+# - Pixel(x:1, y:0, color:1)
+# - Pixel(x:2, y:0, color:2)
+# - Pixel(x:0, y:1, color:3)
+# - Pixel(x:1, y:1, color:4)
+# - Pixel(x:2, y:1, color:5)
+
+Trigger { id: 1 }

@@ -96,6 +96,11 @@ pub enum Stmt {
     Break,
     /// Continue statement
     Continue,
+    /// Emit event statement: `emit EventType(field1: expr1, field2: expr2)`
+    Emit {
+        event_type: String,
+        fields: Vec<NamedArg>,
+    },
     /// Variable assignment: `name := value`
     Assignment { name: String, value: Expr },
     /// SASE+ Pattern declaration: `pattern Name = SEQ(A, B+) within 1h partition by user_id`

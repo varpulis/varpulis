@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mandelbrot Set - Varpulis Demo</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+        h1 { margin-bottom: 10px; color: #f39c12; }
+        .info { font-size: 14px; color: #888; margin-bottom: 20px; }
+        #canvas-container {
+            position: relative;
+            border: 2px solid #333;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        #canvas { display: block; background: #000; }
+        #stats {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.7);
+            padding: 10px 15px;
+            border-radius: 5px;
+            font-size: 13px;
+            font-family: monospace;
+        }
+        .stat-label { color: #888; }
+        .stat-value { color: #f39c12; font-weight: bold; }
+        #status {
+            margin-top: 15px;
+            padding: 10px 20px;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        .status-connecting { background: #2c3e50; }
+        .status-connected { background: #27ae60; }
+        .status-error { background: #c0392b; }
+        .status-complete { background: #8e44ad; }
+        #controls {
+            margin-top: 20px;
+            display: flex;
+            gap: 10px;
+        }
+        button {
+            padding: 10px 25px;
+            font-size: 14px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        button:hover { transform: translateY(-2px); }
+        #startBtn { background: #27ae60; color: white; }
+        #startBtn:disabled { background: #555; cursor: not-allowed; transform: none; }
+        #resetBtn { background: #e74c3c; color: white; }
+    </style>
+</head>
+<body>
+    <h1>Mandelbrot Set</h1>
+    <div class="info">Real-time rendering via Varpulis + MQTT WebSocket</div>
+
+    <div id="canvas-container">
+        <canvas id="canvas" width="1000" height="1000"></canvas>
+        <div id="stats">
+            <div><span class="stat-label">Pixels:</span> <span class="stat-value" id="pixel-count">0</span> / 1,000,000</div>
+            <div><span class="stat-label">Progress:</span> <span class="stat-value" id="progress">0%</span></div>
+            <div><span class="stat-label">Time:</span> <span class="stat-value" id="elapsed">0.0s</span></div>
+            <div><span class="stat-label">Rate:</span> <span class="stat-value" id="rate">0</span> px/s</div>
+        </div>
+    </div>
+
+    <div id="status" class="status-connecting">Connecting to MQTT...</div>
+
+    <div id="controls">
+        <button id="startBtn" disabled>Start Computation</button>
+        <button id="resetBtn">Reset</button>
+    </div>
+
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <script>
+        const SIZE = 1000;
+        const MAX_ITER = 256;
+        const TOTAL_PIXELS = SIZE * SIZE;
+
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const imageData = ctx.createImageData(SIZE, SIZE);
+
+        // Inferno colormap (approximation)
+        function infernoColor(t) {
+            // t in [0, 1]
+            const r = Math.min(255, Math.floor(255 * (1.5 * t)));
+            const g = Math.min(255, Math.floor(255 * (t * t)));
+            const b = Math.min(255, Math.floor(255 * (0.5 + 0.5 * Math.sin(Math.PI * t))));
+            return [r, g, b];
+        }
+
+        let pixelCount = 0;
+        let startTime = null;
+        let mqttClient = null;
+        let varpulisWs = null;
+
+        const statusEl = document.getElementById('status');
+        const startBtn = document.getElementById('startBtn');
+        const resetBtn = document.getElementById('resetBtn');
+
+        function updateStats() {
+            document.getElementById('pixel-count').textContent = pixelCount.toLocaleString();
+            document.getElementById('progress').textContent = (100 * pixelCount / TOTAL_PIXELS).toFixed(1) + '%';
+
+            if (startTime) {
+                const elapsed = (Date.now() - startTime) / 1000;
+                document.getElementById('elapsed').textContent = elapsed.toFixed(1) + 's';
+                document.getElementById('rate').textContent = Math.floor(pixelCount / elapsed).toLocaleString();
+            }
+        }
+
+        function setPixel(x, y, iterations) {
+            if (x < 0 || x >= SIZE || y < 0 || y >= SIZE) return;
+
+            const idx = (y * SIZE + x) * 4;
+
+            if (iterations >= MAX_ITER) {
+                // In the set - black
+                imageData.data[idx] = 0;
+                imageData.data[idx + 1] = 0;
+                imageData.data[idx + 2] = 0;
+            } else {
+                // Outside - use inferno colormap
+                const t = Math.log1p(iterations) / Math.log1p(MAX_ITER);
+                const [r, g, b] = infernoColor(t);
+                imageData.data[idx] = r;
+                imageData.data[idx + 1] = g;
+                imageData.data[idx + 2] = b;
+            }
+            imageData.data[idx + 3] = 255; // alpha
+
+            pixelCount++;
+        }
+
+        function render() {
+            ctx.putImageData(imageData, 0, 0);
+            updateStats();
+
+            if (pixelCount >= TOTAL_PIXELS) {
+                statusEl.textContent = 'Complete!';
+                statusEl.className = 'status-complete';
+            }
+        }
+
+        function reset() {
+            pixelCount = 0;
+            startTime = null;
+            for (let i = 0; i < imageData.data.length; i += 4) {
+                imageData.data[i] = 0;
+                imageData.data[i + 1] = 0;
+                imageData.data[i + 2] = 0;
+                imageData.data[i + 3] = 255;
+            }
+            ctx.putImageData(imageData, 0, 0);
+            updateStats();
+            statusEl.textContent = 'Ready';
+            statusEl.className = 'status-connected';
+        }
+
+        // Connect to MQTT over WebSocket
+        function connectMQTT() {
+            // Try connecting to mosquitto WebSocket (default ws port 9001)
+            const brokerUrl = 'ws://localhost:9001';
+
+            statusEl.textContent = 'Connecting to MQTT WebSocket...';
+            statusEl.className = 'status-connecting';
+
+            mqttClient = mqtt.connect(brokerUrl, {
+                clientId: 'mandelbrot-web-' + Math.random().toString(16).substr(2, 8),
+                keepalive: 60,
+                reconnectPeriod: 1000
+            });
+
+            mqttClient.on('connect', () => {
+                console.log('Connected to MQTT broker');
+                statusEl.textContent = 'Connected to MQTT';
+                statusEl.className = 'status-connected';
+                startBtn.disabled = false;
+
+                mqttClient.subscribe('mandelbrot/pixels/#', (err) => {
+                    if (err) {
+                        console.error('Subscribe error:', err);
+                    } else {
+                        console.log('Subscribed to mandelbrot/pixels/#');
+                    }
+                });
+            });
+
+            mqttClient.on('message', (topic, message) => {
+                try {
+                    const data = JSON.parse(message.toString());
+                    const x = data.x;
+                    const y = data.y;
+                    const iterations = data.iterations;
+
+                    if (!startTime) startTime = Date.now();
+                    setPixel(x, y, iterations);
+
+                    // Batch render updates
+                    if (pixelCount % 1000 === 0) {
+                        render();
+                    }
+                } catch (e) {
+                    // Ignore parse errors
+                }
+            });
+
+            mqttClient.on('error', (err) => {
+                console.error('MQTT error:', err);
+                statusEl.textContent = 'MQTT Error: ' + err.message;
+                statusEl.className = 'status-error';
+            });
+
+            mqttClient.on('close', () => {
+                console.log('MQTT connection closed');
+                startBtn.disabled = true;
+            });
+        }
+
+        // Deploy mandelbrot VPL to Varpulis
+        async function deployMandelbrot() {
+            statusEl.textContent = 'Deploying to Varpulis...';
+
+            const vplSource = await fetch('mandelbrot.vpl').then(r => r.text());
+
+            const response = await fetch('http://localhost:9000/api/v1/pipelines', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-api-key': 'test'
+                },
+                body: JSON.stringify({
+                    name: 'mandelbrot-' + Date.now(),
+                    source: vplSource
+                })
+            });
+
+            if (!response.ok) {
+                const error = await response.text();
+                throw new Error('Deploy failed: ' + error);
+            }
+
+            const result = await response.json();
+            console.log('Deployed:', result);
+            statusEl.textContent = 'Computing... (pipeline ' + result.id.substr(0, 8) + ')';
+        }
+
+        startBtn.addEventListener('click', async () => {
+            try {
+                reset();
+                startBtn.disabled = true;
+                await deployMandelbrot();
+            } catch (e) {
+                statusEl.textContent = 'Error: ' + e.message;
+                statusEl.className = 'status-error';
+                startBtn.disabled = false;
+            }
+        });
+
+        resetBtn.addEventListener('click', reset);
+
+        // Initial render (black canvas)
+        reset();
+
+        // Connect to MQTT
+        connectMQTT();
+
+        // Periodic render for smooth updates
+        setInterval(render, 100);
+    </script>
+</body>
+</html>

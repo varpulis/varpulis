@@ -17,12 +17,46 @@ use crate::attention::AttentionWindow;
 use crate::sequence::SequenceContext;
 use crate::Event;
 use indexmap::IndexMap;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use tracing::debug;
 use varpulis_core::span::Spanned;
 use varpulis_core::{Stmt, Value};
 
 use super::UserFunction;
+
+// =============================================================================
+// Thread-local emit collector
+// =============================================================================
+
+thread_local! {
+    static EMIT_COLLECTOR: RefCell<Option<Vec<Event>>> = const { RefCell::new(None) };
+}
+
+/// Install an emit collector, run `f`, return (result, emitted_events).
+/// Supports nested calls (saves/restores previous collector).
+pub fn with_emit_collector<F, R>(f: F) -> (R, Vec<Event>)
+where
+    F: FnOnce() -> R,
+{
+    EMIT_COLLECTOR.with(|c| {
+        let prev = c.borrow_mut().take();
+        *c.borrow_mut() = Some(Vec::new());
+        let result = f();
+        let events = c.borrow_mut().take().unwrap_or_default();
+        *c.borrow_mut() = prev;
+        (result, events)
+    })
+}
+
+/// Push an event to the active emit collector (no-op if none installed).
+fn collect_emitted_event(event: Event) {
+    EMIT_COLLECTOR.with(|c| {
+        if let Some(ref mut v) = *c.borrow_mut() {
+            v.push(event);
+        }
+    });
+}
 
 // =============================================================================
 // Control Flow
@@ -237,6 +271,21 @@ pub fn eval_stmt(
                 .as_ref()
                 .and_then(|e| eval_expr_with_functions(e, event, ctx, functions, bindings));
             (StmtResult::Return(value.clone()), value)
+        }
+
+        // Emit event statement
+        Stmt::Emit { event_type, fields } => {
+            let mut new_event = Event::new(event_type);
+            new_event.timestamp = event.timestamp;
+            for arg in fields {
+                if let Some(value) =
+                    eval_expr_with_functions(&arg.value, event, ctx, functions, bindings)
+                {
+                    new_event.data.insert(arg.name.clone(), value);
+                }
+            }
+            collect_emitted_event(new_event);
+            (StmtResult::Continue, None)
         }
 
         // Other statements (StreamDecl, EventDecl, etc.) are not executed at runtime

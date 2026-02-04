@@ -1320,6 +1320,9 @@ impl Engine {
                         sink_key,
                     }));
                 }
+                StreamOp::Process(expr) => {
+                    runtime_ops.push(RuntimeOp::Process(expr.clone()));
+                }
                 _ => {
                     debug!("Skipping operation: {:?}", op);
                 }
@@ -1664,6 +1667,23 @@ impl Engine {
                         }
                     }
 
+                    // If no explicit .emit() produced events but .process() was
+                    // used, send output_events to the output channel too
+                    if result.emitted_events.is_empty()
+                        && stream
+                            .operations
+                            .iter()
+                            .any(|op| matches!(op, RuntimeOp::Process(_)))
+                    {
+                        for output in &result.output_events {
+                            self.output_events_emitted += 1;
+                            let owned = (**output).clone();
+                            if let Err(e) = self.output_tx.try_send(owned) {
+                                warn!("Failed to send output event: {}", e);
+                            }
+                        }
+                    }
+
                     // Queue output events for processing by dependent streams
                     for output_event in result.output_events {
                         pending_events.push((output_event, depth + 1));
@@ -1731,7 +1751,19 @@ impl Engine {
 
                     // Collect emitted events for batch sending
                     self.output_events_emitted += result.emitted_events.len() as u64;
+                    let has_emitted = !result.emitted_events.is_empty();
                     emitted_batch.extend(result.emitted_events);
+
+                    // If .process() was used but no .emit(), send output_events too
+                    if !has_emitted
+                        && stream
+                            .operations
+                            .iter()
+                            .any(|op| matches!(op, RuntimeOp::Process(_)))
+                    {
+                        self.output_events_emitted += result.output_events.len() as u64;
+                        emitted_batch.extend(result.output_events.iter().map(Arc::clone));
+                    }
 
                     // Queue output events
                     for output_event in result.output_events {
@@ -1798,7 +1830,18 @@ impl Engine {
                     .await?;
 
                     self.output_events_emitted += result.emitted_events.len() as u64;
+                    let has_emitted = !result.emitted_events.is_empty();
                     emitted_batch.extend(result.emitted_events);
+
+                    if !has_emitted
+                        && stream
+                            .operations
+                            .iter()
+                            .any(|op| matches!(op, RuntimeOp::Process(_)))
+                    {
+                        self.output_events_emitted += result.output_events.len() as u64;
+                        emitted_batch.extend(result.output_events.iter().map(Arc::clone));
+                    }
 
                     for output_event in result.output_events {
                         pending_events.push((output_event, depth + 1));
@@ -2332,6 +2375,23 @@ impl Engine {
                         }
                     }
                 }
+                RuntimeOp::Process(expr) => {
+                    let ctx = SequenceContext::new();
+                    let mut all_emitted = Vec::new();
+                    for event in &current_events {
+                        let (_, emitted) = evaluator::with_emit_collector(|| {
+                            evaluator::eval_expr_with_functions(
+                                expr,
+                                event.as_ref(),
+                                &ctx,
+                                functions,
+                                &HashMap::new(),
+                            );
+                        });
+                        all_emitted.extend(emitted);
+                    }
+                    current_events = all_emitted.into_iter().map(Arc::new).collect();
+                }
                 RuntimeOp::To(config) => {
                     // Send current events to the named connector as a side-effect.
                     // Events continue flowing through the pipeline unchanged.
@@ -2578,6 +2638,23 @@ impl Engine {
                     } else {
                         warn!("Connector '{}' not found for .to()", config.connector_name);
                     }
+                }
+                RuntimeOp::Process(expr) => {
+                    let ctx = SequenceContext::new();
+                    let mut all_emitted = Vec::new();
+                    for event in &current_events {
+                        let (_, emitted) = evaluator::with_emit_collector(|| {
+                            evaluator::eval_expr_with_functions(
+                                expr,
+                                event.as_ref(),
+                                &ctx,
+                                functions,
+                                &HashMap::new(),
+                            );
+                        });
+                        all_emitted.extend(emitted);
+                    }
+                    current_events = all_emitted.into_iter().map(Arc::new).collect();
                 }
                 RuntimeOp::Print(_)
                 | RuntimeOp::Log(_)
@@ -2892,6 +2969,23 @@ impl Engine {
                             }
                         }
                     }
+                }
+                RuntimeOp::Process(expr) => {
+                    let ctx = SequenceContext::new();
+                    let mut all_emitted = Vec::new();
+                    for event in &current_events {
+                        let (_, emitted) = evaluator::with_emit_collector(|| {
+                            evaluator::eval_expr_with_functions(
+                                expr,
+                                event.as_ref(),
+                                &ctx,
+                                functions,
+                                &HashMap::new(),
+                            );
+                        });
+                        all_emitted.extend(emitted);
+                    }
+                    current_events = all_emitted.into_iter().map(Arc::new).collect();
                 }
                 // Skip ops that don't apply to post-window processing
                 RuntimeOp::Window(_)

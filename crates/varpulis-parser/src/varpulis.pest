@@ -38,6 +38,7 @@ statement = {
     | return_stmt
     | break_stmt
     | continue_stmt
+    | emit_stmt
     | assignment_stmt
     | expr_stmt
 }
@@ -334,6 +335,7 @@ while_stmt = { "while" ~ expr ~ ":" ~ block }
 return_stmt = { "return" ~ expr? }
 break_stmt = { "break" }
 continue_stmt = { "continue" }
+emit_stmt = { "emit" ~ identifier ~ "(" ~ named_arg_list? ~ ")" }
 assignment_stmt = { identifier ~ ":=" ~ expr }
 
 expr_stmt = { expr }
@@ -482,5 +484,5 @@ identifier = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 context_keyword = {
     "all" | "map" | "filter" | "tap" | "print" | "log" | "process" | "on_error"
     | "collect" | "concurrent" | "fork" | "any" | "first" | "sliding" | "policy"
-    | "desc" | "asc" | "sequence"
+    | "desc" | "asc" | "sequence" | "emit"
 }

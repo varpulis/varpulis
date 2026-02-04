@@ -1,0 +1,145 @@
+# Mandelbrot Set Demo
+# 16 contexts compute 250x250 tiles in parallel, emitting pixel events to MQTT.
+# A Python subscriber renders the 1000x1000 image using the inferno colormap.
+#
+# Usage:
+#   ./examples/mandelbrot/run.sh
+#
+# Or manually:
+#   1. Start MQTT broker: docker run -d -p 1883:1883 eclipse-mosquitto
+#   2. Start renderer:    python examples/mandelbrot/render.py &
+#   3. Start engine:      cargo run --release -- server --port 9000 --api-key test
+#   4. Deploy VPL:        curl -X POST http://localhost:9000/api/v1/pipelines \
+#                           -H "x-api-key: test" \
+#                           -H "Content-Type: application/json" \
+#                           -d '{"name":"mandelbrot","source":"<contents of this file>"}'
+
+connector MqttOut = mqtt (host: "localhost", port: 1883, client_id: "mandelbrot")
+
+# 16 contexts for parallel tile computation (4x4 grid)
+context t00
+context t01
+context t02
+context t03
+context t10
+context t11
+context t12
+context t13
+context t20
+context t21
+context t22
+context t23
+context t30
+context t31
+context t32
+context t33
+
+# Mandelbrot iteration function
+# Returns the number of iterations before divergence (or max_iter if bounded)
+fn mandelbrot(cx: float, cy: float, max_iter: int) -> int:
+    var zr = 0.0
+    var zi = 0.0
+    var i = 0
+    while i < max_iter:
+        let r2 = zr * zr
+        let i2 = zi * zi
+        if r2 + i2 > 4.0:
+            return i
+        zi := 2.0 * zr * zi + cy
+        zr := r2 - i2 + cx
+        i := i + 1
+    return max_iter
+
+# Compute a tile of the Mandelbrot set
+# Maps pixel coordinates to complex plane: x in [-2, 1], y in [-1.5, 1.5]
+fn compute_tile(x_off: int, y_off: int, size: int, max_iter: int):
+    for px in 0..size:
+        for py in 0..size:
+            let cx = -2.0 + (x_off + px) * 3.0 / 1000.0
+            let cy = -1.5 + (y_off + py) * 3.0 / 1000.0
+            let iters = mandelbrot(cx, cy, max_iter)
+            emit Pixel(x: x_off + px, y: y_off + py, iterations: iters, diverged: iters < max_iter)
+
+# Row 0: tiles (0,0) (250,0) (500,0) (750,0)
+stream Tile00 = timer(1s)
+    .context(t00)
+    .process(compute_tile(0, 0, 250, 256))
+    .to(MqttOut, topic: "mandelbrot/pixels")
+
+stream Tile01 = timer(1s)
+    .context(t01)
+    .process(compute_tile(250, 0, 250, 256))
+    .to(MqttOut, topic: "mandelbrot/pixels")
+
+stream Tile02 = timer(1s)
+    .context(t02)
+    .process(compute_tile(500, 0, 250, 256))
+    .to(MqttOut, topic: "mandelbrot/pixels")
+
+stream Tile03 = timer(1s)
+    .context(t03)
+    .process(compute_tile(750, 0, 250, 256))
+    .to(MqttOut, topic: "mandelbrot/pixels")
+
+# Row 1: tiles (0,250) (250,250) (500,250) (750,250)
+stream Tile10 = timer(1s)
+    .context(t10)
+    .process(compute_tile(0, 250, 250, 256))
+    .to(MqttOut, topic: "mandelbrot/pixels")
+
+stream Tile11 = timer(1s)
+    .context(t11)
+    .process(compute_tile(250, 250, 250, 256))
+    .to(MqttOut, topic: "mandelbrot/pixels")
+
+stream Tile12 = timer(1s)
+    .context(t12)
+    .process(compute_tile(500, 250, 250, 256))
+    .to(MqttOut, topic: "mandelbrot/pixels")
+
+stream Tile13 = timer(1s)
+    .context(t13)
+    .process(compute_tile(750, 250, 250, 256))
+    .to(MqttOut, topic: "mandelbrot/pixels")
+
+# Row 2: tiles (0,500) (250,500) (500,500) (750,500)
+stream Tile20 = timer(1s)
+    .context(t20)
+    .process(compute_tile(0, 500, 250, 256))
+    .to(MqttOut, topic: "mandelbrot/pixels")
+
+stream Tile21 = timer(1s)
+    .context(t21)
+    .process(compute_tile(250, 500, 250, 256))
+    .to(MqttOut, topic: "mandelbrot/pixels")
+
+stream Tile22 = timer(1s)
+    .context(t22)
+    .process(compute_tile(500, 500, 250, 256))
+    .to(MqttOut, topic: "mandelbrot/pixels")
+
+stream Tile23 = timer(1s)
+    .context(t23)
+    .process(compute_tile(750, 500, 250, 256))
+    .to(MqttOut, topic: "mandelbrot/pixels")
+
+# Row 3: tiles (0,750) (250,750) (500,750) (750,750)
+stream Tile30 = timer(1s)
+    .context(t30)
+    .process(compute_tile(0, 750, 250, 256))
+    .to(MqttOut, topic: "mandelbrot/pixels")
+
+stream Tile31 = timer(1s)
+    .context(t31)
+    .process(compute_tile(250, 750, 250, 256))
+    .to(MqttOut, topic: "mandelbrot/pixels")
+
+stream Tile32 = timer(1s)
+    .context(t32)
+    .process(compute_tile(500, 750, 250, 256))
+    .to(MqttOut, topic: "mandelbrot/pixels")
+
+stream Tile33 = timer(1s)
+    .context(t33)
+    .process(compute_tile(750, 750, 250, 256))
+    .to(MqttOut, topic: "mandelbrot/pixels")
