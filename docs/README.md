@@ -72,6 +72,11 @@ stream Alert = SomeEvent
 - [`reference/cli-reference.md`](reference/cli-reference.md) - CLI commands and options
 - [`reference/windows-aggregations.md`](reference/windows-aggregations.md) - Windows and aggregations
 
+### Tutorials
+- [`tutorials/getting-started.md`](tutorials/getting-started.md) - Installation and first program
+- [`tutorials/language-tutorial.md`](tutorials/language-tutorial.md) - Comprehensive VPL language guide
+- [`tutorials/contexts-tutorial.md`](tutorials/contexts-tutorial.md) - Parallel processing with contexts
+
 ### Guides
 - [`guides/contexts.md`](guides/contexts.md) - **Context-based multi-threaded execution**
 - [`guides/performance-tuning.md`](guides/performance-tuning.md) - Optimization

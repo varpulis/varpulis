@@ -387,6 +387,7 @@ curl -s localhost:9090/metrics | grep varpulis_events_processed
 
 ## See Also
 
+- [Contexts Tutorial](../tutorials/contexts-tutorial.md) - Hands-on tutorial with runnable examples
 - [Performance Tuning](performance-tuning.md) - CPU pinning and NUMA optimization
 - [Architecture: Parallelism](../architecture/parallelism.md) - Worker pool parallelism
 - [Architecture: System](../architecture/system.md) - Overall system design
