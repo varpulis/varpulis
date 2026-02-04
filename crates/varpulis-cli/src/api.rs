@@ -688,6 +688,7 @@ pub fn tenant_admin_routes(
     create.or(list_tenants).or(get_tenant).or(delete_tenant)
 }
 
+#[allow(clippy::result_large_err)]
 fn validate_admin_key(
     provided: &str,
     configured: &Option<String>,
