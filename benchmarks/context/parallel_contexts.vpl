@@ -1,0 +1,13 @@
+# Two independent streams in separate contexts for true parallelism
+context temp_ctx
+context pressure_ctx
+
+stream HighTemp = TempReading
+    .context(temp_ctx)
+    .where(temperature > 80.0)
+    .emit(sensor: sensor_id, temp: temperature)
+
+stream HighPressure = PressureReading
+    .context(pressure_ctx)
+    .where(pressure > 1050.0)
+    .emit(sensor: sensor_id, press: pressure)

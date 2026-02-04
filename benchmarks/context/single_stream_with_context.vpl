@@ -1,0 +1,7 @@
+# Single stream with context orchestration — measures overhead
+context ingest
+
+stream HighTemp = SensorReading
+    .context(ingest)
+    .where(temperature > 80.0)
+    .emit(sensor: sensor_id, temp: temperature)
