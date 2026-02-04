@@ -2812,3 +2812,117 @@ async fn test_complex_algorithm_quicksort() {
     // max=9, min=1, range=8
     assert_eq!(output.data.get("range"), Some(&Value::Int(8)));
 }
+
+#[tokio::test]
+async fn test_process_with_emit() {
+    // Test .process() that emits 3 events from a loop
+    let source = r#"
+        fn generate_items(n: int):
+            for i in 0..n:
+                emit Item(index: i)
+
+        stream Items = Trigger
+            .process(generate_items(3))
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    engine.process(Event::new("Trigger")).await.unwrap();
+
+    // Should get 3 output events (emitted events replace current_events and flow as output)
+    let out1 = rx.try_recv().expect("Should have output 1");
+    assert_eq!(out1.data.get("index"), Some(&Value::Int(0)));
+    let out2 = rx.try_recv().expect("Should have output 2");
+    assert_eq!(out2.data.get("index"), Some(&Value::Int(1)));
+    let out3 = rx.try_recv().expect("Should have output 3");
+    assert_eq!(out3.data.get("index"), Some(&Value::Int(2)));
+    assert!(rx.try_recv().is_err(), "Should be no more events");
+}
+
+#[tokio::test]
+async fn test_emit_in_nested_function() {
+    // Function A calls function B which emits
+    let source = r#"
+        fn inner_emit(val: int):
+            emit Result(value: val * 10)
+
+        fn outer(n: int):
+            for i in 0..n:
+                inner_emit(i)
+
+        stream Output = Trigger
+            .process(outer(2))
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    engine.process(Event::new("Trigger")).await.unwrap();
+
+    let out1 = rx.try_recv().expect("Should have output 1");
+    assert_eq!(out1.data.get("value"), Some(&Value::Int(0)));
+    let out2 = rx.try_recv().expect("Should have output 2");
+    assert_eq!(out2.data.get("value"), Some(&Value::Int(10)));
+    assert!(rx.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn test_process_replaces_events() {
+    // Verify that emitted events replace input events and flow through the pipeline
+    let source = r#"
+        fn double_emit():
+            emit A(val: 1)
+            emit A(val: 2)
+
+        stream Output = Trigger
+            .process(double_emit())
+            .where(val > 1)
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    engine.process(Event::new("Trigger")).await.unwrap();
+
+    // Only the event with val=2 should pass the where filter
+    let out = rx.try_recv().expect("Should have output");
+    assert_eq!(out.data.get("val"), Some(&Value::Int(2)));
+    assert!(rx.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn test_process_with_while_loop_emit() {
+    // Test emit inside a while loop
+    let source = r#"
+        fn count_up(limit: int):
+            var i = 0
+            while i < limit:
+                emit Tick(n: i)
+                i := i + 1
+
+        stream Ticks = Start
+            .process(count_up(3))
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    engine.process(Event::new("Start")).await.unwrap();
+
+    for expected in 0..3 {
+        let out = rx
+            .try_recv()
+            .unwrap_or_else(|_| panic!("Should have output {}", expected));
+        assert_eq!(out.data.get("n"), Some(&Value::Int(expected)));
+    }
+    assert!(rx.try_recv().is_err());
+}

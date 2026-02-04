@@ -1,0 +1,11 @@
+# Emit + Process Test
+# Tests the emit statement inside .process() operation
+# A function generates multiple pixel events from a single trigger
+
+fn generate_pixels(width: int, height: int):
+    for y in 0..height:
+        for x in 0..width:
+            emit Pixel(x: x, y: y, color: x + y * width)
+
+stream Pixels = Trigger
+    .process(generate_pixels(3, 2))

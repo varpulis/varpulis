@@ -172,6 +172,8 @@ pub(crate) enum RuntimeOp {
     AttentionWindow(AttentionWindowConfig),
     /// Pattern matching with lambda expression
     Pattern(PatternConfig),
+    /// Process with expression: `.process(expr)` - evaluates for side effects (emit)
+    Process(varpulis_core::ast::Expr),
     /// Send to connector: `.to(ConnectorName)`
     To(ToConfig),
 }

@@ -149,6 +149,7 @@ fn parse_statement(pair: pest::iterators::Pair<Rule>) -> ParseResult<Spanned<Stm
         Rule::return_stmt => parse_return_stmt(inner)?,
         Rule::break_stmt => Stmt::Break,
         Rule::continue_stmt => Stmt::Continue,
+        Rule::emit_stmt => parse_emit_stmt(inner)?,
         Rule::assignment_stmt => {
             let mut inner = inner.into_inner();
             let name = inner.expect_next("variable name")?.as_str().to_string();
@@ -1346,6 +1347,20 @@ fn parse_while_stmt(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
 fn parse_return_stmt(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
     let expr = pair.into_inner().next().map(parse_expr).transpose()?;
     Ok(Stmt::Return(expr))
+}
+
+fn parse_emit_stmt(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
+    let mut inner = pair.into_inner();
+    let event_type = inner.expect_next("event type name")?.as_str().to_string();
+    let mut fields = Vec::new();
+    for p in inner {
+        if p.as_rule() == Rule::named_arg_list {
+            for arg in p.into_inner() {
+                fields.push(parse_named_arg(arg)?);
+            }
+        }
+    }
+    Ok(Stmt::Emit { event_type, fields })
 }
 
 // ============================================================================
@@ -2584,6 +2599,72 @@ mod tests {
                 .where(x > 0)
                 .emit(y: x * 2)
                 .to(KafkaOutput, topic: "output")"#,
+        );
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_emit_stmt_parses() {
+        let result = parse(
+            r#"fn test():
+    emit Pixel(x: 1, y: 2)"#,
+        );
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+        let program = result.unwrap();
+        // Find the fn_decl
+        if let Stmt::FnDecl { body, .. } = &program.statements[0].node {
+            match &body[0].node {
+                Stmt::Emit { event_type, fields } => {
+                    assert_eq!(event_type, "Pixel");
+                    assert_eq!(fields.len(), 2);
+                    assert_eq!(fields[0].name, "x");
+                    assert_eq!(fields[1].name, "y");
+                }
+                other => panic!("Expected Stmt::Emit, got {:?}", other),
+            }
+        } else {
+            panic!("Expected FnDecl");
+        }
+    }
+
+    #[test]
+    fn test_emit_stmt_no_args() {
+        let result = parse(
+            r#"fn test():
+    emit Done()"#,
+        );
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+        let program = result.unwrap();
+        if let Stmt::FnDecl { body, .. } = &program.statements[0].node {
+            match &body[0].node {
+                Stmt::Emit { event_type, fields } => {
+                    assert_eq!(event_type, "Done");
+                    assert!(fields.is_empty());
+                }
+                other => panic!("Expected Stmt::Emit, got {:?}", other),
+            }
+        } else {
+            panic!("Expected FnDecl");
+        }
+    }
+
+    #[test]
+    fn test_emit_in_function_with_for_loop() {
+        let result = parse(
+            r#"fn generate(n: int):
+    for i in 0..n:
+        emit Item(index: i, value: i * 2)"#,
+        );
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_process_op() {
+        let result = parse(
+            r#"fn do_work():
+    emit Result(v: 42)
+
+stream S = timer(1s).process(do_work())"#,
         );
         assert!(result.is_ok(), "Failed: {:?}", result.err());
     }
