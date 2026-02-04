@@ -1150,6 +1150,14 @@ async fn run_simulation(
             .map_err(|e| anyhow::anyhow!("Player error: {}", e))?;
     }
 
+    // Flush any remaining session windows after all events are processed
+    if engine.has_session_windows() {
+        engine
+            .flush_expired_sessions()
+            .await
+            .map_err(|e| anyhow::anyhow!("Session flush error: {}", e))?;
+    }
+
     // Wait a bit for any pending output events
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 

@@ -249,6 +249,38 @@ varpulis run --file iot_pipeline.vpl
 
 ---
 
+## Session Window Lifecycle
+
+Session windows (`.window(session: <gap>)`) group events separated by periods of inactivity. They have two mechanisms for closing sessions:
+
+### Event-Driven Gap Detection (Hot Path)
+
+When a new event arrives and the time since the last event exceeds the configured gap, the current session closes immediately and the new event starts a fresh session. This is the primary closure mechanism and operates per-event with no timer overhead.
+
+### Periodic Sweep (Background)
+
+If no events arrive after a session's last event, the event-driven mechanism never fires. To handle this, each context with session windows runs a background sweep timer. The sweep:
+
+1. Runs every `gap` duration (matching the session window's configured gap)
+2. Checks all session windows for partitions where `last_event_time + gap < now`
+3. Closes expired sessions and pushes results through the rest of the pipeline (aggregate, having, emit, etc.)
+
+This ensures stale sessions are emitted even when a stream goes idle.
+
+### Zero Overhead for Non-Session Workloads
+
+The sweep timer is guarded by a `has_sessions` flag. Contexts without session windows never create or poll the timer -- there is zero overhead for non-session workloads.
+
+### Shutdown Flush
+
+When a context shuts down (via the shutdown signal), all remaining session windows are flushed regardless of whether they have expired. This ensures no data is lost on clean shutdown.
+
+### Batch/Simulation Mode
+
+In simulation mode (no contexts), `flush_expired_sessions()` is called once after all events have been processed. This closes any trailing sessions that would otherwise remain open because no subsequent event triggered the gap detection.
+
+---
+
 ## Architecture
 
 ### Internal Design

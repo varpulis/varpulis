@@ -497,6 +497,16 @@ Sessions closed:  3
 
 Alice's first session (3 events) closes when the gap exceeds 5s. Bob's session (4 events) closes when no more events arrive. Alice's second session (3 events) closes at the end.
 
+### How Sessions Close
+
+Sessions close through two mechanisms:
+
+1. **Event-driven gap detection**: When a new event arrives after a gap exceeding the configured duration, the current session closes immediately. This is the hot path -- it happens per-event with zero timer overhead.
+
+2. **Periodic sweep**: If a stream goes idle (no events arrive), sessions would sit in memory forever with only gap detection. To prevent this, a background sweep runs every `gap` duration inside each context's event loop. It checks all session windows and closes any partition whose last event is older than the gap. In batch/simulation mode, the sweep runs once after all events are processed.
+
+This means you don't need a "trailing event" to close the last session -- the sweep handles it automatically.
+
 ### Combining with Cross-Context Pipelines
 
 Session windows pair well with cross-context pipelines. Here's a pattern where raw events are ingested in one context and session analytics run in another:

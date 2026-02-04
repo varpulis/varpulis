@@ -287,6 +287,22 @@ impl SessionWindow {
             .map(|events| events.into_iter().map(|e| (*e).clone()).collect())
     }
 
+    /// Check if this session has expired (last event time + gap < now).
+    /// Returns accumulated events if expired, None otherwise.
+    pub fn check_expired(&mut self, now: DateTime<Utc>) -> Option<Vec<SharedEvent>> {
+        if let Some(last) = self.last_event_time {
+            if now - last > self.gap {
+                return Some(self.flush_shared());
+            }
+        }
+        None
+    }
+
+    /// Get the configured gap duration.
+    pub fn gap(&self) -> Duration {
+        self.gap
+    }
+
     /// Flush all events as SharedEvent references.
     pub fn flush_shared(&mut self) -> Vec<SharedEvent> {
         self.last_event_time = None;
@@ -339,6 +355,31 @@ impl PartitionedSessionWindow {
     pub fn add(&mut self, event: Event) -> Option<Vec<Event>> {
         self.add_shared(Arc::new(event))
             .map(|events| events.into_iter().map(|e| (*e).clone()).collect())
+    }
+
+    /// Check all partitions for expired sessions.
+    /// Returns a list of (partition_key, events) for each expired session,
+    /// and removes those partitions from the map.
+    pub fn check_expired(&mut self, now: DateTime<Utc>) -> Vec<(String, Vec<SharedEvent>)> {
+        let mut expired = Vec::new();
+        let mut to_remove = Vec::new();
+        for (key, window) in &mut self.windows {
+            if let Some(events) = window.check_expired(now) {
+                if !events.is_empty() {
+                    expired.push((key.clone(), events));
+                }
+                to_remove.push(key.clone());
+            }
+        }
+        for key in to_remove {
+            self.windows.remove(&key);
+        }
+        expired
+    }
+
+    /// Get the configured gap duration.
+    pub fn gap(&self) -> Duration {
+        self.gap
     }
 
     /// Flush all partition sessions as SharedEvent references.
@@ -1565,6 +1606,116 @@ mod tests {
     // ==========================================================================
     // PartitionedSessionWindow Tests
     // ==========================================================================
+
+    #[test]
+    fn test_session_window_check_expired_not_expired() {
+        let mut window = SessionWindow::new(Duration::seconds(5));
+        let base_time = Utc::now();
+
+        // Add events
+        window.add(Event::new("Test").with_timestamp(base_time));
+        window.add(Event::new("Test").with_timestamp(base_time + Duration::seconds(2)));
+
+        // Check at a time within the gap — should not expire
+        let check_time = base_time + Duration::seconds(4);
+        assert!(window.check_expired(check_time).is_none());
+    }
+
+    #[test]
+    fn test_session_window_check_expired_returns_events() {
+        let mut window = SessionWindow::new(Duration::seconds(5));
+        let base_time = Utc::now();
+
+        // Add events
+        window.add(Event::new("Test").with_timestamp(base_time));
+        window.add(Event::new("Test").with_timestamp(base_time + Duration::seconds(1)));
+        window.add(Event::new("Test").with_timestamp(base_time + Duration::seconds(2)));
+
+        // Check at a time past the gap — should expire
+        let check_time = base_time + Duration::seconds(8);
+        let result = window.check_expired(check_time);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().len(), 3);
+
+        // After expiry, window should be empty
+        let flushed = window.flush();
+        assert_eq!(flushed.len(), 0);
+    }
+
+    #[test]
+    fn test_session_window_check_expired_empty() {
+        let mut window = SessionWindow::new(Duration::seconds(5));
+        // Empty window should return None
+        assert!(window.check_expired(Utc::now()).is_none());
+    }
+
+    #[test]
+    fn test_session_window_gap_getter() {
+        let window = SessionWindow::new(Duration::seconds(7));
+        assert_eq!(window.gap(), Duration::seconds(7));
+    }
+
+    #[test]
+    fn test_partitioned_session_window_check_expired() {
+        let mut window = PartitionedSessionWindow::new("region".to_string(), Duration::seconds(5));
+        let base_time = Utc::now();
+
+        // Add events to two partitions at different times
+        window.add(
+            Event::new("Test")
+                .with_timestamp(base_time)
+                .with_field("region", "east"),
+        );
+        window.add(
+            Event::new("Test")
+                .with_timestamp(base_time + Duration::seconds(3))
+                .with_field("region", "west"),
+        );
+
+        // At base_time + 6s: east expired (last=0, gap=5), west still active (last=3)
+        // Note: partition keys are formatted via Display, which quotes strings
+        let check_time = base_time + Duration::seconds(6);
+        let expired = window.check_expired(check_time);
+        assert_eq!(expired.len(), 1);
+        assert_eq!(expired[0].1.len(), 1);
+
+        // At base_time + 9s: west now expired too
+        let check_time2 = base_time + Duration::seconds(9);
+        let expired2 = window.check_expired(check_time2);
+        assert_eq!(expired2.len(), 1);
+    }
+
+    #[test]
+    fn test_partitioned_session_window_removes_expired() {
+        let mut window = PartitionedSessionWindow::new("region".to_string(), Duration::seconds(3));
+        let base_time = Utc::now();
+
+        window.add(
+            Event::new("Test")
+                .with_timestamp(base_time)
+                .with_field("region", "east"),
+        );
+        window.add(
+            Event::new("Test")
+                .with_timestamp(base_time)
+                .with_field("region", "west"),
+        );
+
+        // Expire both partitions
+        let check_time = base_time + Duration::seconds(5);
+        let expired = window.check_expired(check_time);
+        assert_eq!(expired.len(), 2);
+
+        // After expiry, flush should return nothing
+        let flushed = window.flush();
+        assert_eq!(flushed.len(), 0);
+    }
+
+    #[test]
+    fn test_partitioned_session_window_gap_getter() {
+        let window = PartitionedSessionWindow::new("k".to_string(), Duration::seconds(10));
+        assert_eq!(window.gap(), Duration::seconds(10));
+    }
 
     #[test]
     fn test_partitioned_session_window() {
