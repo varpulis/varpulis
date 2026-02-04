@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 use varpulis_parser::parse;
 use varpulis_runtime::engine::Engine;
 use varpulis_runtime::event::Event;
-use varpulis_runtime::{ContextOrchestrator, DispatchError};
+use varpulis_runtime::{ContextMessage, ContextOrchestrator, DispatchError};
 
 /// Helper: parse program, build orchestrator, send events, collect output.
 /// Waits briefly for async processing in context threads.
@@ -416,8 +416,10 @@ async fn test_parallel_dispatch_via_router() {
                 let shared = Arc::new(event);
                 match router_clone.dispatch(shared) {
                     Ok(()) => {}
-                    Err(DispatchError::ChannelFull(ev)) => {
-                        router_clone.dispatch_await(ev).await.unwrap();
+                    Err(DispatchError::ChannelFull(msg)) => {
+                        if let ContextMessage::Event(ev) = msg {
+                            router_clone.dispatch_await(ev).await.unwrap();
+                        }
                     }
                     Err(DispatchError::ChannelClosed(_)) => break,
                 }
@@ -505,10 +507,12 @@ async fn test_try_process_non_blocking() {
         let shared = Arc::new(event);
         match orchestrator.try_process(shared) {
             Ok(()) => ok_count += 1,
-            Err(DispatchError::ChannelFull(ev)) => {
+            Err(DispatchError::ChannelFull(msg)) => {
                 full_count += 1;
                 // Fallback to async dispatch
-                orchestrator.process(ev).await.unwrap();
+                if let ContextMessage::Event(ev) = msg {
+                    orchestrator.process(ev).await.unwrap();
+                }
             }
             Err(DispatchError::ChannelClosed(_)) => break,
         }

@@ -1,0 +1,4 @@
+# Phase 1: First 3 events (checkpoint after these)
+SensorEvent { value: 10 }
+SensorEvent { value: 20 }
+SensorEvent { value: 30 }

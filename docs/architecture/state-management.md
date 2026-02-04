@@ -50,14 +50,9 @@ Configuration (set in code):
 
 ## Checkpointing
 
-### Current State
+### Overview
 
-The checkpoint infrastructure is implemented but not yet integrated into the engine event loop. This means:
-
-- `CheckpointManager`, `Checkpoint`, `WindowCheckpoint`, and `PatternCheckpoint` types exist
-- The `StateStore` trait supports save/load/list/prune checkpoint operations
-- Tenant state recovery works end-to-end
-- **Engine window and pattern state is not yet checkpointed** -- this is in-memory only
+Engine state checkpointing is fully integrated. All stateful components -- windows, SASE+ pattern matchers, join buffers, variables, watermark trackers -- are checkpointed and restored via `EngineCheckpoint`.
 
 ### CheckpointConfig
 
@@ -72,31 +67,36 @@ CheckpointConfig {
 
 ### Checkpoint Contents
 
-When engine integration is complete, each checkpoint will contain:
+Each `EngineCheckpoint` contains:
 
 | Field | Description |
 |-------|-------------|
-| `id` | Monotonically increasing checkpoint ID |
-| `timestamp_ms` | When the checkpoint was created |
-| `events_processed` | Total events processed at checkpoint time |
-| `window_states` | Events currently in active windows (per stream) |
-| `pattern_states` | Active partial matches in pattern matchers |
-| `metadata` | Custom key-value metadata |
+| `window_states` | Events in active windows (count, tumbling, sliding, session, partitioned) |
+| `sase_states` | Active SASE+ runs, captured events, NFA state |
+| `join_states` | Join buffer contents and expiry queues |
+| `variables` | Engine-level `var` declarations |
+| `watermark_state` | Per-source watermark positions and effective watermark |
+| `events_processed` | Total events processed counter |
+| `output_events_emitted` | Total output events counter |
+
+The top-level `Checkpoint` wraps per-context `EngineCheckpoint` entries in `context_states: HashMap<String, EngineCheckpoint>`.
 
 ### Recovery Process
 
-For tenant/pipeline state (working today):
+For tenant/pipeline state:
 
 1. Server starts with `--state-dir`
 2. `TenantManager` loads tenant snapshots from the store
 3. Pipelines are restored and re-compiled from saved VPL source
 4. Usage counters and quotas are restored
 
-For engine state (planned):
+For engine state:
 
-1. Load latest valid checkpoint
-2. Restore window contents and pattern matcher state
-3. Resume processing from checkpoint position
+1. `CheckpointManager::recover()` loads the latest valid checkpoint from the store
+2. `engine.restore_checkpoint()` restores window contents, SASE+ runs, join buffers, variables, watermark state, and counters
+3. Processing resumes from the checkpoint position
+
+See the [Checkpointing Tutorial](../tutorials/checkpointing-tutorial.md) for hands-on examples.
 
 ## Temporal Windows
 
@@ -132,10 +132,26 @@ stream ZoneStats = Temperatures
     )
 ```
 
+## Watermarks
+
+Per-source watermark tracking handles out-of-order events:
+
+```varpulis
+stream Orders = OrderEvent
+    .watermark(out_of_order: 10s)
+    .allowed_lateness(30s)
+    .window(1m)
+    .aggregate(total: sum(amount))
+    .emit(total_amount: total)
+```
+
+- `.watermark(out_of_order: Xs)` -- Track watermarks per event source with X seconds tolerance
+- `.allowed_lateness(Ys)` -- Accept events up to Y seconds past the watermark
+- Watermark advancement triggers window closure
+- Watermark state is included in checkpoints
+
 ## Planned Features
 
-- Engine checkpoint integration (save/restore window and pattern state)
-- Exactly-once processing semantics
-- Watermarks for late event handling
-- Session windows
+- Exactly-once processing semantics (checkpoint barriers in progress)
 - External checkpoint storage (S3)
+- Cross-context watermark propagation

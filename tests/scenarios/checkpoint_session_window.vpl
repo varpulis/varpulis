@@ -1,0 +1,8 @@
+# Checkpoint Test: Session Window with Aggregation
+# Demonstrates session window state preservation across restart.
+# Session gap = 5s. Events within a session are checkpointed and restored.
+
+stream SessionAgg = SensorEvent
+    .window(session: 5s)
+    .aggregate(count: count(), total: sum(value))
+    .emit(n: count, sum: total)

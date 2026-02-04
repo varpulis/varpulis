@@ -1,0 +1,8 @@
+# Checkpoint Test: Serialization round-trip
+# Count window of 5 with avg aggregation. Used to verify checkpoint
+# can be serialized to JSON and deserialized back.
+
+stream Windowed = TestEvent
+    .window(5)
+    .aggregate(avg_val: avg(value))
+    .emit(average: avg_val)

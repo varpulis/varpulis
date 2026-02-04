@@ -352,3 +352,13 @@ pub(crate) struct EmitExprConfig {
     pub fields: Vec<(String, varpulis_core::ast::Expr)>, // (output_name, expression)
     pub target_context: Option<String>,
 }
+
+/// Configuration for late data handling in watermark-based windowing.
+pub(crate) struct LateDataConfig {
+    /// How much lateness to tolerate beyond the watermark.
+    /// Events arriving within this window after watermark advancement are still processed.
+    pub allowed_lateness: chrono::Duration,
+    /// Optional stream name to route late events that exceed allowed_lateness.
+    /// If None, late events are dropped.
+    pub side_output_stream: Option<String>,
+}

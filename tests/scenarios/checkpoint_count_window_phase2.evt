@@ -1,0 +1,4 @@
+# Phase 2: 2 more events after restore (fills window: 3 restored + 2 new = 5)
+# Expected output: sum = 10+20+30+40+50 = 150, count = 5
+SensorEvent { value: 40 }
+SensorEvent { value: 50 }

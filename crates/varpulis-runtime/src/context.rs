@@ -9,11 +9,187 @@
 
 use crate::engine::Engine;
 use crate::event::{Event, SharedEvent};
+use crate::persistence::{CheckpointConfig, CheckpointManager, EngineCheckpoint, StoreError};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::{mpsc, watch};
 use tracing::{error, info, warn};
 use varpulis_core::ast::{Program, Stmt, StreamSource};
+
+/// Messages sent through context channels.
+///
+/// Wraps either a regular event or a checkpoint barrier for exactly-once semantics.
+#[derive(Debug, Clone)]
+pub enum ContextMessage {
+    /// A regular event to process
+    Event(SharedEvent),
+    /// A checkpoint barrier — triggers state snapshot
+    CheckpointBarrier(CheckpointBarrier),
+    /// Watermark update from an upstream context
+    WatermarkUpdate {
+        source_context: String,
+        watermark_ms: i64,
+    },
+}
+
+/// A checkpoint barrier flowing through the context DAG.
+#[derive(Debug, Clone)]
+pub struct CheckpointBarrier {
+    pub checkpoint_id: u64,
+    pub timestamp_ms: i64,
+}
+
+/// Acknowledgment from a context after completing a checkpoint.
+pub struct CheckpointAck {
+    pub context_name: String,
+    pub checkpoint_id: u64,
+    pub engine_checkpoint: EngineCheckpoint,
+}
+
+/// Tracks a pending coordinated checkpoint across all contexts.
+struct PendingCheckpoint {
+    checkpoint_id: u64,
+    timestamp_ms: i64,
+    acks: HashMap<String, EngineCheckpoint>,
+    started_at: Instant,
+}
+
+/// Coordinates checkpoints across multiple contexts.
+///
+/// Sends `CheckpointBarrier` to all contexts, collects `CheckpointAck` responses,
+/// and persists the assembled `Checkpoint` once all contexts have acknowledged.
+pub struct CheckpointCoordinator {
+    manager: CheckpointManager,
+    ack_tx: mpsc::Sender<CheckpointAck>,
+    ack_rx: mpsc::Receiver<CheckpointAck>,
+    context_names: Vec<String>,
+    pending: Option<PendingCheckpoint>,
+    next_checkpoint_id: u64,
+}
+
+impl CheckpointCoordinator {
+    /// Create a new coordinator for the given contexts.
+    pub fn new(manager: CheckpointManager, context_names: Vec<String>) -> Self {
+        let (ack_tx, ack_rx) = mpsc::channel(context_names.len() * 2);
+        Self {
+            manager,
+            ack_tx,
+            ack_rx,
+            context_names,
+            pending: None,
+            next_checkpoint_id: 1,
+        }
+    }
+
+    /// Get a sender for checkpoint acknowledgments (cloned into each context).
+    pub fn ack_sender(&self) -> mpsc::Sender<CheckpointAck> {
+        self.ack_tx.clone()
+    }
+
+    /// Initiate a new checkpoint by sending barriers to all contexts.
+    pub fn initiate(&mut self, context_txs: &HashMap<String, mpsc::Sender<ContextMessage>>) {
+        if self.pending.is_some() {
+            warn!("Checkpoint already in progress, skipping initiation");
+            return;
+        }
+
+        let checkpoint_id = self.next_checkpoint_id;
+        self.next_checkpoint_id += 1;
+        let timestamp_ms = chrono::Utc::now().timestamp_millis();
+
+        let barrier = CheckpointBarrier {
+            checkpoint_id,
+            timestamp_ms,
+        };
+
+        for (ctx_name, tx) in context_txs {
+            if let Err(e) = tx.try_send(ContextMessage::CheckpointBarrier(barrier.clone())) {
+                error!(
+                    "Failed to send checkpoint barrier to context '{}': {}",
+                    ctx_name, e
+                );
+            }
+        }
+
+        self.pending = Some(PendingCheckpoint {
+            checkpoint_id,
+            timestamp_ms,
+            acks: HashMap::new(),
+            started_at: Instant::now(),
+        });
+
+        info!("Initiated checkpoint {}", checkpoint_id);
+    }
+
+    /// Receive an acknowledgment. Returns a complete `Checkpoint` when all contexts have acked.
+    pub fn receive_ack(&mut self, ack: CheckpointAck) -> Option<crate::persistence::Checkpoint> {
+        let pending = self.pending.as_mut()?;
+
+        if ack.checkpoint_id != pending.checkpoint_id {
+            warn!(
+                "Received ack for checkpoint {} but expecting {}",
+                ack.checkpoint_id, pending.checkpoint_id
+            );
+            return None;
+        }
+
+        pending.acks.insert(ack.context_name, ack.engine_checkpoint);
+
+        if pending.acks.len() == self.context_names.len() {
+            let pending = self.pending.take().unwrap();
+            let mut context_states = HashMap::new();
+            for (name, cp) in pending.acks {
+                context_states.insert(name, cp);
+            }
+
+            Some(crate::persistence::Checkpoint {
+                id: pending.checkpoint_id,
+                timestamp_ms: pending.timestamp_ms,
+                events_processed: 0, // Filled from context states
+                window_states: HashMap::new(),
+                pattern_states: HashMap::new(),
+                metadata: HashMap::new(),
+                context_states,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Try to drain pending acks and complete the checkpoint.
+    pub fn try_complete(&mut self) -> Result<(), StoreError> {
+        while let Ok(ack) = self.ack_rx.try_recv() {
+            if let Some(checkpoint) = self.receive_ack(ack) {
+                self.manager.checkpoint(checkpoint)?;
+                return Ok(());
+            }
+        }
+
+        // Warn if a checkpoint has been pending for too long (> 30s)
+        if let Some(ref pending) = self.pending {
+            if pending.started_at.elapsed() > std::time::Duration::from_secs(30) {
+                warn!(
+                    "Checkpoint {} has been pending for {:.1}s — contexts may be blocked",
+                    pending.checkpoint_id,
+                    pending.started_at.elapsed().as_secs_f64()
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Check if a checkpoint should be initiated based on interval.
+    pub fn should_checkpoint(&self) -> bool {
+        self.pending.is_none() && self.manager.should_checkpoint()
+    }
+
+    /// Whether a checkpoint is currently in progress (waiting for acks).
+    pub fn has_pending(&self) -> bool {
+        self.pending.is_some()
+    }
+}
 
 /// Configuration for a named context
 #[derive(Debug, Clone)]
@@ -161,16 +337,18 @@ pub struct ContextRuntime {
     engine: Engine,
     /// Main output channel (tenant/CLI)
     output_tx: mpsc::Sender<Event>,
-    /// Inbound events from orchestrator
-    event_rx: mpsc::Receiver<SharedEvent>,
+    /// Inbound messages from orchestrator (events + barriers)
+    event_rx: mpsc::Receiver<ContextMessage>,
     /// Engine's emitted events receiver
     engine_output_rx: mpsc::Receiver<Event>,
     /// Senders to all contexts (including self, for intra-context derived streams)
-    all_context_txs: HashMap<String, mpsc::Sender<SharedEvent>>,
+    all_context_txs: HashMap<String, mpsc::Sender<ContextMessage>>,
     /// event_type → context_name routing table
     ingress_routing: HashMap<String, String>,
     /// Shutdown signal receiver
     shutdown_rx: watch::Receiver<bool>,
+    /// Checkpoint ack sender (if coordinated checkpointing is enabled)
+    ack_tx: Option<mpsc::Sender<CheckpointAck>>,
     events_processed: u64,
     output_events_emitted: u64,
 }
@@ -182,9 +360,9 @@ impl ContextRuntime {
         name: String,
         engine: Engine,
         output_tx: mpsc::Sender<Event>,
-        event_rx: mpsc::Receiver<SharedEvent>,
+        event_rx: mpsc::Receiver<ContextMessage>,
         engine_output_rx: mpsc::Receiver<Event>,
-        all_context_txs: HashMap<String, mpsc::Sender<SharedEvent>>,
+        all_context_txs: HashMap<String, mpsc::Sender<ContextMessage>>,
         ingress_routing: HashMap<String, String>,
         shutdown_rx: watch::Receiver<bool>,
     ) -> Self {
@@ -197,9 +375,16 @@ impl ContextRuntime {
             all_context_txs,
             ingress_routing,
             shutdown_rx,
+            ack_tx: None,
             events_processed: 0,
             output_events_emitted: 0,
         }
+    }
+
+    /// Set the checkpoint acknowledgment sender for coordinated checkpointing.
+    pub fn with_ack_sender(mut self, ack_tx: mpsc::Sender<CheckpointAck>) -> Self {
+        self.ack_tx = Some(ack_tx);
+        self
     }
 
     /// Drain engine output events and route them to consuming contexts
@@ -211,12 +396,26 @@ impl ContextRuntime {
             // Route to consuming context if any
             if let Some(target_ctx) = self.ingress_routing.get(&output_event.event_type) {
                 if let Some(tx) = self.all_context_txs.get(target_ctx) {
-                    let _ = tx.try_send(Arc::new(output_event.clone()));
+                    let _ = tx.try_send(ContextMessage::Event(Arc::new(output_event.clone())));
                 }
             }
 
             // Always forward to main output channel
             let _ = self.output_tx.try_send(output_event);
+        }
+    }
+
+    /// Handle a checkpoint barrier by snapshotting engine state and sending ack.
+    async fn handle_checkpoint_barrier(&self, barrier: CheckpointBarrier) {
+        if let Some(ref ack_tx) = self.ack_tx {
+            let checkpoint = self.engine.create_checkpoint();
+            let _ = ack_tx
+                .send(CheckpointAck {
+                    context_name: self.name.clone(),
+                    checkpoint_id: barrier.checkpoint_id,
+                    engine_checkpoint: checkpoint,
+                })
+                .await;
         }
     }
 
@@ -277,9 +476,9 @@ impl ContextRuntime {
                     self.drain_and_route_output();
                 }
 
-                event = self.event_rx.recv() => {
-                    match event {
-                        Some(event) => {
+                msg = self.event_rx.recv() => {
+                    match msg {
+                        Some(ContextMessage::Event(event)) => {
                             self.events_processed += 1;
 
                             // Process the event through the engine (zero-copy via SharedEvent)
@@ -291,6 +490,13 @@ impl ContextRuntime {
                             }
 
                             self.drain_and_route_output();
+                        }
+                        Some(ContextMessage::CheckpointBarrier(barrier)) => {
+                            self.handle_checkpoint_barrier(barrier).await;
+                        }
+                        Some(ContextMessage::WatermarkUpdate { source_context, watermark_ms }) => {
+                            // Feed watermark into engine's tracker (Phase 2E)
+                            let _ = self.engine.advance_external_watermark(&source_context, watermark_ms).await;
                         }
                         None => {
                             // Channel closed
@@ -313,21 +519,21 @@ impl ContextRuntime {
 
 /// Direct event-type-to-channel router for non-blocking dispatch.
 ///
-/// Maps `event_type → Sender<SharedEvent>` directly (single HashMap lookup),
+/// Maps `event_type → Sender<ContextMessage>` directly (single HashMap lookup),
 /// uses `try_send()` for non-blocking dispatch, and is cheaply cloneable
 /// via `Arc<HashMap>` for multi-producer scenarios.
 #[derive(Clone)]
 pub struct EventTypeRouter {
-    routes: Arc<HashMap<String, mpsc::Sender<SharedEvent>>>,
-    default_tx: mpsc::Sender<SharedEvent>,
+    routes: Arc<HashMap<String, mpsc::Sender<ContextMessage>>>,
+    default_tx: mpsc::Sender<ContextMessage>,
 }
 
 /// Errors returned by non-blocking dispatch methods.
 pub enum DispatchError {
     /// Channel is full — caller should retry or use async dispatch
-    ChannelFull(SharedEvent),
+    ChannelFull(ContextMessage),
     /// Channel is closed — context has shut down
-    ChannelClosed(SharedEvent),
+    ChannelClosed(ContextMessage),
 }
 
 impl EventTypeRouter {
@@ -340,12 +546,11 @@ impl EventTypeRouter {
             .routes
             .get(&event.event_type)
             .unwrap_or(&self.default_tx);
-        match tx.try_send(event) {
+        let msg = ContextMessage::Event(event);
+        match tx.try_send(msg) {
             Ok(()) => Ok(()),
-            Err(mpsc::error::TrySendError::Full(event)) => Err(DispatchError::ChannelFull(event)),
-            Err(mpsc::error::TrySendError::Closed(event)) => {
-                Err(DispatchError::ChannelClosed(event))
-            }
+            Err(mpsc::error::TrySendError::Full(msg)) => Err(DispatchError::ChannelFull(msg)),
+            Err(mpsc::error::TrySendError::Closed(msg)) => Err(DispatchError::ChannelClosed(msg)),
         }
     }
 
@@ -355,7 +560,7 @@ impl EventTypeRouter {
     pub async fn dispatch_await(&self, event: SharedEvent) -> Result<(), String> {
         let event_type = event.event_type.clone();
         let tx = self.routes.get(&event_type).unwrap_or(&self.default_tx);
-        tx.send(event)
+        tx.send(ContextMessage::Event(event))
             .await
             .map_err(|e| format!("Failed to send event type '{}': {}", event_type, e))
     }
@@ -378,7 +583,7 @@ impl EventTypeRouter {
 /// and stream assignments.
 pub struct ContextOrchestrator {
     /// Senders to each context's event channel
-    context_txs: HashMap<String, mpsc::Sender<SharedEvent>>,
+    context_txs: HashMap<String, mpsc::Sender<ContextMessage>>,
     /// Thread handles for each context
     handles: Vec<std::thread::JoinHandle<()>>,
     /// event_type -> context_name routing table
@@ -387,6 +592,8 @@ pub struct ContextOrchestrator {
     shutdown_tx: watch::Sender<bool>,
     /// Direct event-type-to-channel router
     router: EventTypeRouter,
+    /// Optional checkpoint coordinator for exactly-once semantics
+    checkpoint_coordinator: Option<CheckpointCoordinator>,
 }
 
 impl ContextOrchestrator {
@@ -404,7 +611,26 @@ impl ContextOrchestrator {
         output_tx: mpsc::Sender<Event>,
         channel_capacity: usize,
     ) -> Result<Self, String> {
-        let mut context_txs: HashMap<String, mpsc::Sender<SharedEvent>> = HashMap::new();
+        Self::build_with_checkpoint(
+            context_map,
+            program,
+            output_tx,
+            channel_capacity,
+            None,
+            None,
+        )
+    }
+
+    /// Build the orchestrator with optional checkpoint configuration and recovery state.
+    pub fn build_with_checkpoint(
+        context_map: &ContextMap,
+        program: &Program,
+        output_tx: mpsc::Sender<Event>,
+        channel_capacity: usize,
+        checkpoint_config: Option<(CheckpointConfig, Arc<dyn crate::persistence::StateStore>)>,
+        recovery_checkpoint: Option<&crate::persistence::Checkpoint>,
+    ) -> Result<Self, String> {
+        let mut context_txs: HashMap<String, mpsc::Sender<ContextMessage>> = HashMap::new();
         let mut handles: Vec<std::thread::JoinHandle<()>> = Vec::new();
 
         // Create shutdown signal
@@ -419,12 +645,22 @@ impl ContextOrchestrator {
             .unwrap_or_else(|| "default".to_string());
 
         // Create cross-context senders: first pass to create all channels
-        let mut context_rxs: HashMap<String, mpsc::Receiver<SharedEvent>> = HashMap::new();
+        let mut context_rxs: HashMap<String, mpsc::Receiver<ContextMessage>> = HashMap::new();
         for ctx_name in context_map.contexts().keys() {
             let (tx, rx) = mpsc::channel(channel_capacity);
             context_txs.insert(ctx_name.clone(), tx);
             context_rxs.insert(ctx_name.clone(), rx);
         }
+
+        // Set up checkpoint coordinator if configured
+        let context_names: Vec<String> = context_map.contexts().keys().cloned().collect();
+        let checkpoint_coordinator = checkpoint_config.map(|(config, store)| {
+            let manager = CheckpointManager::new(store, config)
+                .map_err(|e| format!("Failed to create checkpoint manager: {}", e))
+                .unwrap();
+            CheckpointCoordinator::new(manager, context_names.clone())
+        });
+        let ack_tx = checkpoint_coordinator.as_ref().map(|c| c.ack_sender());
 
         // Build ingress routing: event_type -> context_name
         let mut ingress_routing: HashMap<String, String> = HashMap::new();
@@ -468,7 +704,7 @@ impl ContextOrchestrator {
         }
 
         // Build EventTypeRouter: event_type → Sender directly (single lookup)
-        let mut event_type_txs: HashMap<String, mpsc::Sender<SharedEvent>> = HashMap::new();
+        let mut event_type_txs: HashMap<String, mpsc::Sender<ContextMessage>> = HashMap::new();
         for (event_type, ctx_name) in &ingress_routing {
             if let Some(tx) = context_txs.get(ctx_name) {
                 event_type_txs.insert(event_type.clone(), tx.clone());
@@ -486,6 +722,11 @@ impl ContextOrchestrator {
         // Clone context_map for use inside thread spawning
         let context_map_clone = context_map.clone();
 
+        // Clone recovery state per context
+        let recovery_states: HashMap<String, EngineCheckpoint> = recovery_checkpoint
+            .map(|cp| cp.context_states.clone())
+            .unwrap_or_default();
+
         // Spawn a thread for each context
         for (ctx_name, config) in context_map.contexts() {
             let rx = context_rxs
@@ -497,7 +738,7 @@ impl ContextOrchestrator {
             let cores = config.cores.clone();
 
             // Clone all context senders for cross-context forwarding
-            let all_txs: HashMap<String, mpsc::Sender<SharedEvent>> = context_txs
+            let all_txs: HashMap<String, mpsc::Sender<ContextMessage>> = context_txs
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect();
@@ -507,6 +748,8 @@ impl ContextOrchestrator {
                 filter_program_for_context(program, ctx_name, &context_map_clone);
             let ingress_routing_clone = ingress_routing.clone();
             let shutdown_rx = shutdown_tx.subscribe();
+            let ctx_ack_tx = ack_tx.clone();
+            let ctx_recovery = recovery_states.get(ctx_name).cloned();
 
             let handle = std::thread::Builder::new()
                 .name(format!("varpulis-ctx-{}", ctx_name))
@@ -534,6 +777,11 @@ impl ContextOrchestrator {
                             return;
                         }
 
+                        // Restore from checkpoint if available
+                        if let Some(cp) = ctx_recovery {
+                            engine.restore_checkpoint(&cp);
+                        }
+
                         let mut ctx_runtime = ContextRuntime::new(
                             ctx_name_clone,
                             engine,
@@ -544,6 +792,10 @@ impl ContextOrchestrator {
                             ingress_routing_clone,
                             shutdown_rx,
                         );
+
+                        if let Some(ack_tx) = ctx_ack_tx {
+                            ctx_runtime = ctx_runtime.with_ack_sender(ack_tx);
+                        }
 
                         ctx_runtime.run().await;
                     });
@@ -559,6 +811,7 @@ impl ContextOrchestrator {
             ingress_routing,
             shutdown_tx,
             router,
+            checkpoint_coordinator,
         })
     }
 
@@ -600,6 +853,48 @@ impl ContextOrchestrator {
         }
 
         info!("All context runtimes shut down");
+    }
+
+    /// Trigger a checkpoint across all contexts.
+    ///
+    /// Sends a `CheckpointBarrier` to every context. Each context will snapshot
+    /// its engine state and send a `CheckpointAck` back. Call `try_complete_checkpoint()`
+    /// afterwards to drain acks and persist.
+    pub fn trigger_checkpoint(&mut self) {
+        if let Some(ref mut coordinator) = self.checkpoint_coordinator {
+            coordinator.initiate(&self.context_txs);
+        }
+    }
+
+    /// Try to complete a pending checkpoint by draining acknowledgments.
+    ///
+    /// Returns `true` if a checkpoint was fully completed and persisted.
+    pub fn try_complete_checkpoint(&mut self) -> Result<bool, StoreError> {
+        if let Some(ref mut coordinator) = self.checkpoint_coordinator {
+            let had_pending = coordinator.has_pending();
+            coordinator.try_complete()?;
+            // If we had a pending checkpoint and now it's gone, we completed it
+            Ok(had_pending && !coordinator.has_pending())
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Check if a periodic checkpoint should be triggered (based on configured interval).
+    pub fn should_checkpoint(&self) -> bool {
+        self.checkpoint_coordinator
+            .as_ref()
+            .is_some_and(|c| c.should_checkpoint())
+    }
+
+    /// Run one checkpoint cycle: trigger if due, then try to complete.
+    ///
+    /// Call this periodically from the main event loop (e.g., every second or on a timer).
+    pub fn checkpoint_tick(&mut self) -> Result<bool, StoreError> {
+        if self.should_checkpoint() {
+            self.trigger_checkpoint();
+        }
+        self.try_complete_checkpoint()
     }
 
     /// Get the names of all running contexts

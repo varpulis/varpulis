@@ -1,0 +1,3 @@
+# Phase 2: Event after 6s gap (exceeds 5s session timeout)
+# This closes the restored session. Expected output: n = 3, sum = 300
+@9s SensorEvent { value: 999 }

@@ -1,0 +1,6 @@
+# 5 events for metrics tracking
+TestEvent { value: 1 }
+TestEvent { value: 2 }
+TestEvent { value: 3 }
+TestEvent { value: 4 }
+TestEvent { value: 5 }

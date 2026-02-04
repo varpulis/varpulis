@@ -1,0 +1,8 @@
+# Watermark Test: Watermark with tumbling window
+# Watermark advancement triggers window closure for out-of-order data.
+
+stream Windowed = SensorEvent
+    .watermark(out_of_order: 2s)
+    .window(5s)
+    .aggregate(total: count())
+    .emit(event_count: total)

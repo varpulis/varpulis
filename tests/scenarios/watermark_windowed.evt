@@ -1,0 +1,5 @@
+# Events within first window, then one past boundary to trigger watermark advance
+@0s SensorEvent { value: 0 }
+@1s SensorEvent { value: 1 }
+@2s SensorEvent { value: 2 }
+@8s SensorEvent { value: 99 }

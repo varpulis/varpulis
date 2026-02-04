@@ -33,11 +33,13 @@ use crate::join::JoinBuffer;
 use crate::metrics::Metrics;
 use crate::sase::SaseEngine;
 use crate::sequence::SequenceContext;
+use crate::watermark::PerSourceWatermarkTracker;
 use crate::window::{
     CountWindow, PartitionedSessionWindow, PartitionedSlidingWindow, PartitionedTumblingWindow,
     SessionWindow, SlidingCountWindow, SlidingWindow, TumblingWindow,
 };
 use chrono::Duration;
+use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -268,6 +270,12 @@ pub struct Engine {
     metrics: Option<Metrics>,
     /// Context assignments for multi-threaded execution
     context_map: ContextMap,
+    /// Per-source watermark tracker for event-time processing
+    watermark_tracker: Option<PerSourceWatermarkTracker>,
+    /// Last applied watermark (for detecting advances)
+    last_applied_watermark: Option<DateTime<Utc>>,
+    /// Late data configurations per stream
+    late_data_configs: HashMap<String, types::LateDataConfig>,
 }
 
 impl Engine {
@@ -288,6 +296,9 @@ impl Engine {
             output_events_emitted: 0,
             metrics: None,
             context_map: ContextMap::new(),
+            watermark_tracker: None,
+            last_applied_watermark: None,
+            late_data_configs: HashMap::new(),
         }
     }
 
@@ -613,6 +624,42 @@ impl Engine {
                         name.to_string(),
                         emit_idx,
                         ctx.clone(),
+                    );
+                }
+                StreamOp::Watermark(args) => {
+                    // Configure per-source watermark tracking for this stream
+                    self.enable_watermark_tracking();
+                    let mut max_ooo = Duration::seconds(0);
+                    for arg in args {
+                        if arg.name == "out_of_order" {
+                            if let varpulis_core::ast::Expr::Duration(ns) = &arg.value {
+                                max_ooo = Duration::nanoseconds(*ns as i64);
+                            }
+                        }
+                    }
+                    let source_et = match source {
+                        StreamSource::From(et) => Some(et.as_str()),
+                        StreamSource::Ident(s) => Some(s.as_str()),
+                        StreamSource::IdentWithAlias { name: et, .. } => Some(et.as_str()),
+                        StreamSource::FromConnector { event_type, .. } => Some(event_type.as_str()),
+                        _ => None,
+                    };
+                    if let Some(et) = source_et {
+                        self.register_watermark_source(et, max_ooo);
+                    }
+                }
+                StreamOp::AllowedLateness(expr) => {
+                    // Configure late-data handling for this stream
+                    let lateness_ns = match expr {
+                        varpulis_core::ast::Expr::Duration(ns) => *ns as i64,
+                        _ => 0,
+                    };
+                    self.late_data_configs.insert(
+                        name.to_string(),
+                        types::LateDataConfig {
+                            allowed_lateness: Duration::nanoseconds(lateness_ns),
+                            side_output_stream: None,
+                        },
                     );
                 }
                 _ => {}
@@ -954,6 +1001,10 @@ impl Engine {
                 StreamOp::Context(_) => {
                     // Context assignment is metadata, not a runtime operation.
                     // Handled by the engine's load() method via context_map.
+                    continue;
+                }
+                StreamOp::Watermark(_) | StreamOp::AllowedLateness(_) => {
+                    // Handled in register_stream() as metadata ops
                     continue;
                 }
                 _ => {}
@@ -1508,10 +1559,72 @@ impl Engine {
 
     /// Internal processing logic shared by process() and process_shared()
     async fn process_inner(&mut self, event: SharedEvent) -> Result<(), String> {
+        // Check for late data against the watermark
+        if let Some(ref tracker) = self.watermark_tracker {
+            if let Some(effective_wm) = tracker.effective_watermark() {
+                if event.timestamp < effective_wm {
+                    // Event is behind the watermark — check allowed lateness per stream
+                    let mut allowed = false;
+                    if let Some(stream_names) = self.event_sources.get(&event.event_type) {
+                        for sn in stream_names.iter() {
+                            if let Some(cfg) = self.late_data_configs.get(sn) {
+                                if event.timestamp >= effective_wm - cfg.allowed_lateness {
+                                    allowed = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if !allowed && !self.late_data_configs.is_empty() {
+                        // Route to side-output if configured, otherwise drop
+                        let mut routed = false;
+                        if let Some(stream_names) = self.event_sources.get(&event.event_type) {
+                            for sn in stream_names.iter() {
+                                if let Some(cfg) = self.late_data_configs.get(sn) {
+                                    if let Some(ref side_stream) = cfg.side_output_stream {
+                                        debug!(
+                                            "Routing late event to side-output '{}' type={} ts={}",
+                                            side_stream, event.event_type, event.timestamp
+                                        );
+                                        // Create a late-data event with metadata
+                                        let mut late_event = (*event).clone();
+                                        late_event.event_type = side_stream.clone();
+                                        let _ = self.output_tx.try_send(late_event);
+                                        routed = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        if !routed {
+                            debug!(
+                                "Dropping late event type={} ts={} (watermark={})",
+                                event.event_type, event.timestamp, effective_wm
+                            );
+                        }
+                        return Ok(());
+                    }
+                }
+            }
+        }
+
         // Process events with depth limit to prevent infinite loops
         // Each event carries its depth level - use SharedEvent to avoid cloning
-        let mut pending_events: Vec<(SharedEvent, usize)> = vec![(event, 0)];
+        let mut pending_events: Vec<(SharedEvent, usize)> = vec![(event.clone(), 0)];
         const MAX_CHAIN_DEPTH: usize = 10;
+
+        // Observe event in watermark tracker (after processing to not block)
+        if let Some(ref mut tracker) = self.watermark_tracker {
+            tracker.observe_event(&event.event_type, event.timestamp);
+
+            if let Some(new_wm) = tracker.effective_watermark() {
+                if self.last_applied_watermark.is_none_or(|last| new_wm > last) {
+                    self.last_applied_watermark = Some(new_wm);
+                    // Note: we don't call apply_watermark_to_windows here to avoid
+                    // double-mutable-borrow. The caller should periodically flush.
+                }
+            }
+        }
 
         // Process events iteratively, feeding output to dependent streams
         while let Some((current_event, depth)) = pending_events.pop() {
@@ -2998,6 +3111,296 @@ impl Engine {
         );
 
         Ok(report)
+    }
+
+    /// Create a checkpoint of the engine state (windows, SASE engines, joins, variables).
+    pub fn create_checkpoint(&self) -> crate::persistence::EngineCheckpoint {
+        use crate::persistence::{EngineCheckpoint, WindowCheckpoint};
+
+        let mut window_states = HashMap::new();
+        let mut sase_states = HashMap::new();
+        let mut join_states = HashMap::new();
+
+        for (name, stream) in &self.streams {
+            // Checkpoint windows
+            for op in &stream.operations {
+                match op {
+                    RuntimeOp::Window(wt) => {
+                        let cp = match wt {
+                            WindowType::Tumbling(w) => w.checkpoint(),
+                            WindowType::Sliding(w) => w.checkpoint(),
+                            WindowType::Count(w) => w.checkpoint(),
+                            WindowType::SlidingCount(w) => w.checkpoint(),
+                            WindowType::Session(w) => w.checkpoint(),
+                            WindowType::PartitionedSession(w) => w.checkpoint(),
+                            WindowType::PartitionedTumbling(w) => w.checkpoint(),
+                            WindowType::PartitionedSliding(w) => w.checkpoint(),
+                        };
+                        window_states.insert(name.clone(), cp);
+                    }
+                    RuntimeOp::PartitionedWindow(pw) => {
+                        // Serialize partitioned count windows
+                        let mut partitions = HashMap::new();
+                        for (key, cw) in &pw.windows {
+                            let sub_cp = cw.checkpoint();
+                            partitions.insert(
+                                key.clone(),
+                                crate::persistence::PartitionedWindowCheckpoint {
+                                    events: sub_cp.events,
+                                    window_start_ms: sub_cp.window_start_ms,
+                                },
+                            );
+                        }
+                        window_states.insert(
+                            name.clone(),
+                            WindowCheckpoint {
+                                events: Vec::new(),
+                                window_start_ms: None,
+                                last_emit_ms: None,
+                                partitions,
+                            },
+                        );
+                    }
+                    _ => {}
+                }
+            }
+
+            // Checkpoint SASE engines
+            if let Some(ref sase) = stream.sase_engine {
+                sase_states.insert(name.clone(), sase.checkpoint());
+            }
+
+            // Checkpoint join buffers
+            if let Some(ref jb) = stream.join_buffer {
+                join_states.insert(name.clone(), jb.checkpoint());
+            }
+        }
+
+        // Checkpoint variables
+        let variables = self
+            .variables
+            .iter()
+            .map(|(k, v)| (k.clone(), crate::persistence::value_to_ser(v)))
+            .collect();
+
+        let watermark_state = self.watermark_tracker.as_ref().map(|t| t.checkpoint());
+
+        EngineCheckpoint {
+            window_states,
+            sase_states,
+            join_states,
+            variables,
+            events_processed: self.events_processed,
+            output_events_emitted: self.output_events_emitted,
+            watermark_state,
+        }
+    }
+
+    /// Restore engine state from a checkpoint.
+    ///
+    /// Must be called after `load()` so that stream definitions exist.
+    pub fn restore_checkpoint(&mut self, cp: &crate::persistence::EngineCheckpoint) {
+        // Restore counters
+        self.events_processed = cp.events_processed;
+        self.output_events_emitted = cp.output_events_emitted;
+
+        // Restore variables
+        for (k, sv) in &cp.variables {
+            self.variables
+                .insert(k.clone(), crate::persistence::ser_to_value(sv.clone()));
+        }
+
+        // Restore per-stream state
+        for (name, stream) in &mut self.streams {
+            // Restore window state
+            if let Some(wcp) = cp.window_states.get(name) {
+                for op in &mut stream.operations {
+                    match op {
+                        RuntimeOp::Window(wt) => match wt {
+                            WindowType::Tumbling(w) => w.restore(wcp),
+                            WindowType::Sliding(w) => w.restore(wcp),
+                            WindowType::Count(w) => w.restore(wcp),
+                            WindowType::SlidingCount(w) => w.restore(wcp),
+                            WindowType::Session(w) => w.restore(wcp),
+                            WindowType::PartitionedSession(w) => w.restore(wcp),
+                            WindowType::PartitionedTumbling(w) => w.restore(wcp),
+                            WindowType::PartitionedSliding(w) => w.restore(wcp),
+                        },
+                        RuntimeOp::PartitionedWindow(pw) => {
+                            // Restore partitioned count windows
+                            for (key, pcp) in &wcp.partitions {
+                                let sub_wcp = crate::persistence::WindowCheckpoint {
+                                    events: pcp.events.clone(),
+                                    window_start_ms: pcp.window_start_ms,
+                                    last_emit_ms: None,
+                                    partitions: HashMap::new(),
+                                };
+                                let window = pw
+                                    .windows
+                                    .entry(key.clone())
+                                    .or_insert_with(|| CountWindow::new(pw.window_size));
+                                window.restore(&sub_wcp);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            // Restore SASE engine state
+            if let Some(scp) = cp.sase_states.get(name) {
+                if let Some(ref mut sase) = stream.sase_engine {
+                    sase.restore(scp);
+                }
+            }
+
+            // Restore join buffer state
+            if let Some(jcp) = cp.join_states.get(name) {
+                if let Some(ref mut jb) = stream.join_buffer {
+                    jb.restore(jcp);
+                }
+            }
+        }
+
+        // Restore watermark tracker state
+        if let Some(ref wcp) = cp.watermark_state {
+            if self.watermark_tracker.is_none() {
+                self.watermark_tracker = Some(PerSourceWatermarkTracker::new());
+            }
+            if let Some(ref mut tracker) = self.watermark_tracker {
+                tracker.restore(wcp);
+                self.last_applied_watermark = wcp
+                    .effective_watermark_ms
+                    .and_then(DateTime::from_timestamp_millis);
+            }
+        }
+
+        info!(
+            "Engine restored: {} events processed, {} streams with state",
+            cp.events_processed,
+            cp.window_states.len() + cp.sase_states.len() + cp.join_states.len()
+        );
+    }
+
+    /// Enable per-source watermark tracking for this engine.
+    pub fn enable_watermark_tracking(&mut self) {
+        if self.watermark_tracker.is_none() {
+            self.watermark_tracker = Some(PerSourceWatermarkTracker::new());
+        }
+    }
+
+    /// Register a source for watermark tracking with its max out-of-orderness.
+    pub fn register_watermark_source(&mut self, source: &str, max_ooo: Duration) {
+        if let Some(ref mut tracker) = self.watermark_tracker {
+            tracker.register_source(source, max_ooo);
+        }
+    }
+
+    /// Advance the watermark from an external source (e.g., upstream context).
+    pub async fn advance_external_watermark(
+        &mut self,
+        source_context: &str,
+        watermark_ms: i64,
+    ) -> Result<(), String> {
+        if let Some(ref mut tracker) = self.watermark_tracker {
+            if let Some(wm) = DateTime::from_timestamp_millis(watermark_ms) {
+                tracker.advance_source_watermark(source_context, wm);
+
+                if let Some(new_wm) = tracker.effective_watermark() {
+                    if self.last_applied_watermark.is_none_or(|last| new_wm > last) {
+                        self.apply_watermark_to_windows(new_wm).await?;
+                        self.last_applied_watermark = Some(new_wm);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Apply a watermark advance to all windows, triggering closure of expired windows.
+    async fn apply_watermark_to_windows(&mut self, wm: DateTime<Utc>) -> Result<(), String> {
+        let stream_names: Vec<String> = self.streams.keys().cloned().collect();
+
+        for stream_name in stream_names {
+            let (window_idx, expired) = {
+                let stream = self.streams.get_mut(&stream_name).unwrap();
+                let mut result = Vec::new();
+                let mut found_idx = None;
+
+                for (idx, op) in stream.operations.iter_mut().enumerate() {
+                    if let RuntimeOp::Window(window) = op {
+                        let events: Option<Vec<SharedEvent>> = match window {
+                            WindowType::Tumbling(w) => w.advance_watermark(wm),
+                            WindowType::Sliding(w) => w.advance_watermark(wm),
+                            WindowType::Session(w) => w.advance_watermark(wm),
+                            WindowType::PartitionedTumbling(w) => {
+                                let parts = w.advance_watermark(wm);
+                                let all: Vec<_> = parts.into_iter().flat_map(|(_, e)| e).collect();
+                                if all.is_empty() {
+                                    None
+                                } else {
+                                    Some(all)
+                                }
+                            }
+                            WindowType::PartitionedSliding(w) => {
+                                let parts = w.advance_watermark(wm);
+                                let all: Vec<_> = parts.into_iter().flat_map(|(_, e)| e).collect();
+                                if all.is_empty() {
+                                    None
+                                } else {
+                                    Some(all)
+                                }
+                            }
+                            WindowType::PartitionedSession(w) => {
+                                let parts = w.advance_watermark(wm);
+                                let all: Vec<_> = parts.into_iter().flat_map(|(_, e)| e).collect();
+                                if all.is_empty() {
+                                    None
+                                } else {
+                                    Some(all)
+                                }
+                            }
+                            _ => None, // Count-based windows don't use watermarks
+                        };
+
+                        if let Some(evts) = events {
+                            result = evts;
+                            found_idx = Some(idx);
+                        }
+                        break;
+                    }
+                }
+                (found_idx, result)
+            };
+
+            if expired.is_empty() {
+                continue;
+            }
+
+            let window_idx = match window_idx {
+                Some(idx) => idx,
+                None => continue,
+            };
+
+            let result = Self::process_post_window(
+                self.streams.get_mut(&stream_name).unwrap(),
+                expired,
+                window_idx,
+                &self.functions,
+                &self.sink_cache,
+            )
+            .await?;
+
+            for emitted in &result.emitted_events {
+                self.output_events_emitted += 1;
+                let owned = (**emitted).clone();
+                if let Err(e) = self.output_tx.try_send(owned) {
+                    warn!("Failed to send watermark-triggered event: {}", e);
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Check if two runtime sources are compatible for state preservation

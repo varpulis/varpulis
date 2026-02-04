@@ -1,0 +1,9 @@
+# Watermark Test: Watermark with allowed lateness
+# Combines watermark tracking and late-data tolerance.
+
+stream Combined = OrderEvent
+    .watermark(out_of_order: 10s)
+    .allowed_lateness(30s)
+    .window(1m)
+    .aggregate(total: sum(amount))
+    .emit(total_amount: total)

@@ -3325,6 +3325,166 @@ impl PatternBuilder {
 }
 
 // ============================================================================
+// CHECKPOINTING
+// ============================================================================
+
+impl Run {
+    /// Create a checkpoint of this run's state.
+    pub fn checkpoint(&self) -> crate::persistence::RunCheckpoint {
+        use crate::persistence::{SerializableEvent, StackEntryCheckpoint};
+
+        let stack = self
+            .stack
+            .iter()
+            .map(|se| StackEntryCheckpoint {
+                event: SerializableEvent::from(se.event.as_ref()),
+                alias: se.alias.clone(),
+            })
+            .collect();
+
+        let captured = self
+            .captured
+            .iter()
+            .map(|(k, v)| (k.clone(), SerializableEvent::from(v.as_ref())))
+            .collect();
+
+        let kleene_events = self.kleene_capture.as_ref().map(|kc| {
+            kc.events
+                .iter()
+                .map(|e| SerializableEvent::from(e.as_ref()))
+                .collect()
+        });
+
+        crate::persistence::RunCheckpoint {
+            current_state: self.current_state,
+            stack,
+            captured,
+            event_time_started_at_ms: self.event_time_started_at.map(|t| t.timestamp_millis()),
+            event_time_deadline_ms: self.event_time_deadline.map(|t| t.timestamp_millis()),
+            partition_key: self
+                .partition_key
+                .as_ref()
+                .map(crate::persistence::value_to_ser),
+            invalidated: self.invalidated,
+            pending_negation_count: self.pending_negations.len(),
+            kleene_events,
+        }
+    }
+
+    /// Restore a run from a checkpoint.
+    ///
+    /// Note: Wall-clock deadlines (`deadline`, `started_at`) are reset since they
+    /// are meaningless after a restart. Event-time deadlines are preserved.
+    /// NegationConstraint predicates are NOT restored (they contain closures);
+    /// only the count is preserved. The caller must reattach predicates from the NFA
+    /// if needed.
+    /// KleeneCapture ZDD is NOT rebuilt; only the events are restored.
+    pub fn from_checkpoint(rc: &crate::persistence::RunCheckpoint) -> Self {
+        use crate::event::Event;
+
+        let stack = rc
+            .stack
+            .iter()
+            .map(|se| StackEntry {
+                event: Arc::new(Event::from(se.event.clone())),
+                alias: se.alias.clone(),
+                timestamp: Instant::now(),
+            })
+            .collect();
+
+        let captured = rc
+            .captured
+            .iter()
+            .map(|(k, se)| (k.clone(), Arc::new(Event::from(se.clone())) as SharedEvent))
+            .collect();
+
+        let kleene_capture = rc.kleene_events.as_ref().map(|events| {
+            let mut kc = KleeneCapture::new();
+            for se in events {
+                let event = Arc::new(Event::from(se.clone()));
+                kc.extend(event, None);
+            }
+            kc
+        });
+
+        Self {
+            current_state: rc.current_state,
+            stack,
+            captured,
+            started_at: Instant::now(),
+            deadline: None, // Wall-clock deadlines not meaningful after restart
+            event_time_started_at: rc
+                .event_time_started_at_ms
+                .and_then(DateTime::from_timestamp_millis),
+            event_time_deadline: rc
+                .event_time_deadline_ms
+                .and_then(DateTime::from_timestamp_millis),
+            partition_key: rc
+                .partition_key
+                .as_ref()
+                .map(|sv| crate::persistence::ser_to_value(sv.clone())),
+            invalidated: rc.invalidated,
+            pending_negations: Vec::new(), // Predicates cannot be serialized; reattach from NFA
+            and_state: None,               // Rebuilt from NFA on next event
+            kleene_capture,
+        }
+    }
+}
+
+impl SaseEngine {
+    /// Create a checkpoint of the entire SASE engine state.
+    pub fn checkpoint(&self) -> crate::persistence::SaseCheckpoint {
+        let active_runs = self.runs.iter().map(|r| r.checkpoint()).collect();
+
+        let partitioned_runs = self
+            .partitioned_runs
+            .iter()
+            .map(|(k, runs)| {
+                let run_cps = runs.iter().map(|r| r.checkpoint()).collect();
+                (k.clone(), run_cps)
+            })
+            .collect();
+
+        crate::persistence::SaseCheckpoint {
+            active_runs,
+            partitioned_runs,
+            watermark_ms: self.watermark.map(|w| w.timestamp_millis()),
+            max_timestamp_ms: self.max_timestamp.map(|t| t.timestamp_millis()),
+            total_runs_created: self.total_runs_created,
+            total_runs_completed: self.total_runs_completed,
+            total_runs_dropped: self.total_runs_dropped,
+            total_runs_evicted: self.total_runs_evicted,
+        }
+    }
+
+    /// Restore engine state from a checkpoint.
+    ///
+    /// The NFA must already be compiled (from VPL source) before calling restore.
+    /// Wall-clock deadlines and NegationConstraint predicates are not restored.
+    pub fn restore(&mut self, cp: &crate::persistence::SaseCheckpoint) {
+        self.runs = cp.active_runs.iter().map(Run::from_checkpoint).collect();
+
+        self.partitioned_runs = cp
+            .partitioned_runs
+            .iter()
+            .map(|(k, runs)| {
+                let restored_runs = runs.iter().map(Run::from_checkpoint).collect();
+                (k.clone(), restored_runs)
+            })
+            .collect();
+
+        self.watermark = cp.watermark_ms.and_then(DateTime::from_timestamp_millis);
+        self.max_timestamp = cp
+            .max_timestamp_ms
+            .and_then(DateTime::from_timestamp_millis);
+        self.total_runs_created = cp.total_runs_created;
+        self.total_runs_completed = cp.total_runs_completed;
+        self.total_runs_dropped = cp.total_runs_dropped;
+        self.total_runs_evicted = cp.total_runs_evicted;
+    }
+}
+
+// ============================================================================
 // TESTS
 // ============================================================================
 
@@ -5062,6 +5222,98 @@ mod tests {
         assert!(
             !results.is_empty(),
             "AND pattern should match when both events occur"
+        );
+    }
+
+    #[test]
+    fn test_run_checkpoint_restore() {
+        // Create a run and simulate some state advancement
+        let mut run = Run::new(0);
+
+        // Add a captured event
+        let evt_a = Arc::new(make_event("A", vec![("id", Value::from(1))]));
+        run.captured.insert("a".to_string(), evt_a.clone());
+
+        // Advance the current state
+        run.current_state = 2;
+
+        // Mark it as invalidated to test that flag round-trips
+        run.invalidated = true;
+
+        // Checkpoint the run
+        let cp = run.checkpoint();
+
+        // Restore from checkpoint
+        let restored = Run::from_checkpoint(&cp);
+
+        // Verify essential fields survived the round-trip
+        assert_eq!(
+            restored.current_state, run.current_state,
+            "current_state should be preserved across checkpoint/restore"
+        );
+        assert_eq!(
+            restored.captured.len(),
+            run.captured.len(),
+            "captured map size should be preserved"
+        );
+        assert!(
+            restored.captured.contains_key("a"),
+            "captured alias 'a' should be present after restore"
+        );
+        assert_eq!(
+            restored.captured["a"].event_type, evt_a.event_type,
+            "captured event type should be preserved"
+        );
+        assert_eq!(
+            restored.invalidated, run.invalidated,
+            "invalidated flag should be preserved across checkpoint/restore"
+        );
+    }
+
+    #[test]
+    fn test_sase_engine_checkpoint_restore() {
+        // Build a SEQ(A, B) pattern (need two copies because engine takes ownership)
+        let pattern1 =
+            PatternBuilder::seq(vec![PatternBuilder::event("A"), PatternBuilder::event("B")]);
+        let pattern2 =
+            PatternBuilder::seq(vec![PatternBuilder::event("A"), PatternBuilder::event("B")]);
+
+        let mut engine = SaseEngine::new(pattern1);
+
+        // Process event A – creates an active run but no complete match yet
+        let results = engine.process(&make_event("A", vec![]));
+        assert!(
+            results.is_empty(),
+            "A alone should not complete the pattern"
+        );
+
+        // Checkpoint the engine while a run is in progress
+        let cp = engine.checkpoint();
+
+        // Create a fresh engine with the same pattern and restore state
+        let mut engine2 = SaseEngine::new(pattern2);
+        engine2.restore(&cp);
+
+        // Process event B on the restored engine – should complete the sequence
+        let results = engine2.process(&make_event("B", vec![]));
+        assert!(
+            !results.is_empty(),
+            "B on restored engine should complete the SEQ(A, B) match"
+        );
+    }
+
+    #[test]
+    fn test_sase_engine_checkpoint_empty() {
+        let pattern =
+            PatternBuilder::seq(vec![PatternBuilder::event("A"), PatternBuilder::event("B")]);
+        let engine = SaseEngine::new(pattern);
+
+        // Checkpoint with no events processed – no active runs
+        let cp = engine.checkpoint();
+
+        assert!(
+            cp.active_runs.is_empty(),
+            "checkpoint with no processed events should have empty active_runs"
         );
     }
 }

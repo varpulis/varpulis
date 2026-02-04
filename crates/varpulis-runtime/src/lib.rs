@@ -118,11 +118,13 @@ pub mod sink;
 pub mod stream;
 pub mod tenant;
 pub mod timer;
+pub mod watermark;
 pub mod window;
 pub mod worker_pool;
 
 pub use context::{
-    ContextConfig, ContextMap, ContextOrchestrator, ContextRuntime, DispatchError, EventTypeRouter,
+    CheckpointAck, CheckpointBarrier, CheckpointCoordinator, ContextConfig, ContextMap,
+    ContextMessage, ContextOrchestrator, ContextRuntime, DispatchError, EventTypeRouter,
 };
 pub use engine::{Engine, ReloadReport, SourceBinding};
 pub use event::{Event, SharedEvent};

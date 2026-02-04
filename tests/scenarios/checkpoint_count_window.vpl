@@ -1,0 +1,8 @@
+# Checkpoint Test: Count Window with Aggregation
+# Demonstrates state preservation across restart for count-based windows.
+# A window of 5 events collects sensor values and computes sum + count.
+
+stream WindowedSum = SensorEvent
+    .window(5)
+    .aggregate(total: sum(value), count: count())
+    .emit(sum: total, n: count)

@@ -1,0 +1,20 @@
+# Session window with context orchestration — measures overhead
+context analytics
+
+stream SessionStats = SensorReading
+    .context(analytics)
+    .partition_by(sensor_id)
+    .window(session: 5s)
+    .aggregate(
+        sensor_id: last(sensor_id),
+        avg_temp: avg(temperature),
+        max_temp: max(temperature),
+        reading_count: count()
+    )
+    .where(avg_temp > 60.0)
+    .emit(
+        sensor: sensor_id,
+        average: avg_temp,
+        maximum: max_temp,
+        count: reading_count
+    )

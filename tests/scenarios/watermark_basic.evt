@@ -1,0 +1,6 @@
+# 5 events with increasing timestamps
+@0s SensorEvent { value: 0 }
+@1s SensorEvent { value: 1 }
+@2s SensorEvent { value: 2 }
+@3s SensorEvent { value: 3 }
+@4s SensorEvent { value: 4 }

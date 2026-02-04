@@ -1,6 +1,6 @@
 # Varpulis CEP - Kanban
 
-> Derniere mise a jour: 2026-02-03 (SaaS Foundation Complete)
+> Derniere mise a jour: 2026-02-04 (Next-Gen Roadmap)
 
 ## Production Readiness Score: 10/10 - Released
 
@@ -42,6 +42,7 @@
 | **Production Readiness** | 0 | 0 | **4** |
 | **Release & Distribution** | 0 | 0 | **2** |
 | **SaaS** | **1** | 0 | **5** |
+| **Next-Gen** | **4** | **2** | 0 |
 | Parser Pest | 0 | 0 | **9** |
 | SASE+ Core | 0 | 0 | **10** |
 | SASE+ Improvements | 1 | 0 | **6** |
@@ -59,7 +60,7 @@
 | Couverture | 0 | 2 | 0 |
 | VS Code + LSP | 0 | 0 | **8** |
 | Connectivity | 0 | 0 | **4** |
-| **Total** | **3** | **2** | **90** |
+| **Total** | **7** | **4** | **90** |
 
 ---
 
@@ -177,6 +178,94 @@
     ┌────▼────┐  ┌────▼────┐  ┌───▼────┐
     │Prometheus│  │ Grafana │  │ Alerts │
     └─────────┘  └─────────┘  └────────┘
+```
+
+---
+
+## HAUTE PRIORITE - Next-Gen Features
+
+> **Objectif**: Evoluer Varpulis vers un moteur CEP distribue, production-grade
+> **Statut**: 2 en cours, 4 a faire
+
+### En cours
+
+- [ ] **NG-01**: Exactly-once checkpointing
+  - **Description**: Coordinated checkpoint barriers across contexts for exactly-once semantics
+  - **Use case**: Financial and compliance workloads requiring guaranteed processing
+  - **Components**:
+    - Checkpoint barrier injection into context event streams
+    - Coordinated snapshot of window, session, and SASE+ state
+    - Write-ahead log (WAL) for durable state snapshots
+    - Recovery from last consistent checkpoint on restart
+    - Per-context checkpoint acknowledgment protocol
+  - **Dependencies**: Context runtime (context.rs), engine state (engine/mod.rs), window state (window.rs)
+  - **Priorite**: CRITIQUE
+
+- [ ] **NG-02**: Watermark improvements
+  - **Description**: Per-source watermarks, allowed lateness, and late-data handling
+  - **Use case**: Real-world event-time processing with out-of-order and late events
+  - **Components**:
+    - Per-source watermark tracking (each connector maintains its own watermark)
+    - Watermark propagation across contexts (min watermark across sources)
+    - Configurable allowed lateness per stream (`.allowed_lateness(5m)`)
+    - Late data side-output (collect late events instead of dropping)
+    - Watermark-triggered window closure (instead of processing-time only)
+    - Integration with session window sweep
+  - **Existing base**: `EventTimeManager` in sase.rs (basic watermark, no per-source)
+  - **Dependencies**: NG-01 (checkpointing) for consistent watermark snapshots
+  - **Priorite**: CRITIQUE
+
+### A faire
+
+- [ ] **NG-03**: SQL layer via DataFusion
+  - **Description**: Support SQL subset (SELECT, WHERE, GROUP BY, window functions) via Apache DataFusion
+  - **Use case**: Lower adoption barrier for teams familiar with SQL
+  - **Components**:
+    - DataFusion integration as alternative query language
+    - Bridge Varpulis streams to DataFusion TableProvider
+    - SQL window functions (ROW_NUMBER, RANK, LAG, LEAD)
+    - Mixed VPL + SQL pipelines
+  - **Priorite**: HIGH
+
+- [ ] **NG-04**: Connector ecosystem
+  - **Description**: Additional connectors for cloud-native use cases
+  - **Connectors**:
+    - AWS Kinesis source/sink
+    - S3 / file sink (Parquet, CSV, JSON)
+    - Elasticsearch sink
+  - **Existing base**: Connector architecture (connector.rs), MQTT/HTTP/Kafka already implemented
+  - **Priorite**: HIGH
+
+- [ ] **NG-05**: Distributed execution
+  - **Description**: Multi-node support with state partitioning for horizontal scaling
+  - **Components**:
+    - State partitioning across nodes (consistent hashing)
+    - Network transport layer for cross-node events
+    - Distributed checkpointing (requires NG-01)
+    - Leader election for coordination (Raft)
+    - Partition rebalancing on node join/leave
+  - **Dependencies**: NG-01 (checkpointing), NG-02 (watermarks)
+  - **Priorite**: MEDIUM (largest engineering effort)
+
+- [ ] **NG-06**: Web UI
+  - **Description**: Operational dashboard for pipeline monitoring and management
+  - **Components**:
+    - Pipeline topology visualization (React Flow based)
+    - Real-time metrics dashboard (events/sec, latency, backpressure)
+    - Query management (deploy, pause, resume, delete)
+    - Alert history and log viewer
+  - **Existing base**: Grafana dashboards (SAAS-05), React Flow editor (FLOW-01/02)
+  - **Priorite**: MEDIUM
+
+### Ordre d'execution recommande
+
+```mermaid
+graph LR
+    NG01[NG-01: Checkpointing] --> NG02[NG-02: Watermarks]
+    NG01 --> NG05[NG-05: Distributed]
+    NG02 --> NG05
+    NG03[NG-03: SQL Layer] -.-> NG06[NG-06: Web UI]
+    NG04[NG-04: Connectors] -.-> NG05
 ```
 
 ---
@@ -1127,13 +1216,15 @@ graph LR
     SAAS05 --> SAAS06[SAAS-06: CLI deploy]
 ```
 
-### Sprint actuel (SaaS Durability)
-1. SAAS-07: State persistence (tenants/pipelines)
-2. SAAS-08: Tenant registration API
+### Sprint actuel (Engine Reliability)
+1. NG-01: Exactly-once checkpointing
+2. NG-02: Watermark improvements
 
-### Sprint suivant (SaaS Polish)
-3. SAAS-06: CLI deploy command
-4. COV-01: Test coverage 80%+
+### Sprint suivant (Engine + SaaS)
+3. NG-03: SQL layer (DataFusion)
+4. NG-04: Connector ecosystem (Kinesis, S3, Elasticsearch)
+5. SAAS-07: State persistence
+6. SAAS-08: Tenant registration API
 
 ### Complete
 - [x] REL-01/02: v0.1.0 released (5 platforms + Docker)
@@ -1264,9 +1355,10 @@ Version 0.1.0
 
 ### Priorite Immediate
 
-1. **SAAS-07**: State persistence (tenants + pipelines survive restart)
-2. **SAAS-08**: Tenant registration API
-3. **COV-01**: Test coverage 80%+
+1. **NG-01**: Exactly-once checkpointing (coordinated barriers across contexts)
+2. **NG-02**: Watermark improvements (per-source, allowed lateness, late-data)
+3. **SAAS-07**: State persistence (tenants + pipelines survive restart)
+4. **SAAS-08**: Tenant registration API
 
 ### Deja Complete
 
@@ -1287,4 +1379,4 @@ Version 0.1.0
 | **Enterprise** | **READY** | License fees, support contracts |
 | **SaaS** | **FOUNDATION DONE** | Recurring revenue, usage-based |
 
-**Recommendation**: State persistence is the critical blocker for SaaS production.
+**Recommendation**: Checkpointing (NG-01) and watermarks (NG-02) are critical for production-grade event processing. State persistence (SAAS-07) remains the SaaS blocker.

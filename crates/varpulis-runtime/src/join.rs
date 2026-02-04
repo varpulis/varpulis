@@ -306,6 +306,65 @@ impl JoinBuffer {
     }
 }
 
+impl JoinBuffer {
+    /// Create a checkpoint of the join buffer state.
+    pub fn checkpoint(&self) -> crate::persistence::JoinCheckpoint {
+        use crate::persistence::SerializableEvent;
+        let mut buffers = HashMap::new();
+        for (source, keyed_buffer) in &self.buffers {
+            let mut keyed = HashMap::new();
+            for (key, events) in keyed_buffer {
+                let serialized: Vec<(i64, SerializableEvent)> = events
+                    .iter()
+                    .map(|(ts, e)| (ts.timestamp_millis(), SerializableEvent::from(e)))
+                    .collect();
+                keyed.insert(key.clone(), serialized);
+            }
+            buffers.insert(source.clone(), keyed);
+        }
+
+        crate::persistence::JoinCheckpoint {
+            buffers,
+            sources: self.sources.clone(),
+            join_keys: self.join_keys.clone(),
+            window_duration_ms: self.window_duration.num_milliseconds(),
+        }
+    }
+
+    /// Restore join buffer state from a checkpoint.
+    pub fn restore(&mut self, cp: &crate::persistence::JoinCheckpoint) {
+        use crate::event::Event;
+        use std::cmp::Reverse;
+
+        self.buffers.clear();
+        self.expiry_queue = BinaryHeap::new();
+
+        for (source, keyed) in &cp.buffers {
+            let mut keyed_buffer: KeyedEventBuffer = HashMap::new();
+            for (key, events) in keyed {
+                let restored: Vec<(DateTime<Utc>, Event)> = events
+                    .iter()
+                    .filter_map(|(ts_ms, se)| {
+                        let ts = DateTime::from_timestamp_millis(*ts_ms)?;
+                        let event = Event::from(se.clone());
+                        Some((ts, event))
+                    })
+                    .collect();
+
+                // Rebuild expiry queue entries
+                for (ts, _) in &restored {
+                    let expiry_time = *ts + self.window_duration;
+                    self.expiry_queue
+                        .push(Reverse((expiry_time, source.clone(), key.clone())));
+                }
+
+                keyed_buffer.insert(key.clone(), restored);
+            }
+            self.buffers.insert(source.clone(), keyed_buffer);
+        }
+    }
+}
+
 /// Statistics about the JoinBuffer state
 #[derive(Debug)]
 pub struct JoinBufferStats {
@@ -574,5 +633,91 @@ mod tests {
         let stats = buffer.stats();
         // After correlation, events are still in buffer
         assert!(stats.total_events >= 2);
+    }
+
+    #[test]
+    fn test_join_buffer_checkpoint_restore() {
+        let sources = vec!["A".to_string(), "B".to_string()];
+        let mut join_keys = HashMap::new();
+        join_keys.insert("A".to_string(), "symbol".to_string());
+        join_keys.insert("B".to_string(), "symbol".to_string());
+
+        let mut buffer = JoinBuffer::new(sources.clone(), join_keys.clone(), Duration::minutes(1));
+
+        // Add event from source A
+        let event_a = create_event("A", "BTC", 100.0);
+        let result = buffer.add_event("A", event_a);
+        assert!(
+            result.is_none(),
+            "Should not correlate with just one source"
+        );
+
+        // Checkpoint the buffer state
+        let cp = buffer.checkpoint();
+
+        // Create a new buffer with the same configuration
+        let mut buffer2 = JoinBuffer::new(sources, join_keys, Duration::minutes(1));
+
+        // Restore from the checkpoint
+        buffer2.restore(&cp);
+
+        // Add event from source B with matching symbol to the restored buffer
+        let event_b = create_event("B", "BTC", 200.0);
+        let result = buffer2.add_event("B", event_b);
+        assert!(
+            result.is_some(),
+            "Should correlate after restoring source A event from checkpoint"
+        );
+
+        let correlated = result.unwrap();
+        assert_eq!(
+            correlated.get("symbol"),
+            Some(&Value::Str("BTC".to_string()))
+        );
+        assert_eq!(correlated.get("A.value"), Some(&Value::Float(100.0)));
+        assert_eq!(correlated.get("B.value"), Some(&Value::Float(200.0)));
+    }
+
+    #[test]
+    fn test_join_buffer_checkpoint_empty() {
+        let sources = vec!["A".to_string(), "B".to_string()];
+        let mut join_keys = HashMap::new();
+        join_keys.insert("A".to_string(), "symbol".to_string());
+        join_keys.insert("B".to_string(), "symbol".to_string());
+
+        let buffer = JoinBuffer::new(sources.clone(), join_keys.clone(), Duration::minutes(1));
+
+        // Checkpoint with no events added
+        let cp = buffer.checkpoint();
+
+        // Verify the checkpoint has empty buffers
+        for (_source, keyed) in &cp.buffers {
+            assert!(keyed.is_empty(), "Checkpoint buffers should be empty");
+        }
+
+        // Restore into a new buffer
+        let mut buffer2 = JoinBuffer::new(sources, join_keys, Duration::minutes(1));
+        buffer2.restore(&cp);
+
+        // Verify the restored buffer works normally
+        let event_a = create_event("A", "BTC", 100.0);
+        let result = buffer2.add_event("A", event_a);
+        assert!(
+            result.is_none(),
+            "Should not correlate with just one source"
+        );
+
+        let event_b = create_event("B", "BTC", 200.0);
+        let result = buffer2.add_event("B", event_b);
+        assert!(
+            result.is_some(),
+            "Should correlate normally after restoring from empty checkpoint"
+        );
+
+        let correlated = result.unwrap();
+        assert_eq!(
+            correlated.get("symbol"),
+            Some(&Value::Str("BTC".to_string()))
+        );
     }
 }

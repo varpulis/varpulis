@@ -7,6 +7,7 @@
 //! - Delay buffers (rstream equivalent)
 
 use crate::event::{Event, SharedEvent};
+use crate::persistence::{PartitionedWindowCheckpoint, SerializableEvent, WindowCheckpoint};
 use chrono::{DateTime, Duration, Utc};
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -71,6 +72,42 @@ impl TumblingWindow {
             .into_iter()
             .map(|e| (*e).clone())
             .collect()
+    }
+
+    /// Create a checkpoint of the current window state.
+    pub fn checkpoint(&self) -> WindowCheckpoint {
+        WindowCheckpoint {
+            events: self
+                .events
+                .iter()
+                .map(|e| SerializableEvent::from(e.as_ref()))
+                .collect(),
+            window_start_ms: self.window_start.map(|t| t.timestamp_millis()),
+            last_emit_ms: None,
+            partitions: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Restore window state from a checkpoint.
+    pub fn restore(&mut self, cp: &WindowCheckpoint) {
+        self.events = cp
+            .events
+            .iter()
+            .map(|se| Arc::new(Event::from(se.clone())))
+            .collect();
+        self.window_start = cp.window_start_ms.and_then(DateTime::from_timestamp_millis);
+    }
+
+    /// Advance watermark — close window if watermark passes window end.
+    pub fn advance_watermark(&mut self, wm: DateTime<Utc>) -> Option<Vec<SharedEvent>> {
+        if let Some(start) = self.window_start {
+            if wm >= start + self.duration && !self.events.is_empty() {
+                let completed = std::mem::take(&mut self.events);
+                self.window_start = Some(wm);
+                return Some(completed);
+            }
+        }
+        None
     }
 }
 
@@ -140,6 +177,55 @@ impl SlidingWindow {
     pub fn current(&self) -> Vec<Event> {
         self.events.iter().map(|e| (**e).clone()).collect()
     }
+
+    /// Create a checkpoint of the current window state.
+    pub fn checkpoint(&self) -> WindowCheckpoint {
+        WindowCheckpoint {
+            events: self
+                .events
+                .iter()
+                .map(|e| SerializableEvent::from(e.as_ref()))
+                .collect(),
+            window_start_ms: None,
+            last_emit_ms: self.last_emit.map(|t| t.timestamp_millis()),
+            partitions: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Restore window state from a checkpoint.
+    pub fn restore(&mut self, cp: &WindowCheckpoint) {
+        self.events = cp
+            .events
+            .iter()
+            .map(|se| Arc::new(Event::from(se.clone())))
+            .collect::<Vec<_>>()
+            .into();
+        self.last_emit = cp.last_emit_ms.and_then(DateTime::from_timestamp_millis);
+    }
+
+    /// Advance watermark — emit window if slide interval has passed relative to watermark.
+    pub fn advance_watermark(&mut self, wm: DateTime<Utc>) -> Option<Vec<SharedEvent>> {
+        // Remove expired events
+        let cutoff = wm - self.window_size;
+        let expired_count = self
+            .events
+            .iter()
+            .position(|e| e.timestamp >= cutoff)
+            .unwrap_or(self.events.len());
+        if expired_count > 0 {
+            self.events.drain(0..expired_count);
+        }
+
+        let should_emit = match self.last_emit {
+            None => !self.events.is_empty(),
+            Some(last) => wm >= last + self.slide_interval && !self.events.is_empty(),
+        };
+
+        should_emit.then(|| {
+            self.last_emit = Some(wm);
+            self.events.iter().map(Arc::clone).collect()
+        })
+    }
 }
 
 /// A count-based window that emits after collecting N events
@@ -187,6 +273,29 @@ impl CountWindow {
     /// Get current count of events in buffer (for debugging)
     pub fn current_count(&self) -> usize {
         self.events.len()
+    }
+
+    /// Create a checkpoint of the current window state.
+    pub fn checkpoint(&self) -> WindowCheckpoint {
+        WindowCheckpoint {
+            events: self
+                .events
+                .iter()
+                .map(|e| SerializableEvent::from(e.as_ref()))
+                .collect(),
+            window_start_ms: None,
+            last_emit_ms: None,
+            partitions: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Restore window state from a checkpoint.
+    pub fn restore(&mut self, cp: &WindowCheckpoint) {
+        self.events = cp
+            .events
+            .iter()
+            .map(|se| Arc::new(Event::from(se.clone())))
+            .collect();
     }
 }
 
@@ -238,6 +347,31 @@ impl SlidingCountWindow {
     /// Get current count of events in buffer (for debugging)
     pub fn current_count(&self) -> usize {
         self.events.len()
+    }
+
+    /// Create a checkpoint of the current window state.
+    pub fn checkpoint(&self) -> WindowCheckpoint {
+        WindowCheckpoint {
+            events: self
+                .events
+                .iter()
+                .map(|e| SerializableEvent::from(e.as_ref()))
+                .collect(),
+            window_start_ms: None,
+            last_emit_ms: None,
+            partitions: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Restore window state from a checkpoint.
+    pub fn restore(&mut self, cp: &WindowCheckpoint) {
+        self.events = cp
+            .events
+            .iter()
+            .map(|se| Arc::new(Event::from(se.clone())))
+            .collect::<Vec<_>>()
+            .into();
+        self.events_since_emit = 0;
     }
 }
 
@@ -316,6 +450,40 @@ impl SessionWindow {
             .into_iter()
             .map(|e| (*e).clone())
             .collect()
+    }
+
+    /// Create a checkpoint of the current session state.
+    pub fn checkpoint(&self) -> WindowCheckpoint {
+        WindowCheckpoint {
+            events: self
+                .events
+                .iter()
+                .map(|e| SerializableEvent::from(e.as_ref()))
+                .collect(),
+            window_start_ms: self.last_event_time.map(|t| t.timestamp_millis()),
+            last_emit_ms: None,
+            partitions: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Restore session state from a checkpoint.
+    pub fn restore(&mut self, cp: &WindowCheckpoint) {
+        self.events = cp
+            .events
+            .iter()
+            .map(|se| Arc::new(Event::from(se.clone())))
+            .collect();
+        self.last_event_time = cp.window_start_ms.and_then(DateTime::from_timestamp_millis);
+    }
+
+    /// Advance watermark — close session if watermark exceeds last_event_time + gap.
+    pub fn advance_watermark(&mut self, wm: DateTime<Utc>) -> Option<Vec<SharedEvent>> {
+        if let Some(last) = self.last_event_time {
+            if wm >= last + self.gap && !self.events.is_empty() {
+                return Some(self.flush_shared());
+            }
+        }
+        None
     }
 }
 
@@ -399,6 +567,69 @@ impl PartitionedSessionWindow {
             .map(|e| (*e).clone())
             .collect()
     }
+
+    /// Create a checkpoint of all partition sessions.
+    pub fn checkpoint(&self) -> WindowCheckpoint {
+        let partitions = self
+            .windows
+            .iter()
+            .map(|(key, window)| {
+                (
+                    key.clone(),
+                    PartitionedWindowCheckpoint {
+                        events: window
+                            .events
+                            .iter()
+                            .map(|e| SerializableEvent::from(e.as_ref()))
+                            .collect(),
+                        window_start_ms: window.last_event_time.map(|t| t.timestamp_millis()),
+                    },
+                )
+            })
+            .collect();
+
+        WindowCheckpoint {
+            events: Vec::new(),
+            window_start_ms: None,
+            last_emit_ms: None,
+            partitions,
+        }
+    }
+
+    /// Restore partition sessions from a checkpoint.
+    pub fn restore(&mut self, cp: &WindowCheckpoint) {
+        self.windows.clear();
+        for (key, pcp) in &cp.partitions {
+            let mut window = SessionWindow::new(self.gap);
+            window.events = pcp
+                .events
+                .iter()
+                .map(|se| Arc::new(Event::from(se.clone())))
+                .collect();
+            window.last_event_time = pcp
+                .window_start_ms
+                .and_then(DateTime::from_timestamp_millis);
+            self.windows.insert(key.clone(), window);
+        }
+    }
+
+    /// Advance watermark — close expired sessions across all partitions.
+    pub fn advance_watermark(&mut self, wm: DateTime<Utc>) -> Vec<(String, Vec<SharedEvent>)> {
+        let mut expired = Vec::new();
+        let mut to_remove = Vec::new();
+        for (key, window) in &mut self.windows {
+            if let Some(events) = window.advance_watermark(wm) {
+                if !events.is_empty() {
+                    expired.push((key.clone(), events));
+                }
+                to_remove.push(key.clone());
+            }
+        }
+        for key in to_remove {
+            self.windows.remove(&key);
+        }
+        expired
+    }
 }
 
 /// A partitioned tumbling window that maintains separate windows per partition key
@@ -455,6 +686,62 @@ impl PartitionedTumblingWindow {
             .into_iter()
             .map(|e| (*e).clone())
             .collect()
+    }
+
+    /// Create a checkpoint of all partition windows.
+    pub fn checkpoint(&self) -> WindowCheckpoint {
+        let partitions = self
+            .windows
+            .iter()
+            .map(|(key, window)| {
+                (
+                    key.clone(),
+                    PartitionedWindowCheckpoint {
+                        events: window
+                            .events
+                            .iter()
+                            .map(|e| SerializableEvent::from(e.as_ref()))
+                            .collect(),
+                        window_start_ms: window.window_start.map(|t| t.timestamp_millis()),
+                    },
+                )
+            })
+            .collect();
+
+        WindowCheckpoint {
+            events: Vec::new(),
+            window_start_ms: None,
+            last_emit_ms: None,
+            partitions,
+        }
+    }
+
+    /// Restore partition windows from a checkpoint.
+    pub fn restore(&mut self, cp: &WindowCheckpoint) {
+        self.windows.clear();
+        for (key, pcp) in &cp.partitions {
+            let mut window = TumblingWindow::new(self.duration);
+            window.events = pcp
+                .events
+                .iter()
+                .map(|se| Arc::new(Event::from(se.clone())))
+                .collect();
+            window.window_start = pcp
+                .window_start_ms
+                .and_then(DateTime::from_timestamp_millis);
+            self.windows.insert(key.clone(), window);
+        }
+    }
+
+    /// Advance watermark across all partitions.
+    pub fn advance_watermark(&mut self, wm: DateTime<Utc>) -> Vec<(String, Vec<SharedEvent>)> {
+        let mut results = Vec::new();
+        for (key, window) in &mut self.windows {
+            if let Some(events) = window.advance_watermark(wm) {
+                results.push((key.clone(), events));
+            }
+        }
+        results
     }
 }
 
@@ -514,6 +801,63 @@ impl PartitionedSlidingWindow {
             .into_iter()
             .map(|e| (*e).clone())
             .collect()
+    }
+
+    /// Create a checkpoint of all partition windows.
+    pub fn checkpoint(&self) -> WindowCheckpoint {
+        let partitions = self
+            .windows
+            .iter()
+            .map(|(key, window)| {
+                (
+                    key.clone(),
+                    PartitionedWindowCheckpoint {
+                        events: window
+                            .events
+                            .iter()
+                            .map(|e| SerializableEvent::from(e.as_ref()))
+                            .collect(),
+                        window_start_ms: window.last_emit.map(|t| t.timestamp_millis()),
+                    },
+                )
+            })
+            .collect();
+
+        WindowCheckpoint {
+            events: Vec::new(),
+            window_start_ms: None,
+            last_emit_ms: None,
+            partitions,
+        }
+    }
+
+    /// Restore partition windows from a checkpoint.
+    pub fn restore(&mut self, cp: &WindowCheckpoint) {
+        self.windows.clear();
+        for (key, pcp) in &cp.partitions {
+            let mut window = SlidingWindow::new(self.window_size, self.slide_interval);
+            window.events = pcp
+                .events
+                .iter()
+                .map(|se| Arc::new(Event::from(se.clone())))
+                .collect::<Vec<_>>()
+                .into();
+            window.last_emit = pcp
+                .window_start_ms
+                .and_then(DateTime::from_timestamp_millis);
+            self.windows.insert(key.clone(), window);
+        }
+    }
+
+    /// Advance watermark across all partitions.
+    pub fn advance_watermark(&mut self, wm: DateTime<Utc>) -> Vec<(String, Vec<SharedEvent>)> {
+        let mut results = Vec::new();
+        for (key, window) in &mut self.windows {
+            if let Some(events) = window.advance_watermark(wm) {
+                results.push((key.clone(), events));
+            }
+        }
+        results
     }
 }
 
@@ -1761,5 +2105,193 @@ mod tests {
                 .with_field("region", "west"),
         );
         assert!(result.is_none(), "West session should still be open");
+    }
+
+    #[test]
+    fn test_tumbling_window_checkpoint_restore() {
+        let mut window = TumblingWindow::new(Duration::seconds(5));
+        let base_time = Utc::now();
+
+        // Add 2 events within first window
+        let e1 = Event::new("Test").with_timestamp(base_time);
+        assert!(window.add(e1).is_none());
+        let e2 = Event::new("Test").with_timestamp(base_time + Duration::seconds(1));
+        assert!(window.add(e2).is_none());
+
+        // Checkpoint
+        let cp = window.checkpoint();
+
+        // Restore into a new window
+        let mut restored = TumblingWindow::new(Duration::seconds(5));
+        restored.restore(&cp);
+
+        // Add event that triggers window close (falls into next window)
+        let e3 = Event::new("Test").with_timestamp(base_time + Duration::seconds(6));
+        let result = restored.add(e3);
+        assert!(
+            result.is_some(),
+            "Window should close on event past boundary"
+        );
+        let emitted = result.unwrap();
+        assert_eq!(
+            emitted.len(),
+            2,
+            "Restored window should contain the 2 checkpointed events"
+        );
+    }
+
+    #[test]
+    fn test_count_window_checkpoint_restore() {
+        let mut window = CountWindow::new(3);
+
+        // Add 2 events
+        let e1 = Event::new("Test").with_field("value", 1i64);
+        assert!(window.add(e1).is_none());
+        let e2 = Event::new("Test").with_field("value", 2i64);
+        assert!(window.add(e2).is_none());
+
+        // Checkpoint
+        let cp = window.checkpoint();
+
+        // Restore into a new window
+        let mut restored = CountWindow::new(3);
+        restored.restore(&cp);
+
+        // Add 1 more event to fill window
+        let e3 = Event::new("Test").with_field("value", 3i64);
+        let result = restored.add(e3);
+        assert!(result.is_some(), "Window should emit after 3rd event");
+        let emitted = result.unwrap();
+        assert_eq!(emitted.len(), 3, "All 3 events should be returned");
+    }
+
+    #[test]
+    fn test_sliding_count_window_checkpoint_restore() {
+        // window_size=4, slide_size=2
+        let mut window = SlidingCountWindow::new(4, 2);
+
+        // Add 2 events (not enough to fill window yet)
+        let e1 = Event::new("Test").with_field("seq", 1i64);
+        assert!(window.add(e1).is_none());
+        let e2 = Event::new("Test").with_field("seq", 2i64);
+        assert!(window.add(e2).is_none());
+
+        // Checkpoint
+        let cp = window.checkpoint();
+
+        // Restore into a new window
+        let mut restored = SlidingCountWindow::new(4, 2);
+        restored.restore(&cp);
+
+        // Add 2 more events to fill the window (4 total) and reach slide_size
+        let e3 = Event::new("Test").with_field("seq", 3i64);
+        assert!(restored.add(e3).is_none());
+        let e4 = Event::new("Test").with_field("seq", 4i64);
+        let result = restored.add(e4);
+        assert!(
+            result.is_some(),
+            "Should emit when window is full and slide interval reached"
+        );
+        assert_eq!(
+            result.unwrap().len(),
+            4,
+            "Window should contain all 4 events"
+        );
+
+        // Continue sliding: add 2 more events
+        let e5 = Event::new("Test").with_field("seq", 5i64);
+        assert!(restored.add(e5).is_none());
+        let e6 = Event::new("Test").with_field("seq", 6i64);
+        let result = restored.add(e6);
+        assert!(result.is_some(), "Should emit after slide_size more events");
+        let emitted = result.unwrap();
+        assert_eq!(
+            emitted.len(),
+            4,
+            "Sliding window should still hold 4 events"
+        );
+    }
+
+    #[test]
+    fn test_session_window_checkpoint_restore() {
+        let mut window = SessionWindow::new(Duration::seconds(5));
+        let base_time = Utc::now();
+
+        // Add 2 events 1 second apart (within session gap)
+        let e1 = Event::new("Test").with_timestamp(base_time);
+        assert!(window.add(e1).is_none());
+        let e2 = Event::new("Test").with_timestamp(base_time + Duration::seconds(1));
+        assert!(window.add(e2).is_none());
+
+        // Checkpoint
+        let cp = window.checkpoint();
+
+        // Restore into a new window
+        let mut restored = SessionWindow::new(Duration::seconds(5));
+        restored.restore(&cp);
+
+        // Add event with 6s gap from last event to close the session
+        let e3 = Event::new("Test").with_timestamp(base_time + Duration::seconds(7));
+        let result = restored.add(e3);
+        assert!(
+            result.is_some(),
+            "Session should close due to gap exceeding 5s"
+        );
+        let emitted = result.unwrap();
+        assert_eq!(
+            emitted.len(),
+            2,
+            "Closed session should contain the 2 checkpointed events"
+        );
+    }
+
+    #[test]
+    fn test_tumbling_window_advance_watermark() {
+        let mut window = TumblingWindow::new(Duration::seconds(5));
+        let base_time = Utc::now();
+
+        // Add 3 events within first window
+        for i in 0..3 {
+            let event = Event::new("Test").with_timestamp(base_time + Duration::seconds(i));
+            assert!(window.add(event).is_none());
+        }
+
+        // Advance watermark past window boundary (base_time + 5s)
+        let result = window.advance_watermark(base_time + Duration::seconds(6));
+        assert!(
+            result.is_some(),
+            "Watermark past window end should emit events"
+        );
+        let emitted = result.unwrap();
+        assert_eq!(
+            emitted.len(),
+            3,
+            "All 3 events in the window should be emitted"
+        );
+    }
+
+    #[test]
+    fn test_session_window_advance_watermark() {
+        let mut window = SessionWindow::new(Duration::seconds(5));
+        let base_time = Utc::now();
+
+        // Add events within session
+        let e1 = Event::new("Test").with_timestamp(base_time);
+        assert!(window.add(e1).is_none());
+        let e2 = Event::new("Test").with_timestamp(base_time + Duration::seconds(2));
+        assert!(window.add(e2).is_none());
+
+        // Advance watermark past last_event_time + gap (base_time + 2s + 5s = base_time + 7s)
+        let result = window.advance_watermark(base_time + Duration::seconds(8));
+        assert!(
+            result.is_some(),
+            "Watermark past session gap should close the session"
+        );
+        let emitted = result.unwrap();
+        assert_eq!(
+            emitted.len(),
+            2,
+            "Closed session should contain the 2 events"
+        );
     }
 }
