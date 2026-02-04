@@ -38,6 +38,14 @@ async fn run_context_scenario(program_source: &str, events: Vec<Event>) -> Vec<E
                 .expect("Failed to process event");
         }
 
+        // Flush any remaining session windows after all events are processed
+        if engine.has_session_windows() {
+            engine
+                .flush_expired_sessions()
+                .await
+                .expect("Failed to flush expired sessions");
+        }
+
         let mut results = Vec::new();
         while let Ok(event) = rx.try_recv() {
             results.push(event);
@@ -677,5 +685,486 @@ async fn test_session_window_in_context() {
     assert_eq!(results[0].event_type, "SessionData");
     if let Some(count) = results[0].get_int("event_count") {
         assert_eq!(count, 2, "First session should have 2 events");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_session_window_multiple_closures() {
+    // Three sessions: events close two sessions, third stays open (not emitted)
+    let program = r#"
+        stream SessionCount = SensorReading
+            .window(session: 3s)
+            .aggregate(count: count(), total: sum(temperature))
+            .emit(event_count: count, temp_total: total)
+    "#;
+
+    let base_time = chrono::Utc::now();
+    let events = vec![
+        // Session 1: t=0, t=1
+        Event::new("SensorReading")
+            .with_timestamp(base_time)
+            .with_field("temperature", 10.0),
+        Event::new("SensorReading")
+            .with_timestamp(base_time + chrono::Duration::seconds(1))
+            .with_field("temperature", 20.0),
+        // Gap of 4s -> session 1 closes
+        // Session 2: t=5, t=6
+        Event::new("SensorReading")
+            .with_timestamp(base_time + chrono::Duration::seconds(5))
+            .with_field("temperature", 30.0),
+        Event::new("SensorReading")
+            .with_timestamp(base_time + chrono::Duration::seconds(6))
+            .with_field("temperature", 40.0),
+        // Gap of 5s -> session 2 closes
+        // Session 3: t=11 (stays open — no subsequent event to trigger closure)
+        Event::new("SensorReading")
+            .with_timestamp(base_time + chrono::Duration::seconds(11))
+            .with_field("temperature", 50.0),
+    ];
+
+    let results = run_context_scenario(program, events).await;
+
+    assert_eq!(
+        results.len(),
+        2,
+        "Should emit 2 closed sessions (third stays open)"
+    );
+
+    // Session 1: count=2, total=30
+    if let Some(count) = results[0].get_int("event_count") {
+        assert_eq!(count, 2, "Session 1 should have 2 events");
+    }
+    if let Some(total) = results[0].get_float("temp_total") {
+        assert!(
+            (total - 30.0).abs() < 0.01,
+            "Session 1 total should be 30.0, got {}",
+            total
+        );
+    }
+
+    // Session 2: count=2, total=70
+    if let Some(count) = results[1].get_int("event_count") {
+        assert_eq!(count, 2, "Session 2 should have 2 events");
+    }
+    if let Some(total) = results[1].get_float("temp_total") {
+        assert!(
+            (total - 70.0).abs() < 0.01,
+            "Session 2 total should be 70.0, got {}",
+            total
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_session_window_partitioned() {
+    // Two partitions with independent session tracking
+    let program = r#"
+        stream PerSensorSession = SensorReading
+            .partition_by(sensor_id)
+            .window(session: 3s)
+            .aggregate(
+                sensor: last(sensor_id),
+                count: count(),
+                avg_temp: avg(temperature)
+            )
+            .emit(sensor: sensor, event_count: count, average: avg_temp)
+    "#;
+
+    let base_time = chrono::Utc::now();
+    let events = vec![
+        // S1 session 1: t=0
+        Event::new("SensorReading")
+            .with_timestamp(base_time)
+            .with_field("sensor_id", "S1")
+            .with_field("temperature", 100.0),
+        // S2 session 1: t=1
+        Event::new("SensorReading")
+            .with_timestamp(base_time + chrono::Duration::seconds(1))
+            .with_field("sensor_id", "S2")
+            .with_field("temperature", 200.0),
+        // S1 session 1: t=2 (within 3s gap for S1)
+        Event::new("SensorReading")
+            .with_timestamp(base_time + chrono::Duration::seconds(2))
+            .with_field("sensor_id", "S1")
+            .with_field("temperature", 120.0),
+        // S2 session 1: t=2 (within 3s gap for S2)
+        Event::new("SensorReading")
+            .with_timestamp(base_time + chrono::Duration::seconds(2))
+            .with_field("sensor_id", "S2")
+            .with_field("temperature", 220.0),
+        // S1: gap of 5s -> S1 session 1 closes when this arrives at t=7
+        Event::new("SensorReading")
+            .with_timestamp(base_time + chrono::Duration::seconds(7))
+            .with_field("sensor_id", "S1")
+            .with_field("temperature", 140.0),
+        // S2: gap of 5s -> S2 session 1 closes when this arrives at t=7
+        Event::new("SensorReading")
+            .with_timestamp(base_time + chrono::Duration::seconds(7))
+            .with_field("sensor_id", "S2")
+            .with_field("temperature", 240.0),
+    ];
+
+    let results = run_context_scenario(program, events).await;
+
+    assert_eq!(
+        results.len(),
+        2,
+        "Should emit 2 session closures (one per partition)"
+    );
+
+    // Both sessions should have count=2
+    for result in &results {
+        if let Some(count) = result.get_int("event_count") {
+            assert_eq!(count, 2, "Each partition session should have 2 events");
+        }
+    }
+
+    // Check that both sensors are represented
+    let sensors: Vec<String> = results
+        .iter()
+        .filter_map(|r| r.get_str("sensor").map(|s| s.to_string()))
+        .collect();
+    assert!(sensors.contains(&"S1".to_string()), "S1 session should be emitted");
+    assert!(sensors.contains(&"S2".to_string()), "S2 session should be emitted");
+
+    // Verify averages per sensor
+    for result in &results {
+        let sensor = result.get_str("sensor").unwrap_or_default().to_string();
+        let avg = result.get_float("average").unwrap_or(0.0);
+        match sensor.as_str() {
+            "S1" => assert!(
+                (avg - 110.0).abs() < 0.01,
+                "S1 avg should be 110.0, got {}",
+                avg
+            ),
+            "S2" => assert!(
+                (avg - 210.0).abs() < 0.01,
+                "S2 avg should be 210.0, got {}",
+                avg
+            ),
+            _ => panic!("Unexpected sensor: {}", sensor),
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_session_window_cross_context() {
+    // Session window in one context, receiving events forwarded from another
+    let program = r#"
+        context ingest
+        context sessions
+
+        stream Validated = SensorReading
+            .context(ingest)
+            .where(temperature > 0.0)
+            .emit(context: sessions, sensor_id: sensor_id, temperature: temperature)
+
+        stream SessionStats = Validated
+            .context(sessions)
+            .window(session: 3s)
+            .aggregate(count: count(), avg_temp: avg(temperature))
+            .emit(event_count: count, average: avg_temp)
+    "#;
+
+    let base_time = chrono::Utc::now();
+    let events = vec![
+        // Session 1: t=0, t=1, t=2
+        Event::new("SensorReading")
+            .with_timestamp(base_time)
+            .with_field("sensor_id", "S1")
+            .with_field("temperature", 100.0),
+        Event::new("SensorReading")
+            .with_timestamp(base_time + chrono::Duration::seconds(1))
+            .with_field("sensor_id", "S1")
+            .with_field("temperature", 200.0),
+        Event::new("SensorReading")
+            .with_timestamp(base_time + chrono::Duration::seconds(2))
+            .with_field("sensor_id", "S1")
+            .with_field("temperature", 300.0),
+        // Invalid reading — filtered by ingest
+        Event::new("SensorReading")
+            .with_timestamp(base_time + chrono::Duration::seconds(3))
+            .with_field("sensor_id", "S1")
+            .with_field("temperature", -10.0),
+        // Gap of 5s -> session 1 closes when this arrives
+        Event::new("SensorReading")
+            .with_timestamp(base_time + chrono::Duration::seconds(8))
+            .with_field("sensor_id", "S1")
+            .with_field("temperature", 400.0),
+    ];
+
+    let results = run_context_scenario(program, events).await;
+
+    // Both streams produce output: Validated emits forwarded events,
+    // SessionStats emits aggregated sessions. Filter to session results.
+    let session_results: Vec<&Event> = results
+        .iter()
+        .filter(|e| e.event_type == "SessionStats")
+        .collect();
+
+    assert_eq!(
+        session_results.len(),
+        1,
+        "Should emit 1 session aggregation (gap exceeded after 3 valid events), got {} total events ({} SessionStats)",
+        results.len(),
+        session_results.len()
+    );
+
+    if let Some(count) = session_results[0].get_int("event_count") {
+        assert_eq!(count, 3, "Session should have 3 events (invalid filtered)");
+    }
+    if let Some(avg) = session_results[0].get_float("average") {
+        assert!(
+            (avg - 200.0).abs() < 0.01,
+            "Average should be 200.0, got {}",
+            avg
+        );
+    }
+
+    // Validated stream should have emitted 4 events (temperature > 0)
+    let validated_count = results
+        .iter()
+        .filter(|e| e.event_type == "Validated")
+        .count();
+    assert_eq!(
+        validated_count, 4,
+        "Validated should forward 4 events (one filtered for temp <= 0)"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_session_window_partitioned_in_context() {
+    // Partitioned session window running inside a context
+    let program = r#"
+        context analytics
+
+        stream UserSessions = UserActivity
+            .context(analytics)
+            .partition_by(user_id)
+            .window(session: 3s)
+            .aggregate(
+                user: last(user_id),
+                actions: count()
+            )
+            .emit(user: user, action_count: actions)
+    "#;
+
+    let base_time = chrono::Utc::now();
+    let events = vec![
+        // Alice session 1: t=0, t=1
+        Event::new("UserActivity")
+            .with_timestamp(base_time)
+            .with_field("user_id", "alice")
+            .with_field("action", "login"),
+        Event::new("UserActivity")
+            .with_timestamp(base_time + chrono::Duration::seconds(1))
+            .with_field("user_id", "alice")
+            .with_field("action", "view"),
+        // Bob session 1: t=2
+        Event::new("UserActivity")
+            .with_timestamp(base_time + chrono::Duration::seconds(2))
+            .with_field("user_id", "bob")
+            .with_field("action", "login"),
+        // Alice gap=5s -> session closes at t=6
+        Event::new("UserActivity")
+            .with_timestamp(base_time + chrono::Duration::seconds(6))
+            .with_field("user_id", "alice")
+            .with_field("action", "login"),
+        // Bob gap=5s -> session closes at t=7
+        Event::new("UserActivity")
+            .with_timestamp(base_time + chrono::Duration::seconds(7))
+            .with_field("user_id", "bob")
+            .with_field("action", "login"),
+    ];
+
+    let results = run_context_scenario(program, events).await;
+
+    assert_eq!(
+        results.len(),
+        2,
+        "Should emit 2 sessions (one per user)"
+    );
+
+    let users: Vec<String> = results
+        .iter()
+        .filter_map(|r| r.get_str("user").map(|s| s.to_string()))
+        .collect();
+    assert!(users.contains(&"alice".to_string()), "Alice session should be emitted");
+    assert!(users.contains(&"bob".to_string()), "Bob session should be emitted");
+
+    for result in &results {
+        let user = result.get_str("user").unwrap_or_default().to_string();
+        let count = result.get_int("action_count").unwrap_or(0);
+        match user.as_str() {
+            "alice" => assert_eq!(count, 2, "Alice should have 2 actions"),
+            "bob" => assert_eq!(count, 1, "Bob should have 1 action"),
+            _ => panic!("Unexpected user: {}", user),
+        }
+    }
+}
+
+// =============================================================================
+// Session Window Sweep (stale session closure without trailing event)
+// =============================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_session_window_sweep_closes_stale() {
+    // Session with 3 events and no trailing event to close it.
+    // The sweep (flush_expired_sessions) should close it after processing.
+    let program = r#"
+        stream SessionAvg = SensorReading
+            .window(session: 5s)
+            .aggregate(avg_temp: avg(temperature), count: count())
+            .emit(average: avg_temp, total: count)
+    "#;
+
+    let base_time = chrono::Utc::now() - chrono::Duration::seconds(30);
+    let events = vec![
+        Event::new("SensorReading")
+            .with_timestamp(base_time)
+            .with_field("temperature", 100.0),
+        Event::new("SensorReading")
+            .with_timestamp(base_time + chrono::Duration::seconds(1))
+            .with_field("temperature", 200.0),
+        Event::new("SensorReading")
+            .with_timestamp(base_time + chrono::Duration::seconds(2))
+            .with_field("temperature", 300.0),
+        // No trailing event — session should be closed by the sweep
+    ];
+
+    let results = run_context_scenario(program, events).await;
+
+    assert_eq!(
+        results.len(),
+        1,
+        "Sweep should close the stale session and emit 1 aggregation event"
+    );
+    assert_eq!(results[0].event_type, "SessionAvg");
+
+    if let Some(avg) = results[0].get_float("average") {
+        assert!(
+            (avg - 200.0).abs() < 0.01,
+            "Average should be 200.0, got {}",
+            avg
+        );
+    }
+    if let Some(count) = results[0].get_int("total") {
+        assert_eq!(count, 3, "Session should have 3 events");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_session_window_sweep_partitioned() {
+    // Two partitions with events but no trailing event to close them.
+    // The sweep should independently close both partitions.
+    let program = r#"
+        stream PerSensorSession = SensorReading
+            .partition_by(sensor_id)
+            .window(session: 3s)
+            .aggregate(
+                sensor: last(sensor_id),
+                count: count()
+            )
+            .emit(sensor: sensor, event_count: count)
+    "#;
+
+    let base_time = chrono::Utc::now() - chrono::Duration::seconds(30);
+    let events = vec![
+        Event::new("SensorReading")
+            .with_timestamp(base_time)
+            .with_field("sensor_id", "S1")
+            .with_field("temperature", 100.0),
+        Event::new("SensorReading")
+            .with_timestamp(base_time + chrono::Duration::seconds(1))
+            .with_field("sensor_id", "S1")
+            .with_field("temperature", 110.0),
+        Event::new("SensorReading")
+            .with_timestamp(base_time + chrono::Duration::seconds(1))
+            .with_field("sensor_id", "S2")
+            .with_field("temperature", 200.0),
+        // No trailing event — both sessions should be closed by the sweep
+    ];
+
+    let results = run_context_scenario(program, events).await;
+
+    assert_eq!(
+        results.len(),
+        2,
+        "Sweep should close both partition sessions"
+    );
+
+    let sensors: Vec<String> = results
+        .iter()
+        .filter_map(|r| r.get_str("sensor").map(|s| s.to_string()))
+        .collect();
+    assert!(
+        sensors.contains(&"S1".to_string()),
+        "S1 session should be emitted"
+    );
+    assert!(
+        sensors.contains(&"S2".to_string()),
+        "S2 session should be emitted"
+    );
+
+    for result in &results {
+        let sensor = result.get_str("sensor").unwrap_or_default().to_string();
+        let count = result.get_int("event_count").unwrap_or(0);
+        match sensor.as_str() {
+            "S1" => assert_eq!(count, 2, "S1 should have 2 events"),
+            "S2" => assert_eq!(count, 1, "S2 should have 1 event"),
+            _ => panic!("Unexpected sensor: {}", sensor),
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_session_window_sweep_no_false_close() {
+    // Events arrive with a gap that closes session 1, then more events
+    // that are still active. The sweep should NOT close the active session
+    // prematurely (events are recent enough).
+    let program = r#"
+        stream SessionCount = SensorReading
+            .window(session: 5s)
+            .aggregate(count: count())
+            .emit(event_count: count)
+    "#;
+
+    // Use timestamps far in the past for session 1, then recent for session 2
+    let past = chrono::Utc::now() - chrono::Duration::seconds(60);
+    let recent = chrono::Utc::now(); // session 2 is "now" — should NOT be swept
+
+    let events = vec![
+        // Session 1: old events
+        Event::new("SensorReading")
+            .with_timestamp(past)
+            .with_field("temperature", 10.0),
+        Event::new("SensorReading")
+            .with_timestamp(past + chrono::Duration::seconds(1))
+            .with_field("temperature", 20.0),
+        // Gap > 5s closes session 1 when session 2's first event arrives
+        // Session 2: recent events (should NOT be swept)
+        Event::new("SensorReading")
+            .with_timestamp(recent)
+            .with_field("temperature", 30.0),
+        Event::new("SensorReading")
+            .with_timestamp(recent + chrono::Duration::seconds(1))
+            .with_field("temperature", 40.0),
+    ];
+
+    let results = run_context_scenario(program, events).await;
+
+    // Session 1 closes via gap detection (event-driven).
+    // Session 2 closes via sweep (it is still recent, but flush_expired_sessions
+    // is called after all events, using Utc::now() which is ~1s after session 2 start).
+    // With a 5s gap, session 2 should NOT be swept yet — so only session 1 emits.
+    // However, in our test helper, flush_expired_sessions runs immediately after
+    // processing, so session 2 (started ~1s ago) should still be active.
+    assert_eq!(
+        results.len(),
+        1,
+        "Only session 1 should be emitted (session 2 is still active)"
+    );
+    if let Some(count) = results[0].get_int("event_count") {
+        assert_eq!(count, 2, "Session 1 should have 2 events");
     }
 }

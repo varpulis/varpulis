@@ -84,6 +84,37 @@ fn generate_sensor_events(count: usize) -> Vec<Event> {
     events
 }
 
+/// Generate sensor events with timestamps that create session patterns.
+///
+/// Events arrive in bursts of `burst_size` within 1s gaps, separated by
+/// `gap_seconds` pauses. This creates predictable session boundaries for
+/// benchmarking session window closure overhead.
+fn generate_session_events(count: usize, burst_size: usize, gap_seconds: u64) -> Vec<Event> {
+    use chrono::{Duration as ChronoDuration, Utc};
+    let mut events = Vec::with_capacity(count);
+    let sensors = ["S1", "S2", "S3", "S4", "S5"];
+    let base_time = Utc::now();
+    let mut current_time = base_time;
+
+    for i in 0..count {
+        let sensor = sensors[i % sensors.len()];
+        let temperature = 50.0 + (i as f64 * 0.7) % 100.0;
+        let event = Event::new("SensorReading")
+            .with_timestamp(current_time)
+            .with_field("sensor_id", sensor)
+            .with_field("temperature", temperature);
+        events.push(event);
+
+        // Within a burst: 1s between events. At burst boundary: gap_seconds gap.
+        if (i + 1) % burst_size == 0 {
+            current_time = current_time + ChronoDuration::seconds(gap_seconds as i64);
+        } else {
+            current_time = current_time + ChronoDuration::seconds(1);
+        }
+    }
+    events
+}
+
 /// Generate events for two independent streams (temp + pressure).
 fn generate_dual_stream_events(count: usize) -> Vec<Event> {
     let mut events = Vec::with_capacity(count * 2);
@@ -629,6 +660,174 @@ fn bench_dispatch_methods(c: &mut Criterion) {
     group.finish();
 }
 
+// =============================================================================
+// Benchmark 6: Session window overhead (no_context vs with_context)
+//
+// Partitioned session windows with aggregation. Events arrive in bursts
+// separated by gaps that trigger session closures. Measures the overhead
+// of context orchestration for stateful session processing.
+// =============================================================================
+
+fn bench_session_window(c: &mut Criterion) {
+    let mut group = c.benchmark_group("session_window");
+    group.warm_up_time(Duration::from_secs(2));
+    group.measurement_time(Duration::from_secs(10));
+
+    let no_ctx_program = load_vpl("session_window_no_context.vpl");
+    let ctx_program = load_vpl("session_window_with_context.vpl");
+
+    // burst_size=20 events per session, gap=6s (exceeds 5s session gap)
+    for batch_size in [500, 2000, 10000] {
+        let events = generate_session_events(batch_size, 20, 6);
+        group.throughput(Throughput::Elements(batch_size as u64));
+
+        // No context: direct engine.process()
+        group.bench_with_input(
+            BenchmarkId::new("no_context", batch_size),
+            &events,
+            |b, events| {
+                let rt = Runtime::new().unwrap();
+                b.iter_custom(|iters| {
+                    rt.block_on(async {
+                        let mut total = Duration::ZERO;
+                        for _ in 0..iters {
+                            let (tx, _rx) = mpsc::channel(batch_size * 2);
+                            let mut engine = Engine::new(tx);
+                            engine.load(&no_ctx_program).unwrap();
+
+                            let start = Instant::now();
+                            for event in events {
+                                engine.process(event.clone()).await.unwrap();
+                            }
+                            total += start.elapsed();
+                        }
+                        total
+                    })
+                });
+            },
+        );
+
+        // With context: orchestrator.process()
+        group.bench_with_input(
+            BenchmarkId::new("with_context", batch_size),
+            &events,
+            |b, events| {
+                let rt = Runtime::new().unwrap();
+                b.iter_custom(|iters| {
+                    rt.block_on(async {
+                        let mut total = Duration::ZERO;
+                        for _ in 0..iters {
+                            let (tx, mut rx) = mpsc::channel(batch_size * 2);
+                            let (tmp_tx, _tmp_rx) = mpsc::channel(100);
+                            let mut tmp_engine = Engine::new(tmp_tx);
+                            tmp_engine.load(&ctx_program).unwrap();
+
+                            let orchestrator = ContextOrchestrator::build(
+                                tmp_engine.context_map(),
+                                &ctx_program,
+                                tx,
+                                batch_size * 2,
+                            )
+                            .unwrap();
+
+                            let start = Instant::now();
+                            for event in events {
+                                orchestrator.process(Arc::new(event.clone())).await.unwrap();
+                            }
+                            drain_output(&mut rx).await;
+                            total += start.elapsed();
+
+                            orchestrator.shutdown();
+                        }
+                        total
+                    })
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+// =============================================================================
+// Benchmark 7: Session window sweep overhead
+//
+// Measures the cost of periodic sweep for stale session closure.
+// Compares processing with sessions that close via gap detection (event-driven)
+// vs sessions that close via sweep (no trailing event). Ensures the sweep
+// mechanism doesn't add significant overhead to the normal event-driven path.
+// =============================================================================
+
+fn bench_session_window_sweep(c: &mut Criterion) {
+    let mut group = c.benchmark_group("session_window_sweep");
+    group.warm_up_time(Duration::from_secs(2));
+    group.measurement_time(Duration::from_secs(10));
+
+    let no_ctx_program = load_vpl("session_window_no_context.vpl");
+
+    // burst_size=20 events per session, gap=6s (exceeds 5s session gap)
+    for batch_size in [500, 2000, 10000] {
+        let events = generate_session_events(batch_size, 20, 6);
+        group.throughput(Throughput::Elements(batch_size as u64));
+
+        // Baseline: sessions close via gap detection (event-driven, no sweep needed)
+        group.bench_with_input(
+            BenchmarkId::new("event_driven", batch_size),
+            &events,
+            |b, events| {
+                let rt = Runtime::new().unwrap();
+                b.iter_custom(|iters| {
+                    rt.block_on(async {
+                        let mut total = Duration::ZERO;
+                        for _ in 0..iters {
+                            let (tx, _rx) = mpsc::channel(batch_size * 2);
+                            let mut engine = Engine::new(tx);
+                            engine.load(&no_ctx_program).unwrap();
+
+                            let start = Instant::now();
+                            for event in events {
+                                engine.process(event.clone()).await.unwrap();
+                            }
+                            total += start.elapsed();
+                        }
+                        total
+                    })
+                });
+            },
+        );
+
+        // With sweep: process all events, then call flush_expired_sessions()
+        // to close any remaining stale sessions
+        group.bench_with_input(
+            BenchmarkId::new("with_sweep", batch_size),
+            &events,
+            |b, events| {
+                let rt = Runtime::new().unwrap();
+                b.iter_custom(|iters| {
+                    rt.block_on(async {
+                        let mut total = Duration::ZERO;
+                        for _ in 0..iters {
+                            let (tx, _rx) = mpsc::channel(batch_size * 2);
+                            let mut engine = Engine::new(tx);
+                            engine.load(&no_ctx_program).unwrap();
+
+                            let start = Instant::now();
+                            for event in events {
+                                engine.process(event.clone()).await.unwrap();
+                            }
+                            engine.flush_expired_sessions().await.unwrap();
+                            total += start.elapsed();
+                        }
+                        total
+                    })
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_single_stream_overhead,
@@ -636,5 +835,7 @@ criterion_group!(
     bench_cross_context_pipeline,
     bench_cpu_intensive_parallel,
     bench_dispatch_methods,
+    bench_session_window,
+    bench_session_window_sweep,
 );
 criterion_main!(benches);

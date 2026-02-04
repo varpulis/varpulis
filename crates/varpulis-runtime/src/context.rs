@@ -202,10 +202,32 @@ impl ContextRuntime {
         }
     }
 
+    /// Drain engine output events and route them to consuming contexts
+    /// and the main output channel.
+    fn drain_and_route_output(&mut self) {
+        while let Ok(output_event) = self.engine_output_rx.try_recv() {
+            self.output_events_emitted += 1;
+
+            // Route to consuming context if any
+            if let Some(target_ctx) = self.ingress_routing.get(&output_event.event_type) {
+                if let Some(tx) = self.all_context_txs.get(target_ctx) {
+                    let _ = tx.try_send(Arc::new(output_event.clone()));
+                }
+            }
+
+            // Always forward to main output channel
+            let _ = self.output_tx.try_send(output_event);
+        }
+    }
+
     /// Run the event loop. Blocks the current thread.
     ///
     /// Receives events from the inbound channel, processes them through
     /// the engine, and forwards cross-context events as needed.
+    ///
+    /// If the engine has session windows, a periodic sweep timer runs
+    /// every `gap` duration to close stale sessions. This ensures sessions
+    /// are emitted even when no new events arrive.
     pub async fn run(&mut self) {
         info!("Context '{}' runtime started", self.name);
 
@@ -214,6 +236,19 @@ impl ContextRuntime {
             info!("Context '{}' running on cores {:?}", self.name, cores);
         }
 
+        // Compute sweep interval from engine's session window gaps
+        let has_sessions = self.engine.has_session_windows();
+        let sweep_interval = self
+            .engine
+            .min_session_gap()
+            .and_then(|d| d.to_std().ok())
+            .unwrap_or(std::time::Duration::from_secs(60));
+
+        let mut sweep_timer = tokio::time::interval(sweep_interval);
+        sweep_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // Skip the first immediate tick
+        sweep_timer.tick().await;
+
         loop {
             tokio::select! {
                 biased;
@@ -221,8 +256,25 @@ impl ContextRuntime {
                 _ = self.shutdown_rx.changed() => {
                     if *self.shutdown_rx.borrow() {
                         info!("Context '{}' received shutdown signal", self.name);
+                        // On shutdown: flush all remaining sessions
+                        if has_sessions {
+                            if let Err(e) = self.engine.flush_expired_sessions().await {
+                                error!("Context '{}' shutdown session flush error: {}", self.name, e);
+                            }
+                            self.drain_and_route_output();
+                        }
                         break;
                     }
+                }
+
+                _ = sweep_timer.tick(), if has_sessions => {
+                    match self.engine.flush_expired_sessions().await {
+                        Ok(()) => {}
+                        Err(e) => {
+                            error!("Context '{}' session sweep error: {}", self.name, e);
+                        }
+                    }
+                    self.drain_and_route_output();
                 }
 
                 event = self.event_rx.recv() => {
@@ -238,20 +290,7 @@ impl ContextRuntime {
                                 }
                             }
 
-                            // Drain engine output events and route them
-                            while let Ok(output_event) = self.engine_output_rx.try_recv() {
-                                self.output_events_emitted += 1;
-
-                                // Route to consuming context if any
-                                if let Some(target_ctx) = self.ingress_routing.get(&output_event.event_type) {
-                                    if let Some(tx) = self.all_context_txs.get(target_ctx) {
-                                        let _ = tx.try_send(Arc::new(output_event.clone()));
-                                    }
-                                }
-
-                                // Always forward to main output channel
-                                let _ = self.output_tx.try_send(output_event);
-                            }
+                            self.drain_and_route_output();
                         }
                         None => {
                             // Channel closed

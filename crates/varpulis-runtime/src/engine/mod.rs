@@ -2493,6 +2493,321 @@ impl Engine {
         })
     }
 
+    // =========================================================================
+    // Session Window Sweep
+    // =========================================================================
+
+    /// Check if any registered stream has session windows.
+    pub fn has_session_windows(&self) -> bool {
+        self.streams.values().any(|s| {
+            s.operations.iter().any(|op| {
+                matches!(
+                    op,
+                    RuntimeOp::Window(WindowType::Session(_))
+                        | RuntimeOp::Window(WindowType::PartitionedSession(_))
+                )
+            })
+        })
+    }
+
+    /// Return the smallest session gap across all streams (used as sweep interval).
+    pub fn min_session_gap(&self) -> Option<chrono::Duration> {
+        let mut min_gap: Option<chrono::Duration> = None;
+        for stream in self.streams.values() {
+            for op in &stream.operations {
+                if let RuntimeOp::Window(window) = op {
+                    let gap = match window {
+                        WindowType::Session(w) => Some(w.gap()),
+                        WindowType::PartitionedSession(w) => Some(w.gap()),
+                        _ => None,
+                    };
+                    if let Some(g) = gap {
+                        min_gap = Some(match min_gap {
+                            Some(current) if g < current => g,
+                            Some(current) => current,
+                            None => g,
+                        });
+                    }
+                }
+            }
+        }
+        min_gap
+    }
+
+    /// Flush all expired session windows and process the resulting events
+    /// through the remaining pipeline stages (aggregate, having, select, emit, etc.).
+    pub async fn flush_expired_sessions(&mut self) -> Result<(), String> {
+        let now = chrono::Utc::now();
+        let stream_names: Vec<String> = self.streams.keys().cloned().collect();
+
+        for stream_name in stream_names {
+            // Step 1: Find the window op index and collect expired events
+            let (window_idx, expired) = {
+                let stream = self.streams.get_mut(&stream_name).unwrap();
+                let mut result = Vec::new();
+                let mut found_idx = None;
+
+                for (idx, op) in stream.operations.iter_mut().enumerate() {
+                    if let RuntimeOp::Window(window) = op {
+                        match window {
+                            WindowType::Session(w) => {
+                                if let Some(events) = w.check_expired(now) {
+                                    result = events;
+                                }
+                                found_idx = Some(idx);
+                            }
+                            WindowType::PartitionedSession(w) => {
+                                for (_key, events) in w.check_expired(now) {
+                                    result.extend(events);
+                                }
+                                found_idx = Some(idx);
+                            }
+                            _ => {}
+                        }
+                        // Only process the first session window op per stream
+                        if found_idx.is_some() {
+                            break;
+                        }
+                    }
+                }
+                (found_idx, result)
+            };
+
+            if expired.is_empty() {
+                continue;
+            }
+
+            let window_idx = match window_idx {
+                Some(idx) => idx,
+                None => continue,
+            };
+
+            // Step 2: Process expired events through the post-window pipeline
+            let result = Self::process_post_window(
+                self.streams.get_mut(&stream_name).unwrap(),
+                expired,
+                window_idx,
+                &self.functions,
+                &self.sink_cache,
+            )
+            .await?;
+
+            // Step 3: Send emitted events to output channel
+            for emitted in &result.emitted_events {
+                self.output_events_emitted += 1;
+                let owned = (**emitted).clone();
+                if let Err(e) = self.output_tx.try_send(owned) {
+                    warn!("Failed to send swept session event: {}", e);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Process events through the pipeline operations that come after the window
+    /// at `window_idx`. This runs aggregate, having, select, emit, etc.
+    async fn process_post_window(
+        stream: &mut StreamDefinition,
+        events: Vec<SharedEvent>,
+        window_idx: usize,
+        functions: &HashMap<String, UserFunction>,
+        sinks: &HashMap<String, Arc<dyn crate::sink::Sink>>,
+    ) -> Result<StreamProcessResult, String> {
+        let mut current_events = events;
+        let mut emitted_events: Vec<SharedEvent> = Vec::new();
+
+        // Process only the operations after the window
+        let ops_after_window = window_idx + 1;
+        for op in &mut stream.operations[ops_after_window..] {
+            match op {
+                RuntimeOp::Aggregate(aggregator) => {
+                    let result = aggregator.apply_shared(&current_events);
+                    let mut agg_event = Event::new("AggregationResult");
+                    for (key, value) in result {
+                        agg_event.data.insert(key, value);
+                    }
+                    current_events = vec![Arc::new(agg_event)];
+                }
+                RuntimeOp::PartitionedAggregate(state) => {
+                    let results = state.apply(&current_events);
+                    current_events = results
+                        .into_iter()
+                        .map(|(partition_key, result)| {
+                            let mut agg_event = Event::new("AggregationResult");
+                            agg_event
+                                .data
+                                .insert("_partition".to_string(), Value::Str(partition_key));
+                            for (key, value) in result {
+                                agg_event.data.insert(key, value);
+                            }
+                            Arc::new(agg_event)
+                        })
+                        .collect();
+                }
+                RuntimeOp::Having(expr) => {
+                    let ctx = SequenceContext::new();
+                    current_events.retain(|event| {
+                        evaluator::eval_expr_with_functions(
+                            expr,
+                            event.as_ref(),
+                            &ctx,
+                            functions,
+                            &HashMap::new(),
+                        )
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                    });
+                    if current_events.is_empty() {
+                        return Ok(StreamProcessResult {
+                            emitted_events,
+                            output_events: vec![],
+                        });
+                    }
+                }
+                RuntimeOp::WhereExpr(expr) => {
+                    let ctx = SequenceContext::new();
+                    current_events.retain(|e| {
+                        evaluator::eval_expr_with_functions(
+                            expr,
+                            e.as_ref(),
+                            &ctx,
+                            functions,
+                            &HashMap::new(),
+                        )
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                    });
+                    if current_events.is_empty() {
+                        return Ok(StreamProcessResult {
+                            emitted_events,
+                            output_events: vec![],
+                        });
+                    }
+                }
+                RuntimeOp::Select(config) => {
+                    let ctx = SequenceContext::new();
+                    current_events = current_events
+                        .into_iter()
+                        .map(|event| {
+                            let mut new_event = Event::new(&event.event_type);
+                            new_event.timestamp = event.timestamp;
+                            for (out_name, expr) in &config.fields {
+                                if let Some(value) = evaluator::eval_expr_with_functions(
+                                    expr,
+                                    event.as_ref(),
+                                    &ctx,
+                                    functions,
+                                    &HashMap::new(),
+                                ) {
+                                    new_event.data.insert(out_name.clone(), value);
+                                }
+                            }
+                            Arc::new(new_event)
+                        })
+                        .collect();
+                }
+                RuntimeOp::Emit(config) => {
+                    let mut emitted: Vec<SharedEvent> = Vec::new();
+                    for event in &current_events {
+                        let mut new_event = Event::new(&stream.name);
+                        new_event.timestamp = event.timestamp;
+                        for (out_name, source) in &config.fields {
+                            if let Some(value) = event.get(source) {
+                                new_event.data.insert(out_name.clone(), value.clone());
+                            } else {
+                                new_event
+                                    .data
+                                    .insert(out_name.clone(), Value::Str(source.clone()));
+                            }
+                        }
+                        emitted.push(Arc::new(new_event));
+                    }
+                    emitted_events.extend(emitted.iter().map(Arc::clone));
+                    current_events = emitted;
+                }
+                RuntimeOp::EmitExpr(config) => {
+                    let ctx = SequenceContext::new();
+                    let mut emitted: Vec<SharedEvent> = Vec::new();
+                    for event in &current_events {
+                        let mut new_event = Event::new(&stream.name);
+                        new_event.timestamp = event.timestamp;
+                        for (out_name, expr) in &config.fields {
+                            if let Some(value) = evaluator::eval_expr_with_functions(
+                                expr,
+                                event.as_ref(),
+                                &ctx,
+                                functions,
+                                &HashMap::new(),
+                            ) {
+                                new_event.data.insert(out_name.clone(), value);
+                            }
+                        }
+                        emitted.push(Arc::new(new_event));
+                    }
+                    emitted_events.extend(emitted.iter().map(Arc::clone));
+                    current_events = emitted;
+                }
+                RuntimeOp::Print(config) => {
+                    for event in &current_events {
+                        let mut parts = Vec::new();
+                        for expr in &config.exprs {
+                            let value = evaluator::eval_filter_expr(
+                                expr,
+                                event.as_ref(),
+                                &SequenceContext::new(),
+                            )
+                            .unwrap_or(Value::Null);
+                            parts.push(format!("{}", value));
+                        }
+                        let output = if parts.is_empty() {
+                            format!("[{}] {}: {:?}", stream.name, event.event_type, event.data)
+                        } else {
+                            parts.join(" ")
+                        };
+                        println!("[PRINT] {}", output);
+                    }
+                }
+                RuntimeOp::To(config) => {
+                    if let Some(sink) = sinks.get(&config.sink_key) {
+                        for event in &current_events {
+                            if let Err(e) = sink.send(event).await {
+                                warn!(
+                                    "Failed to send to connector '{}': {}",
+                                    config.connector_name, e
+                                );
+                            }
+                        }
+                    }
+                }
+                // Skip ops that don't apply to post-window processing
+                RuntimeOp::Window(_)
+                | RuntimeOp::PartitionedWindow(_)
+                | RuntimeOp::PartitionedSlidingCountWindow(_)
+                | RuntimeOp::WhereClosure(_)
+                | RuntimeOp::Log(_)
+                | RuntimeOp::Sequence
+                | RuntimeOp::AttentionWindow(_)
+                | RuntimeOp::Pattern(_) => {}
+            }
+        }
+
+        // Set event_type to stream name for routing
+        let output_events: Vec<SharedEvent> = current_events
+            .into_iter()
+            .map(|e| {
+                let mut owned = (*e).clone();
+                owned.event_type = stream.name.clone();
+                Arc::new(owned)
+            })
+            .collect();
+
+        Ok(StreamProcessResult {
+            emitted_events,
+            output_events,
+        })
+    }
+
     /// Get metrics
     pub fn metrics(&self) -> EngineMetrics {
         EngineMetrics {
