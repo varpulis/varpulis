@@ -824,8 +824,14 @@ async fn test_session_window_partitioned() {
         .iter()
         .filter_map(|r| r.get_str("sensor").map(|s| s.to_string()))
         .collect();
-    assert!(sensors.contains(&"S1".to_string()), "S1 session should be emitted");
-    assert!(sensors.contains(&"S2".to_string()), "S2 session should be emitted");
+    assert!(
+        sensors.contains(&"S1".to_string()),
+        "S1 session should be emitted"
+    );
+    assert!(
+        sensors.contains(&"S2".to_string()),
+        "S2 session should be emitted"
+    );
 
     // Verify averages per sensor
     for result in &results {
@@ -979,18 +985,20 @@ async fn test_session_window_partitioned_in_context() {
 
     let results = run_context_scenario(program, events).await;
 
-    assert_eq!(
-        results.len(),
-        2,
-        "Should emit 2 sessions (one per user)"
-    );
+    assert_eq!(results.len(), 2, "Should emit 2 sessions (one per user)");
 
     let users: Vec<String> = results
         .iter()
         .filter_map(|r| r.get_str("user").map(|s| s.to_string()))
         .collect();
-    assert!(users.contains(&"alice".to_string()), "Alice session should be emitted");
-    assert!(users.contains(&"bob".to_string()), "Bob session should be emitted");
+    assert!(
+        users.contains(&"alice".to_string()),
+        "Alice session should be emitted"
+    );
+    assert!(
+        users.contains(&"bob".to_string()),
+        "Bob session should be emitted"
+    );
 
     for result in &results {
         let user = result.get_str("user").unwrap_or_default().to_string();

@@ -107,9 +107,9 @@ fn generate_session_events(count: usize, burst_size: usize, gap_seconds: u64) ->
 
         // Within a burst: 1s between events. At burst boundary: gap_seconds gap.
         if (i + 1) % burst_size == 0 {
-            current_time = current_time + ChronoDuration::seconds(gap_seconds as i64);
+            current_time += ChronoDuration::seconds(gap_seconds as i64);
         } else {
-            current_time = current_time + ChronoDuration::seconds(1);
+            current_time += ChronoDuration::seconds(1);
         }
     }
     events
