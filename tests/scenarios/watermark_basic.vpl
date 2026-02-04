@@ -1,0 +1,6 @@
+# Watermark Test: Basic watermark tracking
+# Enables per-source watermark tracking with 5s out-of-order tolerance.
+
+stream Watermarked = SensorEvent
+    .watermark(out_of_order: 5s)
+    .emit(value: value)

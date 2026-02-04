@@ -1,0 +1,7 @@
+# Checkpoint Test: Variable preservation
+# Verifies that engine-level variables survive checkpoint/restore.
+
+var counter: int = 0
+
+stream Incrementer = TestEvent
+    .emit(v: value)

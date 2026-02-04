@@ -1,0 +1,5 @@
+# Checkpoint Test: Simple passthrough for metrics verification
+# Used to verify events_processed and output_events_emitted counters survive restart.
+
+stream PassThrough = TestEvent
+    .emit(value: value)

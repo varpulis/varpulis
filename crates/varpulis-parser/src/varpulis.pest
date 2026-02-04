@@ -131,7 +131,7 @@ dot_op = { "." ~ (
     | tap_op | print_op | log_op | emit_op | to_op | pattern_op
     | attention_window_op | concurrent_op | process_op | on_error_op
     | collect_op | on_op | within_op | not_op | fork_op | any_op
-    | all_op | first_op
+    | all_op | first_op | watermark_op | allowed_lateness_op
 )}
 
 // followed_by: use filter_expr for filter (stops before stream ops), 'as identifier' handled at end
@@ -204,6 +204,8 @@ fork_op = { "fork" ~ "(" ~ fork_path_list ~ ")" }
 any_op = { "any" ~ "(" ~ integer? ~ ")" }
 all_op = { "all" ~ "(" ~ ")" }
 first_op = { "first" ~ "(" ~ ")" }
+watermark_op = { "watermark" ~ "(" ~ named_arg_list ~ ")" }
+allowed_lateness_op = { "allowed_lateness" ~ "(" ~ expr ~ ")" }
 
 select_list = { select_item ~ ("," ~ select_item)* }
 select_item = { (identifier ~ ":" ~ expr) | identifier }

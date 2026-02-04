@@ -1,0 +1,4 @@
+# Phase 1: 3 events within a session (1s apart, well within 5s gap)
+@0s SensorEvent { value: 100 }
+@1s SensorEvent { value: 100 }
+@2s SensorEvent { value: 100 }

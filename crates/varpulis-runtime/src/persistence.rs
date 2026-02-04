@@ -158,6 +158,9 @@ pub struct Checkpoint {
     pub pattern_states: HashMap<String, PatternCheckpoint>,
     /// Custom metadata
     pub metadata: HashMap<String, String>,
+    /// Engine states per context (for coordinated checkpointing)
+    #[serde(default)]
+    pub context_states: HashMap<String, EngineCheckpoint>,
 }
 
 /// Checkpoint for window state
@@ -688,6 +691,120 @@ impl CheckpointManager {
     }
 }
 
+/// Checkpoint for a single engine instance (one context).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EngineCheckpoint {
+    /// Window states by stream name
+    pub window_states: HashMap<String, WindowCheckpoint>,
+    /// SASE+ pattern engine states by stream name
+    pub sase_states: HashMap<String, SaseCheckpoint>,
+    /// Join buffer states by stream name
+    pub join_states: HashMap<String, JoinCheckpoint>,
+    /// Engine variables
+    pub variables: HashMap<String, SerializableValue>,
+    /// Events processed counter
+    pub events_processed: u64,
+    /// Output events emitted counter
+    pub output_events_emitted: u64,
+    /// Watermark tracker state
+    #[serde(default)]
+    pub watermark_state: Option<WatermarkCheckpoint>,
+}
+
+/// Checkpoint for SASE+ pattern matching engine state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SaseCheckpoint {
+    /// Non-partitioned active runs
+    pub active_runs: Vec<RunCheckpoint>,
+    /// Partitioned active runs
+    pub partitioned_runs: HashMap<String, Vec<RunCheckpoint>>,
+    /// Current watermark in milliseconds
+    pub watermark_ms: Option<i64>,
+    /// Maximum observed timestamp in milliseconds
+    pub max_timestamp_ms: Option<i64>,
+    /// Cumulative runs created
+    pub total_runs_created: u64,
+    /// Cumulative runs completed
+    pub total_runs_completed: u64,
+    /// Cumulative runs dropped
+    pub total_runs_dropped: u64,
+    /// Cumulative runs evicted
+    pub total_runs_evicted: u64,
+}
+
+/// Checkpoint for a single SASE+ run (partial match).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunCheckpoint {
+    /// Current NFA state index
+    pub current_state: usize,
+    /// Stack of matched events
+    pub stack: Vec<StackEntryCheckpoint>,
+    /// Captured events by alias
+    pub captured: HashMap<String, SerializableEvent>,
+    /// Event-time when this run started (ms since epoch)
+    pub event_time_started_at_ms: Option<i64>,
+    /// Event-time deadline (ms since epoch)
+    pub event_time_deadline_ms: Option<i64>,
+    /// Partition key value
+    pub partition_key: Option<SerializableValue>,
+    /// Whether the run is invalidated
+    pub invalidated: bool,
+    /// Number of pending negation constraints
+    pub pending_negation_count: usize,
+    /// Kleene capture events (ZDD rebuilt on restore)
+    pub kleene_events: Option<Vec<SerializableEvent>>,
+}
+
+/// Checkpoint for a stack entry in a SASE+ run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StackEntryCheckpoint {
+    pub event: SerializableEvent,
+    pub alias: Option<String>,
+}
+
+/// Checkpoint for a join buffer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JoinCheckpoint {
+    /// Buffered events: source_name -> (key_value -> Vec<(timestamp_ms, event)>)
+    pub buffers: HashMap<String, HashMap<String, Vec<(i64, SerializableEvent)>>>,
+    /// Source stream names
+    pub sources: Vec<String>,
+    /// Join key field per source
+    pub join_keys: HashMap<String, String>,
+    /// Window duration in milliseconds
+    pub window_duration_ms: i64,
+}
+
+/// Checkpoint for per-source watermark tracking.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WatermarkCheckpoint {
+    /// Per-source watermark state
+    pub sources: HashMap<String, SourceWatermarkCheckpoint>,
+    /// Effective (minimum) watermark in milliseconds
+    pub effective_watermark_ms: Option<i64>,
+}
+
+/// Checkpoint for a single source's watermark state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceWatermarkCheckpoint {
+    /// Current watermark in milliseconds
+    pub watermark_ms: Option<i64>,
+    /// Maximum observed timestamp in milliseconds
+    pub max_timestamp_ms: Option<i64>,
+    /// Maximum out-of-orderness tolerance in milliseconds
+    pub max_out_of_orderness_ms: i64,
+}
+
+/// Convert Value to SerializableValue (pub(crate) re-export)
+pub(crate) fn value_to_ser(v: &varpulis_core::Value) -> SerializableValue {
+    value_to_serializable(v)
+}
+
+/// Convert SerializableValue to Value (pub(crate) re-export)
+pub(crate) fn ser_to_value(sv: SerializableValue) -> varpulis_core::Value {
+    serializable_to_value(sv)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -703,6 +820,7 @@ mod tests {
             window_states: HashMap::new(),
             pattern_states: HashMap::new(),
             metadata: HashMap::new(),
+            context_states: HashMap::new(),
         };
 
         store.save_checkpoint(&checkpoint).unwrap();
@@ -726,6 +844,7 @@ mod tests {
                 window_states: HashMap::new(),
                 pattern_states: HashMap::new(),
                 metadata: HashMap::new(),
+                context_states: HashMap::new(),
             };
             store.save_checkpoint(&checkpoint).unwrap();
         }

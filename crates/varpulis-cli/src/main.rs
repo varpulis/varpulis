@@ -494,7 +494,7 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
 
     // Build context orchestrator if the program declares contexts
     let has_contexts = engine.has_contexts();
-    let orchestrator = if has_contexts {
+    let mut orchestrator = if has_contexts {
         match ContextOrchestrator::build(engine.context_map(), &program, output_tx_for_ctx, 1000) {
             Ok(orch) => {
                 println!(
@@ -648,13 +648,15 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
                 Some(event) = event_rx.recv() => {
                     event_count += 1;
 
-                    if let Some(ref orchestrator) = orchestrator {
+                    if let Some(ref mut orchestrator) = orchestrator {
                         let shared = std::sync::Arc::new(event);
                         match orchestrator.try_process(shared) {
                             Ok(()) => {}
-                            Err(varpulis_runtime::DispatchError::ChannelFull(event)) => {
-                                if let Err(e) = orchestrator.process(event).await {
-                                    tracing::warn!("Orchestrator error: {}", e);
+                            Err(varpulis_runtime::DispatchError::ChannelFull(msg)) => {
+                                if let varpulis_runtime::ContextMessage::Event(event) = msg {
+                                    if let Err(e) = orchestrator.process(event).await {
+                                        tracing::warn!("Orchestrator error: {}", e);
+                                    }
                                 }
                             }
                             Err(varpulis_runtime::DispatchError::ChannelClosed(_)) => {
@@ -675,6 +677,13 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
                         );
                         std::io::Write::flush(&mut std::io::stdout())?;
                         last_report = std::time::Instant::now();
+
+                        // Periodic checkpoint tick (piggybacks on progress interval)
+                        if let Some(ref mut orch) = orchestrator {
+                            if let Err(e) = orch.checkpoint_tick() {
+                                tracing::warn!("Checkpoint error: {}", e);
+                            }
+                        }
                     }
                 }
                 _ = tokio::signal::ctrl_c() => {

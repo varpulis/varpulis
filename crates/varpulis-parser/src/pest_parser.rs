@@ -904,6 +904,19 @@ fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
                 .collect::<ParseResult<Vec<_>>>()?;
             Ok(StreamOp::Concurrent(args))
         }
+        Rule::watermark_op => {
+            let args = pair
+                .into_inner()
+                .filter(|p| p.as_rule() == Rule::named_arg_list)
+                .flat_map(|p| p.into_inner())
+                .map(parse_named_arg)
+                .collect::<ParseResult<Vec<_>>>()?;
+            Ok(StreamOp::Watermark(args))
+        }
+        Rule::allowed_lateness_op => {
+            let expr = parse_expr(pair.into_inner().expect_next("allowed lateness duration")?)?;
+            Ok(StreamOp::AllowedLateness(expr))
+        }
         _ => Err(ParseError::UnexpectedToken {
             position: 0,
             expected: "stream operation".to_string(),

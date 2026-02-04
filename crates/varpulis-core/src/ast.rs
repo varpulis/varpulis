@@ -313,6 +313,10 @@ pub enum StreamOp {
     First,
     /// Assign stream to a context: `.context(name)`
     Context(String),
+    /// Watermark configuration: `.watermark(out_of_order: 10s)`
+    Watermark(Vec<NamedArg>),
+    /// Allowed lateness for late data: `.allowed_lateness(30s)`
+    AllowedLateness(Expr),
 }
 
 /// A path in a fork construct

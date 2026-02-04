@@ -343,11 +343,14 @@ impl Tenant {
             let shared_event = std::sync::Arc::new(event);
             match orchestrator.try_process(shared_event) {
                 Ok(()) => {}
-                Err(crate::context::DispatchError::ChannelFull(event)) => {
-                    orchestrator
-                        .process(event)
-                        .await
-                        .map_err(|e| TenantError::EngineError(e.to_string()))?;
+                Err(crate::context::DispatchError::ChannelFull(msg)) => {
+                    // Extract the event from the ContextMessage and retry with await
+                    if let crate::context::ContextMessage::Event(event) = msg {
+                        orchestrator
+                            .process(event)
+                            .await
+                            .map_err(|e| TenantError::EngineError(e.to_string()))?;
+                    }
                 }
                 Err(crate::context::DispatchError::ChannelClosed(_)) => {
                     return Err(TenantError::EngineError(
