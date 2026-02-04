@@ -19,7 +19,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 use varpulis_core::ast::Program;
 use varpulis_parser::parse;
-use varpulis_runtime::{ContextOrchestrator, DispatchError, Engine, Event};
+use varpulis_runtime::{ContextMessage, ContextOrchestrator, DispatchError, Engine, Event};
 
 /// Load and parse a VPL program from `benchmarks/context/`.
 fn load_vpl(filename: &str) -> Program {
@@ -592,8 +592,10 @@ fn bench_dispatch_methods(c: &mut Criterion) {
                                 let shared = Arc::new(event.clone());
                                 match orchestrator.try_process(shared) {
                                     Ok(()) => {}
-                                    Err(DispatchError::ChannelFull(ev)) => {
-                                        orchestrator.process(ev).await.unwrap();
+                                    Err(DispatchError::ChannelFull(msg)) => {
+                                        if let ContextMessage::Event(ev) = msg {
+                                            orchestrator.process(ev).await.unwrap();
+                                        }
                                     }
                                     Err(DispatchError::ChannelClosed(_)) => break,
                                 }
@@ -639,8 +641,10 @@ fn bench_dispatch_methods(c: &mut Criterion) {
                                 let shared = Arc::new(event.clone());
                                 match router.dispatch(shared) {
                                     Ok(()) => {}
-                                    Err(DispatchError::ChannelFull(ev)) => {
-                                        router.dispatch_await(ev).await.unwrap();
+                                    Err(DispatchError::ChannelFull(msg)) => {
+                                        if let ContextMessage::Event(ev) = msg {
+                                            router.dispatch_await(ev).await.unwrap();
+                                        }
                                     }
                                     Err(DispatchError::ChannelClosed(_)) => break,
                                 }

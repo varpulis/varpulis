@@ -691,7 +691,7 @@ mod tests {
         let cp = buffer.checkpoint();
 
         // Verify the checkpoint has empty buffers
-        for (_source, keyed) in &cp.buffers {
+        for keyed in cp.buffers.values() {
             assert!(keyed.is_empty(), "Checkpoint buffers should be empty");
         }
 
