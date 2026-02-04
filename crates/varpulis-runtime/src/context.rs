@@ -12,7 +12,7 @@ use crate::event::{Event, SharedEvent};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, watch};
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 use varpulis_core::ast::{Program, Stmt, StreamSource};
 
 /// Configuration for a named context
@@ -230,9 +230,8 @@ impl ContextRuntime {
                         Some(event) => {
                             self.events_processed += 1;
 
-                            // Process the event through the engine
-                            let owned_event = (*event).clone();
-                            match self.engine.process(owned_event).await {
+                            // Process the event through the engine (zero-copy via SharedEvent)
+                            match self.engine.process_shared(Arc::clone(&event)).await {
                                 Ok(()) => {}
                                 Err(e) => {
                                     error!("Context '{}' processing error: {}", self.name, e);
@@ -273,6 +272,67 @@ impl ContextRuntime {
     }
 }
 
+/// Direct event-type-to-channel router for non-blocking dispatch.
+///
+/// Maps `event_type → Sender<SharedEvent>` directly (single HashMap lookup),
+/// uses `try_send()` for non-blocking dispatch, and is cheaply cloneable
+/// via `Arc<HashMap>` for multi-producer scenarios.
+#[derive(Clone)]
+pub struct EventTypeRouter {
+    routes: Arc<HashMap<String, mpsc::Sender<SharedEvent>>>,
+    default_tx: mpsc::Sender<SharedEvent>,
+}
+
+/// Errors returned by non-blocking dispatch methods.
+pub enum DispatchError {
+    /// Channel is full — caller should retry or use async dispatch
+    ChannelFull(SharedEvent),
+    /// Channel is closed — context has shut down
+    ChannelClosed(SharedEvent),
+}
+
+impl EventTypeRouter {
+    /// Non-blocking dispatch via `try_send()`.
+    ///
+    /// Routes the event to the correct context channel based on event type.
+    /// Returns immediately without waiting for channel capacity.
+    pub fn dispatch(&self, event: SharedEvent) -> Result<(), DispatchError> {
+        let tx = self
+            .routes
+            .get(&event.event_type)
+            .unwrap_or(&self.default_tx);
+        match tx.try_send(event) {
+            Ok(()) => Ok(()),
+            Err(mpsc::error::TrySendError::Full(event)) => Err(DispatchError::ChannelFull(event)),
+            Err(mpsc::error::TrySendError::Closed(event)) => {
+                Err(DispatchError::ChannelClosed(event))
+            }
+        }
+    }
+
+    /// Blocking dispatch via `send().await`.
+    ///
+    /// Waits for channel capacity if the channel is full.
+    pub async fn dispatch_await(&self, event: SharedEvent) -> Result<(), String> {
+        let event_type = event.event_type.clone();
+        let tx = self.routes.get(&event_type).unwrap_or(&self.default_tx);
+        tx.send(event)
+            .await
+            .map_err(|e| format!("Failed to send event type '{}': {}", event_type, e))
+    }
+
+    /// Batch dispatch — non-blocking, returns errors for any events that could not be sent.
+    pub fn dispatch_batch(&self, events: Vec<SharedEvent>) -> Vec<DispatchError> {
+        let mut errors = Vec::new();
+        for event in events {
+            if let Err(e) = self.dispatch(event) {
+                errors.push(e);
+            }
+        }
+        errors
+    }
+}
+
 /// Orchestrates multiple ContextRuntimes across OS threads.
 ///
 /// Routes incoming events to the correct context based on event type
@@ -282,12 +342,12 @@ pub struct ContextOrchestrator {
     context_txs: HashMap<String, mpsc::Sender<SharedEvent>>,
     /// Thread handles for each context
     handles: Vec<std::thread::JoinHandle<()>>,
-    /// Name of the default context (first declared, or "default")
-    default_context: String,
     /// event_type -> context_name routing table
     ingress_routing: HashMap<String, String>,
     /// Shutdown signal sender
     shutdown_tx: watch::Sender<bool>,
+    /// Direct event-type-to-channel router
+    router: EventTypeRouter,
 }
 
 impl ContextOrchestrator {
@@ -368,6 +428,22 @@ impl ContextOrchestrator {
             }
         }
 
+        // Build EventTypeRouter: event_type → Sender directly (single lookup)
+        let mut event_type_txs: HashMap<String, mpsc::Sender<SharedEvent>> = HashMap::new();
+        for (event_type, ctx_name) in &ingress_routing {
+            if let Some(tx) = context_txs.get(ctx_name) {
+                event_type_txs.insert(event_type.clone(), tx.clone());
+            }
+        }
+        let default_tx = context_txs
+            .get(&default_context)
+            .cloned()
+            .ok_or_else(|| format!("No channel for default context '{}'", default_context))?;
+        let router = EventTypeRouter {
+            routes: Arc::new(event_type_txs),
+            default_tx,
+        };
+
         // Clone context_map for use inside thread spawning
         let context_map_clone = context_map.clone();
 
@@ -441,31 +517,30 @@ impl ContextOrchestrator {
         Ok(Self {
             context_txs,
             handles,
-            default_context,
             ingress_routing,
             shutdown_tx,
+            router,
         })
     }
 
-    /// Route an incoming event to the correct context.
+    /// Route an incoming event to the correct context (async, waits on backpressure).
     pub async fn process(&self, event: SharedEvent) -> Result<(), String> {
-        let ctx_name = self
-            .ingress_routing
-            .get(&event.event_type)
-            .unwrap_or(&self.default_context);
+        self.router.dispatch_await(event).await
+    }
 
-        if let Some(tx) = self.context_txs.get(ctx_name) {
-            tx.send(event)
-                .await
-                .map_err(|e| format!("Failed to send event to context '{}': {}", ctx_name, e))?;
-        } else {
-            debug!(
-                "No context '{}' found for event type '{}', dropping event",
-                ctx_name, event.event_type
-            );
-        }
+    /// Non-blocking dispatch — returns `ChannelFull` instead of waiting.
+    pub fn try_process(&self, event: SharedEvent) -> Result<(), DispatchError> {
+        self.router.dispatch(event)
+    }
 
-        Ok(())
+    /// Batch dispatch — non-blocking, returns errors for events that could not be sent.
+    pub fn process_batch(&self, events: Vec<SharedEvent>) -> Vec<DispatchError> {
+        self.router.dispatch_batch(events)
+    }
+
+    /// Get a cloneable router handle for direct multi-producer dispatch.
+    pub fn router(&self) -> EventTypeRouter {
+        self.router.clone()
     }
 
     /// Shut down all context threads.

@@ -366,6 +366,8 @@ pub struct WindowArgs {
     pub duration: Expr,
     pub sliding: Option<Expr>,
     pub policy: Option<Expr>,
+    /// Session window gap duration (syntax: `.window(session: 5m)`)
+    pub session_gap: Option<Expr>,
 }
 
 /// Pattern definition

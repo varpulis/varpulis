@@ -208,7 +208,7 @@ first_op = { "first" ~ "(" ~ ")" }
 select_list = { select_item ~ ("," ~ select_item)* }
 select_item = { (identifier ~ ":" ~ expr) | identifier }
 
-window_args = { expr ~ ("," ~ "sliding" ~ ":" ~ expr)? ~ ("," ~ "policy" ~ ":" ~ expr)? }
+window_args = { "session" ~ ":" ~ expr | expr ~ ("," ~ "sliding" ~ ":" ~ expr)? ~ ("," ~ "policy" ~ ":" ~ expr)? }
 
 agg_list = { agg_item ~ ("," ~ agg_item)* }
 agg_item = { identifier ~ ":" ~ expr }
