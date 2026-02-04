@@ -1,0 +1,4 @@
+# Single stream baseline — no context orchestration overhead
+stream HighTemp = SensorReading
+    .where(temperature > 80.0)
+    .emit(sensor: sensor_id, temp: temperature)

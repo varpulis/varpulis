@@ -1,0 +1,38 @@
+# CPU-intensive windowed aggregation baseline — sequential single engine
+stream TempStats = TempReading
+    .partition_by(sensor_id)
+    .window(10)
+    .aggregate(
+        sensor_id: last(sensor_id),
+        avg_temp: avg(temperature),
+        min_temp: min(temperature),
+        max_temp: max(temperature),
+        reading_count: count()
+    )
+    .where(avg_temp > 60.0)
+    .emit(
+        sensor: sensor_id,
+        average: avg_temp,
+        minimum: min_temp,
+        maximum: max_temp,
+        count: reading_count
+    )
+
+stream PressureStats = PressureReading
+    .partition_by(sensor_id)
+    .window(10)
+    .aggregate(
+        sensor_id: last(sensor_id),
+        avg_press: avg(pressure),
+        min_press: min(pressure),
+        max_press: max(pressure),
+        reading_count: count()
+    )
+    .where(avg_press > 1020.0)
+    .emit(
+        sensor: sensor_id,
+        average: avg_press,
+        minimum: min_press,
+        maximum: max_press,
+        count: reading_count
+    )

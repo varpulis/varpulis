@@ -1,0 +1,19 @@
+# 3-stage cross-context pipeline: ingest -> compute -> alert
+context ingest
+context compute
+context alert
+
+stream Raw = SensorReading
+    .context(ingest)
+    .where(temperature > 0.0)
+    .emit(sensor: sensor_id, temp: temperature)
+
+stream Computed = Raw
+    .context(compute)
+    .where(temp > 50.0)
+    .emit(device: sensor, value: temp)
+
+stream Alert = Computed
+    .context(alert)
+    .where(value > 80.0)
+    .emit(critical_device: device, critical_value: value)

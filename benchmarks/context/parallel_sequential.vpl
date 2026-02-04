@@ -1,0 +1,8 @@
+# Two independent streams processed sequentially in one engine
+stream HighTemp = TempReading
+    .where(temperature > 80.0)
+    .emit(sensor: sensor_id, temp: temperature)
+
+stream HighPressure = PressureReading
+    .where(pressure > 1050.0)
+    .emit(sensor: sensor_id, press: pressure)
