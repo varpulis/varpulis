@@ -121,10 +121,6 @@ stream SuspiciousActivity = LoginStream as login
         severity: if failed_tx.amount > 1000 then "high" else "medium"
     )
 
-# Output suspicious activity alerts
-sink SuspiciousActivity to AuthKafka (topic: "security.alerts")
-sink SuspiciousActivity to console()
-
 # Runtime configuration
 config:
     mode: "low_latency"

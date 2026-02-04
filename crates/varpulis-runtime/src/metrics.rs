@@ -12,7 +12,7 @@ pub struct Metrics {
     registry: Arc<Registry>,
     pub events_total: CounterVec,
     pub events_processed: CounterVec,
-    pub alerts_total: CounterVec,
+    pub output_events_total: CounterVec,
     pub processing_latency: HistogramVec,
     pub stream_queue_size: GaugeVec,
     pub active_streams: Gauge,
@@ -34,11 +34,14 @@ impl Metrics {
         )
         .expect("failed to create events_processed counter");
 
-        let alerts_total = CounterVec::new(
-            Opts::new("varpulis_alerts_total", "Total alerts generated"),
-            &["alert_type", "severity"],
+        let output_events_total = CounterVec::new(
+            Opts::new(
+                "varpulis_output_events_total",
+                "Total output events emitted",
+            ),
+            &["stream", "event_type"],
         )
-        .expect("failed to create alerts_total counter");
+        .expect("failed to create output_events_total counter");
 
         let processing_latency = HistogramVec::new(
             HistogramOpts::new(
@@ -68,8 +71,8 @@ impl Metrics {
             .register(Box::new(events_processed.clone()))
             .expect("failed to register events_processed");
         registry
-            .register(Box::new(alerts_total.clone()))
-            .expect("failed to register alerts_total");
+            .register(Box::new(output_events_total.clone()))
+            .expect("failed to register output_events_total");
         registry
             .register(Box::new(processing_latency.clone()))
             .expect("failed to register processing_latency");
@@ -84,7 +87,7 @@ impl Metrics {
             registry: Arc::new(registry),
             events_total,
             events_processed,
-            alerts_total,
+            output_events_total,
             processing_latency,
             stream_queue_size,
             active_streams,
@@ -104,10 +107,10 @@ impl Metrics {
             .observe(latency_secs);
     }
 
-    /// Record an alert
-    pub fn record_alert(&self, alert_type: &str, severity: &str) {
-        self.alerts_total
-            .with_label_values(&[alert_type, severity])
+    /// Record an output event
+    pub fn record_output_event(&self, stream: &str, event_type: &str) {
+        self.output_events_total
+            .with_label_values(&[stream, event_type])
             .inc();
     }
 
@@ -182,12 +185,12 @@ mod tests {
         let metrics = Metrics::new();
         metrics.record_event("TestEvent");
         metrics.record_processing("test_stream", 0.001);
-        metrics.record_alert("test_alert", "warning");
+        metrics.record_output_event("test_stream", "TestOutput");
         metrics.set_stream_count(5);
 
         let output = metrics.gather();
         assert!(output.contains("varpulis_events_total"));
-        assert!(output.contains("varpulis_alerts_total"));
+        assert!(output.contains("varpulis_output_events_total"));
     }
 
     #[test]
@@ -209,13 +212,13 @@ mod tests {
     }
 
     #[test]
-    fn test_metrics_multiple_alerts() {
+    fn test_metrics_multiple_output_events() {
         let metrics = Metrics::new();
-        metrics.record_alert("critical", "high");
-        metrics.record_alert("warning", "medium");
-        metrics.record_alert("info", "low");
+        metrics.record_output_event("stream1", "OutputA");
+        metrics.record_output_event("stream1", "OutputB");
+        metrics.record_output_event("stream2", "OutputC");
         let output = metrics.gather();
-        assert!(output.contains("varpulis_alerts_total"));
+        assert!(output.contains("varpulis_output_events_total"));
     }
 
     #[test]
@@ -281,26 +284,26 @@ mod tests {
         metrics.record_event("TemperatureReading");
         metrics.record_event("TemperatureReading");
         metrics.record_event("HumidityReading");
-        metrics.record_event("Alert");
+        metrics.record_event("PressureReading");
 
         let output = metrics.gather();
         assert!(output.contains("TemperatureReading"));
         assert!(output.contains("HumidityReading"));
-        assert!(output.contains("Alert"));
+        assert!(output.contains("PressureReading"));
     }
 
     #[test]
-    fn test_metrics_alert_severities() {
+    fn test_metrics_output_event_streams() {
         let metrics = Metrics::new();
 
-        metrics.record_alert("temperature_high", "critical");
-        metrics.record_alert("humidity_low", "warning");
-        metrics.record_alert("system_health", "info");
+        metrics.record_output_event("HighTempAlert", "HighTemp");
+        metrics.record_output_event("HumidityAlert", "LowHumidity");
+        metrics.record_output_event("SystemHealth", "HealthCheck");
 
         let output = metrics.gather();
-        assert!(output.contains("critical"));
-        assert!(output.contains("warning"));
-        assert!(output.contains("info"));
+        assert!(output.contains("HighTempAlert"));
+        assert!(output.contains("HumidityAlert"));
+        assert!(output.contains("SystemHealth"));
     }
 
     #[test]

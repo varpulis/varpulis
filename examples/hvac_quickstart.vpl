@@ -4,7 +4,6 @@
 # This simplified example demonstrates the new syntax:
 # - Connector declarations with explicit configuration
 # - Streams with EventType.from(Connector, topic: "...")
-# - Sink statements with .to() or separate sink declarations
 # - No redundant event_type in .emit()
 
 # =============================================================================
@@ -123,9 +122,21 @@ stream AllAlerts = merge(
     ZoneOverheating
 )
 
-# Send alerts to Kafka and console
-sink AllAlerts to KafkaAlerts (topic: "alerts.hvac")
-sink AllAlerts to console()
+# =============================================================================
+# Step 7: Route output to connectors with .to()
+# =============================================================================
+
+# Send all alerts to Kafka
+stream AlertsToKafka = AllAlerts
+    .to(KafkaAlerts)
+
+# Send critical zone overheating alerts to a webhook
+connector AlertWebhook = http (
+    url: "https://hooks.example.com/hvac-alerts"
+)
+
+stream CriticalToWebhook = ZoneOverheating
+    .to(AlertWebhook)
 
 # =============================================================================
 # That's it! Run with:
@@ -134,6 +145,6 @@ sink AllAlerts to console()
 # Key syntax changes from old version:
 # - connector Name = type (params...)  instead of config block
 # - EventType.from(Connector, topic)   instead of stream from EventType
-# - sink X to Connector (params)       instead of .to("mqtt://...")
 # - Stream name IS the output type     no redundant event_type in emit
+# - .to(Connector)                     routes output to external systems
 # =============================================================================

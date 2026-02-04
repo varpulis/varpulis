@@ -43,7 +43,7 @@
 | `order_by` | Sorting |
 | `limit` | Limitation |
 | `distinct` | Deduplication |
-| `emit` | Emit to sink |
+| `emit` | Emit output events |
 
 ## Patterns and Attention
 

@@ -7,8 +7,8 @@
 //! When no contexts are declared, the engine runs in single-threaded mode with zero
 //! overhead (backward compatible).
 
-use crate::engine::{Alert, Engine};
-use crate::event::SharedEvent;
+use crate::engine::Engine;
+use crate::event::{Event, SharedEvent};
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
@@ -94,11 +94,11 @@ impl ContextMap {
 pub struct ContextRuntime {
     name: String,
     engine: Engine,
-    alert_tx: mpsc::Sender<Alert>,
+    output_tx: mpsc::Sender<Event>,
     event_rx: mpsc::Receiver<SharedEvent>,
     cross_context_tx: HashMap<String, mpsc::Sender<SharedEvent>>,
     events_processed: u64,
-    alerts_generated: u64,
+    output_events_emitted: u64,
 }
 
 impl ContextRuntime {
@@ -106,18 +106,18 @@ impl ContextRuntime {
     pub fn new(
         name: String,
         engine: Engine,
-        alert_tx: mpsc::Sender<Alert>,
+        output_tx: mpsc::Sender<Event>,
         event_rx: mpsc::Receiver<SharedEvent>,
         cross_context_tx: HashMap<String, mpsc::Sender<SharedEvent>>,
     ) -> Self {
         Self {
             name,
             engine,
-            alert_tx,
+            output_tx,
             event_rx,
             cross_context_tx,
             events_processed: 0,
-            alerts_generated: 0,
+            output_events_emitted: 0,
         }
     }
 
@@ -176,7 +176,7 @@ impl ContextOrchestrator {
     pub fn build(
         context_map: &ContextMap,
         program: &varpulis_core::ast::Program,
-        alert_tx: mpsc::Sender<Alert>,
+        output_tx: mpsc::Sender<Event>,
         channel_capacity: usize,
     ) -> Result<Self, String> {
         let mut context_txs: HashMap<String, mpsc::Sender<SharedEvent>> = HashMap::new();
@@ -222,7 +222,7 @@ impl ContextOrchestrator {
                 .remove(ctx_name)
                 .ok_or_else(|| format!("No receiver for context {}", ctx_name))?;
 
-            let ctx_alert_tx = alert_tx.clone();
+            let ctx_output_tx = output_tx.clone();
             let ctx_name_clone = ctx_name.clone();
             let cores = config.cores.clone();
 
@@ -252,17 +252,20 @@ impl ContextOrchestrator {
 
                     rt.block_on(async move {
                         // Create engine for this context
-                        let (engine_alert_tx, mut _engine_alert_rx) = mpsc::channel(1000);
-                        let mut engine = Engine::new(engine_alert_tx);
+                        let (engine_output_tx, mut _engine_output_rx) = mpsc::channel(1000);
+                        let mut engine = Engine::new(engine_output_tx);
                         if let Err(e) = engine.load(&program_clone) {
-                            error!("Failed to load program for context '{}': {}", ctx_name_clone, e);
+                            error!(
+                                "Failed to load program for context '{}': {}",
+                                ctx_name_clone, e
+                            );
                             return;
                         }
 
                         let mut ctx_runtime = ContextRuntime::new(
                             ctx_name_clone,
                             engine,
-                            ctx_alert_tx,
+                            ctx_output_tx,
                             rx,
                             cross_tx,
                         );
@@ -353,10 +356,7 @@ impl ContextOrchestrator {
             if let Some(&first_core) = core_ids.first() {
                 let core_id = CoreId { id: first_core };
                 if core_affinity::set_for_current(core_id) {
-                    info!(
-                        "Context '{}' pinned to core {}",
-                        ctx_name, first_core
-                    );
+                    info!("Context '{}' pinned to core {}", ctx_name, first_core);
                 } else {
                     warn!(
                         "Failed to pin context '{}' to core {}",

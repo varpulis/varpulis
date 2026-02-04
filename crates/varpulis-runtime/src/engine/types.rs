@@ -12,7 +12,6 @@ use crate::window::{
     SlidingWindow, TumblingWindow,
 };
 use indexmap::IndexMap;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use varpulis_core::ast::ConfigValue;
@@ -21,15 +20,6 @@ use varpulis_core::Value;
 // =============================================================================
 // Public Types (exported from crate)
 // =============================================================================
-
-/// Alert emitted by the engine
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Alert {
-    pub alert_type: String,
-    pub severity: String,
-    pub message: String,
-    pub data: IndexMap<String, Value>,
-}
 
 /// Configuration block parsed from VPL
 #[derive(Debug, Clone)]
@@ -51,7 +41,7 @@ pub struct UserFunction {
 #[derive(Debug, Clone)]
 pub struct EngineMetrics {
     pub events_processed: u64,
-    pub alerts_generated: u64,
+    pub output_events_emitted: u64,
     pub streams_count: usize,
 }
 
@@ -78,6 +68,14 @@ impl ReloadReport {
             && self.streams_removed.is_empty()
             && self.streams_updated.is_empty()
     }
+}
+
+/// Source connector binding from .from() declarations
+#[derive(Debug, Clone)]
+pub struct SourceBinding {
+    pub connector_name: String,
+    pub event_type: String,
+    pub topic_override: Option<String>,
 }
 
 // =============================================================================
@@ -174,6 +172,17 @@ pub(crate) enum RuntimeOp {
     AttentionWindow(AttentionWindowConfig),
     /// Pattern matching with lambda expression
     Pattern(PatternConfig),
+    /// Send to connector: `.to(ConnectorName)`
+    To(ToConfig),
+}
+
+/// Configuration for .to() connector routing
+pub(crate) struct ToConfig {
+    pub connector_name: String,
+    /// Topic override from .to() params (e.g., `.to(Conn, topic: "my-topic")`)
+    pub topic_override: Option<String>,
+    /// Cache key for sink lookup (connector_name or connector_name::topic)
+    pub sink_key: String,
 }
 
 /// Configuration for select/projection operation
@@ -182,9 +191,10 @@ pub(crate) struct SelectConfig {
     pub fields: Vec<(String, varpulis_core::ast::Expr)>,
 }
 
-/// Result of processing a stream: alerts to emit and output events for dependent streams
+/// Result of processing a stream
 pub(crate) struct StreamProcessResult {
-    pub alerts: Vec<Alert>,
+    /// Events produced by .emit() — sent to output channel AND downstream
+    pub emitted_events: Vec<SharedEvent>,
     /// Output events to feed to dependent streams (with stream name as event_type)
     pub output_events: Vec<SharedEvent>,
     /// Events destined for a different context: (target_context, event)

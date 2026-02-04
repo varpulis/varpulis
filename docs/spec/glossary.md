@@ -97,8 +97,8 @@ Embedded key-value database, used for state persistence.
 
 ## S
 
-### Sink
-Final destination of processed events (Kafka, HTTP, file, etc.).
+### Output Connector
+Final destination of processed events, routed via `.to()` (Kafka, HTTP, file, etc.).
 
 ### Source
 Origin of events (Kafka, file, HTTP, etc.).

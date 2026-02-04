@@ -1,6 +1,6 @@
 # VarpulisQL Connectors
 
-This document describes how to connect Varpulis to external systems for both event ingestion (sources) and result publishing (sinks).
+This document describes how to connect Varpulis to external systems for both event ingestion (sources) and output routing via `.to()`.
 
 ## Overview
 

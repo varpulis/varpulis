@@ -1,0 +1,32 @@
+connector MqttSensors = mqtt(
+    host: "mosquitto",
+    port: 1883,
+    client_id: "hvac-engine"
+)
+
+connector KafkaAlerts = kafka(
+    brokers: "kafka:29092"
+)
+
+stream Temperatures = TemperatureReading
+    .from(MqttSensors, topic: "varpulis/events/TemperatureReading")
+
+stream HighTempAlert = Temperatures
+    .where(value > 28)
+    .emit(
+        alert_type: "HIGH_TEMPERATURE",
+        zone: zone,
+        sensor: sensor_id,
+        temperature: value
+    )
+    .to(KafkaAlerts, topic: "hvac-alerts")
+
+stream LowTempAlert = Temperatures
+    .where(value < 16)
+    .emit(
+        alert_type: "LOW_TEMPERATURE",
+        zone: zone,
+        sensor: sensor_id,
+        temperature: value
+    )
+    .to(KafkaAlerts, topic: "hvac-alerts")

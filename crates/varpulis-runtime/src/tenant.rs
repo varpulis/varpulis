@@ -3,7 +3,7 @@
 //! Provides tenant-scoped engine instances with resource limits and usage tracking.
 
 use crate::context::ContextOrchestrator;
-use crate::engine::{Alert, Engine};
+use crate::engine::Engine;
 use crate::event::Event;
 use crate::persistence::{StateStore, StoreError};
 use serde::{Deserialize, Serialize};
@@ -99,8 +99,8 @@ pub struct TenantUsage {
     pub window_start: Option<Instant>,
     /// Number of active pipelines
     pub active_pipelines: usize,
-    /// Total alerts generated
-    pub alerts_generated: u64,
+    /// Total output events emitted
+    pub output_events_emitted: u64,
 }
 
 impl TenantUsage {
@@ -124,8 +124,8 @@ impl TenantUsage {
         true
     }
 
-    pub fn record_alert(&mut self) {
-        self.alerts_generated += 1;
+    pub fn record_output_event(&mut self) {
+        self.output_events_emitted += 1;
     }
 }
 
@@ -139,8 +139,8 @@ pub struct Pipeline {
     pub source: String,
     /// The engine running this pipeline
     pub engine: Engine,
-    /// Alert receiver for this pipeline
-    pub alert_rx: mpsc::Receiver<Alert>,
+    /// Output event receiver for this pipeline
+    pub output_rx: mpsc::Receiver<Event>,
     /// When the pipeline was created
     pub created_at: Instant,
     /// Pipeline status
@@ -261,9 +261,9 @@ impl Tenant {
         }
 
         // Create a new engine
-        let (alert_tx, alert_rx) = mpsc::channel(1000);
-        let alert_tx_for_ctx = alert_tx.clone();
-        let mut engine = Engine::new(alert_tx);
+        let (output_tx, output_rx) = mpsc::channel(1000);
+        let output_tx_for_ctx = output_tx.clone();
+        let mut engine = Engine::new(output_tx);
         engine
             .load(&program)
             .map_err(|e| TenantError::EngineError(e.to_string()))?;
@@ -273,7 +273,7 @@ impl Tenant {
             match ContextOrchestrator::build(
                 engine.context_map(),
                 &program,
-                alert_tx_for_ctx,
+                output_tx_for_ctx,
                 1000,
             ) {
                 Ok(orch) => Some(orch),
@@ -294,7 +294,7 @@ impl Tenant {
             name,
             source,
             engine,
-            alert_rx,
+            output_rx,
             created_at: Instant::now(),
             status: PipelineStatus::Running,
             orchestrator,
@@ -320,7 +320,7 @@ impl Tenant {
         &mut self,
         pipeline_id: &str,
         event: Event,
-    ) -> Result<(), TenantError> {
+    ) -> Result<Vec<Event>, TenantError> {
         // Check rate limit
         if !self.usage.record_event(self.quota.max_events_per_second) {
             return Err(TenantError::RateLimitExceeded);
@@ -354,7 +354,13 @@ impl Tenant {
                 .map_err(|e| TenantError::EngineError(e.to_string()))?;
         }
 
-        Ok(())
+        // Drain output events from the channel
+        let mut output_events = Vec::new();
+        while let Ok(ev) = pipeline.output_rx.try_recv() {
+            output_events.push(ev);
+        }
+
+        Ok(output_events)
     }
 
     /// Reload a pipeline with new VPL source
@@ -579,8 +585,8 @@ impl TenantManager {
         if !ids.contains(&id_str) {
             ids.push(id_str);
         }
-        let data = serde_json::to_vec(&ids)
-            .map_err(|e| StoreError::SerializationError(e.to_string()))?;
+        let data =
+            serde_json::to_vec(&ids).map_err(|e| StoreError::SerializationError(e.to_string()))?;
         store.put("tenants:index", &data)
     }
 
@@ -590,8 +596,8 @@ impl TenantManager {
     ) -> Result<(), StoreError> {
         let mut ids = Self::load_tenant_index(store)?;
         ids.retain(|id| id != tenant_id);
-        let data = serde_json::to_vec(&ids)
-            .map_err(|e| StoreError::SerializationError(e.to_string()))?;
+        let data =
+            serde_json::to_vec(&ids).map_err(|e| StoreError::SerializationError(e.to_string()))?;
         store.put("tenants:index", &data)
     }
 
@@ -606,14 +612,9 @@ impl TenantManager {
     fn restore_tenant_from_snapshot(snapshot: TenantSnapshot) -> Result<Tenant, TenantError> {
         let tenant_id = TenantId::new(&snapshot.id);
 
-        let mut tenant = Tenant::new(
-            tenant_id,
-            snapshot.name,
-            snapshot.api_key,
-            snapshot.quota,
-        );
+        let mut tenant = Tenant::new(tenant_id, snapshot.name, snapshot.api_key, snapshot.quota);
         tenant.usage.events_processed = snapshot.events_processed;
-        tenant.usage.alerts_generated = snapshot.alerts_generated;
+        tenant.usage.output_events_emitted = snapshot.output_events_emitted;
         tenant.usage.events_in_window = snapshot.events_in_window;
 
         let mut pipeline_failures = Vec::new();
@@ -640,8 +641,8 @@ impl TenantManager {
         let program = varpulis_parser::parse(&snapshot.source)
             .map_err(|e| TenantError::ParseError(e.to_string()))?;
 
-        let (alert_tx, alert_rx) = mpsc::channel(1000);
-        let mut engine = Engine::new(alert_tx);
+        let (output_tx, output_rx) = mpsc::channel(1000);
+        let mut engine = Engine::new(output_tx);
         engine
             .load(&program)
             .map_err(|e| TenantError::EngineError(e.to_string()))?;
@@ -651,7 +652,7 @@ impl TenantManager {
             name: snapshot.name,
             source: snapshot.source,
             engine,
-            alert_rx,
+            output_rx,
             created_at: Instant::now(),
             status: snapshot.status,
             orchestrator: None,
@@ -702,7 +703,8 @@ pub struct TenantSnapshot {
     pub api_key: String,
     pub quota: TenantQuota,
     pub events_processed: u64,
-    pub alerts_generated: u64,
+    #[serde(alias = "alerts_generated")]
+    pub output_events_emitted: u64,
     pub pipelines: Vec<PipelineSnapshot>,
     #[serde(default)]
     pub created_at_ms: Option<i64>,
@@ -740,7 +742,7 @@ impl Tenant {
             api_key: self.api_key.clone(),
             quota: self.quota.clone(),
             events_processed: self.usage.events_processed,
-            alerts_generated: self.usage.alerts_generated,
+            output_events_emitted: self.usage.output_events_emitted,
             pipelines: self.pipelines.values().map(|p| p.snapshot()).collect(),
             created_at_ms: Some(chrono::Utc::now().timestamp_millis()),
             events_in_window: self.usage.events_in_window,
@@ -1029,9 +1031,11 @@ mod tests {
 
         let tenant = mgr.get_tenant_mut(&id).unwrap();
         let vpl = "stream A = SensorReading .where(x > 1)";
-        tenant.deploy_pipeline("Pipeline1".into(), vpl.into()).unwrap();
+        tenant
+            .deploy_pipeline("Pipeline1".into(), vpl.into())
+            .unwrap();
         tenant.usage.events_processed = 42;
-        tenant.usage.alerts_generated = 7;
+        tenant.usage.output_events_emitted = 7;
 
         let snapshot = tenant.snapshot();
         let json = serde_json::to_vec(&snapshot).unwrap();
@@ -1041,12 +1045,15 @@ mod tests {
         assert_eq!(restored.name, "Snap Corp");
         assert_eq!(restored.api_key, "snap-key");
         assert_eq!(restored.events_processed, 42);
-        assert_eq!(restored.alerts_generated, 7);
+        assert_eq!(restored.output_events_emitted, 7);
         assert_eq!(restored.pipelines.len(), 1);
         assert_eq!(restored.pipelines[0].name, "Pipeline1");
         assert_eq!(restored.pipelines[0].source, vpl);
         assert_eq!(restored.pipelines[0].status, PipelineStatus::Running);
-        assert_eq!(restored.quota.max_pipelines, TenantQuota::pro().max_pipelines);
+        assert_eq!(
+            restored.quota.max_pipelines,
+            TenantQuota::pro().max_pipelines
+        );
     }
 
     #[test]
@@ -1060,13 +1067,19 @@ mod tests {
         let (tenant_id, pipeline_name) = {
             let mut mgr = TenantManager::with_store(Arc::clone(&store));
             let id = mgr
-                .create_tenant("Persisted Corp".into(), "persist-key".into(), TenantQuota::default())
+                .create_tenant(
+                    "Persisted Corp".into(),
+                    "persist-key".into(),
+                    TenantQuota::default(),
+                )
                 .unwrap();
 
             let tenant = mgr.get_tenant_mut(&id).unwrap();
-            tenant.deploy_pipeline("Persistent Pipeline".into(), vpl.into()).unwrap();
+            tenant
+                .deploy_pipeline("Persistent Pipeline".into(), vpl.into())
+                .unwrap();
             tenant.usage.events_processed = 100;
-            tenant.usage.alerts_generated = 5;
+            tenant.usage.output_events_emitted = 5;
             mgr.persist_if_needed(&id);
 
             (id.0.clone(), "Persistent Pipeline".to_string())
@@ -1084,7 +1097,7 @@ mod tests {
         assert_eq!(tenant.name, "Persisted Corp");
         assert_eq!(tenant.api_key, "persist-key");
         assert_eq!(tenant.usage.events_processed, 100);
-        assert_eq!(tenant.usage.alerts_generated, 5);
+        assert_eq!(tenant.usage.output_events_emitted, 5);
         assert_eq!(tenant.pipelines.len(), 1);
 
         let pipeline = tenant.pipelines.values().next().unwrap();
@@ -1093,10 +1106,7 @@ mod tests {
         assert_eq!(pipeline.status, PipelineStatus::Running);
 
         // Verify API key index was rebuilt
-        assert_eq!(
-            mgr2.get_tenant_by_api_key("persist-key"),
-            Some(&tid)
-        );
+        assert_eq!(mgr2.get_tenant_by_api_key("persist-key"), Some(&tid));
     }
 
     #[test]
@@ -1151,7 +1161,11 @@ mod tests {
     fn test_tenant_snapshot_created_at_and_window() {
         let mut mgr = TenantManager::new();
         let id = mgr
-            .create_tenant("Window Corp".into(), "window-key".into(), TenantQuota::default())
+            .create_tenant(
+                "Window Corp".into(),
+                "window-key".into(),
+                TenantQuota::default(),
+            )
             .unwrap();
 
         let tenant = mgr.get_tenant_mut(&id).unwrap();
@@ -1176,8 +1190,7 @@ mod tests {
         assert_eq!(restored.created_at_ms, snapshot.created_at_ms);
 
         // Restore tenant and verify events_in_window is carried over
-        let restored_tenant =
-            TenantManager::restore_tenant_from_snapshot(restored).unwrap();
+        let restored_tenant = TenantManager::restore_tenant_from_snapshot(restored).unwrap();
         assert_eq!(restored_tenant.usage.events_in_window, 42);
         assert_eq!(restored_tenant.usage.events_processed, 100);
     }
@@ -1226,7 +1239,7 @@ mod tests {
             api_key: "bad-key".into(),
             quota: TenantQuota::default(),
             events_processed: 0,
-            alerts_generated: 0,
+            output_events_emitted: 0,
             pipelines: vec![PipelineSnapshot {
                 id: "bad-pipeline".into(),
                 name: "Bad Pipeline".into(),

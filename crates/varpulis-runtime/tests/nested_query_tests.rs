@@ -6,8 +6,8 @@
 use tokio::sync::mpsc;
 use varpulis_core::Value;
 use varpulis_parser::parse;
-use varpulis_runtime::engine::{Alert, Engine};
-use varpulis_runtime::Event;
+use varpulis_runtime::engine::Engine;
+use varpulis_runtime::event::Event;
 
 /// Helper to create an event with data
 fn make_event(event_type: &str, data: Vec<(&str, Value)>) -> Event {
@@ -31,8 +31,8 @@ async fn test_basic_stream_reference() {
 
     let program = parse(code).expect("Failed to parse");
 
-    let (alert_tx, _alert_rx) = mpsc::channel::<Alert>(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, _output_rx) = mpsc::channel::<Event>(100);
+    let mut engine = Engine::new(output_tx);
     engine.load(&program).expect("Failed to load program");
 
     // Send IBM tick - should pass through both streams
@@ -83,8 +83,8 @@ async fn test_three_stage_pipeline() {
 
     let program = parse(code).expect("Failed to parse");
 
-    let (alert_tx, _alert_rx) = mpsc::channel::<Alert>(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, _output_rx) = mpsc::channel::<Event>(100);
+    let mut engine = Engine::new(output_tx);
     engine.load(&program).expect("Failed to load program");
 
     // Send events that pass the filter (price > 100)
@@ -104,8 +104,8 @@ async fn test_three_stage_pipeline() {
 }
 
 #[tokio::test]
-async fn test_nested_with_alert() {
-    // Nested stream that generates alerts
+async fn test_nested_with_output_event() {
+    // Nested stream that generates output events
     let code = r#"
         stream Ticks from Tick
 
@@ -122,8 +122,8 @@ async fn test_nested_with_alert() {
 
     let program = parse(code).expect("Failed to parse");
 
-    let (alert_tx, mut alert_rx) = mpsc::channel::<Alert>(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, mut output_rx) = mpsc::channel::<Event>(100);
+    let mut engine = Engine::new(output_tx);
     engine.load(&program).expect("Failed to load program");
 
     // Send high price tick
@@ -137,9 +137,9 @@ async fn test_nested_with_alert() {
 
     engine.process(tick).await.expect("Process should succeed");
 
-    // Check alert was generated
-    let alert = alert_rx.try_recv();
-    assert!(alert.is_ok(), "Should receive an alert");
+    // Check output event was generated
+    let output = output_rx.try_recv();
+    assert!(output.is_ok(), "Should receive an output event");
 }
 
 #[tokio::test]
@@ -157,8 +157,8 @@ async fn test_parallel_derived_streams() {
 
     let program = parse(code).expect("Failed to parse");
 
-    let (alert_tx, _alert_rx) = mpsc::channel::<Alert>(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, _output_rx) = mpsc::channel::<Event>(100);
+    let mut engine = Engine::new(output_tx);
     engine.load(&program).expect("Failed to load program");
 
     // Send ticks at different price levels
@@ -186,8 +186,8 @@ async fn test_diamond_dependency() {
 
     let program = parse(code).expect("Failed to parse");
 
-    let (alert_tx, _alert_rx) = mpsc::channel::<Alert>(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, _output_rx) = mpsc::channel::<Event>(100);
+    let mut engine = Engine::new(output_tx);
     engine.load(&program).expect("Failed to load program");
 
     // Send events
@@ -220,8 +220,8 @@ async fn test_deep_nesting() {
 
     let program = parse(code).expect("Failed to parse");
 
-    let (alert_tx, _alert_rx) = mpsc::channel::<Alert>(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, _output_rx) = mpsc::channel::<Event>(100);
+    let mut engine = Engine::new(output_tx);
     engine.load(&program).expect("Failed to load program");
 
     // Event with level 5 should pass all stages
@@ -253,8 +253,8 @@ async fn test_nested_with_aggregation_window() {
 
     let program = parse(code).expect("Failed to parse");
 
-    let (alert_tx, _alert_rx) = mpsc::channel::<Alert>(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, _output_rx) = mpsc::channel::<Event>(100);
+    let mut engine = Engine::new(output_tx);
     engine.load(&program).expect("Failed to load program");
 
     // Send big trades
@@ -290,8 +290,8 @@ async fn test_nested_with_partition() {
 
     let program = parse(code).expect("Failed to parse");
 
-    let (alert_tx, _alert_rx) = mpsc::channel::<Alert>(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, _output_rx) = mpsc::channel::<Event>(100);
+    let mut engine = Engine::new(output_tx);
     engine.load(&program).expect("Failed to load program");
 
     // Send orders from different customers
@@ -324,8 +324,8 @@ async fn test_stream_from_event_type_vs_stream() {
 
     let program = parse(code).expect("Failed to parse");
 
-    let (alert_tx, _alert_rx) = mpsc::channel::<Alert>(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, _output_rx) = mpsc::channel::<Event>(100);
+    let mut engine = Engine::new(output_tx);
     engine.load(&program).expect("Failed to load program");
 
     let reading = make_event(
@@ -364,8 +364,8 @@ async fn test_chained_transforms() {
 
     let program = parse(code).expect("Failed to parse");
 
-    let (alert_tx, _alert_rx) = mpsc::channel::<Alert>(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, _output_rx) = mpsc::channel::<Event>(100);
+    let mut engine = Engine::new(output_tx);
     engine.load(&program).expect("Failed to load program");
 
     let measurement = make_event(

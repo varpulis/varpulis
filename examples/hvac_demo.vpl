@@ -459,10 +459,6 @@ stream AllAlerts = merge(
     )
     .emit()
 
-# Output alerts to external systems
-sink AllAlerts to KafkaAlerts (topic: "hvac-alerts")
-sink AllAlerts to BuildingAPI (endpoint: "/alerts", method: "POST")
-
 # =============================================================================
 # CONFIGURATION
 # =============================================================================

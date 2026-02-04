@@ -173,9 +173,3 @@ stream Transformed = MeasurementStream
     })
     .emit(normalized: normalized, category: category)
 
-# =============================================================================
-# SINK STATEMENTS
-# =============================================================================
-
-sink CriticalAlerts to DataKafka (topic: "critical-alerts")
-sink Statistics to console()

@@ -3,9 +3,9 @@
 use std::time::Duration;
 use tokio::sync::mpsc;
 use varpulis_parser::parse;
-use varpulis_runtime::engine::{Alert, Engine};
+use varpulis_runtime::engine::Engine;
+use varpulis_runtime::event::Event;
 use varpulis_runtime::timer::TimerManager;
-use varpulis_runtime::Event;
 
 #[tokio::test]
 async fn test_timer_stream_parsing_and_registration() {
@@ -16,8 +16,8 @@ async fn test_timer_stream_parsing_and_registration() {
 
     let program = parse(code).expect("Failed to parse");
 
-    let (alert_tx, _alert_rx) = mpsc::channel::<Alert>(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, _output_rx) = mpsc::channel::<Event>(100);
+    let mut engine = Engine::new(output_tx);
     engine.load(&program).expect("Failed to load program");
 
     // Check that timer was registered
@@ -39,8 +39,8 @@ async fn test_timer_with_initial_delay() {
 
     let program = parse(code).expect("Failed to parse");
 
-    let (alert_tx, _alert_rx) = mpsc::channel::<Alert>(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, _output_rx) = mpsc::channel::<Event>(100);
+    let mut engine = Engine::new(output_tx);
     engine.load(&program).expect("Failed to load program");
 
     let timers = engine.get_timers();
@@ -170,8 +170,8 @@ async fn test_timer_event_processing_through_engine() {
 
     let program = parse(code).expect("Failed to parse");
 
-    let (alert_tx, _alert_rx) = mpsc::channel::<Alert>(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, _output_rx) = mpsc::channel::<Event>(100);
+    let mut engine = Engine::new(output_tx);
     engine.load(&program).expect("Failed to load program");
 
     // Create a timer event manually and process it

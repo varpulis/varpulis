@@ -3,7 +3,8 @@
 use tokio::sync::mpsc;
 use varpulis_core::Value;
 use varpulis_parser::parse;
-use varpulis_runtime::engine::{Alert, Engine};
+use varpulis_runtime::engine::Engine;
+use varpulis_runtime::event::Event;
 
 #[tokio::test]
 async fn test_var_declaration() {
@@ -13,8 +14,8 @@ async fn test_var_declaration() {
 
     let program = parse(code).expect("Failed to parse");
 
-    let (alert_tx, _alert_rx) = mpsc::channel::<Alert>(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, _output_rx) = mpsc::channel::<Event>(100);
+    let mut engine = Engine::new(output_tx);
     engine.load(&program).expect("Failed to load program");
 
     // Check that variable was registered
@@ -31,8 +32,8 @@ async fn test_let_declaration() {
 
     let program = parse(code).expect("Failed to parse");
 
-    let (alert_tx, _alert_rx) = mpsc::channel::<Alert>(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, _output_rx) = mpsc::channel::<Event>(100);
+    let mut engine = Engine::new(output_tx);
     engine.load(&program).expect("Failed to load program");
 
     let value = engine.get_variable("max_count");
@@ -49,8 +50,8 @@ async fn test_assignment_to_mutable_var() {
 
     let program = parse(code).expect("Failed to parse");
 
-    let (alert_tx, _alert_rx) = mpsc::channel::<Alert>(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, _output_rx) = mpsc::channel::<Event>(100);
+    let mut engine = Engine::new(output_tx);
     engine.load(&program).expect("Failed to load program");
 
     let value = engine.get_variable("counter");
@@ -67,8 +68,8 @@ async fn test_assignment_to_immutable_var_fails() {
 
     let program = parse(code).expect("Failed to parse");
 
-    let (alert_tx, _alert_rx) = mpsc::channel::<Alert>(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, _output_rx) = mpsc::channel::<Event>(100);
+    let mut engine = Engine::new(output_tx);
     let result = engine.load(&program);
 
     assert!(
@@ -88,8 +89,8 @@ async fn test_assignment_with_expression() {
 
     let program = parse(code).expect("Failed to parse");
 
-    let (alert_tx, _alert_rx) = mpsc::channel::<Alert>(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, _output_rx) = mpsc::channel::<Event>(100);
+    let mut engine = Engine::new(output_tx);
     engine.load(&program).expect("Failed to load program");
 
     let value = engine.get_variable("base");
@@ -106,8 +107,8 @@ async fn test_implicit_mutable_on_first_assignment() {
 
     let program = parse(code).expect("Failed to parse");
 
-    let (alert_tx, _alert_rx) = mpsc::channel::<Alert>(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, _output_rx) = mpsc::channel::<Event>(100);
+    let mut engine = Engine::new(output_tx);
     engine.load(&program).expect("Failed to load program");
 
     let value = engine.get_variable("new_var");
@@ -126,8 +127,8 @@ async fn test_multiple_assignments() {
 
     let program = parse(code).expect("Failed to parse");
 
-    let (alert_tx, _alert_rx) = mpsc::channel::<Alert>(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, _output_rx) = mpsc::channel::<Event>(100);
+    let mut engine = Engine::new(output_tx);
     engine.load(&program).expect("Failed to load program");
 
     let value = engine.get_variable("counter");
@@ -145,8 +146,8 @@ async fn test_var_with_float_expression() {
 
     let program = parse(code).expect("Failed to parse");
 
-    let (alert_tx, _alert_rx) = mpsc::channel::<Alert>(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, _output_rx) = mpsc::channel::<Event>(100);
+    let mut engine = Engine::new(output_tx);
     engine.load(&program).expect("Failed to load program");
 
     let area = engine.get_variable("area");
@@ -170,8 +171,8 @@ async fn test_var_with_string() {
 
     let program = parse(code).expect("Failed to parse");
 
-    let (alert_tx, _alert_rx) = mpsc::channel::<Alert>(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, _output_rx) = mpsc::channel::<Event>(100);
+    let mut engine = Engine::new(output_tx);
     engine.load(&program).expect("Failed to load program");
 
     let value = engine.get_variable("message");
@@ -188,8 +189,8 @@ async fn test_var_with_bool() {
 
     let program = parse(code).expect("Failed to parse");
 
-    let (alert_tx, _alert_rx) = mpsc::channel::<Alert>(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, _output_rx) = mpsc::channel::<Event>(100);
+    let mut engine = Engine::new(output_tx);
     engine.load(&program).expect("Failed to load program");
 
     let value = engine.get_variable("enabled");
@@ -207,8 +208,8 @@ async fn test_variables_api() {
 
     let program = parse(code).expect("Failed to parse");
 
-    let (alert_tx, _alert_rx) = mpsc::channel::<Alert>(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, _output_rx) = mpsc::channel::<Event>(100);
+    let mut engine = Engine::new(output_tx);
     engine.load(&program).expect("Failed to load program");
 
     let vars = engine.variables();
@@ -226,8 +227,8 @@ async fn test_set_variable_api() {
 
     let program = parse(code).expect("Failed to parse");
 
-    let (alert_tx, _alert_rx) = mpsc::channel::<Alert>(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, _output_rx) = mpsc::channel::<Event>(100);
+    let mut engine = Engine::new(output_tx);
     engine.load(&program).expect("Failed to load program");
 
     // Use API to set variable
@@ -245,8 +246,8 @@ async fn test_set_immutable_variable_fails() {
 
     let program = parse(code).expect("Failed to parse");
 
-    let (alert_tx, _alert_rx) = mpsc::channel::<Alert>(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, _output_rx) = mpsc::channel::<Event>(100);
+    let mut engine = Engine::new(output_tx);
     engine.load(&program).expect("Failed to load program");
 
     // Try to set immutable variable via API

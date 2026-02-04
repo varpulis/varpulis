@@ -10,7 +10,7 @@ use tokio::sync::{mpsc, RwLock};
 use warp::ws::{Message, WebSocket};
 
 use varpulis_parser::parse;
-use varpulis_runtime::engine::{Alert, Engine};
+use varpulis_runtime::engine::Engine;
 use varpulis_runtime::event::Event;
 
 use crate::security;
@@ -52,19 +52,16 @@ pub enum WsMessage {
         timestamp: String,
         data: serde_json::Value,
     },
-    /// Alert notification
-    Alert {
-        id: String,
-        alert_type: String,
-        severity: String,
-        message: String,
-        timestamp: String,
+    /// Output event notification
+    OutputEvent {
+        event_type: String,
         data: serde_json::Value,
+        timestamp: String,
     },
     /// Current metrics
     Metrics {
         events_processed: u64,
-        alerts_generated: u64,
+        output_events_emitted: u64,
         active_streams: usize,
         uptime: f64,
         memory_usage: u64,
@@ -98,20 +95,20 @@ pub struct ServerState {
     pub streams: Vec<StreamInfo>,
     /// Server start time
     pub start_time: std::time::Instant,
-    /// Channel to send alerts
-    pub alert_tx: mpsc::Sender<Alert>,
+    /// Channel to send output events
+    pub output_tx: mpsc::Sender<Event>,
     /// Allowed working directory for file operations
     pub workdir: PathBuf,
 }
 
 impl ServerState {
     /// Create a new server state
-    pub fn new(alert_tx: mpsc::Sender<Alert>, workdir: PathBuf) -> Self {
+    pub fn new(output_tx: mpsc::Sender<Event>, workdir: PathBuf) -> Self {
         Self {
             engine: None,
             streams: Vec::new(),
             start_time: std::time::Instant::now(),
-            alert_tx,
+            output_tx,
             workdir,
         }
     }
@@ -188,8 +185,8 @@ async fn handle_load_file(path: &str, state: &Arc<RwLock<ServerState>>) -> WsMes
 
     // Load into engine
     let mut state = state.write().await;
-    let alert_tx = state.alert_tx.clone();
-    let mut engine = Engine::new(alert_tx);
+    let output_tx = state.output_tx.clone();
+    let mut engine = Engine::new(output_tx);
 
     match engine.load(&program) {
         Ok(()) => {
@@ -222,18 +219,18 @@ async fn handle_get_streams(state: &Arc<RwLock<ServerState>>) -> WsMessage {
 /// Handle GetMetrics message
 async fn handle_get_metrics(state: &Arc<RwLock<ServerState>>) -> WsMessage {
     let state = state.read().await;
-    let (events_processed, alerts_generated, active_streams) = state
+    let (events_processed, output_events_emitted, active_streams) = state
         .engine
         .as_ref()
         .map(|engine| {
             let m = engine.metrics();
-            (m.events_processed, m.alerts_generated, m.streams_count)
+            (m.events_processed, m.output_events_emitted, m.streams_count)
         })
         .unwrap_or((0, 0, 0));
 
     WsMessage::Metrics {
         events_processed,
-        alerts_generated,
+        output_events_emitted,
         active_streams,
         uptime: state.uptime_secs(),
         memory_usage: 0, // TODO: implement
@@ -337,29 +334,26 @@ pub async fn handle_connection(
 }
 
 // =============================================================================
-// Alert Forwarder
+// Output Event Forwarder
 // =============================================================================
 
-/// Create an alert message from an Alert
-pub fn create_alert_message(alert: &Alert) -> WsMessage {
-    WsMessage::Alert {
-        id: security::generate_request_id(),
-        alert_type: alert.alert_type.clone(),
-        severity: alert.severity.clone(),
-        message: alert.message.clone(),
-        timestamp: chrono::Utc::now().to_rfc3339(),
-        data: serde_json::to_value(&alert.data).unwrap_or_default(),
+/// Create an output event message from an Event
+pub fn create_output_event_message(event: &Event) -> WsMessage {
+    WsMessage::OutputEvent {
+        event_type: event.event_type.clone(),
+        data: serde_json::to_value(&event.data).unwrap_or_default(),
+        timestamp: event.timestamp.to_rfc3339(),
     }
 }
 
-/// Spawn an alert forwarder task
-pub fn spawn_alert_forwarder(
-    mut alert_rx: mpsc::Receiver<Alert>,
+/// Spawn an output event forwarder task
+pub fn forward_output_events_to_websocket(
+    mut output_rx: mpsc::Receiver<Event>,
     broadcast_tx: Arc<tokio::sync::broadcast::Sender<String>>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        while let Some(alert) = alert_rx.recv().await {
-            let msg = create_alert_message(&alert);
+        while let Some(event) = output_rx.recv().await {
+            let msg = create_output_event_message(&event);
             if let Ok(json) = serde_json::to_string(&msg) {
                 let _ = broadcast_tx.send(json);
             }
@@ -539,26 +533,23 @@ mod tests {
     }
 
     #[test]
-    fn test_ws_message_serialize_alert() {
-        let msg = WsMessage::Alert {
-            id: "abc123".to_string(),
-            alert_type: "HighTemperature".to_string(),
-            severity: "warning".to_string(),
-            message: "Temperature exceeded threshold".to_string(),
-            timestamp: "2026-01-29T12:00:00Z".to_string(),
+    fn test_ws_message_serialize_output_event() {
+        let msg = WsMessage::OutputEvent {
+            event_type: "HighTemperature".to_string(),
             data: serde_json::json!({"value": 35.5}),
+            timestamp: "2026-01-29T12:00:00Z".to_string(),
         };
         let json = serde_json::to_string(&msg).expect("should serialize");
-        assert!(json.contains("alert"));
+        assert!(json.contains("output_event"));
         assert!(json.contains("HighTemperature"));
-        assert!(json.contains("warning"));
+        assert!(json.contains("35.5"));
     }
 
     #[test]
     fn test_ws_message_serialize_metrics() {
         let msg = WsMessage::Metrics {
             events_processed: 1000,
-            alerts_generated: 50,
+            output_events_emitted: 50,
             active_streams: 3,
             uptime: 3600.5,
             memory_usage: 1024000,
@@ -759,9 +750,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_server_state_new() {
-        let (alert_tx, _) = mpsc::channel(100);
+        let (output_tx, _) = mpsc::channel(100);
         let workdir = std::env::current_dir().expect("should get current dir");
-        let state = ServerState::new(alert_tx, workdir.clone());
+        let state = ServerState::new(output_tx, workdir.clone());
 
         assert!(state.engine.is_none());
         assert!(state.streams.is_empty());
@@ -770,9 +761,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_server_state_uptime() {
-        let (alert_tx, _) = mpsc::channel(100);
+        let (output_tx, _) = mpsc::channel(100);
         let workdir = std::env::current_dir().expect("should get current dir");
-        let state = ServerState::new(alert_tx, workdir);
+        let state = ServerState::new(output_tx, workdir);
 
         // Small delay
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -787,9 +778,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_message_unknown_type() {
-        let (alert_tx, _) = mpsc::channel(100);
+        let (output_tx, _) = mpsc::channel(100);
         let workdir = std::env::current_dir().expect("should get current dir");
-        let state = Arc::new(RwLock::new(ServerState::new(alert_tx, workdir)));
+        let state = Arc::new(RwLock::new(ServerState::new(output_tx, workdir)));
 
         // Create a response-type message (which shouldn't be sent from client)
         let msg = WsMessage::Error {
@@ -808,9 +799,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_get_metrics_no_engine() {
-        let (alert_tx, _) = mpsc::channel(100);
+        let (output_tx, _) = mpsc::channel(100);
         let workdir = std::env::current_dir().expect("should get current dir");
-        let state = Arc::new(RwLock::new(ServerState::new(alert_tx, workdir)));
+        let state = Arc::new(RwLock::new(ServerState::new(output_tx, workdir)));
 
         let msg = WsMessage::GetMetrics;
         let response = handle_message(msg, &state).await;
@@ -818,12 +809,12 @@ mod tests {
         match response {
             WsMessage::Metrics {
                 events_processed,
-                alerts_generated,
+                output_events_emitted,
                 active_streams,
                 ..
             } => {
                 assert_eq!(events_processed, 0);
-                assert_eq!(alerts_generated, 0);
+                assert_eq!(output_events_emitted, 0);
                 assert_eq!(active_streams, 0);
             }
             _ => panic!("Expected Metrics response"),
@@ -832,9 +823,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_get_streams_empty() {
-        let (alert_tx, _) = mpsc::channel(100);
+        let (output_tx, _) = mpsc::channel(100);
         let workdir = std::env::current_dir().expect("should get current dir");
-        let state = Arc::new(RwLock::new(ServerState::new(alert_tx, workdir)));
+        let state = Arc::new(RwLock::new(ServerState::new(output_tx, workdir)));
 
         let msg = WsMessage::GetStreams;
         let response = handle_message(msg, &state).await;
@@ -849,9 +840,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_inject_event_no_engine() {
-        let (alert_tx, _) = mpsc::channel(100);
+        let (output_tx, _) = mpsc::channel(100);
         let workdir = std::env::current_dir().expect("should get current dir");
-        let state = Arc::new(RwLock::new(ServerState::new(alert_tx, workdir)));
+        let state = Arc::new(RwLock::new(ServerState::new(output_tx, workdir)));
 
         let msg = WsMessage::InjectEvent {
             event_type: "Test".to_string(),
@@ -875,8 +866,8 @@ mod tests {
         let workdir = temp_dir.path().join("allowed");
         std::fs::create_dir(&workdir).expect("Failed to create workdir");
 
-        let (alert_tx, _) = mpsc::channel(100);
-        let state = Arc::new(RwLock::new(ServerState::new(alert_tx, workdir)));
+        let (output_tx, _) = mpsc::channel(100);
+        let state = Arc::new(RwLock::new(ServerState::new(output_tx, workdir)));
 
         let msg = WsMessage::LoadFile {
             path: "../../../etc/passwd".to_string(),
@@ -896,40 +887,30 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
-    // create_alert_message tests
+    // create_output_event_message tests
     // -------------------------------------------------------------------------
 
     #[test]
-    fn test_create_alert_message() {
-        use indexmap::IndexMap;
-
-        let mut data = IndexMap::new();
-        data.insert(
+    fn test_create_output_event_message() {
+        let mut event = Event::new("HighTemp");
+        event.data.insert(
             "sensor_id".to_string(),
             varpulis_core::Value::Str("S1".to_string()),
         );
 
-        let alert = Alert {
-            alert_type: "HighTemp".to_string(),
-            severity: "critical".to_string(),
-            message: "Temperature too high".to_string(),
-            data,
-        };
-
-        let msg = create_alert_message(&alert);
+        let msg = create_output_event_message(&event);
 
         match msg {
-            WsMessage::Alert {
-                alert_type,
-                severity,
-                message,
-                ..
+            WsMessage::OutputEvent {
+                event_type,
+                data,
+                timestamp,
             } => {
-                assert_eq!(alert_type, "HighTemp");
-                assert_eq!(severity, "critical");
-                assert_eq!(message, "Temperature too high");
+                assert_eq!(event_type, "HighTemp");
+                assert!(data.get("sensor_id").is_some());
+                assert!(!timestamp.is_empty());
             }
-            _ => panic!("Expected Alert message"),
+            _ => panic!("Expected OutputEvent message"),
         }
     }
 }

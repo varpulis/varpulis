@@ -8,8 +8,8 @@ use varpulis_runtime::{Engine, Event};
 #[tokio::test]
 async fn test_partition_by_tumbling_window_separate_state() {
     // Test that partitioned tumbling windows maintain separate state per key
-    let (alert_tx, mut alert_rx) = mpsc::channel(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, mut output_rx) = mpsc::channel(100);
+    let mut engine = Engine::new(output_tx);
 
     let vpl = r#"
         event PriceEvent:
@@ -78,14 +78,14 @@ async fn test_partition_by_tumbling_window_separate_state() {
 
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-    // Collect alerts
-    let mut btc_alerts = vec![];
-    let mut eth_alerts = vec![];
-    while let Ok(alert) = alert_rx.try_recv() {
-        if alert.alert_type == "PriceAverage" {
-            match alert.data.get("symbol") {
-                Some(Value::Str(s)) if s == "BTC" => btc_alerts.push(alert),
-                Some(Value::Str(s)) if s == "ETH" => eth_alerts.push(alert),
+    // Collect events
+    let mut btc_events = vec![];
+    let mut eth_events = vec![];
+    while let Ok(event) = output_rx.try_recv() {
+        if event.event_type == "PriceAverage" {
+            match event.data.get("symbol") {
+                Some(Value::Str(s)) if s == "BTC" => btc_events.push(event),
+                Some(Value::Str(s)) if s == "ETH" => eth_events.push(event),
                 _ => {}
             }
         }
@@ -94,17 +94,17 @@ async fn test_partition_by_tumbling_window_separate_state() {
     // Each partition should have its own window state
     // Note: The exact behavior depends on implementation
     println!(
-        "BTC alerts: {}, ETH alerts: {}",
-        btc_alerts.len(),
-        eth_alerts.len()
+        "BTC events: {}, ETH events: {}",
+        btc_events.len(),
+        eth_events.len()
     );
 }
 
 #[tokio::test]
 async fn test_partition_by_sliding_window_separate_state() {
     // Test that partitioned sliding windows maintain separate state per key
-    let (alert_tx, mut alert_rx) = mpsc::channel(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, mut output_rx) = mpsc::channel(100);
+    let mut engine = Engine::new(output_tx);
 
     let vpl = r#"
         event SensorReading:
@@ -150,12 +150,12 @@ async fn test_partition_by_sliding_window_separate_state() {
 
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-    // Count alerts per sensor
+    // Count events per sensor
     let mut sensor_a_count = 0;
     let mut sensor_b_count = 0;
-    while let Ok(alert) = alert_rx.try_recv() {
-        if alert.alert_type == "SensorAverage" {
-            match alert.data.get("sensor_id") {
+    while let Ok(event) = output_rx.try_recv() {
+        if event.event_type == "SensorAverage" {
+            match event.data.get("sensor_id") {
                 Some(Value::Str(s)) if s == "sensor_A" => sensor_a_count += 1,
                 Some(Value::Str(s)) if s == "sensor_B" => sensor_b_count += 1,
                 _ => {}
@@ -164,7 +164,7 @@ async fn test_partition_by_sliding_window_separate_state() {
     }
 
     println!(
-        "Sensor A alerts: {}, Sensor B alerts: {}",
+        "Sensor A events: {}, Sensor B events: {}",
         sensor_a_count, sensor_b_count
     );
 }
@@ -172,8 +172,8 @@ async fn test_partition_by_sliding_window_separate_state() {
 #[tokio::test]
 async fn test_partition_aggregate_independent_per_key() {
     // Test that partitioned aggregates maintain independent state per key
-    let (alert_tx, mut alert_rx) = mpsc::channel(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, mut output_rx) = mpsc::channel(100);
+    let mut engine = Engine::new(output_tx);
 
     let vpl = r#"
         event OrderEvent:
@@ -218,10 +218,10 @@ async fn test_partition_aggregate_independent_per_key() {
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
     // Verify each customer has independent totals
-    while let Ok(alert) = alert_rx.try_recv() {
-        if alert.alert_type == "CustomerTotal" {
-            let customer = alert.data.get("customer_id");
-            let total = alert.data.get("total");
+    while let Ok(event) = output_rx.try_recv() {
+        if event.event_type == "CustomerTotal" {
+            let customer = event.data.get("customer_id");
+            let total = event.data.get("total");
 
             match (customer, total) {
                 (Some(Value::Str(c)), Some(Value::Float(t))) if c == "customer_A" => {
@@ -247,8 +247,8 @@ async fn test_partition_aggregate_independent_per_key() {
 #[tokio::test]
 async fn test_macd_signal_partitioned_by_symbol() {
     // Test that MACD signals are correctly partitioned by symbol
-    let (alert_tx, mut alert_rx) = mpsc::channel(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, mut output_rx) = mpsc::channel(100);
+    let mut engine = Engine::new(output_tx);
 
     let vpl = r#"
         event OHLCV:
@@ -297,16 +297,16 @@ async fn test_macd_signal_partitioned_by_symbol() {
     // Count signals per symbol
     let mut btc_signals = 0;
     let mut eth_signals = 0;
-    while let Ok(alert) = alert_rx.try_recv() {
-        // Check for MACD signals - the event_type is in the data, alert_type is "stream_output"
-        let is_macd = alert
+    while let Ok(event) = output_rx.try_recv() {
+        // Check for MACD signals - the event_type is in the data
+        let is_macd = event
             .data
             .get("event_type")
             .map(|v| v == &Value::Str("MACDSignal".to_string()))
             .unwrap_or(false);
 
         if is_macd {
-            match alert.data.get("symbol") {
+            match event.data.get("symbol") {
                 Some(Value::Str(s)) if s == "BTC/USD" => btc_signals += 1,
                 Some(Value::Str(s)) if s == "ETH/USD" => eth_signals += 1,
                 _ => {}

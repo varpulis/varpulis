@@ -147,7 +147,7 @@ varpulis demo --duration 60 --anomalies --degradation --metrics
 # Run with custom data source
 varpulis run examples/hvac_demo.vpl \
   --source kafka://building-sensors \
-  --sink kafka://hvac-alerts
+  --output kafka://hvac-alerts
 ```
 
 ## Metrics Exposed
