@@ -649,8 +649,17 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
                     event_count += 1;
 
                     if let Some(ref orchestrator) = orchestrator {
-                        if let Err(e) = orchestrator.process(std::sync::Arc::new(event)).await {
-                            tracing::warn!("Orchestrator error: {}", e);
+                        let shared = std::sync::Arc::new(event);
+                        match orchestrator.try_process(shared) {
+                            Ok(()) => {}
+                            Err(varpulis_runtime::DispatchError::ChannelFull(event)) => {
+                                if let Err(e) = orchestrator.process(event).await {
+                                    tracing::warn!("Orchestrator error: {}", e);
+                                }
+                            }
+                            Err(varpulis_runtime::DispatchError::ChannelClosed(_)) => {
+                                tracing::warn!("Context channel closed");
+                            }
                         }
                     } else if let Err(e) = engine.process(event).await {
                         tracing::warn!("Engine error: {}", e);
