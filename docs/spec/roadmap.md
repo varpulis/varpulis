@@ -1,8 +1,8 @@
 # Development Roadmap
 
-## Phase 1: Core Engine (3-4 months) ✅ COMPLETED
+## Phase 1: Core Engine ✅ COMPLETED
 
-- [x] VarpulisQL Parser (recursive descent)
+- [x] VarpulisQL Parser (Pest PEG)
 - [x] VarpulisQL → AST compilation
 - [x] Basic execution engine (single-threaded)
 - [x] Simple aggregations (sum, avg, count, min, max)
@@ -14,57 +14,61 @@
 - "Hello world" demo with simple aggregation
 - Basic documentation
 
-## Phase 2: Parser→Runtime & Output Connectors (Current)
+## Phase 2: Parser→Runtime & Output Connectors ✅ COMPLETED
 
-- [ ] Connect parser to runtime execution
-- [ ] File output connector (JSON lines)
-- [ ] HTTP webhook output connector
-- [ ] Kafka output connector
-- [ ] Prometheus metrics endpoint
+- [x] Connect parser to runtime execution (`.from()`/`.to()` wired at runtime)
+- [x] HTTP webhook output connector (`HttpSink`)
+- [x] Kafka connector (framework + full impl behind `kafka` feature flag)
+- [x] Prometheus metrics endpoint (port 9090)
+- [x] Connector declaration syntax (`connector Name = type (params)`)
 
 ### Phase 2 Deliverables
 - End-to-end execution of VarpulisQL programs
 - Multiple output destinations via `.to()`
+- HVAC E2E integration test (MQTT → Varpulis → Kafka)
 
-## Phase 3: Attention & Pattern Detection (2-3 months)
+## Phase 3: Parallelism, Persistence & Pattern Detection (Current)
 
+- [x] Context-based multi-threaded execution (named contexts, CPU affinity, cross-context channels)
+- [x] State persistence infrastructure (RocksDB, FileStore, MemoryStore backends)
+- [x] Tenant/pipeline state recovery on restart
+- [x] Multi-tenant SaaS API (REST, usage metering, quotas)
+- [ ] Engine checkpoint integration (window/pattern state save/restore)
 - [ ] Embedding engine (rule-based)
 - [ ] Deterministic attention mechanism
 - [ ] HVAC degradation detection demo
-- [x] Context-based multi-threaded execution (named contexts, CPU affinity, cross-context channels)
-- [ ] Declarative parallelization
+- [ ] Declarative parallelization (`.concurrent()`)
 - [ ] Automatic supervision and restart
-- [ ] State backend: RocksDB
 
 ### Phase 3 Deliverables
 - Complex pattern detection via attention
 - Horizontal scaling on multi-cores
+- Engine state durability across restarts
 
-## Phase 4: Observability & Production (2 months)
+## Phase 4: Observability & Production
 
 - [ ] OpenTelemetry tracing
-- [ ] Checkpointing (S3, local)
-- [ ] Advanced CLI and tooling
+- [ ] Engine checkpointing to external storage (S3, local)
+- [ ] Web UI for monitoring
 - [ ] Complete documentation
 
 ### Phase 4 Deliverables
 - Production ready
 - Monitoring dashboard
 
-## Phase 5: Advanced Features (3-4 months)
+## Phase 5: Advanced Features
 
 - [ ] Learned embeddings (pre-trained models)
 - [ ] GPU support for attention (optional)
 - [ ] Distributed mode (multi-nodes)
-- [ ] Web UI for monitoring
 - [ ] Hot reload of configurations
 - [ ] Additional connectors (Pulsar, Redis Streams, etc.)
 
 ## Estimated Timeline
 
 ```
-2026 Q1: Phase 1 (Core) ✅ + Phase 2 (Connectors)
-2026 Q2: Phase 3 (Attention)
+2026 Q1: Phase 1 (Core) ✅ + Phase 2 (Connectors) ✅ + Phase 3 started
+2026 Q2: Phase 3 (Parallelism, Persistence, Patterns)
 2026 Q3: Phase 4 (Production)
 2026 Q4: Phase 5 (Advanced)
 ```

@@ -153,11 +153,11 @@ curl http://localhost:9000/api/v1/usage -H "X-API-Key: my-key"
 
 ## Connectors
 
-| Connector | Input | Output | Status |
-|-----------|-------|--------|--------|
-| **MQTT** | Yes | Yes | Production |
-| **HTTP** | No | Yes | Webhooks via `.to(HttpConnector)` |
-| **Kafka** | Yes | Yes | Connector framework |
+| Connector | Input | Output | Status | Feature Flag |
+|-----------|-------|--------|--------|--------------|
+| **MQTT** | Yes | Yes | Production | `mqtt` |
+| **HTTP** | No | Yes | Webhooks via `.to(HttpConnector)` | default |
+| **Kafka** | Yes | Yes | Available | `kafka` |
 
 See [docs/language/connectors.md](docs/language/connectors.md) for details.
 

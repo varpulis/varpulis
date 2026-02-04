@@ -43,22 +43,26 @@ varpulis run --code 'stream Readings from SensorReading'
 
 **Notes:**
 - Either `--file` or `--code` must be provided
-- If the program contains a `config mqtt { ... }` block, Varpulis will connect to the specified MQTT broker
-- Alerts are published to the configured output topic
+- If the program contains connector declarations with `.from()`, Varpulis will connect to the specified brokers
 - Press Ctrl+C to stop execution
+
+> **Note**: The `config mqtt { }` block syntax is deprecated. Use `connector` declarations with `.from()` instead. See [Connectors](../language/connectors.md).
 
 **Example with MQTT:**
 ```vpl
-config mqtt {
-    broker: "localhost",
+connector MqttBroker = mqtt (
+    host: "localhost",
     port: 1883,
-    input_topic: "sensors/#",
-    output_topic: "alerts"
-}
+    client_id: "sensor-monitor"
+)
 
-stream Readings from SensorReading
-    where temperature > 100
-    emit alert("HighTemp", "Temperature exceeded threshold")
+event SensorReading:
+    temperature: float
+
+stream Readings = SensorReading
+    .from(MqttBroker, topic: "sensors/#")
+    .where(temperature > 100)
+    .emit(alert_type: "HighTemp", temperature: temperature)
 ```
 
 ---

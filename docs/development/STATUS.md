@@ -1,6 +1,6 @@
 # Varpulis Project Status
 
-**Last updated**: January 28, 2026
+**Last updated**: February 4, 2026
 **Version**: 0.1.0
 
 ---
@@ -13,7 +13,7 @@ Varpulis is a high-performance Complex Event Processing (CEP) engine written in 
 |--------|-------|
 | Codebase | ~103,000 lines Rust |
 | Test coverage | ~63% |
-| Tests passing | 539+ |
+| Tests passing | 1068+ |
 | Production readiness | Prototype |
 
 ---
@@ -26,37 +26,70 @@ Varpulis is a high-performance Complex Event Processing (CEP) engine written in 
 - Tumbling and sliding windows (`.window()`)
 - Partitioning (`.partition_by()`)
 - Event emission (`.emit()`)
+- Stream merging (`merge()`)
 
 ### Aggregations (95% coverage)
 - `sum()`, `avg()`, `count()`, `min()`, `max()`
 - `stddev()`, `first()`, `last()`
 - `count_distinct()`, `ema()`
+- SIMD-optimized aggregation (4x speedup on x86_64)
 
-### Pattern Matching
+### Pattern Matching (SASE+)
 - Sequence patterns (`->` operator)
 - Temporal constraints (`.within()`)
-- Multi-step patterns
+- Kleene closures (`+`, `*`)
+- Negation (`AND NOT`)
+- Multi-step patterns with event correlation
 
 ### Connectors
-- MQTT: Full input/output support
-- HTTP: Output only (webhooks)
-- WebSocket: Server mode for dashboards
+- **MQTT**: Full input/output support via `.from()`/`.to()` (production)
+- **HTTP**: Output only (webhooks via `HttpSink`)
+- **Kafka**: Framework + full impl behind `kafka` feature flag
+- **Console**: Debug output
+- Connector declaration syntax: `connector Name = type (params)`
+- Source binding: `.from(Connector, topic: "...")`
+- Sink routing: `.to(Connector)`
+
+### Parallelism
+- Context-based multi-threading (named contexts, CPU affinity, cross-context channels)
+- Worker pool model for partition-based parallelism
+
+### Persistence
+- `StateStore` trait with 3 backends: `MemoryStore`, `FileStore`, `RocksDbStore`
+- `CheckpointManager` with configurable intervals and retention
+- Tenant/pipeline state recovery on restart (via `--state-dir`)
+- RocksDB available behind `persistence` feature flag
+
+### Multi-Tenant SaaS
+- REST API for pipeline management (deploy, list, delete, inject events, hot reload)
+- Usage metering and quota enforcement (Free/Pro/Enterprise tiers)
+- Admin API for tenant management
+- API key authentication with constant-time comparison
+- Rate limiting (token bucket per IP)
 
 ### Tooling
-- CLI with run, simulate, check, server commands
-- VS Code extension with syntax highlighting
+- CLI with run, simulate, check, server, deploy, pipelines, undeploy, status commands
+- VS Code extension with LSP server (diagnostics, hover, completion, semantic tokens)
+- React Flow visual pipeline editor
 - Interactive demos (HVAC, Financial, SASE)
+
+### Infrastructure
+- Docker image (multi-stage, 5 platforms)
+- Docker Compose SaaS stack (Prometheus + Grafana)
+- Kubernetes deployment (Kustomize overlays for dev/prod/k3d)
+- Prometheus metrics endpoint (port 9090)
+- Pre-configured Grafana dashboards
 
 ---
 
 ## What Doesn't Work Yet
 
 ### Not Implemented
-- Kafka connector (stub only)
-- HTTP input (no ingestion endpoint)
-- RocksDB state persistence (in-memory only)
+- Engine checkpoint integration (window/pattern state is not saved/restored)
 - Clustering (single-node only)
-- Many built-in functions (see [builtins.md](../language/builtins.md))
+- Distributed mode
+- Declarative parallelization (`.concurrent()`)
+- Web UI for monitoring (Grafana dashboards exist, no custom UI)
 
 ### Parsed but Not Evaluated
 - `.concurrent()` - parallelization
@@ -64,8 +97,9 @@ Varpulis is a high-performance Complex Event Processing (CEP) engine written in 
 - `.on_error()` - error handling
 
 ### Known Limitations
-- State is lost on restart
-- No checkpointing
+- Window and pattern matcher state is in-memory only (lost on restart)
+- Tenant/pipeline metadata persists with `--state-dir`, but engine processing state does not
+- Checkpoint infrastructure exists but is not wired into the engine event loop
 - Limited to single-node deployment
 
 ---
@@ -80,25 +114,6 @@ Varpulis is a high-performance Complex Event Processing (CEP) engine written in 
 | varpulis-runtime/event.rs | 100% | Perfect |
 | varpulis-parser/parser.rs | 65% | Good |
 | varpulis-runtime/engine.rs | 62% | Needs work |
-| varpulis-runtime/sink.rs | 14% | Critical |
-
----
-
-## Roadmap
-
-### Phase 1: Stabilization (Current)
-- Fix documentation accuracy
-- Improve test coverage to 70%+
-- Stabilize MQTT connector
-
-### Phase 2: Production Features
-- Implement Kafka connector
-- Add RocksDB state backend
-- Implement checkpointing
-
-### Phase 3: Scale
-- Multi-node clustering
-- Horizontal partitioning
 
 ---
 

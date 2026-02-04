@@ -1,56 +1,115 @@
 # VarpulisQL Connectors
 
-This document describes how to connect Varpulis to external systems for both event ingestion (sources) and output routing via `.to()`.
+This document describes how to connect Varpulis to external systems for both event ingestion (sources) and output routing (sinks).
 
 ## Overview
 
-Varpulis supports multiple connector types:
+| Connector | Input | Output | Status | Feature Flag |
+|-----------|-------|--------|--------|--------------|
+| **MQTT**  | Yes | Yes | Production | `mqtt` |
+| **HTTP**  | No | Yes | Output only (webhooks) | default |
+| **Kafka** | Yes | Yes | Available | `kafka` |
+| **Console** | No | Yes | Debug | default |
 
-| Connector | Input | Output | Status |
-|-----------|-------|--------|--------|
-| **MQTT**  | Yes | Yes | Production |
-| **HTTP**  | No | Yes | Output only |
-| **Kafka** | No | No | Stub (not implemented) |
-| **Console** | No | Yes | Debug |
+### Feature Flags
+
+Connectors are compiled via Cargo feature flags:
+
+```bash
+# Build with MQTT only
+cargo build --release --features mqtt
+
+# Build with all connectors
+cargo build --release --features all-connectors
+
+# Docker build with Kafka support
+docker build -f deploy/docker/Dockerfile \
+  --build-arg FEATURES="mqtt,kafka" \
+  -t varpulis/varpulis:latest .
+```
+
+Available features: `mqtt`, `kafka`, `postgres`, `mysql`, `sqlite`, `database`, `redis`, `persistence`, `all-connectors`.
+
+---
+
+## Connector Declaration Syntax
+
+Connectors are declared at the top of a VPL file using `connector Name = type (params)`:
+
+```varpulis
+connector MqttSensors = mqtt (
+    host: "localhost",
+    port: 1883,
+    client_id: "varpulis-app"
+)
+
+connector KafkaOutput = kafka (
+    brokers: ["kafka:9092"],
+    group_id: "varpulis-consumer"
+)
+
+connector AlertWebhook = http (
+    url: "https://hooks.example.com/alerts"
+)
+```
+
+### Source Binding with `.from()`
+
+Bind a stream to ingest events from a connector:
+
+```varpulis
+stream Temperatures = TemperatureReading
+    .from(MqttSensors, topic: "sensors/temperature/#")
+```
+
+### Sink Routing with `.to()`
+
+Route a stream's output to a connector:
+
+```varpulis
+stream AlertsToKafka = AllAlerts
+    .to(KafkaOutput)
+
+stream CriticalToWebhook = CriticalAlerts
+    .to(AlertWebhook)
+```
+
+---
 
 ## MQTT Connector
 
-MQTT is the recommended connector for production deployments. It provides reliable message delivery with QoS support.
+MQTT is the recommended connector for IoT and production deployments. It provides reliable message delivery with QoS support.
 
-### Configuration Block
+### Declaration
 
-Add a `config mqtt { }` block at the top of your VPL file:
-
-```vpl
-config mqtt {
-    broker: "localhost",           # Required: MQTT broker hostname or IP
-    port: 1883,                    # Required: MQTT broker port
-    client_id: "varpulis-app",     # Required: Unique client ID
-    input_topic: "events/#",       # Required: Topic pattern to subscribe
-    output_topic: "alerts"         # Required: Topic for publishing results
-}
+```varpulis
+connector MqttSensors = mqtt (
+    host: "localhost",
+    port: 1883,
+    client_id: "varpulis-app"
+)
 ```
 
-### Configuration Parameters
+### Parameters
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `broker` | string | Yes | - | MQTT broker hostname or IP address |
+| `host` | string | Yes | - | MQTT broker hostname or IP address |
 | `port` | int | Yes | 1883 | MQTT broker port |
 | `client_id` | string | Yes | - | Unique identifier for this client |
-| `input_topic` | string | Yes | - | Topic pattern for subscribing (supports `#` and `+` wildcards) |
-| `output_topic` | string | Yes | - | Base topic for publishing stream results |
 
 ### Topic Wildcards
+
+Topics are specified in `.from()` and support MQTT wildcards:
 
 - `#` - Multi-level wildcard (matches any number of levels)
 - `+` - Single-level wildcard (matches exactly one level)
 
 **Examples:**
 ```
-events/#        # Matches events/login, events/transaction, events/user/created
-events/+        # Matches events/login, events/transaction (but not events/user/created)
-sensors/+/temp  # Matches sensors/zone1/temp, sensors/zone2/temp
+sensors/#            # Matches sensors/temp, sensors/humidity, sensors/zone1/temp
+sensors/+            # Matches sensors/temp, sensors/humidity (but not sensors/zone1/temp)
+sensors/+/temp       # Matches sensors/zone1/temp, sensors/zone2/temp
 ```
 
 ### Event Format
@@ -59,23 +118,11 @@ Events received from MQTT must be JSON with an `event_type` field (or `type` for
 
 ```json
 {
-  "type": "Login",
-  "user_id": "user123",
-  "ip_address": "192.168.1.1",
+  "type": "TemperatureReading",
+  "sensor_id": "sensor-1",
+  "zone": "lobby",
+  "value": 23.5,
   "timestamp": 1706400000
-}
-```
-
-Or with nested data:
-
-```json
-{
-  "event_type": "TemperatureReading",
-  "data": {
-    "sensor_id": "sensor-1",
-    "temperature": 23.5,
-    "unit": "celsius"
-  }
 }
 ```
 
@@ -85,29 +132,30 @@ Stream `.emit()` results are published as JSON:
 
 ```json
 {
-  "event_type": "Alert",
+  "event_type": "HighTempAlert",
   "data": {
-    "alert_type": "high_temperature",
-    "sensor_id": "sensor-1",
+    "alert_type": "HIGH_TEMPERATURE",
+    "zone": "lobby",
     "temperature": 45.2
   },
-  "timestamp": "2025-01-28T10:30:00Z"
+  "timestamp": "2026-02-04T10:30:00Z"
 }
 ```
 
 ### Complete Example
 
-```vpl
-# File: fraud_detection.vpl
-# Run: varpulis run fraud_detection.vpl
-
-config mqtt {
-    broker: "localhost",
+```varpulis
+# Connector declarations
+connector MqttSensors = mqtt (
+    host: "localhost",
     port: 1883,
-    client_id: "fraud-detector-prod",
-    input_topic: "transactions/#",
-    output_topic: "alerts/fraud"
-}
+    client_id: "fraud-detector-prod"
+)
+
+connector KafkaAlerts = kafka (
+    brokers: ["kafka:9092"],
+    group_id: "fraud-alerts"
+)
 
 # Event definitions
 event Login:
@@ -121,6 +169,13 @@ event Transaction:
     status: str
     merchant: str
 
+# Ingest from MQTT
+stream Logins = Login
+    .from(MqttSensors, topic: "transactions/login")
+
+stream Transactions = Transaction
+    .from(MqttSensors, topic: "transactions/payment")
+
 # Pattern: Login followed by failed transaction within 10 minutes
 stream SuspiciousActivity = Login as login
     -> Transaction where user_id == login.user_id and status == "failed" as tx
@@ -133,82 +188,141 @@ stream SuspiciousActivity = Login as login
         merchant: tx.merchant,
         severity: if tx.amount > 1000 then "high" else "medium"
     )
+
+# Route alerts to Kafka
+stream AlertsOut = SuspiciousActivity
+    .to(KafkaAlerts)
 ```
 
 ### Running with MQTT
 
 ```bash
-# Basic execution
-varpulis run fraud_detection.vpl
-
-# With explicit MQTT broker (overrides config)
-varpulis run fraud_detection.vpl --mqtt localhost:1883
+# Basic execution (requires --features mqtt)
+varpulis run --file fraud_detection.vpl
 
 # With verbose logging
-RUST_LOG=info varpulis run fraud_detection.vpl
+RUST_LOG=info varpulis run --file fraud_detection.vpl
 ```
 
-### Error Messages
+### Deprecated: `config mqtt` Block
 
-If MQTT is not configured, Varpulis shows a helpful error:
+> **Deprecated**: The `config mqtt { }` block syntax is deprecated. Use the `connector` declaration + `.from()` syntax instead. The legacy syntax still works but will be removed in a future version.
 
+```varpulis
+# DEPRECATED - do not use
+config mqtt {
+    broker: "localhost",
+    port: 1883,
+    client_id: "my-app",
+    input_topic: "events/#",
+    output_topic: "alerts"
+}
+
+# USE THIS INSTEAD
+connector MqttBroker = mqtt (
+    host: "localhost",
+    port: 1883,
+    client_id: "my-app"
+)
+
+stream Events = MyEvent
+    .from(MqttBroker, topic: "events/#")
 ```
-⚠️  No 'config mqtt' block found in program.
-   Add a config block to connect to MQTT:
 
-   config mqtt {
-       broker: "localhost",
-       port: 1883,
-       input_topic: "varpulis/events/#",
-       output_topic: "varpulis/alerts"
-   }
+---
+
+## Kafka Connector
+
+Kafka provides high-throughput, durable event streaming. Requires the `kafka` feature flag.
+
+### Declaration
+
+```varpulis
+connector KafkaBroker = kafka (
+    brokers: ["broker1:9092", "broker2:9092"],
+    group_id: "varpulis-consumer"
+)
 ```
 
-If MQTT feature is not compiled:
+### Parameters
 
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `brokers` | array | Yes | - | List of Kafka broker addresses |
+| `group_id` | string | Yes | - | Consumer group ID |
+
+### Usage
+
+```varpulis
+# Ingest from Kafka
+stream Events = SensorReading
+    .from(KafkaBroker, topic: "sensor-events")
+
+# Output to Kafka
+stream AlertsOut = ProcessedAlerts
+    .to(KafkaBroker)
 ```
-MQTT requires 'mqtt' feature. Build with: cargo build --features mqtt
+
+### Building with Kafka
+
+```bash
+# Requires rdkafka (librdkafka)
+cargo build --release --features mqtt,kafka
 ```
+
+---
 
 ## HTTP Connector
 
-The HTTP connector allows sending events to webhooks and REST APIs.
+The HTTP connector sends events to webhooks and REST APIs (output only).
 
-### Output to HTTP
+### Declaration
 
-```vpl
-stream Alerts = DetectedPatterns
-    .emit(
-        alert_id: uuid(),
-        severity: "high"
-    )
-    .to("http://webhook.example.com/alerts")
+```varpulis
+connector AlertWebhook = http (
+    url: "https://webhook.example.com/alerts"
+)
 ```
 
-### HTTP Source (Webhook Receiver)
+### Usage
+
+```varpulis
+stream CriticalAlerts = AllAlerts
+    .where(severity == "critical")
+    .to(AlertWebhook)
+```
+
+### HTTP Source (Server Mode)
+
+For HTTP input, use Varpulis in server mode with the REST API:
 
 ```bash
-# Start Varpulis HTTP server
-varpulis server --port 9000
+# Start the server
+varpulis server --port 9000 --api-key "your-key" --metrics
 
-# Send events via HTTP POST
-curl -X POST http://localhost:9000/events \
+# Inject events via HTTP POST
+curl -X POST http://localhost:9000/api/v1/pipelines/<id>/events \
+  -H "X-API-Key: your-key" \
   -H "Content-Type: application/json" \
-  -d '{"type": "Login", "user_id": "user123"}'
+  -d '{"event_type": "Login", "fields": {"user_id": "user123"}}'
 ```
+
+---
 
 ## Console Connector
 
-For debugging, events can be printed to stdout:
+For debugging, stream output is printed to stdout when no `.to()` connector is specified:
 
-```vpl
+```varpulis
 stream DebugOutput = SomeStream
-    .emit(debug_info: "Processing event")
-    .tap(log: "debug")
+    .where(value > 100)
+    .emit(debug_info: "High value detected", value: value)
 ```
+
+---
 
 ## See Also
 
 - [Syntax Reference](syntax.md) - Complete VarpulisQL syntax
-- [Demos README](../../demos/README.md) - Interactive demos with MQTT
 - [Architecture](../architecture/system.md) - System architecture
+- [Configuration Guide](../guides/configuration.md) - CLI and server configuration

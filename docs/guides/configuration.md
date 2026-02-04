@@ -150,50 +150,35 @@ api_key = "your-api-key"
 
 ## MQTT Setup
 
-MQTT is configured within VPL files using the `config mqtt` block.
+MQTT is configured within VPL files using the `connector` declaration syntax with `.from()` source binding.
 
-### Basic Configuration
+### Connector Declaration
 
 ```vpl
-config mqtt {
-    broker: "localhost",
+connector MqttSensors = mqtt (
+    host: "localhost",
     port: 1883,
-    client_id: "varpulis-engine",
-    input_topic: "events/#",
-    output_topic: "alerts"
-}
+    client_id: "varpulis-engine"
+)
+
+# Bind events to the connector
+stream Events = SensorReading
+    .from(MqttSensors, topic: "events/#")
 ```
 
 ### Configuration Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `broker` | required | MQTT broker hostname or IP |
+| `host` | required | MQTT broker hostname or IP |
 | `port` | `1883` | MQTT broker port |
 | `client_id` | `varpulis` | Unique client identifier |
-| `input_topic` | required | Topic pattern to subscribe to |
-| `output_topic` | required | Topic for publishing alerts |
-| `qos` | `1` | QoS level (0, 1, or 2) |
-| `clean_session` | `true` | Clean session on connect |
-| `keep_alive` | `60` | Keep-alive interval (seconds) |
 
-### Secure MQTT (TLS)
+Topics are specified per-stream in `.from()` calls, supporting `#` (multi-level) and `+` (single-level) wildcards.
 
-```vpl
-config mqtt {
-    broker: "mqtt.example.com",
-    port: 8883,
-    client_id: "varpulis-prod",
-    input_topic: "sensors/#",
-    output_topic: "varpulis/alerts",
+### Deprecated: `config mqtt` Block
 
-    // TLS settings
-    tls: true,
-    ca_cert: "/etc/ssl/certs/mqtt-ca.crt",
-    client_cert: "/etc/ssl/certs/client.crt",
-    client_key: "/etc/ssl/private/client.key"
-}
-```
+> **Deprecated**: The `config mqtt { }` block syntax is deprecated and will be removed in a future version. Use the `connector` declaration + `.from()` syntax shown above. See [Connectors](../language/connectors.md) for the migration guide.
 
 ### QoS Levels
 
@@ -279,7 +264,7 @@ stream Alerts from TemperatureReading
 varpulis server --port 9000 --bind 127.0.0.1
 ```
 
-### Production Server with TLS and Auth
+### Production Server with TLS, Auth, and Persistence
 
 ```bash
 varpulis server \
@@ -290,9 +275,12 @@ varpulis server \
     --tls-key /etc/ssl/private/server.key \
     --rate-limit 1000 \
     --workdir /var/lib/varpulis \
+    --state-dir /var/lib/varpulis/state \
     --metrics \
     --metrics-port 9090
 ```
+
+The `--state-dir` flag enables persistence of tenant and pipeline state across restarts. Without it, all state is in-memory only.
 
 ### Server Endpoints
 
@@ -573,8 +561,31 @@ services:
 
 ---
 
+## Pipeline Management Commands
+
+When running in server mode, use these CLI commands to manage pipelines remotely:
+
+```bash
+# Deploy a pipeline to a remote server
+varpulis deploy --server http://localhost:9000 --api-key "key" \
+    --file rules.vpl --name "my-pipeline"
+
+# List deployed pipelines
+varpulis pipelines --server http://localhost:9000 --api-key "key"
+
+# Remove a pipeline
+varpulis undeploy --server http://localhost:9000 --api-key "key" --id <pipeline-id>
+
+# Check usage statistics
+varpulis status --server http://localhost:9000 --api-key "key"
+```
+
+---
+
 ## See Also
 
 - [CLI Reference](../reference/cli-reference.md) - All command options
+- [Connectors](../language/connectors.md) - Connector syntax and configuration
+- [State Management](../architecture/state-management.md) - Persistence and checkpointing
 - [Troubleshooting](troubleshooting.md) - Common issues and solutions
 - [Performance Tuning](performance-tuning.md) - Optimization guide

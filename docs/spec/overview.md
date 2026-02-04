@@ -111,8 +111,8 @@ Varpulis is a next-generation streaming analytics engine combining:
 | MQTT connector | ✅ Implemented | Input and output |
 | HTTP connector | 🚧 Partial | Output only (webhooks) |
 | WebSocket | ✅ Implemented | Server mode for dashboard |
-| Kafka connector | 📋 Planned | Stub only, not functional |
-| RocksDB state | 📋 Planned | Currently in-memory only |
+| Kafka connector | 🚧 Partial | Available with `kafka` feature flag |
+| RocksDB state | 🚧 Partial | Available with `persistence` feature flag, tenant state persists, engine checkpoint integration pending |
 | Clustering | 📋 Planned | Single-node only |
 | Parallelization ops | 🚧 Partial | Parsed but not evaluated (.concurrent, .process) |
 
