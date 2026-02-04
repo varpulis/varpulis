@@ -90,7 +90,7 @@ async fn test_watermark_advance_triggers_window() {
     // Add events within first window
     for i in 0..3 {
         let event = Event::new("SensorEvent")
-            .with_field("value", i as i64)
+            .with_field("value", i)
             .with_timestamp(base_time + Duration::seconds(i));
         engine.process(event).await.expect("Failed to process");
     }
@@ -123,7 +123,7 @@ async fn test_per_source_watermark_with_engine() {
     let base_time = Utc::now();
     for i in 0..5 {
         let event = Event::new("TestEvent")
-            .with_field("value", i as i64)
+            .with_field("value", i)
             .with_timestamp(base_time + Duration::seconds(i));
         engine.process(event).await.expect("Failed to process");
     }

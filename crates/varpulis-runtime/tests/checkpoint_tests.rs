@@ -486,7 +486,7 @@ async fn test_kill_restart_checkpoint_pruning() {
         let (mut engine, _rx) = create_engine();
         engine.load(&program).expect("Failed to load");
 
-        let take_count = ((batch + 1) * 1).min(events.len() as u64) as usize;
+        let take_count = (batch + 1).min(events.len() as u64) as usize;
         for timed in events.iter().take(take_count) {
             engine
                 .process(timed.event.clone())
@@ -525,7 +525,7 @@ async fn test_kill_restart_watermark_state_preserved() {
 
         for i in 0..5 {
             let event = Event::new("SensorEvent")
-                .with_field("value", i as i64)
+                .with_field("value", i)
                 .with_timestamp(base_time + chrono::Duration::seconds(i));
             engine.process(event).await.expect("Failed to process");
         }
