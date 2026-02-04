@@ -103,14 +103,14 @@
 |              |             |              |                           |
 |           Embedding -> State Management -> Aggregation                |
 |  |                                                                    |
-|  Output Sinks (MQTT, HTTP, Console, File)                            |
+|  Output Routing via .to() (MQTT, HTTP, Console, File)                |
 +----------------------------------------------------------------------+
 ```
 
 ### Processing Flow
 
 ```
-Event Sources -> Ingestion -> Embedding -> Pattern Matching -> Aggregation -> Sink
+Event Sources -> Ingestion -> Embedding -> Pattern Matching -> Aggregation -> Output (.to)
 ```
 
 ### Workspace Structure

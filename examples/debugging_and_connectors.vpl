@@ -4,7 +4,6 @@
 # 1. print() - Write to console/stdout
 # 2. log() - Structured logging with levels
 # 3. Connector configuration for external systems
-# 4. Sink statements for output routing
 
 # =============================================================================
 # CONNECTOR DEFINITIONS
@@ -115,19 +114,6 @@ stream DebugLog = Orders
     .log(level: "debug", message: "Order processing")
 
 # =============================================================================
-# SINK STATEMENTS - Output to external systems
-# =============================================================================
-
-# Send critical alerts to Kafka
-sink MonitoredPipeline to KafkaBroker (topic: "handled-alerts")
-
-# Send alerts to HTTP webhook
-sink LogErrors to AlertWebhook (endpoint: "/alerts", method: "POST")
-
-# Send to console for debugging
-sink DebugAllEvents to console()
-
-# =============================================================================
 # COMBINING DEBUG WITH PIPELINES
 # =============================================================================
 
@@ -145,6 +131,17 @@ stream FullDebugPipeline = Orders as order
         amount: payment.amount
     )
 
-# Output completed orders
-sink FullDebugPipeline to KafkaBroker (topic: "completed-orders")
-sink FullDebugPipeline to console()
+# =============================================================================
+# OUTPUT ROUTING WITH .to()
+# =============================================================================
+
+# Route critical alerts to webhook
+stream CriticalToWebhook = Alerts
+    .where(severity == "critical")
+    .emit(message: message, severity: severity)
+    .to(AlertWebhook)
+
+# Route completed orders to Kafka for downstream consumption
+stream CompletedToKafka = FullDebugPipeline
+    .to(KafkaBroker)
+

@@ -46,7 +46,7 @@
 ## Processing Flow
 
 ```
-Event Sources → Ingestion → Embedding → Pattern Matching → Aggregation → Sink
+Event Sources → Ingestion → Embedding → Pattern Matching → Aggregation → Output (.to)
                                  ↓              ↑
                             Attention      Hypertree
                              Scores       Structures

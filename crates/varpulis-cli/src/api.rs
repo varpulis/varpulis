@@ -47,7 +47,7 @@ pub struct PipelineListResponse {
 pub struct PipelineMetricsResponse {
     pub pipeline_id: String,
     pub events_processed: u64,
-    pub alerts_generated: u64,
+    pub output_events_emitted: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -71,7 +71,7 @@ pub struct ApiError {
 pub struct UsageResponse {
     pub tenant_id: String,
     pub events_processed: u64,
-    pub alerts_generated: u64,
+    pub output_events_emitted: u64,
     pub active_pipelines: usize,
     pub quota: QuotaInfo,
 }
@@ -121,7 +121,7 @@ pub struct TenantDetailResponse {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TenantUsageInfo {
     pub events_processed: u64,
-    pub alerts_generated: u64,
+    pub output_events_emitted: u64,
     pub active_pipelines: usize,
 }
 
@@ -466,11 +466,30 @@ async fn handle_inject(
     }
 
     match tenant.process_event(&pipeline_id, event).await {
-        Ok(()) => Ok(warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({"accepted": true})),
-            StatusCode::ACCEPTED,
-        )
-        .into_response()),
+        Ok(output_events) => {
+            let events_json: Vec<serde_json::Value> = output_events
+                .iter()
+                .map(|e| {
+                    let mut map = serde_json::Map::new();
+                    map.insert(
+                        "event_type".into(),
+                        serde_json::Value::String(e.event_type.clone()),
+                    );
+                    for (k, v) in &e.data {
+                        map.insert(k.clone(), crate::websocket::value_to_json(v));
+                    }
+                    serde_json::Value::Object(map)
+                })
+                .collect();
+            let response = serde_json::json!({
+                "accepted": true,
+                "output_events": events_json,
+            });
+            Ok(
+                warp::reply::with_status(warp::reply::json(&response), StatusCode::OK)
+                    .into_response(),
+            )
+        }
         Err(e) => Ok(tenant_error_response(e)),
     }
 }
@@ -515,7 +534,7 @@ async fn handle_metrics(
     let resp = PipelineMetricsResponse {
         pipeline_id,
         events_processed: tenant.usage.events_processed,
-        alerts_generated: tenant.usage.alerts_generated,
+        output_events_emitted: tenant.usage.output_events_emitted,
     };
     Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
 }
@@ -597,7 +616,7 @@ async fn handle_usage(
     let resp = UsageResponse {
         tenant_id: tenant.id.to_string(),
         events_processed: tenant.usage.events_processed,
-        alerts_generated: tenant.usage.alerts_generated,
+        output_events_emitted: tenant.usage.output_events_emitted,
         active_pipelines: tenant.usage.active_pipelines,
         quota: QuotaInfo {
             max_pipelines: tenant.quota.max_pipelines,
@@ -627,7 +646,9 @@ pub fn tenant_admin_routes(
     manager: SharedTenantManager,
     admin_key: Option<String>,
 ) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
-    let api = warp::path("api").and(warp::path("v1")).and(warp::path("tenants"));
+    let api = warp::path("api")
+        .and(warp::path("v1"))
+        .and(warp::path("tenants"));
 
     let create = api
         .and(warp::path::end())
@@ -667,7 +688,10 @@ pub fn tenant_admin_routes(
     create.or(list_tenants).or(get_tenant).or(delete_tenant)
 }
 
-fn validate_admin_key(provided: &str, configured: &Option<String>) -> Result<(), warp::reply::Response> {
+fn validate_admin_key(
+    provided: &str,
+    configured: &Option<String>,
+) -> Result<(), warp::reply::Response> {
     match configured {
         None => Err(error_response(
             StatusCode::FORBIDDEN,
@@ -723,7 +747,10 @@ async fn handle_create_tenant(
                     max_streams_per_pipeline: quota.max_streams_per_pipeline,
                 },
             };
-            Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::CREATED).into_response())
+            Ok(
+                warp::reply::with_status(warp::reply::json(&resp), StatusCode::CREATED)
+                    .into_response(),
+            )
         }
         Err(e) => Ok(tenant_error_response(e)),
     }
@@ -783,7 +810,7 @@ async fn handle_get_tenant(
                 },
                 usage: TenantUsageInfo {
                     events_processed: t.usage.events_processed,
-                    alerts_generated: t.usage.alerts_generated,
+                    output_events_emitted: t.usage.output_events_emitted,
                     active_pipelines: t.usage.active_pipelines,
                 },
                 pipeline_count: t.pipelines.len(),
@@ -1028,7 +1055,7 @@ mod tests {
             .reply(&routes)
             .await;
 
-        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 
     #[test]

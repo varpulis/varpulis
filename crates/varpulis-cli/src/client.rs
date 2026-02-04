@@ -145,8 +145,7 @@ mod tests {
         let manager = Arc::new(RwLock::new(mgr));
         let routes = api::api_routes(manager, None).recover(crate::auth::handle_rejection);
 
-        let (addr, server) =
-            warp::serve(routes).bind_ephemeral(([127, 0, 0, 1], 0));
+        let (addr, server) = warp::serve(routes).bind_ephemeral(([127, 0, 0, 1], 0));
         tokio::spawn(server);
 
         let base_url = format!("http://{}", addr);

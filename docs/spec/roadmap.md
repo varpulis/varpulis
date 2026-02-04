@@ -14,17 +14,17 @@
 - "Hello world" demo with simple aggregation
 - Basic documentation
 
-## Phase 2: Parser→Runtime & Sinks (Current)
+## Phase 2: Parser→Runtime & Output Connectors (Current)
 
 - [ ] Connect parser to runtime execution
-- [ ] File sink (JSON lines)
-- [ ] HTTP webhook sink
-- [ ] Kafka sink
+- [ ] File output connector (JSON lines)
+- [ ] HTTP webhook output connector
+- [ ] Kafka output connector
 - [ ] Prometheus metrics endpoint
 
 ### Phase 2 Deliverables
 - End-to-end execution of VarpulisQL programs
-- Multiple output destinations
+- Multiple output destinations via `.to()`
 
 ## Phase 3: Attention & Pattern Detection (2-3 months)
 
@@ -63,7 +63,7 @@
 ## Estimated Timeline
 
 ```
-2026 Q1: Phase 1 (Core) ✅ + Phase 2 (Sinks)
+2026 Q1: Phase 1 (Core) ✅ + Phase 2 (Connectors)
 2026 Q2: Phase 3 (Attention)
 2026 Q3: Phase 4 (Production)
 2026 Q4: Phase 5 (Advanced)

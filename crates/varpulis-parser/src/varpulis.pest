@@ -23,7 +23,6 @@ program = { SOI ~ statement* ~ EOI }
 statement = {
     context_decl
     | connector_decl
-    | sink_stmt
     | stream_decl
     | pattern_decl
     | event_decl
@@ -65,28 +64,6 @@ connector_type = { "mqtt" | "kafka" | "http" | "amqp" | "file" | "websocket" | "
 
 connector_params = { connector_param ~ ("," ~ connector_param)* }
 connector_param = { identifier ~ ":" ~ config_value }
-
-// ============================================================================
-// Sink Statement
-// ============================================================================
-
-// sink Alerts to KafkaProd (topic: "alerts")
-// sink Alerts to [KafkaProd (topic: "a"), HttpApi (endpoint: "/alerts")]
-// sink Debug to console()
-sink_stmt = {
-    "sink" ~ identifier ~ "to" ~ sink_target
-}
-
-sink_target = {
-    sink_target_list
-    | sink_builtin
-    | sink_connector
-}
-
-sink_target_list = { "[" ~ sink_connector ~ ("," ~ sink_connector)* ~ "]" }
-sink_builtin = { sink_builtin_type ~ "(" ~ named_arg_list? ~ ")" }
-sink_builtin_type = @{ "console" | "log" | "tap" }
-sink_connector = { identifier ~ "(" ~ connector_params? ~ ")" }
 
 // ============================================================================
 // Stream Declaration

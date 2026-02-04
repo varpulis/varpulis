@@ -643,10 +643,6 @@ stream AllSignals = merge(
 .tap(counter: "trading_signals_total", labels: [signal_type, direction])
 .emit()
 
-# Output signals to Kafka
-sink AllSignals to TradingKafka (topic: "trading-signals")
-sink AllSignals to console()
-
 # =============================================================================
 # Configuration
 # =============================================================================

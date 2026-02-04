@@ -19,11 +19,6 @@ pub enum Stmt {
         connector_type: String,
         params: Vec<ConnectorParam>,
     },
-    /// Sink statement: `sink Alerts to KafkaProd (topic: "alerts")`
-    SinkStmt {
-        stream_name: String,
-        targets: Vec<SinkTarget>,
-    },
     /// Stream declaration: `stream X from Y` or `stream X = Y.where(...)`
     StreamDecl {
         name: String,
@@ -122,21 +117,6 @@ pub enum Stmt {
 pub struct ConnectorParam {
     pub name: String,
     pub value: ConfigValue,
-}
-
-/// Sink target for sink statements
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum SinkTarget {
-    /// Connector with params: `KafkaProd (topic: "alerts")`
-    Connector {
-        connector_name: String,
-        params: Vec<ConnectorParam>,
-    },
-    /// Built-in sink: `console()`, `log(level: "info")`, `tap(counter: "x")`
-    Builtin {
-        sink_type: String,
-        params: Vec<NamedArg>,
-    },
 }
 
 /// SASE+ Pattern Expression for complex event processing

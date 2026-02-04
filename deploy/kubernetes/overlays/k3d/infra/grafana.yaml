@@ -69,13 +69,13 @@ data:
           }
         },
         {
-          "title": "Alerts Generated / sec",
+          "title": "Output Events / sec",
           "type": "timeseries",
           "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
           "targets": [
             {
-              "expr": "rate(varpulis_alerts_total[1m])",
-              "legendFormat": "{{severity}}",
+              "expr": "rate(varpulis_output_events_total[1m])",
+              "legendFormat": "{{stream}}",
               "refId": "A"
             }
           ],
@@ -158,12 +158,12 @@ data:
           }
         },
         {
-          "title": "Total Alerts",
+          "title": "Total Output Events",
           "type": "stat",
           "gridPos": { "h": 4, "w": 6, "x": 18, "y": 12 },
           "targets": [
             {
-              "expr": "sum(varpulis_alerts_total)",
+              "expr": "sum(varpulis_output_events_total)",
               "refId": "A"
             }
           ],

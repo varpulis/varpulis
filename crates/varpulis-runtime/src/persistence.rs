@@ -822,14 +822,16 @@ mod tests {
         let mut event = Event::new("ComplexEvent");
 
         // Timestamp (nanoseconds since epoch)
-        event
-            .data
-            .insert("ts".to_string(), varpulis_core::Value::Timestamp(1_700_000_000_000_000_000));
+        event.data.insert(
+            "ts".to_string(),
+            varpulis_core::Value::Timestamp(1_700_000_000_000_000_000),
+        );
 
         // Duration (nanoseconds)
-        event
-            .data
-            .insert("dur".to_string(), varpulis_core::Value::Duration(5_000_000_000));
+        event.data.insert(
+            "dur".to_string(),
+            varpulis_core::Value::Duration(5_000_000_000),
+        );
 
         // Array
         event.data.insert(
@@ -842,7 +844,7 @@ mod tests {
 
         // Map
         let mut inner_map = indexmap::IndexMap::new();
-        inner_map.insert("nested_key".to_string(), varpulis_core::Value::Float(3.14));
+        inner_map.insert("nested_key".to_string(), varpulis_core::Value::Float(3.15));
         inner_map.insert("flag".to_string(), varpulis_core::Value::Bool(true));
         event
             .data
@@ -895,7 +897,10 @@ mod tests {
         match restored.data.get("meta") {
             Some(varpulis_core::Value::Map(m)) => {
                 assert_eq!(m.len(), 2);
-                assert_eq!(m.get("nested_key"), Some(&varpulis_core::Value::Float(3.14)));
+                assert_eq!(
+                    m.get("nested_key"),
+                    Some(&varpulis_core::Value::Float(3.15))
+                );
                 assert_eq!(m.get("flag"), Some(&varpulis_core::Value::Bool(true)));
             }
             other => panic!("Expected Map, got {:?}", other),

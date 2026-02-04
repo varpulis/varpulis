@@ -6,8 +6,8 @@ use varpulis_runtime::{Engine, Event};
 
 #[tokio::test]
 async fn test_process_1000_events_under_100ms() {
-    let (alert_tx, mut alert_rx) = mpsc::channel(10000);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, mut output_rx) = mpsc::channel(10000);
+    let mut engine = Engine::new(output_tx);
 
     let vpl = r#"
         event TestEvent:
@@ -30,8 +30,8 @@ async fn test_process_1000_events_under_100ms() {
         engine.process(event).await.expect("Failed to process");
     }
 
-    // Drain alerts from warm-up
-    while alert_rx.try_recv().is_ok() {}
+    // Drain output events from warm-up
+    while output_rx.try_recv().is_ok() {}
 
     // Timed run
     let start = Instant::now();
@@ -51,13 +51,13 @@ async fn test_process_1000_events_under_100ms() {
         1000.0 / duration.as_secs_f64()
     );
 
-    // Check we got alerts
-    let mut alert_count = 0;
-    while alert_rx.try_recv().is_ok() {
-        alert_count += 1;
+    // Check we got output events
+    let mut output_count = 0;
+    while output_rx.try_recv().is_ok() {
+        output_count += 1;
     }
 
-    println!("Alerts generated: {}", alert_count);
+    println!("Output events: {}", output_count);
 
     // Performance assertion - should complete in under 100ms
     // (This is a generous limit; actual should be much faster)
@@ -70,8 +70,8 @@ async fn test_process_1000_events_under_100ms() {
 
 #[tokio::test]
 async fn test_memory_stable_after_10000_events() {
-    let (alert_tx, mut alert_rx) = mpsc::channel(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, mut output_rx) = mpsc::channel(100);
+    let mut engine = Engine::new(output_tx);
 
     let vpl = r#"
         event DataEvent:
@@ -99,14 +99,14 @@ async fn test_memory_stable_after_10000_events() {
             .with_field("reading", (i as f64) * 0.1);
         engine.process(event).await.expect("Failed to process");
 
-        // Drain alerts periodically to avoid channel backup
-        while alert_rx.try_recv().is_ok() {}
+        // Drain output events periodically to avoid channel backup
+        while output_rx.try_recv().is_ok() {}
     }
 
     // Get metrics
     let metrics = engine.metrics();
     println!("Events processed: {}", metrics.events_processed);
-    println!("Alerts generated: {}", metrics.alerts_generated);
+    println!("Output events: {}", metrics.output_events_emitted);
 
     // The test passes if we complete without OOM or panic
     // A more sophisticated test would check actual memory usage
@@ -115,8 +115,8 @@ async fn test_memory_stable_after_10000_events() {
 
 #[tokio::test]
 async fn test_filter_performance() {
-    let (alert_tx, mut alert_rx) = mpsc::channel(10000);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, mut output_rx) = mpsc::channel(10000);
+    let mut engine = Engine::new(output_tx);
 
     let vpl = r#"
         event NumericEvent:
@@ -137,8 +137,8 @@ async fn test_filter_performance() {
         let event = Event::new("NumericEvent").with_field("value", i as f64);
         engine.process(event).await.expect("Failed to process");
 
-        // Drain alerts to avoid channel backup
-        while alert_rx.try_recv().is_ok() {}
+        // Drain output events to avoid channel backup
+        while output_rx.try_recv().is_ok() {}
     }
 
     let duration = start.elapsed();
@@ -157,8 +157,8 @@ async fn test_filter_performance() {
 async fn test_window_cleanup_performance() {
     use std::time::Instant;
 
-    let (alert_tx, mut alert_rx) = mpsc::channel(10000);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, mut output_rx) = mpsc::channel(10000);
+    let mut engine = Engine::new(output_tx);
 
     let vpl = r#"
         event TickEvent:
@@ -185,9 +185,9 @@ async fn test_window_cleanup_performance() {
 
     let duration = start.elapsed();
 
-    // Drain alerts
+    // Drain output events
     let mut count = 0;
-    while alert_rx.try_recv().is_ok() {
+    while output_rx.try_recv().is_ok() {
         count += 1;
     }
 

@@ -258,15 +258,15 @@ curl -X POST http://localhost:8080/events/batch \
   ]'
 ```
 
-### Webhook Sink (Outgoing)
+### Webhook Output (Outgoing)
 
-Configure HTTP output in VPL:
+Configure HTTP output in VPL using `.to()` to route events to a connector:
 
 ```vpl
 stream Alerts from TemperatureReading
-    where temperature > 100
-    emit alert("HighTemp", "Temperature exceeded threshold")
-    to("http://webhook.example.com/alerts")
+    .where(temperature > 100)
+    .emit(alert_type: "HighTemp", message: "Temperature exceeded threshold")
+    .to("http://webhook.example.com/alerts")
 ```
 
 ---

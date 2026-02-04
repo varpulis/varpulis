@@ -134,7 +134,6 @@ fn parse_statement(pair: pest::iterators::Pair<Rule>) -> ParseResult<Spanned<Stm
     let stmt = match inner.as_rule() {
         Rule::context_decl => parse_context_decl(inner)?,
         Rule::connector_decl => parse_connector_decl(inner)?,
-        Rule::sink_stmt => parse_sink_stmt(inner)?,
         Rule::stream_decl => parse_stream_decl(inner)?,
         Rule::pattern_decl => parse_pattern_decl(inner)?,
         Rule::event_decl => parse_event_decl(inner)?,
@@ -198,7 +197,7 @@ fn parse_context_decl(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
 }
 
 // ============================================================================
-// Connector and Sink Parsing
+// Connector Parsing
 // ============================================================================
 
 fn parse_connector_decl(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
@@ -217,77 +216,6 @@ fn parse_connector_decl(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> 
         name,
         connector_type,
         params,
-    })
-}
-
-fn parse_sink_stmt(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
-    let mut inner = pair.into_inner();
-    let stream_name = inner.expect_next("stream name")?.as_str().to_string();
-    let target_pair = inner.expect_next("sink target")?;
-    let targets = parse_sink_target(target_pair)?;
-
-    Ok(Stmt::SinkStmt {
-        stream_name,
-        targets,
-    })
-}
-
-fn parse_sink_target(pair: pest::iterators::Pair<Rule>) -> ParseResult<Vec<SinkTarget>> {
-    let inner = pair.into_inner().expect_next("sink target type")?;
-
-    match inner.as_rule() {
-        Rule::sink_target_list => {
-            let mut targets = Vec::new();
-            for p in inner.into_inner() {
-                if p.as_rule() == Rule::sink_connector {
-                    targets.push(parse_sink_connector(p)?);
-                }
-            }
-            Ok(targets)
-        }
-        Rule::sink_builtin => {
-            let mut inner_iter = inner.into_inner();
-            let type_pair = inner_iter.expect_next("builtin sink type")?;
-            let sink_type = type_pair.as_str().to_string();
-            let mut params = Vec::new();
-            for p in inner_iter {
-                if p.as_rule() == Rule::named_arg_list {
-                    for arg in p.into_inner() {
-                        params.push(parse_named_arg(arg)?);
-                    }
-                }
-            }
-            Ok(vec![SinkTarget::Builtin { sink_type, params }])
-        }
-        Rule::sink_connector => Ok(vec![parse_sink_connector(inner)?]),
-        _ => Err(ParseError::UnexpectedToken {
-            position: 0,
-            expected: "sink target".to_string(),
-            found: format!("{:?}", inner.as_rule()),
-        }),
-    }
-}
-
-fn parse_sink_connector(pair: pest::iterators::Pair<Rule>) -> ParseResult<SinkTarget> {
-    let mut inner = pair.into_inner();
-    let connector_name = inner.expect_next("connector name")?.as_str().to_string();
-    let mut params = Vec::new();
-
-    for p in inner {
-        if p.as_rule() == Rule::connector_params {
-            params = parse_connector_params(p)?;
-        }
-    }
-
-    Ok(SinkTarget::Connector {
-        connector_name,
-        params: params
-            .into_iter()
-            .map(|p| ConnectorParam {
-                name: p.name,
-                value: p.value,
-            })
-            .collect(),
     })
 }
 
@@ -2588,30 +2516,6 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_sink_to_connector() {
-        let result = parse(r#"sink Alerts to KafkaCluster (topic: "alerts")"#);
-        assert!(result.is_ok(), "Failed: {:?}", result.err());
-    }
-
-    #[test]
-    fn test_parse_sink_to_console() {
-        let result = parse("sink DebugStream to console()");
-        assert!(result.is_ok(), "Failed: {:?}", result.err());
-    }
-
-    #[test]
-    fn test_parse_sink_to_log() {
-        let result = parse(r#"sink ErrorStream to log(level: "error")"#);
-        assert!(result.is_ok(), "Failed: {:?}", result.err());
-    }
-
-    #[test]
-    fn test_parse_sink_to_tap() {
-        let result = parse(r#"sink MetricsStream to tap(counter: "events_total")"#);
-        assert!(result.is_ok(), "Failed: {:?}", result.err());
-    }
-
-    #[test]
     fn test_parse_full_connectivity_pipeline() {
         let result = parse(
             r#"
@@ -2629,8 +2533,6 @@ mod tests {
                 .where(value > 30)
                 .emit(alert_type: "HIGH_TEMP", temperature: value)
 
-            sink HighTempAlert to KafkaAlerts (topic: "alerts")
-            sink HighTempAlert to console()
             "#,
         );
         assert!(result.is_ok(), "Failed: {:?}", result.err());

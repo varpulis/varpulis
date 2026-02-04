@@ -15,9 +15,9 @@ fn create_test_event(event_type: &str, symbol: &str, fields: Vec<(&str, Value)>)
 
 #[tokio::test]
 async fn test_join_two_streams_correlates_by_key() {
-    // Create an engine with alert channel
-    let (alert_tx, mut alert_rx) = mpsc::channel(100);
-    let mut engine = Engine::new(alert_tx);
+    // Create an engine with output channel
+    let (output_tx, mut output_rx) = mpsc::channel(100);
+    let mut engine = Engine::new(output_tx);
 
     // Parse a simple join query
     let vpl = r#"
@@ -71,17 +71,17 @@ async fn test_join_two_streams_correlates_by_key() {
         .await
         .expect("Failed to process EMA26");
 
-    // Check for emitted alert with MACD result
+    // Check for emitted event with MACD result
     // Give a short timeout for async processing
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-    // Try to receive the alert
-    match alert_rx.try_recv() {
-        Ok(alert) => {
-            assert_eq!(alert.alert_type, "MACDResult");
-            let symbol = alert.data.get("symbol").expect("Missing symbol");
+    // Try to receive the event
+    match output_rx.try_recv() {
+        Ok(event) => {
+            assert_eq!(event.event_type, "MACD");
+            let symbol = event.data.get("symbol").expect("Missing symbol");
             assert_eq!(symbol, &Value::Str("BTC/USD".to_string()));
-            let macd_line = alert.data.get("macd_line").expect("Missing macd_line");
+            let macd_line = event.data.get("macd_line").expect("Missing macd_line");
             // EMA12 - EMA26 = 45000 - 44500 = 500
             if let Value::Float(v) = macd_line {
                 assert!((v - 500.0).abs() < 0.001, "Expected ~500, got {}", v);
@@ -91,8 +91,8 @@ async fn test_join_two_streams_correlates_by_key() {
         }
         Err(_) => {
             // This is expected to fail initially until JoinBuffer is implemented
-            // After implementation, we should receive an alert
-            println!("No alert received - JoinBuffer implementation needed");
+            // After implementation, we should receive an event
+            println!("No event received - JoinBuffer implementation needed");
         }
     }
 }
@@ -100,8 +100,8 @@ async fn test_join_two_streams_correlates_by_key() {
 #[tokio::test]
 async fn test_join_buffer_window_expiration() {
     // Test that events outside the window are not correlated
-    let (alert_tx, mut alert_rx) = mpsc::channel(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, mut output_rx) = mpsc::channel(100);
+    let mut engine = Engine::new(output_tx);
 
     let vpl = r#"
         event StreamA:
@@ -151,16 +151,16 @@ async fn test_join_buffer_window_expiration() {
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
     // Should get a result since both events are within 100ms window
-    match alert_rx.try_recv() {
-        Ok(alert) => {
-            assert_eq!(alert.alert_type, "JoinedResult");
-            let total = alert.data.get("total").expect("Missing total");
+    match output_rx.try_recv() {
+        Ok(event) => {
+            assert_eq!(event.event_type, "Joined");
+            let total = event.data.get("total").expect("Missing total");
             if let Value::Float(v) = total {
                 assert!((v - 30.0).abs() < 0.001, "Expected 30, got {}", v);
             }
         }
         Err(_) => {
-            println!("No alert received - JoinBuffer implementation needed");
+            println!("No event received - JoinBuffer implementation needed");
         }
     }
 }
@@ -168,8 +168,8 @@ async fn test_join_buffer_window_expiration() {
 #[tokio::test]
 async fn test_join_multi_stream_all_fields_accessible() {
     // Test that fields from all joined streams are accessible
-    let (alert_tx, mut alert_rx) = mpsc::channel(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, mut output_rx) = mpsc::channel(100);
+    let mut engine = Engine::new(output_tx);
 
     let vpl = r#"
         event PriceEvent:
@@ -220,22 +220,22 @@ async fn test_join_multi_stream_all_fields_accessible() {
 
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
-    match alert_rx.try_recv() {
-        Ok(alert) => {
-            assert_eq!(alert.alert_type, "CombinedResult");
+    match output_rx.try_recv() {
+        Ok(event) => {
+            assert_eq!(event.event_type, "Combined");
             assert_eq!(
-                alert.data.get("symbol"),
+                event.data.get("symbol"),
                 Some(&Value::Str("ETH/USD".to_string()))
             );
-            if let Some(Value::Float(p)) = alert.data.get("price") {
+            if let Some(Value::Float(p)) = event.data.get("price") {
                 assert!((p - 3000.0).abs() < 0.001);
             } else {
                 panic!("price should be a float");
             }
-            assert_eq!(alert.data.get("volume"), Some(&Value::Int(1000)));
+            assert_eq!(event.data.get("volume"), Some(&Value::Int(1000)));
         }
         Err(_) => {
-            println!("No alert received - JoinBuffer implementation needed");
+            println!("No event received - JoinBuffer implementation needed");
         }
     }
 }
@@ -243,8 +243,8 @@ async fn test_join_multi_stream_all_fields_accessible() {
 #[tokio::test]
 async fn test_join_no_match_returns_empty() {
     // Test that mismatched keys don't produce output
-    let (alert_tx, mut alert_rx) = mpsc::channel(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, mut output_rx) = mpsc::channel(100);
+    let mut engine = Engine::new(output_tx);
 
     let vpl = r#"
         event EventA:
@@ -282,10 +282,10 @@ async fn test_join_no_match_returns_empty() {
 
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
-    // Should NOT receive any alert because keys don't match
+    // Should NOT receive any event because keys don't match
     assert!(
-        alert_rx.try_recv().is_err(),
-        "Should not receive alert for mismatched keys"
+        output_rx.try_recv().is_err(),
+        "Should not receive event for mismatched keys"
     );
 }
 
@@ -293,8 +293,8 @@ async fn test_join_no_match_returns_empty() {
 async fn test_aggregate_comparison_join() {
     // Test joining two aggregated streams and comparing their values
     // This is the core use case for STREAM-03
-    let (alert_tx, mut alert_rx) = mpsc::channel(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, mut output_rx) = mpsc::channel(100);
+    let mut engine = Engine::new(output_tx);
 
     // Simpler test: just join two aggregated streams and emit their values
     let vpl = r#"
@@ -350,30 +350,30 @@ async fn test_aggregate_comparison_join() {
 
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-    // Count combined alerts
+    // Count combined events
     let mut combined_count = 0;
-    while let Ok(alert) = alert_rx.try_recv() {
-        if alert.alert_type == "Combined" {
+    while let Ok(event) = output_rx.try_recv() {
+        if event.event_type == "Combined" {
             combined_count += 1;
-            // Debug: print alert
-            println!("Combined alert: {:?}", alert.data);
-            // Verify the alert has expected fields
-            assert!(alert.data.contains_key("sensor_id"));
-            assert!(alert.data.contains_key("fast_avg"));
-            assert!(alert.data.contains_key("slow_avg"));
+            // Debug: print event
+            println!("Combined event: {:?}", event.data);
+            // Verify the event has expected fields
+            assert!(event.data.contains_key("sensor_id"));
+            assert!(event.data.contains_key("fast_avg"));
+            assert!(event.data.contains_key("slow_avg"));
         }
     }
 
-    // Should have multiple combined alerts after both windows are full
+    // Should have multiple combined events after both windows are full
     // FastAvg outputs after 3 events, SlowAvg outputs after 5 events
     // First join should happen after event 5
     assert!(
         combined_count > 0,
-        "Expected combined alerts, got {}",
+        "Expected combined events, got {}",
         combined_count
     );
     println!(
-        "Aggregate comparison join produced {} combined alerts",
+        "Aggregate comparison join produced {} combined events",
         combined_count
     );
 }
@@ -381,8 +381,8 @@ async fn test_aggregate_comparison_join() {
 #[tokio::test]
 async fn test_macd_example_produces_signals() {
     // End-to-end test simulating the financial_markets.vpl MACD pattern
-    let (alert_tx, mut alert_rx) = mpsc::channel(100);
-    let mut engine = Engine::new(alert_tx);
+    let (output_tx, mut output_rx) = mpsc::channel(100);
+    let mut engine = Engine::new(output_tx);
 
     let vpl = r#"
         event OHLCV:
@@ -441,24 +441,24 @@ async fn test_macd_example_produces_signals() {
 
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-    // Count MACD alerts
+    // Count MACD events
     let mut macd_count = 0;
-    while let Ok(alert) = alert_rx.try_recv() {
-        if alert.alert_type == "MACD" {
+    while let Ok(event) = output_rx.try_recv() {
+        if event.event_type == "MACD" {
             macd_count += 1;
-            println!("MACD alert {}: {:?}", macd_count, alert.data);
+            println!("MACD event {}: {:?}", macd_count, event.data);
             // Verify the MACD has expected fields
-            assert!(alert.data.contains_key("symbol"));
-            assert!(alert.data.contains_key("macd_line"));
+            assert!(event.data.contains_key("symbol"));
+            assert!(event.data.contains_key("macd_line"));
         }
     }
 
-    // After implementing aggregate-to-aggregate joins, we should see MACD alerts
+    // After implementing aggregate-to-aggregate joins, we should see MACD events
     // With 30 events: EMA12 produces after 12, EMA26 produces after 26
     // So first join possible at event 26, giving ~5 potential matches
     assert!(
         macd_count > 0,
-        "Expected MACD alerts after aggregate join implementation"
+        "Expected MACD events after aggregate join implementation"
     );
-    println!("MACD alerts received: {}", macd_count);
+    println!("MACD events received: {}", macd_count);
 }

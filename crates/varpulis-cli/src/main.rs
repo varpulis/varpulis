@@ -14,7 +14,7 @@ use warp::Filter;
 
 use varpulis_core::ast::{Program, Stmt};
 use varpulis_parser::parse;
-use varpulis_runtime::engine::{Alert, Engine};
+use varpulis_runtime::engine::Engine;
 use varpulis_runtime::event::Event;
 use varpulis_runtime::event_file::{EventFileParser, EventFilePlayer, StreamingEventReader};
 use varpulis_runtime::metrics::{Metrics, MetricsServer};
@@ -444,12 +444,18 @@ async fn main() -> Result<()> {
                 Ok(usage) => {
                     println!("Tenant: {}", usage.tenant_id);
                     println!("  Events processed:  {}", usage.events_processed);
-                    println!("  Alerts generated:  {}", usage.alerts_generated);
+                    println!("  Output events emitted: {}", usage.output_events_emitted);
                     println!("  Active pipelines:  {}", usage.active_pipelines);
                     println!("  Quota:");
                     println!("    Max pipelines:          {}", usage.quota.max_pipelines);
-                    println!("    Max events/sec:         {}", usage.quota.max_events_per_second);
-                    println!("    Max streams/pipeline:   {}", usage.quota.max_streams_per_pipeline);
+                    println!(
+                        "    Max events/sec:         {}",
+                        usage.quota.max_events_per_second
+                    );
+                    println!(
+                        "    Max streams/pipeline:   {}",
+                        usage.quota.max_streams_per_pipeline
+                    );
                 }
                 Err(e) => {
                     anyhow::bail!("Failed to get status: {}", e);
@@ -462,9 +468,7 @@ async fn main() -> Result<()> {
 }
 
 async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
-    use varpulis_runtime::connector::{
-        MqttConfig, MqttSink, MqttSource, SinkConnector, SourceConnector,
-    };
+    use varpulis_runtime::connector::{MqttConfig, MqttSource, SourceConnector};
 
     info!("Parsing VarpulisQL program...");
     let mut program = parse(source).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
@@ -473,11 +477,11 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
     // Resolve imports
     resolve_imports(&mut program, base_path)?;
 
-    // Create alert channel
-    let (alert_tx, mut alert_rx) = mpsc::channel::<Alert>(100);
+    // Create output event channel
+    let (output_tx, mut output_rx) = mpsc::channel::<Event>(100);
 
     // Create engine
-    let mut engine = Engine::new(alert_tx);
+    let mut engine = Engine::new(output_tx);
     engine
         .load(&program)
         .map_err(|e| anyhow::anyhow!("Load error: {}", e))?;
@@ -486,17 +490,15 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
     println!("\nProgram loaded successfully!");
     println!("   Streams registered: {}", metrics.streams_count);
 
-    // Check for MQTT config (deprecated path — kept for backward compatibility)
-    let mqtt_config = engine.get_config("mqtt");
-    if mqtt_config.is_some() {
+    // Check for deprecated config mqtt block
+    if engine.get_config("mqtt").is_some() {
         eprintln!(
             "WARNING: 'config mqtt {{ ... }}' is deprecated. \
              Use the connector syntax instead:\n\
              \n\
              connector MyMqtt = mqtt (\n\
-                 broker: \"localhost\",\n\
-                 port: 1883,\n\
-                 topic: \"events/#\"\n\
+                 host: \"localhost\",\n\
+                 port: 1883\n\
              )\n\
              \n\
              stream Events = SensorReading\n\
@@ -504,107 +506,128 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
         );
     }
 
-    if let Some(config) = mqtt_config {
-        // Use unwrap_or instead of unwrap() for safe defaults
-        let broker = config
-            .values
-            .get("broker")
-            .and_then(|v| v.as_string())
-            .unwrap_or("localhost");
-        let port: u16 = config
-            .values
-            .get("port")
-            .and_then(|v| v.as_int())
-            .map(|i| i as u16)
-            .unwrap_or(1883);
-        let input_topic = config
-            .values
-            .get("input_topic")
-            .and_then(|v| v.as_string())
-            .unwrap_or("varpulis/events/#");
-        let output_topic = config
-            .values
-            .get("output_topic")
-            .and_then(|v| v.as_string())
-            .unwrap_or("varpulis/alerts");
-        let client_id = config
-            .values
-            .get("client_id")
-            .and_then(|v| v.as_string())
-            .unwrap_or("varpulis-engine");
+    let bindings = engine.source_bindings().to_vec();
 
-        println!("\nMQTT Configuration:");
-        println!("   Broker: {}:{}", broker, port);
-        println!("   Input:  {}", input_topic);
-        println!("   Output: {}", output_topic);
-
-        // Create MQTT source
-        let mqtt_source_config = MqttConfig::new(broker, input_topic)
-            .with_port(port)
-            .with_client_id(&format!("{}-source", client_id));
-        let mut mqtt_source = MqttSource::new("mqtt-source", mqtt_source_config);
-
-        // Create MQTT sink for alerts
-        let mqtt_sink_config = MqttConfig::new(broker, output_topic)
-            .with_port(port)
-            .with_client_id(&format!("{}-sink", client_id));
-        let mut mqtt_sink = MqttSink::new("mqtt-sink", mqtt_sink_config);
-        mqtt_sink
-            .connect()
-            .await
-            .map_err(|e| anyhow::anyhow!("MQTT sink connection error: {}", e))?;
-        let mqtt_sink = Arc::new(mqtt_sink);
-
-        // Create event channel
+    if !bindings.is_empty() {
+        // Create shared event channel for all source connectors
         let (event_tx, mut event_rx) = mpsc::channel::<Event>(1000);
 
-        // Spawn alert handler that publishes to MQTT
-        let sink_clone = mqtt_sink.clone();
-        tokio::spawn(async move {
-            while let Some(alert) = alert_rx.recv().await {
-                println!("ALERT: {} - {}", alert.alert_type, alert.message);
+        // Track active sources for cleanup
+        let mut active_sources: Vec<Box<dyn SourceConnector>> = Vec::new();
 
-                // Publish alert to MQTT with full data
-                let mut alert_event = Event::new(&alert.alert_type);
-                alert_event.data.insert(
-                    "message".to_string(),
-                    varpulis_core::Value::Str(alert.message.clone()),
+        // Start a source connector for each .from() binding
+        for binding in &bindings {
+            let connector_config = engine.get_connector(&binding.connector_name).cloned();
+            let Some(config) = connector_config else {
+                anyhow::bail!(
+                    "Connector '{}' referenced in .from() but not declared",
+                    binding.connector_name
                 );
-                alert_event.data.insert(
-                    "severity".to_string(),
-                    varpulis_core::Value::Str(alert.severity.clone()),
+            };
+
+            let topic = binding
+                .topic_override
+                .as_deref()
+                .or(config.topic.as_deref())
+                .unwrap_or("varpulis/events/#");
+
+            match config.connector_type.as_str() {
+                "mqtt" => {
+                    let broker = &config.url;
+                    let port: u16 = config
+                        .properties
+                        .get("port")
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(1883);
+                    let client_id = config
+                        .properties
+                        .get("client_id")
+                        .cloned()
+                        .unwrap_or_else(|| format!("{}-source", binding.connector_name));
+
+                    let mqtt_config = MqttConfig::new(broker, topic)
+                        .with_port(port)
+                        .with_client_id(&client_id);
+
+                    let mut mqtt_source =
+                        MqttSource::new(&format!("{}-source", binding.connector_name), mqtt_config);
+
+                    println!("\nMQTT Source: {}:{} topic={}", broker, port, topic);
+
+                    mqtt_source
+                        .start(event_tx.clone())
+                        .await
+                        .map_err(|e| anyhow::anyhow!("MQTT source error: {}", e))?;
+
+                    active_sources.push(Box::new(mqtt_source));
+                }
+                "kafka" => {
+                    #[cfg(feature = "kafka")]
+                    {
+                        use varpulis_runtime::connector::{KafkaConfig, KafkaSourceFull};
+
+                        let brokers = config
+                            .properties
+                            .get("brokers")
+                            .cloned()
+                            .unwrap_or_else(|| config.url.clone());
+
+                        let kafka_config = KafkaConfig::new(&brokers, topic);
+                        let mut kafka_source = KafkaSourceFull::new(
+                            &format!("{}-source", binding.connector_name),
+                            kafka_config,
+                        );
+
+                        println!("\nKafka Source: {} topic={}", brokers, topic);
+
+                        kafka_source
+                            .start(event_tx.clone())
+                            .await
+                            .map_err(|e| anyhow::anyhow!("Kafka source error: {}", e))?;
+
+                        active_sources.push(Box::new(kafka_source));
+                    }
+                    #[cfg(not(feature = "kafka"))]
+                    {
+                        anyhow::bail!(
+                            "Kafka connector '{}' requires 'kafka' feature flag",
+                            binding.connector_name
+                        );
+                    }
+                }
+                other => {
+                    anyhow::bail!(
+                        "Unsupported source connector type '{}' for connector '{}'",
+                        other,
+                        binding.connector_name
+                    );
+                }
+            }
+        }
+
+        // Spawn output event handler
+        tokio::spawn(async move {
+            while let Some(output_event) = output_rx.recv().await {
+                println!(
+                    "OUTPUT EVENT: {} - {:?}",
+                    output_event.event_type, output_event.data
                 );
-                for (key, value) in &alert.data {
-                    alert_event.data.insert(key.clone(), value.clone());
-                }
-                match sink_clone.as_ref().send(&alert_event).await {
-                    Ok(_) => tracing::debug!("Published alert to MQTT: {}", alert.alert_type),
-                    Err(e) => tracing::warn!("Failed to publish alert to MQTT: {}", e),
-                }
             }
         });
 
-        // Start MQTT source
-        println!("\nStarting MQTT source...");
-        mqtt_source
-            .start(event_tx)
-            .await
-            .map_err(|e| anyhow::anyhow!("MQTT source error: {}", e))?;
-
-        println!("Listening for events on {}...\n", input_topic);
+        println!("\nListening for events...");
         println!("   Press Ctrl+C to stop\n");
 
         let start = std::time::Instant::now();
         let mut last_report = std::time::Instant::now();
         let mut event_count = 0u64;
 
-        // Process events from MQTT
+        // Process events from all sources
         loop {
             tokio::select! {
                 Some(event) = event_rx.recv() => {
                     event_count += 1;
 
-                    // Process through engine
                     if let Err(e) = engine.process(event.clone()).await {
                         tracing::warn!("Engine error: {}", e);
                     }
@@ -612,9 +635,9 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
                     // Progress report every 2 seconds
                     if last_report.elapsed() >= std::time::Duration::from_secs(2) {
                         let metrics = engine.metrics();
-                        print!("\rEvents: {} | Alerts: {} | Rate: {:.0}/s    ",
+                        print!("\rEvents: {} | Output events: {} | Rate: {:.0}/s    ",
                             metrics.events_processed,
-                            metrics.alerts_generated,
+                            metrics.output_events_emitted,
                             event_count as f64 / start.elapsed().as_secs_f64()
                         );
                         std::io::Write::flush(&mut std::io::stdout())?;
@@ -623,7 +646,9 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
                 }
                 _ = tokio::signal::ctrl_c() => {
                     println!("\n\nStopping...");
-                    mqtt_source.stop().await.ok();
+                    for source in &mut active_sources {
+                        source.stop().await.ok();
+                    }
                     break;
                 }
             }
@@ -633,28 +658,29 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
         let metrics = engine.metrics();
         println!("\nFinal Statistics:");
         println!("   Events processed: {}", metrics.events_processed);
-        println!("   Alerts generated: {}", metrics.alerts_generated);
+        println!(
+            "   Output events emitted: {}",
+            metrics.output_events_emitted
+        );
         println!("   Runtime: {:.1}s", start.elapsed().as_secs_f64());
     } else {
-        // No MQTT config - just show that we loaded successfully
-        println!("\nNo connector configuration found in program.");
+        // No source bindings - just show that we loaded successfully
+        println!("\nNo source connector bindings found (.from() declarations).");
         println!("   To connect to MQTT, use the connector syntax:");
         println!("   ");
         println!("   connector MyMqtt = mqtt (");
-        println!("       broker: \"localhost\",");
-        println!("       port: 1883,");
-        println!("       topic: \"varpulis/events/#\"");
+        println!("       host: \"localhost\",");
+        println!("       port: 1883");
         println!("   )");
         println!("   ");
         println!("   stream Events = SensorReading");
         println!("       .from(MyMqtt, topic: \"sensors/#\")");
 
-        // Spawn alert handler anyway for demo mode
+        // Spawn output event handler anyway for demo mode
         tokio::spawn(async move {
-            while let Some(alert) = alert_rx.recv().await {
-                println!("\nALERT: {} ({})", alert.alert_type, alert.severity);
-                println!("   Message: {}", alert.message);
-                for (key, value) in &alert.data {
+            while let Some(output_event) = output_rx.recv().await {
+                println!("\nOUTPUT EVENT: {}", output_event.event_type);
+                for (key, value) in &output_event.data {
                     println!("   {}: {}", key, value);
                 }
             }
@@ -770,11 +796,11 @@ async fn run_simulation(
         program.statements.len()
     );
 
-    // Create alert channel (shared across all engines)
-    let (alert_tx, mut alert_rx) = mpsc::channel::<Alert>(1000 * num_workers);
+    // Create output event channel (shared across all engines)
+    let (output_tx, mut output_rx) = mpsc::channel::<Event>(1000 * num_workers);
 
     // Create initial engine to show metrics
-    let mut engine = Engine::new(alert_tx.clone());
+    let mut engine = Engine::new(output_tx.clone());
     engine
         .load(&program)
         .map_err(|e| anyhow::anyhow!("Load error: {}", e))?;
@@ -783,19 +809,19 @@ async fn run_simulation(
     println!("Program loaded: {} streams", metrics.streams_count);
     println!();
 
-    // Collect alerts
-    let alerts = Arc::new(RwLock::new(Vec::<Alert>::new()));
-    let alerts_clone = alerts.clone();
+    // Collect output events
+    let output_events = Arc::new(RwLock::new(Vec::<Event>::new()));
+    let output_events_clone = output_events.clone();
 
     tokio::spawn(async move {
-        while let Some(alert) = alert_rx.recv().await {
+        while let Some(output_event) = output_rx.recv().await {
             if verbose {
-                println!("ALERT: {} - {}", alert.alert_type, alert.message);
-                for (k, v) in &alert.data {
-                    println!("   {}: {}", k, v);
-                }
+                println!(
+                    "OUTPUT EVENT: {} - {:?}",
+                    output_event.event_type, output_event.data
+                );
             }
-            alerts_clone.write().await.push(alert);
+            output_events_clone.write().await.push(output_event);
         }
     });
 
@@ -849,7 +875,7 @@ async fn run_simulation(
 
         // Process partitions in parallel using spawn_blocking + rayon
         let program_arc = program.clone();
-        let alert_tx_arc = alert_tx.clone();
+        let output_tx_arc = output_tx.clone();
         let total_counter = total_events_processed.clone();
 
         let partition_vec: Vec<_> = partitions.into_iter().collect();
@@ -867,7 +893,7 @@ async fn run_simulation(
                         .expect("Failed to create tokio runtime");
 
                     rt.block_on(async {
-                        let mut worker_engine = Engine::new(alert_tx_arc.clone());
+                        let mut worker_engine = Engine::new(output_tx_arc.clone());
                         if let Err(e) = worker_engine.load(&program_arc) {
                             eprintln!("Worker {}: Failed to load program: {}", partition_id, e);
                             return;
@@ -970,7 +996,7 @@ async fn run_simulation(
 
             // Process partitions in parallel using spawn_blocking + rayon
             let program_arc = program.clone();
-            let alert_tx_arc = alert_tx.clone();
+            let output_tx_arc = output_tx.clone();
             let total_counter = total_events_processed.clone();
 
             let partition_vec: Vec<_> = partitions.into_iter().collect();
@@ -985,7 +1011,7 @@ async fn run_simulation(
                             .expect("Failed to create tokio runtime");
 
                         rt.block_on(async {
-                            let mut worker_engine = Engine::new(alert_tx_arc.clone());
+                            let mut worker_engine = Engine::new(output_tx_arc.clone());
                             if let Err(e) = worker_engine.load(&program_arc) {
                                 eprintln!("Worker {}: Failed to load program: {}", partition_id, e);
                                 return;
@@ -1086,7 +1112,7 @@ async fn run_simulation(
             .map_err(|e| anyhow::anyhow!("Player error: {}", e))?;
     }
 
-    // Wait a bit for any pending alerts
+    // Wait a bit for any pending output events
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     // Summary
@@ -1099,23 +1125,23 @@ async fn run_simulation(
         engine.metrics().events_processed
     };
 
-    let alerts_count = alerts.read().await.len();
+    let output_events_count = output_events.read().await.len();
 
     println!("\nSimulation Complete");
     println!("======================");
     println!("Duration:         {:?}", elapsed);
     println!("Events processed: {}", events_processed);
     println!("Workers used:     {}", num_workers);
-    println!("Alerts generated: {}", alerts_count);
+    println!("Output events emitted: {}", output_events_count);
     println!(
         "Event rate:       {:.1} events/sec",
         events_processed as f64 / elapsed.as_secs_f64()
     );
 
-    if alerts_count > 0 {
-        println!("\nAlerts Summary:");
-        for alert in alerts.read().await.iter() {
-            println!("  - {}: {}", alert.alert_type, alert.message);
+    if output_events_count > 0 {
+        println!("\nOutput Events Summary:");
+        for output_event in output_events.read().await.iter() {
+            println!("  - {}: {:?}", output_event.event_type, output_event.data);
         }
     }
 
@@ -1160,8 +1186,8 @@ async fn run_demo(
     // Create simulator
     let mut simulator = Simulator::new(config, event_tx);
 
-    // Create alert channel
-    let (alert_tx, mut alert_rx) = mpsc::channel::<Alert>(100);
+    // Create output event channel
+    let (output_tx, mut output_rx) = mpsc::channel::<Event>(100);
 
     // Create engine with a simple stream
     let demo_program = r#"
@@ -1175,7 +1201,7 @@ async fn run_demo(
     // Create prometheus metrics if enabled
     let prom_metrics = enable_metrics.then(Metrics::new);
 
-    let mut engine = Engine::new(alert_tx);
+    let mut engine = Engine::new(output_tx);
     if let Some(ref m) = prom_metrics {
         engine = engine.with_metrics(m.clone());
     }
@@ -1196,10 +1222,10 @@ async fn run_demo(
         simulator.run().await;
     });
 
-    // Spawn alert handler
+    // Spawn output event handler
     tokio::spawn(async move {
-        while let Some(alert) = alert_rx.recv().await {
-            println!("{}: {}", alert.alert_type, alert.message);
+        while let Some(output_event) = output_rx.recv().await {
+            println!("{}: {:?}", output_event.event_type, output_event.data);
         }
     });
 
@@ -1224,9 +1250,9 @@ async fn run_demo(
                 // Progress report every second
                 if last_report.elapsed() >= std::time::Duration::from_secs(1) {
                     let metrics = engine.metrics();
-                    print!("\rEvents: {} | Alerts: {} | Rate: {:.0}/s    ",
+                    print!("\rEvents: {} | Output events: {} | Rate: {:.0}/s    ",
                         metrics.events_processed,
-                        metrics.alerts_generated,
+                        metrics.output_events_emitted,
                         event_count as f64 / start.elapsed().as_secs_f64()
                     );
                     std::io::Write::flush(&mut std::io::stdout())?;
@@ -1248,7 +1274,10 @@ async fn run_demo(
     println!("================");
     let metrics = engine.metrics();
     println!("Total events processed: {}", metrics.events_processed);
-    println!("Total alerts generated: {}", metrics.alerts_generated);
+    println!(
+        "Total output events emitted: {}",
+        metrics.output_events_emitted
+    );
     println!(
         "Average rate: {:.0} events/sec",
         event_count as f64 / start.elapsed().as_secs_f64()
@@ -1317,11 +1346,11 @@ async fn run_server(
     }
     println!();
 
-    // Create alert channel
-    let (alert_tx, alert_rx) = mpsc::channel::<Alert>(100);
+    // Create output event channel
+    let (output_tx, output_rx) = mpsc::channel::<Event>(100);
 
     // Create shared state using websocket module
-    let state = Arc::new(RwLock::new(ServerState::new(alert_tx.clone(), workdir)));
+    let state = Arc::new(RwLock::new(ServerState::new(output_tx.clone(), workdir)));
 
     // Create metrics if enabled
     let _prom_metrics = enable_metrics.then(|| {
@@ -1335,12 +1364,12 @@ async fn run_server(
         metrics
     });
 
-    // Broadcast channel for alerts to all connected clients
+    // Broadcast channel for output events to all connected clients
     let (broadcast_tx, _) = tokio::sync::broadcast::channel::<String>(100);
     let broadcast_tx = Arc::new(broadcast_tx);
 
-    // Spawn alert forwarder using websocket module
-    websocket::spawn_alert_forwarder(alert_rx, broadcast_tx.clone());
+    // Spawn output event forwarder using websocket module
+    websocket::forward_output_events_to_websocket(output_rx, broadcast_tx.clone());
 
     // Create auth config Arc for sharing
     let auth_config = Arc::new(auth_config);
@@ -1411,7 +1440,7 @@ async fn run_server(
                     "engine_loaded": true,
                     "streams_count": streams_count,
                     "events_processed": metrics.events_processed,
-                    "alerts_generated": metrics.alerts_generated,
+                    "output_events_emitted": metrics.output_events_emitted,
                 });
                 Ok::<_, warp::Rejection>(warp::reply::with_status(
                     warp::reply::json(&response),

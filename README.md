@@ -73,7 +73,7 @@ event TemperatureReading:
     value: float
     timestamp: timestamp
 
-# Stream with filtering and alerting
+# Stream with filtering and output
 stream HighTempAlert = TemperatureReading
     .from(MqttSensors, topic: "sensors/temperature/#")
     .where(value > 28)
@@ -83,15 +83,18 @@ stream HighTempAlert = TemperatureReading
         temperature: value
     )
 
-# SASE+ pattern: rapid temperature swing
-pattern RapidTempSwing = SEQ(
-    TemperatureReading as t1,
-    TemperatureReading+ as readings where value > t1.value + 5,
-    TemperatureReading as t3 where value < t1.value
-) within 10m partition by zone
+# Windowed aggregation per zone
+stream ZoneStats = TemperatureReading
+    .partition_by(zone)
+    .window(5m)
+    .aggregate(zone: last(zone), avg_temp: avg(value), max_temp: max(value))
 
-# Output
-sink HighTempAlert to console()
+# SASE+ pattern: rapid temperature swing (arrow syntax)
+stream RapidSwing = TemperatureReading as t1
+    -> TemperatureReading where sensor_id == t1.sensor_id and value > t1.value + 5 as t2
+    -> TemperatureReading where sensor_id == t1.sensor_id and value < t2.value - 5 as t3
+    .within(10m)
+    .emit(alert_type: "RAPID_SWING", zone: t1.zone, peak: t2.value)
 ```
 
 ## Examples
@@ -122,11 +125,12 @@ curl -X POST http://localhost:9000/api/v1/pipelines \
 # List pipelines
 curl http://localhost:9000/api/v1/pipelines -H "X-API-Key: my-key"
 
-# Inject events
+# Inject events (response includes any output events produced)
 curl -X POST http://localhost:9000/api/v1/pipelines/<id>/events \
   -H "X-API-Key: my-key" \
   -H "Content-Type: application/json" \
   -d '{"event_type": "SensorReading", "fields": {"temperature": 105}}'
+# Response: {"accepted": true, "output_events": [...]}
 
 # Check usage
 curl http://localhost:9000/api/v1/usage -H "X-API-Key: my-key"
@@ -152,7 +156,7 @@ curl http://localhost:9000/api/v1/usage -H "X-API-Key: my-key"
 | Connector | Input | Output | Status |
 |-----------|-------|--------|--------|
 | **MQTT** | Yes | Yes | Production |
-| **HTTP** | No | Yes | Webhooks via `.to("http://...")` |
+| **HTTP** | No | Yes | Webhooks via `.to(HttpConnector)` |
 | **Kafka** | Yes | Yes | Connector framework |
 
 See [docs/language/connectors.md](docs/language/connectors.md) for details.
@@ -272,7 +276,7 @@ docker compose -f deploy/docker/docker-compose.saas.yml up -d
 # Varpulis API: http://localhost:9000
 ```
 
-Pre-configured dashboard panels: Events/sec, Alerts/sec, Processing Latency (p99), Active Streams, Queue Depth.
+Pre-configured dashboard panels: Events/sec, Output Events/sec, Processing Latency (p99), Active Streams, Queue Depth.
 
 ## VS Code Extension
 

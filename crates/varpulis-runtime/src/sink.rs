@@ -1,6 +1,5 @@
 //! Sink implementations for outputting processed events
 
-use crate::engine::Alert;
 use crate::event::Event;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -22,9 +21,6 @@ pub trait Sink: Send + Sync {
 
     /// Send an event to this sink
     async fn send(&self, event: &Event) -> Result<()>;
-
-    /// Send an alert to this sink
-    async fn send_alert(&self, alert: &Alert) -> Result<()>;
 
     /// Flush any buffered data
     async fn flush(&self) -> Result<()>;
@@ -73,17 +69,6 @@ impl Sink for ConsoleSink {
         Ok(())
     }
 
-    async fn send_alert(&self, alert: &Alert) -> Result<()> {
-        println!(
-            "🚨 ALERT [{}] {}: {}",
-            alert.severity, alert.alert_type, alert.message
-        );
-        for (k, v) in &alert.data {
-            println!("   {}: {}", k, v);
-        }
-        Ok(())
-    }
-
     async fn flush(&self) -> Result<()> {
         Ok(())
     }
@@ -126,13 +111,6 @@ impl Sink for FileSink {
 
     async fn send(&self, event: &Event) -> Result<()> {
         let json = serde_json::to_string(event)?;
-        let mut file = self.file.lock().await;
-        writeln!(file, "{}", json)?;
-        Ok(())
-    }
-
-    async fn send_alert(&self, alert: &Alert) -> Result<()> {
-        let json = serde_json::to_string(alert)?;
         let mut file = self.file.lock().await;
         writeln!(file, "{}", json)?;
         Ok(())
@@ -230,23 +208,6 @@ impl Sink for AsyncFileSink {
         Ok(())
     }
 
-    async fn send_alert(&self, alert: &Alert) -> Result<()> {
-        let json = serde_json::to_string(alert)?;
-
-        let should_flush = {
-            let mut buffer = self.buffer.lock().await;
-            buffer.extend_from_slice(json.as_bytes());
-            buffer.push(b'\n');
-            buffer.len() >= self.buffer_size
-        };
-
-        if should_flush {
-            self.flush().await?;
-        }
-
-        Ok(())
-    }
-
     async fn flush(&self) -> Result<()> {
         use tokio::io::AsyncWriteExt;
 
@@ -306,27 +267,6 @@ impl Sink for HttpSink {
         }
         req = req.header("Content-Type", "application/json");
         req = req.json(event);
-
-        match req.send().await {
-            Ok(resp) => {
-                if !resp.status().is_success() {
-                    error!("HTTP sink {} got status {}", self.name, resp.status());
-                }
-            }
-            Err(e) => {
-                error!("HTTP sink {} error: {}", self.name, e);
-            }
-        }
-        Ok(())
-    }
-
-    async fn send_alert(&self, alert: &Alert) -> Result<()> {
-        let mut req = self.client.post(&self.url);
-        for (k, v) in &self.headers {
-            req = req.header(k.as_str(), v.as_str());
-        }
-        req = req.header("Content-Type", "application/json");
-        req = req.json(alert);
 
         match req.send().await {
             Ok(resp) => {
@@ -517,11 +457,6 @@ impl Sink for HttpSinkWithRetry {
         self.send_with_retry(body).await
     }
 
-    async fn send_alert(&self, alert: &Alert) -> Result<()> {
-        let body = serde_json::to_vec(alert)?;
-        self.send_with_retry(body).await
-    }
-
     async fn flush(&self) -> Result<()> {
         Ok(())
     }
@@ -566,15 +501,6 @@ impl Sink for MultiSink {
         Ok(())
     }
 
-    async fn send_alert(&self, alert: &Alert) -> Result<()> {
-        for sink in &self.sinks {
-            if let Err(e) = sink.send_alert(alert).await {
-                error!("Sink {} error: {}", sink.name(), e);
-            }
-        }
-        Ok(())
-    }
-
     async fn flush(&self) -> Result<()> {
         for sink in &self.sinks {
             sink.flush().await?;
@@ -593,9 +519,7 @@ impl Sink for MultiSink {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use indexmap::IndexMap;
     use tempfile::NamedTempFile;
-    use varpulis_core::Value;
 
     // ==========================================================================
     // ConsoleSink Tests
@@ -620,18 +544,6 @@ mod tests {
         assert!(!sink.pretty);
         let event = Event::new("TestEvent").with_field("value", 42i64);
         assert!(sink.send(&event).await.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_console_sink_alert() {
-        let sink = ConsoleSink::new("test");
-        let alert = Alert {
-            alert_type: "test_alert".to_string(),
-            severity: "warning".to_string(),
-            message: "Test message".to_string(),
-            data: IndexMap::new(),
-        };
-        assert!(sink.send_alert(&alert).await.is_ok());
     }
 
     #[tokio::test]
@@ -666,27 +578,6 @@ mod tests {
         let temp_file = NamedTempFile::new().unwrap();
         let sink = FileSink::new("my_file", temp_file.path()).unwrap();
         assert_eq!(sink.name(), "my_file");
-    }
-
-    #[tokio::test]
-    async fn test_file_sink_alert() {
-        let temp_file = NamedTempFile::new().unwrap();
-        let sink = FileSink::new("test_file", temp_file.path()).unwrap();
-
-        let mut data = IndexMap::new();
-        data.insert("key".to_string(), Value::Str("value".to_string()));
-
-        let alert = Alert {
-            alert_type: "test_alert".to_string(),
-            severity: "critical".to_string(),
-            message: "Critical issue".to_string(),
-            data,
-        };
-        assert!(sink.send_alert(&alert).await.is_ok());
-        assert!(sink.flush().await.is_ok());
-
-        let contents = std::fs::read_to_string(temp_file.path()).unwrap();
-        assert!(contents.contains("test_alert"));
     }
 
     // ==========================================================================
@@ -744,14 +635,6 @@ mod tests {
         let event = Event::new("Test").with_field("x", 1i64);
         assert!(multi.send(&event).await.is_ok());
 
-        let alert = Alert {
-            alert_type: "test".to_string(),
-            severity: "info".to_string(),
-            message: "msg".to_string(),
-            data: IndexMap::new(),
-        };
-        assert!(multi.send_alert(&alert).await.is_ok());
-
         assert!(multi.flush().await.is_ok());
         assert!(multi.close().await.is_ok());
     }
@@ -802,48 +685,6 @@ mod tests {
         assert_eq!(lines.len(), 5);
     }
 
-    #[tokio::test]
-    async fn test_file_sink_multiple_alerts() {
-        let temp_file = NamedTempFile::new().unwrap();
-        let sink = FileSink::new("test", temp_file.path()).unwrap();
-
-        for i in 0..3 {
-            let alert = Alert {
-                alert_type: format!("alert_{}", i),
-                severity: "info".to_string(),
-                message: format!("Message {}", i),
-                data: IndexMap::new(),
-            };
-            sink.send_alert(&alert).await.unwrap();
-        }
-        sink.flush().await.unwrap();
-
-        let contents = std::fs::read_to_string(temp_file.path()).unwrap();
-        assert!(contents.contains("alert_0"));
-        assert!(contents.contains("alert_1"));
-        assert!(contents.contains("alert_2"));
-    }
-
-    // ==========================================================================
-    // Additional ConsoleSink Tests
-    // ==========================================================================
-
-    #[tokio::test]
-    async fn test_console_sink_alert_with_data() {
-        let sink = ConsoleSink::new("test");
-        let mut data = IndexMap::new();
-        data.insert("field1".to_string(), Value::Int(123));
-        data.insert("field2".to_string(), Value::Str("value".to_string()));
-
-        let alert = Alert {
-            alert_type: "test_alert".to_string(),
-            severity: "critical".to_string(),
-            message: "Test with data".to_string(),
-            data,
-        };
-        assert!(sink.send_alert(&alert).await.is_ok());
-    }
-
     // ==========================================================================
     // Additional MultiSink Tests
     // ==========================================================================
@@ -868,27 +709,6 @@ mod tests {
         let contents2 = std::fs::read_to_string(temp2.path()).unwrap();
         assert!(contents1.contains("TripleEvent"));
         assert!(contents2.contains("TripleEvent"));
-    }
-
-    #[tokio::test]
-    async fn test_multi_sink_alert_broadcast() {
-        let temp = NamedTempFile::new().unwrap();
-
-        let multi = MultiSink::new("alert_multi")
-            .with_sink(Box::new(ConsoleSink::new("console")))
-            .with_sink(Box::new(FileSink::new("file", temp.path()).unwrap()));
-
-        let alert = Alert {
-            alert_type: "broadcast_alert".to_string(),
-            severity: "warning".to_string(),
-            message: "Broadcast test".to_string(),
-            data: IndexMap::new(),
-        };
-        multi.send_alert(&alert).await.unwrap();
-        multi.flush().await.unwrap();
-
-        let contents = std::fs::read_to_string(temp.path()).unwrap();
-        assert!(contents.contains("broadcast_alert"));
     }
 
     // ==========================================================================
@@ -939,29 +759,6 @@ mod tests {
         let expected_path = temp_file.path().to_path_buf();
         let sink = AsyncFileSink::new("test", temp_file.path()).await.unwrap();
         assert_eq!(sink.path(), &expected_path);
-    }
-
-    #[tokio::test]
-    async fn test_async_file_sink_alert() {
-        let temp_file = NamedTempFile::new().unwrap();
-        let sink = AsyncFileSink::new("test_async", temp_file.path())
-            .await
-            .unwrap();
-
-        let mut data = IndexMap::new();
-        data.insert("key".to_string(), Value::Str("value".to_string()));
-
-        let alert = Alert {
-            alert_type: "async_test_alert".to_string(),
-            severity: "info".to_string(),
-            message: "Async alert test".to_string(),
-            data,
-        };
-        assert!(sink.send_alert(&alert).await.is_ok());
-        assert!(sink.flush().await.is_ok());
-
-        let contents = std::fs::read_to_string(temp_file.path()).unwrap();
-        assert!(contents.contains("async_test_alert"));
     }
 
     #[tokio::test]

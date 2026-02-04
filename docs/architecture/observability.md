@@ -44,7 +44,7 @@ Spans are automatically created for:
 - Pattern matching
 - Attention computation
 - Aggregation
-- Emission to sinks
+- Output routing via `.to()`
 
 ### OpenTelemetry Configuration
 

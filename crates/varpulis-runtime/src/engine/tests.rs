@@ -24,16 +24,16 @@ async fn test_engine_simple_sequence() {
     let order = Event::new("Order").with_field("id", 1i64);
     engine.process(order).await.unwrap();
 
-    // No alert yet - waiting for Payment
+    // No output yet - waiting for Payment
     assert!(rx.try_recv().is_err());
 
     // Send Payment event
     let payment = Event::new("Payment").with_field("order_id", 1i64);
     engine.process(payment).await.unwrap();
 
-    // Should get alert now
-    let alert = rx.try_recv().expect("Should have alert");
-    assert_eq!(alert.alert_type, "stream_output");
+    // Should get output now
+    let output = rx.try_recv().expect("Should have output");
+    assert_eq!(output.event_type, "OrderPayment");
 }
 
 #[tokio::test]
@@ -58,9 +58,9 @@ async fn test_engine_sequence_with_alias() {
     let tick2 = Event::new("StockTick").with_field("price", 101.0);
     engine.process(tick2).await.unwrap();
 
-    let alert = rx.try_recv().expect("Should have alert");
+    let output = rx.try_recv().expect("Should have output");
     assert_eq!(
-        alert.data.get("result"),
+        output.data.get("result"),
         Some(&Value::Str("two_ticks".to_string()))
     );
 }
@@ -84,9 +84,9 @@ async fn test_engine_sequence_three_steps() {
     assert!(rx.try_recv().is_err());
 
     engine.process(Event::new("C")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
+    let output = rx.try_recv().expect("Should have output");
     assert_eq!(
-        alert.data.get("status"),
+        output.data.get("status"),
         Some(&Value::Str("complete".to_string()))
     );
 }
@@ -144,9 +144,9 @@ async fn test_engine_sequence_with_filter() {
         .process(Event::new("Payment").with_field("order_id", 1i64))
         .await
         .unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
+    let output = rx.try_recv().expect("Should have output");
     assert_eq!(
-        alert.data.get("status"),
+        output.data.get("status"),
         Some(&Value::Str("matched".to_string()))
     );
 }
@@ -175,9 +175,9 @@ async fn test_engine_sequence_with_timeout() {
         .process(Event::new("Response").with_field("id", 1i64))
         .await
         .unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
+    let output = rx.try_recv().expect("Should have output");
     assert_eq!(
-        alert.data.get("status"),
+        output.data.get("status"),
         Some(&Value::Str("fast".to_string()))
     );
 }
@@ -212,9 +212,9 @@ async fn test_engine_with_event_file() {
         engine.process(timed_event.event).await.unwrap();
     }
 
-    let alert = rx.try_recv().expect("Should have alert");
+    let output = rx.try_recv().expect("Should have output");
     assert_eq!(
-        alert.data.get("status"),
+        output.data.get("status"),
         Some(&Value::Str("matched".to_string()))
     );
 }
@@ -242,9 +242,9 @@ async fn test_engine_sequence_with_not() {
         .await
         .unwrap();
 
-    let alert = rx.try_recv().expect("Should have alert");
+    let output = rx.try_recv().expect("Should have output");
     assert_eq!(
-        alert.data.get("status"),
+        output.data.get("status"),
         Some(&Value::Str("payment_received".to_string()))
     );
 }
@@ -341,7 +341,7 @@ async fn test_engine_metrics() {
 
     let metrics = engine.metrics();
     assert_eq!(metrics.events_processed, 2);
-    assert!(metrics.alerts_generated >= 1);
+    assert!(metrics.output_events_emitted >= 1);
     assert_eq!(metrics.streams_count, 1);
 }
 
@@ -889,10 +889,10 @@ async fn test_engine_join_derived_streams() {
         .with_field("exchange", "NYSE");
     engine.process(event_a).await.unwrap();
 
-    // No alert yet - waiting for MarketB
+    // No output yet - waiting for MarketB
     assert!(
         rx.try_recv().is_err(),
-        "Should not alert with just one event"
+        "Should not emit with just one event"
     );
 
     // Send MarketBTick (not MarketB!) - engine should route it correctly
@@ -903,14 +903,14 @@ async fn test_engine_join_derived_streams() {
         .with_field("exchange", "NASDAQ");
     engine.process(event_b).await.unwrap();
 
-    // Now should get correlated alert
-    let alert = rx.try_recv().expect("Should have alert after both events");
+    // Now should get correlated output
+    let output = rx.try_recv().expect("Should have output after both events");
     assert_eq!(
-        alert.data.get("alert"),
+        output.data.get("alert"),
         Some(&Value::Str("matched".to_string()))
     );
     assert_eq!(
-        alert.data.get("symbol"),
+        output.data.get("symbol"),
         Some(&Value::Str("AAPL".to_string()))
     );
 }
@@ -944,10 +944,10 @@ async fn test_engine_join_no_correlation_different_keys() {
         .with_field("price", 100.0);
     engine.process(event_b).await.unwrap();
 
-    // No alert - different symbols
+    // No output - different symbols
     assert!(
         rx.try_recv().is_err(),
-        "Should not alert with different join keys"
+        "Should not emit with different join keys"
     );
 }
 
@@ -977,8 +977,8 @@ async fn test_engine_derived_stream_in_sequence() {
         .with_field("amount", 200.0);
     engine.process(high_tx).await.unwrap();
 
-    // No alert yet
-    assert!(rx.try_recv().is_err(), "Should not alert after first event");
+    // No output yet
+    assert!(rx.try_recv().is_err(), "Should not emit after first event");
 
     // Send low value transaction (amount <= 100) from same user
     let low_tx = Event::new("Transaction")
@@ -986,16 +986,16 @@ async fn test_engine_derived_stream_in_sequence() {
         .with_field("amount", 50.0);
     engine.process(low_tx).await.unwrap();
 
-    // Should get alert now - pattern matched
-    let alert = rx
+    // Should get output now - pattern matched
+    let output = rx
         .try_recv()
-        .expect("Should have alert after pattern match");
+        .expect("Should have output after pattern match");
     assert_eq!(
-        alert.data.get("pattern"),
+        output.data.get("pattern"),
         Some(&Value::Str("high_then_low".to_string()))
     );
     assert_eq!(
-        alert.data.get("user_id"),
+        output.data.get("user_id"),
         Some(&Value::Str("user1".to_string()))
     );
 }
@@ -1021,7 +1021,7 @@ async fn test_engine_derived_stream_filters_applied() {
     let low_tx = Event::new("Transaction").with_field("amount", 50.0);
     engine.process(low_tx.clone()).await.unwrap();
 
-    // No alert - low value doesn't match HighValue
+    // No output - low value doesn't match HighValue
     assert!(
         rx.try_recv().is_err(),
         "Low value should not match HighValue stream"
@@ -1031,18 +1031,18 @@ async fn test_engine_derived_stream_filters_applied() {
     let high_tx = Event::new("Transaction").with_field("amount", 200.0);
     engine.process(high_tx).await.unwrap();
 
-    // Still no alert - waiting for second step
+    // Still no output - waiting for second step
     assert!(rx.try_recv().is_err(), "Should wait for second step");
 
     // Send any transaction
     engine.process(low_tx).await.unwrap();
 
-    // Should get alert now
-    let alert = rx
+    // Should get output now
+    let output = rx
         .try_recv()
-        .expect("Should have alert after pattern match");
+        .expect("Should have output after pattern match");
     assert_eq!(
-        alert.data.get("matched"),
+        output.data.get("matched"),
         Some(&Value::Str("yes".to_string()))
     );
 }
@@ -1153,16 +1153,16 @@ async fn test_engine_add_filter() {
         .add_filter("Test", |event| event.get_int("value").unwrap_or(0) > 50)
         .unwrap();
 
-    // Event below filter threshold - no alert
+    // Event below filter threshold - no output
     let low_event = Event::new("EventA").with_field("value", 30i64);
     engine.process(low_event).await.unwrap();
     assert!(rx.try_recv().is_err(), "Low value should be filtered out");
 
-    // Event above filter threshold - should alert
+    // Event above filter threshold - should emit
     let high_event = Event::new("EventA").with_field("value", 100i64);
     engine.process(high_event).await.unwrap();
-    let alert = rx.try_recv().expect("High value should pass filter");
-    assert_eq!(alert.data.get("value"), Some(&Value::Int(100)));
+    let output = rx.try_recv().expect("High value should pass filter");
+    assert_eq!(output.data.get("value"), Some(&Value::Int(100)));
 }
 
 #[tokio::test]
@@ -1245,8 +1245,8 @@ async fn test_engine_event_with_many_fields() {
 
     engine.process(event).await.unwrap();
 
-    let alert = rx.try_recv().expect("Should receive alert");
-    assert_eq!(alert.data.get("sum"), Some(&Value::Int(60)));
+    let output = rx.try_recv().expect("Should receive output");
+    assert_eq!(output.data.get("sum"), Some(&Value::Int(60)));
 }
 
 #[tokio::test]
@@ -1264,8 +1264,8 @@ async fn test_engine_special_characters_in_event_type() {
     let event = Event::new("Event_With_Underscores");
     engine.process(event).await.unwrap();
 
-    let alert = rx.try_recv().expect("Should receive alert");
-    assert_eq!(alert.data.get("ok"), Some(&Value::Str("yes".to_string())));
+    let output = rx.try_recv().expect("Should receive output");
+    assert_eq!(output.data.get("ok"), Some(&Value::Str("yes".to_string())));
 }
 
 // ==========================================================================
@@ -1329,11 +1329,11 @@ async fn test_engine_count_window() {
         .process(Event::new("StockTick").with_field("price", 120.0))
         .await
         .unwrap();
-    let alert = rx
+    let output = rx
         .try_recv()
-        .expect("Should have alert after window completes");
+        .expect("Should have output after window completes");
     // Average should be (100 + 110 + 120) / 3 = 110
-    if let Some(Value::Float(avg)) = alert.data.get("average") {
+    if let Some(Value::Float(avg)) = output.data.get("average") {
         assert!((avg - 110.0).abs() < 0.001, "Average should be 110.0");
     }
 }
@@ -1389,10 +1389,10 @@ async fn test_engine_sliding_count_window() {
             .unwrap();
     }
 
-    // Should get alert after window is full
-    let alert = rx.try_recv().expect("Should have alert");
+    // Should get output after window is full
+    let output = rx.try_recv().expect("Should have output");
     // sum = 100 + 200 + 300 + 400 + 500 = 1500
-    if let Some(Value::Float(sum)) = alert.data.get("total") {
+    if let Some(Value::Float(sum)) = output.data.get("total") {
         assert!((sum - 1500.0).abs() < 0.001, "Sum should be 1500.0");
     }
 }
@@ -1419,8 +1419,8 @@ async fn test_engine_aggregation_count() {
         engine.process(Event::new("EventA")).await.unwrap();
     }
 
-    let alert = rx.try_recv().expect("Should have alert");
-    assert_eq!(alert.data.get("event_count"), Some(&Value::Int(3)));
+    let output = rx.try_recv().expect("Should have output");
+    assert_eq!(output.data.get("event_count"), Some(&Value::Int(3)));
 }
 
 #[tokio::test]
@@ -1448,9 +1448,9 @@ async fn test_engine_aggregation_min_max() {
             .unwrap();
     }
 
-    let alert = rx.try_recv().expect("Should have alert");
-    assert_eq!(alert.data.get("minimum"), Some(&Value::Float(20.0)));
-    assert_eq!(alert.data.get("maximum"), Some(&Value::Float(80.0)));
+    let output = rx.try_recv().expect("Should have output");
+    assert_eq!(output.data.get("minimum"), Some(&Value::Float(20.0)));
+    assert_eq!(output.data.get("maximum"), Some(&Value::Float(80.0)));
 }
 
 // ==========================================================================
@@ -1491,9 +1491,9 @@ async fn test_engine_select_simple() {
         .unwrap();
 
     // Window of 2 should trigger
-    let alert = rx.try_recv().expect("Should have alert");
+    let output = rx.try_recv().expect("Should have output");
     // Select should project only specified fields
-    assert!(alert.data.contains_key("selected_temp") || alert.data.contains_key("selected_loc"));
+    assert!(output.data.contains_key("selected_temp") || output.data.contains_key("selected_loc"));
 }
 
 // ==========================================================================
@@ -1544,8 +1544,8 @@ async fn test_engine_partitioned_window() {
         .unwrap();
 
     // AAPL window should complete with 2 events (sum = 300)
-    let alert = rx.try_recv().expect("AAPL window should complete");
-    if let Some(Value::Float(vol)) = alert.data.get("volume") {
+    let output = rx.try_recv().expect("AAPL window should complete");
+    if let Some(Value::Float(vol)) = output.data.get("volume") {
         assert!((vol - 300.0).abs() < 0.001, "AAPL volume should be 300.0");
     }
 
@@ -1576,14 +1576,14 @@ async fn test_engine_max_chain_depth() {
 
     engine.process(Event::new("Source")).await.unwrap();
 
-    // Should get all 3 alerts from the chain
-    let mut alerts = Vec::new();
-    while let Ok(alert) = rx.try_recv() {
-        alerts.push(alert);
+    // Should get all 3 outputs from the chain
+    let mut outputs = Vec::new();
+    while let Ok(output) = rx.try_recv() {
+        outputs.push(output);
     }
     assert!(
-        !alerts.is_empty(),
-        "Should have at least one alert from chain"
+        !outputs.is_empty(),
+        "Should have at least one output from chain"
     );
 }
 
@@ -1619,8 +1619,8 @@ async fn test_engine_event_declaration() {
         .await
         .unwrap();
 
-    let alert = rx.try_recv().expect("Should have alert");
-    assert_eq!(alert.data.get("s"), Some(&Value::Str("AAPL".to_string())));
+    let output = rx.try_recv().expect("Should have output");
+    assert_eq!(output.data.get("s"), Some(&Value::Str("AAPL".to_string())));
 }
 
 // ==========================================================================
@@ -1646,8 +1646,8 @@ async fn test_engine_print_operation() {
         .unwrap();
 
     // Print operation should not block emit
-    let alert = rx.try_recv().expect("Should have alert after print");
-    assert_eq!(alert.data.get("ok"), Some(&Value::Str("yes".to_string())));
+    let output = rx.try_recv().expect("Should have output after print");
+    assert_eq!(output.data.get("ok"), Some(&Value::Str("yes".to_string())));
 }
 
 // ==========================================================================
@@ -1680,7 +1680,7 @@ async fn test_engine_merge_streams() {
         .process(Event::new("TemperatureReading").with_field("value", 35.0))
         .await
         .unwrap();
-    // Should get alert from TempAlerts first, then from AllAlerts merge
+    // Should get output from TempAlerts first, then from AllAlerts merge
     let _ = rx.try_recv(); // TempAlerts emit
 
     // Humidity event that passes filter (value > 70)
@@ -1688,7 +1688,7 @@ async fn test_engine_merge_streams() {
         .process(Event::new("HumidityReading").with_field("value", 80.0))
         .await
         .unwrap();
-    // Should get alert from HumidAlerts
+    // Should get output from HumidAlerts
     let _ = rx.try_recv(); // HumidAlerts emit
 
     // Temperature event that fails filter (value <= 30)
@@ -1696,7 +1696,7 @@ async fn test_engine_merge_streams() {
         .process(Event::new("TemperatureReading").with_field("value", 25.0))
         .await
         .unwrap();
-    // No more alerts expected after previous clears
+    // No more outputs expected after previous clears
     let metrics = engine.metrics();
     assert!(
         metrics.events_processed >= 3,
@@ -1726,8 +1726,8 @@ async fn test_engine_import_statement() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("EventA")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
-    assert_eq!(alert.data.get("ok"), Some(&Value::Str("yes".to_string())));
+    let output = rx.try_recv().expect("Should have output");
+    assert_eq!(output.data.get("ok"), Some(&Value::Str("yes".to_string())));
 }
 
 #[tokio::test]
@@ -1765,11 +1765,11 @@ async fn test_engine_having_filter() {
         .process(Event::new("Trade").with_field("volume", 300i64))
         .await
         .unwrap();
-    let alert = rx.try_recv().expect("Should have alert after 3 trades");
-    assert_eq!(alert.alert_type, "stream_output");
-    assert_eq!(alert.data.get("count"), Some(&Value::Int(3)));
+    let output = rx.try_recv().expect("Should have output after 3 trades");
+    assert_eq!(output.event_type, "HighVolume");
+    assert_eq!(output.data.get("count"), Some(&Value::Int(3)));
     // sum() returns Float
-    assert_eq!(alert.data.get("volume"), Some(&Value::Float(600.0)));
+    assert_eq!(output.data.get("volume"), Some(&Value::Float(600.0)));
 }
 
 #[tokio::test]
@@ -1802,7 +1802,7 @@ async fn test_engine_having_filter_blocks() {
     // avg=50, which is NOT > 100, so no output
     assert!(
         rx.try_recv().is_err(),
-        "Should have no alert when avg < 100"
+        "Should have no output when avg < 100"
     );
 
     // Two more readings with high average (150.0)
@@ -1815,8 +1815,8 @@ async fn test_engine_having_filter_blocks() {
         .await
         .unwrap();
     // avg=150, which IS > 100, so we should get output
-    let alert = rx.try_recv().expect("Should have alert when avg > 100");
-    assert_eq!(alert.alert_type, "stream_output");
+    let output = rx.try_recv().expect("Should have output when avg > 100");
+    assert_eq!(output.event_type, "FilteredAgg");
 }
 
 // ==========================================================================
@@ -1844,9 +1844,9 @@ async fn test_imperative_for_loop_sum() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
+    let output = rx.try_recv().expect("Should have output");
     // sum(0..5) = 0+1+2+3+4 = 10
-    assert_eq!(alert.data.get("result"), Some(&Value::Int(10)));
+    assert_eq!(output.data.get("result"), Some(&Value::Int(10)));
 }
 
 #[tokio::test]
@@ -1869,8 +1869,8 @@ async fn test_imperative_while_loop() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
-    assert_eq!(alert.data.get("count"), Some(&Value::Int(5)));
+    let output = rx.try_recv().expect("Should have output");
+    assert_eq!(output.data.get("count"), Some(&Value::Int(5)));
 }
 
 #[tokio::test]
@@ -1893,8 +1893,8 @@ async fn test_imperative_for_loop_with_break() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
-    assert_eq!(alert.data.get("found"), Some(&Value::Int(43)));
+    let output = rx.try_recv().expect("Should have output");
+    assert_eq!(output.data.get("found"), Some(&Value::Int(43)));
 }
 
 // ==========================================================================
@@ -1927,9 +1927,9 @@ async fn test_imperative_if_else() {
         .process(Event::new("Input").with_field("value", 150i64))
         .await
         .unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
+    let output = rx.try_recv().expect("Should have output");
     assert_eq!(
-        alert.data.get("class"),
+        output.data.get("class"),
         Some(&Value::Str("high".to_string()))
     );
 
@@ -1938,9 +1938,9 @@ async fn test_imperative_if_else() {
         .process(Event::new("Input").with_field("value", 75i64))
         .await
         .unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
+    let output = rx.try_recv().expect("Should have output");
     assert_eq!(
-        alert.data.get("class"),
+        output.data.get("class"),
         Some(&Value::Str("medium".to_string()))
     );
 
@@ -1949,9 +1949,9 @@ async fn test_imperative_if_else() {
         .process(Event::new("Input").with_field("value", 25i64))
         .await
         .unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
+    let output = rx.try_recv().expect("Should have output");
     assert_eq!(
-        alert.data.get("class"),
+        output.data.get("class"),
         Some(&Value::Str("low".to_string()))
     );
 }
@@ -1986,9 +1986,9 @@ async fn test_imperative_nested_if() {
         )
         .await
         .unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
+    let output = rx.try_recv().expect("Should have output");
     assert_eq!(
-        alert.data.get("result"),
+        output.data.get("result"),
         Some(&Value::Str("both_positive".to_string()))
     );
 }
@@ -2015,8 +2015,8 @@ async fn test_imperative_array_literal() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
-    assert_eq!(alert.data.get("length"), Some(&Value::Int(5)));
+    let output = rx.try_recv().expect("Should have output");
+    assert_eq!(output.data.get("length"), Some(&Value::Int(5)));
 }
 
 #[tokio::test]
@@ -2037,8 +2037,8 @@ async fn test_imperative_array_index() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
-    assert_eq!(alert.data.get("value"), Some(&Value::Int(30)));
+    let output = rx.try_recv().expect("Should have output");
+    assert_eq!(output.data.get("value"), Some(&Value::Int(30)));
 }
 
 #[tokio::test]
@@ -2059,8 +2059,8 @@ async fn test_imperative_array_sum() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
-    if let Some(Value::Float(total)) = alert.data.get("total") {
+    let output = rx.try_recv().expect("Should have output");
+    if let Some(Value::Float(total)) = output.data.get("total") {
         assert!((total - 15.0).abs() < 0.001, "Sum should be 15.0");
     } else {
         panic!("Expected float total");
@@ -2086,8 +2086,8 @@ async fn test_imperative_array_push() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
-    assert_eq!(alert.data.get("length"), Some(&Value::Int(4)));
+    let output = rx.try_recv().expect("Should have output");
+    assert_eq!(output.data.get("length"), Some(&Value::Int(4)));
 }
 
 #[tokio::test]
@@ -2108,8 +2108,8 @@ async fn test_imperative_array_range() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
-    assert_eq!(alert.data.get("length"), Some(&Value::Int(10)));
+    let output = rx.try_recv().expect("Should have output");
+    assert_eq!(output.data.get("length"), Some(&Value::Int(10)));
 }
 
 // ==========================================================================
@@ -2134,8 +2134,8 @@ async fn test_imperative_map_literal() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
-    assert_eq!(alert.data.get("length"), Some(&Value::Int(3)));
+    let output = rx.try_recv().expect("Should have output");
+    assert_eq!(output.data.get("length"), Some(&Value::Int(3)));
 }
 
 #[tokio::test]
@@ -2156,8 +2156,8 @@ async fn test_imperative_map_access() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
-    assert_eq!(alert.data.get("value"), Some(&Value::Int(42)));
+    let output = rx.try_recv().expect("Should have output");
+    assert_eq!(output.data.get("value"), Some(&Value::Int(42)));
 }
 
 #[tokio::test]
@@ -2178,8 +2178,8 @@ async fn test_imperative_map_keys() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
-    assert_eq!(alert.data.get("count"), Some(&Value::Int(3)));
+    let output = rx.try_recv().expect("Should have output");
+    assert_eq!(output.data.get("count"), Some(&Value::Int(3)));
 }
 
 // ==========================================================================
@@ -2208,9 +2208,9 @@ async fn test_builtin_math_functions() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
+    let output = rx.try_recv().expect("Should have output");
     // 5 + 4 + 3 + 4 + 4 = 20
-    if let Some(Value::Float(result)) = alert.data.get("result") {
+    if let Some(Value::Float(result)) = output.data.get("result") {
         assert!((result - 20.0).abs() < 0.001, "Result should be 20.0");
     } else {
         panic!("Expected float result");
@@ -2236,9 +2236,9 @@ async fn test_builtin_min_max() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
+    let output = rx.try_recv().expect("Should have output");
     // max(10,5) - min(10,5) = 10 - 5 = 5
-    assert_eq!(alert.data.get("range"), Some(&Value::Int(5)));
+    assert_eq!(output.data.get("range"), Some(&Value::Int(5)));
 }
 
 #[tokio::test]
@@ -2260,9 +2260,9 @@ async fn test_builtin_string_functions() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
+    let output = rx.try_recv().expect("Should have output");
     assert_eq!(
-        alert.data.get("result"),
+        output.data.get("result"),
         Some(&Value::Str("HELLO".to_string()))
     );
 }
@@ -2290,9 +2290,9 @@ async fn test_builtin_type_checking() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
+    let output = rx.try_recv().expect("Should have output");
     assert_eq!(
-        alert.data.get("result"),
+        output.data.get("result"),
         Some(&Value::Str("all_correct".to_string()))
     );
 }
@@ -2315,8 +2315,8 @@ async fn test_builtin_contains() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
-    assert_eq!(alert.data.get("found"), Some(&Value::Bool(true)));
+    let output = rx.try_recv().expect("Should have output");
+    assert_eq!(output.data.get("found"), Some(&Value::Bool(true)));
 }
 
 #[tokio::test]
@@ -2338,8 +2338,8 @@ async fn test_builtin_sort() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
-    assert_eq!(alert.data.get("first_val"), Some(&Value::Int(1)));
+    let output = rx.try_recv().expect("Should have output");
+    assert_eq!(output.data.get("first_val"), Some(&Value::Int(1)));
 }
 
 // ==========================================================================
@@ -2366,15 +2366,15 @@ async fn test_operator_modulo() {
         .process(Event::new("Input").with_field("value", 10i64))
         .await
         .unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
-    assert_eq!(alert.data.get("even"), Some(&Value::Bool(true)));
+    let output = rx.try_recv().expect("Should have output");
+    assert_eq!(output.data.get("even"), Some(&Value::Bool(true)));
 
     engine
         .process(Event::new("Input").with_field("value", 7i64))
         .await
         .unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
-    assert_eq!(alert.data.get("even"), Some(&Value::Bool(false)));
+    let output = rx.try_recv().expect("Should have output");
+    assert_eq!(output.data.get("even"), Some(&Value::Bool(false)));
 }
 
 #[tokio::test]
@@ -2398,15 +2398,15 @@ async fn test_operator_in() {
         .process(Event::new("Input").with_field("value", 3i64))
         .await
         .unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
-    assert_eq!(alert.data.get("found"), Some(&Value::Bool(true)));
+    let output = rx.try_recv().expect("Should have output");
+    assert_eq!(output.data.get("found"), Some(&Value::Bool(true)));
 
     engine
         .process(Event::new("Input").with_field("value", 99i64))
         .await
         .unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
-    assert_eq!(alert.data.get("found"), Some(&Value::Bool(false)));
+    let output = rx.try_recv().expect("Should have output");
+    assert_eq!(output.data.get("found"), Some(&Value::Bool(false)));
 }
 
 // ==========================================================================
@@ -2433,8 +2433,8 @@ async fn test_imperative_break_in_for_loop() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
-    assert_eq!(alert.data.get("result"), Some(&Value::Int(10)));
+    let output = rx.try_recv().expect("Should have output");
+    assert_eq!(output.data.get("result"), Some(&Value::Int(10)));
 }
 
 #[tokio::test]
@@ -2459,9 +2459,9 @@ async fn test_imperative_continue_in_loop() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
+    let output = rx.try_recv().expect("Should have output");
     // sum of odd numbers 1+3+5+7+9 = 25
-    assert_eq!(alert.data.get("result"), Some(&Value::Int(25)));
+    assert_eq!(output.data.get("result"), Some(&Value::Int(25)));
 }
 
 #[tokio::test]
@@ -2482,8 +2482,8 @@ async fn test_imperative_negative_number() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
-    assert_eq!(alert.data.get("value"), Some(&Value::Int(-1)));
+    let output = rx.try_recv().expect("Should have output");
+    assert_eq!(output.data.get("value"), Some(&Value::Int(-1)));
 }
 
 #[tokio::test]
@@ -2504,8 +2504,8 @@ async fn test_imperative_negative_index() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
-    assert_eq!(alert.data.get("last"), Some(&Value::Int(50)));
+    let output = rx.try_recv().expect("Should have output");
+    assert_eq!(output.data.get("last"), Some(&Value::Int(50)));
 }
 
 #[tokio::test]
@@ -2527,9 +2527,9 @@ async fn test_imperative_slice() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
+    let output = rx.try_recv().expect("Should have output");
     // sliced = [20, 30, 40], length = 3
-    assert_eq!(alert.data.get("length"), Some(&Value::Int(3)));
+    assert_eq!(output.data.get("length"), Some(&Value::Int(3)));
 }
 
 #[tokio::test]
@@ -2550,9 +2550,9 @@ async fn test_imperative_range_inclusive() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
+    let output = rx.try_recv().expect("Should have output");
     // 1..=5 = [1, 2, 3, 4, 5], length = 5
-    assert_eq!(alert.data.get("length"), Some(&Value::Int(5)));
+    assert_eq!(output.data.get("length"), Some(&Value::Int(5)));
 }
 
 #[tokio::test]
@@ -2576,9 +2576,9 @@ async fn test_imperative_for_over_map() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
+    let output = rx.try_recv().expect("Should have output");
     // 1 + 2 + 3 = 6
-    assert_eq!(alert.data.get("total"), Some(&Value::Int(6)));
+    assert_eq!(output.data.get("total"), Some(&Value::Int(6)));
 }
 
 #[tokio::test]
@@ -2600,9 +2600,9 @@ async fn test_imperative_recursive_fibonacci() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
+    let output = rx.try_recv().expect("Should have output");
     // fib(10) = 55
-    assert_eq!(alert.data.get("result"), Some(&Value::Int(55)));
+    assert_eq!(output.data.get("result"), Some(&Value::Int(55)));
 }
 
 #[tokio::test]
@@ -2622,9 +2622,9 @@ async fn test_builtin_pow() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
+    let output = rx.try_recv().expect("Should have output");
     // 2^10 = 1024
-    assert_eq!(alert.data.get("result"), Some(&Value::Int(1024)));
+    assert_eq!(output.data.get("result"), Some(&Value::Int(1024)));
 }
 
 #[tokio::test]
@@ -2646,9 +2646,9 @@ async fn test_builtin_log() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
+    let output = rx.try_recv().expect("Should have output");
     // ln(e) ≈ 1, log10(100) = 2, sum ≈ 3
-    if let Some(Value::Float(result)) = alert.data.get("result") {
+    if let Some(Value::Float(result)) = output.data.get("result") {
         assert!(
             (result - 3.0).abs() < 0.1,
             "Result should be approximately 3.0"
@@ -2677,8 +2677,8 @@ async fn test_builtin_reverse() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
-    assert_eq!(alert.data.get("result"), Some(&Value::Int(5)));
+    let output = rx.try_recv().expect("Should have output");
+    assert_eq!(output.data.get("result"), Some(&Value::Int(5)));
 }
 
 #[tokio::test]
@@ -2699,9 +2699,9 @@ async fn test_builtin_replace() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
+    let output = rx.try_recv().expect("Should have output");
     assert_eq!(
-        alert.data.get("result"),
+        output.data.get("result"),
         Some(&Value::Str("hello VPL".to_string()))
     );
 }
@@ -2724,8 +2724,8 @@ async fn test_builtin_starts_ends_with() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
-    assert_eq!(alert.data.get("result"), Some(&Value::Bool(true)));
+    let output = rx.try_recv().expect("Should have output");
+    assert_eq!(output.data.get("result"), Some(&Value::Bool(true)));
 }
 
 #[tokio::test]
@@ -2746,9 +2746,9 @@ async fn test_builtin_substring() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
+    let output = rx.try_recv().expect("Should have output");
     assert_eq!(
-        alert.data.get("result"),
+        output.data.get("result"),
         Some(&Value::Str("hello".to_string()))
     );
 }
@@ -2773,12 +2773,15 @@ async fn test_operator_not_in() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
+    let output = rx.try_recv().expect("Should have output");
 
     // 99 not in [1,2,3,4,5] should be true
-    assert_eq!(alert.data.get("should_be_true"), Some(&Value::Bool(true)));
+    assert_eq!(output.data.get("should_be_true"), Some(&Value::Bool(true)));
     // 3 not in [1,2,3,4,5] should be false
-    assert_eq!(alert.data.get("should_be_false"), Some(&Value::Bool(false)));
+    assert_eq!(
+        output.data.get("should_be_false"),
+        Some(&Value::Bool(false))
+    );
 }
 
 #[tokio::test]
@@ -2805,7 +2808,7 @@ async fn test_complex_algorithm_quicksort() {
     engine.load(&program).unwrap();
 
     engine.process(Event::new("Input")).await.unwrap();
-    let alert = rx.try_recv().expect("Should have alert");
+    let output = rx.try_recv().expect("Should have output");
     // max=9, min=1, range=8
-    assert_eq!(alert.data.get("range"), Some(&Value::Int(8)));
+    assert_eq!(output.data.get("range"), Some(&Value::Int(8)));
 }

@@ -40,8 +40,8 @@ pub fn validate_program(source: &str) -> Result<usize> {
     let statement_count = program.statements.len();
 
     // Try to create engine and load program
-    let (alert_tx, _alert_rx) = tokio::sync::mpsc::channel(100);
-    let mut engine = varpulis_runtime::engine::Engine::new(alert_tx);
+    let (output_tx, _output_rx) = tokio::sync::mpsc::channel(100);
+    let mut engine = varpulis_runtime::engine::Engine::new(output_tx);
     engine
         .load(&program)
         .map_err(|e| anyhow::anyhow!("Load error: {}", e))?;

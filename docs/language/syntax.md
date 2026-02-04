@@ -316,7 +316,7 @@ stream FraudAlert = Transaction
 ### HTTP Connector
 
 ```varpulis
-# HTTP webhook sink
+# HTTP webhook output
 stream Alerts = DetectedPatterns
     .emit(severity: "high")
     .to("http://webhook.example.com/alerts")
@@ -361,7 +361,9 @@ config:
             endpoint: "localhost:4317"
 ```
 
-## Emission to Sinks
+## Output Routing
+
+Use `.to()` to route stream output to connectors:
 
 ```varpulis
 stream Alerts = DetectedPatterns

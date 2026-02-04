@@ -64,24 +64,25 @@
 //! async fn main() {
 //!     // Parse a VarpulisQL program
 //!     let program = parse(r#"
-//!         stream Alerts from SensorReading
-//!             where temperature > 100
-//!             emit alert("HighTemp", "Temperature exceeded threshold")
+//!         stream HighTemp = SensorReading
+//!             .where(temperature > 100)
+//!             .emit(sensor: sensor_id, temp: temperature)
 //!     "#).unwrap();
 //!
-//!     // Create engine with alert channel
-//!     let (alert_tx, mut alert_rx) = mpsc::channel(100);
-//!     let mut engine = Engine::new(alert_tx);
+//!     // Create engine with output channel
+//!     let (output_tx, mut output_rx) = mpsc::channel(100);
+//!     let mut engine = Engine::new(output_tx);
 //!     engine.load(&program).unwrap();
 //!
 //!     // Process an event
 //!     let event = Event::new("SensorReading")
-//!         .with_field("temperature", 105.5);
+//!         .with_field("temperature", 105.5)
+//!         .with_field("sensor_id", "S1");
 //!     engine.process(event).await.unwrap();
 //!
-//!     // Receive alert
-//!     if let Some(alert) = alert_rx.recv().await {
-//!         println!("Alert: {}", alert.message);
+//!     // Receive output event
+//!     if let Some(output) = output_rx.recv().await {
+//!         println!("Output: {} {:?}", output.event_type, output.data);
 //!     }
 //! }
 //! ```
@@ -121,7 +122,7 @@ pub mod window;
 pub mod worker_pool;
 
 pub use context::{ContextConfig, ContextMap, ContextOrchestrator, ContextRuntime};
-pub use engine::{Engine, ReloadReport};
+pub use engine::{Engine, ReloadReport, SourceBinding};
 pub use event::{Event, SharedEvent};
 pub use event_file::StreamingEventReader;
 pub use metrics::Metrics;
@@ -142,8 +143,8 @@ pub use worker_pool::{
 // Multi-tenant SaaS support
 pub use tenant::{
     shared_tenant_manager, shared_tenant_manager_with_store, Pipeline, PipelineSnapshot,
-    PipelineStatus, SharedTenantManager, Tenant, TenantError, TenantId, TenantManager,
-    TenantQuota, TenantSnapshot, TenantUsage,
+    PipelineStatus, SharedTenantManager, Tenant, TenantError, TenantId, TenantManager, TenantQuota,
+    TenantSnapshot, TenantUsage,
 };
 
 // Persistence exports (always available, RocksDB impl requires "persistence" feature)

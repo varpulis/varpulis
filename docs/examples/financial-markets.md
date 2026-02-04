@@ -181,7 +181,7 @@ varpulis run examples/financial_markets.vpl --source mock
 # Run with live data (requires exchange API keys)
 varpulis run examples/financial_markets.vpl \
   --source kafka://market-ticks \
-  --sink kafka://trading-signals
+  --output kafka://trading-signals
 ```
 
 ## See Also
