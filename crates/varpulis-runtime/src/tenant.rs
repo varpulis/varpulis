@@ -339,12 +339,22 @@ impl Tenant {
         }
 
         if let Some(ref orchestrator) = pipeline.orchestrator {
-            // Route through context orchestrator
+            // Route through context orchestrator — try non-blocking first
             let shared_event = std::sync::Arc::new(event);
-            orchestrator
-                .process(shared_event)
-                .await
-                .map_err(|e| TenantError::EngineError(e.to_string()))?;
+            match orchestrator.try_process(shared_event) {
+                Ok(()) => {}
+                Err(crate::context::DispatchError::ChannelFull(event)) => {
+                    orchestrator
+                        .process(event)
+                        .await
+                        .map_err(|e| TenantError::EngineError(e.to_string()))?;
+                }
+                Err(crate::context::DispatchError::ChannelClosed(_)) => {
+                    return Err(TenantError::EngineError(
+                        "Context channel closed".to_string(),
+                    ));
+                }
+            }
         } else {
             // Direct engine processing (no contexts, zero overhead)
             pipeline
