@@ -55,7 +55,7 @@ pub fn parse(source: &str) -> ParseResult<Program> {
         }
     }
 
-    Ok(Program { statements })
+    Ok(crate::optimize::fold_program(Program { statements }))
 }
 
 fn convert_pest_error(e: pest::error::Error<Rule>) -> ParseError {
