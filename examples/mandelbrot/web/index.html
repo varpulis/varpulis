@@ -87,14 +87,15 @@
 <body>
     <h1>Mandelbrot Set - Parallel</h1>
     <div class="info">
-        16 contexts compute 250×250 tiles in parallel<br>
-        Events stream via MQTT WebSocket
+        16 contexts compute 250x250 tiles in parallel<br>
+        Row events stream via MQTT WebSocket (4,000 messages)
     </div>
 
     <div id="canvas-container">
         <canvas id="canvas" width="1000" height="1000"></canvas>
         <div id="stats">
             <div><span class="stat-label">Pixels:</span> <span class="stat-value" id="pixel-count">0</span> / 1,000,000</div>
+            <div><span class="stat-label">Rows:</span> <span class="stat-value" id="row-count">0</span> / 4,000</div>
             <div><span class="stat-label">Progress:</span> <span class="stat-value" id="progress">0%</span></div>
             <div><span class="stat-label">Time:</span> <span class="stat-value" id="elapsed">0.0s</span></div>
             <div><span class="stat-label">Rate:</span> <span class="stat-value" id="rate">0</span> px/s</div>
@@ -114,22 +115,31 @@
         const SIZE = 1000;
         const MAX_ITER = 256;
         const TOTAL_PIXELS = SIZE * SIZE;
+        const TOTAL_ROWS = 4000; // 16 tiles x 250 rows
         const NUM_CONTEXTS = 16;
         const TILE_SIZE = 250;
 
         const canvas = document.getElementById('canvas');
-        const ctx = canvas.getContext('2d');
-        const imageData = ctx.createImageData(SIZE, SIZE);
+        const canvasCtx = canvas.getContext('2d');
+        const imageData = canvasCtx.createImageData(SIZE, SIZE);
 
-        // Inferno colormap
-        function infernoColor(t) {
-            const r = Math.min(255, Math.floor(255 * (1.5 * t)));
-            const g = Math.min(255, Math.floor(255 * (t * t)));
-            const b = Math.min(255, Math.floor(255 * (0.5 + 0.5 * Math.sin(Math.PI * t))));
-            return [r, g, b];
+        // Inferno colormap (precomputed LUT for performance)
+        const colorLut = new Uint8Array((MAX_ITER + 1) * 3);
+        for (let i = 0; i <= MAX_ITER; i++) {
+            if (i >= MAX_ITER) {
+                colorLut[i * 3] = 0;
+                colorLut[i * 3 + 1] = 0;
+                colorLut[i * 3 + 2] = 0;
+            } else {
+                const t = Math.log1p(i) / Math.log1p(MAX_ITER);
+                colorLut[i * 3] = Math.min(255, Math.floor(255 * (1.5 * t)));
+                colorLut[i * 3 + 1] = Math.min(255, Math.floor(255 * (t * t)));
+                colorLut[i * 3 + 2] = Math.min(255, Math.floor(255 * (0.5 + 0.5 * Math.sin(Math.PI * t))));
+            }
         }
 
         let pixelCount = 0;
+        let rowCount = 0;
         let startTime = null;
         let pipelineId = null;
         let mqttClient = null;
@@ -162,6 +172,7 @@
 
         function updateStats() {
             document.getElementById('pixel-count').textContent = pixelCount.toLocaleString();
+            document.getElementById('row-count').textContent = rowCount.toLocaleString();
             document.getElementById('progress').textContent = (100 * pixelCount / TOTAL_PIXELS).toFixed(1) + '%';
 
             if (startTime) {
@@ -171,28 +182,34 @@
             }
         }
 
-        function setPixel(x, y, iterations) {
-            if (x < 0 || x >= SIZE || y < 0 || y >= SIZE) return;
+        // Process a full row of pixels from comma-separated iteration data
+        function setPixelRow(y, xStart, count, rowData) {
+            if (y < 0 || y >= SIZE) return;
 
-            const idx = (y * SIZE + x) * 4;
+            const iterations = rowData.split(',');
+            const len = Math.min(iterations.length, count, SIZE - xStart);
+            const data = imageData.data;
 
-            if (iterations >= MAX_ITER) {
-                imageData.data[idx] = 0;
-                imageData.data[idx + 1] = 0;
-                imageData.data[idx + 2] = 0;
-            } else {
-                const t = Math.log1p(iterations) / Math.log1p(MAX_ITER);
-                const [r, g, b] = infernoColor(t);
-                imageData.data[idx] = r;
-                imageData.data[idx + 1] = g;
-                imageData.data[idx + 2] = b;
+            for (let i = 0; i < len; i++) {
+                const x = xStart + i;
+                if (x < 0 || x >= SIZE) continue;
+
+                const iter = parseInt(iterations[i], 10);
+                const idx = (y * SIZE + x) * 4;
+                const ci = Math.min(iter, MAX_ITER) * 3;
+
+                data[idx] = colorLut[ci];
+                data[idx + 1] = colorLut[ci + 1];
+                data[idx + 2] = colorLut[ci + 2];
+                data[idx + 3] = 255;
             }
-            imageData.data[idx + 3] = 255;
-            pixelCount++;
 
-            // Track which tile this pixel belongs to
+            pixelCount += len;
+            rowCount++;
+
+            // Track which tile this row belongs to
             const tileRow = Math.floor(y / TILE_SIZE);
-            const tileCol = Math.floor(x / TILE_SIZE);
+            const tileCol = Math.floor(xStart / TILE_SIZE);
             const tileIdx = tileRow * 4 + tileCol;
             if (contextStatus[tileIdx] !== 'done') {
                 contextStatus[tileIdx] = 'active';
@@ -204,7 +221,7 @@
             if (!renderPending) {
                 renderPending = true;
                 requestAnimationFrame(() => {
-                    ctx.putImageData(imageData, 0, 0);
+                    canvasCtx.putImageData(imageData, 0, 0);
                     updateStats();
                     updateContextUI();
                     renderPending = false;
@@ -223,6 +240,7 @@
 
         function reset() {
             pixelCount = 0;
+            rowCount = 0;
             startTime = null;
             pipelineId = null;
             contextStatus = Array(NUM_CONTEXTS).fill('pending');
@@ -232,7 +250,7 @@
                 imageData.data[i + 2] = 0;
                 imageData.data[i + 3] = 255;
             }
-            ctx.putImageData(imageData, 0, 0);
+            canvasCtx.putImageData(imageData, 0, 0);
             updateStats();
             updateContextUI();
             statusEl.textContent = 'Ready';
@@ -245,7 +263,7 @@
 
             mqttClient.on('connect', () => {
                 console.log('MQTT connected');
-                mqttClient.subscribe('mandelbrot/pixels/#', (err) => {
+                mqttClient.subscribe('mandelbrot/pixels/#', { qos: 1 }, (err) => {
                     if (!err) {
                         statusEl.textContent = 'Connected - Ready';
                         statusEl.className = 'status-connected';
@@ -257,10 +275,24 @@
             mqttClient.on('message', (topic, message) => {
                 try {
                     const event = JSON.parse(message.toString());
-                    // Pixel data is nested inside event.data
                     const d = event.data || event;
-                    if (d.x !== undefined && d.y !== undefined) {
-                        setPixel(d.x, d.y, d.iterations || 0);
+
+                    // Handle PixelRow events (batched row data)
+                    if (d.data !== undefined && d.y !== undefined) {
+                        setPixelRow(d.y, d.x_start || 0, d.count || 250, d.data);
+                        scheduleRender();
+                    }
+                    // Legacy: handle individual Pixel events
+                    else if (d.x !== undefined && d.y !== undefined) {
+                        const x = d.x, y = d.y;
+                        const iter = d.iterations || 0;
+                        const idx = (y * SIZE + x) * 4;
+                        const ci = Math.min(iter, MAX_ITER) * 3;
+                        imageData.data[idx] = colorLut[ci];
+                        imageData.data[idx + 1] = colorLut[ci + 1];
+                        imageData.data[idx + 2] = colorLut[ci + 2];
+                        imageData.data[idx + 3] = 255;
+                        pixelCount++;
                         scheduleRender();
                     }
                 } catch (e) {
@@ -362,7 +394,7 @@
         for (let i = 0; i < imageData.data.length; i += 4) {
             imageData.data[i + 3] = 255;
         }
-        ctx.putImageData(imageData, 0, 0);
+        canvasCtx.putImageData(imageData, 0, 0);
     </script>
 </body>
 </html>

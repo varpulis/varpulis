@@ -413,6 +413,7 @@ pub fn eval_filter_expr(
                     (Value::Float(a), Value::Float(b)) => Some(Value::Float(a + b)),
                     (Value::Int(a), Value::Float(b)) => Some(Value::Float(*a as f64 + b)),
                     (Value::Float(a), Value::Int(b)) => Some(Value::Float(a + *b as f64)),
+                    (Value::Str(a), Value::Str(b)) => Some(Value::Str(format!("{}{}", a, b))),
                     _ => None,
                 },
                 BinOp::Sub => match (&left_val, &right_val) {
@@ -1116,6 +1117,7 @@ pub fn eval_expr_with_functions(
                     (Value::Float(a), Value::Float(b)) => Some(Value::Float(a + b)),
                     (Value::Int(a), Value::Float(b)) => Some(Value::Float(*a as f64 + b)),
                     (Value::Float(a), Value::Int(b)) => Some(Value::Float(a + *b as f64)),
+                    (Value::Str(a), Value::Str(b)) => Some(Value::Str(format!("{}{}", a, b))),
                     _ => None,
                 },
                 BinOp::Sub => match (&left_val, &right_val) {
