@@ -12,6 +12,7 @@ use crate::window::{
     SessionWindow, SlidingCountWindow, SlidingWindow, TumblingWindow,
 };
 use indexmap::IndexMap;
+use rustc_hash::FxHashMap;
 use std::collections::HashMap;
 use std::sync::Arc;
 use varpulis_core::ast::ConfigValue;
@@ -94,7 +95,7 @@ pub(crate) struct StreamDefinition {
     /// Join buffer for correlating events from multiple sources
     pub join_buffer: Option<JoinBuffer>,
     /// Mapping from event type to join source name (for join streams)
-    pub event_type_to_source: std::collections::HashMap<String, String>,
+    pub event_type_to_source: FxHashMap<String, String>,
 }
 
 /// Source of events for a stream
@@ -205,7 +206,7 @@ pub(crate) struct StreamProcessResult {
 pub(crate) struct PartitionedWindowState {
     pub partition_key: String,
     pub window_size: usize, // For count-based windows
-    pub windows: HashMap<String, CountWindow>,
+    pub windows: FxHashMap<String, CountWindow>,
 }
 
 impl PartitionedWindowState {
@@ -213,14 +214,14 @@ impl PartitionedWindowState {
         Self {
             partition_key,
             window_size,
-            windows: HashMap::new(),
+            windows: FxHashMap::default(),
         }
     }
 
     pub fn add(&mut self, event: SharedEvent) -> Option<Vec<SharedEvent>> {
         let key = event
             .get(&self.partition_key)
-            .map(|v| format!("{}", v))
+            .map(|v| v.to_partition_key().into_owned())
             .unwrap_or_else(|| "default".to_string());
 
         let window = self
@@ -237,7 +238,7 @@ pub(crate) struct PartitionedSlidingCountWindowState {
     pub partition_key: String,
     pub window_size: usize,
     pub slide_size: usize,
-    pub windows: HashMap<String, SlidingCountWindow>,
+    pub windows: FxHashMap<String, SlidingCountWindow>,
 }
 
 impl PartitionedSlidingCountWindowState {
@@ -246,14 +247,14 @@ impl PartitionedSlidingCountWindowState {
             partition_key,
             window_size,
             slide_size,
-            windows: HashMap::new(),
+            windows: FxHashMap::default(),
         }
     }
 
     pub fn add(&mut self, event: SharedEvent) -> Option<Vec<SharedEvent>> {
         let key = event
             .get(&self.partition_key)
-            .map(|v| format!("{}", v))
+            .map(|v| v.to_partition_key().into_owned())
             .unwrap_or_else(|| "default".to_string());
 
         let window = self
@@ -281,12 +282,12 @@ impl PartitionedAggregatorState {
 
     pub fn apply(&mut self, events: &[SharedEvent]) -> Vec<(String, IndexMap<String, Value>)> {
         // Group events by partition key - use Arc::clone to avoid deep clones
-        let mut partitions: HashMap<String, Vec<SharedEvent>> = HashMap::new();
+        let mut partitions: FxHashMap<String, Vec<SharedEvent>> = FxHashMap::default();
 
         for event in events {
             let key = event
                 .get(&self.partition_key)
-                .map(|v| format!("{}", v))
+                .map(|v| v.to_partition_key().into_owned())
                 .unwrap_or_else(|| "default".to_string());
             partitions.entry(key).or_default().push(Arc::clone(event));
         }

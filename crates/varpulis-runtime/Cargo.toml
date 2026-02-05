@@ -18,6 +18,7 @@ chrono = { workspace = true }
 indexmap = { workspace = true }
 rand = { workspace = true }
 prometheus = { workspace = true }
+rustc-hash = { workspace = true }
 async-trait = "0.1"
 rayon = "1.10"
 hnsw_rs = "0.3"

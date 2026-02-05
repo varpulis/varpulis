@@ -9,6 +9,7 @@
 use crate::event::{Event, SharedEvent};
 use crate::persistence::{PartitionedWindowCheckpoint, SerializableEvent, WindowCheckpoint};
 use chrono::{DateTime, Duration, Utc};
+use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -491,7 +492,7 @@ impl SessionWindow {
 pub struct PartitionedSessionWindow {
     partition_key: String,
     gap: Duration,
-    windows: std::collections::HashMap<String, SessionWindow>,
+    windows: FxHashMap<String, SessionWindow>,
 }
 
 impl PartitionedSessionWindow {
@@ -499,7 +500,7 @@ impl PartitionedSessionWindow {
         Self {
             partition_key,
             gap,
-            windows: std::collections::HashMap::new(),
+            windows: FxHashMap::default(),
         }
     }
 
@@ -507,7 +508,7 @@ impl PartitionedSessionWindow {
     pub fn add_shared(&mut self, event: SharedEvent) -> Option<Vec<SharedEvent>> {
         let key = event
             .get(&self.partition_key)
-            .map(|v| format!("{}", v))
+            .map(|v| v.to_partition_key().into_owned())
             .unwrap_or_else(|| "default".to_string());
 
         let window = self
@@ -529,7 +530,7 @@ impl PartitionedSessionWindow {
     /// Returns a list of (partition_key, events) for each expired session,
     /// and removes those partitions from the map.
     pub fn check_expired(&mut self, now: DateTime<Utc>) -> Vec<(String, Vec<SharedEvent>)> {
-        let mut expired = Vec::new();
+        let mut expired = Vec::with_capacity(self.windows.len());
         let mut to_remove = Vec::new();
         for (key, window) in &mut self.windows {
             if let Some(events) = window.check_expired(now) {
@@ -615,7 +616,7 @@ impl PartitionedSessionWindow {
 
     /// Advance watermark — close expired sessions across all partitions.
     pub fn advance_watermark(&mut self, wm: DateTime<Utc>) -> Vec<(String, Vec<SharedEvent>)> {
-        let mut expired = Vec::new();
+        let mut expired = Vec::with_capacity(self.windows.len());
         let mut to_remove = Vec::new();
         for (key, window) in &mut self.windows {
             if let Some(events) = window.advance_watermark(wm) {
@@ -636,7 +637,7 @@ impl PartitionedSessionWindow {
 pub struct PartitionedTumblingWindow {
     partition_key: String,
     duration: Duration,
-    windows: std::collections::HashMap<String, TumblingWindow>,
+    windows: FxHashMap<String, TumblingWindow>,
 }
 
 impl PartitionedTumblingWindow {
@@ -644,7 +645,7 @@ impl PartitionedTumblingWindow {
         Self {
             partition_key,
             duration,
-            windows: std::collections::HashMap::new(),
+            windows: FxHashMap::default(),
         }
     }
 
@@ -652,7 +653,7 @@ impl PartitionedTumblingWindow {
     pub fn add_shared(&mut self, event: SharedEvent) -> Option<Vec<SharedEvent>> {
         let key = event
             .get(&self.partition_key)
-            .map(|v| format!("{}", v))
+            .map(|v| v.to_partition_key().into_owned())
             .unwrap_or_else(|| "default".to_string());
 
         let window = self
@@ -750,7 +751,7 @@ pub struct PartitionedSlidingWindow {
     partition_key: String,
     window_size: Duration,
     slide_interval: Duration,
-    windows: std::collections::HashMap<String, SlidingWindow>,
+    windows: FxHashMap<String, SlidingWindow>,
 }
 
 impl PartitionedSlidingWindow {
@@ -759,7 +760,7 @@ impl PartitionedSlidingWindow {
             partition_key,
             window_size,
             slide_interval,
-            windows: std::collections::HashMap::new(),
+            windows: FxHashMap::default(),
         }
     }
 
@@ -767,7 +768,7 @@ impl PartitionedSlidingWindow {
     pub fn add_shared(&mut self, event: SharedEvent) -> Option<Vec<SharedEvent>> {
         let key = event
             .get(&self.partition_key)
-            .map(|v| format!("{}", v))
+            .map(|v| v.to_partition_key().into_owned())
             .unwrap_or_else(|| "default".to_string());
 
         let window = self

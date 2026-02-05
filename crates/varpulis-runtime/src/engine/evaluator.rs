@@ -17,9 +17,11 @@ use crate::attention::AttentionWindow;
 use crate::sequence::SequenceContext;
 use crate::Event;
 use indexmap::IndexMap;
+use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use tracing::debug;
+use varpulis_core::ast::Expr;
 use varpulis_core::span::Spanned;
 use varpulis_core::{Stmt, Value};
 
@@ -85,7 +87,7 @@ pub fn eval_stmts(
     event: &Event,
     ctx: &SequenceContext,
     functions: &HashMap<String, UserFunction>,
-    bindings: &mut HashMap<String, Value>,
+    bindings: &mut FxHashMap<String, Value>,
 ) -> (StmtResult, Option<Value>) {
     let mut last_value = None;
 
@@ -110,7 +112,7 @@ pub fn eval_stmt(
     event: &Event,
     ctx: &SequenceContext,
     functions: &HashMap<String, UserFunction>,
-    bindings: &mut HashMap<String, Value>,
+    bindings: &mut FxHashMap<String, Value>,
 ) -> (StmtResult, Option<Value>) {
     match stmt {
         // Expression statement - evaluate and return value
@@ -146,18 +148,76 @@ pub fn eval_stmt(
         Stmt::Assignment { name, value } => {
             let val = eval_expr_with_functions(value, event, ctx, functions, bindings);
             if let Some(v) = val {
-                bindings.insert(name.clone(), v);
+                if let Some(existing) = bindings.get_mut(name) {
+                    *existing = v;
+                } else {
+                    bindings.insert(name.clone(), v);
+                }
             }
             (StmtResult::Continue, None)
         }
 
         // For loop
         Stmt::For { var, iter, body } => {
+            // Phase 3: Lazy range evaluation — detect Expr::Range before materializing
+            if let Expr::Range {
+                start,
+                end,
+                inclusive,
+            } = iter
+            {
+                let s = eval_expr_with_functions(start, event, ctx, functions, bindings)
+                    .and_then(|v| v.as_int());
+                let e = eval_expr_with_functions(end, event, ctx, functions, bindings)
+                    .and_then(|v| v.as_int());
+                if let (Some(s), Some(e)) = (s, e) {
+                    if *inclusive {
+                        for i in s..=e {
+                            match bindings.get_mut(var) {
+                                Some(existing) => *existing = Value::Int(i),
+                                None => {
+                                    bindings.insert(var.clone(), Value::Int(i));
+                                }
+                            }
+                            let (result, _) = eval_stmts(body, event, ctx, functions, bindings);
+                            match result {
+                                StmtResult::Break => break,
+                                StmtResult::ContinueLoop => continue,
+                                StmtResult::Return(v) => return (StmtResult::Return(v), None),
+                                StmtResult::Continue => {}
+                            }
+                        }
+                    } else {
+                        for i in s..e {
+                            match bindings.get_mut(var) {
+                                Some(existing) => *existing = Value::Int(i),
+                                None => {
+                                    bindings.insert(var.clone(), Value::Int(i));
+                                }
+                            }
+                            let (result, _) = eval_stmts(body, event, ctx, functions, bindings);
+                            match result {
+                                StmtResult::Break => break,
+                                StmtResult::ContinueLoop => continue,
+                                StmtResult::Return(v) => return (StmtResult::Return(v), None),
+                                StmtResult::Continue => {}
+                            }
+                        }
+                    }
+                }
+                return (StmtResult::Continue, None);
+            }
+
             let iter_val = eval_expr_with_functions(iter, event, ctx, functions, bindings);
 
             if let Some(Value::Array(items)) = iter_val {
                 for item in items {
-                    bindings.insert(var.clone(), item);
+                    match bindings.get_mut(var) {
+                        Some(existing) => *existing = item,
+                        None => {
+                            bindings.insert(var.clone(), item);
+                        }
+                    }
                     let (result, _) = eval_stmts(body, event, ctx, functions, bindings);
 
                     match result {
@@ -171,7 +231,12 @@ pub fn eval_stmt(
                 // Iterate over map entries as [key, value] pairs
                 for (key, value) in map {
                     let pair = Value::Array(vec![Value::Str(key), value]);
-                    bindings.insert(var.clone(), pair);
+                    match bindings.get_mut(var) {
+                        Some(existing) => *existing = pair,
+                        None => {
+                            bindings.insert(var.clone(), pair);
+                        }
+                    }
                     let (result, _) = eval_stmts(body, event, ctx, functions, bindings);
 
                     match result {
@@ -185,7 +250,12 @@ pub fn eval_stmt(
             // Also support iterating over ranges (0..n)
             else if let Some(Value::Int(n)) = iter_val {
                 for i in 0..n {
-                    bindings.insert(var.clone(), Value::Int(i));
+                    match bindings.get_mut(var) {
+                        Some(existing) => *existing = Value::Int(i),
+                        None => {
+                            bindings.insert(var.clone(), Value::Int(i));
+                        }
+                    }
                     let (result, _) = eval_stmts(body, event, ctx, functions, bindings);
 
                     match result {
@@ -301,8 +371,9 @@ pub fn call_user_function(
     ctx: &SequenceContext,
     functions: &HashMap<String, UserFunction>,
 ) -> Option<Value> {
-    // Bind parameters to argument values
-    let mut bindings = HashMap::new();
+    // Bind parameters to argument values (pre-allocate for params + local vars)
+    let mut bindings =
+        FxHashMap::with_capacity_and_hasher(func.params.len() + 8, Default::default());
     for (i, (param_name, _)) in func.params.iter().enumerate() {
         if let Some(val) = args.get(i) {
             bindings.insert(param_name.clone(), val.clone());
@@ -413,7 +484,13 @@ pub fn eval_filter_expr(
                     (Value::Float(a), Value::Float(b)) => Some(Value::Float(a + b)),
                     (Value::Int(a), Value::Float(b)) => Some(Value::Float(*a as f64 + b)),
                     (Value::Float(a), Value::Int(b)) => Some(Value::Float(a + *b as f64)),
-                    (Value::Str(a), Value::Str(b)) => Some(Value::Str(format!("{}{}", a, b))),
+                    (Value::Str(_), Value::Str(_)) => match (left_val, right_val) {
+                        (Value::Str(mut a), Value::Str(b)) => {
+                            a.push_str(&b);
+                            Some(Value::Str(a))
+                        }
+                        _ => unreachable!(),
+                    },
                     _ => None,
                 },
                 BinOp::Sub => match (&left_val, &right_val) {
@@ -547,7 +624,7 @@ pub fn eval_expr_with_functions(
     event: &Event,
     ctx: &SequenceContext,
     functions: &HashMap<String, UserFunction>,
-    bindings: &HashMap<String, Value>,
+    bindings: &FxHashMap<String, Value>,
 ) -> Option<Value> {
     use varpulis_core::ast::{BinOp, Expr};
 
@@ -1117,7 +1194,13 @@ pub fn eval_expr_with_functions(
                     (Value::Float(a), Value::Float(b)) => Some(Value::Float(a + b)),
                     (Value::Int(a), Value::Float(b)) => Some(Value::Float(*a as f64 + b)),
                     (Value::Float(a), Value::Int(b)) => Some(Value::Float(a + *b as f64)),
-                    (Value::Str(a), Value::Str(b)) => Some(Value::Str(format!("{}{}", a, b))),
+                    (Value::Str(_), Value::Str(_)) => match (left_val, right_val) {
+                        (Value::Str(mut a), Value::Str(b)) => {
+                            a.push_str(&b);
+                            Some(Value::Str(a))
+                        }
+                        _ => unreachable!(),
+                    },
                     _ => None,
                 },
                 BinOp::Sub => match (&left_val, &right_val) {

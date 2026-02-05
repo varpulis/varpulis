@@ -10,6 +10,7 @@
 use crate::engine::Engine;
 use crate::event::{Event, SharedEvent};
 use crate::persistence::{CheckpointConfig, CheckpointManager, EngineCheckpoint, StoreError};
+use rustc_hash::FxHashMap;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
@@ -88,7 +89,7 @@ impl CheckpointCoordinator {
     }
 
     /// Initiate a new checkpoint by sending barriers to all contexts.
-    pub fn initiate(&mut self, context_txs: &HashMap<String, mpsc::Sender<ContextMessage>>) {
+    pub fn initiate(&mut self, context_txs: &FxHashMap<String, mpsc::Sender<ContextMessage>>) {
         if self.pending.is_some() {
             warn!("Checkpoint already in progress, skipping initiation");
             return;
@@ -342,9 +343,9 @@ pub struct ContextRuntime {
     /// Engine's emitted events receiver
     engine_output_rx: mpsc::Receiver<Event>,
     /// Senders to all contexts (including self, for intra-context derived streams)
-    all_context_txs: HashMap<String, mpsc::Sender<ContextMessage>>,
+    all_context_txs: FxHashMap<String, mpsc::Sender<ContextMessage>>,
     /// event_type → context_name routing table
-    ingress_routing: HashMap<String, String>,
+    ingress_routing: FxHashMap<String, String>,
     /// Shutdown signal receiver
     shutdown_rx: watch::Receiver<bool>,
     /// Checkpoint ack sender (if coordinated checkpointing is enabled)
@@ -362,8 +363,8 @@ impl ContextRuntime {
         output_tx: mpsc::Sender<Event>,
         event_rx: mpsc::Receiver<ContextMessage>,
         engine_output_rx: mpsc::Receiver<Event>,
-        all_context_txs: HashMap<String, mpsc::Sender<ContextMessage>>,
-        ingress_routing: HashMap<String, String>,
+        all_context_txs: FxHashMap<String, mpsc::Sender<ContextMessage>>,
+        ingress_routing: FxHashMap<String, String>,
         shutdown_rx: watch::Receiver<bool>,
     ) -> Self {
         Self {
@@ -396,7 +397,12 @@ impl ContextRuntime {
             // Route to consuming context if any
             if let Some(target_ctx) = self.ingress_routing.get(&output_event.event_type) {
                 if let Some(tx) = self.all_context_txs.get(target_ctx) {
-                    let _ = tx.try_send(ContextMessage::Event(Arc::new(output_event.clone())));
+                    let shared = Arc::new(output_event);
+                    let _ = tx.try_send(ContextMessage::Event(Arc::clone(&shared)));
+                    // Unwrap the Arc for the output channel (we hold the only other ref)
+                    let owned = Arc::try_unwrap(shared).unwrap_or_else(|arc| (*arc).clone());
+                    let _ = self.output_tx.try_send(owned);
+                    continue;
                 }
             }
 
@@ -524,7 +530,7 @@ impl ContextRuntime {
 /// via `Arc<HashMap>` for multi-producer scenarios.
 #[derive(Clone)]
 pub struct EventTypeRouter {
-    routes: Arc<HashMap<String, mpsc::Sender<ContextMessage>>>,
+    routes: Arc<FxHashMap<String, mpsc::Sender<ContextMessage>>>,
     default_tx: mpsc::Sender<ContextMessage>,
 }
 
@@ -583,11 +589,11 @@ impl EventTypeRouter {
 /// and stream assignments.
 pub struct ContextOrchestrator {
     /// Senders to each context's event channel
-    context_txs: HashMap<String, mpsc::Sender<ContextMessage>>,
+    context_txs: FxHashMap<String, mpsc::Sender<ContextMessage>>,
     /// Thread handles for each context
     handles: Vec<std::thread::JoinHandle<()>>,
     /// event_type -> context_name routing table
-    ingress_routing: HashMap<String, String>,
+    ingress_routing: FxHashMap<String, String>,
     /// Shutdown signal sender
     shutdown_tx: watch::Sender<bool>,
     /// Direct event-type-to-channel router
@@ -630,7 +636,7 @@ impl ContextOrchestrator {
         checkpoint_config: Option<(CheckpointConfig, Arc<dyn crate::persistence::StateStore>)>,
         recovery_checkpoint: Option<&crate::persistence::Checkpoint>,
     ) -> Result<Self, String> {
-        let mut context_txs: HashMap<String, mpsc::Sender<ContextMessage>> = HashMap::new();
+        let mut context_txs: FxHashMap<String, mpsc::Sender<ContextMessage>> = FxHashMap::default();
         let mut handles: Vec<std::thread::JoinHandle<()>> = Vec::new();
 
         // Create shutdown signal
@@ -645,7 +651,8 @@ impl ContextOrchestrator {
             .unwrap_or_else(|| "default".to_string());
 
         // Create cross-context senders: first pass to create all channels
-        let mut context_rxs: HashMap<String, mpsc::Receiver<ContextMessage>> = HashMap::new();
+        let mut context_rxs: FxHashMap<String, mpsc::Receiver<ContextMessage>> =
+            FxHashMap::default();
         for ctx_name in context_map.contexts().keys() {
             let (tx, rx) = mpsc::channel(channel_capacity);
             context_txs.insert(ctx_name.clone(), tx);
@@ -663,7 +670,7 @@ impl ContextOrchestrator {
         let ack_tx = checkpoint_coordinator.as_ref().map(|c| c.ack_sender());
 
         // Build ingress routing: event_type -> context_name
-        let mut ingress_routing: HashMap<String, String> = HashMap::new();
+        let mut ingress_routing: FxHashMap<String, String> = FxHashMap::default();
 
         // First pass: route raw event types from stream sources to contexts
         for stmt in &program.statements {
@@ -704,7 +711,8 @@ impl ContextOrchestrator {
         }
 
         // Build EventTypeRouter: event_type → Sender directly (single lookup)
-        let mut event_type_txs: HashMap<String, mpsc::Sender<ContextMessage>> = HashMap::new();
+        let mut event_type_txs: FxHashMap<String, mpsc::Sender<ContextMessage>> =
+            FxHashMap::default();
         for (event_type, ctx_name) in &ingress_routing {
             if let Some(tx) = context_txs.get(ctx_name) {
                 event_type_txs.insert(event_type.clone(), tx.clone());
@@ -738,7 +746,7 @@ impl ContextOrchestrator {
             let cores = config.cores.clone();
 
             // Clone all context senders for cross-context forwarding
-            let all_txs: HashMap<String, mpsc::Sender<ContextMessage>> = context_txs
+            let all_txs: FxHashMap<String, mpsc::Sender<ContextMessage>> = context_txs
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect();
@@ -913,7 +921,7 @@ impl ContextOrchestrator {
     }
 
     /// Get the ingress routing table (for testing/debugging)
-    pub fn ingress_routing(&self) -> &HashMap<String, String> {
+    pub fn ingress_routing(&self) -> &FxHashMap<String, String> {
         &self.ingress_routing
     }
 

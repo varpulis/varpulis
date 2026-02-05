@@ -5,24 +5,25 @@
 
 use crate::event::Event;
 use chrono::{DateTime, Duration, Utc};
+use rustc_hash::FxHashMap;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use tracing::{debug, trace};
 
 /// Type alias for timestamped events stored by key value
-type KeyedEventBuffer = HashMap<String, Vec<(DateTime<Utc>, Event)>>;
+type KeyedEventBuffer = FxHashMap<String, Vec<(DateTime<Utc>, Event)>>;
 
 /// Buffer for join operations - stores events from each source and correlates them
 #[derive(Debug)]
 pub struct JoinBuffer {
     /// Events by source name, keyed by join key value
     /// Structure: source_name -> (join_key_value -> Vec<(timestamp, event)>)
-    buffers: HashMap<String, KeyedEventBuffer>,
+    buffers: FxHashMap<String, KeyedEventBuffer>,
     /// Names of the source streams being joined
     sources: Vec<String>,
     /// Join key field name for each source (extracted from .on() clause)
     /// Structure: source_name -> field_name
-    join_keys: HashMap<String, String>,
+    join_keys: FxHashMap<String, String>,
     /// Window duration for correlation
     window_duration: Duration,
     /// Maximum events to keep per source/key (prevents unbounded growth)
@@ -45,12 +46,12 @@ impl JoinBuffer {
     /// * `window_duration` - How long to keep events for potential correlation
     pub fn new(
         sources: Vec<String>,
-        join_keys: HashMap<String, String>,
+        join_keys: FxHashMap<String, String>,
         window_duration: Duration,
     ) -> Self {
-        let mut buffers = HashMap::new();
+        let mut buffers = FxHashMap::default();
         for source in &sources {
-            buffers.insert(source.clone(), HashMap::new());
+            buffers.insert(source.clone(), FxHashMap::default());
         }
 
         // GC interval is 10% of window duration, minimum 10ms, maximum 1 second
@@ -104,7 +105,7 @@ impl JoinBuffer {
 
         // Extract the join key value from the event
         let key_value = match event.get(&join_key_field) {
-            Some(v) => format!("{}", v),
+            Some(v) => v.to_partition_key().into_owned(),
             None => {
                 debug!(
                     "Event missing join key field '{}', skipping",
@@ -290,7 +291,7 @@ impl JoinBuffer {
     /// Get statistics about the buffer state (for debugging)
     pub fn stats(&self) -> JoinBufferStats {
         let mut total_events = 0;
-        let mut events_per_source = HashMap::new();
+        let mut events_per_source = FxHashMap::default();
 
         for (source, buffer) in &self.buffers {
             let source_count: usize = buffer.values().map(|v| v.len()).sum();
@@ -326,7 +327,11 @@ impl JoinBuffer {
         crate::persistence::JoinCheckpoint {
             buffers,
             sources: self.sources.clone(),
-            join_keys: self.join_keys.clone(),
+            join_keys: self
+                .join_keys
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
             window_duration_ms: self.window_duration.num_milliseconds(),
         }
     }
@@ -340,7 +345,7 @@ impl JoinBuffer {
         self.expiry_queue = BinaryHeap::new();
 
         for (source, keyed) in &cp.buffers {
-            let mut keyed_buffer: KeyedEventBuffer = HashMap::new();
+            let mut keyed_buffer: KeyedEventBuffer = FxHashMap::default();
             for (key, events) in keyed {
                 let restored: Vec<(DateTime<Utc>, Event)> = events
                     .iter()
@@ -369,7 +374,7 @@ impl JoinBuffer {
 #[derive(Debug)]
 pub struct JoinBufferStats {
     pub total_events: usize,
-    pub events_per_source: HashMap<String, usize>,
+    pub events_per_source: FxHashMap<String, usize>,
     pub sources: Vec<String>,
 }
 
@@ -387,7 +392,7 @@ mod tests {
     #[test]
     fn test_join_buffer_correlates_matching_events() {
         let sources = vec!["A".to_string(), "B".to_string()];
-        let mut join_keys = HashMap::new();
+        let mut join_keys = FxHashMap::default();
         join_keys.insert("A".to_string(), "symbol".to_string());
         join_keys.insert("B".to_string(), "symbol".to_string());
 
@@ -418,7 +423,7 @@ mod tests {
     #[test]
     fn test_join_buffer_no_correlation_different_keys() {
         let sources = vec!["A".to_string(), "B".to_string()];
-        let mut join_keys = HashMap::new();
+        let mut join_keys = FxHashMap::default();
         join_keys.insert("A".to_string(), "symbol".to_string());
         join_keys.insert("B".to_string(), "symbol".to_string());
 
@@ -437,7 +442,7 @@ mod tests {
     #[test]
     fn test_join_buffer_window_expiration() {
         let sources = vec!["A".to_string(), "B".to_string()];
-        let mut join_keys = HashMap::new();
+        let mut join_keys = FxHashMap::default();
         join_keys.insert("A".to_string(), "symbol".to_string());
         join_keys.insert("B".to_string(), "symbol".to_string());
 
@@ -465,7 +470,7 @@ mod tests {
     #[test]
     fn test_join_buffer_stats() {
         let sources = vec!["A".to_string(), "B".to_string()];
-        let mut join_keys = HashMap::new();
+        let mut join_keys = FxHashMap::default();
         join_keys.insert("A".to_string(), "symbol".to_string());
         join_keys.insert("B".to_string(), "symbol".to_string());
 
@@ -485,7 +490,7 @@ mod tests {
     #[test]
     fn test_join_buffer_multiple_matches() {
         let sources = vec!["A".to_string(), "B".to_string()];
-        let mut join_keys = HashMap::new();
+        let mut join_keys = FxHashMap::default();
         join_keys.insert("A".to_string(), "symbol".to_string());
         join_keys.insert("B".to_string(), "symbol".to_string());
 
@@ -508,7 +513,7 @@ mod tests {
     #[test]
     fn test_join_buffer_three_way_join() {
         let sources = vec!["A".to_string(), "B".to_string(), "C".to_string()];
-        let mut join_keys = HashMap::new();
+        let mut join_keys = FxHashMap::default();
         join_keys.insert("A".to_string(), "symbol".to_string());
         join_keys.insert("B".to_string(), "symbol".to_string());
         join_keys.insert("C".to_string(), "symbol".to_string());
@@ -536,7 +541,7 @@ mod tests {
     #[test]
     fn test_join_buffer_max_events_limit() {
         let sources = vec!["A".to_string(), "B".to_string()];
-        let mut join_keys = HashMap::new();
+        let mut join_keys = FxHashMap::default();
         join_keys.insert("A".to_string(), "symbol".to_string());
         join_keys.insert("B".to_string(), "symbol".to_string());
 
@@ -556,7 +561,7 @@ mod tests {
     #[test]
     fn test_join_buffer_missing_key_field() {
         let sources = vec!["A".to_string(), "B".to_string()];
-        let mut join_keys = HashMap::new();
+        let mut join_keys = FxHashMap::default();
         join_keys.insert("A".to_string(), "symbol".to_string());
         join_keys.insert("B".to_string(), "symbol".to_string());
 
@@ -576,7 +581,7 @@ mod tests {
     fn test_join_buffer_common_key_detection() {
         let sources = vec!["A".to_string(), "B".to_string()];
         // Empty join keys - should detect common "symbol" field
-        let join_keys = HashMap::new();
+        let join_keys = FxHashMap::default();
 
         let mut buffer = JoinBuffer::new(sources, join_keys, Duration::minutes(1));
 
@@ -594,7 +599,7 @@ mod tests {
     #[test]
     fn test_join_buffer_continuous_correlation() {
         let sources = vec!["A".to_string(), "B".to_string()];
-        let mut join_keys = HashMap::new();
+        let mut join_keys = FxHashMap::default();
         join_keys.insert("A".to_string(), "symbol".to_string());
         join_keys.insert("B".to_string(), "symbol".to_string());
 
@@ -619,7 +624,7 @@ mod tests {
     #[test]
     fn test_join_buffer_multiple_symbols() {
         let sources = vec!["A".to_string(), "B".to_string()];
-        let mut join_keys = HashMap::new();
+        let mut join_keys = FxHashMap::default();
         join_keys.insert("A".to_string(), "symbol".to_string());
         join_keys.insert("B".to_string(), "symbol".to_string());
 
@@ -638,7 +643,7 @@ mod tests {
     #[test]
     fn test_join_buffer_checkpoint_restore() {
         let sources = vec!["A".to_string(), "B".to_string()];
-        let mut join_keys = HashMap::new();
+        let mut join_keys = FxHashMap::default();
         join_keys.insert("A".to_string(), "symbol".to_string());
         join_keys.insert("B".to_string(), "symbol".to_string());
 
@@ -681,7 +686,7 @@ mod tests {
     #[test]
     fn test_join_buffer_checkpoint_empty() {
         let sources = vec!["A".to_string(), "B".to_string()];
-        let mut join_keys = HashMap::new();
+        let mut join_keys = FxHashMap::default();
         join_keys.insert("A".to_string(), "symbol".to_string());
         join_keys.insert("B".to_string(), "symbol".to_string());
 

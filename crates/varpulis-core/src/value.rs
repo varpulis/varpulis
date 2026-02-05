@@ -3,6 +3,7 @@
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
@@ -93,6 +94,16 @@ impl Value {
         match self {
             Value::Array(a) => a.get(idx),
             _ => None,
+        }
+    }
+
+    /// Fast partition key extraction: returns `Cow` to avoid allocation for string keys.
+    pub fn to_partition_key(&self) -> Cow<'_, str> {
+        match self {
+            Value::Str(s) => Cow::Borrowed(s.as_str()),
+            Value::Int(n) => Cow::Owned(n.to_string()),
+            Value::Bool(b) => Cow::Borrowed(if *b { "true" } else { "false" }),
+            other => Cow::Owned(format!("{}", other)),
         }
     }
 }
