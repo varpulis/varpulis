@@ -213,6 +213,12 @@ pub fn api_routes(
         .and(with_manager(manager.clone()))
         .and_then(handle_usage);
 
+    // CORS configuration for browser-based clients
+    let cors = warp::cors()
+        .allow_any_origin()
+        .allow_methods(vec!["GET", "POST", "DELETE", "OPTIONS"])
+        .allow_headers(vec!["content-type", "x-api-key", "authorization"]);
+
     deploy
         .or(list)
         .or(get_pipeline)
@@ -222,6 +228,7 @@ pub fn api_routes(
         .or(reload)
         .or(usage)
         .or(admin_routes)
+        .with(cors)
 }
 
 // =============================================================================
