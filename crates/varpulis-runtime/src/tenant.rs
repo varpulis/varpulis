@@ -234,7 +234,11 @@ impl Tenant {
     }
 
     /// Deploy a new pipeline from VPL source code
-    pub fn deploy_pipeline(&mut self, name: String, source: String) -> Result<String, TenantError> {
+    pub async fn deploy_pipeline(
+        &mut self,
+        name: String,
+        source: String,
+    ) -> Result<String, TenantError> {
         // Check pipeline quota
         if self.pipelines.len() >= self.quota.max_pipelines {
             return Err(TenantError::QuotaExceeded(format!(
@@ -270,6 +274,7 @@ impl Tenant {
 
         // Build context orchestrator if the program declares contexts
         let orchestrator = if engine.has_contexts() {
+            // Context orchestrator connects sinks in each context thread
             match ContextOrchestrator::build(
                 engine.context_map(),
                 &program,
@@ -285,6 +290,11 @@ impl Tenant {
                 }
             }
         } else {
+            // No contexts - connect sinks on the main engine
+            engine
+                .connect_sinks()
+                .await
+                .map_err(TenantError::EngineError)?;
             None
         };
 
@@ -866,8 +876,8 @@ mod tests {
         assert!(mgr.get_tenant_by_api_key("key-1").is_none());
     }
 
-    #[test]
-    fn test_tenant_deploy_pipeline() {
+    #[tokio::test]
+    async fn test_tenant_deploy_pipeline() {
         let mut mgr = TenantManager::new();
         let id = mgr
             .create_tenant("Test".into(), "key-1".into(), TenantQuota::default())
@@ -880,6 +890,7 @@ mod tests {
         "#;
         let pipeline_id = tenant
             .deploy_pipeline("My Pipeline".into(), vpl.into())
+            .await
             .unwrap();
         assert_eq!(tenant.pipelines.len(), 1);
         assert_eq!(tenant.usage.active_pipelines, 1);
@@ -889,8 +900,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_tenant_pipeline_quota() {
+    #[tokio::test]
+    async fn test_tenant_pipeline_quota() {
         let mut mgr = TenantManager::new();
         let quota = TenantQuota {
             max_pipelines: 1,
@@ -903,15 +914,18 @@ mod tests {
 
         let tenant = mgr.get_tenant_mut(&id).unwrap();
         let vpl = "stream A = SensorReading .where(x > 1)";
-        tenant.deploy_pipeline("P1".into(), vpl.into()).unwrap();
+        tenant
+            .deploy_pipeline("P1".into(), vpl.into())
+            .await
+            .unwrap();
 
         // Second should fail
-        let result = tenant.deploy_pipeline("P2".into(), vpl.into());
+        let result = tenant.deploy_pipeline("P2".into(), vpl.into()).await;
         assert!(result.is_err());
     }
 
-    #[test]
-    fn test_tenant_remove_pipeline() {
+    #[tokio::test]
+    async fn test_tenant_remove_pipeline() {
         let mut mgr = TenantManager::new();
         let id = mgr
             .create_tenant("Test".into(), "key-1".into(), TenantQuota::default())
@@ -919,22 +933,27 @@ mod tests {
 
         let tenant = mgr.get_tenant_mut(&id).unwrap();
         let vpl = "stream A = SensorReading .where(x > 1)";
-        let pid = tenant.deploy_pipeline("P1".into(), vpl.into()).unwrap();
+        let pid = tenant
+            .deploy_pipeline("P1".into(), vpl.into())
+            .await
+            .unwrap();
 
         tenant.remove_pipeline(&pid).unwrap();
         assert_eq!(tenant.pipelines.len(), 0);
         assert_eq!(tenant.usage.active_pipelines, 0);
     }
 
-    #[test]
-    fn test_tenant_parse_error() {
+    #[tokio::test]
+    async fn test_tenant_parse_error() {
         let mut mgr = TenantManager::new();
         let id = mgr
             .create_tenant("Test".into(), "key-1".into(), TenantQuota::default())
             .unwrap();
 
         let tenant = mgr.get_tenant_mut(&id).unwrap();
-        let result = tenant.deploy_pipeline("Bad".into(), "this is not valid VPL {{{{".into());
+        let result = tenant
+            .deploy_pipeline("Bad".into(), "this is not valid VPL {{{{".into())
+            .await;
         assert!(result.is_err());
     }
 
@@ -947,7 +966,10 @@ mod tests {
 
         let tenant = mgr.get_tenant_mut(&id).unwrap();
         let vpl = "stream A = SensorReading .where(temperature > 100)";
-        let pid = tenant.deploy_pipeline("P1".into(), vpl.into()).unwrap();
+        let pid = tenant
+            .deploy_pipeline("P1".into(), vpl.into())
+            .await
+            .unwrap();
 
         let event = Event::new("SensorReading").with_field("temperature", 150.0);
         tenant.process_event(&pid, event).await.unwrap();
@@ -968,7 +990,10 @@ mod tests {
 
         let tenant = mgr.get_tenant_mut(&id).unwrap();
         let vpl = "stream A = SensorReading .where(x > 1)";
-        let pid = tenant.deploy_pipeline("P1".into(), vpl.into()).unwrap();
+        let pid = tenant
+            .deploy_pipeline("P1".into(), vpl.into())
+            .await
+            .unwrap();
 
         let event = Event::new("SensorReading").with_field("x", 5);
         tenant.process_event(&pid, event.clone()).await.unwrap();
@@ -979,8 +1004,8 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[test]
-    fn test_tenant_reload_pipeline() {
+    #[tokio::test]
+    async fn test_tenant_reload_pipeline() {
         let mut mgr = TenantManager::new();
         let id = mgr
             .create_tenant("Test".into(), "key-1".into(), TenantQuota::default())
@@ -988,7 +1013,10 @@ mod tests {
 
         let tenant = mgr.get_tenant_mut(&id).unwrap();
         let vpl1 = "stream A = SensorReading .where(x > 1)";
-        let pid = tenant.deploy_pipeline("P1".into(), vpl1.into()).unwrap();
+        let pid = tenant
+            .deploy_pipeline("P1".into(), vpl1.into())
+            .await
+            .unwrap();
 
         let vpl2 = "stream B = SensorReading .where(x > 50)";
         tenant.reload_pipeline(&pid, vpl2.into()).unwrap();
@@ -1035,8 +1063,8 @@ mod tests {
         assert_eq!(mgr.tenant_count(), 0);
     }
 
-    #[test]
-    fn test_tenant_snapshot_roundtrip() {
+    #[tokio::test]
+    async fn test_tenant_snapshot_roundtrip() {
         let mut mgr = TenantManager::new();
         let id = mgr
             .create_tenant("Snap Corp".into(), "snap-key".into(), TenantQuota::pro())
@@ -1046,6 +1074,7 @@ mod tests {
         let vpl = "stream A = SensorReading .where(x > 1)";
         tenant
             .deploy_pipeline("Pipeline1".into(), vpl.into())
+            .await
             .unwrap();
         tenant.usage.events_processed = 42;
         tenant.usage.output_events_emitted = 7;
@@ -1069,8 +1098,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_tenant_manager_persistence_and_recovery() {
+    #[tokio::test]
+    async fn test_tenant_manager_persistence_and_recovery() {
         use crate::persistence::MemoryStore;
 
         let store: Arc<dyn StateStore> = Arc::new(MemoryStore::new());
@@ -1090,6 +1119,7 @@ mod tests {
             let tenant = mgr.get_tenant_mut(&id).unwrap();
             tenant
                 .deploy_pipeline("Persistent Pipeline".into(), vpl.into())
+                .await
                 .unwrap();
             tenant.usage.events_processed = 100;
             tenant.usage.output_events_emitted = 5;
@@ -1122,8 +1152,8 @@ mod tests {
         assert_eq!(mgr2.get_tenant_by_api_key("persist-key"), Some(&tid));
     }
 
-    #[test]
-    fn test_persistence_survives_restart() {
+    #[tokio::test]
+    async fn test_persistence_survives_restart() {
         use crate::persistence::MemoryStore;
 
         let store: Arc<dyn StateStore> = Arc::new(MemoryStore::new());
@@ -1140,12 +1170,21 @@ mod tests {
                 .unwrap();
 
             let tenant_a = mgr.get_tenant_mut(&id1).unwrap();
-            tenant_a.deploy_pipeline("P1".into(), vpl.into()).unwrap();
+            tenant_a
+                .deploy_pipeline("P1".into(), vpl.into())
+                .await
+                .unwrap();
             mgr.persist_if_needed(&id1);
 
             let tenant_b = mgr.get_tenant_mut(&id2).unwrap();
-            tenant_b.deploy_pipeline("P2".into(), vpl.into()).unwrap();
-            tenant_b.deploy_pipeline("P3".into(), vpl.into()).unwrap();
+            tenant_b
+                .deploy_pipeline("P2".into(), vpl.into())
+                .await
+                .unwrap();
+            tenant_b
+                .deploy_pipeline("P3".into(), vpl.into())
+                .await
+                .unwrap();
             mgr.persist_if_needed(&id2);
         }
 

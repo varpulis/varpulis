@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mandelbrot Set - Varpulis Demo</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+        h1 { margin-bottom: 10px; color: #f39c12; }
+        .info { font-size: 14px; color: #888; margin-bottom: 20px; }
+        #canvas-container {
+            position: relative;
+            border: 2px solid #333;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        #canvas { display: block; background: #000; }
+        #stats {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.7);
+            padding: 10px 15px;
+            border-radius: 5px;
+            font-size: 13px;
+            font-family: monospace;
+        }
+        .stat-label { color: #888; }
+        .stat-value { color: #f39c12; font-weight: bold; }
+        #status {
+            margin-top: 15px;
+            padding: 10px 20px;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        .status-connecting { background: #2c3e50; }
+        .status-connected { background: #27ae60; }
+        .status-computing { background: #e67e22; }
+        .status-error { background: #c0392b; }
+        .status-complete { background: #8e44ad; }
+        #controls {
+            margin-top: 20px;
+            display: flex;
+            gap: 10px;
+        }
+        button {
+            padding: 10px 25px;
+            font-size: 14px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        button:hover { transform: translateY(-2px); }
+        #startBtn { background: #27ae60; color: white; }
+        #startBtn:disabled { background: #555; cursor: not-allowed; transform: none; }
+        #resetBtn { background: #e74c3c; color: white; }
+    </style>
+</head>
+<body>
+    <h1>Mandelbrot Set</h1>
+    <div class="info">Real-time rendering via Varpulis VPL (emit + .process())</div>
+
+    <div id="canvas-container">
+        <canvas id="canvas" width="992" height="992"></canvas>
+        <div id="stats">
+            <div><span class="stat-label">Pixels:</span> <span class="stat-value" id="pixel-count">0</span> / 984,064</div>
+            <div><span class="stat-label">Progress:</span> <span class="stat-value" id="progress">0%</span></div>
+            <div><span class="stat-label">Time:</span> <span class="stat-value" id="elapsed">0.0s</span></div>
+            <div><span class="stat-label">Tile:</span> <span class="stat-value" id="tile-progress">0/16</span></div>
+        </div>
+    </div>
+
+    <div id="status" class="status-connecting">Ready</div>
+
+    <div id="controls">
+        <button id="startBtn">Start Computation</button>
+        <button id="resetBtn">Reset</button>
+    </div>
+
+    <script>
+        const SIZE = 992;  // 32 tiles * 31 pixels = 992
+        const MAX_ITER = 256;
+        const TOTAL_PIXELS = SIZE * SIZE;
+        const NUM_TILES = 1024;  // 32x32 grid
+
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const imageData = ctx.createImageData(SIZE, SIZE);
+
+        // Inferno colormap (approximation)
+        function infernoColor(t) {
+            const r = Math.min(255, Math.floor(255 * (1.5 * t)));
+            const g = Math.min(255, Math.floor(255 * (t * t)));
+            const b = Math.min(255, Math.floor(255 * (0.5 + 0.5 * Math.sin(Math.PI * t))));
+            return [r, g, b];
+        }
+
+        let pixelCount = 0;
+        let startTime = null;
+        let pipelineId = null;
+        let currentTile = 0;
+
+        const statusEl = document.getElementById('status');
+        const startBtn = document.getElementById('startBtn');
+        const resetBtn = document.getElementById('resetBtn');
+
+        function updateStats() {
+            document.getElementById('pixel-count').textContent = pixelCount.toLocaleString();
+            document.getElementById('progress').textContent = (100 * pixelCount / TOTAL_PIXELS).toFixed(1) + '%';
+            document.getElementById('tile-progress').textContent = `${currentTile}/${NUM_TILES}`;
+
+            if (startTime) {
+                const elapsed = (Date.now() - startTime) / 1000;
+                document.getElementById('elapsed').textContent = elapsed.toFixed(1) + 's';
+            }
+        }
+
+        function setPixel(x, y, iterations) {
+            if (x < 0 || x >= SIZE || y < 0 || y >= SIZE) return;
+
+            const idx = (y * SIZE + x) * 4;
+
+            if (iterations >= MAX_ITER) {
+                imageData.data[idx] = 0;
+                imageData.data[idx + 1] = 0;
+                imageData.data[idx + 2] = 0;
+            } else {
+                const t = Math.log1p(iterations) / Math.log1p(MAX_ITER);
+                const [r, g, b] = infernoColor(t);
+                imageData.data[idx] = r;
+                imageData.data[idx + 1] = g;
+                imageData.data[idx + 2] = b;
+            }
+            imageData.data[idx + 3] = 255;
+            pixelCount++;
+        }
+
+        function render() {
+            ctx.putImageData(imageData, 0, 0);
+            updateStats();
+        }
+
+        function reset() {
+            pixelCount = 0;
+            startTime = null;
+            currentTile = 0;
+            pipelineId = null;
+            for (let i = 0; i < imageData.data.length; i += 4) {
+                imageData.data[i] = 0;
+                imageData.data[i + 1] = 0;
+                imageData.data[i + 2] = 0;
+                imageData.data[i + 3] = 255;
+            }
+            ctx.putImageData(imageData, 0, 0);
+            updateStats();
+            statusEl.textContent = 'Ready';
+            statusEl.className = 'status-connected';
+            startBtn.disabled = false;
+        }
+
+        async function deployPipeline() {
+            const vplSource = await fetch('mandelbrot_server.vpl').then(r => r.text());
+
+            const response = await fetch('http://localhost:9000/api/v1/pipelines', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-api-key': 'test'
+                },
+                body: JSON.stringify({
+                    name: 'mandelbrot-' + Date.now(),
+                    source: vplSource
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error('Deploy failed: ' + await response.text());
+            }
+
+            const result = await response.json();
+            return result.id;
+        }
+
+        async function computeTile(tileId) {
+            const response = await fetch(`http://localhost:9000/api/v1/pipelines/${pipelineId}/events`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-api-key': 'test'
+                },
+                body: JSON.stringify({
+                    event_type: 'ComputeTile',
+                    fields: { tile_id: tileId }
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error('Compute failed: ' + await response.text());
+            }
+
+            const result = await response.json();
+
+            // Process output events
+            for (const event of result.output_events) {
+                setPixel(event.x, event.y, event.iterations);
+            }
+
+            render();
+        }
+
+        async function startComputation() {
+            try {
+                reset();
+                startBtn.disabled = true;
+                startTime = Date.now();
+
+                statusEl.textContent = 'Deploying pipeline...';
+                statusEl.className = 'status-computing';
+
+                pipelineId = await deployPipeline();
+                console.log('Pipeline deployed:', pipelineId);
+
+                statusEl.textContent = 'Computing tiles...';
+
+                // Compute all 16 tiles sequentially
+                for (let tileId = 0; tileId < NUM_TILES; tileId++) {
+                    currentTile = tileId + 1;
+                    statusEl.textContent = `Computing tile ${tileId + 1}/${NUM_TILES}...`;
+                    updateStats();
+
+                    await computeTile(tileId);
+                }
+
+                const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+                statusEl.textContent = `Complete! (${elapsed}s)`;
+                statusEl.className = 'status-complete';
+                startBtn.disabled = false;
+
+            } catch (e) {
+                console.error(e);
+                statusEl.textContent = 'Error: ' + e.message;
+                statusEl.className = 'status-error';
+                startBtn.disabled = false;
+            }
+        }
+
+        startBtn.addEventListener('click', startComputation);
+        resetBtn.addEventListener('click', reset);
+
+        // Initial render (black canvas)
+        reset();
+    </script>
+</body>
+</html>

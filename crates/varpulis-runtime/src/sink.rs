@@ -19,6 +19,14 @@ pub trait Sink: Send + Sync {
     /// Name of this sink
     fn name(&self) -> &str;
 
+    /// Establish connection to the external system.
+    ///
+    /// Called once after sink creation to establish any necessary connections.
+    /// The default implementation is a no-op for sinks that connect eagerly.
+    async fn connect(&self) -> Result<()> {
+        Ok(())
+    }
+
     /// Send an event to this sink
     async fn send(&self, event: &Event) -> Result<()>;
 

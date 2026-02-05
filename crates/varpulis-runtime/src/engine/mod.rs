@@ -100,6 +100,10 @@ impl crate::sink::Sink for SinkConnectorAdapter {
     fn name(&self) -> &str {
         &self.name
     }
+    async fn connect(&self) -> anyhow::Result<()> {
+        let mut inner = self.inner.lock().await;
+        inner.connect().await.map_err(|e| anyhow::anyhow!("{}", e))
+    }
     async fn send(&self, event: &crate::event::Event) -> anyhow::Result<()> {
         let inner = self.inner.lock().await;
         inner
@@ -196,11 +200,20 @@ fn create_sink_from_config(
                     .map(|s| s.to_string())
                     .or_else(|| config.topic.clone())
                     .unwrap_or_else(|| format!("{}-output", name));
-                let client_id = config
+                // Each sink gets a unique client_id to avoid MQTT broker conflicts
+                // when multiple contexts share the same connector config
+                let base_id = config
                     .properties
                     .get("client_id")
                     .cloned()
                     .unwrap_or_else(|| format!("{}-sink", name));
+                use std::sync::atomic::{AtomicU64, Ordering};
+                static SINK_COUNTER: AtomicU64 = AtomicU64::new(0);
+                let client_id = format!(
+                    "{}-{}",
+                    base_id,
+                    SINK_COUNTER.fetch_add(1, Ordering::Relaxed)
+                );
                 let mqtt_config = connector::MqttConfig::new(&broker, &topic)
                     .with_port(port)
                     .with_client_id(&client_id);
@@ -600,6 +613,20 @@ impl Engine {
             }
         }
 
+        Ok(())
+    }
+
+    /// Connect all sinks that require explicit connection.
+    ///
+    /// Call this after `load()` to establish connections to external systems
+    /// like MQTT brokers, databases, etc. This must be called before processing
+    /// events if any `.to()` operations are used.
+    pub async fn connect_sinks(&self) -> Result<(), String> {
+        for (name, sink) in &self.sink_cache {
+            if let Err(e) = sink.connect().await {
+                return Err(format!("Failed to connect sink '{}': {}", name, e));
+            }
+        }
         Ok(())
     }
 
