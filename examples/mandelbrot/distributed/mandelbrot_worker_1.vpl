@@ -1,0 +1,51 @@
+# Distributed Mandelbrot - Worker 1 (Row 1)
+# Handles tiles (0,1) through (3,1) — 4 tiles of 250x250 pixels each.
+
+connector MqttOut = mqtt (host: "localhost", port: 1883, client_id: "mandelbrot-w1")
+
+context t10
+context t11
+context t12
+context t13
+
+fn mandelbrot(cx: float, cy: float, max_iter: int) -> int:
+    var zr = 0.0
+    var zi = 0.0
+    var i = 0
+    while i < max_iter:
+        let r2 = zr * zr
+        let i2 = zi * zi
+        if r2 + i2 > 4.0:
+            return i
+        zi := 2.0 * zr * zi + cy
+        zr := r2 - i2 + cx
+        i := i + 1
+    return max_iter
+
+fn compute_tile(x_off: int, y_off: int, size: int, max_iter: int):
+    for px in 0..size:
+        for py in 0..size:
+            let cx = -2.0 + (x_off + px) * 3.0 / 1000.0
+            let cy = -1.5 + (y_off + py) * 3.0 / 1000.0
+            let iters = mandelbrot(cx, cy, max_iter)
+            emit Pixel(x: x_off + px, y: y_off + py, iterations: iters, diverged: iters < max_iter)
+
+stream Tile10 = ComputeTile10
+    .context(t10)
+    .process(compute_tile(0, 250, 250, 256))
+    .to(MqttOut, topic: "mandelbrot/pixels")
+
+stream Tile11 = ComputeTile11
+    .context(t11)
+    .process(compute_tile(250, 250, 250, 256))
+    .to(MqttOut, topic: "mandelbrot/pixels")
+
+stream Tile12 = ComputeTile12
+    .context(t12)
+    .process(compute_tile(500, 250, 250, 256))
+    .to(MqttOut, topic: "mandelbrot/pixels")
+
+stream Tile13 = ComputeTile13
+    .context(t13)
+    .process(compute_tile(750, 250, 250, 256))
+    .to(MqttOut, topic: "mandelbrot/pixels")

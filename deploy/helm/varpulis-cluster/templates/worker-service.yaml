@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "varpulis-cluster.worker.fullname" . }}
+  labels:
+    {{- include "varpulis-cluster.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  type: {{ .Values.workers.service.type }}
+  clusterIP: None  # Headless service for StatefulSet
+  ports:
+    - port: {{ .Values.workers.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+    {{- if .Values.workers.enableMetrics }}
+    - port: {{ .Values.workers.metricsPort }}
+      targetPort: metrics
+      protocol: TCP
+      name: metrics
+    {{- end }}
+  selector:
+    {{- include "varpulis-cluster.worker.selectorLabels" . | nindent 4 }}

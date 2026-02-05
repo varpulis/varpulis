@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "varpulis-cluster.worker.fullname" . }}
+  labels:
+    {{- include "varpulis-cluster.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  serviceName: {{ include "varpulis-cluster.worker.fullname" . }}
+  replicas: {{ .Values.workers.replicas }}
+  selector:
+    matchLabels:
+      {{- include "varpulis-cluster.worker.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "varpulis-cluster.worker.selectorLabels" . | nindent 8 }}
+      {{- if .Values.monitoring.enabled }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "{{ .Values.workers.metricsPort }}"
+        prometheus.io/path: "/metrics"
+      {{- end }}
+    spec:
+      containers:
+        - name: worker
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - server
+            - "--bind"
+            - "0.0.0.0"
+            - "--port"
+            - "{{ .Values.workers.port }}"
+            - "--api-key"
+            - "$(VARPULIS_WORKER_KEY)"
+            {{- if .Values.workers.enableMetrics }}
+            - "--metrics"
+            - "--metrics-port"
+            - "{{ .Values.workers.metricsPort }}"
+            {{- end }}
+            - "--coordinator"
+            - "http://{{ include "varpulis-cluster.coordinator.fullname" . }}:{{ .Values.coordinator.service.port }}"
+            - "--worker-id"
+            - "$(POD_NAME)"
+          env:
+            - name: RUST_LOG
+              value: {{ .Values.logLevel }}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: VARPULIS_WORKER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: worker-api-key
+          ports:
+            - name: http
+              containerPort: {{ .Values.workers.port }}
+              protocol: TCP
+            {{- if .Values.workers.enableMetrics }}
+            - name: metrics
+              containerPort: {{ .Values.workers.metricsPort }}
+              protocol: TCP
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.workers.resources | nindent 12 }}

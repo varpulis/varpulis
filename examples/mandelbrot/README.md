@@ -69,6 +69,34 @@ timer(1s) --> .process() --> emit Pixel --> MQTT --> WebSocket --> Browser
               (16 tiles)                    (broker)  (bridge)    (canvas)
 ```
 
+## Distributed Mode
+
+The Mandelbrot demo can also run in distributed mode across 4 worker processes,
+each handling one row of the 4x4 tile grid:
+
+```bash
+./examples/mandelbrot/distributed/deploy.sh
+```
+
+Architecture:
+```
+Coordinator (port 9100)
+    ├── Worker 0 (port 9000): row0 → tiles (0,0)-(3,0)
+    ├── Worker 1 (port 9001): row1 → tiles (0,1)-(3,1)
+    ├── Worker 2 (port 9002): row2 → tiles (0,2)-(3,2)
+    └── Worker 3 (port 9003): row3 → tiles (0,3)-(3,3)
+```
+
+Events are routed by the coordinator: `ComputeTile0*` to worker-0, `ComputeTile1*`
+to worker-1, etc. See [`distributed/`](distributed/) and the
+[Cluster Architecture](../../docs/architecture/cluster.md) docs.
+
+### Benchmarking (single vs distributed)
+
+```bash
+python3 examples/mandelbrot/distributed/bench.py
+```
+
 ## Key VPL Features Used
 
 - **`emit` statement**: Generates multiple events from imperative code

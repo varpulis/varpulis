@@ -1,0 +1,58 @@
+{{- if .Values.mqtt.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "varpulis-cluster.mqtt.fullname" . }}
+  labels:
+    {{- include "varpulis-cluster.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mqtt
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: varpulis
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: mqtt
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: varpulis
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: mqtt
+    spec:
+      containers:
+        - name: mqtt
+          image: "{{ .Values.mqtt.image.repository }}:{{ .Values.mqtt.image.tag }}"
+          args:
+            - mosquitto
+            - "-c"
+            - "/dev/null"
+            - "-p"
+            - "{{ .Values.mqtt.port }}"
+            - "-v"
+          ports:
+            - name: mqtt
+              containerPort: {{ .Values.mqtt.port }}
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.mqtt.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "varpulis-cluster.mqtt.fullname" . }}
+  labels:
+    {{- include "varpulis-cluster.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mqtt
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.mqtt.port }}
+      targetPort: mqtt
+      protocol: TCP
+      name: mqtt
+  selector:
+    app.kubernetes.io/name: varpulis
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: mqtt
+{{- end }}

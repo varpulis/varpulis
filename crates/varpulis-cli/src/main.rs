@@ -132,6 +132,14 @@ enum Commands {
         /// Directory for persistent state (enables state recovery on restart)
         #[arg(long, env = "VARPULIS_STATE_DIR")]
         state_dir: Option<PathBuf>,
+
+        /// Coordinator URL to register with (e.g., http://localhost:9100)
+        #[arg(long, env = "VARPULIS_COORDINATOR")]
+        coordinator: Option<String>,
+
+        /// Worker identifier (auto-generated if not set)
+        #[arg(long, env = "VARPULIS_WORKER_ID")]
+        worker_id: Option<String>,
     },
 
     /// Simulate events from an event file (.evt)
@@ -231,6 +239,21 @@ enum Commands {
         #[arg(long, env = "VARPULIS_API_KEY")]
         api_key: String,
     },
+
+    /// Start cluster coordinator (control plane for distributed execution)
+    Coordinator {
+        /// Coordinator port
+        #[arg(short, long, default_value = "9100")]
+        port: u16,
+
+        /// Bind address
+        #[arg(long, default_value = "127.0.0.1")]
+        bind: String,
+
+        /// API key for coordinator authentication
+        #[arg(long, env = "VARPULIS_API_KEY")]
+        api_key: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -290,6 +313,8 @@ async fn main() -> Result<()> {
             tls_key,
             rate_limit,
             state_dir,
+            coordinator,
+            worker_id,
         } => {
             // Use security module to validate workdir - NO unwrap()!
             let workdir =
@@ -330,6 +355,8 @@ async fn main() -> Result<()> {
                 tls_config,
                 rate_limit_config,
                 state_dir,
+                coordinator,
+                worker_id,
             )
             .await?;
         }
@@ -461,6 +488,14 @@ async fn main() -> Result<()> {
                     anyhow::bail!("Failed to get status: {}", e);
                 }
             }
+        }
+
+        Commands::Coordinator {
+            port,
+            bind,
+            api_key,
+        } => {
+            run_coordinator(port, &bind, api_key).await?;
         }
     }
 
@@ -1359,6 +1394,8 @@ async fn run_server(
     tls_config: Option<(PathBuf, PathBuf)>,
     rate_limit_config: rate_limit::RateLimitConfig,
     state_dir: Option<PathBuf>,
+    coordinator_url: Option<String>,
+    worker_id: Option<String>,
 ) -> Result<()> {
     let tls_enabled = tls_config.is_some();
     let protocol = if tls_enabled { "wss" } else { "ws" };
@@ -1556,6 +1593,23 @@ async fn run_server(
         .parse()
         .map_err(|e| anyhow::anyhow!("Invalid bind address '{}': {}", bind, e))?;
 
+    // Optionally register with a coordinator
+    if let Some(coordinator_url) = coordinator_url {
+        let worker_id = worker_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let worker_addr = format!("{}://{}:{}", http_protocol, bind, port);
+        let worker_api_key = auth_config.api_key().unwrap_or("no-key").to_string();
+        info!(
+            "Registering with coordinator at {} as worker '{}'",
+            coordinator_url, worker_id
+        );
+        tokio::spawn(varpulis_cluster::worker_registration_loop(
+            coordinator_url,
+            worker_id,
+            worker_addr,
+            worker_api_key,
+        ));
+    }
+
     info!("Server listening on {}:{}", bind, port);
 
     // Start server with or without TLS
@@ -1570,6 +1624,72 @@ async fn run_server(
     } else {
         warp::serve(routes).run((bind_addr, port)).await;
     }
+
+    Ok(())
+}
+
+// =============================================================================
+// Coordinator Mode
+// =============================================================================
+
+async fn run_coordinator(port: u16, bind: &str, api_key: Option<String>) -> Result<()> {
+    let http_protocol = "http";
+    println!("Varpulis Coordinator");
+    println!("=======================");
+    println!(
+        "API:       {}://{}:{}/api/v1/cluster/",
+        http_protocol, bind, port
+    );
+    println!(
+        "Auth:      {}",
+        if api_key.is_some() {
+            "enabled (API key required)"
+        } else {
+            "disabled"
+        }
+    );
+    println!();
+
+    let coordinator = varpulis_cluster::shared_coordinator();
+
+    // Spawn periodic health sweep
+    let health_coordinator = coordinator.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(varpulis_cluster::HEARTBEAT_INTERVAL);
+        loop {
+            interval.tick().await;
+            let mut coord = health_coordinator.write().await;
+            let result = coord.health_sweep();
+            if !result.workers_marked_unhealthy.is_empty() {
+                for wid in &result.workers_marked_unhealthy {
+                    tracing::warn!("Worker {} marked unhealthy", wid);
+                }
+            }
+        }
+    });
+
+    // Health endpoint (no auth)
+    let health_route = warp::path("health").and(warp::get()).and_then(|| async {
+        let response = serde_json::json!({
+            "status": "healthy",
+            "role": "coordinator",
+            "version": env!("CARGO_PKG_VERSION"),
+        });
+        Ok::<_, warp::Rejection>(warp::reply::json(&response))
+    });
+
+    let api_routes = varpulis_cluster::cluster_routes(coordinator, api_key);
+
+    let routes = health_route
+        .or(api_routes)
+        .recover(varpulis_cluster::api::handle_rejection);
+
+    let bind_addr: std::net::IpAddr = bind
+        .parse()
+        .map_err(|e| anyhow::anyhow!("Invalid bind address '{}': {}", bind, e))?;
+
+    info!("Coordinator listening on {}:{}", bind, port);
+    warp::serve(routes).run((bind_addr, port)).await;
 
     Ok(())
 }
