@@ -225,6 +225,21 @@ pub trait SinkConnector: Send + Sync {
     /// Returns the name/identifier of this connector instance.
     fn name(&self) -> &str;
 
+    /// Establish connection to the external system.
+    ///
+    /// Called once after sink creation to establish any necessary connections.
+    /// Implementations that connect eagerly in `new()` can return Ok(()) here.
+    /// This method may be called multiple times; implementations should handle
+    /// reconnection gracefully.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ConnectorError::ConnectionFailed` if connection cannot be established.
+    async fn connect(&mut self) -> Result<(), ConnectorError> {
+        // Default: no-op for sinks that connect eagerly
+        Ok(())
+    }
+
     /// Send an event to the external system.
     ///
     /// This method should be idempotent if possible. Implementations may
@@ -1270,6 +1285,11 @@ mod mqtt_impl {
     impl SinkConnector for MqttSink {
         fn name(&self) -> &str {
             &self.name
+        }
+
+        async fn connect(&mut self) -> Result<(), ConnectorError> {
+            // Delegate to the inherent connect method
+            MqttSink::connect(self).await
         }
 
         async fn send(&self, event: &Event) -> Result<(), ConnectorError> {

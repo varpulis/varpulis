@@ -267,19 +267,17 @@ async fn handle_deploy(
         }
     };
 
-    let result = {
-        let tenant = match mgr.get_tenant_mut(&tenant_id) {
-            Some(t) => t,
-            None => {
-                return Ok(error_response(
-                    StatusCode::NOT_FOUND,
-                    "tenant_not_found",
-                    "Tenant not found",
-                ))
-            }
-        };
-        tenant.deploy_pipeline(body.name.clone(), body.source)
+    let tenant = match mgr.get_tenant_mut(&tenant_id) {
+        Some(t) => t,
+        None => {
+            return Ok(error_response(
+                StatusCode::NOT_FOUND,
+                "tenant_not_found",
+                "Tenant not found",
+            ))
+        }
     };
+    let result = tenant.deploy_pipeline(body.name.clone(), body.source).await;
 
     match result {
         Ok(id) => {
@@ -931,6 +929,7 @@ mod tests {
                 "Test Pipeline".into(),
                 "stream A = SensorReading .where(x > 1)".into(),
             )
+            .await
             .unwrap();
 
         Arc::new(RwLock::new(mgr))

@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mandelbrot Set - Varpulis Demo</title>
+    <title>Mandelbrot Set - Parallel Contexts Demo</title>
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -17,7 +18,7 @@
             padding: 20px;
         }
         h1 { margin-bottom: 10px; color: #f39c12; }
-        .info { font-size: 14px; color: #888; margin-bottom: 20px; }
+        .info { font-size: 14px; color: #888; margin-bottom: 20px; text-align: center; }
         #canvas-container {
             position: relative;
             border: 2px solid #333;
@@ -65,40 +66,62 @@
         #startBtn { background: #27ae60; color: white; }
         #startBtn:disabled { background: #555; cursor: not-allowed; transform: none; }
         #resetBtn { background: #e74c3c; color: white; }
+        .context-grid {
+            margin-top: 15px;
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 5px;
+            font-size: 11px;
+            font-family: monospace;
+        }
+        .context-cell {
+            padding: 5px;
+            background: #2c3e50;
+            border-radius: 3px;
+            text-align: center;
+        }
+        .context-cell.active { background: #e67e22; }
+        .context-cell.done { background: #27ae60; }
     </style>
 </head>
 <body>
-    <h1>Mandelbrot Set</h1>
-    <div class="info">Real-time rendering via Varpulis VPL (emit + .process())</div>
+    <h1>Mandelbrot Set - Parallel</h1>
+    <div class="info">
+        16 contexts compute 250×250 tiles in parallel<br>
+        Events stream via MQTT WebSocket
+    </div>
 
     <div id="canvas-container">
-        <canvas id="canvas" width="992" height="992"></canvas>
+        <canvas id="canvas" width="1000" height="1000"></canvas>
         <div id="stats">
-            <div><span class="stat-label">Pixels:</span> <span class="stat-value" id="pixel-count">0</span> / 984,064</div>
+            <div><span class="stat-label">Pixels:</span> <span class="stat-value" id="pixel-count">0</span> / 1,000,000</div>
             <div><span class="stat-label">Progress:</span> <span class="stat-value" id="progress">0%</span></div>
             <div><span class="stat-label">Time:</span> <span class="stat-value" id="elapsed">0.0s</span></div>
-            <div><span class="stat-label">Tile:</span> <span class="stat-value" id="tile-progress">0/16</span></div>
+            <div><span class="stat-label">Rate:</span> <span class="stat-value" id="rate">0</span> px/s</div>
         </div>
     </div>
 
-    <div id="status" class="status-connecting">Ready</div>
+    <div id="status" class="status-connecting">Connecting to MQTT...</div>
+
+    <div class="context-grid" id="context-grid"></div>
 
     <div id="controls">
-        <button id="startBtn">Start Computation</button>
+        <button id="startBtn" disabled>Start Computation</button>
         <button id="resetBtn">Reset</button>
     </div>
 
     <script>
-        const SIZE = 992;  // 32 tiles * 31 pixels = 992
+        const SIZE = 1000;
         const MAX_ITER = 256;
         const TOTAL_PIXELS = SIZE * SIZE;
-        const NUM_TILES = 1024;  // 32x32 grid
+        const NUM_CONTEXTS = 16;
+        const TILE_SIZE = 250;
 
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
         const imageData = ctx.createImageData(SIZE, SIZE);
 
-        // Inferno colormap (approximation)
+        // Inferno colormap
         function infernoColor(t) {
             const r = Math.min(255, Math.floor(255 * (1.5 * t)));
             const g = Math.min(255, Math.floor(255 * (t * t)));
@@ -109,20 +132,42 @@
         let pixelCount = 0;
         let startTime = null;
         let pipelineId = null;
-        let currentTile = 0;
+        let mqttClient = null;
+        let contextStatus = Array(NUM_CONTEXTS).fill('pending');
 
         const statusEl = document.getElementById('status');
         const startBtn = document.getElementById('startBtn');
         const resetBtn = document.getElementById('resetBtn');
+        const contextGrid = document.getElementById('context-grid');
+
+        // Build context grid UI
+        for (let i = 0; i < NUM_CONTEXTS; i++) {
+            const row = Math.floor(i / 4);
+            const col = i % 4;
+            const cell = document.createElement('div');
+            cell.className = 'context-cell';
+            cell.id = `ctx-${row}${col}`;
+            cell.textContent = `t${row}${col}`;
+            contextGrid.appendChild(cell);
+        }
+
+        function updateContextUI() {
+            for (let i = 0; i < NUM_CONTEXTS; i++) {
+                const row = Math.floor(i / 4);
+                const col = i % 4;
+                const cell = document.getElementById(`ctx-${row}${col}`);
+                cell.className = 'context-cell ' + contextStatus[i];
+            }
+        }
 
         function updateStats() {
             document.getElementById('pixel-count').textContent = pixelCount.toLocaleString();
             document.getElementById('progress').textContent = (100 * pixelCount / TOTAL_PIXELS).toFixed(1) + '%';
-            document.getElementById('tile-progress').textContent = `${currentTile}/${NUM_TILES}`;
 
             if (startTime) {
                 const elapsed = (Date.now() - startTime) / 1000;
                 document.getElementById('elapsed').textContent = elapsed.toFixed(1) + 's';
+                document.getElementById('rate').textContent = Math.round(pixelCount / elapsed).toLocaleString();
             }
         }
 
@@ -144,18 +189,43 @@
             }
             imageData.data[idx + 3] = 255;
             pixelCount++;
+
+            // Track which tile this pixel belongs to
+            const tileRow = Math.floor(y / TILE_SIZE);
+            const tileCol = Math.floor(x / TILE_SIZE);
+            const tileIdx = tileRow * 4 + tileCol;
+            if (contextStatus[tileIdx] !== 'done') {
+                contextStatus[tileIdx] = 'active';
+            }
         }
 
-        function render() {
-            ctx.putImageData(imageData, 0, 0);
-            updateStats();
+        let renderPending = false;
+        function scheduleRender() {
+            if (!renderPending) {
+                renderPending = true;
+                requestAnimationFrame(() => {
+                    ctx.putImageData(imageData, 0, 0);
+                    updateStats();
+                    updateContextUI();
+                    renderPending = false;
+
+                    if (pixelCount >= TOTAL_PIXELS) {
+                        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+                        statusEl.textContent = `Complete! (${elapsed}s)`;
+                        statusEl.className = 'status-complete';
+                        startBtn.disabled = false;
+                        contextStatus = contextStatus.map(() => 'done');
+                        updateContextUI();
+                    }
+                });
+            }
         }
 
         function reset() {
             pixelCount = 0;
             startTime = null;
-            currentTile = 0;
             pipelineId = null;
+            contextStatus = Array(NUM_CONTEXTS).fill('pending');
             for (let i = 0; i < imageData.data.length; i += 4) {
                 imageData.data[i] = 0;
                 imageData.data[i + 1] = 0;
@@ -164,13 +234,49 @@
             }
             ctx.putImageData(imageData, 0, 0);
             updateStats();
+            updateContextUI();
             statusEl.textContent = 'Ready';
             statusEl.className = 'status-connected';
             startBtn.disabled = false;
         }
 
+        function connectMqtt() {
+            mqttClient = mqtt.connect('ws://localhost:9001');
+
+            mqttClient.on('connect', () => {
+                console.log('MQTT connected');
+                mqttClient.subscribe('mandelbrot/pixels/#', (err) => {
+                    if (!err) {
+                        statusEl.textContent = 'Connected - Ready';
+                        statusEl.className = 'status-connected';
+                        startBtn.disabled = false;
+                    }
+                });
+            });
+
+            mqttClient.on('message', (topic, message) => {
+                try {
+                    const event = JSON.parse(message.toString());
+                    // Pixel data is nested inside event.data
+                    const d = event.data || event;
+                    if (d.x !== undefined && d.y !== undefined) {
+                        setPixel(d.x, d.y, d.iterations || 0);
+                        scheduleRender();
+                    }
+                } catch (e) {
+                    console.error('Parse error:', e);
+                }
+            });
+
+            mqttClient.on('error', (err) => {
+                console.error('MQTT error:', err);
+                statusEl.textContent = 'MQTT Error: ' + err.message;
+                statusEl.className = 'status-error';
+            });
+        }
+
         async function deployPipeline() {
-            const vplSource = await fetch('mandelbrot_server.vpl').then(r => r.text());
+            const vplSource = await fetch('mandelbrot_parallel.vpl').then(r => r.text());
 
             const response = await fetch('http://localhost:9000/api/v1/pipelines', {
                 method: 'POST',
@@ -179,7 +285,7 @@
                     'x-api-key': 'test'
                 },
                 body: JSON.stringify({
-                    name: 'mandelbrot-' + Date.now(),
+                    name: 'mandelbrot-parallel-' + Date.now(),
                     source: vplSource
                 })
             });
@@ -192,31 +298,28 @@
             return result.id;
         }
 
-        async function computeTile(tileId) {
-            const response = await fetch(`http://localhost:9000/api/v1/pipelines/${pipelineId}/events`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'x-api-key': 'test'
-                },
-                body: JSON.stringify({
-                    event_type: 'ComputeTile',
-                    fields: { tile_id: tileId }
-                })
-            });
-
-            if (!response.ok) {
-                throw new Error('Compute failed: ' + await response.text());
+        async function injectAllTiles() {
+            // Inject all 16 tile events in parallel
+            const promises = [];
+            for (let row = 0; row < 4; row++) {
+                for (let col = 0; col < 4; col++) {
+                    const eventType = `ComputeTile${row}${col}`;
+                    promises.push(
+                        fetch(`http://localhost:9000/api/v1/pipelines/${pipelineId}/events`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'x-api-key': 'test'
+                            },
+                            body: JSON.stringify({
+                                event_type: eventType,
+                                fields: {}
+                            })
+                        })
+                    );
+                }
             }
-
-            const result = await response.json();
-
-            // Process output events
-            for (const event of result.output_events) {
-                setPixel(event.x, event.y, event.iterations);
-            }
-
-            render();
+            await Promise.all(promises);
         }
 
         async function startComputation() {
@@ -231,21 +334,15 @@
                 pipelineId = await deployPipeline();
                 console.log('Pipeline deployed:', pipelineId);
 
-                statusEl.textContent = 'Computing tiles...';
+                statusEl.textContent = 'Injecting events (16 contexts)...';
 
-                // Compute all 16 tiles sequentially
-                for (let tileId = 0; tileId < NUM_TILES; tileId++) {
-                    currentTile = tileId + 1;
-                    statusEl.textContent = `Computing tile ${tileId + 1}/${NUM_TILES}...`;
-                    updateStats();
+                // Small delay to ensure MQTT subscription is ready
+                await new Promise(r => setTimeout(r, 500));
 
-                    await computeTile(tileId);
-                }
+                await injectAllTiles();
+                console.log('All 16 tile events injected');
 
-                const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-                statusEl.textContent = `Complete! (${elapsed}s)`;
-                statusEl.className = 'status-complete';
-                startBtn.disabled = false;
+                statusEl.textContent = 'Computing... (watching MQTT)';
 
             } catch (e) {
                 console.error(e);
@@ -258,8 +355,14 @@
         startBtn.addEventListener('click', startComputation);
         resetBtn.addEventListener('click', reset);
 
+        // Connect to MQTT on load
+        connectMqtt();
+
         // Initial render (black canvas)
-        reset();
+        for (let i = 0; i < imageData.data.length; i += 4) {
+            imageData.data[i + 3] = 255;
+        }
+        ctx.putImageData(imageData, 0, 0);
     </script>
 </body>
 </html>

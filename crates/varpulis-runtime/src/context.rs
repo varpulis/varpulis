@@ -777,6 +777,15 @@ impl ContextOrchestrator {
                             return;
                         }
 
+                        // Connect sinks (MQTT, Kafka, etc.) after load
+                        if let Err(e) = engine.connect_sinks().await {
+                            error!(
+                                "Failed to connect sinks for context '{}': {}",
+                                ctx_name_clone, e
+                            );
+                            return;
+                        }
+
                         // Restore from checkpoint if available
                         if let Some(cp) = ctx_recovery {
                             engine.restore_checkpoint(&cp);
