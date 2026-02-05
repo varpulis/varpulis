@@ -1,17 +1,17 @@
 # Varpulis CEP - Kanban
 
-> Derniere mise a jour: 2026-02-04 (Next-Gen Roadmap)
+> Derniere mise a jour: 2026-02-04 (NG-01 + NG-02 Complete)
 
 ## Production Readiness Score: 10/10 - Released
 
 | Critere | Score | Statut |
 |---------|-------|--------|
 | Code Quality | 10/10 | Clippy clean, LSP server, v0.1.0 released |
-| Test Coverage | 6/10 | 62.92% (cible 80%), 1040+ tests |
+| Test Coverage | 6/10 | 62.92% (cible 80%), 1133 tests |
 | Error Handling | **10/10** | **0 unwraps production** |
 | Security | **10/10** | TLS/Auth + Rate Limiting |
 | Performance | **10/10** | ZDD + SIMD + Incremental, 300-500K evt/s |
-| Documentation | 7/10 | Exemples complets, LSP hover docs, audit in progress |
+| Documentation | 8/10 | Exemples complets, LSP hover docs, tutorials, architecture docs |
 | Developer Experience | **10/10** | **LSP + Visual Editor + New Syntax** |
 | Release & Distribution | **10/10** | **5 platforms + Docker + GitHub Release** |
 | SaaS Infrastructure | **8/10** | Multi-tenant, REST API, Docker Compose, Grafana |
@@ -25,7 +25,7 @@
 5. ~~**v0.1.0 Release**~~ **DONE** - 5 platforms, Docker image, GitHub Release
 6. **Test coverage 62.92%** - En dessous du seuil 80% (1040+ tests, en cours)
 7. ~~**SaaS Foundation**~~ **DONE** - Multi-tenant, REST API, usage metering, Docker Compose + Grafana
-8. **State Persistence** - Tenant/pipeline state persists via `--state-dir` (FileStore). Engine window/pattern state in-memory only. Checkpoint infrastructure exists, engine integration pending (en cours)
+8. ~~**State Persistence**~~ **DONE** - Tenant/pipeline state persists via `--state-dir` (FileStore). Engine checkpointing fully integrated: ContextMessage barriers, coordinated snapshots, checkpoint/restore for windows, SASE+, joins, variables, watermarks
 
 ### Monetization Tiers
 
@@ -33,7 +33,7 @@
 |------|-----------|----------------|
 | **Community** (Open Source) | **RELEASED v0.1.0** | Disponible maintenant |
 | **Enterprise** (On-prem + Support) | **READY** | LSP, rate limiting, hot reload done |
-| **SaaS** (Managed Service) | **FOUNDATION DONE** | State persistence + tenant registration needed |
+| **SaaS** (Managed Service) | **FOUNDATION DONE** | CLI deploy + tenant registration API needed |
 
 ## Vue d'ensemble
 
@@ -41,8 +41,8 @@
 |-----------|---------|----------|----------|
 | **Production Readiness** | 0 | 0 | **4** |
 | **Release & Distribution** | 0 | 0 | **2** |
-| **SaaS** | **1** | 0 | **5** |
-| **Next-Gen** | **4** | **2** | 0 |
+| **SaaS** | **2** | 0 | **6** |
+| **Next-Gen** | **4** | 0 | **2** |
 | Parser Pest | 0 | 0 | **9** |
 | SASE+ Core | 0 | 0 | **10** |
 | SASE+ Improvements | 1 | 0 | **6** |
@@ -60,7 +60,7 @@
 | Couverture | 0 | 2 | 0 |
 | VS Code + LSP | 0 | 0 | **8** |
 | Connectivity | 0 | 0 | **4** |
-| **Total** | **7** | **4** | **90** |
+| **Total** | **7** | **2** | **92** |
 
 ---
 
@@ -142,12 +142,13 @@
   - **Commands**: `deploy`, `status`, `logs`, `destroy`
   - **Config**: `.varpulis.toml` avec endpoint et API key
 
-### Gaps critiques pour production
+### Termine (infrastructure)
 
-- [ ] **SAAS-07**: State persistence
-  - **Description**: Tenants et pipelines sont in-memory. Restart = perte de tout.
-  - **Solution**: Hook tenant/pipeline state into RocksDB persistence (feature deja existante)
-  - **Priorite**: CRITIQUE
+- [x] **SAAS-07**: State persistence
+  - **Description**: Tenants et pipelines persistent via `--state-dir` (FileStore). Engine state fully checkpointed (NG-01).
+  - **Implementation**: TenantManager snapshot/recovery via StateStore + EngineCheckpoint for windows, SASE+, joins, variables, watermarks
+
+### A faire
 
 - [ ] **SAAS-08**: Tenant registration API
   - **Description**: `POST /api/v1/tenants` pour onboarding programmatique
@@ -185,35 +186,43 @@
 ## HAUTE PRIORITE - Next-Gen Features
 
 > **Objectif**: Evoluer Varpulis vers un moteur CEP distribue, production-grade
-> **Statut**: 2 en cours, 4 a faire
+> **Statut**: 2 termines, 4 a faire
 
-### En cours
+### Termine
 
-- [ ] **NG-01**: Exactly-once checkpointing
+- [x] **NG-01**: Exactly-once checkpointing
   - **Description**: Coordinated checkpoint barriers across contexts for exactly-once semantics
   - **Use case**: Financial and compliance workloads requiring guaranteed processing
-  - **Components**:
-    - Checkpoint barrier injection into context event streams
-    - Coordinated snapshot of window, session, and SASE+ state
-    - Write-ahead log (WAL) for durable state snapshots
-    - Recovery from last consistent checkpoint on restart
-    - Per-context checkpoint acknowledgment protocol
-  - **Dependencies**: Context runtime (context.rs), engine state (engine/mod.rs), window state (window.rs)
-  - **Priorite**: CRITIQUE
+  - **Implementation**:
+    - `ContextMessage` enum (`Event`, `CheckpointBarrier`, `WatermarkUpdate`) replaces raw `SharedEvent` channels
+    - `CheckpointCoordinator` with barrier injection and per-context ack protocol
+    - `EngineCheckpoint` with window, SASE+, join, variable, and watermark state
+    - `checkpoint()`/`restore()` on all window types (tumbling, sliding, count, session, partitioned)
+    - `SaseEngine` checkpoint/restore (active runs, captured events, NFA state)
+    - `JoinBuffer` checkpoint/restore (buffers, expiry queues)
+    - Recovery flow in `ContextOrchestrator` and standalone engine
+    - `CheckpointManager` with configurable interval, max checkpoints, shutdown save
+  - **Files**: `context.rs`, `persistence.rs`, `window.rs`, `sase.rs`, `join.rs`, `engine/mod.rs`
+  - **Tests**: 10 integration tests (`checkpoint_tests.rs`) backed by VPL scenario files
+  - **VPL scenarios**: `checkpoint_count_window.vpl`, `checkpoint_session_window.vpl`, `checkpoint_passthrough.vpl`, `checkpoint_variables.vpl`, `checkpoint_serialization.vpl`
+  - **Tutorial**: `docs/tutorials/checkpointing-tutorial.md`
 
-- [ ] **NG-02**: Watermark improvements
+- [x] **NG-02**: Watermark improvements
   - **Description**: Per-source watermarks, allowed lateness, and late-data handling
   - **Use case**: Real-world event-time processing with out-of-order and late events
-  - **Components**:
-    - Per-source watermark tracking (each connector maintains its own watermark)
-    - Watermark propagation across contexts (min watermark across sources)
-    - Configurable allowed lateness per stream (`.allowed_lateness(5m)`)
-    - Late data side-output (collect late events instead of dropping)
-    - Watermark-triggered window closure (instead of processing-time only)
-    - Integration with session window sweep
-  - **Existing base**: `EventTimeManager` in sase.rs (basic watermark, no per-source)
-  - **Dependencies**: NG-01 (checkpointing) for consistent watermark snapshots
-  - **Priorite**: CRITIQUE
+  - **Implementation**:
+    - `PerSourceWatermarkTracker` module (`watermark.rs`) with per-source watermark tracking
+    - Effective watermark = min(all source watermarks), per-source monotonicity enforced
+    - Auto-registration of unknown sources with zero out-of-orderness
+    - `WatermarkCheckpoint`/`SourceWatermarkCheckpoint` for state persistence
+    - Checkpoint/restore round-trip for watermark state
+    - Engine integration: `enable_watermark_tracking()`, `register_watermark_source()`
+    - VPL syntax: `.watermark(out_of_order: Xs)` and `.allowed_lateness(Ys)` parsed and compiled
+    - Cross-context watermark propagation via `ContextMessage::WatermarkUpdate`
+    - Watermark-triggered window closure (`advance_watermark()` on window types)
+  - **Files**: `watermark.rs` (new), `persistence.rs`, `engine/mod.rs`, `context.rs`, `window.rs`
+  - **Tests**: 6 integration tests (`watermark_tests.rs`) + 5 unit tests in `watermark.rs`
+  - **VPL scenarios**: `watermark_basic.vpl`, `watermark_windowed.vpl`, `watermark_lateness.vpl`
 
 ### A faire
 
@@ -261,7 +270,7 @@
 
 ```mermaid
 graph LR
-    NG01[NG-01: Checkpointing] --> NG02[NG-02: Watermarks]
+    NG01[NG-01: Checkpointing ✓] --> NG02[NG-02: Watermarks ✓]
     NG01 --> NG05[NG-05: Distributed]
     NG02 --> NG05
     NG03[NG-03: SQL Layer] -.-> NG06[NG-06: Web UI]
@@ -1216,17 +1225,15 @@ graph LR
     SAAS05 --> SAAS06[SAAS-06: CLI deploy]
 ```
 
-### Sprint actuel (Engine Reliability)
-1. NG-01: Exactly-once checkpointing
-2. NG-02: Watermark improvements
-
-### Sprint suivant (Engine + SaaS)
-3. NG-03: SQL layer (DataFusion)
-4. NG-04: Connector ecosystem (Kinesis, S3, Elasticsearch)
-5. SAAS-07: State persistence
-6. SAAS-08: Tenant registration API
+### Sprint actuel (Engine + SaaS)
+1. NG-03: SQL layer (DataFusion)
+2. NG-04: Connector ecosystem (Kinesis, S3, Elasticsearch)
+3. SAAS-06: CLI client pour SaaS
+4. SAAS-08: Tenant registration API
 
 ### Complete
+- [x] NG-01: Exactly-once checkpointing (coordinated barriers, engine state snapshot/restore)
+- [x] NG-02: Watermark improvements (per-source tracking, allowed lateness, VPL syntax)
 - [x] REL-01/02: v0.1.0 released (5 platforms + Docker)
 - [x] SEC-04: Authentification WebSocket
 - [x] SEC-05: TLS/WSS support
@@ -1271,6 +1278,9 @@ cargo tarpaulin --out Html
 | `crates/varpulis-runtime/src/sase.rs` | Moteur SASE+ |
 | `crates/varpulis-runtime/src/attention.rs` | Attention mechanism |
 | `crates/varpulis-runtime/src/engine/mod.rs` | Runtime engine |
+| `crates/varpulis-runtime/src/watermark.rs` | Per-source watermark tracker |
+| `crates/varpulis-runtime/src/persistence.rs` | State persistence + checkpoint types |
+| `crates/varpulis-runtime/src/context.rs` | Context runtime + checkpoint coordinator |
 | `crates/varpulis-runtime/src/connector.rs` | Connecteurs MQTT/HTTP |
 | `crates/varpulis-runtime/src/timer.rs` | Timers periodiques |
 | `crates/varpulis-lsp/src/server.rs` | LSP server implementation |
@@ -1285,7 +1295,7 @@ cargo tarpaulin --out Html
 | Metrique | Valeur | Cible | Statut |
 |----------|--------|-------|--------|
 | **Production Score** | **9.5/10** | 9/10 | **Enterprise Ready** |
-| **Tests totaux** | **1040+** | 100+ | Excellent |
+| **Tests totaux** | **1133** | 100+ | Excellent |
 | **Tests CLI** | **76** | - | Excellent |
 | **Tests LSP** | **20+** | - | Good |
 | **Tests Tenant/API** | **29** | - | Good |
@@ -1331,14 +1341,17 @@ Version 0.1.0
 |   +-- completion.rs - Auto-completion
 |   +-- semantic.rs - Semantic token highlighting
 |
-+-- varpulis-runtime (~10,000 lignes)
++-- varpulis-runtime (~11,000 lignes)
 |   +-- sase.rs - SASE+ NFA engine
 |   +-- attention.rs - Attention mechanism
 |   +-- engine/ - Runtime engine (modularise)
-|   +-- tenant.rs - Multi-tenant isolation (20 tests) [NEW]
+|   +-- context.rs - Context runtime + checkpoint coordinator
+|   +-- persistence.rs - State persistence + checkpoint types
+|   +-- watermark.rs - Per-source watermark tracker
+|   +-- tenant.rs - Multi-tenant isolation (20 tests)
 |   +-- connector.rs - External connectors
 |   +-- aggregation.rs - Aggregation functions
-|   +-- window.rs - Time windows
+|   +-- window.rs - Time windows (with checkpoint/restore)
 |
 +-- varpulis-cli (~1,500 lignes) [REFACTORED + SaaS]
     +-- main.rs - CLI entry point + server
@@ -1355,13 +1368,15 @@ Version 0.1.0
 
 ### Priorite Immediate
 
-1. **NG-01**: Exactly-once checkpointing (coordinated barriers across contexts)
-2. **NG-02**: Watermark improvements (per-source, allowed lateness, late-data)
-3. **SAAS-07**: State persistence (tenants + pipelines survive restart)
+1. **NG-03**: SQL layer (DataFusion) - lower adoption barrier for SQL-familiar teams
+2. **NG-04**: Connector ecosystem (Kinesis, S3, Elasticsearch)
+3. **SAAS-06**: CLI client pour SaaS (`varpulis deploy`)
 4. **SAAS-08**: Tenant registration API
 
 ### Deja Complete
 
+- [x] NG-01: Exactly-once checkpointing (coordinated barriers, engine state snapshot/restore, recovery)
+- [x] NG-02: Watermark improvements (per-source tracking, allowed lateness, VPL syntax, cross-context propagation)
 - [x] v0.1.0 Released: 5 platforms + Docker image
 - [x] Securite: TLS/WSS (SEC-05) et Auth API Key (SEC-04)
 - [x] Rate limiting: Token bucket per IP (PROD-02)
@@ -1379,4 +1394,4 @@ Version 0.1.0
 | **Enterprise** | **READY** | License fees, support contracts |
 | **SaaS** | **FOUNDATION DONE** | Recurring revenue, usage-based |
 
-**Recommendation**: Checkpointing (NG-01) and watermarks (NG-02) are critical for production-grade event processing. State persistence (SAAS-07) remains the SaaS blocker.
+**Recommendation**: Checkpointing (NG-01) and watermarks (NG-02) are complete. SQL layer (NG-03) and connector ecosystem (NG-04) are the next priorities for adoption and enterprise use cases.
