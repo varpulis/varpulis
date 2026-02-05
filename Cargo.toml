@@ -42,6 +42,7 @@ clap = { version = "4.4", features = ["derive", "env"] }
 # Collections
 indexmap = { version = "2.1", features = ["serde"] }
 smallvec = "1.11"
+rustc-hash = "2"
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }

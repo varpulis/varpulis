@@ -41,6 +41,7 @@ use crate::window::{
 use chrono::Duration;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
+use rustc_hash::FxHashMap;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -253,25 +254,25 @@ pub struct NamedPattern {
 /// The main Varpulis engine
 pub struct Engine {
     /// Registered stream definitions
-    streams: HashMap<String, StreamDefinition>,
+    streams: FxHashMap<String, StreamDefinition>,
     /// Event type to stream mapping (Arc for zero-cost sharing in hot path)
-    event_sources: HashMap<String, Arc<[String]>>,
+    event_sources: FxHashMap<String, Arc<[String]>>,
     /// User-defined functions
     functions: HashMap<String, UserFunction>,
     /// Named patterns for reuse
-    patterns: HashMap<String, NamedPattern>,
+    patterns: FxHashMap<String, NamedPattern>,
     /// Configuration blocks (e.g., mqtt, kafka)
-    configs: HashMap<String, EngineConfig>,
+    configs: FxHashMap<String, EngineConfig>,
     /// Mutable variables accessible across events
-    variables: HashMap<String, Value>,
+    variables: FxHashMap<String, Value>,
     /// Tracks which variables are declared as mutable (var vs let)
     mutable_vars: std::collections::HashSet<String>,
     /// Declared connectors from VPL
-    connectors: HashMap<String, connector::ConnectorConfig>,
+    connectors: FxHashMap<String, connector::ConnectorConfig>,
     /// Source connector bindings from .from() declarations
     source_bindings: Vec<SourceBinding>,
     /// Cached sinks for .to() operations
-    sink_cache: HashMap<String, Arc<dyn crate::sink::Sink>>,
+    sink_cache: FxHashMap<String, Arc<dyn crate::sink::Sink>>,
     /// Output event sender
     output_tx: mpsc::Sender<Event>,
     /// Metrics
@@ -286,7 +287,7 @@ pub struct Engine {
     /// Last applied watermark (for detecting advances)
     last_applied_watermark: Option<DateTime<Utc>>,
     /// Late data configurations per stream
-    late_data_configs: HashMap<String, types::LateDataConfig>,
+    late_data_configs: FxHashMap<String, types::LateDataConfig>,
     /// Context name when running inside a context thread (used for unique connector IDs)
     context_name: Option<String>,
 }
@@ -294,16 +295,16 @@ pub struct Engine {
 impl Engine {
     pub fn new(output_tx: mpsc::Sender<Event>) -> Self {
         Self {
-            streams: HashMap::new(),
-            event_sources: HashMap::new(),
+            streams: FxHashMap::default(),
+            event_sources: FxHashMap::default(),
             functions: HashMap::new(),
-            patterns: HashMap::new(),
-            configs: HashMap::new(),
-            variables: HashMap::new(),
+            patterns: FxHashMap::default(),
+            configs: FxHashMap::default(),
+            variables: FxHashMap::default(),
             mutable_vars: std::collections::HashSet::new(),
-            connectors: HashMap::new(),
+            connectors: FxHashMap::default(),
             source_bindings: Vec::new(),
-            sink_cache: HashMap::new(),
+            sink_cache: FxHashMap::default(),
             output_tx,
             events_processed: 0,
             output_events_emitted: 0,
@@ -311,7 +312,7 @@ impl Engine {
             context_map: ContextMap::new(),
             watermark_tracker: None,
             last_applied_watermark: None,
-            late_data_configs: HashMap::new(),
+            late_data_configs: FxHashMap::default(),
             context_name: None,
         }
     }
@@ -346,7 +347,7 @@ impl Engine {
     }
 
     /// Get all registered patterns
-    pub fn patterns(&self) -> &HashMap<String, NamedPattern> {
+    pub fn patterns(&self) -> &FxHashMap<String, NamedPattern> {
         &self.patterns
     }
 
@@ -383,7 +384,7 @@ impl Engine {
     }
 
     /// Get all variables (for debugging/testing)
-    pub fn variables(&self) -> &HashMap<String, Value> {
+    pub fn variables(&self) -> &FxHashMap<String, Value> {
         &self.variables
     }
 
@@ -726,7 +727,7 @@ impl Engine {
             self.compile_ops_with_sequences(source, ops)?;
 
         // Mapping from event_type to source name (for join streams)
-        let mut event_type_to_source: HashMap<String, String> = HashMap::new();
+        let mut event_type_to_source: FxHashMap<String, String> = FxHashMap::default();
 
         let runtime_source = match source {
             StreamSource::From(event_type) => {
@@ -1475,8 +1476,8 @@ impl Engine {
         &self,
         clauses: &[varpulis_core::ast::JoinClause],
         ops: &[StreamOp],
-    ) -> HashMap<String, String> {
-        let mut join_keys: HashMap<String, String> = HashMap::new();
+    ) -> FxHashMap<String, String> {
+        let mut join_keys: FxHashMap<String, String> = FxHashMap::default();
 
         // First check clauses for on conditions
         for clause in clauses {
@@ -1511,7 +1512,7 @@ impl Engine {
     fn extract_join_keys_from_expr(
         &self,
         expr: &varpulis_core::ast::Expr,
-        keys: &mut HashMap<String, String>,
+        keys: &mut FxHashMap<String, String>,
     ) {
         use varpulis_core::ast::{BinOp, Expr};
 
@@ -1919,7 +1920,7 @@ impl Engine {
         stream: &mut StreamDefinition,
         event: SharedEvent,
         functions: &HashMap<String, UserFunction>,
-        sinks: &HashMap<String, Arc<dyn crate::sink::Sink>>,
+        sinks: &FxHashMap<String, Arc<dyn crate::sink::Sink>>,
     ) -> Result<StreamProcessResult, String> {
         // For merge sources, check if the event passes the appropriate filter
         if let RuntimeSource::Merge(ref sources) = stream.source {
@@ -1934,7 +1935,7 @@ impl Engine {
                             &event,
                             &ctx,
                             functions,
-                            &HashMap::new(),
+                            &FxHashMap::default(),
                         ) {
                             if result.as_bool().unwrap_or(false) {
                                 passes_filter = true;
@@ -2079,7 +2080,7 @@ impl Engine {
                             e.as_ref(),
                             &ctx,
                             functions,
-                            &HashMap::new(),
+                            &FxHashMap::default(),
                         )
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false)
@@ -2211,7 +2212,7 @@ impl Engine {
                             event.as_ref(),
                             &ctx,
                             functions,
-                            &HashMap::new(),
+                            &FxHashMap::default(),
                         )
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false)
@@ -2237,7 +2238,7 @@ impl Engine {
                                     event.as_ref(),
                                     &ctx,
                                     functions,
-                                    &HashMap::new(),
+                                    &FxHashMap::default(),
                                 ) {
                                     new_event.data.insert(out_name.clone(), value);
                                 }
@@ -2325,7 +2326,7 @@ impl Engine {
 
                     if let Some(ref mut sase) = stream.sase_engine {
                         for event in &current_events {
-                            let matches = sase.process(event.as_ref());
+                            let matches = sase.process_shared(Arc::clone(event));
                             for match_result in matches {
                                 // Create synthetic event from completed sequence
                                 let mut seq_event = Event::new("SequenceMatch");
@@ -2369,7 +2370,7 @@ impl Engine {
                                 event.as_ref(),
                                 &ctx,
                                 functions,
-                                &HashMap::new(),
+                                &FxHashMap::default(),
                             ) {
                                 new_event.data.insert(out_name.clone(), value);
                             }
@@ -2440,7 +2441,7 @@ impl Engine {
                                 event.as_ref(),
                                 &ctx,
                                 functions,
-                                &HashMap::new(),
+                                &FxHashMap::default(),
                             );
                         });
                         all_emitted.extend(emitted);
@@ -2489,7 +2490,7 @@ impl Engine {
         stream: &mut StreamDefinition,
         correlated_event: SharedEvent,
         functions: &HashMap<String, UserFunction>,
-        sinks: &HashMap<String, Arc<dyn crate::sink::Sink>>,
+        sinks: &FxHashMap<String, Arc<dyn crate::sink::Sink>>,
     ) -> Result<StreamProcessResult, String> {
         let mut current_events: Vec<SharedEvent> = vec![correlated_event];
         let mut emitted_events: Vec<SharedEvent> = Vec::new();
@@ -2514,7 +2515,7 @@ impl Engine {
                             e.as_ref(),
                             &ctx,
                             functions,
-                            &HashMap::new(),
+                            &FxHashMap::default(),
                         );
                         let passes = result.as_ref().and_then(|v| v.as_bool()).unwrap_or(false);
                         tracing::trace!(
@@ -2605,7 +2606,7 @@ impl Engine {
                             event.as_ref(),
                             &ctx,
                             functions,
-                            &HashMap::new(),
+                            &FxHashMap::default(),
                         )
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false)
@@ -2630,7 +2631,7 @@ impl Engine {
                                     event.as_ref(),
                                     &ctx,
                                     functions,
-                                    &HashMap::new(),
+                                    &FxHashMap::default(),
                                 ) {
                                     new_event.data.insert(out_name.clone(), value);
                                 }
@@ -2670,7 +2671,7 @@ impl Engine {
                                 event.as_ref(),
                                 &ctx,
                                 functions,
-                                &HashMap::new(),
+                                &FxHashMap::default(),
                             ) {
                                 new_event.data.insert(out_name.clone(), value);
                             }
@@ -2704,7 +2705,7 @@ impl Engine {
                                 event.as_ref(),
                                 &ctx,
                                 functions,
-                                &HashMap::new(),
+                                &FxHashMap::default(),
                             );
                         });
                         all_emitted.extend(emitted);
@@ -2857,7 +2858,7 @@ impl Engine {
         events: Vec<SharedEvent>,
         window_idx: usize,
         functions: &HashMap<String, UserFunction>,
-        sinks: &HashMap<String, Arc<dyn crate::sink::Sink>>,
+        sinks: &FxHashMap<String, Arc<dyn crate::sink::Sink>>,
     ) -> Result<StreamProcessResult, String> {
         let mut current_events = events;
         let mut emitted_events: Vec<SharedEvent> = Vec::new();
@@ -2898,7 +2899,7 @@ impl Engine {
                             event.as_ref(),
                             &ctx,
                             functions,
-                            &HashMap::new(),
+                            &FxHashMap::default(),
                         )
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false)
@@ -2918,7 +2919,7 @@ impl Engine {
                             e.as_ref(),
                             &ctx,
                             functions,
-                            &HashMap::new(),
+                            &FxHashMap::default(),
                         )
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false)
@@ -2943,7 +2944,7 @@ impl Engine {
                                     event.as_ref(),
                                     &ctx,
                                     functions,
-                                    &HashMap::new(),
+                                    &FxHashMap::default(),
                                 ) {
                                     new_event.data.insert(out_name.clone(), value);
                                 }
@@ -2983,7 +2984,7 @@ impl Engine {
                                 event.as_ref(),
                                 &ctx,
                                 functions,
-                                &HashMap::new(),
+                                &FxHashMap::default(),
                             ) {
                                 new_event.data.insert(out_name.clone(), value);
                             }
@@ -3035,7 +3036,7 @@ impl Engine {
                                 event.as_ref(),
                                 &ctx,
                                 functions,
-                                &HashMap::new(),
+                                &FxHashMap::default(),
                             );
                         });
                         all_emitted.extend(emitted);

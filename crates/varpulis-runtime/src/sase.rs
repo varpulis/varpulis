@@ -23,6 +23,7 @@ use crate::engine::eval_filter_expr;
 use crate::event::Event;
 use crate::sequence::SequenceContext;
 use chrono::{DateTime, Utc};
+use rustc_hash::FxHashMap;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -588,8 +589,8 @@ impl KleeneCapture {
     }
 
     /// Get captured events for a single combination (by index set)
-    pub fn get_combination_captured(&self, indices: &[u32]) -> HashMap<String, SharedEvent> {
-        let mut captured = HashMap::new();
+    pub fn get_combination_captured(&self, indices: &[u32]) -> FxHashMap<String, SharedEvent> {
+        let mut captured = FxHashMap::default();
         for &idx in indices {
             let idx = idx as usize;
             if let Some(ref alias) = self.aliases[idx] {
@@ -627,7 +628,7 @@ pub struct NegationConstraint {
 
 impl NegationConstraint {
     /// Check if this constraint is violated by the given event
-    pub fn is_violated_by(&self, event: &Event, captured: &HashMap<String, SharedEvent>) -> bool {
+    pub fn is_violated_by(&self, event: &Event, captured: &FxHashMap<String, SharedEvent>) -> bool {
         if event.event_type != self.forbidden_type {
             return false;
         }
@@ -856,7 +857,7 @@ pub struct SaseExtendedStats {
 #[derive(Debug, Clone)]
 pub struct EventTypeIndex {
     /// event_type -> list of state IDs that can accept this event type
-    state_index: HashMap<String, Vec<usize>>,
+    state_index: FxHashMap<String, Vec<usize>>,
     /// States that can match any event type (no specific type requirement)
     wildcard_states: Vec<usize>,
     /// States that are AND states (need special handling)
@@ -866,7 +867,7 @@ pub struct EventTypeIndex {
 impl EventTypeIndex {
     pub fn new() -> Self {
         Self {
-            state_index: HashMap::new(),
+            state_index: FxHashMap::default(),
             wildcard_states: Vec::new(),
             and_states: Vec::new(),
         }
@@ -1589,7 +1590,7 @@ pub struct Run {
     /// Stack of matched events (for non-Kleene patterns)
     pub stack: Vec<StackEntry>,
     /// Captured events by alias (Arc for efficient sharing)
-    pub captured: HashMap<String, SharedEvent>,
+    pub captured: FxHashMap<String, SharedEvent>,
     /// When this run started (wall-clock time for metrics)
     pub started_at: Instant,
     /// Deadline for completion (from WITHIN) - wall-clock time (legacy)
@@ -1615,7 +1616,7 @@ impl Run {
         Self {
             current_state: start_state,
             stack: Vec::new(),
-            captured: HashMap::new(),
+            captured: FxHashMap::default(),
             started_at: Instant::now(),
             deadline: None,
             event_time_started_at: None,
@@ -1633,7 +1634,7 @@ impl Run {
         Self {
             current_state: start_state,
             stack: Vec::new(),
-            captured: HashMap::new(),
+            captured: FxHashMap::default(),
             started_at: Instant::now(),
             deadline: None,
             event_time_started_at: Some(event_timestamp),
@@ -1719,7 +1720,7 @@ pub enum SelectionStrategy {
 #[derive(Debug, Clone)]
 pub struct MatchResult {
     /// All captured events by alias (Arc for zero-copy access)
-    pub captured: HashMap<String, SharedEvent>,
+    pub captured: FxHashMap<String, SharedEvent>,
     /// The event stack (ordered sequence of matches)
     pub stack: Vec<StackEntry>,
     /// Match duration
@@ -1758,7 +1759,7 @@ pub struct SaseEngine {
     /// Partition-by field (SASEXT optimization)
     partition_by: Option<String>,
     /// Partitioned runs for SASEXT
-    partitioned_runs: HashMap<String, Vec<Run>>,
+    partitioned_runs: FxHashMap<String, Vec<Run>>,
     /// Global negation conditions that invalidate active runs
     global_negations: Vec<GlobalNegation>,
     /// Time semantics (processing time vs event time)
@@ -1799,7 +1800,7 @@ impl SaseEngine {
             max_runs: 10000,
             strategy: SelectionStrategy::SkipTillAnyMatch,
             partition_by: None,
-            partitioned_runs: HashMap::new(),
+            partitioned_runs: FxHashMap::default(),
             global_negations: Vec::new(),
             time_semantics: TimeSemantics::ProcessingTime,
             watermark: None,
@@ -2032,7 +2033,7 @@ impl SaseEngine {
         if let Some(ref partition_field) = self.partition_by.clone() {
             let partition_key = shared_event
                 .get(partition_field)
-                .map(|v| format!("{}", v))
+                .map(|v| v.to_partition_key().into_owned())
                 .unwrap_or_default();
 
             completed
@@ -2128,7 +2129,7 @@ impl SaseEngine {
         if let Some(ref partition_field) = self.partition_by.clone() {
             let partition_key = event
                 .get(partition_field)
-                .map(|v| format!("{}", v))
+                .map(|v| v.to_partition_key().into_owned())
                 .unwrap_or_default();
 
             completed.extend(self.process_partition_shared(&partition_key, Arc::clone(&event)));
@@ -2173,7 +2174,7 @@ impl SaseEngine {
 
     /// Process a shared event reference (avoids redundant cloning)
     pub fn process_shared(&mut self, event: SharedEvent) -> Vec<MatchResult> {
-        let mut completed = Vec::new();
+        let mut completed = Vec::with_capacity(8);
 
         // Update watermark tracking for event-time processing
         if self.time_semantics == TimeSemantics::EventTime {
@@ -2190,7 +2191,7 @@ impl SaseEngine {
         if let Some(ref partition_field) = self.partition_by.clone() {
             let partition_key = event
                 .get(partition_field)
-                .map(|v| format!("{}", v))
+                .map(|v| v.to_partition_key().into_owned())
                 .unwrap_or_default();
 
             // Process partitioned runs
@@ -2458,7 +2459,7 @@ impl SaseEngine {
         partition_key: &str,
         event: SharedEvent,
     ) -> Vec<MatchResult> {
-        let mut completed = Vec::new();
+        let mut completed = Vec::with_capacity(4);
 
         if let Some(runs) = self.partitioned_runs.get_mut(partition_key) {
             let mut i = 0;
@@ -2492,7 +2493,7 @@ impl SaseEngine {
     }
 
     fn process_runs_shared(&mut self, event: SharedEvent) -> Vec<MatchResult> {
-        let mut completed = Vec::new();
+        let mut completed = Vec::with_capacity(4);
         let mut i = 0;
 
         while i < self.runs.len() {
@@ -2530,7 +2531,7 @@ impl SaseEngine {
 
     fn try_start_run_shared(&self, event: SharedEvent) -> Option<Run> {
         let start_state = &self.nfa.states[self.nfa.start_state];
-        let empty_captured: HashMap<String, SharedEvent> = HashMap::new();
+        let empty_captured: FxHashMap<String, SharedEvent> = FxHashMap::default();
 
         // Check if event matches any transition from start
         for &next_id in &start_state.transitions {
@@ -3116,7 +3117,7 @@ fn event_matches_state(
     _nfa: &Nfa,
     event: &Event,
     state: &State,
-    captured: &HashMap<String, SharedEvent>,
+    captured: &FxHashMap<String, SharedEvent>,
 ) -> bool {
     if let Some(ref expected_type) = state.event_type {
         if event.event_type != *expected_type {
@@ -3136,7 +3137,7 @@ fn event_matches_state(
 fn eval_predicate(
     predicate: &Predicate,
     event: &Event,
-    captured: &HashMap<String, SharedEvent>,
+    captured: &FxHashMap<String, SharedEvent>,
 ) -> bool {
     match predicate {
         Predicate::Compare { field, op, value } => event

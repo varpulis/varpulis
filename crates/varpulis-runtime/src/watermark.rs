@@ -6,7 +6,7 @@
 
 use crate::persistence::{SourceWatermarkCheckpoint, WatermarkCheckpoint};
 use chrono::{DateTime, Duration, Utc};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::time::Instant;
 
 /// Tracks watermarks for multiple event sources.
@@ -14,7 +14,7 @@ use std::time::Instant;
 /// The effective watermark is the minimum watermark across all registered sources,
 /// ensuring no source's events are prematurely considered late.
 pub struct PerSourceWatermarkTracker {
-    sources: HashMap<String, SourceWatermark>,
+    sources: FxHashMap<String, SourceWatermark>,
     effective_watermark: Option<DateTime<Utc>>,
 }
 
@@ -29,7 +29,7 @@ impl PerSourceWatermarkTracker {
     /// Create a new empty tracker.
     pub fn new() -> Self {
         Self {
-            sources: HashMap::new(),
+            sources: FxHashMap::default(),
             effective_watermark: None,
         }
     }
