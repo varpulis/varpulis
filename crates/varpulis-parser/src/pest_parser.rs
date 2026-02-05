@@ -36,8 +36,10 @@ pub struct VarpulisParser;
 
 /// Parse a VarpulisQL source string into a Program AST
 pub fn parse(source: &str) -> ParseResult<Program> {
+    // Expand compile-time declaration loops (top-level for with {var} interpolation)
+    let expanded = crate::expand::expand_declaration_loops(source);
     // Preprocess to add INDENT/DEDENT markers
-    let preprocessed = preprocess_indentation(source);
+    let preprocessed = preprocess_indentation(&expanded);
 
     let pairs = VarpulisParser::parse(Rule::program, &preprocessed).map_err(convert_pest_error)?;
 

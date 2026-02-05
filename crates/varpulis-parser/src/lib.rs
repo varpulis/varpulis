@@ -75,6 +75,7 @@
 //! - [`varpulis_runtime`](../varpulis_runtime): Executing parsed programs
 
 pub mod error;
+pub mod expand;
 pub mod helpers;
 pub mod indent;
 pub mod lexer;
