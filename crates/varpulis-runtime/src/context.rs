@@ -769,6 +769,7 @@ impl ContextOrchestrator {
                         // Create engine for this context with filtered program
                         let (engine_output_tx, engine_output_rx) = mpsc::channel(1000);
                         let mut engine = Engine::new(engine_output_tx);
+                        engine.set_context_name(&ctx_name_clone);
                         if let Err(e) = engine.load(&filtered_program) {
                             error!(
                                 "Failed to load program for context '{}': {}",

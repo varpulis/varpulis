@@ -127,6 +127,7 @@ fn create_sink_from_config(
     name: &str,
     config: &connector::ConnectorConfig,
     topic_override: Option<&str>,
+    context_name: Option<&str>,
 ) -> Option<Arc<dyn crate::sink::Sink>> {
     match config.connector_type.as_str() {
         "console" => Some(Arc::new(crate::sink::ConsoleSink::new(name))),
@@ -200,20 +201,17 @@ fn create_sink_from_config(
                     .map(|s| s.to_string())
                     .or_else(|| config.topic.clone())
                     .unwrap_or_else(|| format!("{}-output", name));
-                // Each sink gets a unique client_id to avoid MQTT broker conflicts
-                // when multiple contexts share the same connector config
+                // Use exact client_id from config; append context name only
+                // when running inside a context to avoid MQTT broker conflicts
                 let base_id = config
                     .properties
                     .get("client_id")
                     .cloned()
                     .unwrap_or_else(|| format!("{}-sink", name));
-                use std::sync::atomic::{AtomicU64, Ordering};
-                static SINK_COUNTER: AtomicU64 = AtomicU64::new(0);
-                let client_id = format!(
-                    "{}-{}",
-                    base_id,
-                    SINK_COUNTER.fetch_add(1, Ordering::Relaxed)
-                );
+                let client_id = match context_name {
+                    Some(ctx) => format!("{}-{}", base_id, ctx),
+                    None => base_id,
+                };
                 let mqtt_config = connector::MqttConfig::new(&broker, &topic)
                     .with_port(port)
                     .with_client_id(&client_id);
@@ -289,6 +287,8 @@ pub struct Engine {
     last_applied_watermark: Option<DateTime<Utc>>,
     /// Late data configurations per stream
     late_data_configs: HashMap<String, types::LateDataConfig>,
+    /// Context name when running inside a context thread (used for unique connector IDs)
+    context_name: Option<String>,
 }
 
 impl Engine {
@@ -312,7 +312,18 @@ impl Engine {
             watermark_tracker: None,
             last_applied_watermark: None,
             late_data_configs: HashMap::new(),
+            context_name: None,
         }
+    }
+
+    /// Set the context name for this engine instance.
+    ///
+    /// When set, connectors (e.g., MQTT) append the context name to their
+    /// client IDs to avoid broker conflicts when multiple contexts share the
+    /// same connector configuration. Without a context, the exact client_id
+    /// from the VPL connector declaration is used unchanged.
+    pub fn set_context_name(&mut self, name: &str) {
+        self.context_name = Some(name.to_string());
     }
 
     /// Add a stream to the event sources for a given event type.
@@ -582,8 +593,9 @@ impl Engine {
         }
 
         // Build sink cache from registered connectors (base entries without topic override)
+        let ctx_name = self.context_name.clone();
         for (name, config) in &self.connectors {
-            if let Some(sink) = create_sink_from_config(name, config, None) {
+            if let Some(sink) = create_sink_from_config(name, config, None, ctx_name.as_deref()) {
                 self.sink_cache.insert(name.clone(), sink);
             }
         }
@@ -607,7 +619,12 @@ impl Engine {
         }
         for (sink_key, connector_name, topic) in topic_overrides {
             if let Some(config) = self.connectors.get(&connector_name) {
-                if let Some(sink) = create_sink_from_config(&connector_name, config, Some(&topic)) {
+                if let Some(sink) = create_sink_from_config(
+                    &connector_name,
+                    config,
+                    Some(&topic),
+                    ctx_name.as_deref(),
+                ) {
                     self.sink_cache.insert(sink_key, sink);
                 }
             }
