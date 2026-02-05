@@ -1,0 +1,43 @@
+# Mandelbrot Set Demo (Server Mode)
+# Triggered by injecting ComputeTile events with tile_id field.
+# 100 tiles (10x10 grid) of 100x100 pixels each = 10,000 pixels per tile
+# Note: Output channel limited to 1000 events, so we use smaller batches
+#
+# Inject events via API:
+#   POST /api/v1/pipelines/{id}/events
+#   {"event_type": "ComputeTile", "fields": {"tile_id": 0}}
+
+connector MqttOut = mqtt (host: "localhost", port: 1883, client_id: "mandelbrot")
+
+fn mandelbrot(cx: float, cy: float, max_iter: int) -> int:
+    var zr = 0.0
+    var zi = 0.0
+    var i = 0
+    while i < max_iter:
+        let r2 = zr * zr
+        let i2 = zi * zi
+        if r2 + i2 > 4.0:
+            return i
+        zi := 2.0 * zr * zi + cy
+        zr := r2 - i2 + cx
+        i := i + 1
+    return max_iter
+
+# Compute a 31x31 tile (~961 pixels, under the 1000 channel limit)
+fn compute_tile(x_off: int, y_off: int, size: int, max_iter: int):
+    for px in 0..size:
+        for py in 0..size:
+            let cx = -2.0 + (x_off + px) * 3.0 / 1000.0
+            let cy = -1.5 + (y_off + py) * 3.0 / 1000.0
+            let iters = mandelbrot(cx, cy, max_iter)
+            emit Pixel(x: x_off + px, y: y_off + py, iterations: iters, diverged: iters < max_iter)
+
+# 1024 tiles (32x32 grid), each tile is 31x31 pixels (992 pixels, under 1000 limit)
+# But simpler: use 100 tiles (10x10 grid), each 100x100 = 10000 pixels
+# Actually we need to fit in 1000: 31x31 = 961 < 1000
+
+# Let's use a 32x32 grid of 31x31 tiles = 992x992 pixels (close to 1000x1000)
+# tile_id = row * 32 + col, where row and col are 0-31
+
+stream Tile = ComputeTile
+    .process(compute_tile((tile_id % 32) * 31, (tile_id / 32) * 31, 31, 256))
