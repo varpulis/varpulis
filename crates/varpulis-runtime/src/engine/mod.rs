@@ -592,40 +592,51 @@ impl Engine {
             }
         }
 
-        // Build sink cache from registered connectors (base entries without topic override)
-        let ctx_name = self.context_name.clone();
-        for (name, config) in &self.connectors {
-            if let Some(sink) = create_sink_from_config(name, config, None, ctx_name.as_deref()) {
-                self.sink_cache.insert(name.clone(), sink);
-            }
-        }
-
-        // Scan streams for .to() ops with topic overrides and create additional sink entries
+        // Collect all sink_keys actually referenced by stream operations
+        let mut referenced_sink_keys: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
         let mut topic_overrides: Vec<(String, String, String)> = Vec::new(); // (sink_key, connector_name, topic)
         for stream in self.streams.values() {
             for op in &stream.operations {
                 if let RuntimeOp::To(to_config) = op {
+                    referenced_sink_keys.insert(to_config.sink_key.clone());
                     if let Some(ref topic) = to_config.topic_override {
-                        if !self.sink_cache.contains_key(&to_config.sink_key) {
-                            topic_overrides.push((
-                                to_config.sink_key.clone(),
-                                to_config.connector_name.clone(),
-                                topic.clone(),
-                            ));
-                        }
+                        topic_overrides.push((
+                            to_config.sink_key.clone(),
+                            to_config.connector_name.clone(),
+                            topic.clone(),
+                        ));
                     }
                 }
             }
         }
+
+        // Build sink cache: only create sinks that are actually referenced.
+        // Creating unreferenced sinks (e.g. a base connector entry when only
+        // topic-override entries are used) wastes resources and — for MQTT —
+        // causes duplicate client_id conflicts that disconnect the useful sink.
+        let ctx_name = self.context_name.clone();
+        for (name, config) in &self.connectors {
+            if referenced_sink_keys.contains(name.as_str()) {
+                if let Some(sink) = create_sink_from_config(name, config, None, ctx_name.as_deref())
+                {
+                    self.sink_cache.insert(name.clone(), sink);
+                }
+            }
+        }
+
+        // Create sinks for topic-override keys
         for (sink_key, connector_name, topic) in topic_overrides {
-            if let Some(config) = self.connectors.get(&connector_name) {
-                if let Some(sink) = create_sink_from_config(
-                    &connector_name,
-                    config,
-                    Some(&topic),
-                    ctx_name.as_deref(),
-                ) {
-                    self.sink_cache.insert(sink_key, sink);
+            if !self.sink_cache.contains_key(&sink_key) {
+                if let Some(config) = self.connectors.get(&connector_name) {
+                    if let Some(sink) = create_sink_from_config(
+                        &connector_name,
+                        config,
+                        Some(&topic),
+                        ctx_name.as_deref(),
+                    ) {
+                        self.sink_cache.insert(sink_key, sink);
+                    }
                 }
             }
         }
