@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "varpulis-cluster.coordinator.fullname" . }}
+  labels:
+    {{- include "varpulis-cluster.labels" . | nindent 4 }}
+    app.kubernetes.io/component: coordinator
+spec:
+  replicas: {{ .Values.coordinator.replicas }}
+  selector:
+    matchLabels:
+      {{- include "varpulis-cluster.coordinator.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "varpulis-cluster.coordinator.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: coordinator
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - coordinator
+            - "--bind"
+            - "0.0.0.0"
+            - "--port"
+            - "{{ .Values.coordinator.port }}"
+            {{- if .Values.coordinator.apiKey }}
+            - "--api-key"
+            - "$(VARPULIS_API_KEY)"
+            {{- end }}
+          env:
+            - name: RUST_LOG
+              value: {{ .Values.logLevel }}
+            {{- if .Values.coordinator.apiKey }}
+            - name: VARPULIS_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: coordinator-api-key
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.coordinator.port }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.coordinator.resources | nindent 12 }}

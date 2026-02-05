@@ -1,0 +1,20 @@
+[package]
+name = "varpulis-cluster"
+version.workspace = true
+edition.workspace = true
+description = "Distributed execution cluster for Varpulis streaming analytics"
+
+[dependencies]
+varpulis-runtime = { path = "../varpulis-runtime", features = ["mqtt"] }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+warp = { workspace = true }
+reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
+uuid = { version = "1", features = ["v4"] }
+chrono = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

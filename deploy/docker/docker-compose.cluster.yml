@@ -1,0 +1,235 @@
+# Varpulis Distributed Cluster - Docker Compose
+#
+# Starts a full cluster: 1 coordinator + 4 workers + MQTT broker + monitoring
+#
+# Usage:
+#   docker compose -f deploy/docker/docker-compose.cluster.yml up -d
+#
+# Then deploy pipeline groups via the coordinator API:
+#   curl -X POST http://localhost:9100/api/v1/cluster/pipeline-groups \
+#     -H "x-api-key: ${VARPULIS_API_KEY:-admin}" -H "Content-Type: application/json" \
+#     -d '{"name": "my-group", "pipelines": [...], "routes": [...]}'
+
+services:
+  # MQTT Broker for inter-pipeline communication
+  mqtt:
+    image: eclipse-mosquitto:2
+    container_name: varpulis-mqtt
+    ports:
+      - "1883:1883"
+    volumes:
+      - mqtt-data:/mosquitto/data
+      - mqtt-log:/mosquitto/log
+    command: mosquitto -c /dev/null -p 1883 -v
+    restart: unless-stopped
+    networks:
+      - varpulis-cluster
+
+  # Coordinator (control plane)
+  coordinator:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    container_name: varpulis-coordinator
+    command:
+      - "coordinator"
+      - "--bind"
+      - "0.0.0.0"
+      - "--port"
+      - "9100"
+      - "--api-key"
+      - "${VARPULIS_API_KEY:-admin}"
+    ports:
+      - "9100:9100"
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9100/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - varpulis-cluster
+
+  # Worker 0
+  worker-0:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    container_name: varpulis-worker-0
+    command:
+      - "server"
+      - "--bind"
+      - "0.0.0.0"
+      - "--port"
+      - "9000"
+      - "--api-key"
+      - "${VARPULIS_WORKER_KEY:-test}"
+      - "--metrics"
+      - "--coordinator"
+      - "http://coordinator:9100"
+      - "--worker-id"
+      - "worker-0"
+    ports:
+      - "9000:9000"
+    expose:
+      - "9090"
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+    depends_on:
+      coordinator:
+        condition: service_healthy
+      mqtt:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - varpulis-cluster
+
+  # Worker 1
+  worker-1:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    container_name: varpulis-worker-1
+    command:
+      - "server"
+      - "--bind"
+      - "0.0.0.0"
+      - "--port"
+      - "9000"
+      - "--api-key"
+      - "${VARPULIS_WORKER_KEY:-test}"
+      - "--metrics"
+      - "--coordinator"
+      - "http://coordinator:9100"
+      - "--worker-id"
+      - "worker-1"
+    ports:
+      - "9001:9000"
+    expose:
+      - "9090"
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+    depends_on:
+      coordinator:
+        condition: service_healthy
+      mqtt:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - varpulis-cluster
+
+  # Worker 2
+  worker-2:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    container_name: varpulis-worker-2
+    command:
+      - "server"
+      - "--bind"
+      - "0.0.0.0"
+      - "--port"
+      - "9000"
+      - "--api-key"
+      - "${VARPULIS_WORKER_KEY:-test}"
+      - "--metrics"
+      - "--coordinator"
+      - "http://coordinator:9100"
+      - "--worker-id"
+      - "worker-2"
+    ports:
+      - "9002:9000"
+    expose:
+      - "9090"
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+    depends_on:
+      coordinator:
+        condition: service_healthy
+      mqtt:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - varpulis-cluster
+
+  # Worker 3
+  worker-3:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    container_name: varpulis-worker-3
+    command:
+      - "server"
+      - "--bind"
+      - "0.0.0.0"
+      - "--port"
+      - "9000"
+      - "--api-key"
+      - "${VARPULIS_WORKER_KEY:-test}"
+      - "--metrics"
+      - "--coordinator"
+      - "http://coordinator:9100"
+      - "--worker-id"
+      - "worker-3"
+    ports:
+      - "9003:9000"
+    expose:
+      - "9090"
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+    depends_on:
+      coordinator:
+        condition: service_healthy
+      mqtt:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - varpulis-cluster
+
+  # Prometheus - Metrics collection
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: varpulis-cluster-prometheus
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./prometheus-cluster.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-cluster-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+    restart: unless-stopped
+    networks:
+      - varpulis-cluster
+
+  # Grafana - Monitoring dashboard
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: varpulis-cluster-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-varpulis}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-cluster-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    restart: unless-stopped
+    networks:
+      - varpulis-cluster
+
+volumes:
+  mqtt-data:
+  mqtt-log:
+  prometheus-cluster-data:
+  grafana-cluster-data:
+
+networks:
+  varpulis-cluster:
+    driver: bridge

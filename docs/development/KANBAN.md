@@ -1,6 +1,6 @@
 # Varpulis CEP - Kanban
 
-> Derniere mise a jour: 2026-02-04 (NG-01 + NG-02 Complete)
+> Derniere mise a jour: 2026-02-05 (NG-01 + NG-02 + NG-05 Complete)
 
 ## Production Readiness Score: 10/10 - Released
 
@@ -42,7 +42,7 @@
 | **Production Readiness** | 0 | 0 | **4** |
 | **Release & Distribution** | 0 | 0 | **2** |
 | **SaaS** | **2** | 0 | **6** |
-| **Next-Gen** | **4** | 0 | **2** |
+| **Next-Gen** | **3** | 0 | **3** |
 | Parser Pest | 0 | 0 | **9** |
 | SASE+ Core | 0 | 0 | **10** |
 | SASE+ Improvements | 1 | 0 | **6** |
@@ -60,7 +60,7 @@
 | Couverture | 0 | 2 | 0 |
 | VS Code + LSP | 0 | 0 | **8** |
 | Connectivity | 0 | 0 | **4** |
-| **Total** | **7** | **2** | **92** |
+| **Total** | **6** | **2** | **93** |
 
 ---
 
@@ -186,7 +186,7 @@
 ## HAUTE PRIORITE - Next-Gen Features
 
 > **Objectif**: Evoluer Varpulis vers un moteur CEP distribue, production-grade
-> **Statut**: 2 termines, 4 a faire
+> **Statut**: 3 termines, 3 a faire
 
 ### Termine
 
@@ -245,16 +245,22 @@
   - **Existing base**: Connector architecture (connector.rs), MQTT/HTTP/Kafka already implemented
   - **Priorite**: HIGH
 
-- [ ] **NG-05**: Distributed execution
-  - **Description**: Multi-node support with state partitioning for horizontal scaling
-  - **Components**:
-    - State partitioning across nodes (consistent hashing)
-    - Network transport layer for cross-node events
-    - Distributed checkpointing (requires NG-01)
-    - Leader election for coordination (Raft)
-    - Partition rebalancing on node join/leave
-  - **Dependencies**: NG-01 (checkpointing), NG-02 (watermarks)
-  - **Priorite**: MEDIUM (largest engineering effort)
+- [x] **NG-05**: Distributed execution (Cluster Mode)
+  - **Description**: Multi-process pipeline execution with coordinated control plane
+  - **Implementation**:
+    - `varpulis-cluster` crate: coordinator, worker registry, pipeline groups, event routing, health monitoring
+    - `varpulis coordinator` CLI command: REST API for worker management, pipeline deployment, event routing
+    - `varpulis server --coordinator` flag: auto-registration, heartbeats, exponential backoff
+    - Pipeline groups: deploy multiple pipelines across workers with routing rules
+    - Event routing: wildcard pattern matching (`ComputeTile0*` → worker-0)
+    - Placement strategies: round-robin, least-loaded, worker affinity
+    - Health monitoring: 5s heartbeat interval, 15s unhealthy timeout, auto-recovery
+    - Docker Compose cluster stack: coordinator + 4 workers + MQTT + Prometheus + Grafana
+    - Helm chart for Kubernetes deployment
+    - Distributed Mandelbrot demo: 4 workers computing 1000x1000 image
+  - **Files**: `crates/varpulis-cluster/` (7 modules), `examples/mandelbrot/distributed/`
+  - **Tests**: 28 unit tests + E2E integration test (14 checks)
+  - **Docs**: `docs/architecture/cluster.md`, CLI reference updated
 
 - [ ] **NG-06**: Web UI
   - **Description**: Operational dashboard for pipeline monitoring and management
@@ -271,7 +277,7 @@
 ```mermaid
 graph LR
     NG01[NG-01: Checkpointing ✓] --> NG02[NG-02: Watermarks ✓]
-    NG01 --> NG05[NG-05: Distributed]
+    NG01 --> NG05[NG-05: Distributed ✓]
     NG02 --> NG05
     NG03[NG-03: SQL Layer] -.-> NG06[NG-06: Web UI]
     NG04[NG-04: Connectors] -.-> NG05
@@ -1320,8 +1326,8 @@ cargo tarpaulin --out Html
 ## Architecture actuelle
 
 ```
-~27,000 lignes de Rust
-5 crates + 1 CLI
+~28,200 lignes de Rust
+6 crates + 1 CLI
 Version 0.1.0
 
 +-- varpulis-core (1,500 lignes)
@@ -1353,8 +1359,16 @@ Version 0.1.0
 |   +-- aggregation.rs - Aggregation functions
 |   +-- window.rs - Time windows (with checkpoint/restore)
 |
-+-- varpulis-cli (~1,500 lignes) [REFACTORED + SaaS]
-    +-- main.rs - CLI entry point + server
++-- varpulis-cluster (~1,200 lignes) **NEW**
+|   +-- coordinator.rs - Coordinator state machine
+|   +-- worker.rs - Worker types + registration
+|   +-- pipeline_group.rs - Pipeline group abstraction
+|   +-- routing.rs - Event routing + pattern matching
+|   +-- health.rs - Heartbeat + failure detection
+|   +-- api.rs - Coordinator REST API (warp)
+|
++-- varpulis-cli (~1,500 lignes) [REFACTORED + SaaS + Cluster]
+    +-- main.rs - CLI entry point + server + coordinator
     +-- lib.rs - Library exports
     +-- api.rs - REST API routes (9 tests)
     +-- auth.rs - Authentication module (35 tests)
@@ -1377,6 +1391,7 @@ Version 0.1.0
 
 - [x] NG-01: Exactly-once checkpointing (coordinated barriers, engine state snapshot/restore, recovery)
 - [x] NG-02: Watermark improvements (per-source tracking, allowed lateness, VPL syntax, cross-context propagation)
+- [x] NG-05: Distributed execution (coordinator + workers, pipeline groups, event routing, health monitoring, Docker Compose, Helm)
 - [x] v0.1.0 Released: 5 platforms + Docker image
 - [x] Securite: TLS/WSS (SEC-05) et Auth API Key (SEC-04)
 - [x] Rate limiting: Token bucket per IP (PROD-02)

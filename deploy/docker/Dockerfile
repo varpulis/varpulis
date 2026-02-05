@@ -25,6 +25,7 @@ COPY crates/varpulis-runtime/Cargo.toml crates/varpulis-runtime/
 COPY crates/varpulis-cli/Cargo.toml crates/varpulis-cli/
 COPY crates/varpulis-lsp/Cargo.toml crates/varpulis-lsp/
 COPY crates/varpulis-zdd/Cargo.toml crates/varpulis-zdd/
+COPY crates/varpulis-cluster/Cargo.toml crates/varpulis-cluster/
 
 # Create dummy source files to cache dependencies
 RUN mkdir -p crates/varpulis-core/src && echo "pub fn dummy() {}" > crates/varpulis-core/src/lib.rs && \
@@ -32,7 +33,8 @@ RUN mkdir -p crates/varpulis-core/src && echo "pub fn dummy() {}" > crates/varpu
     mkdir -p crates/varpulis-runtime/src && echo "pub fn dummy() {}" > crates/varpulis-runtime/src/lib.rs && \
     mkdir -p crates/varpulis-cli/src && echo "fn main() {}" > crates/varpulis-cli/src/main.rs && \
     mkdir -p crates/varpulis-lsp/src && echo "fn main() {}" > crates/varpulis-lsp/src/main.rs && \
-    mkdir -p crates/varpulis-zdd/src && echo "pub fn dummy() {}" > crates/varpulis-zdd/src/lib.rs
+    mkdir -p crates/varpulis-zdd/src && echo "pub fn dummy() {}" > crates/varpulis-zdd/src/lib.rs && \
+    mkdir -p crates/varpulis-cluster/src && echo "pub fn dummy() {}" > crates/varpulis-cluster/src/lib.rs
 
 # Build dependencies (this layer is cached)
 RUN cargo build --release -p varpulis-cli 2>/dev/null || true

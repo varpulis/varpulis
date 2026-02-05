@@ -1,0 +1,64 @@
+# Varpulis Cluster Helm Values
+
+image:
+  repository: ghcr.io/varpulis/varpulis
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+# Coordinator settings
+coordinator:
+  replicas: 1
+  port: 9100
+  apiKey: ""  # Required: set via --set coordinator.apiKey=...
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  service:
+    type: ClusterIP
+    port: 9100
+
+# Worker settings
+workers:
+  replicas: 4
+  port: 9000
+  metricsPort: 9090
+  apiKey: "worker-key"
+  enableMetrics: true
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  service:
+    type: ClusterIP
+    port: 9000
+
+# MQTT broker (optional, for inter-pipeline communication)
+mqtt:
+  enabled: true
+  image:
+    repository: eclipse-mosquitto
+    tag: "2"
+  port: 1883
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 128Mi
+
+# Monitoring
+monitoring:
+  enabled: false
+  prometheus:
+    scrapeInterval: 5s
+
+# Common settings
+logLevel: info

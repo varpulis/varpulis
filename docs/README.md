@@ -56,6 +56,7 @@ stream Alert = SomeEvent
 
 ### Architecture
 - [`architecture/system.md`](architecture/system.md) - System architecture
+- [`architecture/cluster.md`](architecture/cluster.md) - **Distributed execution (cluster mode)**
 - [`architecture/attention-engine.md`](architecture/attention-engine.md) - Attention mechanism
 - [`architecture/state-management.md`](architecture/state-management.md) - State management
 - [`architecture/parallelism.md`](architecture/parallelism.md) - Parallelization
@@ -115,6 +116,25 @@ Full SaaS stack with monitoring:
 docker compose -f deploy/docker/docker-compose.saas.yml up -d
 # Grafana: http://localhost:3000 | Prometheus: http://localhost:9091
 ```
+
+## Distributed Execution (Cluster Mode)
+
+Varpulis supports distributed execution across multiple worker processes,
+coordinated by a central control plane:
+
+```bash
+# Start coordinator
+varpulis coordinator --port 9100 --api-key admin
+
+# Start workers (each registers with coordinator)
+varpulis server --port 9000 --api-key test \
+    --coordinator http://localhost:9100 --worker-id worker-0
+
+# Or use Docker Compose
+docker compose -f deploy/docker/docker-compose.cluster.yml up -d
+```
+
+See [`architecture/cluster.md`](architecture/cluster.md) for full documentation.
 
 ---
 

@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "varpulis-cluster.coordinator.fullname" . }}
+  labels:
+    {{- include "varpulis-cluster.labels" . | nindent 4 }}
+    app.kubernetes.io/component: coordinator
+spec:
+  type: {{ .Values.coordinator.service.type }}
+  ports:
+    - port: {{ .Values.coordinator.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "varpulis-cluster.coordinator.selectorLabels" . | nindent 4 }}
