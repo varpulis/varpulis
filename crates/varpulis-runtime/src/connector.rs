@@ -1261,14 +1261,19 @@ mod mqtt_impl {
                 mqtt_opts.set_credentials(user, pass);
             }
 
-            let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 100);
+            let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 10_000);
             self.client = Some(client);
 
             // Spawn eventloop handler
+            let sink_name = self.name.clone();
             tokio::spawn(async move {
                 loop {
-                    if eventloop.poll().await.is_err() {
-                        break;
+                    match eventloop.poll().await {
+                        Ok(_) => {}
+                        Err(e) => {
+                            warn!("MQTT sink {} eventloop error: {}", sink_name, e);
+                            break;
+                        }
                     }
                 }
             });

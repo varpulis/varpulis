@@ -5,8 +5,8 @@
 # Architecture:
 #   Browser injects 16 ComputeTileXX events in parallel
 #   → 16 contexts process tiles concurrently
-#   → Pixel events stream to MQTT
-#   → Browser receives via WebSocket bridge
+#   → PixelRow events stream to MQTT (one per row = 4,000 total)
+#   → Browser receives via WebSocket bridge and renders
 #
 # Usage:
 #   1. Deploy this pipeline via REST API
@@ -49,13 +49,20 @@ fn mandelbrot(cx: float, cy: float, max_iter: int) -> int:
         i := i + 1
     return max_iter
 
+# Emits one PixelRow event per row (250 events per tile, 4,000 total)
+# Each row contains comma-separated iteration values for efficient MQTT delivery
 fn compute_tile(x_off: int, y_off: int, size: int, max_iter: int):
-    for px in 0..size:
-        for py in 0..size:
+    for py in 0..size:
+        var row_data = ""
+        for px in 0..size:
             let cx = -2.0 + (x_off + px) * 3.0 / 1000.0
             let cy = -1.5 + (y_off + py) * 3.0 / 1000.0
             let iters = mandelbrot(cx, cy, max_iter)
-            emit Pixel(x: x_off + px, y: y_off + py, iterations: iters, diverged: iters < max_iter)
+            if px > 0:
+                row_data := row_data + "," + to_string(iters)
+            else:
+                row_data := to_string(iters)
+        emit PixelRow(y: y_off + py, x_start: x_off, count: size, data: row_data)
 
 # Row 0: tiles (0,0) (250,0) (500,0) (750,0)
 stream Tile00 = ComputeTile00
