@@ -453,4 +453,157 @@ mod tests {
         let result = coord.health_sweep();
         assert_eq!(result.workers_marked_unhealthy.len(), 1);
     }
+
+    #[test]
+    fn test_coordinator_heartbeat_unknown_worker() {
+        let mut coord = Coordinator::new();
+        let hb = HeartbeatRequest {
+            events_processed: 0,
+            pipelines_running: 0,
+        };
+        let result = coord.heartbeat(&WorkerId("nonexistent".into()), &hb);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            crate::ClusterError::WorkerNotFound(id) => assert_eq!(id, "nonexistent"),
+            other => panic!("Expected WorkerNotFound, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_coordinator_heartbeat_recovers_unhealthy() {
+        let mut coord = Coordinator::new();
+        let mut node = WorkerNode::new(
+            WorkerId("w1".into()),
+            "http://localhost:9000".into(),
+            "key".into(),
+        );
+        node.status = WorkerStatus::Ready;
+        coord.workers.insert(node.id.clone(), node);
+
+        // Mark unhealthy
+        coord
+            .workers
+            .get_mut(&WorkerId("w1".into()))
+            .unwrap()
+            .status = WorkerStatus::Unhealthy;
+        assert_eq!(
+            coord.workers[&WorkerId("w1".into())].status,
+            WorkerStatus::Unhealthy
+        );
+
+        // Heartbeat should recover
+        let hb = HeartbeatRequest {
+            events_processed: 50,
+            pipelines_running: 1,
+        };
+        assert!(coord.heartbeat(&WorkerId("w1".into()), &hb).is_ok());
+        assert_eq!(
+            coord.workers[&WorkerId("w1".into())].status,
+            WorkerStatus::Ready
+        );
+    }
+
+    #[test]
+    fn test_coordinator_re_register_same_worker() {
+        let mut coord = Coordinator::new();
+        let node1 = WorkerNode::new(
+            WorkerId("w1".into()),
+            "http://localhost:9000".into(),
+            "key1".into(),
+        );
+        coord.register_worker(node1);
+        assert_eq!(coord.workers[&WorkerId("w1".into())].api_key, "key1");
+
+        // Re-register with different address/key
+        let node2 = WorkerNode::new(
+            WorkerId("w1".into()),
+            "http://localhost:9999".into(),
+            "key2".into(),
+        );
+        coord.register_worker(node2);
+        assert_eq!(coord.workers.len(), 1);
+        assert_eq!(
+            coord.workers[&WorkerId("w1".into())].address,
+            "http://localhost:9999"
+        );
+        assert_eq!(coord.workers[&WorkerId("w1".into())].api_key, "key2");
+    }
+
+    #[test]
+    fn test_coordinator_multiple_workers() {
+        let mut coord = Coordinator::new();
+        for i in 0..5 {
+            let node = WorkerNode::new(
+                WorkerId(format!("w{}", i)),
+                format!("http://localhost:900{}", i),
+                "key".into(),
+            );
+            coord.register_worker(node);
+        }
+        assert_eq!(coord.workers.len(), 5);
+        for i in 0..5 {
+            assert!(coord.workers.contains_key(&WorkerId(format!("w{}", i))));
+            assert_eq!(
+                coord.workers[&WorkerId(format!("w{}", i))].status,
+                WorkerStatus::Ready
+            );
+        }
+    }
+
+    #[test]
+    fn test_coordinator_deregister_all() {
+        let mut coord = Coordinator::new();
+        for i in 0..3 {
+            let node = WorkerNode::new(
+                WorkerId(format!("w{}", i)),
+                format!("http://localhost:900{}", i),
+                "key".into(),
+            );
+            coord.register_worker(node);
+        }
+        assert_eq!(coord.workers.len(), 3);
+
+        for i in 0..3 {
+            assert!(coord
+                .deregister_worker(&WorkerId(format!("w{}", i)))
+                .is_ok());
+        }
+        assert!(coord.workers.is_empty());
+    }
+
+    #[test]
+    fn test_coordinator_heartbeat_updates_pipelines_running() {
+        let mut coord = Coordinator::new();
+        let node = WorkerNode::new(
+            WorkerId("w1".into()),
+            "http://localhost:9000".into(),
+            "key".into(),
+        );
+        coord.register_worker(node);
+        assert_eq!(
+            coord.workers[&WorkerId("w1".into())]
+                .capacity
+                .pipelines_running,
+            0
+        );
+
+        let hb = HeartbeatRequest {
+            events_processed: 1000,
+            pipelines_running: 5,
+        };
+        coord.heartbeat(&WorkerId("w1".into()), &hb).unwrap();
+        assert_eq!(
+            coord.workers[&WorkerId("w1".into())]
+                .capacity
+                .pipelines_running,
+            5
+        );
+    }
+
+    #[test]
+    fn test_coordinator_default() {
+        let coord = Coordinator::default();
+        assert!(coord.workers.is_empty());
+        assert!(coord.pipeline_groups.is_empty());
+    }
 }
