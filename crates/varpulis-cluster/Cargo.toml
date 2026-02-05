@@ -18,3 +18,4 @@ chrono = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
+tokio-stream = { version = "0.1", features = ["net"] }

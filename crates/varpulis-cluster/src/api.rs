@@ -617,4 +617,485 @@ mod tests {
         let body: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
         assert_eq!(body["total"], 0);
     }
+
+    #[tokio::test]
+    async fn test_get_worker_found() {
+        let (coord, routes) = setup_routes();
+
+        {
+            let mut c = coord.write().await;
+            c.register_worker(WorkerNode::new(
+                WorkerId("w1".into()),
+                "http://localhost:9000".into(),
+                "key".into(),
+            ));
+        }
+
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/api/v1/cluster/workers/w1")
+            .header("x-api-key", "admin-key")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: WorkerInfo = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body.id, "w1");
+        assert_eq!(body.address, "http://localhost:9000");
+        assert_eq!(body.status, "ready");
+    }
+
+    #[tokio::test]
+    async fn test_get_worker_not_found() {
+        let (_coord, routes) = setup_routes();
+
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/api/v1/cluster/workers/nonexistent")
+            .header("x-api-key", "admin-key")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_delete_worker_not_found() {
+        let (_coord, routes) = setup_routes();
+
+        let resp = warp::test::request()
+            .method("DELETE")
+            .path("/api/v1/cluster/workers/nonexistent")
+            .header("x-api-key", "admin-key")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_heartbeat_unknown_worker() {
+        let (_coord, routes) = setup_routes();
+
+        let resp = warp::test::request()
+            .method("POST")
+            .path("/api/v1/cluster/workers/nonexistent/heartbeat")
+            .json(&HeartbeatRequest {
+                events_processed: 0,
+                pipelines_running: 0,
+            })
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_unauthorized_wrong_key() {
+        let (_coord, routes) = setup_routes();
+
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/api/v1/cluster/workers")
+            .header("x-api-key", "wrong-key")
+            .reply(&routes)
+            .await;
+
+        assert_ne!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_no_auth_mode() {
+        // When admin_key is None, no auth required
+        let coord = shared_coordinator();
+        let routes = cluster_routes(coord.clone(), None);
+
+        // Register without API key
+        let resp = warp::test::request()
+            .method("POST")
+            .path("/api/v1/cluster/workers/register")
+            .json(&RegisterWorkerRequest {
+                worker_id: "w1".into(),
+                address: "http://localhost:9000".into(),
+                api_key: "key".into(),
+                capacity: WorkerCapacity::default(),
+            })
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::CREATED);
+
+        // List without API key
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/api/v1/cluster/workers")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body["total"], 1);
+    }
+
+    #[tokio::test]
+    async fn test_get_group_not_found() {
+        let (_coord, routes) = setup_routes();
+
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/api/v1/cluster/pipeline-groups/nonexistent")
+            .header("x-api-key", "admin-key")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        let body: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body["code"], "404");
+    }
+
+    #[tokio::test]
+    async fn test_delete_group_not_found() {
+        let (_coord, routes) = setup_routes();
+
+        let resp = warp::test::request()
+            .method("DELETE")
+            .path("/api/v1/cluster/pipeline-groups/nonexistent")
+            .header("x-api-key", "admin-key")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        let body: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body["code"], "group_not_found");
+    }
+
+    #[tokio::test]
+    async fn test_inject_event_group_not_found() {
+        let (_coord, routes) = setup_routes();
+
+        let resp = warp::test::request()
+            .method("POST")
+            .path("/api/v1/cluster/pipeline-groups/nonexistent/inject")
+            .header("x-api-key", "admin-key")
+            .json(&serde_json::json!({
+                "event_type": "TestEvent",
+                "fields": {}
+            }))
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        let body: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body["code"], "group_not_found");
+    }
+
+    #[tokio::test]
+    async fn test_deploy_group_no_workers() {
+        let (_coord, routes) = setup_routes();
+
+        let resp = warp::test::request()
+            .method("POST")
+            .path("/api/v1/cluster/pipeline-groups")
+            .header("x-api-key", "admin-key")
+            .json(&serde_json::json!({
+                "name": "test-group",
+                "pipelines": [
+                    {"name": "p1", "source": "stream A = X"}
+                ]
+            }))
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body["code"], "no_workers_available");
+    }
+
+    #[tokio::test]
+    async fn test_register_multiple_workers_list() {
+        let (coord, routes) = setup_routes();
+
+        // Register 3 workers directly
+        {
+            let mut c = coord.write().await;
+            for i in 0..3 {
+                c.register_worker(WorkerNode::new(
+                    WorkerId(format!("w{}", i)),
+                    format!("http://localhost:900{}", i),
+                    "key".into(),
+                ));
+            }
+        }
+
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/api/v1/cluster/workers")
+            .header("x-api-key", "admin-key")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body["total"], 3);
+        assert_eq!(body["workers"].as_array().unwrap().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_topology_with_groups() {
+        let (coord, routes) = setup_routes();
+
+        // Manually insert a pipeline group
+        {
+            let mut c = coord.write().await;
+            use crate::pipeline_group::*;
+            let spec = PipelineGroupSpec {
+                name: "test-group".into(),
+                pipelines: vec![PipelinePlacement {
+                    name: "p1".into(),
+                    source: "stream A = X".into(),
+                    worker_affinity: None,
+                }],
+                routes: vec![InterPipelineRoute {
+                    from_pipeline: "_external".into(),
+                    to_pipeline: "p1".into(),
+                    event_types: vec!["*".into()],
+                    mqtt_topic: None,
+                }],
+            };
+
+            let mut group = DeployedPipelineGroup::new("g1".into(), "test-group".into(), spec);
+            group.placements.insert(
+                "p1".into(),
+                PipelineDeployment {
+                    worker_id: WorkerId("w1".into()),
+                    worker_address: "http://localhost:9000".into(),
+                    worker_api_key: "key".into(),
+                    pipeline_id: "pid1".into(),
+                    status: PipelineDeploymentStatus::Running,
+                },
+            );
+            c.pipeline_groups.insert("g1".into(), group);
+        }
+
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/api/v1/cluster/topology")
+            .header("x-api-key", "admin-key")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+        let groups = body["groups"].as_array().unwrap();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0]["group_name"], "test-group");
+        assert_eq!(groups[0]["pipelines"].as_array().unwrap().len(), 1);
+        assert_eq!(groups[0]["routes"].as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_get_group_found() {
+        let (coord, routes) = setup_routes();
+
+        // Insert a pipeline group manually
+        {
+            let mut c = coord.write().await;
+            use crate::pipeline_group::*;
+            let spec = PipelineGroupSpec {
+                name: "my-group".into(),
+                pipelines: vec![PipelinePlacement {
+                    name: "p1".into(),
+                    source: "stream A = X".into(),
+                    worker_affinity: None,
+                }],
+                routes: vec![],
+            };
+
+            let group = DeployedPipelineGroup::new("g1".into(), "my-group".into(), spec);
+            c.pipeline_groups.insert("g1".into(), group);
+        }
+
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/api/v1/cluster/pipeline-groups/g1")
+            .header("x-api-key", "admin-key")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body["name"], "my-group");
+        assert_eq!(body["id"], "g1");
+    }
+
+    #[tokio::test]
+    async fn test_list_groups_with_entries() {
+        let (coord, routes) = setup_routes();
+
+        {
+            let mut c = coord.write().await;
+            use crate::pipeline_group::*;
+            for i in 0..3 {
+                let spec = PipelineGroupSpec {
+                    name: format!("group-{}", i),
+                    pipelines: vec![],
+                    routes: vec![],
+                };
+                let group =
+                    DeployedPipelineGroup::new(format!("g{}", i), format!("group-{}", i), spec);
+                c.pipeline_groups.insert(format!("g{}", i), group);
+            }
+        }
+
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/api/v1/cluster/pipeline-groups")
+            .header("x-api-key", "admin-key")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body["total"], 3);
+    }
+
+    #[tokio::test]
+    async fn test_register_worker_via_api_then_get() {
+        let (_coord, routes) = setup_routes();
+
+        // Register
+        let resp = warp::test::request()
+            .method("POST")
+            .path("/api/v1/cluster/workers/register")
+            .header("x-api-key", "admin-key")
+            .json(&RegisterWorkerRequest {
+                worker_id: "api-worker".into(),
+                address: "http://localhost:8000".into(),
+                api_key: "worker-secret".into(),
+                capacity: WorkerCapacity {
+                    cpu_cores: 4,
+                    pipelines_running: 0,
+                    max_pipelines: 50,
+                },
+            })
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::CREATED);
+
+        // Get the worker
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/api/v1/cluster/workers/api-worker")
+            .header("x-api-key", "admin-key")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: WorkerInfo = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body.id, "api-worker");
+        assert_eq!(body.address, "http://localhost:8000");
+        assert_eq!(body.max_pipelines, 50);
+    }
+
+    #[tokio::test]
+    async fn test_register_delete_register_cycle() {
+        let (_coord, routes) = setup_routes();
+
+        // Register
+        let resp = warp::test::request()
+            .method("POST")
+            .path("/api/v1/cluster/workers/register")
+            .header("x-api-key", "admin-key")
+            .json(&RegisterWorkerRequest {
+                worker_id: "w1".into(),
+                address: "http://localhost:9000".into(),
+                api_key: "key".into(),
+                capacity: WorkerCapacity::default(),
+            })
+            .reply(&routes)
+            .await;
+        assert_eq!(resp.status(), StatusCode::CREATED);
+
+        // Delete
+        let resp = warp::test::request()
+            .method("DELETE")
+            .path("/api/v1/cluster/workers/w1")
+            .header("x-api-key", "admin-key")
+            .reply(&routes)
+            .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // Verify gone
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/api/v1/cluster/workers/w1")
+            .header("x-api-key", "admin-key")
+            .reply(&routes)
+            .await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+        // Re-register
+        let resp = warp::test::request()
+            .method("POST")
+            .path("/api/v1/cluster/workers/register")
+            .header("x-api-key", "admin-key")
+            .json(&RegisterWorkerRequest {
+                worker_id: "w1".into(),
+                address: "http://localhost:9001".into(),
+                api_key: "new-key".into(),
+                capacity: WorkerCapacity::default(),
+            })
+            .reply(&routes)
+            .await;
+        assert_eq!(resp.status(), StatusCode::CREATED);
+
+        // Verify re-registered with new address
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/api/v1/cluster/workers/w1")
+            .header("x-api-key", "admin-key")
+            .reply(&routes)
+            .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: WorkerInfo = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body.address, "http://localhost:9001");
+    }
+
+    #[tokio::test]
+    async fn test_heartbeat_then_get_worker_updates() {
+        let (coord, routes) = setup_routes();
+
+        {
+            let mut c = coord.write().await;
+            c.register_worker(WorkerNode::new(
+                WorkerId("w1".into()),
+                "http://localhost:9000".into(),
+                "key".into(),
+            ));
+        }
+
+        // Send heartbeat with updated pipeline count
+        let resp = warp::test::request()
+            .method("POST")
+            .path("/api/v1/cluster/workers/w1/heartbeat")
+            .json(&HeartbeatRequest {
+                events_processed: 500,
+                pipelines_running: 3,
+            })
+            .reply(&routes)
+            .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // Get worker should reflect new pipeline count
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/api/v1/cluster/workers/w1")
+            .header("x-api-key", "admin-key")
+            .reply(&routes)
+            .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: WorkerInfo = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body.pipelines_running, 3);
+    }
 }

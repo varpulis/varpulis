@@ -271,4 +271,176 @@ mod tests {
         };
         assert!(placement.place(&pipeline, &workers).is_none());
     }
+
+    #[test]
+    fn test_round_robin_single_worker() {
+        let placement = RoundRobinPlacement::new();
+        let w1 = WorkerNode::new(
+            WorkerId("w1".into()),
+            "http://localhost:9000".into(),
+            "key".into(),
+        );
+        let workers = vec![&w1];
+        let pipeline = PipelinePlacement {
+            name: "p1".into(),
+            source: "".into(),
+            worker_affinity: None,
+        };
+
+        // All placements should go to the single worker
+        for _ in 0..10 {
+            assert_eq!(
+                placement.place(&pipeline, &workers),
+                Some(WorkerId("w1".into()))
+            );
+        }
+    }
+
+    #[test]
+    fn test_round_robin_wraps_around() {
+        let placement = RoundRobinPlacement::new();
+        let w1 = WorkerNode::new(
+            WorkerId("w1".into()),
+            "http://localhost:9000".into(),
+            "key".into(),
+        );
+        let w2 = WorkerNode::new(
+            WorkerId("w2".into()),
+            "http://localhost:9001".into(),
+            "key".into(),
+        );
+        let w3 = WorkerNode::new(
+            WorkerId("w3".into()),
+            "http://localhost:9002".into(),
+            "key".into(),
+        );
+        let workers = vec![&w1, &w2, &w3];
+        let pipeline = PipelinePlacement {
+            name: "p1".into(),
+            source: "".into(),
+            worker_affinity: None,
+        };
+
+        let mut results = Vec::new();
+        for _ in 0..9 {
+            results.push(placement.place(&pipeline, &workers).unwrap());
+        }
+
+        // Should cycle w1, w2, w3, w1, w2, w3, w1, w2, w3
+        assert_eq!(results[0], WorkerId("w1".into()));
+        assert_eq!(results[1], WorkerId("w2".into()));
+        assert_eq!(results[2], WorkerId("w3".into()));
+        assert_eq!(results[3], WorkerId("w1".into()));
+        assert_eq!(results[4], WorkerId("w2".into()));
+        assert_eq!(results[5], WorkerId("w3".into()));
+        assert_eq!(results[6], WorkerId("w1".into()));
+    }
+
+    #[test]
+    fn test_least_loaded_empty_workers() {
+        let placement = LeastLoadedPlacement;
+        let workers: Vec<&WorkerNode> = vec![];
+        let pipeline = PipelinePlacement {
+            name: "p1".into(),
+            source: "".into(),
+            worker_affinity: None,
+        };
+        assert!(placement.place(&pipeline, &workers).is_none());
+    }
+
+    #[test]
+    fn test_least_loaded_tied_workers() {
+        let placement = LeastLoadedPlacement;
+        let mut w1 = WorkerNode::new(
+            WorkerId("w1".into()),
+            "http://localhost:9000".into(),
+            "key".into(),
+        );
+        w1.capacity.pipelines_running = 2;
+        let mut w2 = WorkerNode::new(
+            WorkerId("w2".into()),
+            "http://localhost:9001".into(),
+            "key".into(),
+        );
+        w2.capacity.pipelines_running = 2;
+        let workers = vec![&w1, &w2];
+        let pipeline = PipelinePlacement {
+            name: "p1".into(),
+            source: "".into(),
+            worker_affinity: None,
+        };
+
+        // Should pick one of them (min_by_key picks first in case of tie)
+        let result = placement.place(&pipeline, &workers).unwrap();
+        assert!(result == WorkerId("w1".into()) || result == WorkerId("w2".into()));
+    }
+
+    #[test]
+    fn test_least_loaded_picks_zero_load() {
+        let placement = LeastLoadedPlacement;
+        let mut w1 = WorkerNode::new(
+            WorkerId("w1".into()),
+            "http://localhost:9000".into(),
+            "key".into(),
+        );
+        w1.capacity.pipelines_running = 5;
+        let w2 = WorkerNode::new(
+            WorkerId("w2".into()),
+            "http://localhost:9001".into(),
+            "key".into(),
+        );
+        // w2 has pipelines_running = 0 (default)
+        let workers = vec![&w1, &w2];
+        let pipeline = PipelinePlacement {
+            name: "p1".into(),
+            source: "".into(),
+            worker_affinity: None,
+        };
+
+        assert_eq!(
+            placement.place(&pipeline, &workers),
+            Some(WorkerId("w2".into()))
+        );
+    }
+
+    #[test]
+    fn test_cluster_error_display() {
+        let e = ClusterError::WorkerNotFound("w42".into());
+        assert_eq!(e.to_string(), "Worker not found: w42");
+
+        let e = ClusterError::GroupNotFound("g99".into());
+        assert_eq!(e.to_string(), "Pipeline group not found: g99");
+
+        let e = ClusterError::NoWorkersAvailable;
+        assert_eq!(e.to_string(), "No workers available for deployment");
+
+        let e = ClusterError::DeployFailed("connection refused".into());
+        assert_eq!(
+            e.to_string(),
+            "Pipeline deployment failed: connection refused"
+        );
+
+        let e = ClusterError::RoutingFailed("no target".into());
+        assert_eq!(e.to_string(), "Event routing failed: no target");
+    }
+
+    #[test]
+    fn test_round_robin_default() {
+        let placement = RoundRobinPlacement::default();
+        let w = WorkerNode::new(
+            WorkerId("w1".into()),
+            "http://localhost:9000".into(),
+            "key".into(),
+        );
+        let workers = vec![&w];
+        let pipeline = PipelinePlacement {
+            name: "p1".into(),
+            source: "".into(),
+            worker_affinity: None,
+        };
+        assert_eq!(
+            placement.place(&pipeline, &workers),
+            Some(WorkerId("w1".into()))
+        );
+    }
 }

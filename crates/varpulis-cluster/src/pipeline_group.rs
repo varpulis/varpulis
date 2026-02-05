@@ -249,4 +249,297 @@ mod tests {
         assert!(spec.pipelines[1].worker_affinity.is_none());
         assert_eq!(spec.routes.len(), 1);
     }
+
+    #[test]
+    fn test_group_status_all_failed() {
+        let spec = PipelineGroupSpec {
+            name: "test".into(),
+            pipelines: vec![
+                PipelinePlacement {
+                    name: "p1".into(),
+                    source: "".into(),
+                    worker_affinity: None,
+                },
+                PipelinePlacement {
+                    name: "p2".into(),
+                    source: "".into(),
+                    worker_affinity: None,
+                },
+            ],
+            routes: vec![],
+        };
+
+        let mut group = DeployedPipelineGroup::new("g1".into(), "test".into(), spec);
+        group.placements.insert(
+            "p1".into(),
+            PipelineDeployment {
+                worker_id: WorkerId("w1".into()),
+                worker_address: "http://localhost:9000".into(),
+                worker_api_key: "key".into(),
+                pipeline_id: "".into(),
+                status: PipelineDeploymentStatus::Failed,
+            },
+        );
+        group.placements.insert(
+            "p2".into(),
+            PipelineDeployment {
+                worker_id: WorkerId("w2".into()),
+                worker_address: "http://localhost:9001".into(),
+                worker_api_key: "key".into(),
+                pipeline_id: "".into(),
+                status: PipelineDeploymentStatus::Failed,
+            },
+        );
+        group.update_status();
+        assert_eq!(group.status, GroupStatus::Failed);
+    }
+
+    #[test]
+    fn test_group_status_empty_placements() {
+        let spec = PipelineGroupSpec {
+            name: "test".into(),
+            pipelines: vec![],
+            routes: vec![],
+        };
+
+        let mut group = DeployedPipelineGroup::new("g1".into(), "test".into(), spec);
+        assert_eq!(group.status, GroupStatus::Deploying);
+        group.update_status();
+        // Empty placements should leave status unchanged
+        assert_eq!(group.status, GroupStatus::Deploying);
+    }
+
+    #[test]
+    fn test_group_status_mixed_deploying_and_running() {
+        let spec = PipelineGroupSpec {
+            name: "test".into(),
+            pipelines: vec![
+                PipelinePlacement {
+                    name: "p1".into(),
+                    source: "".into(),
+                    worker_affinity: None,
+                },
+                PipelinePlacement {
+                    name: "p2".into(),
+                    source: "".into(),
+                    worker_affinity: None,
+                },
+            ],
+            routes: vec![],
+        };
+
+        let mut group = DeployedPipelineGroup::new("g1".into(), "test".into(), spec);
+        group.placements.insert(
+            "p1".into(),
+            PipelineDeployment {
+                worker_id: WorkerId("w1".into()),
+                worker_address: "http://localhost:9000".into(),
+                worker_api_key: "key".into(),
+                pipeline_id: "pid1".into(),
+                status: PipelineDeploymentStatus::Running,
+            },
+        );
+        group.placements.insert(
+            "p2".into(),
+            PipelineDeployment {
+                worker_id: WorkerId("w2".into()),
+                worker_address: "http://localhost:9001".into(),
+                worker_api_key: "key".into(),
+                pipeline_id: "pid2".into(),
+                status: PipelineDeploymentStatus::Deploying,
+            },
+        );
+        group.update_status();
+        // One running + one deploying = PartiallyRunning (any_running && !all_running)
+        assert_eq!(group.status, GroupStatus::PartiallyRunning);
+    }
+
+    #[test]
+    fn test_group_status_all_stopped() {
+        let spec = PipelineGroupSpec {
+            name: "test".into(),
+            pipelines: vec![PipelinePlacement {
+                name: "p1".into(),
+                source: "".into(),
+                worker_affinity: None,
+            }],
+            routes: vec![],
+        };
+
+        let mut group = DeployedPipelineGroup::new("g1".into(), "test".into(), spec);
+        group.placements.insert(
+            "p1".into(),
+            PipelineDeployment {
+                worker_id: WorkerId("w1".into()),
+                worker_address: "http://localhost:9000".into(),
+                worker_api_key: "key".into(),
+                pipeline_id: "pid1".into(),
+                status: PipelineDeploymentStatus::Stopped,
+            },
+        );
+        group.update_status();
+        // Not running, not failed → Deploying (fallback)
+        assert_eq!(group.status, GroupStatus::Deploying);
+    }
+
+    #[test]
+    fn test_group_status_display() {
+        assert_eq!(GroupStatus::Deploying.to_string(), "deploying");
+        assert_eq!(GroupStatus::Running.to_string(), "running");
+        assert_eq!(
+            GroupStatus::PartiallyRunning.to_string(),
+            "partially_running"
+        );
+        assert_eq!(GroupStatus::Failed.to_string(), "failed");
+        assert_eq!(GroupStatus::TornDown.to_string(), "torn_down");
+    }
+
+    #[test]
+    fn test_group_status_serde() {
+        for status in [
+            GroupStatus::Deploying,
+            GroupStatus::Running,
+            GroupStatus::PartiallyRunning,
+            GroupStatus::Failed,
+            GroupStatus::TornDown,
+        ] {
+            let json = serde_json::to_string(&status).unwrap();
+            let parsed: GroupStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(parsed, status);
+        }
+    }
+
+    #[test]
+    fn test_pipeline_group_info_from_deployed() {
+        let spec = PipelineGroupSpec {
+            name: "test-group".into(),
+            pipelines: vec![
+                PipelinePlacement {
+                    name: "p1".into(),
+                    source: "stream A = X".into(),
+                    worker_affinity: None,
+                },
+                PipelinePlacement {
+                    name: "p2".into(),
+                    source: "stream B = Y".into(),
+                    worker_affinity: None,
+                },
+            ],
+            routes: vec![],
+        };
+
+        let mut group = DeployedPipelineGroup::new("g1".into(), "test-group".into(), spec);
+        group.status = GroupStatus::Running;
+        group.placements.insert(
+            "p1".into(),
+            PipelineDeployment {
+                worker_id: WorkerId("w1".into()),
+                worker_address: "http://localhost:9000".into(),
+                worker_api_key: "key".into(),
+                pipeline_id: "pid-abc".into(),
+                status: PipelineDeploymentStatus::Running,
+            },
+        );
+
+        let info = PipelineGroupInfo::from(&group);
+        assert_eq!(info.id, "g1");
+        assert_eq!(info.name, "test-group");
+        assert_eq!(info.status, "running");
+        assert_eq!(info.pipeline_count, 2);
+        assert_eq!(info.placements.len(), 1); // only placed pipelines
+
+        let p = &info.placements[0];
+        assert_eq!(p.pipeline_name, "p1");
+        assert_eq!(p.worker_id, "w1");
+        assert_eq!(p.pipeline_id, "pid-abc");
+    }
+
+    #[test]
+    fn test_pipeline_group_info_serde() {
+        let info = PipelineGroupInfo {
+            id: "g1".into(),
+            name: "test".into(),
+            status: "running".into(),
+            pipeline_count: 2,
+            placements: vec![PipelinePlacementInfo {
+                pipeline_name: "p1".into(),
+                worker_id: "w1".into(),
+                worker_address: "http://localhost:9000".into(),
+                pipeline_id: "pid1".into(),
+                status: "Running".into(),
+            }],
+        };
+
+        let json = serde_json::to_string(&info).unwrap();
+        let parsed: PipelineGroupInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.id, "g1");
+        assert_eq!(parsed.placements.len(), 1);
+    }
+
+    #[test]
+    fn test_pipeline_group_spec_no_routes() {
+        let json = r#"{
+            "name": "simple",
+            "pipelines": [
+                {"name": "p1", "source": "stream A = X"}
+            ]
+        }"#;
+        let spec: PipelineGroupSpec = serde_json::from_str(json).unwrap();
+        assert_eq!(spec.name, "simple");
+        assert!(spec.routes.is_empty()); // default
+    }
+
+    #[test]
+    fn test_inter_pipeline_route_serde() {
+        let route = InterPipelineRoute {
+            from_pipeline: "a".into(),
+            to_pipeline: "b".into(),
+            event_types: vec!["TypeA*".into(), "TypeB".into()],
+            mqtt_topic: Some("custom/topic".into()),
+        };
+        let json = serde_json::to_string(&route).unwrap();
+        let parsed: InterPipelineRoute = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.from_pipeline, "a");
+        assert_eq!(parsed.to_pipeline, "b");
+        assert_eq!(parsed.event_types.len(), 2);
+        assert_eq!(parsed.mqtt_topic, Some("custom/topic".into()));
+    }
+
+    #[test]
+    fn test_inter_pipeline_route_no_mqtt_topic() {
+        let json = r#"{
+            "from_pipeline": "a",
+            "to_pipeline": "b",
+            "event_types": ["*"]
+        }"#;
+        let parsed: InterPipelineRoute = serde_json::from_str(json).unwrap();
+        assert!(parsed.mqtt_topic.is_none());
+    }
+
+    #[test]
+    fn test_single_pipeline_group() {
+        let spec = PipelineGroupSpec {
+            name: "singleton".into(),
+            pipelines: vec![PipelinePlacement {
+                name: "only".into(),
+                source: "stream A = X".into(),
+                worker_affinity: None,
+            }],
+            routes: vec![],
+        };
+
+        let mut group = DeployedPipelineGroup::new("g1".into(), "singleton".into(), spec);
+        group.placements.insert(
+            "only".into(),
+            PipelineDeployment {
+                worker_id: WorkerId("w1".into()),
+                worker_address: "http://localhost:9000".into(),
+                worker_api_key: "key".into(),
+                pipeline_id: "pid1".into(),
+                status: PipelineDeploymentStatus::Running,
+            },
+        );
+        group.update_status();
+        assert_eq!(group.status, GroupStatus::Running);
+    }
 }
