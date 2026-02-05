@@ -77,6 +77,7 @@ stream Alert = SomeEvent
 - [`tutorials/getting-started.md`](tutorials/getting-started.md) - Installation and first program
 - [`tutorials/language-tutorial.md`](tutorials/language-tutorial.md) - Comprehensive VPL language guide
 - [`tutorials/contexts-tutorial.md`](tutorials/contexts-tutorial.md) - Parallel processing with contexts
+- [`tutorials/cluster-tutorial.md`](tutorials/cluster-tutorial.md) - **Distributed execution with cluster mode**
 - [`tutorials/checkpointing-tutorial.md`](tutorials/checkpointing-tutorial.md) - Checkpointing, persistence, and watermarks
 
 ### Guides

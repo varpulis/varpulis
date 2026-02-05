@@ -551,3 +551,11 @@ The cluster functionality lives in `crates/varpulis-cluster/`:
 | Heartbeat timeout | 15s | Time before marking a worker unhealthy |
 | HTTP client timeout | 10s | Timeout for coordinator → worker API calls |
 | Registration backoff | 1s-30s | Exponential backoff for registration retries |
+
+---
+
+## See Also
+
+- [Cluster Tutorial](../tutorials/cluster-tutorial.md) -- Step-by-step guide to running a distributed cluster
+- [CLI Reference](../reference/cli-reference.md) -- Full command-line options for `coordinator` and `server`
+- [Contexts Tutorial](../tutorials/contexts-tutorial.md) -- Single-process parallelism (used within each worker)

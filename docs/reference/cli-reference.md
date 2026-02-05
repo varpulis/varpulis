@@ -525,6 +525,7 @@ The worker auto-registers, sends heartbeats every 5 seconds, and retries registr
 
 - [Getting Started Tutorial](../tutorials/getting-started.md)
 - [VPL Language Tutorial](../tutorials/language-tutorial.md)
+- [Cluster Tutorial](../tutorials/cluster-tutorial.md)
 - [Configuration Guide](../guides/configuration.md)
 - [Cluster Architecture](../architecture/cluster.md)
 - [Troubleshooting Guide](../guides/troubleshooting.md)
