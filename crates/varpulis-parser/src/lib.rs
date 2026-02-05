@@ -79,6 +79,7 @@ pub mod expand;
 pub mod helpers;
 pub mod indent;
 pub mod lexer;
+pub mod optimize;
 pub mod pest_parser;
 
 pub use error::ParseError;
