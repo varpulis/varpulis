@@ -2262,7 +2262,7 @@ impl SaseEngine {
                     .min_by_key(|(_, r)| r.started_at)
                     .map(|(idx, r)| (idx, r.started_at.elapsed()))
                 {
-                    self.runs.remove(idx);
+                    self.runs.swap_remove(idx);
                     self.runs.push(run);
                     self.total_runs_evicted += 1;
                     (true, Some(ProcessWarning::RunEvicted { age }))
@@ -2280,7 +2280,7 @@ impl SaseEngine {
                     .min_by_key(|(_, r)| r.stack.len())
                     .map(|(idx, r)| (idx, r.started_at.elapsed()))
                 {
-                    self.runs.remove(idx);
+                    self.runs.swap_remove(idx);
                     self.runs.push(run);
                     self.total_runs_evicted += 1;
                     (true, Some(ProcessWarning::RunEvicted { age }))
@@ -2302,7 +2302,7 @@ impl SaseEngine {
                         .min_by_key(|(_, r)| r.started_at)
                         .map(|(idx, r)| (idx, r.started_at.elapsed()))
                     {
-                        self.runs.remove(idx);
+                        self.runs.swap_remove(idx);
                         self.runs.push(run);
                         self.total_runs_evicted += 1;
                         (true, Some(ProcessWarning::RunEvicted { age }))
@@ -2369,7 +2369,7 @@ impl SaseEngine {
                     .min_by_key(|(_, r)| r.started_at)
                     .map(|(idx, r)| (idx, r.started_at.elapsed()))
                 {
-                    partition_runs.remove(idx);
+                    partition_runs.swap_remove(idx);
                     partition_runs.push(run);
                     self.total_runs_evicted += 1;
                     (true, Some(ProcessWarning::RunEvicted { age }))
@@ -2385,7 +2385,7 @@ impl SaseEngine {
                     .min_by_key(|(_, r)| r.stack.len())
                     .map(|(idx, r)| (idx, r.started_at.elapsed()))
                 {
-                    partition_runs.remove(idx);
+                    partition_runs.swap_remove(idx);
                     partition_runs.push(run);
                     self.total_runs_evicted += 1;
                     (true, Some(ProcessWarning::RunEvicted { age }))
@@ -2404,7 +2404,7 @@ impl SaseEngine {
                         .min_by_key(|(_, r)| r.started_at)
                         .map(|(idx, r)| (idx, r.started_at.elapsed()))
                     {
-                        partition_runs.remove(idx);
+                        partition_runs.swap_remove(idx);
                         partition_runs.push(run);
                         self.total_runs_evicted += 1;
                         (true, Some(ProcessWarning::RunEvicted { age }))
@@ -2464,7 +2464,7 @@ impl SaseEngine {
             let mut i = 0;
             while i < runs.len() {
                 if runs[i].is_timed_out() || runs[i].invalidated {
-                    runs.remove(i);
+                    runs.swap_remove(i);
                     continue;
                 }
 
@@ -2473,7 +2473,7 @@ impl SaseEngine {
                     RunAdvanceResult::Continue => i += 1,
                     RunAdvanceResult::Complete(result) => {
                         completed.push(result);
-                        runs.remove(i);
+                        runs.swap_remove(i);
                     }
                     RunAdvanceResult::CompleteAndContinue(result) => {
                         // For `all` patterns: emit result but keep run active
@@ -2481,7 +2481,7 @@ impl SaseEngine {
                         i += 1;
                     }
                     RunAdvanceResult::Invalidate => {
-                        runs.remove(i);
+                        runs.swap_remove(i);
                     }
                     RunAdvanceResult::NoMatch => i += 1,
                 }
@@ -2497,7 +2497,7 @@ impl SaseEngine {
 
         while i < self.runs.len() {
             if self.runs[i].is_timed_out() || self.runs[i].invalidated {
-                self.runs.remove(i);
+                self.runs.swap_remove(i);
                 continue;
             }
 
@@ -2510,7 +2510,7 @@ impl SaseEngine {
                 }
                 RunAdvanceResult::Complete(result) => {
                     completed.push(result);
-                    self.runs.remove(i);
+                    self.runs.swap_remove(i);
                 }
                 RunAdvanceResult::CompleteAndContinue(result) => {
                     // For `all` patterns: emit result but keep run active
@@ -2519,7 +2519,7 @@ impl SaseEngine {
                     i += 1;
                 }
                 RunAdvanceResult::Invalidate => {
-                    self.runs.remove(i);
+                    self.runs.swap_remove(i);
                 }
                 RunAdvanceResult::NoMatch => i += 1,
             }
