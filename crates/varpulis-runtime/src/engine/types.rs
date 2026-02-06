@@ -15,7 +15,7 @@ use indexmap::IndexMap;
 use rustc_hash::FxHashMap;
 use std::collections::HashMap;
 use std::sync::Arc;
-use varpulis_core::ast::ConfigValue;
+use varpulis_core::ast::{ConfigValue, Expr, SasePatternExpr};
 use varpulis_core::Value;
 
 // =============================================================================
@@ -77,6 +77,19 @@ pub struct SourceBinding {
     pub connector_name: String,
     pub event_type: String,
     pub topic_override: Option<String>,
+}
+
+/// Named SASE+ pattern definition
+#[derive(Debug, Clone)]
+pub struct NamedPattern {
+    /// Pattern name
+    pub name: String,
+    /// SASE+ pattern expression (SEQ, AND, OR, NOT)
+    pub expr: SasePatternExpr,
+    /// Optional time constraint
+    pub within: Option<Expr>,
+    /// Optional partition key expression
+    pub partition_by: Option<Expr>,
 }
 
 // =============================================================================

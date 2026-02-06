@@ -426,236 +426,380 @@ pub fn call_user_function(
     }
 }
 
-/// Evaluate a filter expression at runtime
+/// Evaluate a filter expression at runtime.
+///
+/// This is a convenience wrapper around `eval_expr_with_functions` that passes
+/// empty function and binding maps. It provides access to all built-in functions
+/// without requiring user-defined function context.
+///
+/// For sequence filters and SASE+ pattern matching where no user-defined functions
+/// are needed, this provides a simpler API.
+#[inline]
 pub fn eval_filter_expr(
     expr: &varpulis_core::ast::Expr,
     event: &Event,
     ctx: &SequenceContext,
 ) -> Option<Value> {
-    use varpulis_core::ast::{BinOp, Expr};
+    // Use thread-local empty maps to avoid allocation on every call
+    thread_local! {
+        static EMPTY_FUNCTIONS: FxHashMap<String, UserFunction> = FxHashMap::default();
+        static EMPTY_BINDINGS: FxHashMap<String, Value> = FxHashMap::default();
+    }
 
-    match expr {
-        Expr::Ident(name) => {
-            // First check current event, then context
-            event.get(name).cloned()
-        }
-        Expr::Int(n) => Some(Value::Int(*n)),
-        Expr::Float(f) => Some(Value::Float(*f)),
-        Expr::Str(s) => Some(Value::Str(s.clone().into())),
-        Expr::Bool(b) => Some(Value::Bool(*b)),
-        Expr::Member {
-            expr: object,
-            member,
-        } => {
-            // Handle alias.field access (e.g., order.id, EMA12.symbol)
-            if let Expr::Ident(alias) = object.as_ref() {
-                // First check sequence context for captured events
-                if let Some(captured) = ctx.get(alias.as_str()) {
-                    return captured.get(member).cloned();
-                }
-                // Then check event data with prefixed field name (for join results)
-                // Try both dot notation (alias.field) and underscore notation (alias_field)
-                let prefixed_dot = format!("{}.{}", alias, member);
-                if let Some(value) = event.get(&prefixed_dot) {
-                    return Some(value.clone());
-                }
-                let prefixed_underscore = format!("{}_{}", alias, member);
-                if let Some(value) = event.get(&prefixed_underscore) {
-                    return Some(value.clone());
-                }
-                // Also try the member directly if alias matches event type
-                if alias == &*event.event_type {
-                    return event.get(member).cloned();
-                }
-            }
-            None
-        }
-        Expr::Binary { op, left, right } => {
-            let left_val = eval_filter_expr(left, event, ctx)?;
-            let right_val = eval_filter_expr(right, event, ctx)?;
+    EMPTY_FUNCTIONS.with(|functions| {
+        EMPTY_BINDINGS
+            .with(|bindings| eval_expr_with_functions(expr, event, ctx, functions, bindings))
+    })
+}
 
-            match op {
-                BinOp::Eq => Some(Value::Bool(left_val == right_val)),
-                BinOp::NotEq => Some(Value::Bool(left_val != right_val)),
-                BinOp::Lt => match (&left_val, &right_val) {
-                    (Value::Int(a), Value::Int(b)) => Some(Value::Bool(a < b)),
-                    (Value::Float(a), Value::Float(b)) => Some(Value::Bool(a < b)),
-                    (Value::Int(a), Value::Float(b)) => Some(Value::Bool((*a as f64) < *b)),
-                    (Value::Float(a), Value::Int(b)) => Some(Value::Bool(*a < (*b as f64))),
-                    _ => None,
-                },
-                BinOp::Le => match (&left_val, &right_val) {
-                    (Value::Int(a), Value::Int(b)) => Some(Value::Bool(a <= b)),
-                    (Value::Float(a), Value::Float(b)) => Some(Value::Bool(a <= b)),
-                    (Value::Int(a), Value::Float(b)) => Some(Value::Bool((*a as f64) <= *b)),
-                    (Value::Float(a), Value::Int(b)) => Some(Value::Bool(*a <= (*b as f64))),
-                    _ => None,
-                },
-                BinOp::Gt => match (&left_val, &right_val) {
-                    (Value::Int(a), Value::Int(b)) => Some(Value::Bool(a > b)),
-                    (Value::Float(a), Value::Float(b)) => Some(Value::Bool(a > b)),
-                    (Value::Int(a), Value::Float(b)) => Some(Value::Bool((*a as f64) > *b)),
-                    (Value::Float(a), Value::Int(b)) => Some(Value::Bool(*a > (*b as f64))),
-                    _ => None,
-                },
-                BinOp::Ge => match (&left_val, &right_val) {
-                    (Value::Int(a), Value::Int(b)) => Some(Value::Bool(a >= b)),
-                    (Value::Float(a), Value::Float(b)) => Some(Value::Bool(a >= b)),
-                    (Value::Int(a), Value::Float(b)) => Some(Value::Bool((*a as f64) >= *b)),
-                    (Value::Float(a), Value::Int(b)) => Some(Value::Bool(*a >= (*b as f64))),
-                    _ => None,
-                },
-                BinOp::And => {
-                    let a = left_val.as_bool()?;
-                    let b = right_val.as_bool()?;
-                    Some(Value::Bool(a && b))
-                }
-                BinOp::Or => {
-                    let a = left_val.as_bool()?;
-                    let b = right_val.as_bool()?;
-                    Some(Value::Bool(a || b))
-                }
-                BinOp::Add => match (&left_val, &right_val) {
-                    (Value::Int(a), Value::Int(b)) => Some(Value::Int(a + b)),
-                    (Value::Float(a), Value::Float(b)) => Some(Value::Float(a + b)),
-                    (Value::Int(a), Value::Float(b)) => Some(Value::Float(*a as f64 + b)),
-                    (Value::Float(a), Value::Int(b)) => Some(Value::Float(a + *b as f64)),
-                    (Value::Str(_), Value::Str(_)) => match (left_val, right_val) {
-                        (Value::Str(a), Value::Str(b)) => {
-                            let mut result = a.into_string();
-                            result.push_str(&b);
-                            Some(Value::Str(result.into()))
-                        }
-                        _ => unreachable!(),
-                    },
-                    _ => None,
-                },
-                BinOp::Sub => match (&left_val, &right_val) {
-                    (Value::Int(a), Value::Int(b)) => Some(Value::Int(a - b)),
-                    (Value::Float(a), Value::Float(b)) => Some(Value::Float(a - b)),
-                    (Value::Int(a), Value::Float(b)) => Some(Value::Float(*a as f64 - b)),
-                    (Value::Float(a), Value::Int(b)) => Some(Value::Float(a - *b as f64)),
-                    _ => None,
-                },
-                BinOp::Mul => match (&left_val, &right_val) {
-                    (Value::Int(a), Value::Int(b)) => Some(Value::Int(a * b)),
-                    (Value::Float(a), Value::Float(b)) => Some(Value::Float(a * b)),
-                    (Value::Int(a), Value::Float(b)) => Some(Value::Float(*a as f64 * b)),
-                    (Value::Float(a), Value::Int(b)) => Some(Value::Float(a * *b as f64)),
-                    _ => None,
-                },
-                BinOp::Div => match (&left_val, &right_val) {
-                    (Value::Int(a), Value::Int(b)) if *b != 0 => Some(Value::Int(a / b)),
-                    (Value::Float(a), Value::Float(b)) if *b != 0.0 => Some(Value::Float(a / b)),
-                    (Value::Int(a), Value::Float(b)) if *b != 0.0 => {
-                        Some(Value::Float(*a as f64 / b))
-                    }
-                    (Value::Float(a), Value::Int(b)) if *b != 0 => {
-                        Some(Value::Float(a / *b as f64))
-                    }
-                    _ => None,
-                },
-                _ => None,
-            }
-        }
-        Expr::Call { func, args } => {
-            // Handle function calls - both built-in and user-defined
-            if let Expr::Ident(func_name) = func.as_ref() {
-                // Evaluate arguments
-                let arg_values: Vec<Value> = args
-                    .iter()
-                    .filter_map(|arg| match arg {
-                        varpulis_core::ast::Arg::Positional(e) => eval_filter_expr(e, event, ctx),
-                        varpulis_core::ast::Arg::Named(_, e) => eval_filter_expr(e, event, ctx),
-                    })
-                    .collect();
+// =============================================================================
+// Built-in Functions
+// =============================================================================
 
-                // Built-in functions
-                match func_name.as_str() {
-                    "abs" => arg_values.first().and_then(|v| match v {
-                        Value::Int(n) => Some(Value::Int(n.abs())),
-                        Value::Float(f) => Some(Value::Float(f.abs())),
-                        _ => None,
-                    }),
-                    "sqrt" => arg_values.first().and_then(|v| match v {
-                        Value::Int(n) => Some(Value::Float((*n as f64).sqrt())),
-                        Value::Float(f) => Some(Value::Float(f.sqrt())),
-                        _ => None,
-                    }),
-                    "floor" => arg_values.first().and_then(|v| match v {
-                        Value::Float(f) => Some(Value::Int(f.floor() as i64)),
-                        Value::Int(n) => Some(Value::Int(*n)),
-                        _ => None,
-                    }),
-                    "ceil" => arg_values.first().and_then(|v| match v {
-                        Value::Float(f) => Some(Value::Int(f.ceil() as i64)),
-                        Value::Int(n) => Some(Value::Int(*n)),
-                        _ => None,
-                    }),
-                    "round" => arg_values.first().and_then(|v| match v {
-                        Value::Float(f) => Some(Value::Int(f.round() as i64)),
-                        Value::Int(n) => Some(Value::Int(*n)),
-                        _ => None,
-                    }),
-                    "len" => arg_values.first().and_then(|v| match v {
-                        Value::Str(s) => Some(Value::Int(s.len() as i64)),
-                        Value::Array(a) => Some(Value::Int(a.len() as i64)),
-                        _ => None,
-                    }),
-                    "to_string" => arg_values
-                        .first()
-                        .map(|v| Value::Str(format!("{}", v).into())),
-                    "to_int" => arg_values.first().and_then(|v| match v {
-                        Value::Int(n) => Some(Value::Int(*n)),
-                        Value::Float(f) => Some(Value::Int(*f as i64)),
-                        Value::Str(s) => s.parse::<i64>().ok().map(Value::Int),
-                        _ => None,
-                    }),
-                    "to_float" => arg_values.first().and_then(|v| match v {
-                        Value::Int(n) => Some(Value::Float(*n as f64)),
-                        Value::Float(f) => Some(Value::Float(*f)),
-                        Value::Str(s) => s.parse::<f64>().ok().map(Value::Float),
-                        _ => None,
-                    }),
-                    "min" if arg_values.len() == 2 => match (&arg_values[0], &arg_values[1]) {
-                        (Value::Int(a), Value::Int(b)) => Some(Value::Int(*a.min(b))),
-                        (Value::Float(a), Value::Float(b)) => Some(Value::Float(a.min(*b))),
-                        _ => None,
-                    },
-                    "max" if arg_values.len() == 2 => match (&arg_values[0], &arg_values[1]) {
-                        (Value::Int(a), Value::Int(b)) => Some(Value::Int(*a.max(b))),
-                        (Value::Float(a), Value::Float(b)) => Some(Value::Float(a.max(*b))),
-                        _ => None,
-                    },
-                    _ => {
-                        // User-defined function - requires FunctionContext
-                        // For now, log and return None (will be extended)
-                        debug!("User function call: {}({:?})", func_name, arg_values);
-                        None
-                    }
-                }
+/// Evaluate a built-in function call.
+///
+/// This centralizes all built-in function implementations including:
+/// - Math: abs, sqrt, floor, ceil, round, pow, log, log10, exp, sin, cos, tan, min, max
+/// - Array/Collection: len, first, last, push, pop, reverse, sort, contains, keys, values, get, set, range, sum, avg
+/// - String: to_string, to_int, to_float, trim, lower, upper, split, join, replace, starts_with, ends_with, substring
+/// - Type checking: type_of, is_null, is_int, is_float, is_string, is_bool, is_array, is_map
+#[inline]
+fn eval_builtin_function(func_name: &str, args: &[Value]) -> Option<Value> {
+    match func_name {
+        // Math functions
+        "abs" => args.first().and_then(|v| match v {
+            Value::Int(n) => Some(Value::Int(n.abs())),
+            Value::Float(f) => Some(Value::Float(f.abs())),
+            _ => None,
+        }),
+        "sqrt" => args.first().and_then(|v| match v {
+            Value::Int(n) => Some(Value::Float((*n as f64).sqrt())),
+            Value::Float(f) => Some(Value::Float(f.sqrt())),
+            _ => None,
+        }),
+        "floor" => args.first().and_then(|v| match v {
+            Value::Float(f) => Some(Value::Int(f.floor() as i64)),
+            Value::Int(n) => Some(Value::Int(*n)),
+            _ => None,
+        }),
+        "ceil" => args.first().and_then(|v| match v {
+            Value::Float(f) => Some(Value::Int(f.ceil() as i64)),
+            Value::Int(n) => Some(Value::Int(*n)),
+            _ => None,
+        }),
+        "round" => args.first().and_then(|v| match v {
+            Value::Float(f) => Some(Value::Int(f.round() as i64)),
+            Value::Int(n) => Some(Value::Int(*n)),
+            _ => None,
+        }),
+        "pow" if args.len() == 2 => match (&args[0], &args[1]) {
+            (Value::Int(a), Value::Int(b)) => Some(Value::Int((*a as f64).powi(*b as i32) as i64)),
+            (Value::Float(a), Value::Int(b)) => Some(Value::Float(a.powi(*b as i32))),
+            (Value::Float(a), Value::Float(b)) => Some(Value::Float(a.powf(*b))),
+            (Value::Int(a), Value::Float(b)) => Some(Value::Float((*a as f64).powf(*b))),
+            _ => None,
+        },
+        "log" => args.first().and_then(|v| match v {
+            Value::Int(n) => Some(Value::Float((*n as f64).ln())),
+            Value::Float(f) => Some(Value::Float(f.ln())),
+            _ => None,
+        }),
+        "log10" => args.first().and_then(|v| match v {
+            Value::Int(n) => Some(Value::Float((*n as f64).log10())),
+            Value::Float(f) => Some(Value::Float(f.log10())),
+            _ => None,
+        }),
+        "exp" => args.first().and_then(|v| match v {
+            Value::Int(n) => Some(Value::Float((*n as f64).exp())),
+            Value::Float(f) => Some(Value::Float(f.exp())),
+            _ => None,
+        }),
+        "sin" => args.first().and_then(|v| match v {
+            Value::Int(n) => Some(Value::Float((*n as f64).sin())),
+            Value::Float(f) => Some(Value::Float(f.sin())),
+            _ => None,
+        }),
+        "cos" => args.first().and_then(|v| match v {
+            Value::Int(n) => Some(Value::Float((*n as f64).cos())),
+            Value::Float(f) => Some(Value::Float(f.cos())),
+            _ => None,
+        }),
+        "tan" => args.first().and_then(|v| match v {
+            Value::Int(n) => Some(Value::Float((*n as f64).tan())),
+            Value::Float(f) => Some(Value::Float(f.tan())),
+            _ => None,
+        }),
+        "min" if args.len() == 2 => match (&args[0], &args[1]) {
+            (Value::Int(a), Value::Int(b)) => Some(Value::Int(*a.min(b))),
+            (Value::Float(a), Value::Float(b)) => Some(Value::Float(a.min(*b))),
+            (Value::Int(a), Value::Float(b)) => Some(Value::Float((*a as f64).min(*b))),
+            (Value::Float(a), Value::Int(b)) => Some(Value::Float(a.min(*b as f64))),
+            _ => None,
+        },
+        "max" if args.len() == 2 => match (&args[0], &args[1]) {
+            (Value::Int(a), Value::Int(b)) => Some(Value::Int(*a.max(b))),
+            (Value::Float(a), Value::Float(b)) => Some(Value::Float(a.max(*b))),
+            (Value::Int(a), Value::Float(b)) => Some(Value::Float((*a as f64).max(*b))),
+            (Value::Float(a), Value::Int(b)) => Some(Value::Float(a.max(*b as f64))),
+            _ => None,
+        },
+
+        // Array/Collection functions
+        "len" => args.first().and_then(|v| match v {
+            Value::Str(s) => Some(Value::Int(s.len() as i64)),
+            Value::Array(a) => Some(Value::Int(a.len() as i64)),
+            Value::Map(m) => Some(Value::Int(m.len() as i64)),
+            _ => None,
+        }),
+        "first" => args.first().and_then(|v| match v {
+            Value::Array(a) => a.first().cloned(),
+            _ => None,
+        }),
+        "last" => args.first().and_then(|v| match v {
+            Value::Array(a) => a.last().cloned(),
+            _ => None,
+        }),
+        "push" if args.len() == 2 => {
+            if let Value::Array(mut arr) = args[0].clone() {
+                arr.push(args[1].clone());
+                Some(Value::Array(arr))
             } else {
                 None
             }
         }
-        Expr::Unary { op, expr: inner } => {
-            let val = eval_filter_expr(inner, event, ctx)?;
-            match op {
-                varpulis_core::ast::UnaryOp::Neg => match val {
-                    Value::Int(n) => Some(Value::Int(-n)),
-                    Value::Float(f) => Some(Value::Float(-f)),
-                    _ => None,
-                },
-                varpulis_core::ast::UnaryOp::Not => match val {
-                    Value::Bool(b) => Some(Value::Bool(!b)),
-                    _ => None,
-                },
-                _ => None,
+        "pop" => args.first().and_then(|v| match v {
+            Value::Array(arr) => {
+                let mut arr = arr.clone();
+                arr.pop().map(|_| Value::Array(arr))
             }
+            _ => None,
+        }),
+        "reverse" => args.first().and_then(|v| match v {
+            Value::Array(arr) => {
+                let mut arr = arr.clone();
+                arr.reverse();
+                Some(Value::Array(arr))
+            }
+            Value::Str(s) => Some(Value::Str(s.chars().rev().collect::<String>().into())),
+            _ => None,
+        }),
+        "sort" => args.first().and_then(|v| match v {
+            Value::Array(arr) => {
+                let mut arr = arr.clone();
+                arr.sort_by(|a, b| match (a, b) {
+                    (Value::Int(x), Value::Int(y)) => x.cmp(y),
+                    (Value::Float(x), Value::Float(y)) => {
+                        x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal)
+                    }
+                    (Value::Str(x), Value::Str(y)) => x.cmp(y),
+                    _ => std::cmp::Ordering::Equal,
+                });
+                Some(Value::Array(arr))
+            }
+            _ => None,
+        }),
+        "contains" if args.len() == 2 => match (&args[0], &args[1]) {
+            (Value::Array(arr), val) => Some(Value::Bool(arr.contains(val))),
+            (Value::Str(s), Value::Str(sub)) => Some(Value::Bool(s.contains(&**sub))),
+            (Value::Map(m), Value::Str(key)) => Some(Value::Bool(m.contains_key(&**key))),
+            _ => None,
+        },
+        "keys" => args.first().and_then(|v| match v {
+            Value::Map(m) => Some(Value::array(
+                m.keys().map(|k| Value::Str((&**k).into())).collect(),
+            )),
+            _ => None,
+        }),
+        "values" => args.first().and_then(|v| match v {
+            Value::Map(m) => Some(Value::array(m.values().cloned().collect())),
+            _ => None,
+        }),
+        "get" if args.len() == 2 => match (&args[0], &args[1]) {
+            (Value::Array(arr), Value::Int(idx)) => arr.get(*idx as usize).cloned(),
+            (Value::Map(m), Value::Str(key)) => m.get(&**key).cloned(),
+            _ => None,
+        },
+        "set" if args.len() == 3 => match (&args[0], &args[1], &args[2]) {
+            (Value::Array(arr), Value::Int(idx), val) => {
+                let mut arr = arr.clone();
+                let idx = *idx as usize;
+                if idx < arr.len() {
+                    arr[idx] = val.clone();
+                }
+                Some(Value::Array(arr))
+            }
+            (Value::Map(m), Value::Str(key), val) => {
+                let mut m = m.clone();
+                m.insert((&**key).into(), val.clone());
+                Some(Value::Map(m))
+            }
+            _ => None,
+        },
+        "range" if !args.is_empty() => {
+            let (start, end) = if args.len() >= 2 {
+                match (&args[0], &args[1]) {
+                    (Value::Int(s), Value::Int(e)) => (*s, *e),
+                    _ => return None,
+                }
+            } else if let Value::Int(n) = &args[0] {
+                (0, *n)
+            } else {
+                return None;
+            };
+            Some(Value::array((start..end).map(Value::Int).collect()))
         }
+        "sum" => args.first().and_then(|v| match v {
+            Value::Array(arr) => {
+                let sum: f64 = arr
+                    .iter()
+                    .filter_map(|v| match v {
+                        Value::Int(n) => Some(*n as f64),
+                        Value::Float(f) => Some(*f),
+                        _ => None,
+                    })
+                    .sum();
+                Some(Value::Float(sum))
+            }
+            _ => None,
+        }),
+        "avg" => args.first().and_then(|v| match v {
+            Value::Array(arr) => {
+                let nums: Vec<f64> = arr
+                    .iter()
+                    .filter_map(|v| match v {
+                        Value::Int(n) => Some(*n as f64),
+                        Value::Float(f) => Some(*f),
+                        _ => None,
+                    })
+                    .collect();
+                if nums.is_empty() {
+                    Some(Value::Float(0.0))
+                } else {
+                    Some(Value::Float(nums.iter().sum::<f64>() / nums.len() as f64))
+                }
+            }
+            _ => None,
+        }),
+
+        // String functions
+        "to_string" => args.first().map(|v| Value::Str(format!("{}", v).into())),
+        "to_int" => args.first().and_then(|v| match v {
+            Value::Int(n) => Some(Value::Int(*n)),
+            Value::Float(f) => Some(Value::Int(*f as i64)),
+            Value::Str(s) => s.parse::<i64>().ok().map(Value::Int),
+            Value::Bool(b) => Some(Value::Int(if *b { 1 } else { 0 })),
+            _ => None,
+        }),
+        "to_float" => args.first().and_then(|v| match v {
+            Value::Int(n) => Some(Value::Float(*n as f64)),
+            Value::Float(f) => Some(Value::Float(*f)),
+            Value::Str(s) => s.parse::<f64>().ok().map(Value::Float),
+            _ => None,
+        }),
+        "trim" => args.first().and_then(|v| match v {
+            Value::Str(s) => Some(Value::Str(s.trim().to_string().into())),
+            _ => None,
+        }),
+        "lower" | "lowercase" => args.first().and_then(|v| match v {
+            Value::Str(s) => Some(Value::Str(s.to_lowercase().into())),
+            _ => None,
+        }),
+        "upper" | "uppercase" => args.first().and_then(|v| match v {
+            Value::Str(s) => Some(Value::Str(s.to_uppercase().into())),
+            _ => None,
+        }),
+        "split" if args.len() == 2 => match (&args[0], &args[1]) {
+            (Value::Str(s), Value::Str(sep)) => Some(Value::array(
+                s.split(&**sep).map(|p| Value::Str(p.into())).collect(),
+            )),
+            _ => None,
+        },
+        "join" if args.len() == 2 => match (&args[0], &args[1]) {
+            (Value::Array(arr), Value::Str(sep)) => {
+                let strs: Vec<String> = arr.iter().map(|v| format!("{}", v)).collect();
+                Some(Value::Str(strs.join(&**sep).into()))
+            }
+            _ => None,
+        },
+        "replace" if args.len() == 3 => match (&args[0], &args[1], &args[2]) {
+            (Value::Str(s), Value::Str(from), Value::Str(to)) => {
+                Some(Value::Str(s.replace(&**from, to).into()))
+            }
+            _ => None,
+        },
+        "starts_with" if args.len() == 2 => match (&args[0], &args[1]) {
+            (Value::Str(s), Value::Str(prefix)) => Some(Value::Bool(s.starts_with(&**prefix))),
+            _ => None,
+        },
+        "ends_with" if args.len() == 2 => match (&args[0], &args[1]) {
+            (Value::Str(s), Value::Str(suffix)) => Some(Value::Bool(s.ends_with(&**suffix))),
+            _ => None,
+        },
+        "substring" if args.len() >= 2 => match &args[0] {
+            Value::Str(s) => {
+                let start = match &args[1] {
+                    Value::Int(n) => *n as usize,
+                    _ => return None,
+                };
+                let end = if args.len() >= 3 {
+                    match &args[2] {
+                        Value::Int(n) => *n as usize,
+                        _ => return None,
+                    }
+                } else {
+                    s.len()
+                };
+                let chars: Vec<char> = s.chars().collect();
+                (start <= end && end <= chars.len())
+                    .then(|| Value::Str(chars[start..end].iter().collect::<String>().into()))
+            }
+            _ => None,
+        },
+
+        // Type checking
+        "type_of" => args.first().map(|v| {
+            Value::Str(
+                match v {
+                    Value::Int(_) => "int",
+                    Value::Float(_) => "float",
+                    Value::Str(_) => "string",
+                    Value::Bool(_) => "bool",
+                    Value::Array(_) => "array",
+                    Value::Map(_) => "map",
+                    Value::Null => "null",
+                    Value::Duration(_) => "duration",
+                    Value::Timestamp(_) => "timestamp",
+                }
+                .into(),
+            )
+        }),
+        "is_null" => args.first().map(|v| Value::Bool(matches!(v, Value::Null))),
+        "is_int" => args
+            .first()
+            .map(|v| Value::Bool(matches!(v, Value::Int(_)))),
+        "is_float" => args
+            .first()
+            .map(|v| Value::Bool(matches!(v, Value::Float(_)))),
+        "is_string" => args
+            .first()
+            .map(|v| Value::Bool(matches!(v, Value::Str(_)))),
+        "is_bool" => args
+            .first()
+            .map(|v| Value::Bool(matches!(v, Value::Bool(_)))),
+        "is_array" => args
+            .first()
+            .map(|v| Value::Bool(matches!(v, Value::Array(_)))),
+        "is_map" => args
+            .first()
+            .map(|v| Value::Bool(matches!(v, Value::Map(_)))),
+
         _ => None,
     }
 }
+
+// =============================================================================
+// Expression Evaluation
+// =============================================================================
 
 /// Evaluate expression with access to user-defined functions
 pub fn eval_expr_with_functions(
@@ -869,362 +1013,8 @@ pub fn eval_expr_with_functions(
                     return call_user_function(user_fn, &arg_values, event, ctx, functions);
                 }
 
-                // Built-in functions
-                match func_name.as_str() {
-                    // Math functions
-                    "abs" => arg_values.first().and_then(|v| match v {
-                        Value::Int(n) => Some(Value::Int(n.abs())),
-                        Value::Float(f) => Some(Value::Float(f.abs())),
-                        _ => None,
-                    }),
-                    "sqrt" => arg_values.first().and_then(|v| match v {
-                        Value::Int(n) => Some(Value::Float((*n as f64).sqrt())),
-                        Value::Float(f) => Some(Value::Float(f.sqrt())),
-                        _ => None,
-                    }),
-                    "floor" => arg_values.first().and_then(|v| match v {
-                        Value::Float(f) => Some(Value::Int(f.floor() as i64)),
-                        Value::Int(n) => Some(Value::Int(*n)),
-                        _ => None,
-                    }),
-                    "ceil" => arg_values.first().and_then(|v| match v {
-                        Value::Float(f) => Some(Value::Int(f.ceil() as i64)),
-                        Value::Int(n) => Some(Value::Int(*n)),
-                        _ => None,
-                    }),
-                    "round" => arg_values.first().and_then(|v| match v {
-                        Value::Float(f) => Some(Value::Int(f.round() as i64)),
-                        Value::Int(n) => Some(Value::Int(*n)),
-                        _ => None,
-                    }),
-                    "pow" if arg_values.len() == 2 => match (&arg_values[0], &arg_values[1]) {
-                        (Value::Int(a), Value::Int(b)) => {
-                            Some(Value::Int((*a as f64).powi(*b as i32) as i64))
-                        }
-                        (Value::Float(a), Value::Int(b)) => Some(Value::Float(a.powi(*b as i32))),
-                        (Value::Float(a), Value::Float(b)) => Some(Value::Float(a.powf(*b))),
-                        (Value::Int(a), Value::Float(b)) => {
-                            Some(Value::Float((*a as f64).powf(*b)))
-                        }
-                        _ => None,
-                    },
-                    "log" => arg_values.first().and_then(|v| match v {
-                        Value::Int(n) => Some(Value::Float((*n as f64).ln())),
-                        Value::Float(f) => Some(Value::Float(f.ln())),
-                        _ => None,
-                    }),
-                    "log10" => arg_values.first().and_then(|v| match v {
-                        Value::Int(n) => Some(Value::Float((*n as f64).log10())),
-                        Value::Float(f) => Some(Value::Float(f.log10())),
-                        _ => None,
-                    }),
-                    "exp" => arg_values.first().and_then(|v| match v {
-                        Value::Int(n) => Some(Value::Float((*n as f64).exp())),
-                        Value::Float(f) => Some(Value::Float(f.exp())),
-                        _ => None,
-                    }),
-                    "sin" => arg_values.first().and_then(|v| match v {
-                        Value::Int(n) => Some(Value::Float((*n as f64).sin())),
-                        Value::Float(f) => Some(Value::Float(f.sin())),
-                        _ => None,
-                    }),
-                    "cos" => arg_values.first().and_then(|v| match v {
-                        Value::Int(n) => Some(Value::Float((*n as f64).cos())),
-                        Value::Float(f) => Some(Value::Float(f.cos())),
-                        _ => None,
-                    }),
-                    "tan" => arg_values.first().and_then(|v| match v {
-                        Value::Int(n) => Some(Value::Float((*n as f64).tan())),
-                        Value::Float(f) => Some(Value::Float(f.tan())),
-                        _ => None,
-                    }),
-                    "min" if arg_values.len() == 2 => match (&arg_values[0], &arg_values[1]) {
-                        (Value::Int(a), Value::Int(b)) => Some(Value::Int(*a.min(b))),
-                        (Value::Float(a), Value::Float(b)) => Some(Value::Float(a.min(*b))),
-                        (Value::Int(a), Value::Float(b)) => Some(Value::Float((*a as f64).min(*b))),
-                        (Value::Float(a), Value::Int(b)) => Some(Value::Float(a.min(*b as f64))),
-                        _ => None,
-                    },
-                    "max" if arg_values.len() == 2 => match (&arg_values[0], &arg_values[1]) {
-                        (Value::Int(a), Value::Int(b)) => Some(Value::Int(*a.max(b))),
-                        (Value::Float(a), Value::Float(b)) => Some(Value::Float(a.max(*b))),
-                        (Value::Int(a), Value::Float(b)) => Some(Value::Float((*a as f64).max(*b))),
-                        (Value::Float(a), Value::Int(b)) => Some(Value::Float(a.max(*b as f64))),
-                        _ => None,
-                    },
-
-                    // Array/Collection functions
-                    "len" => arg_values.first().and_then(|v| match v {
-                        Value::Str(s) => Some(Value::Int(s.len() as i64)),
-                        Value::Array(a) => Some(Value::Int(a.len() as i64)),
-                        Value::Map(m) => Some(Value::Int(m.len() as i64)),
-                        _ => None,
-                    }),
-                    "first" => arg_values.first().and_then(|v| match v {
-                        Value::Array(a) => a.first().cloned(),
-                        _ => None,
-                    }),
-                    "last" => arg_values.first().and_then(|v| match v {
-                        Value::Array(a) => a.last().cloned(),
-                        _ => None,
-                    }),
-                    "push" if arg_values.len() == 2 => {
-                        if let Value::Array(mut arr) = arg_values[0].clone() {
-                            arr.push(arg_values[1].clone());
-                            Some(Value::Array(arr))
-                        } else {
-                            None
-                        }
-                    }
-                    "pop" => arg_values.first().and_then(|v| match v {
-                        Value::Array(arr) => {
-                            let mut arr = arr.clone();
-                            arr.pop().map(|_| Value::Array(arr))
-                        }
-                        _ => None,
-                    }),
-                    "reverse" => arg_values.first().and_then(|v| match v {
-                        Value::Array(arr) => {
-                            let mut arr = arr.clone();
-                            arr.reverse();
-                            Some(Value::Array(arr))
-                        }
-                        Value::Str(s) => {
-                            Some(Value::Str(s.chars().rev().collect::<String>().into()))
-                        }
-                        _ => None,
-                    }),
-                    "sort" => arg_values.first().and_then(|v| match v {
-                        Value::Array(arr) => {
-                            let mut arr = arr.clone();
-                            arr.sort_by(|a, b| match (a, b) {
-                                (Value::Int(x), Value::Int(y)) => x.cmp(y),
-                                (Value::Float(x), Value::Float(y)) => {
-                                    x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal)
-                                }
-                                (Value::Str(x), Value::Str(y)) => x.cmp(y),
-                                _ => std::cmp::Ordering::Equal,
-                            });
-                            Some(Value::Array(arr))
-                        }
-                        _ => None,
-                    }),
-                    "contains" if arg_values.len() == 2 => match (&arg_values[0], &arg_values[1]) {
-                        (Value::Array(arr), val) => Some(Value::Bool(arr.contains(val))),
-                        (Value::Str(s), Value::Str(sub)) => Some(Value::Bool(s.contains(&**sub))),
-                        (Value::Map(m), Value::Str(key)) => {
-                            Some(Value::Bool(m.contains_key(&**key)))
-                        }
-                        _ => None,
-                    },
-                    "keys" => arg_values.first().and_then(|v| match v {
-                        Value::Map(m) => Some(Value::array(
-                            m.keys().map(|k| Value::Str((&**k).into())).collect(),
-                        )),
-                        _ => None,
-                    }),
-                    "values" => arg_values.first().and_then(|v| match v {
-                        Value::Map(m) => Some(Value::array(m.values().cloned().collect())),
-                        _ => None,
-                    }),
-                    "get" if arg_values.len() == 2 => match (&arg_values[0], &arg_values[1]) {
-                        (Value::Array(arr), Value::Int(idx)) => arr.get(*idx as usize).cloned(),
-                        (Value::Map(m), Value::Str(key)) => m.get(&**key).cloned(),
-                        _ => None,
-                    },
-                    "set" if arg_values.len() == 3 => {
-                        match (&arg_values[0], &arg_values[1], &arg_values[2]) {
-                            (Value::Array(arr), Value::Int(idx), val) => {
-                                let mut arr = arr.clone();
-                                let idx = *idx as usize;
-                                if idx < arr.len() {
-                                    arr[idx] = val.clone();
-                                }
-                                Some(Value::Array(arr))
-                            }
-                            (Value::Map(m), Value::Str(key), val) => {
-                                let mut m = m.clone();
-                                m.insert((&**key).into(), val.clone());
-                                Some(Value::Map(m))
-                            }
-                            _ => None,
-                        }
-                    }
-                    "range" if !arg_values.is_empty() => {
-                        let (start, end) = if arg_values.len() >= 2 {
-                            match (&arg_values[0], &arg_values[1]) {
-                                (Value::Int(s), Value::Int(e)) => (*s, *e),
-                                _ => return None,
-                            }
-                        } else if let Value::Int(n) = &arg_values[0] {
-                            (0, *n)
-                        } else {
-                            return None;
-                        };
-                        Some(Value::array((start..end).map(Value::Int).collect()))
-                    }
-                    "sum" => arg_values.first().and_then(|v| match v {
-                        Value::Array(arr) => {
-                            let sum: f64 = arr
-                                .iter()
-                                .filter_map(|v| match v {
-                                    Value::Int(n) => Some(*n as f64),
-                                    Value::Float(f) => Some(*f),
-                                    _ => None,
-                                })
-                                .sum();
-                            Some(Value::Float(sum))
-                        }
-                        _ => None,
-                    }),
-                    "avg" => arg_values.first().and_then(|v| match v {
-                        Value::Array(arr) => {
-                            let nums: Vec<f64> = arr
-                                .iter()
-                                .filter_map(|v| match v {
-                                    Value::Int(n) => Some(*n as f64),
-                                    Value::Float(f) => Some(*f),
-                                    _ => None,
-                                })
-                                .collect();
-                            if nums.is_empty() {
-                                Some(Value::Float(0.0))
-                            } else {
-                                Some(Value::Float(nums.iter().sum::<f64>() / nums.len() as f64))
-                            }
-                        }
-                        _ => None,
-                    }),
-
-                    // String functions
-                    "to_string" => arg_values
-                        .first()
-                        .map(|v| Value::Str(format!("{}", v).into())),
-                    "to_int" => arg_values.first().and_then(|v| match v {
-                        Value::Int(n) => Some(Value::Int(*n)),
-                        Value::Float(f) => Some(Value::Int(*f as i64)),
-                        Value::Str(s) => s.parse::<i64>().ok().map(Value::Int),
-                        Value::Bool(b) => Some(Value::Int(if *b { 1 } else { 0 })),
-                        _ => None,
-                    }),
-                    "to_float" => arg_values.first().and_then(|v| match v {
-                        Value::Int(n) => Some(Value::Float(*n as f64)),
-                        Value::Float(f) => Some(Value::Float(*f)),
-                        Value::Str(s) => s.parse::<f64>().ok().map(Value::Float),
-                        _ => None,
-                    }),
-                    "trim" => arg_values.first().and_then(|v| match v {
-                        Value::Str(s) => Some(Value::Str(s.trim().to_string().into())),
-                        _ => None,
-                    }),
-                    "lower" | "lowercase" => arg_values.first().and_then(|v| match v {
-                        Value::Str(s) => Some(Value::Str(s.to_lowercase().into())),
-                        _ => None,
-                    }),
-                    "upper" | "uppercase" => arg_values.first().and_then(|v| match v {
-                        Value::Str(s) => Some(Value::Str(s.to_uppercase().into())),
-                        _ => None,
-                    }),
-                    "split" if arg_values.len() == 2 => match (&arg_values[0], &arg_values[1]) {
-                        (Value::Str(s), Value::Str(sep)) => Some(Value::array(
-                            s.split(&**sep).map(|p| Value::Str(p.into())).collect(),
-                        )),
-                        _ => None,
-                    },
-                    "join" if arg_values.len() == 2 => match (&arg_values[0], &arg_values[1]) {
-                        (Value::Array(arr), Value::Str(sep)) => {
-                            let strs: Vec<String> = arr.iter().map(|v| format!("{}", v)).collect();
-                            Some(Value::Str(strs.join(&**sep).into()))
-                        }
-                        _ => None,
-                    },
-                    "replace" if arg_values.len() == 3 => {
-                        match (&arg_values[0], &arg_values[1], &arg_values[2]) {
-                            (Value::Str(s), Value::Str(from), Value::Str(to)) => {
-                                Some(Value::Str(s.replace(&**from, to).into()))
-                            }
-                            _ => None,
-                        }
-                    }
-                    "starts_with" if arg_values.len() == 2 => {
-                        match (&arg_values[0], &arg_values[1]) {
-                            (Value::Str(s), Value::Str(prefix)) => {
-                                Some(Value::Bool(s.starts_with(&**prefix)))
-                            }
-                            _ => None,
-                        }
-                    }
-                    "ends_with" if arg_values.len() == 2 => {
-                        match (&arg_values[0], &arg_values[1]) {
-                            (Value::Str(s), Value::Str(suffix)) => {
-                                Some(Value::Bool(s.ends_with(&**suffix)))
-                            }
-                            _ => None,
-                        }
-                    }
-                    "substring" if arg_values.len() >= 2 => match &arg_values[0] {
-                        Value::Str(s) => {
-                            let start = match &arg_values[1] {
-                                Value::Int(n) => *n as usize,
-                                _ => return None,
-                            };
-                            let end = if arg_values.len() >= 3 {
-                                match &arg_values[2] {
-                                    Value::Int(n) => *n as usize,
-                                    _ => return None,
-                                }
-                            } else {
-                                s.len()
-                            };
-                            let chars: Vec<char> = s.chars().collect();
-                            (start <= end && end <= chars.len()).then(|| {
-                                Value::Str(chars[start..end].iter().collect::<String>().into())
-                            })
-                        }
-                        _ => None,
-                    },
-
-                    // Type checking
-                    "type_of" => arg_values.first().map(|v| {
-                        Value::Str(
-                            match v {
-                                Value::Int(_) => "int",
-                                Value::Float(_) => "float",
-                                Value::Str(_) => "string",
-                                Value::Bool(_) => "bool",
-                                Value::Array(_) => "array",
-                                Value::Map(_) => "map",
-                                Value::Null => "null",
-                                Value::Duration(_) => "duration",
-                                Value::Timestamp(_) => "timestamp",
-                            }
-                            .into(),
-                        )
-                    }),
-                    "is_null" => arg_values
-                        .first()
-                        .map(|v| Value::Bool(matches!(v, Value::Null))),
-                    "is_int" => arg_values
-                        .first()
-                        .map(|v| Value::Bool(matches!(v, Value::Int(_)))),
-                    "is_float" => arg_values
-                        .first()
-                        .map(|v| Value::Bool(matches!(v, Value::Float(_)))),
-                    "is_string" => arg_values
-                        .first()
-                        .map(|v| Value::Bool(matches!(v, Value::Str(_)))),
-                    "is_bool" => arg_values
-                        .first()
-                        .map(|v| Value::Bool(matches!(v, Value::Bool(_)))),
-                    "is_array" => arg_values
-                        .first()
-                        .map(|v| Value::Bool(matches!(v, Value::Array(_)))),
-                    "is_map" => arg_values
-                        .first()
-                        .map(|v| Value::Bool(matches!(v, Value::Map(_)))),
-
-                    _ => None,
-                }
+                // Delegate to centralized built-in function evaluator
+                eval_builtin_function(func_name, &arg_values)
             } else {
                 None
             }
