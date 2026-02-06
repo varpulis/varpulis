@@ -2496,7 +2496,7 @@ fn json_to_value(json: &serde_json::Value) -> Option<varpulis_core::Value> {
         serde_json::Value::String(s) => Some(Value::Str(s.clone())),
         serde_json::Value::Array(arr) => {
             let values: Vec<Value> = arr.iter().filter_map(json_to_value).collect();
-            Some(Value::Array(values))
+            Some(Value::array(values))
         }
         serde_json::Value::Object(obj) => {
             let mut map = indexmap::IndexMap::new();
@@ -2505,7 +2505,7 @@ fn json_to_value(json: &serde_json::Value) -> Option<varpulis_core::Value> {
                     map.insert(key.clone(), v);
                 }
             }
-            Some(Value::Map(map))
+            Some(Value::map(map))
         }
     }
 }

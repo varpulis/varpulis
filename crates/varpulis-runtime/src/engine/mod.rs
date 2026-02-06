@@ -2385,7 +2385,7 @@ impl Engine {
                     // Pattern matching: evaluate the matcher expression with events as context
                     // The matcher is a lambda: events => predicate
                     let ctx = SequenceContext::new();
-                    let events_value = Value::Array(
+                    let events_value = Value::array(
                         current_events
                             .iter()
                             .map(|e| {
@@ -2397,7 +2397,7 @@ impl Engine {
                                 for (k, v) in &e.data {
                                     map.insert(k.clone(), v.clone());
                                 }
-                                Value::Map(map)
+                                Value::map(map)
                             })
                             .collect(),
                     );

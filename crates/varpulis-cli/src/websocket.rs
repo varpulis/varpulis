@@ -381,13 +381,13 @@ pub fn json_to_value(json: &serde_json::Value) -> varpulis_core::Value {
             }
         }
         serde_json::Value::String(s) => Value::Str(s.clone()),
-        serde_json::Value::Array(arr) => Value::Array(arr.iter().map(json_to_value).collect()),
+        serde_json::Value::Array(arr) => Value::array(arr.iter().map(json_to_value).collect()),
         serde_json::Value::Object(obj) => {
             let map = obj
                 .iter()
                 .map(|(k, v)| (k.clone(), json_to_value(v)))
                 .collect();
-            Value::Map(map)
+            Value::map(map)
         }
     }
 }
@@ -702,7 +702,7 @@ mod tests {
 
     #[test]
     fn test_value_to_json_array() {
-        let value = varpulis_core::Value::Array(vec![
+        let value = varpulis_core::Value::array(vec![
             varpulis_core::Value::Int(1),
             varpulis_core::Value::Int(2),
         ]);

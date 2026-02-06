@@ -893,14 +893,14 @@ fn json_to_runtime_value(v: &serde_json::Value) -> varpulis_core::Value {
         }
         serde_json::Value::String(s) => varpulis_core::Value::Str(s.clone()),
         serde_json::Value::Array(arr) => {
-            varpulis_core::Value::Array(arr.iter().map(json_to_runtime_value).collect())
+            varpulis_core::Value::array(arr.iter().map(json_to_runtime_value).collect())
         }
         serde_json::Value::Object(map) => {
             let m: indexmap::IndexMap<String, varpulis_core::Value> = map
                 .iter()
                 .map(|(k, v)| (k.clone(), json_to_runtime_value(v)))
                 .collect();
-            varpulis_core::Value::Map(m)
+            varpulis_core::Value::map(m)
         }
     }
 }

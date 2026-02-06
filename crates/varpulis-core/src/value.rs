@@ -9,6 +9,10 @@ use std::hash::{Hash, Hasher};
 use std::time::Duration;
 
 /// Runtime value
+///
+/// The Array and Map variants are boxed to reduce the overall enum size.
+/// This optimization significantly reduces memory usage for Value-heavy
+/// workloads since most Values are scalar types (Int, Float, Str).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 #[derive(Default)]
@@ -21,11 +25,23 @@ pub enum Value {
     Str(String),
     Timestamp(i64), // nanoseconds since epoch
     Duration(u64),  // nanoseconds
-    Array(Vec<Value>),
-    Map(IndexMap<String, Value>),
+    Array(Box<Vec<Value>>),
+    Map(Box<IndexMap<String, Value>>),
 }
 
 impl Value {
+    /// Creates a new Array value from a Vec.
+    #[inline]
+    pub fn array(v: Vec<Value>) -> Self {
+        Value::Array(Box::new(v))
+    }
+
+    /// Creates a new Map value from an IndexMap.
+    #[inline]
+    pub fn map(m: IndexMap<String, Value>) -> Self {
+        Value::Map(Box::new(m))
+    }
+
     pub fn type_name(&self) -> &'static str {
         match self {
             Value::Null => "null",
@@ -215,13 +231,13 @@ impl Hash for Value {
             Value::Duration(d) => d.hash(state),
             Value::Array(arr) => {
                 arr.len().hash(state);
-                for v in arr {
+                for v in arr.iter() {
                     v.hash(state);
                 }
             }
             Value::Map(map) => {
                 map.len().hash(state);
-                for (k, v) in map {
+                for (k, v) in map.iter() {
                     k.hash(state);
                     v.hash(state);
                 }
@@ -234,7 +250,7 @@ impl Eq for Value {}
 
 impl<T: Into<Value>> From<Vec<T>> for Value {
     fn from(v: Vec<T>) -> Self {
-        Value::Array(v.into_iter().map(Into::into).collect())
+        Value::array(v.into_iter().map(Into::into).collect())
     }
 }
 
@@ -292,12 +308,12 @@ mod tests {
 
     #[test]
     fn test_type_name_array() {
-        assert_eq!(Value::Array(vec![]).type_name(), "array");
+        assert_eq!(Value::array(vec![]).type_name(), "array");
     }
 
     #[test]
     fn test_type_name_map() {
-        assert_eq!(Value::Map(IndexMap::new()).type_name(), "map");
+        assert_eq!(Value::map(IndexMap::new()).type_name(), "map");
     }
 
     // ==========================================================================
@@ -336,16 +352,16 @@ mod tests {
 
     #[test]
     fn test_is_truthy_array() {
-        assert!(Value::Array(vec![Value::Int(1)]).is_truthy());
-        assert!(!Value::Array(vec![]).is_truthy());
+        assert!(Value::array(vec![Value::Int(1)]).is_truthy());
+        assert!(!Value::array(vec![]).is_truthy());
     }
 
     #[test]
     fn test_is_truthy_map() {
         let mut m = IndexMap::new();
         m.insert("key".to_string(), Value::Int(1));
-        assert!(Value::Map(m).is_truthy());
-        assert!(!Value::Map(IndexMap::new()).is_truthy());
+        assert!(Value::map(m).is_truthy());
+        assert!(!Value::map(IndexMap::new()).is_truthy());
     }
 
     #[test]
@@ -416,7 +432,7 @@ mod tests {
     fn test_get_from_map() {
         let mut m = IndexMap::new();
         m.insert("key".to_string(), Value::Int(42));
-        let v = Value::Map(m);
+        let v = Value::map(m);
         assert_eq!(v.get("key"), Some(&Value::Int(42)));
         assert_eq!(v.get("missing"), None);
     }
@@ -428,7 +444,7 @@ mod tests {
 
     #[test]
     fn test_get_index_from_array() {
-        let v = Value::Array(vec![Value::Int(1), Value::Int(2), Value::Int(3)]);
+        let v = Value::array(vec![Value::Int(1), Value::Int(2), Value::Int(3)]);
         assert_eq!(v.get_index(0), Some(&Value::Int(1)));
         assert_eq!(v.get_index(2), Some(&Value::Int(3)));
         assert_eq!(v.get_index(5), None);
@@ -472,13 +488,13 @@ mod tests {
 
     #[test]
     fn test_display_array() {
-        let v = Value::Array(vec![Value::Int(1), Value::Int(2)]);
+        let v = Value::array(vec![Value::Int(1), Value::Int(2)]);
         assert_eq!(format!("{}", v), "[1, 2]");
     }
 
     #[test]
     fn test_display_empty_array() {
-        assert_eq!(format!("{}", Value::Array(vec![])), "[]");
+        assert_eq!(format!("{}", Value::array(vec![])), "[]");
     }
 
     #[test]
@@ -550,7 +566,7 @@ mod tests {
         let v: Value = vec![1i64, 2i64, 3i64].into();
         assert_eq!(
             v,
-            Value::Array(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
+            Value::array(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
         );
     }
 

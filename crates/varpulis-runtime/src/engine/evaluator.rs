@@ -247,7 +247,7 @@ pub fn eval_stmt(
             let iter_val = eval_expr_with_functions(iter, event, ctx, functions, bindings);
 
             if let Some(Value::Array(items)) = iter_val {
-                for item in items {
+                for item in items.iter().cloned() {
                     match bindings.get_mut(var) {
                         Some(existing) => *existing = item,
                         None => {
@@ -265,8 +265,8 @@ pub fn eval_stmt(
                 }
             } else if let Some(Value::Map(map)) = iter_val {
                 // Iterate over map entries as [key, value] pairs
-                for (key, value) in map {
-                    let pair = Value::Array(vec![Value::Str(key), value]);
+                for (key, value) in map.iter() {
+                    let pair = Value::array(vec![Value::Str(key.clone()), value.clone()]);
                     match bindings.get_mut(var) {
                         Some(existing) => *existing = pair,
                         None => {
@@ -685,7 +685,7 @@ pub fn eval_expr_with_functions(
                 .iter()
                 .filter_map(|e| eval_expr_with_functions(e, event, ctx, functions, bindings))
                 .collect();
-            Some(Value::Array(values))
+            Some(Value::array(values))
         }
 
         // Map literal: { "key": value, ... }
@@ -698,7 +698,7 @@ pub fn eval_expr_with_functions(
                     map.insert(key.clone(), value);
                 }
             }
-            Some(Value::Map(map))
+            Some(Value::map(map))
         }
 
         // Index access: arr[0] or map["key"]
@@ -756,9 +756,9 @@ pub fn eval_expr_with_functions(
                         .unwrap_or(arr.len() as i64) as usize;
                     let end_val = end_val.min(arr.len());
                     if start_val <= end_val {
-                        Some(Value::Array(arr[start_val..end_val].to_vec()))
+                        Some(Value::array(arr[start_val..end_val].to_vec()))
                     } else {
-                        Some(Value::Array(vec![]))
+                        Some(Value::array(vec![]))
                     }
                 }
                 Value::Str(s) => {
@@ -795,7 +795,7 @@ pub fn eval_expr_with_functions(
             } else {
                 (start_val..end_val).map(Value::Int).collect()
             };
-            Some(Value::Array(range))
+            Some(Value::array(range))
         }
 
         // Null coalescing: expr ?? default
@@ -1010,13 +1010,13 @@ pub fn eval_expr_with_functions(
                         _ => None,
                     },
                     "keys" => arg_values.first().and_then(|v| match v {
-                        Value::Map(m) => Some(Value::Array(
+                        Value::Map(m) => Some(Value::array(
                             m.keys().map(|k| Value::Str(k.clone())).collect(),
                         )),
                         _ => None,
                     }),
                     "values" => arg_values.first().and_then(|v| match v {
-                        Value::Map(m) => Some(Value::Array(m.values().cloned().collect())),
+                        Value::Map(m) => Some(Value::array(m.values().cloned().collect())),
                         _ => None,
                     }),
                     "get" if arg_values.len() == 2 => match (&arg_values[0], &arg_values[1]) {
@@ -1053,7 +1053,7 @@ pub fn eval_expr_with_functions(
                         } else {
                             return None;
                         };
-                        Some(Value::Array((start..end).map(Value::Int).collect()))
+                        Some(Value::array((start..end).map(Value::Int).collect()))
                     }
                     "sum" => arg_values.first().and_then(|v| match v {
                         Value::Array(arr) => {
@@ -1116,7 +1116,7 @@ pub fn eval_expr_with_functions(
                         _ => None,
                     }),
                     "split" if arg_values.len() == 2 => match (&arg_values[0], &arg_values[1]) {
-                        (Value::Str(s), Value::Str(sep)) => Some(Value::Array(
+                        (Value::Str(s), Value::Str(sep)) => Some(Value::array(
                             s.split(sep.as_str())
                                 .map(|p| Value::Str(p.to_string()))
                                 .collect(),
@@ -1685,7 +1685,7 @@ pub fn eval_pattern_expr(
                                         .unwrap_or(false)
                                     })
                                     .collect();
-                                return Some(Value::Array(filtered));
+                                return Some(Value::array(filtered));
                             }
                         }
                     }
@@ -1695,7 +1695,8 @@ pub fn eval_pattern_expr(
                                 args.first()
                             {
                                 let mapped: Vec<Value> = arr
-                                    .into_iter()
+                                    .iter()
+                                    .cloned()
                                     .filter_map(|item| {
                                         let mut local = pattern_vars.clone();
 
@@ -1732,23 +1733,24 @@ pub fn eval_pattern_expr(
                                         )
                                     })
                                     .collect();
-                                return Some(Value::Array(mapped));
+                                return Some(Value::array(mapped));
                             }
                         }
                     }
                     "flatten" => {
                         if let Value::Array(arr) = receiver_val {
                             let flattened: Vec<Value> = arr
-                                .into_iter()
+                                .iter()
+                                .cloned()
                                 .flat_map(|item| {
                                     if let Value::Array(inner) = item {
-                                        inner
+                                        (*inner).into_iter()
                                     } else {
-                                        vec![item]
+                                        vec![item].into_iter()
                                     }
                                 })
                                 .collect();
-                            return Some(Value::Array(flattened));
+                            return Some(Value::array(flattened));
                         }
                     }
                     "len" | "count" => {
@@ -1760,13 +1762,13 @@ pub fn eval_pattern_expr(
                         // Generate pairs of consecutive elements: [a, b, c] -> [[a, b], [b, c]]
                         if let Value::Array(arr) = receiver_val {
                             if arr.len() < 2 {
-                                return Some(Value::Array(vec![]));
+                                return Some(Value::array(vec![]));
                             }
                             let pairs: Vec<Value> = arr
                                 .windows(2)
-                                .map(|pair| Value::Array(pair.to_vec()))
+                                .map(|pair| Value::array(pair.to_vec()))
                                 .collect();
-                            return Some(Value::Array(pairs));
+                            return Some(Value::array(pairs));
                         }
                     }
                     "first" => {
