@@ -16,6 +16,8 @@
 //! ```
 
 use crate::event::Event;
+use indexmap::IndexMap;
+use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -108,7 +110,7 @@ fn serializable_to_value(sv: SerializableValue) -> varpulis_core::Value {
             varpulis_core::Value::array(arr.into_iter().map(serializable_to_value).collect())
         }
         SerializableValue::Map(entries) => {
-            let mut map = indexmap::IndexMap::new();
+            let mut map = IndexMap::with_hasher(FxBuildHasher);
             for (k, v) in entries {
                 map.insert(k, serializable_to_value(v));
             }
@@ -962,7 +964,7 @@ mod tests {
         );
 
         // Map
-        let mut inner_map = indexmap::IndexMap::new();
+        let mut inner_map = IndexMap::with_hasher(FxBuildHasher);
         inner_map.insert("nested_key".to_string(), varpulis_core::Value::Float(3.15));
         inner_map.insert("flag".to_string(), varpulis_core::Value::Bool(true));
         event

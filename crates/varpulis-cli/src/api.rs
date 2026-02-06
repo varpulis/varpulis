@@ -4,6 +4,8 @@
 //! in a multi-tenant environment.
 
 use crate::auth::constant_time_compare;
+use indexmap::IndexMap;
+use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use varpulis_runtime::tenant::{SharedTenantManager, TenantError, TenantQuota};
@@ -896,10 +898,10 @@ fn json_to_runtime_value(v: &serde_json::Value) -> varpulis_core::Value {
             varpulis_core::Value::array(arr.iter().map(json_to_runtime_value).collect())
         }
         serde_json::Value::Object(map) => {
-            let m: indexmap::IndexMap<String, varpulis_core::Value> = map
-                .iter()
-                .map(|(k, v)| (k.clone(), json_to_runtime_value(v)))
-                .collect();
+            let mut m = IndexMap::with_hasher(FxBuildHasher);
+            for (k, v) in map {
+                m.insert(k.clone(), json_to_runtime_value(v));
+            }
             varpulis_core::Value::map(m)
         }
     }

@@ -25,6 +25,8 @@
 //! ```
 
 use crate::event::Event;
+use indexmap::IndexMap;
+use rustc_hash::FxBuildHasher;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -381,10 +383,10 @@ impl EventFileParser {
                 Value::array(arr.iter().map(Self::json_to_value).collect())
             }
             serde_json::Value::Object(obj) => {
-                let map: indexmap::IndexMap<String, Value> = obj
-                    .iter()
-                    .map(|(k, v)| (k.clone(), Self::json_to_value(v)))
-                    .collect();
+                let mut map = IndexMap::with_hasher(FxBuildHasher);
+                for (k, v) in obj {
+                    map.insert(k.clone(), Self::json_to_value(v));
+                }
                 Value::map(map)
             }
         }

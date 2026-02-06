@@ -22,6 +22,7 @@ use std::cell::RefCell;
 use tracing::debug;
 use varpulis_core::ast::Expr;
 use varpulis_core::span::Spanned;
+use varpulis_core::value::FxIndexMap;
 use varpulis_core::{Stmt, Value};
 
 use super::UserFunction;
@@ -690,7 +691,7 @@ pub fn eval_expr_with_functions(
 
         // Map literal: { "key": value, ... }
         Expr::Map(entries) => {
-            let mut map = IndexMap::new();
+            let mut map = IndexMap::with_hasher(FxBuildHasher);
             for (key, value_expr) in entries {
                 if let Some(value) =
                     eval_expr_with_functions(value_expr, event, ctx, functions, bindings)
@@ -1898,7 +1899,7 @@ pub fn eval_pattern_expr(
 }
 
 /// Convert a Value::Map back to an Event for attention scoring
-pub fn map_to_event(map: &IndexMap<String, Value>) -> Event {
+pub fn map_to_event(map: &FxIndexMap<String, Value>) -> Event {
     let event_type = map
         .get("event_type")
         .and_then(|v| v.as_str())
