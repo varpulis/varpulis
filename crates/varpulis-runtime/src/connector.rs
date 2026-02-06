@@ -894,7 +894,7 @@ fn json_to_event_from_json(json: &serde_json::Value) -> Event {
         for (key, value) in obj {
             if key != "event_type" && key != "type" {
                 if let Some(v) = json_to_value(value) {
-                    event = event.with_field(key, v);
+                    event = event.with_field(key.as_str(), v);
                 }
             }
         }
@@ -1350,13 +1350,13 @@ mod mqtt_impl {
         // First try nested "data" object, then fall back to top-level fields
         if let Some(data) = json.get("data").and_then(|v| v.as_object()) {
             for (k, v) in data {
-                event = event.with_field(k, json_value_to_native(v));
+                event = event.with_field(k.as_str(), json_value_to_native(v));
             }
         } else if let Some(obj) = json.as_object() {
             // Parse fields directly from root object (excluding type fields)
             for (k, v) in obj {
                 if k != "event_type" && k != "type" {
-                    event = event.with_field(k, json_value_to_native(v));
+                    event = event.with_field(k.as_str(), json_value_to_native(v));
                 }
             }
         }
@@ -2010,12 +2010,12 @@ mod kinesis_impl {
                             // Create event with raw data
                             let mut event = Event::new("KinesisRecord");
                             event.data.insert(
-                                "data".to_string(),
+                                "data".into(),
                                 varpulis_core::Value::String(json_str.to_string()),
                             );
                             if let Some(partition_key) = record.partition_key() {
                                 event.data.insert(
-                                    "partition_key".to_string(),
+                                    "partition_key".into(),
                                     varpulis_core::Value::String(partition_key.to_string()),
                                 );
                             }
@@ -3564,7 +3564,7 @@ fn json_to_event(event_type: &str, json: &serde_json::Value) -> Event {
         for (key, value) in obj {
             if key != "event_type" {
                 if let Some(v) = json_to_value(value) {
-                    event = event.with_field(key, v);
+                    event = event.with_field(key.as_str(), v);
                 }
             }
         }
@@ -3590,10 +3590,10 @@ fn json_to_value(json: &serde_json::Value) -> Option<varpulis_core::Value> {
             Some(Value::array(values))
         }
         serde_json::Value::Object(obj) => {
-            let mut map = IndexMap::with_hasher(FxBuildHasher);
+            let mut map: IndexMap<std::sync::Arc<str>, Value, FxBuildHasher> = IndexMap::with_hasher(FxBuildHasher);
             for (key, value) in obj {
                 if let Some(v) = json_to_value(value) {
-                    map.insert(key.clone(), v);
+                    map.insert(key.as_str().into(), v);
                 }
             }
             Some(Value::map(map))

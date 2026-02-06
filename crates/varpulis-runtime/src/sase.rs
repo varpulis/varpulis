@@ -3495,7 +3495,7 @@ mod tests {
     fn make_event(event_type: &str, data: Vec<(&str, Value)>) -> Event {
         let mut event = Event::new(event_type);
         for (k, v) in data {
-            event.data.insert(k.to_string(), v);
+            event.data.insert(k.into(), v);
         }
         event
     }

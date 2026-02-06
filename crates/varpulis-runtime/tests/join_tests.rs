@@ -8,7 +8,7 @@ use varpulis_runtime::{Engine, Event};
 fn create_test_event(event_type: &str, symbol: &str, fields: Vec<(&str, Value)>) -> Event {
     let mut event = Event::new(event_type).with_field("symbol", symbol);
     for (key, value) in fields {
-        event.data.insert(key.to_string(), value);
+        event.data.insert(key.into(), value);
     }
     event
 }

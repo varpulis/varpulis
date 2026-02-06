@@ -26,7 +26,7 @@ use varpulis_runtime::Event;
 fn create_event(event_type: &str, data: Vec<(&str, Value)>) -> Event {
     let mut event_data = IndexMap::with_hasher(FxBuildHasher);
     for (k, v) in data {
-        event_data.insert(k.to_string(), v);
+        event_data.insert(k.into(), v);
     }
     Event {
         event_type: event_type.into(),

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::fmt;
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Type alias for IndexMap with FxBuildHasher for faster key lookups.
@@ -37,7 +38,7 @@ pub enum Value {
     Timestamp(i64), // nanoseconds since epoch
     Duration(u64),  // nanoseconds
     Array(Box<Vec<Value>>),
-    Map(Box<FxIndexMap<String, Value>>),
+    Map(Box<FxIndexMap<Arc<str>, Value>>),
 }
 
 /// Helper function to compare f64 values consistently with Hash impl.
@@ -78,10 +79,20 @@ impl Value {
         Value::Array(Box::new(v))
     }
 
-    /// Creates a new Map value from an IndexMap with FxBuildHasher.
+    /// Creates a new Map value from an IndexMap with Arc<str> keys.
     #[inline]
-    pub fn map(m: FxIndexMap<String, Value>) -> Self {
+    pub fn map(m: FxIndexMap<Arc<str>, Value>) -> Self {
         Value::Map(Box::new(m))
+    }
+
+    /// Creates a new Map value from an IndexMap with String keys (converts to Arc<str>).
+    #[inline]
+    pub fn map_from_strings(m: FxIndexMap<String, Value>) -> Self {
+        let converted: FxIndexMap<Arc<str>, Value> = m
+            .into_iter()
+            .map(|(k, v)| (Arc::from(k), v))
+            .collect();
+        Value::Map(Box::new(converted))
     }
 
     pub fn type_name(&self) -> &'static str {
@@ -415,8 +426,8 @@ mod tests {
 
     #[test]
     fn test_is_truthy_map() {
-        let mut m = IndexMap::with_hasher(FxBuildHasher);
-        m.insert("key".to_string(), Value::Int(1));
+        let mut m: FxIndexMap<Arc<str>, Value> = IndexMap::with_hasher(FxBuildHasher);
+        m.insert("key".into(), Value::Int(1));
         assert!(Value::map(m).is_truthy());
         assert!(!Value::map(IndexMap::with_hasher(FxBuildHasher)).is_truthy());
     }
@@ -487,8 +498,8 @@ mod tests {
 
     #[test]
     fn test_get_from_map() {
-        let mut m = IndexMap::with_hasher(FxBuildHasher);
-        m.insert("key".to_string(), Value::Int(42));
+        let mut m: FxIndexMap<Arc<str>, Value> = IndexMap::with_hasher(FxBuildHasher);
+        m.insert("key".into(), Value::Int(42));
         let v = Value::map(m);
         assert_eq!(v.get("key"), Some(&Value::Int(42)));
         assert_eq!(v.get("missing"), None);
