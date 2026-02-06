@@ -6,6 +6,7 @@
 //! - Partitioned windows
 //! - Delay buffers (rstream equivalent)
 
+use crate::columnar::{ColumnarAccess, ColumnarBuffer};
 use crate::event::{Event, SharedEvent};
 use crate::persistence::{PartitionedWindowCheckpoint, SerializableEvent, WindowCheckpoint};
 use chrono::{DateTime, Duration, Utc};
@@ -13,18 +14,24 @@ use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-/// A tumbling window that collects events over a fixed duration
+/// A tumbling window that collects events over a fixed duration.
+///
+/// Supports both row-oriented and columnar access patterns:
+/// - `flush_shared()`: Row-oriented access for backward compatibility
+/// - `flush_columnar()`: Columnar access for SIMD-optimized aggregations
 pub struct TumblingWindow {
     duration: Duration,
-    events: Vec<SharedEvent>,
-    window_start: Option<DateTime<Utc>>,
+    /// Columnar storage for events (pub(crate) for checkpoint access)
+    pub(crate) columnar: ColumnarBuffer,
+    /// Window start time (pub(crate) for checkpoint access)
+    pub(crate) window_start: Option<DateTime<Utc>>,
 }
 
 impl TumblingWindow {
     pub fn new(duration: Duration) -> Self {
         Self {
             duration,
-            events: Vec::new(),
+            columnar: ColumnarBuffer::new(),
             window_start: None,
         }
     }
@@ -44,12 +51,12 @@ impl TumblingWindow {
 
         if event_time >= window_end {
             // Window is complete, emit and start new window
-            let completed = std::mem::take(&mut self.events);
+            let completed = self.columnar.take_all();
             self.window_start = Some(event_time);
-            self.events.push(event);
+            self.columnar.push(event);
             Some(completed)
         } else {
-            self.events.push(event);
+            self.columnar.push(event);
             None
         }
     }
@@ -63,7 +70,15 @@ impl TumblingWindow {
 
     /// Flush all events as SharedEvent references.
     pub fn flush_shared(&mut self) -> Vec<SharedEvent> {
-        std::mem::take(&mut self.events)
+        self.columnar.take_all()
+    }
+
+    /// Flush and return the columnar buffer for SIMD-optimized aggregations.
+    ///
+    /// The returned buffer can be used with `Aggregator::apply_columnar()`.
+    pub fn flush_columnar(&mut self) -> ColumnarBuffer {
+        self.window_start = None;
+        std::mem::take(&mut self.columnar)
     }
 
     /// Flush all events (clones for backward compatibility).
@@ -75,11 +90,22 @@ impl TumblingWindow {
             .collect()
     }
 
+    /// Get the number of events currently in the window.
+    pub fn len(&self) -> usize {
+        self.columnar.len()
+    }
+
+    /// Check if the window is empty.
+    pub fn is_empty(&self) -> bool {
+        self.columnar.is_empty()
+    }
+
     /// Create a checkpoint of the current window state.
     pub fn checkpoint(&self) -> WindowCheckpoint {
         WindowCheckpoint {
             events: self
-                .events
+                .columnar
+                .events()
                 .iter()
                 .map(|e| SerializableEvent::from(e.as_ref()))
                 .collect(),
@@ -91,24 +117,35 @@ impl TumblingWindow {
 
     /// Restore window state from a checkpoint.
     pub fn restore(&mut self, cp: &WindowCheckpoint) {
-        self.events = cp
+        let events: Vec<SharedEvent> = cp
             .events
             .iter()
             .map(|se| Arc::new(Event::from(se.clone())))
             .collect();
+        self.columnar = ColumnarBuffer::from_events(events);
         self.window_start = cp.window_start_ms.and_then(DateTime::from_timestamp_millis);
     }
 
     /// Advance watermark — close window if watermark passes window end.
     pub fn advance_watermark(&mut self, wm: DateTime<Utc>) -> Option<Vec<SharedEvent>> {
         if let Some(start) = self.window_start {
-            if wm >= start + self.duration && !self.events.is_empty() {
-                let completed = std::mem::take(&mut self.events);
+            if wm >= start + self.duration && !self.columnar.is_empty() {
+                let completed = self.columnar.take_all();
                 self.window_start = Some(wm);
                 return Some(completed);
             }
         }
         None
+    }
+}
+
+impl ColumnarAccess for TumblingWindow {
+    fn columnar(&self) -> &ColumnarBuffer {
+        &self.columnar
+    }
+
+    fn columnar_mut(&mut self) -> &mut ColumnarBuffer {
+        &mut self.columnar
     }
 }
 
@@ -229,25 +266,29 @@ impl SlidingWindow {
     }
 }
 
-/// A count-based window that emits after collecting N events
+/// A count-based window that emits after collecting N events.
+///
+/// Supports both row-oriented and columnar access patterns:
+/// - `flush_shared()`: Row-oriented access for backward compatibility
+/// - `flush_columnar()`: Columnar access for SIMD-optimized aggregations
 pub struct CountWindow {
     count: usize,
-    events: Vec<SharedEvent>,
+    columnar: ColumnarBuffer,
 }
 
 impl CountWindow {
     pub fn new(count: usize) -> Self {
         Self {
             count,
-            events: Vec::with_capacity(count),
+            columnar: ColumnarBuffer::with_capacity(count),
         }
     }
 
     /// Add a shared event, returning completed window if count reached.
     pub fn add_shared(&mut self, event: SharedEvent) -> Option<Vec<SharedEvent>> {
-        self.events.push(event);
+        self.columnar.push(event);
 
-        (self.events.len() >= self.count).then(|| std::mem::take(&mut self.events))
+        (self.columnar.len() >= self.count).then(|| self.columnar.take_all())
     }
 
     /// Add an event (wraps in Arc).
@@ -259,7 +300,12 @@ impl CountWindow {
 
     /// Flush all events as SharedEvent references.
     pub fn flush_shared(&mut self) -> Vec<SharedEvent> {
-        std::mem::take(&mut self.events)
+        self.columnar.take_all()
+    }
+
+    /// Flush and return the columnar buffer for SIMD-optimized aggregations.
+    pub fn flush_columnar(&mut self) -> ColumnarBuffer {
+        std::mem::take(&mut self.columnar)
     }
 
     /// Flush all events (clones for backward compatibility).
@@ -273,14 +319,15 @@ impl CountWindow {
 
     /// Get current count of events in buffer (for debugging)
     pub fn current_count(&self) -> usize {
-        self.events.len()
+        self.columnar.len()
     }
 
     /// Create a checkpoint of the current window state.
     pub fn checkpoint(&self) -> WindowCheckpoint {
         WindowCheckpoint {
             events: self
-                .events
+                .columnar
+                .events()
                 .iter()
                 .map(|e| SerializableEvent::from(e.as_ref()))
                 .collect(),
@@ -292,11 +339,22 @@ impl CountWindow {
 
     /// Restore window state from a checkpoint.
     pub fn restore(&mut self, cp: &WindowCheckpoint) {
-        self.events = cp
+        let events: Vec<SharedEvent> = cp
             .events
             .iter()
             .map(|se| Arc::new(Event::from(se.clone())))
             .collect();
+        self.columnar = ColumnarBuffer::from_events(events);
+    }
+}
+
+impl ColumnarAccess for CountWindow {
+    fn columnar(&self) -> &ColumnarBuffer {
+        &self.columnar
+    }
+
+    fn columnar_mut(&mut self) -> &mut ColumnarBuffer {
+        &mut self.columnar
     }
 }
 
@@ -381,17 +439,23 @@ impl SlidingCountWindow {
 /// Events are accumulated into a session. When a new event arrives after a gap
 /// exceeding the configured duration, the current session is closed (emitted)
 /// and a new session begins with the incoming event.
+///
+/// Supports both row-oriented and columnar access patterns:
+/// - `flush_shared()`: Row-oriented access for backward compatibility
+/// - `flush_columnar()`: Columnar access for SIMD-optimized aggregations
 pub struct SessionWindow {
     gap: Duration,
-    events: Vec<SharedEvent>,
-    last_event_time: Option<DateTime<Utc>>,
+    /// Columnar storage for events (pub(crate) for checkpoint access)
+    pub(crate) columnar: ColumnarBuffer,
+    /// Last event time (pub(crate) for checkpoint access)
+    pub(crate) last_event_time: Option<DateTime<Utc>>,
 }
 
 impl SessionWindow {
     pub fn new(gap: Duration) -> Self {
         Self {
             gap,
-            events: Vec::new(),
+            columnar: ColumnarBuffer::new(),
             last_event_time: None,
         }
     }
@@ -403,14 +467,14 @@ impl SessionWindow {
         if let Some(last_time) = self.last_event_time {
             if event_time - last_time > self.gap {
                 // Gap exceeded — close current session, start new one
-                let completed = std::mem::take(&mut self.events);
-                self.events.push(event);
+                let completed = self.columnar.take_all();
+                self.columnar.push(event);
                 self.last_event_time = Some(event_time);
                 return Some(completed);
             }
         }
         // Within session gap (or first event)
-        self.events.push(event);
+        self.columnar.push(event);
         self.last_event_time = Some(event_time);
         None
     }
@@ -441,7 +505,13 @@ impl SessionWindow {
     /// Flush all events as SharedEvent references.
     pub fn flush_shared(&mut self) -> Vec<SharedEvent> {
         self.last_event_time = None;
-        std::mem::take(&mut self.events)
+        self.columnar.take_all()
+    }
+
+    /// Flush and return the columnar buffer for SIMD-optimized aggregations.
+    pub fn flush_columnar(&mut self) -> ColumnarBuffer {
+        self.last_event_time = None;
+        std::mem::take(&mut self.columnar)
     }
 
     /// Flush all events (clones for backward compatibility).
@@ -457,7 +527,8 @@ impl SessionWindow {
     pub fn checkpoint(&self) -> WindowCheckpoint {
         WindowCheckpoint {
             events: self
-                .events
+                .columnar
+                .events()
                 .iter()
                 .map(|e| SerializableEvent::from(e.as_ref()))
                 .collect(),
@@ -469,22 +540,33 @@ impl SessionWindow {
 
     /// Restore session state from a checkpoint.
     pub fn restore(&mut self, cp: &WindowCheckpoint) {
-        self.events = cp
+        let events: Vec<SharedEvent> = cp
             .events
             .iter()
             .map(|se| Arc::new(Event::from(se.clone())))
             .collect();
+        self.columnar = ColumnarBuffer::from_events(events);
         self.last_event_time = cp.window_start_ms.and_then(DateTime::from_timestamp_millis);
     }
 
     /// Advance watermark — close session if watermark exceeds last_event_time + gap.
     pub fn advance_watermark(&mut self, wm: DateTime<Utc>) -> Option<Vec<SharedEvent>> {
         if let Some(last) = self.last_event_time {
-            if wm >= last + self.gap && !self.events.is_empty() {
+            if wm >= last + self.gap && !self.columnar.is_empty() {
                 return Some(self.flush_shared());
             }
         }
         None
+    }
+}
+
+impl ColumnarAccess for SessionWindow {
+    fn columnar(&self) -> &ColumnarBuffer {
+        &self.columnar
+    }
+
+    fn columnar_mut(&mut self) -> &mut ColumnarBuffer {
+        &mut self.columnar
     }
 }
 
@@ -579,7 +661,8 @@ impl PartitionedSessionWindow {
                     key.clone(),
                     PartitionedWindowCheckpoint {
                         events: window
-                            .events
+                            .columnar
+                            .events()
                             .iter()
                             .map(|e| SerializableEvent::from(e.as_ref()))
                             .collect(),
@@ -602,11 +685,12 @@ impl PartitionedSessionWindow {
         self.windows.clear();
         for (key, pcp) in &cp.partitions {
             let mut window = SessionWindow::new(self.gap);
-            window.events = pcp
+            let events: Vec<SharedEvent> = pcp
                 .events
                 .iter()
                 .map(|se| Arc::new(Event::from(se.clone())))
                 .collect();
+            window.columnar = ColumnarBuffer::from_events(events);
             window.last_event_time = pcp
                 .window_start_ms
                 .and_then(DateTime::from_timestamp_millis);
@@ -699,7 +783,8 @@ impl PartitionedTumblingWindow {
                     key.clone(),
                     PartitionedWindowCheckpoint {
                         events: window
-                            .events
+                            .columnar
+                            .events()
                             .iter()
                             .map(|e| SerializableEvent::from(e.as_ref()))
                             .collect(),
@@ -722,11 +807,12 @@ impl PartitionedTumblingWindow {
         self.windows.clear();
         for (key, pcp) in &cp.partitions {
             let mut window = TumblingWindow::new(self.duration);
-            window.events = pcp
+            let events: Vec<SharedEvent> = pcp
                 .events
                 .iter()
                 .map(|se| Arc::new(Event::from(se.clone())))
                 .collect();
+            window.columnar = ColumnarBuffer::from_events(events);
             window.window_start = pcp
                 .window_start_ms
                 .and_then(DateTime::from_timestamp_millis);

@@ -72,6 +72,7 @@
 //! }
 //! ```
 
+use crate::columnar::ColumnarBuffer;
 use crate::event::{Event, SharedEvent};
 use indexmap::IndexMap;
 use std::hash::{Hash, Hasher};
@@ -134,6 +135,15 @@ pub trait AggregateFunc: Send + Sync {
         let owned: Vec<Event> = events.iter().map(|e| (*e).clone()).collect();
         self.apply(&owned, field)
     }
+
+    /// Apply aggregation to columnar buffer (SIMD-optimized for numeric aggregations).
+    ///
+    /// Default implementation falls back to shared events. Override this for
+    /// aggregations that can benefit from columnar data layout (sum, avg, min, max).
+    fn apply_columnar(&self, buffer: &mut ColumnarBuffer, field: Option<&str>) -> Value {
+        // Default: fall back to shared event access
+        self.apply_shared(buffer.events(), field)
+    }
 }
 
 /// Count aggregation
@@ -150,6 +160,10 @@ impl AggregateFunc for Count {
 
     fn apply_refs(&self, events: &[&Event], _field: Option<&str>) -> Value {
         Value::Int(events.len() as i64)
+    }
+
+    fn apply_columnar(&self, buffer: &mut ColumnarBuffer, _field: Option<&str>) -> Value {
+        Value::Int(buffer.len() as i64)
     }
 }
 
@@ -175,6 +189,14 @@ impl AggregateFunc for Sum {
             .filter(|v| !v.is_nan())
             .collect();
         Value::Float(crate::simd::sum_f64(&values))
+    }
+
+    fn apply_columnar(&self, buffer: &mut ColumnarBuffer, field: Option<&str>) -> Value {
+        let field = field.unwrap_or("value");
+        let col = buffer.ensure_float_column(field);
+        // Filter NaN values for sum
+        let valid: Vec<f64> = col.iter().copied().filter(|v| !v.is_nan()).collect();
+        Value::Float(crate::simd::sum_f64(&valid))
     }
 }
 
@@ -209,6 +231,17 @@ impl AggregateFunc for Avg {
             Value::Float(crate::simd::sum_f64(&values) / values.len() as f64)
         }
     }
+
+    fn apply_columnar(&self, buffer: &mut ColumnarBuffer, field: Option<&str>) -> Value {
+        let field = field.unwrap_or("value");
+        let col = buffer.ensure_float_column(field);
+        let valid: Vec<f64> = col.iter().copied().filter(|v| !v.is_nan()).collect();
+        if valid.is_empty() {
+            Value::Null
+        } else {
+            Value::Float(crate::simd::sum_f64(&valid) / valid.len() as f64)
+        }
+    }
 }
 
 /// Min aggregation (SIMD-optimized)
@@ -239,6 +272,16 @@ impl AggregateFunc for Min {
             None => Value::Null,
         }
     }
+
+    fn apply_columnar(&self, buffer: &mut ColumnarBuffer, field: Option<&str>) -> Value {
+        let field = field.unwrap_or("value");
+        let col = buffer.ensure_float_column(field);
+        let valid: Vec<f64> = col.iter().copied().filter(|v| !v.is_nan()).collect();
+        match crate::simd::min_f64(&valid) {
+            Some(min) => Value::Float(min),
+            None => Value::Null,
+        }
+    }
 }
 
 /// Max aggregation (SIMD-optimized)
@@ -265,6 +308,16 @@ impl AggregateFunc for Max {
             .filter(|v| !v.is_nan())
             .collect();
         match crate::simd::max_f64(&values) {
+            Some(max) => Value::Float(max),
+            None => Value::Null,
+        }
+    }
+
+    fn apply_columnar(&self, buffer: &mut ColumnarBuffer, field: Option<&str>) -> Value {
+        let field = field.unwrap_or("value");
+        let col = buffer.ensure_float_column(field);
+        let valid: Vec<f64> = col.iter().copied().filter(|v| !v.is_nan()).collect();
+        match crate::simd::max_f64(&valid) {
             Some(max) => Value::Float(max),
             None => Value::Null,
         }
@@ -709,6 +762,33 @@ impl Aggregator {
         }
         result
     }
+
+    /// Apply aggregations to a columnar buffer (SIMD-optimized).
+    ///
+    /// This method uses lazy column extraction for SIMD operations on contiguous memory.
+    /// Each field is extracted once and cached for subsequent aggregations on the same field.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let aggregator = Aggregator::new()
+    ///     .add("total", Box::new(Sum), Some("price".to_string()))
+    ///     .add("avg_price", Box::new(Avg), Some("price".to_string()))
+    ///     .add("count", Box::new(Count), None);
+    ///
+    /// let mut window = TumblingWindow::new(Duration::seconds(60));
+    /// // ... add events ...
+    /// let mut buffer = window.flush_columnar();
+    /// let results = aggregator.apply_columnar(&mut buffer);
+    /// ```
+    pub fn apply_columnar(&self, buffer: &mut ColumnarBuffer) -> AggResult {
+        let mut result = IndexMap::new();
+        for (alias, func, field) in &self.aggregations {
+            let value = func.apply_columnar(buffer, field.as_deref());
+            result.insert(alias.clone(), value);
+        }
+        result
+    }
 }
 
 impl Default for Aggregator {
@@ -1118,5 +1198,126 @@ mod tests {
         let result = CountDistinct.apply(&events, Some("category"));
         // Should count 3 distinct values: A, B, C
         assert_eq!(result, Value::Int(3));
+    }
+
+    // ==========================================================================
+    // Columnar Aggregation Tests
+    // ==========================================================================
+
+    use crate::columnar::ColumnarBuffer;
+    use std::sync::Arc;
+
+    fn make_columnar_buffer() -> ColumnarBuffer {
+        let events = vec![
+            Arc::new(Event::new("Test").with_field("value", 10.0)),
+            Arc::new(Event::new("Test").with_field("value", 20.0)),
+            Arc::new(Event::new("Test").with_field("value", 30.0)),
+        ];
+        ColumnarBuffer::from_events(events)
+    }
+
+    #[test]
+    fn test_columnar_count() {
+        let mut buffer = make_columnar_buffer();
+        let result = Count.apply_columnar(&mut buffer, None);
+        assert_eq!(result, Value::Int(3));
+    }
+
+    #[test]
+    fn test_columnar_sum() {
+        let mut buffer = make_columnar_buffer();
+        let result = Sum.apply_columnar(&mut buffer, Some("value"));
+        assert_eq!(result, Value::Float(60.0));
+    }
+
+    #[test]
+    fn test_columnar_avg() {
+        let mut buffer = make_columnar_buffer();
+        let result = Avg.apply_columnar(&mut buffer, Some("value"));
+        assert_eq!(result, Value::Float(20.0));
+    }
+
+    #[test]
+    fn test_columnar_min() {
+        let mut buffer = make_columnar_buffer();
+        let result = Min.apply_columnar(&mut buffer, Some("value"));
+        assert_eq!(result, Value::Float(10.0));
+    }
+
+    #[test]
+    fn test_columnar_max() {
+        let mut buffer = make_columnar_buffer();
+        let result = Max.apply_columnar(&mut buffer, Some("value"));
+        assert_eq!(result, Value::Float(30.0));
+    }
+
+    #[test]
+    fn test_columnar_with_nan() {
+        let events = vec![
+            Arc::new(Event::new("Test").with_field("value", 10.0)),
+            Arc::new(Event::new("Test")), // Missing value -> NaN
+            Arc::new(Event::new("Test").with_field("value", 30.0)),
+        ];
+        let mut buffer = ColumnarBuffer::from_events(events);
+
+        // Sum should ignore NaN
+        let sum_result = Sum.apply_columnar(&mut buffer, Some("value"));
+        assert_eq!(sum_result, Value::Float(40.0));
+
+        // Avg should only count non-NaN values
+        let avg_result = Avg.apply_columnar(&mut buffer, Some("value"));
+        assert_eq!(avg_result, Value::Float(20.0)); // 40/2
+
+        // Min/Max should ignore NaN
+        let min_result = Min.apply_columnar(&mut buffer, Some("value"));
+        assert_eq!(min_result, Value::Float(10.0));
+        let max_result = Max.apply_columnar(&mut buffer, Some("value"));
+        assert_eq!(max_result, Value::Float(30.0));
+    }
+
+    #[test]
+    fn test_columnar_aggregator() {
+        let mut buffer = make_columnar_buffer();
+        let aggregator = Aggregator::new()
+            .add("count", Box::new(Count), None)
+            .add("sum", Box::new(Sum), Some("value".to_string()))
+            .add("avg", Box::new(Avg), Some("value".to_string()))
+            .add("min", Box::new(Min), Some("value".to_string()))
+            .add("max", Box::new(Max), Some("value".to_string()));
+
+        let result = aggregator.apply_columnar(&mut buffer);
+        assert_eq!(result.get("count"), Some(&Value::Int(3)));
+        assert_eq!(result.get("sum"), Some(&Value::Float(60.0)));
+        assert_eq!(result.get("avg"), Some(&Value::Float(20.0)));
+        assert_eq!(result.get("min"), Some(&Value::Float(10.0)));
+        assert_eq!(result.get("max"), Some(&Value::Float(30.0)));
+    }
+
+    #[test]
+    fn test_columnar_column_caching() {
+        let mut buffer = make_columnar_buffer();
+
+        // First access extracts column
+        assert!(!buffer.has_column("value"));
+        let _sum1 = Sum.apply_columnar(&mut buffer, Some("value"));
+        assert!(buffer.has_column("value"));
+
+        // Second access reuses cached column
+        let _sum2 = Avg.apply_columnar(&mut buffer, Some("value"));
+        assert!(buffer.has_column("value"));
+    }
+
+    #[test]
+    fn test_columnar_empty_buffer() {
+        let mut buffer = ColumnarBuffer::new();
+
+        assert_eq!(Count.apply_columnar(&mut buffer, None), Value::Int(0));
+        assert_eq!(
+            Sum.apply_columnar(&mut buffer, Some("value")),
+            Value::Float(0.0)
+        );
+        assert_eq!(Avg.apply_columnar(&mut buffer, Some("value")), Value::Null);
+        assert_eq!(Min.apply_columnar(&mut buffer, Some("value")), Value::Null);
+        assert_eq!(Max.apply_columnar(&mut buffer, Some("value")), Value::Null);
     }
 }

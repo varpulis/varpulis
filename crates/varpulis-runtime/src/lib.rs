@@ -102,6 +102,7 @@
 
 pub mod aggregation;
 pub mod attention;
+pub mod columnar;
 pub mod connector;
 pub mod context;
 pub mod engine;
@@ -139,6 +140,9 @@ pub use window::{
     PartitionedSlidingWindow, PartitionedTumblingWindow, PreviousValueTracker, SessionWindow,
     SlidingCountWindow, SlidingWindow, TumblingWindow,
 };
+
+// Columnar storage for SIMD-optimized aggregations
+pub use columnar::{Column, ColumnarAccess, ColumnarBuffer, ColumnarCheckpoint};
 pub use worker_pool::{
     BackpressureError, BackpressureStrategy, WorkerPool, WorkerPoolConfig, WorkerPoolMetrics,
     WorkerState, WorkerStatus,
