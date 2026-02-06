@@ -105,14 +105,14 @@ fn serializable_to_value(sv: SerializableValue) -> varpulis_core::Value {
         SerializableValue::Timestamp(ts) => varpulis_core::Value::Timestamp(ts),
         SerializableValue::Duration(d) => varpulis_core::Value::Duration(d),
         SerializableValue::Array(arr) => {
-            varpulis_core::Value::Array(arr.into_iter().map(serializable_to_value).collect())
+            varpulis_core::Value::array(arr.into_iter().map(serializable_to_value).collect())
         }
         SerializableValue::Map(entries) => {
             let mut map = indexmap::IndexMap::new();
             for (k, v) in entries {
                 map.insert(k, serializable_to_value(v));
             }
-            varpulis_core::Value::Map(map)
+            varpulis_core::Value::map(map)
         }
     }
 }
@@ -955,7 +955,7 @@ mod tests {
         // Array
         event.data.insert(
             "tags".to_string(),
-            varpulis_core::Value::Array(vec![
+            varpulis_core::Value::array(vec![
                 varpulis_core::Value::Str("a".to_string()),
                 varpulis_core::Value::Int(1),
             ]),
@@ -967,7 +967,7 @@ mod tests {
         inner_map.insert("flag".to_string(), varpulis_core::Value::Bool(true));
         event
             .data
-            .insert("meta".to_string(), varpulis_core::Value::Map(inner_map));
+            .insert("meta".to_string(), varpulis_core::Value::map(inner_map));
 
         // Round-trip through SerializableEvent
         let serializable: SerializableEvent = (&event).into();

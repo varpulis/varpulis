@@ -297,7 +297,7 @@ impl EventFileParser {
                 .filter(|s| !s.is_empty())
                 .map(|item| Self::parse_value(item))
                 .collect();
-            return Ok(Value::Array(items?));
+            return Ok(Value::array(items?));
         }
 
         // Unquoted string (identifier-like)
@@ -378,14 +378,14 @@ impl EventFileParser {
             }
             serde_json::Value::String(s) => Value::Str(s.clone()),
             serde_json::Value::Array(arr) => {
-                Value::Array(arr.iter().map(Self::json_to_value).collect())
+                Value::array(arr.iter().map(Self::json_to_value).collect())
             }
             serde_json::Value::Object(obj) => {
                 let map: indexmap::IndexMap<String, Value> = obj
                     .iter()
                     .map(|(k, v)| (k.clone(), Self::json_to_value(v)))
                     .collect();
-                Value::Map(map)
+                Value::map(map)
             }
         }
     }
