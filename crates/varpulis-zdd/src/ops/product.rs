@@ -3,10 +3,11 @@
 //! The product_with_optional operation is the key operation for Kleene pattern matching.
 //! It extends each set in the family with an optional new element.
 
+use super::common::{get_node_info, remap_nodes, union_refs};
 use crate::refs::ZddRef;
 use crate::table::UniqueTable;
 use crate::zdd::Zdd;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 impl Zdd {
     /// Extends each combination with an optional new element.
@@ -42,7 +43,7 @@ impl Zdd {
     /// This is much better than the naive O(2^n) for n elements.
     pub fn product_with_optional(&self, var: u32) -> Zdd {
         let mut table = self.table().clone();
-        let mut cache: HashMap<ZddRef, ZddRef> = HashMap::new();
+        let mut cache: FxHashMap<ZddRef, ZddRef> = FxHashMap::default();
 
         let new_root = product_with_optional_rec(self.root(), var, &mut table, self, &mut cache);
 
@@ -62,12 +63,12 @@ impl Zdd {
     /// ```
     pub fn product(&self, other: &Zdd) -> Zdd {
         let mut table = self.table().clone();
-        let mut node_map: HashMap<u32, ZddRef> = HashMap::new();
+        let mut node_map: FxHashMap<u32, ZddRef> = FxHashMap::default();
 
         // Remap other's nodes into our table
         let other_root = remap_nodes(other, &mut table, &mut node_map);
 
-        let mut cache: HashMap<(ZddRef, ZddRef), ZddRef> = HashMap::new();
+        let mut cache: FxHashMap<(ZddRef, ZddRef), ZddRef> = FxHashMap::default();
         let result_root = product_rec(
             self.root(),
             other_root,
@@ -86,7 +87,7 @@ fn product_with_optional_rec(
     var: u32,
     table: &mut UniqueTable,
     zdd: &Zdd,
-    cache: &mut HashMap<ZddRef, ZddRef>,
+    cache: &mut FxHashMap<ZddRef, ZddRef>,
 ) -> ZddRef {
     // Terminal cases
     match node {
@@ -138,111 +139,13 @@ fn product_with_optional_rec(
     result
 }
 
-/// Union of two refs (helper for product_with_optional)
-fn union_refs(a: ZddRef, b: ZddRef, table: &mut UniqueTable) -> ZddRef {
-    let mut cache: HashMap<(ZddRef, ZddRef), ZddRef> = HashMap::new();
-    union_refs_rec(a, b, table, &mut cache)
-}
-
-fn union_refs_rec(
-    a: ZddRef,
-    b: ZddRef,
-    table: &mut UniqueTable,
-    cache: &mut HashMap<(ZddRef, ZddRef), ZddRef>,
-) -> ZddRef {
-    if a == ZddRef::Empty {
-        return b;
-    }
-    if b == ZddRef::Empty {
-        return a;
-    }
-    if a == b {
-        return a;
-    }
-
-    let (a, b) = if a <= b { (a, b) } else { (b, a) };
-
-    if let Some(&cached) = cache.get(&(a, b)) {
-        return cached;
-    }
-
-    if a == ZddRef::Base && b == ZddRef::Base {
-        return ZddRef::Base;
-    }
-
-    let (a_var, a_lo, a_hi) = get_node_info(a, table);
-    let (b_var, b_lo, b_hi) = get_node_info(b, table);
-
-    let result = match (a_var, b_var) {
-        (Some(av), Some(bv)) => {
-            if av < bv {
-                let new_lo = union_refs_rec(a_lo, b, table, cache);
-                table.get_or_create(av, new_lo, a_hi)
-            } else if av > bv {
-                let new_lo = union_refs_rec(a, b_lo, table, cache);
-                table.get_or_create(bv, new_lo, b_hi)
-            } else {
-                let new_lo = union_refs_rec(a_lo, b_lo, table, cache);
-                let new_hi = union_refs_rec(a_hi, b_hi, table, cache);
-                table.get_or_create(av, new_lo, new_hi)
-            }
-        }
-        (Some(av), None) => {
-            let new_lo = union_refs_rec(a_lo, b, table, cache);
-            table.get_or_create(av, new_lo, a_hi)
-        }
-        (None, Some(bv)) => {
-            let new_lo = union_refs_rec(a, b_lo, table, cache);
-            table.get_or_create(bv, new_lo, b_hi)
-        }
-        (None, None) => unreachable!(),
-    };
-
-    cache.insert((a, b), result);
-    result
-}
-
-/// Remap nodes from source ZDD into target table
-fn remap_nodes(
-    source: &Zdd,
-    target_table: &mut UniqueTable,
-    node_map: &mut HashMap<u32, ZddRef>,
-) -> ZddRef {
-    remap_ref(source.root(), source, target_table, node_map)
-}
-
-fn remap_ref(
-    r: ZddRef,
-    source: &Zdd,
-    target_table: &mut UniqueTable,
-    node_map: &mut HashMap<u32, ZddRef>,
-) -> ZddRef {
-    match r {
-        ZddRef::Empty => ZddRef::Empty,
-        ZddRef::Base => ZddRef::Base,
-        ZddRef::Node(id) => {
-            if let Some(&mapped) = node_map.get(&id) {
-                return mapped;
-            }
-
-            let node = source.get_node(id);
-            let new_lo = remap_ref(node.lo, source, target_table, node_map);
-            let new_hi = remap_ref(node.hi, source, target_table, node_map);
-            let new_ref = target_table.get_or_create(node.var, new_lo, new_hi);
-
-            node_map.insert(id, new_ref);
-            new_ref
-        }
-    }
-}
-
 fn product_rec(
     a: ZddRef,
     b: ZddRef,
     table: &mut UniqueTable,
     _zdd: &Zdd,
-    _node_map: &HashMap<u32, ZddRef>,
-    cache: &mut HashMap<(ZddRef, ZddRef), ZddRef>,
+    _node_map: &FxHashMap<u32, ZddRef>,
+    cache: &mut FxHashMap<(ZddRef, ZddRef), ZddRef>,
 ) -> ZddRef {
     // Terminal cases
     if a == ZddRef::Empty || b == ZddRef::Empty {
@@ -304,17 +207,6 @@ fn product_rec(
 
     cache.insert((a, b), result);
     result
-}
-
-fn get_node_info(r: ZddRef, table: &UniqueTable) -> (Option<u32>, ZddRef, ZddRef) {
-    match r {
-        ZddRef::Empty => (None, ZddRef::Empty, ZddRef::Empty),
-        ZddRef::Base => (None, ZddRef::Base, ZddRef::Empty),
-        ZddRef::Node(id) => {
-            let node = table.get_node(id);
-            (Some(node.var), node.lo, node.hi)
-        }
-    }
 }
 
 #[cfg(test)]

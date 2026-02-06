@@ -3,6 +3,7 @@
 //! This module provides set-theoretic operations on ZDDs.
 //! Operations are implemented as methods on the Zdd struct.
 
+mod common;
 mod difference;
 mod intersection;
 mod product;

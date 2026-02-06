@@ -25,7 +25,7 @@
 
 use crate::refs::ZddRef;
 use crate::table::UniqueTable;
-use std::collections::HashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::{Arc, RwLock};
 
 /// A lightweight handle to a ZDD within an arena.
@@ -75,16 +75,16 @@ pub struct ZddArena {
     table: UniqueTable,
 
     /// Persistent cache for union operations
-    union_cache: HashMap<(ZddRef, ZddRef), ZddRef>,
+    union_cache: FxHashMap<(ZddRef, ZddRef), ZddRef>,
 
     /// Persistent cache for intersection operations
-    intersection_cache: HashMap<(ZddRef, ZddRef), ZddRef>,
+    intersection_cache: FxHashMap<(ZddRef, ZddRef), ZddRef>,
 
     /// Persistent cache for difference operations
-    difference_cache: HashMap<(ZddRef, ZddRef), ZddRef>,
+    difference_cache: FxHashMap<(ZddRef, ZddRef), ZddRef>,
 
     /// Cached counts for ZDD roots
-    count_cache: HashMap<ZddRef, usize>,
+    count_cache: FxHashMap<ZddRef, usize>,
 }
 
 impl std::fmt::Debug for ZddArena {
@@ -102,10 +102,10 @@ impl ZddArena {
     pub fn new() -> Self {
         Self {
             table: UniqueTable::new(),
-            union_cache: HashMap::new(),
-            intersection_cache: HashMap::new(),
-            difference_cache: HashMap::new(),
-            count_cache: HashMap::new(),
+            union_cache: FxHashMap::default(),
+            intersection_cache: FxHashMap::default(),
+            difference_cache: FxHashMap::default(),
+            count_cache: FxHashMap::default(),
         }
     }
 
@@ -113,10 +113,10 @@ impl ZddArena {
     pub fn with_capacity(node_capacity: usize) -> Self {
         Self {
             table: UniqueTable::with_capacity(node_capacity),
-            union_cache: HashMap::with_capacity(node_capacity),
-            intersection_cache: HashMap::new(),
-            difference_cache: HashMap::new(),
-            count_cache: HashMap::with_capacity(node_capacity),
+            union_cache: FxHashMap::with_capacity_and_hasher(node_capacity, Default::default()),
+            intersection_cache: FxHashMap::default(),
+            difference_cache: FxHashMap::default(),
+            count_cache: FxHashMap::with_capacity_and_hasher(node_capacity, Default::default()),
         }
     }
 
@@ -176,7 +176,7 @@ impl ZddArena {
     /// This is the key operation for Kleene pattern matching.
     /// Complexity: O(|Z|) where |Z| is the number of nodes.
     pub fn product_with_optional(&mut self, handle: ZddHandle, var: u32) -> ZddHandle {
-        let mut cache: HashMap<ZddRef, ZddRef> = HashMap::new();
+        let mut cache: FxHashMap<ZddRef, ZddRef> = FxHashMap::default();
         let new_root = self.product_with_optional_rec(handle.root, var, &mut cache);
         self.invalidate_caches();
         ZddHandle { root: new_root }
@@ -186,7 +186,7 @@ impl ZddArena {
         &mut self,
         node: ZddRef,
         var: u32,
-        cache: &mut HashMap<ZddRef, ZddRef>,
+        cache: &mut FxHashMap<ZddRef, ZddRef>,
     ) -> ZddRef {
         // Terminal cases
         match node {
@@ -431,7 +431,10 @@ impl ZddArena {
     // Query Operations
     // ========================================================================
 
-    /// Count the number of sets in the family
+    /// Count the number of sets in the family (with caching).
+    ///
+    /// Uses an internal cache for repeated calls. Takes `&mut self`.
+    /// For read-only access (e.g., in SharedArena), use [`count_uncached`](Self::count_uncached).
     pub fn count(&mut self, handle: ZddHandle) -> usize {
         self.count_ref(handle.root)
     }
@@ -453,11 +456,75 @@ impl ZddArena {
         }
     }
 
+    /// Count the number of sets in the family (without caching).
+    ///
+    /// This method takes `&self` and can be used for read-only access.
+    /// Useful for SharedArena to avoid write lock contention.
+    ///
+    /// For repeated counts on the same ZDD, prefer [`count`](Self::count) with caching.
+    pub fn count_uncached(&self, handle: ZddHandle) -> usize {
+        let mut local_cache: FxHashMap<ZddRef, usize> = FxHashMap::default();
+        self.count_ref_uncached(handle.root, &mut local_cache)
+    }
+
+    fn count_ref_uncached(&self, r: ZddRef, cache: &mut FxHashMap<ZddRef, usize>) -> usize {
+        match r {
+            ZddRef::Empty => 0,
+            ZddRef::Base => 1,
+            ZddRef::Node(_) => {
+                if let Some(&cached) = cache.get(&r) {
+                    return cached;
+                }
+
+                let node = *self.table.get_node(r.node_id().unwrap());
+                let count = self.count_ref_uncached(node.lo, cache)
+                    + self.count_ref_uncached(node.hi, cache);
+                cache.insert(r, count);
+                count
+            }
+        }
+    }
+
     /// Check if a specific combination is in the family
+    ///
+    /// This method allocates a temporary Vec to sort the elements.
+    /// For hot paths with pre-sorted data, use [`contains_sorted`](Self::contains_sorted).
     pub fn contains(&self, handle: ZddHandle, elements: &[u32]) -> bool {
         let mut sorted: Vec<u32> = elements.to_vec();
         sorted.sort_unstable();
         sorted.dedup();
+        self.contains_sorted(handle, &sorted)
+    }
+
+    /// Check if a specific combination is in the family (pre-sorted input).
+    ///
+    /// This is the allocation-free version of [`contains`](Self::contains).
+    ///
+    /// # Arguments
+    /// * `handle` - The ZDD handle to check
+    /// * `sorted_elements` - Elements **must be sorted in ascending order** with no duplicates
+    ///
+    /// # Panics
+    /// Debug builds will panic if elements are not sorted.
+    ///
+    /// # Example
+    /// ```
+    /// use varpulis_zdd::ZddArena;
+    ///
+    /// let mut arena = ZddArena::new();
+    /// let mut zdd = arena.base();
+    /// zdd = arena.product_with_optional(zdd, 0);
+    /// zdd = arena.product_with_optional(zdd, 1);
+    ///
+    /// // Pre-sorted query (no allocation)
+    /// assert!(arena.contains_sorted(zdd, &[0, 1]));
+    /// assert!(arena.contains_sorted(zdd, &[]));
+    /// ```
+    pub fn contains_sorted(&self, handle: ZddHandle, sorted_elements: &[u32]) -> bool {
+        debug_assert!(
+            sorted_elements.windows(2).all(|w| w[0] < w[1]),
+            "elements must be sorted in ascending order with no duplicates"
+        );
 
         let mut current = handle.root;
         let mut elem_idx = 0;
@@ -465,14 +532,16 @@ impl ZddArena {
         loop {
             match current {
                 ZddRef::Empty => return false,
-                ZddRef::Base => return elem_idx == sorted.len(),
+                ZddRef::Base => return elem_idx == sorted_elements.len(),
                 ZddRef::Node(id) => {
                     let node = self.table.get_node(id);
 
-                    if elem_idx < sorted.len() && node.var == sorted[elem_idx] {
+                    if elem_idx < sorted_elements.len() && node.var == sorted_elements[elem_idx] {
                         current = node.hi;
                         elem_idx += 1;
-                    } else if elem_idx < sorted.len() && node.var > sorted[elem_idx] {
+                    } else if elem_idx < sorted_elements.len()
+                        && node.var > sorted_elements[elem_idx]
+                    {
                         return false;
                     } else {
                         current = node.lo;
@@ -521,14 +590,14 @@ impl ZddArena {
             + self.count_cache.len();
 
         // Phase 1: Mark all reachable nodes
-        let mut marked: HashMap<u32, bool> = HashMap::new();
+        let mut marked: FxHashSet<u32> = FxHashSet::default();
         for handle in live_handles {
             self.mark_reachable(handle.root, &mut marked);
         }
 
         // Phase 2: Create new table with only marked nodes
         let mut new_table = UniqueTable::with_capacity(marked.len());
-        let mut remap: HashMap<u32, ZddRef> = HashMap::new();
+        let mut remap: FxHashMap<u32, ZddRef> = FxHashMap::default();
 
         // Remap all live nodes to new table
         let new_roots: Vec<ZddHandle> = live_handles
@@ -557,14 +626,13 @@ impl ZddArena {
     }
 
     /// Mark all nodes reachable from a root
-    fn mark_reachable(&self, r: ZddRef, marked: &mut HashMap<u32, bool>) {
+    fn mark_reachable(&self, r: ZddRef, marked: &mut FxHashSet<u32>) {
         match r {
             ZddRef::Empty | ZddRef::Base => {}
             ZddRef::Node(id) => {
-                if marked.contains_key(&id) {
-                    return;
+                if !marked.insert(id) {
+                    return; // Already marked
                 }
-                marked.insert(id, true);
                 let node = self.table.get_node(id);
                 self.mark_reachable(node.lo, marked);
                 self.mark_reachable(node.hi, marked);
@@ -577,7 +645,7 @@ impl ZddArena {
         &self,
         r: ZddRef,
         new_table: &mut UniqueTable,
-        remap: &mut HashMap<u32, ZddRef>,
+        remap: &mut FxHashMap<u32, ZddRef>,
     ) -> ZddRef {
         match r {
             ZddRef::Empty => ZddRef::Empty,
@@ -627,9 +695,30 @@ impl ZddArena {
         }
     }
 
+    /// Invalidate caches after structural changes.
+    ///
+    /// # Why this is a no-op
+    ///
+    /// The UniqueTable uses monotonically increasing node IDs and never reuses them.
+    /// When new nodes are created (via singleton, from_set, product_with_optional, etc.),
+    /// they get fresh IDs that don't conflict with existing cache entries.
+    ///
+    /// Old cache entries remain valid because:
+    /// - `union_cache[(a, b)] = c` - if a, b existed before, c is still correct
+    /// - `intersection_cache` - same reasoning
+    /// - `difference_cache` - same reasoning
+    /// - `count_cache[r] = n` - counts don't change when new nodes are added elsewhere
+    ///
+    /// This invariant holds as long as:
+    /// 1. Node IDs are never reused (guaranteed by UniqueTable appending to Vec)
+    /// 2. ZddRef values are never modified after creation (they're immutable)
+    ///
+    /// If these invariants ever change (e.g., adding node compaction without GC),
+    /// this method would need to clear the caches.
+    #[inline]
     fn invalidate_caches(&mut self) {
-        // Clear caches that depend on structure
-        // Keep count_cache as counts are still valid
+        // No-op: see documentation above.
+        // Caches remain valid due to monotonic ID allocation.
     }
 
     /// Get table statistics
@@ -738,14 +827,33 @@ impl SharedArena {
         self.inner.write().unwrap().difference(a, b)
     }
 
-    /// Count sets
+    /// Count sets (read lock, no caching).
+    ///
+    /// Uses a read lock for better concurrency. Each call recomputes the count.
+    /// For repeated counts on the same ZDD, consider using [`count_cached`](Self::count_cached).
     pub fn count(&self, handle: ZddHandle) -> usize {
+        self.inner.read().unwrap().count_uncached(handle)
+    }
+
+    /// Count sets (write lock, with caching).
+    ///
+    /// Uses the arena's internal cache for repeated calls on the same ZDD.
+    /// Takes a write lock, so may block concurrent reads.
+    pub fn count_cached(&self, handle: ZddHandle) -> usize {
         self.inner.write().unwrap().count(handle)
     }
 
     /// Check containment
     pub fn contains(&self, handle: ZddHandle, elements: &[u32]) -> bool {
         self.inner.read().unwrap().contains(handle, elements)
+    }
+
+    /// Check containment (pre-sorted, allocation-free)
+    pub fn contains_sorted(&self, handle: ZddHandle, sorted_elements: &[u32]) -> bool {
+        self.inner
+            .read()
+            .unwrap()
+            .contains_sorted(handle, sorted_elements)
     }
 
     /// Get node count
@@ -984,6 +1092,26 @@ mod tests {
     }
 
     #[test]
+    fn test_contains_sorted() {
+        let mut arena = ZddArena::new();
+        let mut zdd = arena.base();
+        zdd = arena.product_with_optional(zdd, 0);
+        zdd = arena.product_with_optional(zdd, 1);
+        zdd = arena.product_with_optional(zdd, 2);
+
+        // Pre-sorted queries (allocation-free)
+        assert!(arena.contains_sorted(zdd, &[]));
+        assert!(arena.contains_sorted(zdd, &[0]));
+        assert!(arena.contains_sorted(zdd, &[1]));
+        assert!(arena.contains_sorted(zdd, &[0, 1]));
+        assert!(arena.contains_sorted(zdd, &[0, 1, 2]));
+
+        // Non-existent combinations
+        assert!(!arena.contains_sorted(zdd, &[3]));
+        assert!(!arena.contains_sorted(zdd, &[0, 3]));
+    }
+
+    #[test]
     fn test_shared_arena() {
         let arena = SharedArena::new();
         let base = arena.base();
@@ -1083,5 +1211,41 @@ mod tests {
 
         // Nodes should still be there
         assert!(arena.node_count() > 0);
+    }
+
+    #[test]
+    fn test_cache_consistency_after_structural_changes() {
+        // Verify that caches remain valid after adding new nodes
+        let mut arena = ZddArena::new();
+
+        // Create initial ZDDs and compute union
+        let a = arena.from_set(&[1, 2]);
+        let b = arena.from_set(&[3, 4]);
+        let ab = arena.union(a, b);
+        assert_eq!(arena.count(ab), 2);
+
+        // Remember cache state
+        let cache_size = arena.stats().union_cache_size;
+        assert!(cache_size > 0);
+
+        // Add more nodes to the arena (structural change)
+        let c = arena.from_set(&[5, 6]);
+        let d = arena.product_with_optional(c, 7);
+
+        // Cache should still be valid - same result for same inputs
+        let ab2 = arena.union(a, b);
+        assert_eq!(ab, ab2, "Cached result should be reused");
+        assert_eq!(arena.count(ab2), 2);
+
+        // Original handles should still work
+        assert!(arena.contains(a, &[1, 2]));
+        assert!(arena.contains(b, &[3, 4]));
+        assert!(arena.contains(ab, &[1, 2]));
+        assert!(arena.contains(ab, &[3, 4]));
+
+        // New handles should also work
+        assert!(arena.contains(c, &[5, 6]));
+        assert!(arena.contains(d, &[5, 6]));
+        assert!(arena.contains(d, &[5, 6, 7]));
     }
 }

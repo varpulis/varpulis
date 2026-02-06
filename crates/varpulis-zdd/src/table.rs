@@ -5,7 +5,7 @@
 
 use crate::node::ZddNode;
 use crate::refs::ZddRef;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 /// UniqueTable for ZDD node management
 ///
@@ -18,7 +18,7 @@ pub struct UniqueTable {
     /// Storage for all nodes
     nodes: Vec<ZddNode>,
     /// Index: (var, lo, hi) → node_id for O(1) lookup
-    index: HashMap<ZddNode, u32>,
+    index: FxHashMap<ZddNode, u32>,
 }
 
 impl UniqueTable {
@@ -26,7 +26,7 @@ impl UniqueTable {
     pub fn new() -> Self {
         Self {
             nodes: Vec::new(),
-            index: HashMap::new(),
+            index: FxHashMap::default(),
         }
     }
 
@@ -34,7 +34,7 @@ impl UniqueTable {
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             nodes: Vec::with_capacity(capacity),
-            index: HashMap::with_capacity(capacity),
+            index: FxHashMap::with_capacity_and_hasher(capacity, Default::default()),
         }
     }
 
