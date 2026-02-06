@@ -2,10 +2,11 @@
 //!
 //! Computes S₁ \ S₂ (set difference of families)
 
+use super::common::{get_node_info, remap_nodes};
 use crate::refs::ZddRef;
 use crate::table::UniqueTable;
 use crate::zdd::Zdd;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 impl Zdd {
     /// Compute the set difference of two ZDDs: S₁ \ S₂
@@ -24,50 +25,16 @@ impl Zdd {
     pub fn difference(&self, other: &Zdd) -> Zdd {
         // Build a combined table with nodes from both ZDDs
         let mut table = self.table().clone();
-        let mut node_map: HashMap<u32, ZddRef> = HashMap::new();
+        let mut node_map: FxHashMap<u32, ZddRef> = FxHashMap::default();
 
         // Remap other's nodes into our table
         let other_root = remap_nodes(other, &mut table, &mut node_map);
 
         // Now compute difference with both ZDDs sharing the same table
-        let mut cache: HashMap<(ZddRef, ZddRef), ZddRef> = HashMap::new();
+        let mut cache: FxHashMap<(ZddRef, ZddRef), ZddRef> = FxHashMap::default();
         let result_root = difference_rec(self.root(), other_root, &mut table, &mut cache);
 
         Zdd::from_parts(result_root, table)
-    }
-}
-
-/// Remap nodes from source ZDD into target table
-fn remap_nodes(
-    source: &Zdd,
-    target_table: &mut UniqueTable,
-    node_map: &mut HashMap<u32, ZddRef>,
-) -> ZddRef {
-    remap_ref(source.root(), source, target_table, node_map)
-}
-
-fn remap_ref(
-    r: ZddRef,
-    source: &Zdd,
-    target_table: &mut UniqueTable,
-    node_map: &mut HashMap<u32, ZddRef>,
-) -> ZddRef {
-    match r {
-        ZddRef::Empty => ZddRef::Empty,
-        ZddRef::Base => ZddRef::Base,
-        ZddRef::Node(id) => {
-            if let Some(&mapped) = node_map.get(&id) {
-                return mapped;
-            }
-
-            let node = source.get_node(id);
-            let new_lo = remap_ref(node.lo, source, target_table, node_map);
-            let new_hi = remap_ref(node.hi, source, target_table, node_map);
-            let new_ref = target_table.get_or_create(node.var, new_lo, new_hi);
-
-            node_map.insert(id, new_ref);
-            new_ref
-        }
     }
 }
 
@@ -75,7 +42,7 @@ fn difference_rec(
     a: ZddRef,
     b: ZddRef,
     table: &mut UniqueTable,
-    cache: &mut HashMap<(ZddRef, ZddRef), ZddRef>,
+    cache: &mut FxHashMap<(ZddRef, ZddRef), ZddRef>,
 ) -> ZddRef {
     // Terminal cases
     if a == ZddRef::Empty {
@@ -136,17 +103,6 @@ fn difference_rec(
 
     cache.insert((a, b), result);
     result
-}
-
-fn get_node_info(r: ZddRef, table: &UniqueTable) -> (Option<u32>, ZddRef, ZddRef) {
-    match r {
-        ZddRef::Empty => (None, ZddRef::Empty, ZddRef::Empty),
-        ZddRef::Base => (None, ZddRef::Base, ZddRef::Empty),
-        ZddRef::Node(id) => {
-            let node = table.get_node(id);
-            (Some(node.var), node.lo, node.hi)
-        }
-    }
 }
 
 #[cfg(test)]

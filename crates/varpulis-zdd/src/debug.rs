@@ -4,7 +4,7 @@
 
 use crate::refs::ZddRef;
 use crate::zdd::Zdd;
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 use std::fmt::Write;
 
 impl Zdd {
@@ -20,7 +20,7 @@ impl Zdd {
     /// ```
     pub fn to_dot(&self) -> String {
         let mut out = String::new();
-        let mut visited = HashSet::new();
+        let mut visited = FxHashSet::default();
 
         writeln!(out, "digraph ZDD {{").unwrap();
         writeln!(out, "  rankdir=TB;").unwrap();
@@ -49,7 +49,7 @@ impl Zdd {
         out
     }
 
-    fn emit_dot_node(&self, r: ZddRef, out: &mut String, visited: &mut HashSet<ZddRef>) {
+    fn emit_dot_node(&self, r: ZddRef, out: &mut String, visited: &mut FxHashSet<ZddRef>) {
         if visited.contains(&r) {
             return;
         }

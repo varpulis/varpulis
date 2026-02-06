@@ -5,7 +5,7 @@
 use crate::node::ZddNode;
 use crate::refs::ZddRef;
 use crate::table::UniqueTable;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 /// Zero-suppressed Decision Diagram
 ///
@@ -168,11 +168,11 @@ impl Zdd {
     ///
     /// Uses memoization for efficiency.
     pub fn count(&self) -> usize {
-        let mut cache: HashMap<ZddRef, usize> = HashMap::new();
+        let mut cache: FxHashMap<ZddRef, usize> = FxHashMap::default();
         self.count_rec(self.root, &mut cache)
     }
 
-    fn count_rec(&self, r: ZddRef, cache: &mut HashMap<ZddRef, usize>) -> usize {
+    fn count_rec(&self, r: ZddRef, cache: &mut FxHashMap<ZddRef, usize>) -> usize {
         match r {
             ZddRef::Empty => 0,
             ZddRef::Base => 1,
