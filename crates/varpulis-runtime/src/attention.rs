@@ -196,7 +196,7 @@ impl EmbeddingEngine {
             let dim_per_feature = self.embedding_dim / features_count.max(1);
 
             for feat in &self.config.numeric_features {
-                if let Some(value) = event.data.get(&feat.field) {
+                if let Some(value) = event.data.get(feat.field.as_str()) {
                     if let Some(num) = value_to_f64(value) {
                         let transformed = self.transform_numeric(num, &feat.transform);
                         for i in 0..dim_per_feature.min(self.embedding_dim - idx) {
@@ -209,7 +209,7 @@ impl EmbeddingEngine {
             }
 
             for feat in &self.config.categorical_features {
-                if let Some(value) = event.data.get(&feat.field) {
+                if let Some(value) = event.data.get(feat.field.as_str()) {
                     if let Some(s) = value_to_string(value) {
                         let cat_emb = self.embed_categorical(&s, feat);
                         for i in 0..cat_emb.len().min(self.embedding_dim - idx) {

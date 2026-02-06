@@ -342,9 +342,9 @@ mod tests {
     use varpulis_core::Value;
 
     fn make_event(event_type: &str, fields: Vec<(&str, Value)>) -> Event {
-        let mut event = Event::new(event_type.to_string());
+        let mut event = Event::new(event_type);
         for (k, v) in fields {
-            event.data.insert(k.to_string(), v);
+            event.data.insert(k.into(), v);
         }
         event
     }

@@ -52,7 +52,7 @@ pub fn spawn_timer(
             // Create timer event
             let mut event = Event::new(timer_event_type.clone());
             event.data.insert(
-                "timestamp".to_string(),
+                "timestamp".into(),
                 varpulis_core::Value::Int(chrono::Utc::now().timestamp_millis()),
             );
 

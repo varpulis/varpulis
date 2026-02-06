@@ -177,7 +177,7 @@ async fn test_timer_event_processing_through_engine() {
     // Create a timer event manually and process it
     let mut timer_event = Event::new("Timer_heartbeat");
     timer_event.data.insert(
-        "timestamp".to_string(),
+        "timestamp".into(),
         varpulis_core::Value::Int(chrono::Utc::now().timestamp_millis()),
     );
 

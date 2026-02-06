@@ -90,7 +90,7 @@ fn value_to_serializable(v: &varpulis_core::Value) -> SerializableValue {
         }
         varpulis_core::Value::Map(map) => SerializableValue::Map(
             map.iter()
-                .map(|(k, v)| (k.clone(), value_to_serializable(v)))
+                .map(|(k, v)| (k.to_string(), value_to_serializable(v)))
                 .collect(),
         ),
     }
@@ -110,9 +110,9 @@ fn serializable_to_value(sv: SerializableValue) -> varpulis_core::Value {
             varpulis_core::Value::array(arr.into_iter().map(serializable_to_value).collect())
         }
         SerializableValue::Map(entries) => {
-            let mut map = IndexMap::with_hasher(FxBuildHasher);
+            let mut map: IndexMap<std::sync::Arc<str>, varpulis_core::Value, FxBuildHasher> = IndexMap::with_hasher(FxBuildHasher);
             for (k, v) in entries {
-                map.insert(k, serializable_to_value(v));
+                map.insert(k.into(), serializable_to_value(v));
             }
             varpulis_core::Value::map(map)
         }
@@ -123,7 +123,7 @@ impl From<&Event> for SerializableEvent {
     fn from(event: &Event) -> Self {
         let mut fields = HashMap::new();
         for (k, v) in &event.data {
-            fields.insert(k.clone(), value_to_serializable(v));
+            fields.insert(k.to_string(), value_to_serializable(v));
         }
         Self {
             event_type: event.event_type.to_string(),
@@ -139,7 +139,7 @@ impl From<SerializableEvent> for Event {
         event.timestamp = chrono::DateTime::from_timestamp_millis(se.timestamp_ms)
             .unwrap_or_else(chrono::Utc::now);
         for (k, v) in se.fields {
-            event.data.insert(k, serializable_to_value(v));
+            event.data.insert(k.into(), serializable_to_value(v));
         }
         event
     }
@@ -920,12 +920,12 @@ mod tests {
         let mut event = Event::new("TestEvent");
         event
             .data
-            .insert("count".to_string(), varpulis_core::Value::Int(42));
+            .insert("count".into(), varpulis_core::Value::Int(42));
         event
             .data
-            .insert("value".to_string(), varpulis_core::Value::Float(1.5));
+            .insert("value".into(), varpulis_core::Value::Float(1.5));
         event.data.insert(
-            "name".to_string(),
+            "name".into(),
             varpulis_core::Value::Str("test".into()),
         );
 
@@ -944,19 +944,19 @@ mod tests {
 
         // Timestamp (nanoseconds since epoch)
         event.data.insert(
-            "ts".to_string(),
+            "ts".into(),
             varpulis_core::Value::Timestamp(1_700_000_000_000_000_000),
         );
 
         // Duration (nanoseconds)
         event.data.insert(
-            "dur".to_string(),
+            "dur".into(),
             varpulis_core::Value::Duration(5_000_000_000),
         );
 
         // Array
         event.data.insert(
-            "tags".to_string(),
+            "tags".into(),
             varpulis_core::Value::array(vec![
                 varpulis_core::Value::Str("a".into()),
                 varpulis_core::Value::Int(1),
@@ -965,11 +965,11 @@ mod tests {
 
         // Map
         let mut inner_map = IndexMap::with_hasher(FxBuildHasher);
-        inner_map.insert("nested_key".to_string(), varpulis_core::Value::Float(3.15));
-        inner_map.insert("flag".to_string(), varpulis_core::Value::Bool(true));
+        inner_map.insert("nested_key".into(), varpulis_core::Value::Float(3.15));
+        inner_map.insert("flag".into(), varpulis_core::Value::Bool(true));
         event
             .data
-            .insert("meta".to_string(), varpulis_core::Value::map(inner_map));
+            .insert("meta".into(), varpulis_core::Value::map(inner_map));
 
         // Round-trip through SerializableEvent
         let serializable: SerializableEvent = (&event).into();

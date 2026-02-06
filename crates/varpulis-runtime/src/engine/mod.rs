@@ -2037,20 +2037,20 @@ impl Engine {
 
             // Add attention_score to event data for use in expressions
             enriched_event.data.insert(
-                "attention_score".to_string(),
+                "attention_score".into(),
                 Value::Float(attention_score as f64),
             );
 
             // Add attention context vector norm as additional metric
             let context_norm: f32 = result.context.iter().map(|x| x * x).sum::<f32>().sqrt();
             enriched_event.data.insert(
-                "attention_context_norm".to_string(),
+                "attention_context_norm".into(),
                 Value::Float(context_norm as f64),
             );
 
             // Add number of correlated events
             enriched_event.data.insert(
-                "attention_matches".to_string(),
+                "attention_matches".into(),
                 Value::Int(result.scores.len() as i64),
             );
         }
@@ -2180,7 +2180,7 @@ impl Engine {
                     // Create synthetic event from aggregation result
                     let mut agg_event = Event::new("AggregationResult");
                     for (key, value) in result {
-                        agg_event.data.insert(key, value);
+                        agg_event.data.insert(key.into(), value);
                     }
                     current_events = vec![Arc::new(agg_event)];
                 }
@@ -2193,9 +2193,9 @@ impl Engine {
                             let mut agg_event = Event::new("AggregationResult");
                             agg_event
                                 .data
-                                .insert("_partition".to_string(), Value::Str(partition_key.into()));
+                                .insert("_partition".into(), Value::Str(partition_key.into()));
                             for (key, value) in result {
-                                agg_event.data.insert(key, value);
+                                agg_event.data.insert(key.into(), value);
                             }
                             Arc::new(agg_event)
                         })
@@ -2238,7 +2238,7 @@ impl Engine {
                                     functions,
                                     &FxHashMap::default(),
                                 ) {
-                                    new_event.data.insert(out_name.clone(), value);
+                                    new_event.data.insert(out_name.clone().into(), value);
                                 }
                             }
                             Arc::new(new_event)
@@ -2252,11 +2252,11 @@ impl Engine {
                         new_event.timestamp = event.timestamp;
                         for (out_name, source) in &config.fields {
                             if let Some(value) = event.get(source) {
-                                new_event.data.insert(out_name.clone(), value.clone());
+                                new_event.data.insert(out_name.clone().into(), value.clone());
                             } else {
                                 new_event
                                     .data
-                                    .insert(out_name.clone(), Value::Str(source.clone().into()));
+                                    .insert(out_name.clone().into(), Value::Str(source.clone().into()));
                             }
                         }
                         emitted.push(Arc::new(new_event));
@@ -2330,9 +2330,9 @@ impl Engine {
                                 let mut seq_event = Event::new("SequenceMatch");
                                 seq_event
                                     .data
-                                    .insert("stream".to_string(), Value::Str(stream.name.clone().into()));
+                                    .insert("stream".into(), Value::Str(stream.name.clone().into()));
                                 seq_event.data.insert(
-                                    "match_duration_ms".to_string(),
+                                    "match_duration_ms".into(),
                                     Value::Int(match_result.duration.as_millis() as i64),
                                 );
                                 // Add captured events to the result
@@ -2340,7 +2340,7 @@ impl Engine {
                                     for (k, v) in &captured.data {
                                         seq_event
                                             .data
-                                            .insert(format!("{}_{}", alias, k), v.clone());
+                                            .insert(format!("{}_{}", alias, k).into(), v.clone());
                                     }
                                 }
                                 sequence_results.push(Arc::new(seq_event));
@@ -2370,7 +2370,7 @@ impl Engine {
                                 functions,
                                 &FxHashMap::default(),
                             ) {
-                                new_event.data.insert(out_name.clone(), value);
+                                new_event.data.insert(out_name.clone().into(), value);
                             }
                         }
                         emitted.push(Arc::new(new_event));
@@ -2389,9 +2389,9 @@ impl Engine {
                         current_events
                             .iter()
                             .map(|e| {
-                                let mut map = IndexMap::with_hasher(FxBuildHasher);
+                                let mut map: IndexMap<Arc<str>, Value, FxBuildHasher> = IndexMap::with_hasher(FxBuildHasher);
                                 map.insert(
-                                    "event_type".to_string(),
+                                    "event_type".into(),
                                     Value::Str(e.event_type.to_string().into()),
                                 );
                                 for (k, v) in &e.data {
@@ -2404,7 +2404,7 @@ impl Engine {
 
                     // Create a context with "events" bound
                     let mut pattern_vars = FxHashMap::default();
-                    pattern_vars.insert("events".to_string(), events_value);
+                    pattern_vars.insert("events".into(), events_value);
 
                     // Dereference events for pattern evaluation
                     let event_refs: Vec<Event> =
@@ -2575,7 +2575,7 @@ impl Engine {
                     let result = aggregator.apply_shared(&current_events);
                     let mut agg_event = Event::new("AggregationResult");
                     for (key, value) in result {
-                        agg_event.data.insert(key, value);
+                        agg_event.data.insert(key.into(), value);
                     }
                     current_events = vec![Arc::new(agg_event)];
                 }
@@ -2587,9 +2587,9 @@ impl Engine {
                             let mut agg_event = Event::new("AggregationResult");
                             agg_event
                                 .data
-                                .insert("_partition".to_string(), Value::Str(partition_key.into()));
+                                .insert("_partition".into(), Value::Str(partition_key.into()));
                             for (key, value) in result {
-                                agg_event.data.insert(key, value);
+                                agg_event.data.insert(key.into(), value);
                             }
                             Arc::new(agg_event)
                         })
@@ -2631,7 +2631,7 @@ impl Engine {
                                     functions,
                                     &FxHashMap::default(),
                                 ) {
-                                    new_event.data.insert(out_name.clone(), value);
+                                    new_event.data.insert(out_name.clone().into(), value);
                                 }
                             }
                             Arc::new(new_event)
@@ -2645,11 +2645,11 @@ impl Engine {
                         new_event.timestamp = event.timestamp;
                         for (out_name, source_field) in &config.fields {
                             if let Some(value) = event.get(source_field) {
-                                new_event.data.insert(out_name.clone(), value.clone());
+                                new_event.data.insert(out_name.clone().into(), value.clone());
                             } else {
                                 new_event
                                     .data
-                                    .insert(out_name.clone(), Value::Str(source_field.clone().into()));
+                                    .insert(out_name.clone().into(), Value::Str(source_field.clone().into()));
                             }
                         }
                         emitted.push(Arc::new(new_event));
@@ -2671,7 +2671,7 @@ impl Engine {
                                 functions,
                                 &FxHashMap::default(),
                             ) {
-                                new_event.data.insert(out_name.clone(), value);
+                                new_event.data.insert(out_name.clone().into(), value);
                             }
                         }
                         emitted.push(Arc::new(new_event));
@@ -2869,7 +2869,7 @@ impl Engine {
                     let result = aggregator.apply_shared(&current_events);
                     let mut agg_event = Event::new("AggregationResult");
                     for (key, value) in result {
-                        agg_event.data.insert(key, value);
+                        agg_event.data.insert(key.into(), value);
                     }
                     current_events = vec![Arc::new(agg_event)];
                 }
@@ -2881,9 +2881,9 @@ impl Engine {
                             let mut agg_event = Event::new("AggregationResult");
                             agg_event
                                 .data
-                                .insert("_partition".to_string(), Value::Str(partition_key.into()));
+                                .insert("_partition".into(), Value::Str(partition_key.into()));
                             for (key, value) in result {
-                                agg_event.data.insert(key, value);
+                                agg_event.data.insert(key.into(), value);
                             }
                             Arc::new(agg_event)
                         })
@@ -2944,7 +2944,7 @@ impl Engine {
                                     functions,
                                     &FxHashMap::default(),
                                 ) {
-                                    new_event.data.insert(out_name.clone(), value);
+                                    new_event.data.insert(out_name.clone().into(), value);
                                 }
                             }
                             Arc::new(new_event)
@@ -2958,11 +2958,11 @@ impl Engine {
                         new_event.timestamp = event.timestamp;
                         for (out_name, source) in &config.fields {
                             if let Some(value) = event.get(source) {
-                                new_event.data.insert(out_name.clone(), value.clone());
+                                new_event.data.insert(out_name.clone().into(), value.clone());
                             } else {
                                 new_event
                                     .data
-                                    .insert(out_name.clone(), Value::Str(source.clone().into()));
+                                    .insert(out_name.clone().into(), Value::Str(source.clone().into()));
                             }
                         }
                         emitted.push(Arc::new(new_event));
@@ -2984,7 +2984,7 @@ impl Engine {
                                 functions,
                                 &FxHashMap::default(),
                             ) {
-                                new_event.data.insert(out_name.clone(), value);
+                                new_event.data.insert(out_name.clone().into(), value);
                             }
                         }
                         emitted.push(Arc::new(new_event));

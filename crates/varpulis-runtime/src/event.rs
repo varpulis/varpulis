@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use varpulis_core::Value;
 
+/// Type alias for field name keys using Arc<str> for O(1) cloning.
+pub type FieldKey = Arc<str>;
+
 /// Type alias for IndexMap with FxBuildHasher for faster hashing of event fields.
 pub type FxIndexMap<K, V> = IndexMap<K, V, FxBuildHasher>;
 
@@ -23,8 +26,8 @@ pub struct Event {
     /// Timestamp of the event (defaults to current server time if not provided)
     #[serde(default = "Utc::now")]
     pub timestamp: DateTime<Utc>,
-    /// Event payload (uses FxBuildHasher for faster field access)
-    pub data: FxIndexMap<String, Value>,
+    /// Event payload (uses Arc<str> keys for O(1) cloning, FxBuildHasher for faster access)
+    pub data: FxIndexMap<Arc<str>, Value>,
 }
 
 impl Event {
@@ -48,7 +51,7 @@ impl Event {
 
     /// Creates a new event from pre-built fields map.
     /// Use this when you already have the fields constructed (e.g., from JSON parsing).
-    pub fn from_fields(event_type: impl Into<Arc<str>>, data: FxIndexMap<String, Value>) -> Self {
+    pub fn from_fields(event_type: impl Into<Arc<str>>, data: FxIndexMap<Arc<str>, Value>) -> Self {
         Self {
             event_type: event_type.into(),
             timestamp: Utc::now(),
@@ -56,11 +59,24 @@ impl Event {
         }
     }
 
+    /// Creates a new event from pre-built fields map with String keys (converts to Arc<str>).
+    pub fn from_string_fields(event_type: impl Into<Arc<str>>, data: FxIndexMap<String, Value>) -> Self {
+        let converted: FxIndexMap<Arc<str>, Value> = data
+            .into_iter()
+            .map(|(k, v)| (Arc::from(k), v))
+            .collect();
+        Self {
+            event_type: event_type.into(),
+            timestamp: Utc::now(),
+            data: converted,
+        }
+    }
+
     /// Creates a new event from pre-built fields map with a specific timestamp.
     pub fn from_fields_with_timestamp(
         event_type: impl Into<Arc<str>>,
         timestamp: DateTime<Utc>,
-        data: FxIndexMap<String, Value>,
+        data: FxIndexMap<Arc<str>, Value>,
     ) -> Self {
         Self {
             event_type: event_type.into(),
@@ -74,7 +90,7 @@ impl Event {
         self
     }
 
-    pub fn with_field(mut self, key: impl Into<String>, value: impl Into<Value>) -> Self {
+    pub fn with_field(mut self, key: impl Into<Arc<str>>, value: impl Into<Value>) -> Self {
         self.data.insert(key.into(), value.into());
         self
     }

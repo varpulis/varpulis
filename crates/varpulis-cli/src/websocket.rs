@@ -3,6 +3,8 @@
 //! Provides WebSocket server functionality for the VS Code extension and other clients.
 
 use futures_util::{SinkExt, StreamExt};
+use indexmap::IndexMap;
+use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -262,7 +264,7 @@ async fn handle_inject_event(
     if let Some(obj) = data.as_object() {
         for (key, value) in obj {
             let v = json_to_value(value);
-            event.data.insert(key.clone(), v);
+            event.data.insert(key.as_str().into(), v);
         }
     }
 
@@ -383,9 +385,9 @@ pub fn json_to_value(json: &serde_json::Value) -> varpulis_core::Value {
         serde_json::Value::String(s) => Value::Str(s.clone().into()),
         serde_json::Value::Array(arr) => Value::array(arr.iter().map(json_to_value).collect()),
         serde_json::Value::Object(obj) => {
-            let map = obj
+            let map: IndexMap<std::sync::Arc<str>, Value, FxBuildHasher> = obj
                 .iter()
-                .map(|(k, v)| (k.clone(), json_to_value(v)))
+                .map(|(k, v)| (std::sync::Arc::from(k.as_str()), json_to_value(v)))
                 .collect();
             Value::map(map)
         }
@@ -405,7 +407,7 @@ pub fn value_to_json(value: &varpulis_core::Value) -> serde_json::Value {
         Value::Map(map) => {
             let obj: serde_json::Map<String, serde_json::Value> = map
                 .iter()
-                .map(|(k, v)| (k.clone(), value_to_json(v)))
+                .map(|(k, v)| (k.to_string(), value_to_json(v)))
                 .collect();
             serde_json::Value::Object(obj)
         }
@@ -894,7 +896,7 @@ mod tests {
     fn test_create_output_event_message() {
         let mut event = Event::new("HighTemp");
         event.data.insert(
-            "sensor_id".to_string(),
+            "sensor_id".into(),
             varpulis_core::Value::Str("S1".into()),
         );
 

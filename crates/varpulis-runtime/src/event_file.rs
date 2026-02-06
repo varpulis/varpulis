@@ -184,7 +184,7 @@ impl EventFileParser {
 
                 let field_name = parts[0].trim();
                 let field_value = Self::parse_value(parts[1].trim())?;
-                event.data.insert(field_name.to_string(), field_value);
+                event.data.insert(field_name.into(), field_value);
             }
         } else if rest.starts_with('(') {
             // Positional: (value1, value2, ...)
@@ -197,7 +197,7 @@ impl EventFileParser {
                 }
 
                 let field_value = Self::parse_value(value_str)?;
-                event.data.insert(format!("field_{}", i), field_value);
+                event.data.insert(format!("field_{}", i).into(), field_value);
             }
         }
 
@@ -357,7 +357,7 @@ impl EventFileParser {
 
         if let Some(data) = json.get("data").and_then(|v| v.as_object()) {
             for (key, value) in data {
-                event.data.insert(key.clone(), Self::json_to_value(value));
+                event.data.insert(key.as_str().into(), Self::json_to_value(value));
             }
         }
 
@@ -383,9 +383,9 @@ impl EventFileParser {
                 Value::array(arr.iter().map(Self::json_to_value).collect())
             }
             serde_json::Value::Object(obj) => {
-                let mut map = IndexMap::with_hasher(FxBuildHasher);
+                let mut map: IndexMap<std::sync::Arc<str>, Value, FxBuildHasher> = IndexMap::with_hasher(FxBuildHasher);
                 for (k, v) in obj {
-                    map.insert(k.clone(), Self::json_to_value(v));
+                    map.insert(k.as_str().into(), Self::json_to_value(v));
                 }
                 Value::map(map)
             }

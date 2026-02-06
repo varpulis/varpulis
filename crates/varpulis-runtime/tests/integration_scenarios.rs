@@ -371,7 +371,7 @@ async fn test_regression_output_channel_stays_open() {
         let mut event = varpulis_runtime::event::Event::new("Event");
         event
             .data
-            .insert("id".to_string(), varpulis_core::Value::Int(i));
+            .insert("id".into(), varpulis_core::Value::Int(i));
         engine.process(event).await.expect("Failed to process");
     }
 
@@ -463,15 +463,15 @@ async fn test_regression_event_field_types() {
     let mut event = Event::new("Data");
     event
         .data
-        .insert("string_field".to_string(), Value::Str("hello".into()));
-    event.data.insert("int_field".to_string(), Value::Int(42));
+        .insert("string_field".into(), Value::Str("hello".into()));
+    event.data.insert("int_field".into(), Value::Int(42));
     event
         .data
-        .insert("float_field".to_string(), Value::Float(2.5));
+        .insert("float_field".into(), Value::Float(2.5));
     event
         .data
-        .insert("bool_field".to_string(), Value::Bool(true));
-    event.data.insert("null_field".to_string(), Value::Null);
+        .insert("bool_field".into(), Value::Bool(true));
+    event.data.insert("null_field".into(), Value::Null);
 
     engine
         .process(event)
@@ -505,7 +505,7 @@ async fn test_regression_rapid_event_injection() {
         let mut event = varpulis_runtime::event::Event::new("Tick");
         event
             .data
-            .insert("n".to_string(), varpulis_core::Value::Int(i));
+            .insert("n".into(), varpulis_core::Value::Int(i));
         engine
             .process(event)
             .await
@@ -620,37 +620,37 @@ async fn test_electrical_multiple_buildings() {
     // Events from different buildings
     let mut e1 = Event::new("FloorConsumption");
     e1.data.insert(
-        "site_id".to_string(),
+        "site_id".into(),
         varpulis_core::Value::Str("S1".into()),
     );
     e1.data.insert(
-        "building_id".to_string(),
+        "building_id".into(),
         varpulis_core::Value::Str("B1".into()),
     );
     e1.data.insert(
-        "floor_id".to_string(),
+        "floor_id".into(),
         varpulis_core::Value::Str("F1".into()),
     );
     e1.data.insert(
-        "consumption_kwh".to_string(),
+        "consumption_kwh".into(),
         varpulis_core::Value::Float(100.0),
     );
 
     let mut e2 = Event::new("FloorConsumption");
     e2.data.insert(
-        "site_id".to_string(),
+        "site_id".into(),
         varpulis_core::Value::Str("S1".into()),
     );
     e2.data.insert(
-        "building_id".to_string(),
+        "building_id".into(),
         varpulis_core::Value::Str("B2".into()),
     );
     e2.data.insert(
-        "floor_id".to_string(),
+        "floor_id".into(),
         varpulis_core::Value::Str("F1".into()),
     );
     e2.data.insert(
-        "consumption_kwh".to_string(),
+        "consumption_kwh".into(),
         varpulis_core::Value::Float(150.0),
     );
 
