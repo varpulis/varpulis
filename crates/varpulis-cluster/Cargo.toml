@@ -6,6 +6,7 @@ description = "Distributed execution cluster for Varpulis streaming analytics"
 
 [dependencies]
 varpulis-runtime = { path = "../varpulis-runtime", features = ["mqtt"] }
+varpulis-parser = { path = "../varpulis-parser" }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
