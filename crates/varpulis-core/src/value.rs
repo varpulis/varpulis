@@ -13,7 +13,10 @@ use std::time::Duration;
 /// The Array and Map variants are boxed to reduce the overall enum size.
 /// This optimization significantly reduces memory usage for Value-heavy
 /// workloads since most Values are scalar types (Int, Float, Str).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+///
+/// Note: PartialEq is implemented manually to ensure consistency with Hash
+/// for Float values (NaN equals NaN, -0.0 equals 0.0).
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 #[derive(Default)]
 pub enum Value {
@@ -27,6 +30,37 @@ pub enum Value {
     Duration(u64),  // nanoseconds
     Array(Box<Vec<Value>>),
     Map(Box<IndexMap<String, Value>>),
+}
+
+/// Helper function to compare f64 values consistently with Hash impl.
+/// Treats NaN == NaN and -0.0 == 0.0.
+#[inline]
+fn float_eq(a: f64, b: f64) -> bool {
+    if a.is_nan() && b.is_nan() {
+        true
+    } else if a == 0.0 && b == 0.0 {
+        // Both are zero (handles -0.0 == 0.0)
+        true
+    } else {
+        a == b
+    }
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Value::Null, Value::Null) => true,
+            (Value::Bool(a), Value::Bool(b)) => a == b,
+            (Value::Int(a), Value::Int(b)) => a == b,
+            (Value::Float(a), Value::Float(b)) => float_eq(*a, *b),
+            (Value::Str(a), Value::Str(b)) => a == b,
+            (Value::Timestamp(a), Value::Timestamp(b)) => a == b,
+            (Value::Duration(a), Value::Duration(b)) => a == b,
+            (Value::Array(a), Value::Array(b)) => a == b,
+            (Value::Map(a), Value::Map(b)) => a == b,
+            _ => false,
+        }
+    }
 }
 
 impl Value {
@@ -685,5 +719,51 @@ mod tests {
         set.insert(Value::Str("hello".to_string())); // Duplicate
 
         assert_eq!(set.len(), 3);
+    }
+
+    // ==========================================================================
+    // PartialEq Consistency Tests (VAL-02)
+    // ==========================================================================
+
+    #[test]
+    fn test_eq_nan_equals_nan() {
+        // NaN == NaN should be true (consistent with Hash)
+        assert_eq!(Value::Float(f64::NAN), Value::Float(f64::NAN));
+    }
+
+    #[test]
+    fn test_eq_zero_equals_negative_zero() {
+        // 0.0 == -0.0 should be true (consistent with Hash)
+        assert_eq!(Value::Float(0.0), Value::Float(-0.0));
+    }
+
+    #[test]
+    fn test_eq_regular_floats() {
+        assert_eq!(Value::Float(1.5), Value::Float(1.5));
+        assert_ne!(Value::Float(1.5), Value::Float(2.5));
+    }
+
+    #[test]
+    fn test_nan_in_hashset() {
+        use std::collections::HashSet;
+
+        let mut set = HashSet::new();
+        set.insert(Value::Float(f64::NAN));
+        set.insert(Value::Float(f64::NAN)); // Should be deduplicated
+
+        // Should only have one NaN value since they're now equal
+        assert_eq!(set.len(), 1);
+    }
+
+    #[test]
+    fn test_zero_in_hashset() {
+        use std::collections::HashSet;
+
+        let mut set = HashSet::new();
+        set.insert(Value::Float(0.0));
+        set.insert(Value::Float(-0.0)); // Should be deduplicated
+
+        // Should only have one zero value
+        assert_eq!(set.len(), 1);
     }
 }
