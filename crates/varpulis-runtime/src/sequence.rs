@@ -3,7 +3,7 @@
 //! Implements the runtime support for the `->` (followed-by) operator.
 
 use crate::event::Event;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::time::{Duration, Instant};
 
 /// Type alias for sequence filter functions
@@ -27,7 +27,7 @@ pub struct SequenceStep {
 #[derive(Debug, Clone, Default)]
 pub struct SequenceContext {
     /// Captured events by alias
-    pub captured: HashMap<String, Event>,
+    pub captured: FxHashMap<String, Event>,
     /// Previous event in sequence (accessible as $)
     pub previous: Option<Event>,
 }
