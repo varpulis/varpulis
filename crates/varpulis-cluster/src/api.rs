@@ -8,10 +8,11 @@ use crate::worker::{
     WorkerInfo, WorkerNode,
 };
 use crate::ClusterError;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use varpulis_parser::ParseError;
 use warp::http::StatusCode;
 use warp::{Filter, Rejection, Reply};
 
@@ -128,9 +129,17 @@ pub fn cluster_routes(
         .and(warp::path("topology"))
         .and(warp::path::end())
         .and(warp::get())
-        .and(with_optional_auth(admin_key))
+        .and(with_optional_auth(admin_key.clone()))
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_topology);
+
+    let validate = api
+        .and(warp::path("validate"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(with_optional_auth(admin_key))
+        .and(warp::body::json())
+        .and_then(handle_validate);
 
     let cors = warp::cors()
         .allow_any_origin()
@@ -148,6 +157,7 @@ pub fn cluster_routes(
         .or(delete_group)
         .or(inject_event)
         .or(topology)
+        .or(validate)
         .with(cors)
 }
 
@@ -355,6 +365,164 @@ async fn handle_inject_event(
         }
         Err(e) => Ok(cluster_error_response(e)),
     }
+}
+
+/// Request body for the validate endpoint.
+#[derive(Debug, Deserialize)]
+struct ValidateRequest {
+    source: String,
+}
+
+/// A single diagnostic from validation.
+#[derive(Debug, Serialize)]
+struct ValidateDiagnostic {
+    severity: &'static str,
+    line: usize,
+    column: usize,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hint: Option<String>,
+}
+
+/// Response from the validate endpoint.
+#[derive(Debug, Serialize)]
+struct ValidateResponse {
+    valid: bool,
+    diagnostics: Vec<ValidateDiagnostic>,
+}
+
+async fn handle_validate(_auth: (), body: ValidateRequest) -> Result<impl Reply, Infallible> {
+    match varpulis_parser::parse(&body.source) {
+        Ok(_) => {
+            let resp = ValidateResponse {
+                valid: true,
+                diagnostics: vec![],
+            };
+            Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+        }
+        Err(e) => {
+            let diagnostic = match e {
+                ParseError::Located {
+                    line,
+                    column,
+                    message,
+                    hint,
+                    ..
+                } => ValidateDiagnostic {
+                    severity: "error",
+                    line,
+                    column,
+                    message,
+                    hint,
+                },
+                ParseError::UnexpectedToken {
+                    position,
+                    expected,
+                    found,
+                } => {
+                    // Calculate line/column from position
+                    let (line, column) = position_to_line_col(&body.source, position);
+                    ValidateDiagnostic {
+                        severity: "error",
+                        line,
+                        column,
+                        message: format!("Expected {}, found {}", expected, found),
+                        hint: None,
+                    }
+                }
+                ParseError::UnexpectedEof => ValidateDiagnostic {
+                    severity: "error",
+                    line: body.source.lines().count().max(1),
+                    column: 1,
+                    message: "Unexpected end of input".to_string(),
+                    hint: Some(
+                        "Check for missing closing brackets or incomplete statements".to_string(),
+                    ),
+                },
+                ParseError::InvalidToken { position, message } => {
+                    let (line, column) = position_to_line_col(&body.source, position);
+                    ValidateDiagnostic {
+                        severity: "error",
+                        line,
+                        column,
+                        message,
+                        hint: None,
+                    }
+                }
+                ParseError::InvalidNumber(msg) => ValidateDiagnostic {
+                    severity: "error",
+                    line: 1,
+                    column: 1,
+                    message: format!("Invalid number: {}", msg),
+                    hint: None,
+                },
+                ParseError::InvalidDuration(msg) => ValidateDiagnostic {
+                    severity: "error",
+                    line: 1,
+                    column: 1,
+                    message: format!("Invalid duration: {}", msg),
+                    hint: Some("Use format like 5s, 10m, 1h".to_string()),
+                },
+                ParseError::InvalidTimestamp(msg) => ValidateDiagnostic {
+                    severity: "error",
+                    line: 1,
+                    column: 1,
+                    message: format!("Invalid timestamp: {}", msg),
+                    hint: None,
+                },
+                ParseError::UnterminatedString(position) => {
+                    let (line, column) = position_to_line_col(&body.source, position);
+                    ValidateDiagnostic {
+                        severity: "error",
+                        line,
+                        column,
+                        message: "Unterminated string".to_string(),
+                        hint: Some("Add a closing quote".to_string()),
+                    }
+                }
+                ParseError::InvalidEscape(msg) => ValidateDiagnostic {
+                    severity: "error",
+                    line: 1,
+                    column: 1,
+                    message: format!("Invalid escape sequence: {}", msg),
+                    hint: None,
+                },
+                ParseError::Custom { span, message } => {
+                    let (line, column) = position_to_line_col(&body.source, span.start);
+                    ValidateDiagnostic {
+                        severity: "error",
+                        line,
+                        column,
+                        message,
+                        hint: None,
+                    }
+                }
+            };
+            let resp = ValidateResponse {
+                valid: false,
+                diagnostics: vec![diagnostic],
+            };
+            Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+        }
+    }
+}
+
+/// Convert byte position to line and column numbers (1-indexed).
+fn position_to_line_col(source: &str, position: usize) -> (usize, usize) {
+    let mut line = 1;
+    let mut column = 1;
+    for (i, ch) in source.chars().enumerate() {
+        if i >= position {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+            column = 1;
+        } else {
+            column += 1;
+        }
+    }
+    (line, column)
 }
 
 async fn handle_topology(
