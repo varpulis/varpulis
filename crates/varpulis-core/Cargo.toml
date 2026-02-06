@@ -10,3 +10,4 @@ chrono = { workspace = true }
 thiserror = { workspace = true }
 indexmap = { workspace = true }
 smallvec = { workspace = true }
+rustc-hash = { workspace = true }

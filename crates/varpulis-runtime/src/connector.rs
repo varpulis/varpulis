@@ -53,6 +53,7 @@
 use crate::event::Event;
 use async_trait::async_trait;
 use indexmap::IndexMap;
+use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
@@ -2499,7 +2500,7 @@ fn json_to_value(json: &serde_json::Value) -> Option<varpulis_core::Value> {
             Some(Value::array(values))
         }
         serde_json::Value::Object(obj) => {
-            let mut map = indexmap::IndexMap::new();
+            let mut map = IndexMap::with_hasher(FxBuildHasher);
             for (key, value) in obj {
                 if let Some(v) = json_to_value(value) {
                     map.insert(key.clone(), v);
@@ -2575,10 +2576,19 @@ impl ConnectorRegistry {
             }
             "redis" => {
                 let channel = config.topic.clone().unwrap_or_else(|| "events".to_string());
-                Ok(Box::new(RedisSink::new(
-                    "redis",
-                    RedisConfig::new(&config.url, &channel),
-                )))
+                #[cfg(feature = "redis")]
+                {
+                    let sink =
+                        RedisSink::new("redis", RedisConfig::new(&config.url, &channel)).await?;
+                    Ok(Box::new(sink))
+                }
+                #[cfg(not(feature = "redis"))]
+                {
+                    Ok(Box::new(RedisSink::new(
+                        "redis",
+                        RedisConfig::new(&config.url, &channel),
+                    )))
+                }
             }
             "database" | "postgres" | "mysql" | "sqlite" => {
                 let table = config.topic.clone().unwrap_or_else(|| "events".to_string());

@@ -41,7 +41,7 @@ use crate::window::{
 use chrono::Duration;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
@@ -2389,7 +2389,7 @@ impl Engine {
                         current_events
                             .iter()
                             .map(|e| {
-                                let mut map = IndexMap::new();
+                                let mut map = IndexMap::with_hasher(FxBuildHasher);
                                 map.insert(
                                     "event_type".to_string(),
                                     Value::Str(e.event_type.clone()),

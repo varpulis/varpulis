@@ -2,17 +2,24 @@
 
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
+use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
 
+/// Type alias for IndexMap with FxBuildHasher for faster key lookups.
+pub type FxIndexMap<K, V> = IndexMap<K, V, FxBuildHasher>;
+
 /// Runtime value
 ///
 /// The Array and Map variants are boxed to reduce the overall enum size.
 /// This optimization significantly reduces memory usage for Value-heavy
 /// workloads since most Values are scalar types (Int, Float, Str).
+///
+/// The Map variant uses FxBuildHasher for faster key lookups since map keys
+/// are typically short strings.
 ///
 /// Note: PartialEq is implemented manually to ensure consistency with Hash
 /// for Float values (NaN equals NaN, -0.0 equals 0.0).
@@ -29,7 +36,7 @@ pub enum Value {
     Timestamp(i64), // nanoseconds since epoch
     Duration(u64),  // nanoseconds
     Array(Box<Vec<Value>>),
-    Map(Box<IndexMap<String, Value>>),
+    Map(Box<FxIndexMap<String, Value>>),
 }
 
 /// Helper function to compare f64 values consistently with Hash impl.
@@ -70,9 +77,9 @@ impl Value {
         Value::Array(Box::new(v))
     }
 
-    /// Creates a new Map value from an IndexMap.
+    /// Creates a new Map value from an IndexMap with FxBuildHasher.
     #[inline]
-    pub fn map(m: IndexMap<String, Value>) -> Self {
+    pub fn map(m: FxIndexMap<String, Value>) -> Self {
         Value::Map(Box::new(m))
     }
 
@@ -347,7 +354,10 @@ mod tests {
 
     #[test]
     fn test_type_name_map() {
-        assert_eq!(Value::map(IndexMap::new()).type_name(), "map");
+        assert_eq!(
+            Value::map(IndexMap::with_hasher(FxBuildHasher)).type_name(),
+            "map"
+        );
     }
 
     // ==========================================================================
@@ -392,10 +402,10 @@ mod tests {
 
     #[test]
     fn test_is_truthy_map() {
-        let mut m = IndexMap::new();
+        let mut m = IndexMap::with_hasher(FxBuildHasher);
         m.insert("key".to_string(), Value::Int(1));
         assert!(Value::map(m).is_truthy());
-        assert!(!Value::map(IndexMap::new()).is_truthy());
+        assert!(!Value::map(IndexMap::with_hasher(FxBuildHasher)).is_truthy());
     }
 
     #[test]
@@ -464,7 +474,7 @@ mod tests {
 
     #[test]
     fn test_get_from_map() {
-        let mut m = IndexMap::new();
+        let mut m = IndexMap::with_hasher(FxBuildHasher);
         m.insert("key".to_string(), Value::Int(42));
         let v = Value::map(m);
         assert_eq!(v.get("key"), Some(&Value::Int(42)));
