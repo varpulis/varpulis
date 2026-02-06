@@ -895,10 +895,9 @@ mod tests {
     #[test]
     fn test_create_output_event_message() {
         let mut event = Event::new("HighTemp");
-        event.data.insert(
-            "sensor_id".into(),
-            varpulis_core::Value::Str("S1".into()),
-        );
+        event
+            .data
+            .insert("sensor_id".into(), varpulis_core::Value::Str("S1".into()));
 
         let msg = create_output_event_message(&event);
 

@@ -898,7 +898,8 @@ fn json_to_runtime_value(v: &serde_json::Value) -> varpulis_core::Value {
             varpulis_core::Value::array(arr.iter().map(json_to_runtime_value).collect())
         }
         serde_json::Value::Object(map) => {
-            let mut m: IndexMap<std::sync::Arc<str>, varpulis_core::Value, FxBuildHasher> = IndexMap::with_hasher(FxBuildHasher);
+            let mut m: IndexMap<std::sync::Arc<str>, varpulis_core::Value, FxBuildHasher> =
+                IndexMap::with_hasher(FxBuildHasher);
             for (k, v) in map {
                 m.insert(k.as_str().into(), json_to_runtime_value(v));
             }

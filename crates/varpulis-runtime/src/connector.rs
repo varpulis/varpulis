@@ -3590,7 +3590,8 @@ fn json_to_value(json: &serde_json::Value) -> Option<varpulis_core::Value> {
             Some(Value::array(values))
         }
         serde_json::Value::Object(obj) => {
-            let mut map: IndexMap<std::sync::Arc<str>, Value, FxBuildHasher> = IndexMap::with_hasher(FxBuildHasher);
+            let mut map: IndexMap<std::sync::Arc<str>, Value, FxBuildHasher> =
+                IndexMap::with_hasher(FxBuildHasher);
             for (key, value) in obj {
                 if let Some(v) = json_to_value(value) {
                     map.insert(key.as_str().into(), v);

@@ -60,11 +60,12 @@ impl Event {
     }
 
     /// Creates a new event from pre-built fields map with String keys (converts to Arc<str>).
-    pub fn from_string_fields(event_type: impl Into<Arc<str>>, data: FxIndexMap<String, Value>) -> Self {
-        let converted: FxIndexMap<Arc<str>, Value> = data
-            .into_iter()
-            .map(|(k, v)| (Arc::from(k), v))
-            .collect();
+    pub fn from_string_fields(
+        event_type: impl Into<Arc<str>>,
+        data: FxIndexMap<String, Value>,
+    ) -> Self {
+        let converted: FxIndexMap<Arc<str>, Value> =
+            data.into_iter().map(|(k, v)| (Arc::from(k), v)).collect();
         Self {
             event_type: event_type.into(),
             timestamp: Utc::now(),

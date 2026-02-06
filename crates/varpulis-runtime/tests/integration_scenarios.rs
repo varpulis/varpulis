@@ -369,9 +369,7 @@ async fn test_regression_output_channel_stays_open() {
     // Process multiple events - output events should all be received
     for i in 1..=5 {
         let mut event = varpulis_runtime::event::Event::new("Event");
-        event
-            .data
-            .insert("id".into(), varpulis_core::Value::Int(i));
+        event.data.insert("id".into(), varpulis_core::Value::Int(i));
         engine.process(event).await.expect("Failed to process");
     }
 
@@ -465,12 +463,8 @@ async fn test_regression_event_field_types() {
         .data
         .insert("string_field".into(), Value::Str("hello".into()));
     event.data.insert("int_field".into(), Value::Int(42));
-    event
-        .data
-        .insert("float_field".into(), Value::Float(2.5));
-    event
-        .data
-        .insert("bool_field".into(), Value::Bool(true));
+    event.data.insert("float_field".into(), Value::Float(2.5));
+    event.data.insert("bool_field".into(), Value::Bool(true));
     event.data.insert("null_field".into(), Value::Null);
 
     engine
@@ -503,9 +497,7 @@ async fn test_regression_rapid_event_injection() {
     // Rapid injection of 100 events
     for i in 0..100 {
         let mut event = varpulis_runtime::event::Event::new("Tick");
-        event
-            .data
-            .insert("n".into(), varpulis_core::Value::Int(i));
+        event.data.insert("n".into(), varpulis_core::Value::Int(i));
         engine
             .process(event)
             .await
@@ -619,40 +611,24 @@ async fn test_electrical_multiple_buildings() {
 
     // Events from different buildings
     let mut e1 = Event::new("FloorConsumption");
-    e1.data.insert(
-        "site_id".into(),
-        varpulis_core::Value::Str("S1".into()),
-    );
-    e1.data.insert(
-        "building_id".into(),
-        varpulis_core::Value::Str("B1".into()),
-    );
-    e1.data.insert(
-        "floor_id".into(),
-        varpulis_core::Value::Str("F1".into()),
-    );
-    e1.data.insert(
-        "consumption_kwh".into(),
-        varpulis_core::Value::Float(100.0),
-    );
+    e1.data
+        .insert("site_id".into(), varpulis_core::Value::Str("S1".into()));
+    e1.data
+        .insert("building_id".into(), varpulis_core::Value::Str("B1".into()));
+    e1.data
+        .insert("floor_id".into(), varpulis_core::Value::Str("F1".into()));
+    e1.data
+        .insert("consumption_kwh".into(), varpulis_core::Value::Float(100.0));
 
     let mut e2 = Event::new("FloorConsumption");
-    e2.data.insert(
-        "site_id".into(),
-        varpulis_core::Value::Str("S1".into()),
-    );
-    e2.data.insert(
-        "building_id".into(),
-        varpulis_core::Value::Str("B2".into()),
-    );
-    e2.data.insert(
-        "floor_id".into(),
-        varpulis_core::Value::Str("F1".into()),
-    );
-    e2.data.insert(
-        "consumption_kwh".into(),
-        varpulis_core::Value::Float(150.0),
-    );
+    e2.data
+        .insert("site_id".into(), varpulis_core::Value::Str("S1".into()));
+    e2.data
+        .insert("building_id".into(), varpulis_core::Value::Str("B2".into()));
+    e2.data
+        .insert("floor_id".into(), varpulis_core::Value::Str("F1".into()));
+    e2.data
+        .insert("consumption_kwh".into(), varpulis_core::Value::Float(150.0));
 
     engine.process(e1).await.expect("Process e1");
     engine.process(e2).await.expect("Process e2");

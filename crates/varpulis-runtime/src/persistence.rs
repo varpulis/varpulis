@@ -110,7 +110,8 @@ fn serializable_to_value(sv: SerializableValue) -> varpulis_core::Value {
             varpulis_core::Value::array(arr.into_iter().map(serializable_to_value).collect())
         }
         SerializableValue::Map(entries) => {
-            let mut map: IndexMap<std::sync::Arc<str>, varpulis_core::Value, FxBuildHasher> = IndexMap::with_hasher(FxBuildHasher);
+            let mut map: IndexMap<std::sync::Arc<str>, varpulis_core::Value, FxBuildHasher> =
+                IndexMap::with_hasher(FxBuildHasher);
             for (k, v) in entries {
                 map.insert(k.into(), serializable_to_value(v));
             }
@@ -924,10 +925,9 @@ mod tests {
         event
             .data
             .insert("value".into(), varpulis_core::Value::Float(1.5));
-        event.data.insert(
-            "name".into(),
-            varpulis_core::Value::Str("test".into()),
-        );
+        event
+            .data
+            .insert("name".into(), varpulis_core::Value::Str("test".into()));
 
         let serializable: SerializableEvent = (&event).into();
         let restored: Event = serializable.into();
@@ -949,10 +949,9 @@ mod tests {
         );
 
         // Duration (nanoseconds)
-        event.data.insert(
-            "dur".into(),
-            varpulis_core::Value::Duration(5_000_000_000),
-        );
+        event
+            .data
+            .insert("dur".into(), varpulis_core::Value::Duration(5_000_000_000));
 
         // Array
         event.data.insert(

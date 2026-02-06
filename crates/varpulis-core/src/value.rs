@@ -34,7 +34,7 @@ pub enum Value {
     Bool(bool),
     Int(i64),
     Float(f64),
-    Str(Box<str>), // Box<str> saves 8 bytes vs String (no capacity field)
+    Str(Box<str>),  // Box<str> saves 8 bytes vs String (no capacity field)
     Timestamp(i64), // nanoseconds since epoch
     Duration(u64),  // nanoseconds
     Array(Box<Vec<Value>>),
@@ -88,10 +88,8 @@ impl Value {
     /// Creates a new Map value from an IndexMap with String keys (converts to Arc<str>).
     #[inline]
     pub fn map_from_strings(m: FxIndexMap<String, Value>) -> Self {
-        let converted: FxIndexMap<Arc<str>, Value> = m
-            .into_iter()
-            .map(|(k, v)| (Arc::from(k), v))
-            .collect();
+        let converted: FxIndexMap<Arc<str>, Value> =
+            m.into_iter().map(|(k, v)| (Arc::from(k), v)).collect();
         Value::Map(Box::new(converted))
     }
 
@@ -696,10 +694,7 @@ mod tests {
 
         // Different values should (likely) have different hash
         assert_ne!(hash_value(&Value::Int(1)), hash_value(&Value::Int(2)));
-        assert_ne!(
-            hash_value(&Value::Int(0)),
-            hash_value(&Value::str("0"))
-        );
+        assert_ne!(hash_value(&Value::Int(0)), hash_value(&Value::str("0")));
     }
 
     #[test]
