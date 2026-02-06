@@ -61,7 +61,7 @@ async fn test_engine_sequence_with_alias() {
     let output = rx.try_recv().expect("Should have output");
     assert_eq!(
         output.data.get("result"),
-        Some(&Value::Str("two_ticks".to_string()))
+        Some(&Value::Str("two_ticks".into()))
     );
 }
 
@@ -87,7 +87,7 @@ async fn test_engine_sequence_three_steps() {
     let output = rx.try_recv().expect("Should have output");
     assert_eq!(
         output.data.get("status"),
-        Some(&Value::Str("complete".to_string()))
+        Some(&Value::Str("complete".into()))
     );
 }
 
@@ -147,7 +147,7 @@ async fn test_engine_sequence_with_filter() {
     let output = rx.try_recv().expect("Should have output");
     assert_eq!(
         output.data.get("status"),
-        Some(&Value::Str("matched".to_string()))
+        Some(&Value::Str("matched".into()))
     );
 }
 
@@ -178,7 +178,7 @@ async fn test_engine_sequence_with_timeout() {
     let output = rx.try_recv().expect("Should have output");
     assert_eq!(
         output.data.get("status"),
-        Some(&Value::Str("fast".to_string()))
+        Some(&Value::Str("fast".into()))
     );
 }
 
@@ -215,7 +215,7 @@ async fn test_engine_with_event_file() {
     let output = rx.try_recv().expect("Should have output");
     assert_eq!(
         output.data.get("status"),
-        Some(&Value::Str("matched".to_string()))
+        Some(&Value::Str("matched".into()))
     );
 }
 
@@ -245,7 +245,7 @@ async fn test_engine_sequence_with_not() {
     let output = rx.try_recv().expect("Should have output");
     assert_eq!(
         output.data.get("status"),
-        Some(&Value::Str("payment_received".to_string()))
+        Some(&Value::Str("payment_received".into()))
     );
 }
 
@@ -907,11 +907,11 @@ async fn test_engine_join_derived_streams() {
     let output = rx.try_recv().expect("Should have output after both events");
     assert_eq!(
         output.data.get("alert"),
-        Some(&Value::Str("matched".to_string()))
+        Some(&Value::Str("matched".into()))
     );
     assert_eq!(
         output.data.get("symbol"),
-        Some(&Value::Str("AAPL".to_string()))
+        Some(&Value::Str("AAPL".into()))
     );
 }
 
@@ -992,11 +992,11 @@ async fn test_engine_derived_stream_in_sequence() {
         .expect("Should have output after pattern match");
     assert_eq!(
         output.data.get("pattern"),
-        Some(&Value::Str("high_then_low".to_string()))
+        Some(&Value::Str("high_then_low".into()))
     );
     assert_eq!(
         output.data.get("user_id"),
-        Some(&Value::Str("user1".to_string()))
+        Some(&Value::Str("user1".into()))
     );
 }
 
@@ -1043,7 +1043,7 @@ async fn test_engine_derived_stream_filters_applied() {
         .expect("Should have output after pattern match");
     assert_eq!(
         output.data.get("matched"),
-        Some(&Value::Str("yes".to_string()))
+        Some(&Value::Str("yes".into()))
     );
 }
 
@@ -1265,7 +1265,7 @@ async fn test_engine_special_characters_in_event_type() {
     engine.process(event).await.unwrap();
 
     let output = rx.try_recv().expect("Should receive output");
-    assert_eq!(output.data.get("ok"), Some(&Value::Str("yes".to_string())));
+    assert_eq!(output.data.get("ok"), Some(&Value::Str("yes".into())));
 }
 
 // ==========================================================================
@@ -1620,7 +1620,7 @@ async fn test_engine_event_declaration() {
         .unwrap();
 
     let output = rx.try_recv().expect("Should have output");
-    assert_eq!(output.data.get("s"), Some(&Value::Str("AAPL".to_string())));
+    assert_eq!(output.data.get("s"), Some(&Value::Str("AAPL".into())));
 }
 
 // ==========================================================================
@@ -1647,7 +1647,7 @@ async fn test_engine_print_operation() {
 
     // Print operation should not block emit
     let output = rx.try_recv().expect("Should have output after print");
-    assert_eq!(output.data.get("ok"), Some(&Value::Str("yes".to_string())));
+    assert_eq!(output.data.get("ok"), Some(&Value::Str("yes".into())));
 }
 
 // ==========================================================================
@@ -1727,7 +1727,7 @@ async fn test_engine_import_statement() {
 
     engine.process(Event::new("EventA")).await.unwrap();
     let output = rx.try_recv().expect("Should have output");
-    assert_eq!(output.data.get("ok"), Some(&Value::Str("yes".to_string())));
+    assert_eq!(output.data.get("ok"), Some(&Value::Str("yes".into())));
 }
 
 #[tokio::test]
@@ -1930,7 +1930,7 @@ async fn test_imperative_if_else() {
     let output = rx.try_recv().expect("Should have output");
     assert_eq!(
         output.data.get("class"),
-        Some(&Value::Str("high".to_string()))
+        Some(&Value::Str("high".into()))
     );
 
     // Test medium value
@@ -1941,7 +1941,7 @@ async fn test_imperative_if_else() {
     let output = rx.try_recv().expect("Should have output");
     assert_eq!(
         output.data.get("class"),
-        Some(&Value::Str("medium".to_string()))
+        Some(&Value::Str("medium".into()))
     );
 
     // Test low value
@@ -1952,7 +1952,7 @@ async fn test_imperative_if_else() {
     let output = rx.try_recv().expect("Should have output");
     assert_eq!(
         output.data.get("class"),
-        Some(&Value::Str("low".to_string()))
+        Some(&Value::Str("low".into()))
     );
 }
 
@@ -1989,7 +1989,7 @@ async fn test_imperative_nested_if() {
     let output = rx.try_recv().expect("Should have output");
     assert_eq!(
         output.data.get("result"),
-        Some(&Value::Str("both_positive".to_string()))
+        Some(&Value::Str("both_positive".into()))
     );
 }
 
@@ -2263,7 +2263,7 @@ async fn test_builtin_string_functions() {
     let output = rx.try_recv().expect("Should have output");
     assert_eq!(
         output.data.get("result"),
-        Some(&Value::Str("HELLO".to_string()))
+        Some(&Value::Str("HELLO".into()))
     );
 }
 
@@ -2293,7 +2293,7 @@ async fn test_builtin_type_checking() {
     let output = rx.try_recv().expect("Should have output");
     assert_eq!(
         output.data.get("result"),
-        Some(&Value::Str("all_correct".to_string()))
+        Some(&Value::Str("all_correct".into()))
     );
 }
 
@@ -2702,7 +2702,7 @@ async fn test_builtin_replace() {
     let output = rx.try_recv().expect("Should have output");
     assert_eq!(
         output.data.get("result"),
-        Some(&Value::Str("hello VPL".to_string()))
+        Some(&Value::Str("hello VPL".into()))
     );
 }
 
@@ -2749,7 +2749,7 @@ async fn test_builtin_substring() {
     let output = rx.try_recv().expect("Should have output");
     assert_eq!(
         output.data.get("result"),
-        Some(&Value::Str("hello".to_string()))
+        Some(&Value::Str("hello".into()))
     );
 }
 

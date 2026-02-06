@@ -177,7 +177,7 @@ async fn test_var_with_string() {
 
     let value = engine.get_variable("message");
     assert!(value.is_some());
-    assert_eq!(*value.unwrap(), Value::Str("hello".to_string()));
+    assert_eq!(*value.unwrap(), Value::Str("hello".into()));
 }
 
 #[tokio::test]

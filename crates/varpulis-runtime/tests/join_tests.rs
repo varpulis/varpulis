@@ -80,7 +80,7 @@ async fn test_join_two_streams_correlates_by_key() {
         Ok(event) => {
             assert_eq!(&*event.event_type, "MACD");
             let symbol = event.data.get("symbol").expect("Missing symbol");
-            assert_eq!(symbol, &Value::Str("BTC/USD".to_string()));
+            assert_eq!(symbol, &Value::Str("BTC/USD".into()));
             let macd_line = event.data.get("macd_line").expect("Missing macd_line");
             // EMA12 - EMA26 = 45000 - 44500 = 500
             if let Value::Float(v) = macd_line {
@@ -225,7 +225,7 @@ async fn test_join_multi_stream_all_fields_accessible() {
             assert_eq!(&*event.event_type, "Combined");
             assert_eq!(
                 event.data.get("symbol"),
-                Some(&Value::Str("ETH/USD".to_string()))
+                Some(&Value::Str("ETH/USD".into()))
             );
             if let Some(Value::Float(p)) = event.data.get("price") {
                 assert!((p - 3000.0).abs() < 0.001);

@@ -414,7 +414,7 @@ mod tests {
         let correlated = result.unwrap();
         assert_eq!(
             correlated.get("symbol"),
-            Some(&Value::Str("BTC".to_string()))
+            Some(&Value::Str("BTC".into()))
         );
         assert_eq!(correlated.get("A.value"), Some(&Value::Float(100.0)));
         assert_eq!(correlated.get("B.value"), Some(&Value::Float(200.0)));
@@ -677,7 +677,7 @@ mod tests {
         let correlated = result.unwrap();
         assert_eq!(
             correlated.get("symbol"),
-            Some(&Value::Str("BTC".to_string()))
+            Some(&Value::Str("BTC".into()))
         );
         assert_eq!(correlated.get("A.value"), Some(&Value::Float(100.0)));
         assert_eq!(correlated.get("B.value"), Some(&Value::Float(200.0)));
@@ -722,7 +722,7 @@ mod tests {
         let correlated = result.unwrap();
         assert_eq!(
             correlated.get("symbol"),
-            Some(&Value::Str("BTC".to_string()))
+            Some(&Value::Str("BTC".into()))
         );
     }
 }

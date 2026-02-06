@@ -84,8 +84,8 @@ async fn test_partition_by_tumbling_window_separate_state() {
     while let Ok(event) = output_rx.try_recv() {
         if &*event.event_type == "PriceAverage" {
             match event.data.get("symbol") {
-                Some(Value::Str(s)) if s == "BTC" => btc_events.push(event),
-                Some(Value::Str(s)) if s == "ETH" => eth_events.push(event),
+                Some(Value::Str(s)) if &**s == "BTC" => btc_events.push(event),
+                Some(Value::Str(s)) if &**s == "ETH" => eth_events.push(event),
                 _ => {}
             }
         }
@@ -156,8 +156,8 @@ async fn test_partition_by_sliding_window_separate_state() {
     while let Ok(event) = output_rx.try_recv() {
         if &*event.event_type == "SensorAverage" {
             match event.data.get("sensor_id") {
-                Some(Value::Str(s)) if s == "sensor_A" => sensor_a_count += 1,
-                Some(Value::Str(s)) if s == "sensor_B" => sensor_b_count += 1,
+                Some(Value::Str(s)) if &**s == "sensor_A" => sensor_a_count += 1,
+                Some(Value::Str(s)) if &**s == "sensor_B" => sensor_b_count += 1,
                 _ => {}
             }
         }
@@ -224,14 +224,14 @@ async fn test_partition_aggregate_independent_per_key() {
             let total = event.data.get("total");
 
             match (customer, total) {
-                (Some(Value::Str(c)), Some(Value::Float(t))) if c == "customer_A" => {
+                (Some(Value::Str(c)), Some(Value::Float(t))) if &**c == "customer_A" => {
                     assert!(
                         (t - 600.0).abs() < 0.01,
                         "Customer A total should be 600, got {}",
                         t
                     );
                 }
-                (Some(Value::Str(c)), Some(Value::Float(t))) if c == "customer_B" => {
+                (Some(Value::Str(c)), Some(Value::Float(t))) if &**c == "customer_B" => {
                     assert!(
                         (t - 150.0).abs() < 0.01,
                         "Customer B total should be 150, got {}",
@@ -302,13 +302,13 @@ async fn test_macd_signal_partitioned_by_symbol() {
         let is_macd = event
             .data
             .get("event_type")
-            .map(|v| v == &Value::Str("MACDSignal".to_string()))
+            .map(|v| v == &Value::Str("MACDSignal".into()))
             .unwrap_or(false);
 
         if is_macd {
             match event.data.get("symbol") {
-                Some(Value::Str(s)) if s == "BTC/USD" => btc_signals += 1,
-                Some(Value::Str(s)) if s == "ETH/USD" => eth_signals += 1,
+                Some(Value::Str(s)) if &**s == "BTC/USD" => btc_signals += 1,
+                Some(Value::Str(s)) if &**s == "ETH/USD" => eth_signals += 1,
                 _ => {}
             }
         }

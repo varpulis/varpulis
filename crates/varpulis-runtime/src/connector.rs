@@ -1374,7 +1374,7 @@ mod mqtt_impl {
                     varpulis_core::Value::Float(n.as_f64().unwrap_or(0.0))
                 }
             }
-            serde_json::Value::String(s) => varpulis_core::Value::Str(s.clone()),
+            serde_json::Value::String(s) => varpulis_core::Value::Str(s.clone().into()),
             _ => varpulis_core::Value::Null,
         }
     }
@@ -3584,7 +3584,7 @@ fn json_to_value(json: &serde_json::Value) -> Option<varpulis_core::Value> {
             .as_i64()
             .map(Value::Int)
             .or_else(|| n.as_f64().map(Value::Float)),
-        serde_json::Value::String(s) => Some(Value::Str(s.clone())),
+        serde_json::Value::String(s) => Some(Value::Str(s.clone().into())),
         serde_json::Value::Array(arr) => {
             let values: Vec<Value> = arr.iter().filter_map(json_to_value).collect();
             Some(Value::array(values))
