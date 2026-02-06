@@ -340,7 +340,7 @@ pub async fn handle_connection(
 /// Create an output event message from an Event
 pub fn create_output_event_message(event: &Event) -> WsMessage {
     WsMessage::OutputEvent {
-        event_type: event.event_type.clone(),
+        event_type: event.event_type.to_string(),
         data: serde_json::to_value(&event.data).unwrap_or_default(),
         timestamp: event.timestamp.to_rfc3339(),
     }

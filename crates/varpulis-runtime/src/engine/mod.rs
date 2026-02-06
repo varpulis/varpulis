@@ -1622,7 +1622,7 @@ impl Engine {
                 if event.timestamp < effective_wm {
                     // Event is behind the watermark — check allowed lateness per stream
                     let mut allowed = false;
-                    if let Some(stream_names) = self.event_sources.get(&event.event_type) {
+                    if let Some(stream_names) = self.event_sources.get(&*event.event_type) {
                         for sn in stream_names.iter() {
                             if let Some(cfg) = self.late_data_configs.get(sn) {
                                 if event.timestamp >= effective_wm - cfg.allowed_lateness {
@@ -1635,7 +1635,7 @@ impl Engine {
                     if !allowed && !self.late_data_configs.is_empty() {
                         // Route to side-output if configured, otherwise drop
                         let mut routed = false;
-                        if let Some(stream_names) = self.event_sources.get(&event.event_type) {
+                        if let Some(stream_names) = self.event_sources.get(&*event.event_type) {
                             for sn in stream_names.iter() {
                                 if let Some(cfg) = self.late_data_configs.get(sn) {
                                     if let Some(ref side_stream) = cfg.side_output_stream {
@@ -1645,7 +1645,7 @@ impl Engine {
                                         );
                                         // Create a late-data event with metadata
                                         let mut late_event = (*event).clone();
-                                        late_event.event_type = side_stream.clone();
+                                        late_event.event_type = side_stream.clone().into();
                                         let _ = self.output_tx.try_send(late_event);
                                         routed = true;
                                         break;
@@ -1698,7 +1698,7 @@ impl Engine {
             // PERF: Arc<[String]> clone is O(1) - just atomic increment, not deep copy
             let stream_names: Arc<[String]> = self
                 .event_sources
-                .get(&current_event.event_type)
+                .get(&*current_event.event_type)
                 .cloned()
                 .unwrap_or_else(|| Arc::from([]));
 
@@ -1789,7 +1789,7 @@ impl Engine {
             // Get stream names (Arc clone is O(1))
             let stream_names: Arc<[String]> = self
                 .event_sources
-                .get(&current_event.event_type)
+                .get(&*current_event.event_type)
                 .cloned()
                 .unwrap_or_else(|| Arc::from([]));
 
@@ -1869,7 +1869,7 @@ impl Engine {
 
             let stream_names: Arc<[String]> = self
                 .event_sources
-                .get(&current_event.event_type)
+                .get(&*current_event.event_type)
                 .cloned()
                 .unwrap_or_else(|| Arc::from([]));
 
@@ -1925,7 +1925,7 @@ impl Engine {
             let mut passes_filter = false;
             let mut matched_source_name = None;
             for ms in sources {
-                if ms.event_type == event.event_type {
+                if ms.event_type == *event.event_type {
                     if let Some(ref filter) = ms.filter {
                         let ctx = SequenceContext::new();
                         if let Some(result) = evaluator::eval_expr_with_functions(
@@ -1968,9 +1968,9 @@ impl Engine {
                 // This maps event types (e.g., "MarketATick") to source names (e.g., "MarketA")
                 let source_name = stream
                     .event_type_to_source
-                    .get(&event.event_type)
+                    .get(&*event.event_type)
                     .cloned()
-                    .unwrap_or_else(|| event.event_type.clone());
+                    .unwrap_or_else(|| event.event_type.to_string());
 
                 tracing::debug!(
                     "Join stream {}: Adding event from source '{}' (event_type: {})",
@@ -2228,7 +2228,7 @@ impl Engine {
                     current_events = current_events
                         .into_iter()
                         .map(|event| {
-                            let mut new_event = Event::new(&event.event_type);
+                            let mut new_event = Event::new(event.event_type.clone());
                             new_event.timestamp = event.timestamp;
                             for (out_name, expr) in &config.fields {
                                 if let Some(value) = evaluator::eval_expr_with_functions(
@@ -2248,7 +2248,7 @@ impl Engine {
                 RuntimeOp::Emit(config) => {
                     let mut emitted: Vec<SharedEvent> = Vec::new();
                     for event in &current_events {
-                        let mut new_event = Event::new(&stream.name);
+                        let mut new_event = Event::new(stream.name.clone());
                         new_event.timestamp = event.timestamp;
                         for (out_name, source) in &config.fields {
                             if let Some(value) = event.get(source) {
@@ -2289,7 +2289,7 @@ impl Engine {
                         let msg = config
                             .message
                             .clone()
-                            .unwrap_or_else(|| event.event_type.clone());
+                            .unwrap_or_else(|| event.event_type.to_string());
                         let data = if let Some(ref field) = config.data_field {
                             event
                                 .get(field)
@@ -2360,7 +2360,7 @@ impl Engine {
                     let ctx = SequenceContext::new();
                     let mut emitted: Vec<SharedEvent> = Vec::new();
                     for event in &current_events {
-                        let mut new_event = Event::new(&stream.name);
+                        let mut new_event = Event::new(stream.name.clone());
                         new_event.timestamp = event.timestamp;
                         for (out_name, expr) in &config.fields {
                             if let Some(value) = evaluator::eval_expr_with_functions(
@@ -2392,7 +2392,7 @@ impl Engine {
                                 let mut map = IndexMap::with_hasher(FxBuildHasher);
                                 map.insert(
                                     "event_type".to_string(),
-                                    Value::Str(e.event_type.clone()),
+                                    Value::Str(e.event_type.to_string()),
                                 );
                                 for (k, v) in &e.data {
                                     map.insert(k.clone(), v.clone());
@@ -2472,7 +2472,7 @@ impl Engine {
             .into_iter()
             .map(|e| {
                 let mut owned = (*e).clone();
-                owned.event_type = stream.name.clone();
+                owned.event_type = stream.name.clone().into();
                 Arc::new(owned)
             })
             .collect();
@@ -2621,7 +2621,7 @@ impl Engine {
                     current_events = current_events
                         .into_iter()
                         .map(|event| {
-                            let mut new_event = Event::new(&event.event_type);
+                            let mut new_event = Event::new(event.event_type.clone());
                             new_event.timestamp = event.timestamp;
                             for (out_name, expr) in &config.fields {
                                 if let Some(value) = evaluator::eval_expr_with_functions(
@@ -2641,7 +2641,7 @@ impl Engine {
                 RuntimeOp::Emit(config) => {
                     let mut emitted: Vec<SharedEvent> = Vec::new();
                     for event in &current_events {
-                        let mut new_event = Event::new(&stream.name);
+                        let mut new_event = Event::new(stream.name.clone());
                         new_event.timestamp = event.timestamp;
                         for (out_name, source_field) in &config.fields {
                             if let Some(value) = event.get(source_field) {
@@ -2661,7 +2661,7 @@ impl Engine {
                     let ctx = SequenceContext::new();
                     let mut emitted: Vec<SharedEvent> = Vec::new();
                     for event in &current_events {
-                        let mut new_event = Event::new(&stream.name);
+                        let mut new_event = Event::new(stream.name.clone());
                         new_event.timestamp = event.timestamp;
                         for (out_name, expr) in &config.fields {
                             if let Some(value) = evaluator::eval_expr_with_functions(
@@ -2726,7 +2726,7 @@ impl Engine {
             .into_iter()
             .map(|e| {
                 let mut owned = (*e).clone();
-                owned.event_type = stream.name.clone();
+                owned.event_type = stream.name.clone().into();
                 Arc::new(owned)
             })
             .collect();
@@ -2934,7 +2934,7 @@ impl Engine {
                     current_events = current_events
                         .into_iter()
                         .map(|event| {
-                            let mut new_event = Event::new(&event.event_type);
+                            let mut new_event = Event::new(event.event_type.clone());
                             new_event.timestamp = event.timestamp;
                             for (out_name, expr) in &config.fields {
                                 if let Some(value) = evaluator::eval_expr_with_functions(
@@ -2954,7 +2954,7 @@ impl Engine {
                 RuntimeOp::Emit(config) => {
                     let mut emitted: Vec<SharedEvent> = Vec::new();
                     for event in &current_events {
-                        let mut new_event = Event::new(&stream.name);
+                        let mut new_event = Event::new(stream.name.clone());
                         new_event.timestamp = event.timestamp;
                         for (out_name, source) in &config.fields {
                             if let Some(value) = event.get(source) {
@@ -2974,7 +2974,7 @@ impl Engine {
                     let ctx = SequenceContext::new();
                     let mut emitted: Vec<SharedEvent> = Vec::new();
                     for event in &current_events {
-                        let mut new_event = Event::new(&stream.name);
+                        let mut new_event = Event::new(stream.name.clone());
                         new_event.timestamp = event.timestamp;
                         for (out_name, expr) in &config.fields {
                             if let Some(value) = evaluator::eval_expr_with_functions(
@@ -3058,7 +3058,7 @@ impl Engine {
             .into_iter()
             .map(|e| {
                 let mut owned = (*e).clone();
-                owned.event_type = stream.name.clone();
+                owned.event_type = stream.name.clone().into();
                 Arc::new(owned)
             })
             .collect();

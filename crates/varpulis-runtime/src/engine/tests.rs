@@ -33,7 +33,7 @@ async fn test_engine_simple_sequence() {
 
     // Should get output now
     let output = rx.try_recv().expect("Should have output");
-    assert_eq!(output.event_type, "OrderPayment");
+    assert_eq!(&*output.event_type, "OrderPayment");
 }
 
 #[tokio::test]
@@ -1766,7 +1766,7 @@ async fn test_engine_having_filter() {
         .await
         .unwrap();
     let output = rx.try_recv().expect("Should have output after 3 trades");
-    assert_eq!(output.event_type, "HighVolume");
+    assert_eq!(&*output.event_type, "HighVolume");
     assert_eq!(output.data.get("count"), Some(&Value::Int(3)));
     // sum() returns Float
     assert_eq!(output.data.get("volume"), Some(&Value::Float(600.0)));
@@ -1816,7 +1816,7 @@ async fn test_engine_having_filter_blocks() {
         .unwrap();
     // avg=150, which IS > 100, so we should get output
     let output = rx.try_recv().expect("Should have output when avg > 100");
-    assert_eq!(output.event_type, "FilteredAgg");
+    assert_eq!(&*output.event_type, "FilteredAgg");
 }
 
 // ==========================================================================

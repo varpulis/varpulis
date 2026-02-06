@@ -29,7 +29,7 @@ fn create_event(event_type: &str, data: Vec<(&str, Value)>) -> Event {
         event_data.insert(k.to_string(), v);
     }
     Event {
-        event_type: event_type.to_string(),
+        event_type: event_type.into(),
         timestamp: Utc::now(),
         data: event_data,
     }

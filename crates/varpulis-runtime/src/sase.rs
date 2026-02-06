@@ -628,7 +628,7 @@ pub struct NegationConstraint {
 impl NegationConstraint {
     /// Check if this constraint is violated by the given event
     pub fn is_violated_by(&self, event: &Event, captured: &FxHashMap<String, SharedEvent>) -> bool {
-        if event.event_type != self.forbidden_type {
+        if *event.event_type != self.forbidden_type {
             return false;
         }
         // If there's a predicate, check it
@@ -2541,7 +2541,7 @@ impl SaseEngine {
                 if let Some(ref config) = next_state.and_config {
                     // Check if event matches any branch
                     for (idx, branch) in config.branches.iter().enumerate() {
-                        if event.event_type == branch.event_type {
+                        if *event.event_type == branch.event_type {
                             let pred_matches = branch
                                 .predicate
                                 .as_ref()
@@ -2610,7 +2610,7 @@ impl SaseEngine {
                 if next_state.state_type == StateType::And {
                     if let Some(ref config) = next_state.and_config {
                         for (idx, branch) in config.branches.iter().enumerate() {
-                            if event.event_type == branch.event_type {
+                            if *event.event_type == branch.event_type {
                                 let pred_matches = branch
                                     .predicate
                                     .as_ref()
@@ -2782,7 +2782,7 @@ impl SaseEngine {
     fn check_global_negations(&mut self, event: &Event) {
         for negation in &self.global_negations {
             // Check if event type matches the negation
-            if event.event_type != negation.event_type {
+            if *event.event_type != negation.event_type {
                 continue;
             }
 
@@ -2893,7 +2893,7 @@ fn advance_run_shared(
     if current_state.state_type == StateType::Negation {
         if let Some(ref neg_info) = current_state.negation_info {
             // Check if this event violates the negation
-            if event.event_type == neg_info.forbidden_type {
+            if *event.event_type == neg_info.forbidden_type {
                 let pred_matches = neg_info
                     .predicate
                     .as_ref()
@@ -3057,7 +3057,7 @@ fn advance_and_state(
                 continue;
             }
 
-            if event.event_type == branch.event_type {
+            if *event.event_type == branch.event_type {
                 let pred_matches = branch
                     .predicate
                     .as_ref()
@@ -3119,7 +3119,7 @@ fn event_matches_state(
     captured: &FxHashMap<String, SharedEvent>,
 ) -> bool {
     if let Some(ref expected_type) = state.event_type {
-        if event.event_type != *expected_type {
+        if &*event.event_type != expected_type {
             return false;
         }
     }

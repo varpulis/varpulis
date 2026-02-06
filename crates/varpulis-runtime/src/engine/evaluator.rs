@@ -382,7 +382,7 @@ pub fn eval_stmt(
 
         // Emit event statement
         Stmt::Emit { event_type, fields } => {
-            let mut new_event = Event::new(event_type);
+            let mut new_event = Event::new(event_type.clone());
             new_event.timestamp = event.timestamp;
             for arg in fields {
                 if let Some(value) =
@@ -465,7 +465,7 @@ pub fn eval_filter_expr(
                     return Some(value.clone());
                 }
                 // Also try the member directly if alias matches event type
-                if alias == &event.event_type {
+                if alias == &*event.event_type {
                     return event.get(member).cloned();
                 }
             }
@@ -838,7 +838,7 @@ pub fn eval_expr_with_functions(
                     return Some(value.clone());
                 }
                 // Also try the member directly if alias matches event type
-                if alias == &event.event_type {
+                if alias == &*event.event_type {
                     return event.get(member).cloned();
                 }
             }
@@ -1914,7 +1914,7 @@ pub fn map_to_event(map: &FxIndexMap<String, Value>) -> Event {
     }
 
     Event {
-        event_type,
+        event_type: event_type.into(),
         timestamp: chrono::Utc::now(),
         data,
     }

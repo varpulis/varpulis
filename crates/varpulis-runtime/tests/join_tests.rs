@@ -78,7 +78,7 @@ async fn test_join_two_streams_correlates_by_key() {
     // Try to receive the event
     match output_rx.try_recv() {
         Ok(event) => {
-            assert_eq!(event.event_type, "MACD");
+            assert_eq!(&*event.event_type, "MACD");
             let symbol = event.data.get("symbol").expect("Missing symbol");
             assert_eq!(symbol, &Value::Str("BTC/USD".to_string()));
             let macd_line = event.data.get("macd_line").expect("Missing macd_line");
@@ -153,7 +153,7 @@ async fn test_join_buffer_window_expiration() {
     // Should get a result since both events are within 100ms window
     match output_rx.try_recv() {
         Ok(event) => {
-            assert_eq!(event.event_type, "Joined");
+            assert_eq!(&*event.event_type, "Joined");
             let total = event.data.get("total").expect("Missing total");
             if let Value::Float(v) = total {
                 assert!((v - 30.0).abs() < 0.001, "Expected 30, got {}", v);
@@ -222,7 +222,7 @@ async fn test_join_multi_stream_all_fields_accessible() {
 
     match output_rx.try_recv() {
         Ok(event) => {
-            assert_eq!(event.event_type, "Combined");
+            assert_eq!(&*event.event_type, "Combined");
             assert_eq!(
                 event.data.get("symbol"),
                 Some(&Value::Str("ETH/USD".to_string()))
@@ -353,7 +353,7 @@ async fn test_aggregate_comparison_join() {
     // Count combined events
     let mut combined_count = 0;
     while let Ok(event) = output_rx.try_recv() {
-        if event.event_type == "Combined" {
+        if &*event.event_type == "Combined" {
             combined_count += 1;
             // Debug: print event
             println!("Combined event: {:?}", event.data);
@@ -444,7 +444,7 @@ async fn test_macd_example_produces_signals() {
     // Count MACD events
     let mut macd_count = 0;
     while let Ok(event) = output_rx.try_recv() {
-        if event.event_type == "MACD" {
+        if &*event.event_type == "MACD" {
             macd_count += 1;
             println!("MACD event {}: {:?}", macd_count, event.data);
             // Verify the MACD has expected fields

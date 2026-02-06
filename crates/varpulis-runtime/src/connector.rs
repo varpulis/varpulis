@@ -886,7 +886,7 @@ fn json_to_event_from_json(json: &serde_json::Value) -> Event {
         .unwrap_or("WebhookEvent")
         .to_string();
 
-    let mut event = Event::new(&event_type);
+    let mut event = Event::new(event_type);
 
     // Handle nested "data" field or top-level fields
     let fields = json.get("data").or(Some(json));
@@ -1345,7 +1345,7 @@ mod mqtt_impl {
                     .to_string()
             });
 
-        let mut event = Event::new(&event_type);
+        let mut event = Event::new(event_type);
 
         // First try nested "data" object, then fall back to top-level fields
         if let Some(data) = json.get("data").and_then(|v| v.as_object()) {
@@ -1547,7 +1547,7 @@ mod kafka_impl {
                                             .unwrap_or("KafkaEvent")
                                             .to_string();
 
-                                        let mut event = Event::new(&event_type);
+                                        let mut event = Event::new(event_type);
 
                                         if let Some(obj) = json.as_object() {
                                             for (key, value) in obj {
@@ -1631,7 +1631,7 @@ mod kafka_impl {
 
             let record = FutureRecord::to(&self.config.topic)
                 .payload(&payload)
-                .key(&event.event_type);
+                .key(&*event.event_type);
 
             self.producer
                 .send(record, Duration::from_secs(5))
@@ -1972,7 +1972,7 @@ mod database_impl {
                                     .try_get("event_type")
                                     .unwrap_or_else(|_| "DatabaseEvent".to_string());
 
-                                let mut event = Event::new(&event_type);
+                                let mut event = Event::new(event_type);
 
                                 // Try to get common columns
                                 if let Ok(data) = row.try_get::<String, _>("data") {
@@ -2061,7 +2061,7 @@ mod database_impl {
             );
 
             sqlx::query(&query)
-                .bind(&event.event_type)
+                .bind(event.event_type.to_string())
                 .bind(&data)
                 .bind(event.timestamp.to_rfc3339())
                 .execute(&self.pool)

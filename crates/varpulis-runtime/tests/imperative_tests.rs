@@ -521,7 +521,7 @@ async fn test_loop_with_conditional_emit() {
     // Even values: 0, 2, 4, 6, 8
     let evens: Vec<i64> = events
         .iter()
-        .filter(|e| e.event_type.contains("Even") || e.event_type == "S")
+        .filter(|e| e.event_type.contains("Even") || &*e.event_type == "S")
         .filter_map(|e| e.get_int("val"))
         .filter(|v| v % 2 == 0)
         .collect();

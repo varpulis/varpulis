@@ -363,7 +363,7 @@ for row in 0..2:
     }
 
     // Verify all 4 tiles produced output
-    let mut tile_types: Vec<String> = results.iter().map(|e| e.event_type.clone()).collect();
+    let mut tile_types: Vec<String> = results.iter().map(|e| e.event_type.to_string()).collect();
     tile_types.sort();
     tile_types.dedup();
     assert_eq!(tile_types.len(), 4, "All 4 tiles should produce output");
