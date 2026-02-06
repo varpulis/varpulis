@@ -380,7 +380,7 @@ pub fn json_to_value(json: &serde_json::Value) -> varpulis_core::Value {
                 Value::Null
             }
         }
-        serde_json::Value::String(s) => Value::Str(s.clone()),
+        serde_json::Value::String(s) => Value::Str(s.clone().into()),
         serde_json::Value::Array(arr) => Value::array(arr.iter().map(json_to_value).collect()),
         serde_json::Value::Object(obj) => {
             let map = obj
@@ -400,7 +400,7 @@ pub fn value_to_json(value: &varpulis_core::Value) -> serde_json::Value {
         Value::Bool(b) => serde_json::Value::Bool(*b),
         Value::Int(i) => serde_json::json!(*i),
         Value::Float(f) => serde_json::json!(*f),
-        Value::Str(s) => serde_json::Value::String(s.clone()),
+        Value::Str(s) => serde_json::Value::String(s.to_string()),
         Value::Array(arr) => serde_json::Value::Array(arr.iter().map(value_to_json).collect()),
         Value::Map(map) => {
             let obj: serde_json::Map<String, serde_json::Value> = map
@@ -612,7 +612,7 @@ mod tests {
     fn test_json_to_value_string() {
         let json = serde_json::json!("hello");
         let value = json_to_value(&json);
-        assert_eq!(value, varpulis_core::Value::Str("hello".to_string()));
+        assert_eq!(value, varpulis_core::Value::Str("hello".into()));
     }
 
     #[test]
@@ -636,7 +636,7 @@ mod tests {
             varpulis_core::Value::Map(map) => {
                 assert_eq!(
                     map.get("key"),
-                    Some(&varpulis_core::Value::Str("value".to_string()))
+                    Some(&varpulis_core::Value::Str("value".into()))
                 );
             }
             _ => panic!("Expected Map"),
@@ -695,7 +695,7 @@ mod tests {
 
     #[test]
     fn test_value_to_json_string() {
-        let value = varpulis_core::Value::Str("world".to_string());
+        let value = varpulis_core::Value::Str("world".into());
         let json = value_to_json(&value);
         assert_eq!(json, serde_json::json!("world"));
     }
@@ -895,7 +895,7 @@ mod tests {
         let mut event = Event::new("HighTemp");
         event.data.insert(
             "sensor_id".to_string(),
-            varpulis_core::Value::Str("S1".to_string()),
+            varpulis_core::Value::Str("S1".into()),
         );
 
         let msg = create_output_event_message(&event);

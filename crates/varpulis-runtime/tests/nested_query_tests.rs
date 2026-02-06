@@ -39,7 +39,7 @@ async fn test_basic_stream_reference() {
     let ibm_tick = make_event(
         "Tick",
         vec![
-            ("symbol", Value::Str("IBM".to_string())),
+            ("symbol", Value::Str("IBM".into())),
             ("price", Value::Float(150.0)),
         ],
     );
@@ -53,7 +53,7 @@ async fn test_basic_stream_reference() {
     let aapl_tick = make_event(
         "Tick",
         vec![
-            ("symbol", Value::Str("AAPL".to_string())),
+            ("symbol", Value::Str("AAPL".into())),
             ("price", Value::Float(175.0)),
         ],
     );
@@ -92,7 +92,7 @@ async fn test_three_stage_pipeline() {
         let tick = make_event(
             "Tick",
             vec![
-                ("symbol", Value::Str("IBM".to_string())),
+                ("symbol", Value::Str("IBM".into())),
                 ("price", Value::Float(price)),
             ],
         );
@@ -130,7 +130,7 @@ async fn test_nested_with_output_event() {
     let tick = make_event(
         "Tick",
         vec![
-            ("symbol", Value::Str("NVDA".to_string())),
+            ("symbol", Value::Str("NVDA".into())),
             ("price", Value::Float(250.0)),
         ],
     );
@@ -191,8 +191,8 @@ async fn test_diamond_dependency() {
     engine.load(&program).expect("Failed to load program");
 
     // Send events
-    let event_a = make_event("Event", vec![("type", Value::Str("a".to_string()))]);
-    let event_b = make_event("Event", vec![("type", Value::Str("b".to_string()))]);
+    let event_a = make_event("Event", vec![("type", Value::Str("a".into()))]);
+    let event_b = make_event("Event", vec![("type", Value::Str("b".into()))]);
 
     engine
         .process(event_a)
@@ -263,7 +263,7 @@ async fn test_nested_with_aggregation_window() {
             "Trade",
             vec![
                 ("amount", Value::Float(2000.0 + (i as f64 * 100.0))),
-                ("symbol", Value::Str("BTC".to_string())),
+                ("symbol", Value::Str("BTC".into())),
             ],
         );
         engine.process(trade).await.expect("Process should succeed");
@@ -299,7 +299,7 @@ async fn test_nested_with_partition() {
         let order = make_event(
             "Order",
             vec![
-                ("customer_id", Value::Str(customer.to_string())),
+                ("customer_id", Value::Str(customer.into())),
                 ("total", Value::Float(total)),
             ],
         );
@@ -331,7 +331,7 @@ async fn test_stream_from_event_type_vs_stream() {
     let reading = make_event(
         "SensorReading",
         vec![
-            ("sensor_id", Value::Str("S1".to_string())),
+            ("sensor_id", Value::Str("S1".into())),
             ("value", Value::Float(42.0)),
         ],
     );
@@ -371,7 +371,7 @@ async fn test_chained_transforms() {
     let measurement = make_event(
         "Measurement",
         vec![
-            ("sensor_id", Value::Str("TEMP01".to_string())),
+            ("sensor_id", Value::Str("TEMP01".into())),
             ("value", Value::Float(23.5)),
             ("quality", Value::Float(0.95)),
         ],

@@ -347,7 +347,7 @@ fn expr_to_value(expr: &varpulis_core::ast::Expr) -> Option<varpulis_core::Value
     match expr {
         Expr::Int(n) => Some(Value::Int(*n)),
         Expr::Float(f) => Some(Value::Float(*f)),
-        Expr::Str(s) => Some(Value::Str(s.clone())),
+        Expr::Str(s) => Some(Value::Str(s.clone().into())),
         Expr::Bool(b) => Some(Value::Bool(*b)),
         _ => None,
     }

@@ -278,7 +278,7 @@ impl EventFileParser {
                 .replace("\\\"", "\"")
                 .replace("\\'", "'")
                 .replace("\\\\", "\\");
-            return Ok(Value::Str(unescaped));
+            return Ok(Value::Str(unescaped.into()));
         }
 
         // Integer
@@ -303,7 +303,7 @@ impl EventFileParser {
         }
 
         // Unquoted string (identifier-like)
-        Ok(Value::Str(s.to_string()))
+        Ok(Value::Str(s.to_string().into()))
     }
 
     /// Parse from a file path
@@ -378,7 +378,7 @@ impl EventFileParser {
                     Value::Null
                 }
             }
-            serde_json::Value::String(s) => Value::Str(s.clone()),
+            serde_json::Value::String(s) => Value::Str(s.clone().into()),
             serde_json::Value::Array(arr) => {
                 Value::array(arr.iter().map(Self::json_to_value).collect())
             }
@@ -543,7 +543,7 @@ mod tests {
         assert_eq!(&*events[0].event.event_type, "StockTick");
         assert_eq!(
             events[0].event.get("symbol"),
-            Some(&Value::Str("AAPL".to_string()))
+            Some(&Value::Str("AAPL".into()))
         );
         assert_eq!(events[0].event.get("price"), Some(&Value::Float(150.5)));
         assert_eq!(events[0].event.get("volume"), Some(&Value::Int(1000)));
@@ -592,7 +592,7 @@ mod tests {
         assert_eq!(&*events[0].event.event_type, "StockPrice");
         assert_eq!(
             events[0].event.get("field_0"),
-            Some(&Value::Str("AAPL".to_string()))
+            Some(&Value::Str("AAPL".into()))
         );
         assert_eq!(events[0].event.get("field_1"), Some(&Value::Float(150.5)));
     }
@@ -714,7 +714,7 @@ mod tests {
         let events = EventFileParser::parse(source).unwrap();
         assert_eq!(
             events[0].event.get("name"),
-            Some(&Value::Str("single quoted".to_string()))
+            Some(&Value::Str("single quoted".into()))
         );
     }
 
@@ -727,11 +727,11 @@ mod tests {
         let events = EventFileParser::parse(source).unwrap();
         assert_eq!(
             events[0].event.get("status"),
-            Some(&Value::Str("active".to_string()))
+            Some(&Value::Str("active".into()))
         );
         assert_eq!(
             events[0].event.get("mode"),
-            Some(&Value::Str("processing".to_string()))
+            Some(&Value::Str("processing".into()))
         );
     }
 

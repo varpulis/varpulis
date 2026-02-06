@@ -66,7 +66,7 @@ async fn test_order_payment_sequence_match() {
     assert_eq!(results.len(), 1, "Should generate exactly one output event");
     assert_eq!(
         results[0].data.get("status"),
-        Some(&varpulis_core::Value::Str("matched".to_string()))
+        Some(&varpulis_core::Value::Str("matched".into()))
     );
 }
 
@@ -463,7 +463,7 @@ async fn test_regression_event_field_types() {
     let mut event = Event::new("Data");
     event
         .data
-        .insert("string_field".to_string(), Value::Str("hello".to_string()));
+        .insert("string_field".to_string(), Value::Str("hello".into()));
     event.data.insert("int_field".to_string(), Value::Int(42));
     event
         .data
@@ -598,7 +598,7 @@ async fn test_electrical_abnormal_floor_consumption() {
     assert_eq!(results.len(), 1, "Should detect one abnormal floor");
     assert_eq!(
         results[0].data.get("alert_type"),
-        Some(&varpulis_core::Value::Str("abnormal".to_string()))
+        Some(&varpulis_core::Value::Str("abnormal".into()))
     );
 }
 
@@ -621,15 +621,15 @@ async fn test_electrical_multiple_buildings() {
     let mut e1 = Event::new("FloorConsumption");
     e1.data.insert(
         "site_id".to_string(),
-        varpulis_core::Value::Str("S1".to_string()),
+        varpulis_core::Value::Str("S1".into()),
     );
     e1.data.insert(
         "building_id".to_string(),
-        varpulis_core::Value::Str("B1".to_string()),
+        varpulis_core::Value::Str("B1".into()),
     );
     e1.data.insert(
         "floor_id".to_string(),
-        varpulis_core::Value::Str("F1".to_string()),
+        varpulis_core::Value::Str("F1".into()),
     );
     e1.data.insert(
         "consumption_kwh".to_string(),
@@ -639,15 +639,15 @@ async fn test_electrical_multiple_buildings() {
     let mut e2 = Event::new("FloorConsumption");
     e2.data.insert(
         "site_id".to_string(),
-        varpulis_core::Value::Str("S1".to_string()),
+        varpulis_core::Value::Str("S1".into()),
     );
     e2.data.insert(
         "building_id".to_string(),
-        varpulis_core::Value::Str("B2".to_string()),
+        varpulis_core::Value::Str("B2".into()),
     );
     e2.data.insert(
         "floor_id".to_string(),
-        varpulis_core::Value::Str("F1".to_string()),
+        varpulis_core::Value::Str("F1".into()),
     );
     e2.data.insert(
         "consumption_kwh".to_string(),
@@ -688,7 +688,7 @@ async fn test_electrical_consumption_spike_detection() {
     assert_eq!(results.len(), 1, "Should detect spike sequence");
     assert_eq!(
         results[0].data.get("alert_type"),
-        Some(&varpulis_core::Value::Str("spike".to_string()))
+        Some(&varpulis_core::Value::Str("spike".into()))
     );
 }
 
@@ -1253,7 +1253,7 @@ async fn test_pattern_with_filter() {
     for event in &results {
         assert_eq!(
             event.data.get("alert_type"),
-            Some(&varpulis_core::Value::Str("high_value_trade".to_string()))
+            Some(&varpulis_core::Value::Str("high_value_trade".into()))
         );
     }
 }
@@ -1391,7 +1391,7 @@ async fn test_building_metrics_comprehensive() {
     for event in &results {
         if let Some(varpulis_core::Value::Str(sensor)) = event.data.get("sensor") {
             assert!(
-                sensor == "S1" || sensor == "S2" || sensor == "S3",
+                &**sensor == "S1" || &**sensor == "S2" || &**sensor == "S3",
                 "Sensor {} should not be in results",
                 sensor
             );
@@ -1618,7 +1618,7 @@ async fn test_to_connector_not_found() {
     assert_eq!(results.len(), 1, "Output event should still be produced");
     assert_eq!(
         results[0].data.get("status"),
-        Some(&varpulis_core::Value::Str("hot".to_string()))
+        Some(&varpulis_core::Value::Str("hot".into()))
     );
 }
 
@@ -1646,7 +1646,7 @@ async fn test_to_console_connector() {
     for result in &results {
         assert_eq!(
             result.data.get("status"),
-            Some(&varpulis_core::Value::Str("alert".to_string()))
+            Some(&varpulis_core::Value::Str("alert".into()))
         );
     }
 }

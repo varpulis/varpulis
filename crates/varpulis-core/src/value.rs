@@ -14,9 +14,10 @@ pub type FxIndexMap<K, V> = IndexMap<K, V, FxBuildHasher>;
 
 /// Runtime value
 ///
-/// The Array and Map variants are boxed to reduce the overall enum size.
-/// This optimization significantly reduces memory usage for Value-heavy
-/// workloads since most Values are scalar types (Int, Float, Str).
+/// The Array, Map, and Str variants are optimized for memory efficiency:
+/// - Array and Map are boxed to reduce overall enum size
+/// - Str uses Box<str> instead of String (16 bytes vs 24 bytes)
+///   since string values are rarely mutated after creation
 ///
 /// The Map variant uses FxBuildHasher for faster key lookups since map keys
 /// are typically short strings.
@@ -32,7 +33,7 @@ pub enum Value {
     Bool(bool),
     Int(i64),
     Float(f64),
-    Str(String),
+    Str(Box<str>), // Box<str> saves 8 bytes vs String (no capacity field)
     Timestamp(i64), // nanoseconds since epoch
     Duration(u64),  // nanoseconds
     Array(Box<Vec<Value>>),
@@ -110,6 +111,12 @@ impl Value {
         }
     }
 
+    /// Creates a Str value from any type that can be converted to a string slice.
+    #[inline]
+    pub fn str(s: impl AsRef<str>) -> Self {
+        Value::Str(s.as_ref().into())
+    }
+
     pub fn as_int(&self) -> Option<i64> {
         match self {
             Value::Int(n) => Some(*n),
@@ -157,7 +164,7 @@ impl Value {
     /// Fast partition key extraction: returns `Cow` to avoid allocation for string keys.
     pub fn to_partition_key(&self) -> Cow<'_, str> {
         match self {
-            Value::Str(s) => Cow::Borrowed(s.as_str()),
+            Value::Str(s) => Cow::Borrowed(&**s),
             Value::Int(n) => Cow::Owned(n.to_string()),
             Value::Bool(b) => Cow::Borrowed(if *b { "true" } else { "false" }),
             other => Cow::Owned(format!("{}", other)),
@@ -172,7 +179,7 @@ impl fmt::Display for Value {
             Value::Bool(b) => write!(f, "{}", b),
             Value::Int(n) => write!(f, "{}", n),
             Value::Float(n) => write!(f, "{}", n),
-            Value::Str(s) => write!(f, "\"{}\"", s),
+            Value::Str(s) => write!(f, "\"{}\"", &**s),
             Value::Timestamp(ts) => {
                 let dt = DateTime::<Utc>::from_timestamp_nanos(*ts);
                 write!(f, "@{}", dt.format("%Y-%m-%dT%H:%M:%SZ"))
@@ -237,13 +244,19 @@ impl From<f64> for Value {
 
 impl From<String> for Value {
     fn from(s: String) -> Self {
-        Value::Str(s)
+        Value::Str(s.into_boxed_str())
     }
 }
 
 impl From<&str> for Value {
     fn from(s: &str) -> Self {
-        Value::Str(s.to_string())
+        Value::Str(s.into())
+    }
+}
+
+impl From<Box<str>> for Value {
+    fn from(s: Box<str>) -> Self {
+        Value::Str(s)
     }
 }
 
@@ -334,7 +347,7 @@ mod tests {
 
     #[test]
     fn test_type_name_str() {
-        assert_eq!(Value::Str("hello".to_string()).type_name(), "str");
+        assert_eq!(Value::str("hello").type_name(), "str");
     }
 
     #[test]
@@ -390,8 +403,8 @@ mod tests {
 
     #[test]
     fn test_is_truthy_str() {
-        assert!(Value::Str("hello".to_string()).is_truthy());
-        assert!(!Value::Str("".to_string()).is_truthy());
+        assert!(Value::str("hello").is_truthy());
+        assert!(!Value::str("").is_truthy());
     }
 
     #[test]
@@ -436,7 +449,7 @@ mod tests {
 
     #[test]
     fn test_as_int_from_other() {
-        assert_eq!(Value::Str("42".to_string()).as_int(), None);
+        assert_eq!(Value::str("42").as_int(), None);
         assert_eq!(Value::Null.as_int(), None);
     }
 
@@ -452,12 +465,12 @@ mod tests {
 
     #[test]
     fn test_as_float_from_other() {
-        assert_eq!(Value::Str("3.14".to_string()).as_float(), None);
+        assert_eq!(Value::str("3.14").as_float(), None);
     }
 
     #[test]
     fn test_as_str() {
-        assert_eq!(Value::Str("hello".to_string()).as_str(), Some("hello"));
+        assert_eq!(Value::str("hello").as_str(), Some("hello"));
         assert_eq!(Value::Int(42).as_str(), None);
     }
 
@@ -527,7 +540,7 @@ mod tests {
 
     #[test]
     fn test_display_str() {
-        assert_eq!(format!("{}", Value::Str("hello".to_string())), "\"hello\"");
+        assert_eq!(format!("{}", Value::str("hello")), "\"hello\"");
     }
 
     #[test]
@@ -596,13 +609,13 @@ mod tests {
     #[test]
     fn test_from_string() {
         let v: Value = "hello".to_string().into();
-        assert_eq!(v, Value::Str("hello".to_string()));
+        assert_eq!(v, Value::str("hello"));
     }
 
     #[test]
     fn test_from_str_ref() {
         let v: Value = "hello".into();
-        assert_eq!(v, Value::Str("hello".to_string()));
+        assert_eq!(v, Value::str("hello"));
     }
 
     #[test]
@@ -650,8 +663,8 @@ mod tests {
         // Same values should have same hash
         assert_eq!(hash_value(&Value::Int(42)), hash_value(&Value::Int(42)));
         assert_eq!(
-            hash_value(&Value::Str("hello".to_string())),
-            hash_value(&Value::Str("hello".to_string()))
+            hash_value(&Value::str("hello")),
+            hash_value(&Value::str("hello"))
         );
         assert_eq!(
             hash_value(&Value::Float(42.5)),
@@ -674,7 +687,7 @@ mod tests {
         assert_ne!(hash_value(&Value::Int(1)), hash_value(&Value::Int(2)));
         assert_ne!(
             hash_value(&Value::Int(0)),
-            hash_value(&Value::Str("0".to_string()))
+            hash_value(&Value::str("0"))
         );
     }
 
@@ -725,8 +738,8 @@ mod tests {
 
         assert_eq!(set.len(), 2);
 
-        set.insert(Value::Str("hello".to_string()));
-        set.insert(Value::Str("hello".to_string())); // Duplicate
+        set.insert(Value::str("hello"));
+        set.insert(Value::str("hello")); // Duplicate
 
         assert_eq!(set.len(), 3);
     }

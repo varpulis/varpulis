@@ -125,7 +125,7 @@ fn test_embed_auto_multiple_fields() {
         vec![
             ("price", Value::Float(100.5)),
             ("volume", Value::Int(1000)),
-            ("symbol", Value::Str("AAPL".to_string())),
+            ("symbol", Value::Str("AAPL".into())),
             ("active", Value::Bool(true)),
         ],
     );
@@ -251,7 +251,7 @@ fn test_embed_with_categorical_features() {
     };
 
     let engine = EmbeddingEngine::new(config, 64, 4);
-    let event = create_event("Trade", vec![("symbol", Value::Str("AAPL".to_string()))]);
+    let event = create_event("Trade", vec![("symbol", Value::Str("AAPL".into()))]);
 
     let embedding = engine.embed(&event);
     assert_eq!(embedding.len(), 64);
@@ -283,7 +283,7 @@ fn test_embed_with_mixed_features() {
         "Trade",
         vec![
             ("price", Value::Float(150.0)),
-            ("market", Value::Str("NASDAQ".to_string())),
+            ("market", Value::Str("NASDAQ".into())),
         ],
     );
 
@@ -1034,7 +1034,7 @@ fn test_trading_price_correlation() {
         let event = create_event(
             "Trade",
             vec![
-                ("symbol", Value::Str("AAPL".to_string())),
+                ("symbol", Value::Str("AAPL".into())),
                 ("price", Value::Float(150.0 + i as f64)),
                 ("volume", Value::Int(1000 + i * 100)),
             ],
@@ -1047,7 +1047,7 @@ fn test_trading_price_correlation() {
         let event = create_event(
             "Trade",
             vec![
-                ("symbol", Value::Str("GOOG".to_string())),
+                ("symbol", Value::Str("GOOG".into())),
                 ("price", Value::Float(2800.0 + i as f64 * 10.0)),
                 ("volume", Value::Int(500 + i * 50)),
             ],
@@ -1059,7 +1059,7 @@ fn test_trading_price_correlation() {
     let query = create_event(
         "Trade",
         vec![
-            ("symbol", Value::Str("AAPL".to_string())),
+            ("symbol", Value::Str("AAPL".into())),
             ("price", Value::Float(152.0)),
             ("volume", Value::Int(1100)),
         ],
@@ -1079,7 +1079,7 @@ fn test_trading_volume_spike() {
         let event = create_event(
             "Trade",
             vec![
-                ("symbol", Value::Str("AAPL".to_string())),
+                ("symbol", Value::Str("AAPL".into())),
                 ("volume", Value::Int(1000)),
             ],
         );
@@ -1090,7 +1090,7 @@ fn test_trading_volume_spike() {
     let spike = create_event(
         "Trade",
         vec![
-            ("symbol", Value::Str("AAPL".to_string())),
+            ("symbol", Value::Str("AAPL".into())),
             ("volume", Value::Int(100000)),
         ],
     );
@@ -1114,9 +1114,9 @@ fn test_fraud_detection_unusual_amount() {
         let event = create_event(
             "Transaction",
             vec![
-                ("user_id", Value::Str("user123".to_string())),
+                ("user_id", Value::Str("user123".into())),
                 ("amount", Value::Float(50.0 + i as f64 * 10.0)),
-                ("location", Value::Str("NYC".to_string())),
+                ("location", Value::Str("NYC".into())),
             ],
         );
         engine.add_event(event);
@@ -1126,18 +1126,18 @@ fn test_fraud_detection_unusual_amount() {
     let suspicious = create_event(
         "Transaction",
         vec![
-            ("user_id", Value::Str("user123".to_string())),
+            ("user_id", Value::Str("user123".into())),
             ("amount", Value::Float(50000.0)),
-            ("location", Value::Str("Lagos".to_string())),
+            ("location", Value::Str("Lagos".into())),
         ],
     );
 
     let normal = create_event(
         "Transaction",
         vec![
-            ("user_id", Value::Str("user123".to_string())),
+            ("user_id", Value::Str("user123".into())),
             ("amount", Value::Float(75.0)),
-            ("location", Value::Str("NYC".to_string())),
+            ("location", Value::Str("NYC".into())),
         ],
     );
 
@@ -1165,9 +1165,9 @@ fn test_fraud_detection_velocity() {
         let event = create_event(
             "Transaction",
             vec![
-                ("user_id", Value::Str("user456".to_string())),
+                ("user_id", Value::Str("user456".into())),
                 ("amount", Value::Float(100.0)),
-                ("merchant", Value::Str(format!("merchant_{}", i % 5))),
+                ("merchant", Value::Str(format!("merchant_{}", i % 5).into())),
             ],
         );
         let result = window.process(event);
@@ -1194,7 +1194,7 @@ fn test_hvac_normal_operation() {
         let event = create_event(
             "HVACReading",
             vec![
-                ("unit_id", Value::Str("HVAC-001".to_string())),
+                ("unit_id", Value::Str("HVAC-001".into())),
                 ("temperature", Value::Float(22.0 + (i as f64 * 0.1))),
                 ("power", Value::Float(100.0 + (i as f64 * 2.0))),
                 ("efficiency", Value::Float(0.85)),
@@ -1217,7 +1217,7 @@ fn test_hvac_degradation_detection() {
         let event = create_event(
             "HVACReading",
             vec![
-                ("unit_id", Value::Str("HVAC-001".to_string())),
+                ("unit_id", Value::Str("HVAC-001".into())),
                 ("temperature", Value::Float(22.0)),
                 ("power", Value::Float(100.0)),
                 ("efficiency", Value::Float(0.85)),
@@ -1231,7 +1231,7 @@ fn test_hvac_degradation_detection() {
         let event = create_event(
             "HVACReading",
             vec![
-                ("unit_id", Value::Str("HVAC-001".to_string())),
+                ("unit_id", Value::Str("HVAC-001".into())),
                 ("temperature", Value::Float(24.0 + i as f64)),
                 ("power", Value::Float(130.0 + i as f64 * 10.0)),
                 ("efficiency", Value::Float(0.75 - i as f64 * 0.05)),
@@ -1244,7 +1244,7 @@ fn test_hvac_degradation_detection() {
     let current = create_event(
         "HVACReading",
         vec![
-            ("unit_id", Value::Str("HVAC-001".to_string())),
+            ("unit_id", Value::Str("HVAC-001".into())),
             ("temperature", Value::Float(28.0)),
             ("power", Value::Float(180.0)),
             ("efficiency", Value::Float(0.55)),
@@ -1312,9 +1312,9 @@ fn test_edge_unicode_strings() {
     let event = create_event(
         "Test",
         vec![
-            ("emoji", Value::Str("🚀💰📈".to_string())),
-            ("chinese", Value::Str("股票交易".to_string())),
-            ("arabic", Value::Str("تداول".to_string())),
+            ("emoji", Value::Str("🚀💰📈".into())),
+            ("chinese", Value::Str("股票交易".into())),
+            ("arabic", Value::Str("تداول".into())),
         ],
     );
 
@@ -1328,7 +1328,7 @@ fn test_edge_very_long_string() {
     let engine = EmbeddingEngine::new(config.embedding_config, 64, 4);
 
     let long_string = "x".repeat(10000);
-    let event = create_event("Test", vec![("long", Value::Str(long_string))]);
+    let event = create_event("Test", vec![("long", Value::Str(long_string.into()))]);
 
     let embedding = engine.embed(&event);
     assert_eq!(embedding.len(), 64);

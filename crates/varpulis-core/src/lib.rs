@@ -31,7 +31,7 @@
 //! // Values are the runtime representation
 //! let int_val = Value::Int(42);
 //! let float_val = Value::Float(3.14);
-//! let str_val = Value::Str("hello".to_string());
+//! let str_val = Value::Str("hello".into());
 //!
 //! // Check value types
 //! assert!(int_val.is_int());

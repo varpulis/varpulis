@@ -81,7 +81,7 @@ fn value_to_serializable(v: &varpulis_core::Value) -> SerializableValue {
         varpulis_core::Value::Int(i) => SerializableValue::Int(*i),
         varpulis_core::Value::Float(f) => SerializableValue::Float(*f),
         varpulis_core::Value::Bool(b) => SerializableValue::Bool(*b),
-        varpulis_core::Value::Str(s) => SerializableValue::String(s.clone()),
+        varpulis_core::Value::Str(s) => SerializableValue::String(s.to_string()),
         varpulis_core::Value::Null => SerializableValue::Null,
         varpulis_core::Value::Timestamp(ts) => SerializableValue::Timestamp(*ts),
         varpulis_core::Value::Duration(d) => SerializableValue::Duration(*d),
@@ -102,7 +102,7 @@ fn serializable_to_value(sv: SerializableValue) -> varpulis_core::Value {
         SerializableValue::Int(i) => varpulis_core::Value::Int(i),
         SerializableValue::Float(f) => varpulis_core::Value::Float(f),
         SerializableValue::Bool(b) => varpulis_core::Value::Bool(b),
-        SerializableValue::String(s) => varpulis_core::Value::Str(s),
+        SerializableValue::String(s) => varpulis_core::Value::Str(s.into()),
         SerializableValue::Null => varpulis_core::Value::Null,
         SerializableValue::Timestamp(ts) => varpulis_core::Value::Timestamp(ts),
         SerializableValue::Duration(d) => varpulis_core::Value::Duration(d),
@@ -926,7 +926,7 @@ mod tests {
             .insert("value".to_string(), varpulis_core::Value::Float(1.5));
         event.data.insert(
             "name".to_string(),
-            varpulis_core::Value::Str("test".to_string()),
+            varpulis_core::Value::Str("test".into()),
         );
 
         let serializable: SerializableEvent = (&event).into();
@@ -958,7 +958,7 @@ mod tests {
         event.data.insert(
             "tags".to_string(),
             varpulis_core::Value::array(vec![
-                varpulis_core::Value::Str("a".to_string()),
+                varpulis_core::Value::Str("a".into()),
                 varpulis_core::Value::Int(1),
             ]),
         );
@@ -1008,7 +1008,7 @@ mod tests {
         match restored.data.get("tags") {
             Some(varpulis_core::Value::Array(arr)) => {
                 assert_eq!(arr.len(), 2);
-                assert_eq!(arr[0], varpulis_core::Value::Str("a".to_string()));
+                assert_eq!(arr[0], varpulis_core::Value::Str("a".into()));
                 assert_eq!(arr[1], varpulis_core::Value::Int(1));
             }
             other => panic!("Expected Array, got {:?}", other),

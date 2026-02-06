@@ -893,7 +893,7 @@ fn json_to_runtime_value(v: &serde_json::Value) -> varpulis_core::Value {
                 varpulis_core::Value::Null
             }
         }
-        serde_json::Value::String(s) => varpulis_core::Value::Str(s.clone()),
+        serde_json::Value::String(s) => varpulis_core::Value::Str(s.clone().into()),
         serde_json::Value::Array(arr) => {
             varpulis_core::Value::array(arr.iter().map(json_to_runtime_value).collect())
         }

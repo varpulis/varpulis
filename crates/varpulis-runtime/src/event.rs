@@ -196,7 +196,7 @@ mod tests {
             .with_field("count", 42i64);
 
         assert_eq!(event.data.len(), 2);
-        assert_eq!(event.get("name"), Some(&Value::Str("value".to_string())));
+        assert_eq!(event.get("name"), Some(&Value::Str("value".into())));
         assert_eq!(event.get("count"), Some(&Value::Int(42)));
     }
 
@@ -218,7 +218,7 @@ mod tests {
     #[test]
     fn test_event_get() {
         let event = Event::new("Test").with_field("key", "value");
-        assert_eq!(event.get("key"), Some(&Value::Str("value".to_string())));
+        assert_eq!(event.get("key"), Some(&Value::Str("value".into())));
         assert_eq!(event.get("missing"), None);
     }
 

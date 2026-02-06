@@ -1141,7 +1141,7 @@ fn value_to_f64(value: &Value) -> Option<f64> {
 
 fn value_to_string(value: &Value) -> Option<String> {
     match value {
-        Value::Str(s) => Some(s.clone()),
+        Value::Str(s) => Some(s.to_string()),
         Value::Int(i) => Some(i.to_string()),
         Value::Float(f) => Some(f.to_string()),
         Value::Bool(b) => Some(b.to_string()),

@@ -2193,7 +2193,7 @@ impl Engine {
                             let mut agg_event = Event::new("AggregationResult");
                             agg_event
                                 .data
-                                .insert("_partition".to_string(), Value::Str(partition_key));
+                                .insert("_partition".to_string(), Value::Str(partition_key.into()));
                             for (key, value) in result {
                                 agg_event.data.insert(key, value);
                             }
@@ -2256,7 +2256,7 @@ impl Engine {
                             } else {
                                 new_event
                                     .data
-                                    .insert(out_name.clone(), Value::Str(source.clone()));
+                                    .insert(out_name.clone(), Value::Str(source.clone().into()));
                             }
                         }
                         emitted.push(Arc::new(new_event));
@@ -2330,7 +2330,7 @@ impl Engine {
                                 let mut seq_event = Event::new("SequenceMatch");
                                 seq_event
                                     .data
-                                    .insert("stream".to_string(), Value::Str(stream.name.clone()));
+                                    .insert("stream".to_string(), Value::Str(stream.name.clone().into()));
                                 seq_event.data.insert(
                                     "match_duration_ms".to_string(),
                                     Value::Int(match_result.duration.as_millis() as i64),
@@ -2392,7 +2392,7 @@ impl Engine {
                                 let mut map = IndexMap::with_hasher(FxBuildHasher);
                                 map.insert(
                                     "event_type".to_string(),
-                                    Value::Str(e.event_type.to_string()),
+                                    Value::Str(e.event_type.to_string().into()),
                                 );
                                 for (k, v) in &e.data {
                                     map.insert(k.clone(), v.clone());
@@ -2587,7 +2587,7 @@ impl Engine {
                             let mut agg_event = Event::new("AggregationResult");
                             agg_event
                                 .data
-                                .insert("_partition".to_string(), Value::Str(partition_key));
+                                .insert("_partition".to_string(), Value::Str(partition_key.into()));
                             for (key, value) in result {
                                 agg_event.data.insert(key, value);
                             }
@@ -2649,7 +2649,7 @@ impl Engine {
                             } else {
                                 new_event
                                     .data
-                                    .insert(out_name.clone(), Value::Str(source_field.clone()));
+                                    .insert(out_name.clone(), Value::Str(source_field.clone().into()));
                             }
                         }
                         emitted.push(Arc::new(new_event));
@@ -2881,7 +2881,7 @@ impl Engine {
                             let mut agg_event = Event::new("AggregationResult");
                             agg_event
                                 .data
-                                .insert("_partition".to_string(), Value::Str(partition_key));
+                                .insert("_partition".to_string(), Value::Str(partition_key.into()));
                             for (key, value) in result {
                                 agg_event.data.insert(key, value);
                             }
@@ -2962,7 +2962,7 @@ impl Engine {
                             } else {
                                 new_event
                                     .data
-                                    .insert(out_name.clone(), Value::Str(source.clone()));
+                                    .insert(out_name.clone(), Value::Str(source.clone().into()));
                             }
                         }
                         emitted.push(Arc::new(new_event));
