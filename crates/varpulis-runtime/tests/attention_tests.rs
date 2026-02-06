@@ -13,7 +13,7 @@
 
 use chrono::Utc;
 use indexmap::IndexMap;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxBuildHasher, FxHashMap};
 use std::time::Duration;
 use varpulis_core::Value;
 use varpulis_runtime::attention::*;
@@ -24,7 +24,7 @@ use varpulis_runtime::Event;
 // ============================================================================
 
 fn create_event(event_type: &str, data: Vec<(&str, Value)>) -> Event {
-    let mut event_data = IndexMap::new();
+    let mut event_data = IndexMap::with_hasher(FxBuildHasher);
     for (k, v) in data {
         event_data.insert(k.to_string(), v);
     }

@@ -2,9 +2,13 @@
 
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
+use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use varpulis_core::Value;
+
+/// Type alias for IndexMap with FxBuildHasher for faster hashing of event fields.
+pub type FxIndexMap<K, V> = IndexMap<K, V, FxBuildHasher>;
 
 /// A shared reference to an Event for efficient passing through pipelines.
 /// Using Arc avoids expensive deep clones when events are processed by
@@ -19,8 +23,8 @@ pub struct Event {
     /// Timestamp of the event (defaults to current server time if not provided)
     #[serde(default = "Utc::now")]
     pub timestamp: DateTime<Utc>,
-    /// Event payload
-    pub data: IndexMap<String, Value>,
+    /// Event payload (uses FxBuildHasher for faster field access)
+    pub data: FxIndexMap<String, Value>,
 }
 
 impl Event {
@@ -28,7 +32,17 @@ impl Event {
         Self {
             event_type: event_type.into(),
             timestamp: Utc::now(),
-            data: IndexMap::new(),
+            data: IndexMap::with_hasher(FxBuildHasher),
+        }
+    }
+
+    /// Creates a new event with pre-allocated capacity for fields.
+    /// Use this when you know the approximate number of fields in advance.
+    pub fn with_capacity(event_type: impl Into<String>, capacity: usize) -> Self {
+        Self {
+            event_type: event_type.into(),
+            timestamp: Utc::now(),
+            data: IndexMap::with_capacity_and_hasher(capacity, FxBuildHasher),
         }
     }
 

@@ -17,7 +17,7 @@ use crate::attention::AttentionWindow;
 use crate::sequence::SequenceContext;
 use crate::Event;
 use indexmap::IndexMap;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxBuildHasher, FxHashMap};
 use std::cell::RefCell;
 use tracing::debug;
 use varpulis_core::ast::Expr;
@@ -1903,7 +1903,7 @@ pub fn map_to_event(map: &IndexMap<String, Value>) -> Event {
         .unwrap_or("unknown")
         .to_string();
 
-    let mut data = IndexMap::new();
+    let mut data = IndexMap::with_hasher(FxBuildHasher);
     for (k, v) in map {
         if k != "event_type" {
             data.insert(k.clone(), v.clone());
