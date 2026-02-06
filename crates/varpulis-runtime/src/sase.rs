@@ -3165,7 +3165,7 @@ fn eval_predicate(
         Predicate::Expr(expr) => {
             // Build SequenceContext from captured events for expression evaluation
             // Dereference Arc<Event> to Event for compatibility with SequenceContext
-            let captured_events: std::collections::HashMap<String, Event> = captured
+            let captured_events: FxHashMap<String, Event> = captured
                 .iter()
                 .map(|(k, v)| (k.clone(), (**v).clone()))
                 .collect();
