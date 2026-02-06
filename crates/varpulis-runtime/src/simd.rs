@@ -474,13 +474,37 @@ impl IncrementalSum {
     }
 }
 
-/// Incremental min/max tracker using a sorted structure
+/// Wrapper for f64 that implements Ord using total ordering.
+/// NaN values sort after all other values for consistency.
+#[derive(Debug, Clone, Copy)]
+struct OrderedF64(f64);
+
+impl PartialEq for OrderedF64 {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.total_cmp(&other.0) == std::cmp::Ordering::Equal
+    }
+}
+
+impl Eq for OrderedF64 {}
+
+impl PartialOrd for OrderedF64 {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for OrderedF64 {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.total_cmp(&other.0)
+    }
+}
+
+/// Incremental min/max tracker using BTreeMap for O(log n) operations
 #[derive(Debug, Clone)]
 pub struct IncrementalMinMax {
-    // Use a sorted vec for simplicity - could use a more sophisticated data structure
-    // for O(log n) operations if needed
-    values: Vec<f64>,
-    sorted: bool,
+    // BTreeMap provides O(log n) insert, remove, min, max
+    // Value is count of duplicates for the same f64
+    values: std::collections::BTreeMap<OrderedF64, usize>,
 }
 
 impl Default for IncrementalMinMax {
@@ -492,55 +516,43 @@ impl Default for IncrementalMinMax {
 impl IncrementalMinMax {
     pub fn new() -> Self {
         Self {
-            values: Vec::new(),
-            sorted: true,
+            values: std::collections::BTreeMap::new(),
         }
     }
 
     #[inline]
     pub fn add(&mut self, value: f64) {
         if !value.is_nan() {
-            self.values.push(value);
-            self.sorted = false;
+            *self.values.entry(OrderedF64(value)).or_insert(0) += 1;
         }
     }
 
     #[inline]
     pub fn remove(&mut self, value: f64) {
         if !value.is_nan() {
-            if let Some(pos) = self.values.iter().position(|&v| v == value) {
-                self.values.swap_remove(pos);
-                self.sorted = false;
+            let key = OrderedF64(value);
+            if let std::collections::btree_map::Entry::Occupied(mut entry) = self.values.entry(key)
+            {
+                let count = entry.get_mut();
+                if *count > 1 {
+                    *count -= 1;
+                } else {
+                    entry.remove();
+                }
             }
         }
     }
 
-    fn ensure_sorted(&mut self) {
-        if !self.sorted {
-            self.values.sort_by(|a, b| a.partial_cmp(b).unwrap());
-            self.sorted = true;
-        }
-    }
-
     pub fn min(&mut self) -> Option<f64> {
-        if self.values.is_empty() {
-            return None;
-        }
-        self.ensure_sorted();
-        self.values.first().copied()
+        self.values.first_key_value().map(|(k, _)| k.0)
     }
 
     pub fn max(&mut self) -> Option<f64> {
-        if self.values.is_empty() {
-            return None;
-        }
-        self.ensure_sorted();
-        self.values.last().copied()
+        self.values.last_key_value().map(|(k, _)| k.0)
     }
 
     pub fn reset(&mut self) {
         self.values.clear();
-        self.sorted = true;
     }
 }
 

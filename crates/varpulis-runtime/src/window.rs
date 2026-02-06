@@ -1036,7 +1036,7 @@ impl<T: Clone> PreviousValueTracker<T> {
 #[derive(Debug)]
 pub struct PartitionedDelayBuffer<T> {
     delay: usize,
-    buffers: std::collections::HashMap<String, DelayBuffer<T>>,
+    buffers: FxHashMap<String, DelayBuffer<T>>,
 }
 
 impl<T: Clone> PartitionedDelayBuffer<T> {
@@ -1044,7 +1044,7 @@ impl<T: Clone> PartitionedDelayBuffer<T> {
     pub fn new(delay: usize) -> Self {
         Self {
             delay,
-            buffers: std::collections::HashMap::new(),
+            buffers: FxHashMap::default(),
         }
     }
 
@@ -1074,16 +1074,22 @@ impl<T: Clone> PartitionedDelayBuffer<T> {
 }
 
 /// A partitioned previous value tracker.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct PartitionedPreviousValueTracker<T> {
-    trackers: std::collections::HashMap<String, PreviousValueTracker<T>>,
+    trackers: FxHashMap<String, PreviousValueTracker<T>>,
+}
+
+impl<T: Clone> Default for PartitionedPreviousValueTracker<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T: Clone> PartitionedPreviousValueTracker<T> {
     /// Create a new partitioned tracker.
     pub fn new() -> Self {
         Self {
-            trackers: std::collections::HashMap::new(),
+            trackers: FxHashMap::default(),
         }
     }
 

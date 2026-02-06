@@ -19,7 +19,6 @@ use crate::Event;
 use indexmap::IndexMap;
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use tracing::debug;
 use varpulis_core::ast::Expr;
 use varpulis_core::span::Spanned;
@@ -86,7 +85,7 @@ pub fn eval_stmts(
     stmts: &[Spanned<Stmt>],
     event: &Event,
     ctx: &SequenceContext,
-    functions: &HashMap<String, UserFunction>,
+    functions: &FxHashMap<String, UserFunction>,
     bindings: &mut FxHashMap<String, Value>,
 ) -> (StmtResult, Option<Value>) {
     let mut last_value = None;
@@ -111,7 +110,7 @@ pub fn eval_stmt(
     stmt: &Stmt,
     event: &Event,
     ctx: &SequenceContext,
-    functions: &HashMap<String, UserFunction>,
+    functions: &FxHashMap<String, UserFunction>,
     bindings: &mut FxHashMap<String, Value>,
 ) -> (StmtResult, Option<Value>) {
     match stmt {
@@ -369,7 +368,7 @@ pub fn call_user_function(
     args: &[Value],
     event: &Event,
     ctx: &SequenceContext,
-    functions: &HashMap<String, UserFunction>,
+    functions: &FxHashMap<String, UserFunction>,
 ) -> Option<Value> {
     // Bind parameters to argument values (pre-allocate for params + local vars)
     let mut bindings =
@@ -623,7 +622,7 @@ pub fn eval_expr_with_functions(
     expr: &varpulis_core::ast::Expr,
     event: &Event,
     ctx: &SequenceContext,
-    functions: &HashMap<String, UserFunction>,
+    functions: &FxHashMap<String, UserFunction>,
     bindings: &FxHashMap<String, Value>,
 ) -> Option<Value> {
     use varpulis_core::ast::{BinOp, Expr};
@@ -1347,8 +1346,8 @@ pub fn eval_pattern_expr(
     expr: &varpulis_core::ast::Expr,
     events: &[Event],
     ctx: &SequenceContext,
-    functions: &HashMap<String, UserFunction>,
-    pattern_vars: &HashMap<String, Value>,
+    functions: &FxHashMap<String, UserFunction>,
+    pattern_vars: &FxHashMap<String, Value>,
     attention_window: Option<&AttentionWindow>,
 ) -> Option<Value> {
     use varpulis_core::ast::{Arg, Expr};

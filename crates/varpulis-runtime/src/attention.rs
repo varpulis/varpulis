@@ -13,7 +13,8 @@ use crate::event::Event;
 use hnsw_rs::prelude::*;
 use lru::LruCache;
 use rayon::prelude::*;
-use std::collections::{HashMap, VecDeque};
+use rustc_hash::FxHashMap;
+use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 use std::num::NonZeroUsize;
 #[allow(unused_imports)]
@@ -125,7 +126,7 @@ pub enum CategoricalMethod {
     },
     Hash,
     Lookup {
-        embeddings: HashMap<String, Vec<f32>>,
+        embeddings: FxHashMap<String, Vec<f32>>,
     },
 }
 
@@ -522,7 +523,7 @@ impl HnswIndex {
         );
         Self {
             hnsw,
-            min_size: 100, // Only use HNSW when history > 100
+            min_size: 32,  // Use HNSW early - it's faster than brute force for n > 32
             ef_search: 30, // Retrieve top 30 neighbors (optimized from 50)
             max_nb_connection,
         }
@@ -796,23 +797,32 @@ impl AttentionEngine {
         let threshold = self.config.threshold;
         let embedding_dim = self.config.embedding_dim;
 
+        let scale = 1.0 / (head_dim as f32).sqrt();
+
         // Parallel computation of attention for each event
         let results: Vec<AttentionResult> = embeddings
             .par_iter()
             .enumerate()
             .map(|(_, current_embedding)| {
+                // Pre-compute Q projections ONCE per embedding (not per history event!)
+                let q_projections: Vec<Vec<f32>> = (0..num_heads)
+                    .map(|head| {
+                        self.embedding_engine.project(
+                            current_embedding,
+                            head,
+                            ProjectionType::Query,
+                        )
+                    })
+                    .collect();
+
                 let mut all_scores = Vec::with_capacity(self.history.len());
 
                 for (hist_event, _hist_embedding, k_projections) in &self.history {
                     let mut total = 0.0f32;
                     for head in 0..num_heads {
-                        let q = self.embedding_engine.project(
-                            current_embedding,
-                            head,
-                            ProjectionType::Query,
-                        );
+                        let q = &q_projections[head];
                         let k = &k_projections[head];
-                        total += dot_product_simd(&q, k) / (head_dim as f32).sqrt();
+                        total += dot_product_simd(q, k) * scale;
                     }
                     let avg = total / num_heads as f32;
                     let event_id = format!(
@@ -874,14 +884,24 @@ impl AttentionEngine {
     }
 
     fn hash_event(&self, event: &Event) -> u64 {
+        use std::mem::discriminant;
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         event.event_type.hash(&mut hasher);
-        let mut keys: Vec<_> = event.data.keys().collect();
-        keys.sort();
-        for key in keys {
+        // IndexMap maintains insertion order, so iterate directly (no sort needed)
+        for (key, value) in &event.data {
             key.hash(&mut hasher);
-            if let Some(v) = event.data.get(key) {
-                format!("{:?}", v).hash(&mut hasher);
+            // Hash value directly by variant without format!() allocation
+            discriminant(value).hash(&mut hasher);
+            match value {
+                Value::Null => {}
+                Value::Bool(b) => b.hash(&mut hasher),
+                Value::Int(i) => i.hash(&mut hasher),
+                Value::Float(f) => f.to_bits().hash(&mut hasher),
+                Value::Str(s) => s.hash(&mut hasher),
+                Value::Timestamp(t) => t.hash(&mut hasher),
+                Value::Duration(d) => d.hash(&mut hasher),
+                Value::Array(arr) => arr.len().hash(&mut hasher), // Shallow hash for arrays
+                Value::Map(map) => map.len().hash(&mut hasher),   // Shallow hash for maps
             }
         }
         hasher.finish()
@@ -1345,7 +1365,7 @@ mod attention_tests {
     #[test]
     fn test_embed_categorical_lookup() {
         let engine = AttentionEngine::new(AttentionConfig::default());
-        let mut embeddings = HashMap::new();
+        let mut embeddings = FxHashMap::default();
         embeddings.insert("red".to_string(), vec![1.0, 0.0, 0.0]);
         embeddings.insert("green".to_string(), vec![0.0, 1.0, 0.0]);
 

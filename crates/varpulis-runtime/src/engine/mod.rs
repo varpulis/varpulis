@@ -41,8 +41,7 @@ use crate::window::{
 use chrono::Duration;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
-use rustc_hash::FxHashMap;
-use std::collections::HashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
@@ -258,7 +257,7 @@ pub struct Engine {
     /// Event type to stream mapping (Arc for zero-cost sharing in hot path)
     event_sources: FxHashMap<String, Arc<[String]>>,
     /// User-defined functions
-    functions: HashMap<String, UserFunction>,
+    functions: FxHashMap<String, UserFunction>,
     /// Named patterns for reuse
     patterns: FxHashMap<String, NamedPattern>,
     /// Configuration blocks (e.g., mqtt, kafka)
@@ -266,7 +265,7 @@ pub struct Engine {
     /// Mutable variables accessible across events
     variables: FxHashMap<String, Value>,
     /// Tracks which variables are declared as mutable (var vs let)
-    mutable_vars: std::collections::HashSet<String>,
+    mutable_vars: FxHashSet<String>,
     /// Declared connectors from VPL
     connectors: FxHashMap<String, connector::ConnectorConfig>,
     /// Source connector bindings from .from() declarations
@@ -297,11 +296,11 @@ impl Engine {
         Self {
             streams: FxHashMap::default(),
             event_sources: FxHashMap::default(),
-            functions: HashMap::new(),
+            functions: FxHashMap::default(),
             patterns: FxHashMap::default(),
             configs: FxHashMap::default(),
             variables: FxHashMap::default(),
-            mutable_vars: std::collections::HashSet::new(),
+            mutable_vars: FxHashSet::default(),
             connectors: FxHashMap::default(),
             source_bindings: Vec::new(),
             sink_cache: FxHashMap::default(),
@@ -466,7 +465,7 @@ impl Engine {
                          connector MyConn = {} (...)",
                         name, name
                     );
-                    let mut values = HashMap::new();
+                    let mut values = std::collections::HashMap::new();
                     for item in items {
                         if let ConfigItem::Value(key, val) = item {
                             values.insert(key.clone(), val.clone());
@@ -594,8 +593,7 @@ impl Engine {
         }
 
         // Collect all sink_keys actually referenced by stream operations
-        let mut referenced_sink_keys: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        let mut referenced_sink_keys: FxHashSet<String> = FxHashSet::default();
         let mut topic_overrides: Vec<(String, String, String)> = Vec::new(); // (sink_key, connector_name, topic)
         for stream in self.streams.values() {
             for op in &stream.operations {
@@ -1919,7 +1917,7 @@ impl Engine {
     async fn process_stream_with_functions(
         stream: &mut StreamDefinition,
         event: SharedEvent,
-        functions: &HashMap<String, UserFunction>,
+        functions: &FxHashMap<String, UserFunction>,
         sinks: &FxHashMap<String, Arc<dyn crate::sink::Sink>>,
     ) -> Result<StreamProcessResult, String> {
         // For merge sources, check if the event passes the appropriate filter
@@ -2405,7 +2403,7 @@ impl Engine {
                     );
 
                     // Create a context with "events" bound
-                    let mut pattern_vars = HashMap::new();
+                    let mut pattern_vars = FxHashMap::default();
                     pattern_vars.insert("events".to_string(), events_value);
 
                     // Dereference events for pattern evaluation
@@ -2489,7 +2487,7 @@ impl Engine {
     async fn process_join_result(
         stream: &mut StreamDefinition,
         correlated_event: SharedEvent,
-        functions: &HashMap<String, UserFunction>,
+        functions: &FxHashMap<String, UserFunction>,
         sinks: &FxHashMap<String, Arc<dyn crate::sink::Sink>>,
     ) -> Result<StreamProcessResult, String> {
         let mut current_events: Vec<SharedEvent> = vec![correlated_event];
@@ -2857,7 +2855,7 @@ impl Engine {
         stream: &mut StreamDefinition,
         events: Vec<SharedEvent>,
         window_idx: usize,
-        functions: &HashMap<String, UserFunction>,
+        functions: &FxHashMap<String, UserFunction>,
         sinks: &FxHashMap<String, Arc<dyn crate::sink::Sink>>,
     ) -> Result<StreamProcessResult, String> {
         let mut current_events = events;
@@ -3129,15 +3127,14 @@ impl Engine {
         let mut report = ReloadReport::default();
 
         // Collect current stream names
-        let old_streams: std::collections::HashSet<String> = self.streams.keys().cloned().collect();
+        let old_streams: FxHashSet<String> = self.streams.keys().cloned().collect();
 
         // Parse new program to get new stream definitions
         // We need to compile the new program to compare with existing streams
         let mut new_engine = Engine::new(self.output_tx.clone());
         new_engine.load(program)?;
 
-        let new_streams: std::collections::HashSet<String> =
-            new_engine.streams.keys().cloned().collect();
+        let new_streams: FxHashSet<String> = new_engine.streams.keys().cloned().collect();
 
         // Find added, removed, and potentially updated streams
         for name in new_streams.difference(&old_streams) {
@@ -3267,9 +3264,9 @@ impl Engine {
     pub fn create_checkpoint(&self) -> crate::persistence::EngineCheckpoint {
         use crate::persistence::{EngineCheckpoint, WindowCheckpoint};
 
-        let mut window_states = HashMap::new();
-        let mut sase_states = HashMap::new();
-        let mut join_states = HashMap::new();
+        let mut window_states = std::collections::HashMap::new();
+        let mut sase_states = std::collections::HashMap::new();
+        let mut join_states = std::collections::HashMap::new();
 
         for (name, stream) in &self.streams {
             // Checkpoint windows
@@ -3290,7 +3287,7 @@ impl Engine {
                     }
                     RuntimeOp::PartitionedWindow(pw) => {
                         // Serialize partitioned count windows
-                        let mut partitions = HashMap::new();
+                        let mut partitions = std::collections::HashMap::new();
                         for (key, cw) in &pw.windows {
                             let sub_cp = cw.checkpoint();
                             partitions.insert(
@@ -3383,7 +3380,7 @@ impl Engine {
                                     events: pcp.events.clone(),
                                     window_start_ms: pcp.window_start_ms,
                                     last_emit_ms: None,
-                                    partitions: HashMap::new(),
+                                    partitions: std::collections::HashMap::new(),
                                 };
                                 let window = pw
                                     .windows

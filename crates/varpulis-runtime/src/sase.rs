@@ -23,8 +23,7 @@ use crate::engine::eval_filter_expr;
 use crate::event::Event;
 use crate::sequence::SequenceContext;
 use chrono::{DateTime, Utc};
-use rustc_hash::FxHashMap;
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -678,16 +677,16 @@ pub struct AndConfig {
 #[derive(Debug, Clone)]
 pub struct AndState {
     /// Indices of branches that have been completed
-    pub completed: HashSet<usize>,
+    pub completed: FxHashSet<usize>,
     /// Events captured by each branch
-    pub captures: HashMap<usize, SharedEvent>,
+    pub captures: FxHashMap<usize, SharedEvent>,
 }
 
 impl AndState {
     pub fn new() -> Self {
         Self {
-            completed: HashSet::new(),
-            captures: HashMap::new(),
+            completed: FxHashSet::default(),
+            captures: FxHashMap::default(),
         }
     }
 
@@ -3166,7 +3165,7 @@ fn eval_predicate(
         Predicate::Expr(expr) => {
             // Build SequenceContext from captured events for expression evaluation
             // Dereference Arc<Event> to Event for compatibility with SequenceContext
-            let captured_events: HashMap<String, Event> = captured
+            let captured_events: std::collections::HashMap<String, Event> = captured
                 .iter()
                 .map(|(k, v)| (k.clone(), (**v).clone()))
                 .collect();

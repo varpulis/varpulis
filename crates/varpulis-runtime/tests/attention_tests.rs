@@ -13,6 +13,7 @@
 
 use chrono::Utc;
 use indexmap::IndexMap;
+use rustc_hash::FxHashMap;
 use std::time::Duration;
 use varpulis_core::Value;
 use varpulis_runtime::attention::*;
@@ -527,7 +528,7 @@ fn test_categorical_lookup() {
     let config = EmbeddingConfig::default();
     let engine = EmbeddingEngine::new(config, 64, 4);
 
-    let mut embeddings = std::collections::HashMap::new();
+    let mut embeddings = FxHashMap::default();
     embeddings.insert("AAPL".to_string(), vec![0.1, 0.2, 0.3, 0.4]);
     embeddings.insert("GOOG".to_string(), vec![0.5, 0.6, 0.7, 0.8]);
 
