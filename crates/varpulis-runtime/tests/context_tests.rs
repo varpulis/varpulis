@@ -119,7 +119,7 @@ async fn test_single_context_basic() {
         2,
         "Should emit 2 events (S1 and S3 above threshold)"
     );
-    assert_eq!(results[0].event_type, "HighTemp");
+    assert_eq!(&*results[0].event_type, "HighTemp");
     assert_eq!(results[0].get_str("sensor"), Some("S1"));
 }
 
@@ -162,11 +162,11 @@ async fn test_two_context_pipeline() {
     // Analysis should emit only for S1 (temp > 100)
     let filtered_events: Vec<_> = results
         .iter()
-        .filter(|e| e.event_type == "Filtered")
+        .filter(|e| &*e.event_type == "Filtered")
         .collect();
     let analysis_events: Vec<_> = results
         .iter()
-        .filter(|e| e.event_type == "Analysis")
+        .filter(|e| &*e.event_type == "Analysis")
         .collect();
 
     assert_eq!(filtered_events.len(), 2, "Filtered should emit 2 events");
@@ -212,7 +212,10 @@ async fn test_three_context_chain() {
 
     let results = run_context_scenario(program, events).await;
 
-    let alert_events: Vec<_> = results.iter().filter(|e| e.event_type == "Alert").collect();
+    let alert_events: Vec<_> = results
+        .iter()
+        .filter(|e| &*e.event_type == "Alert")
+        .collect();
     assert_eq!(
         alert_events.len(),
         1,
@@ -253,11 +256,11 @@ async fn test_context_isolation() {
 
     let stream_a_results: Vec<_> = results
         .iter()
-        .filter(|e| e.event_type == "StreamA")
+        .filter(|e| &*e.event_type == "StreamA")
         .collect();
     let stream_b_results: Vec<_> = results
         .iter()
-        .filter(|e| e.event_type == "StreamB")
+        .filter(|e| &*e.event_type == "StreamB")
         .collect();
 
     assert_eq!(
@@ -296,7 +299,7 @@ async fn test_no_context_backward_compat() {
     let results = run_context_scenario(program, events).await;
 
     assert_eq!(results.len(), 1, "Should emit 1 event (S1 above threshold)");
-    assert_eq!(results[0].event_type, "HighTemp");
+    assert_eq!(&*results[0].event_type, "HighTemp");
 }
 
 // =============================================================================
@@ -328,7 +331,7 @@ async fn test_context_with_window_aggregate() {
         1,
         "Should emit 1 aggregation event after 3 events"
     );
-    assert_eq!(results[0].event_type, "AvgTemp");
+    assert_eq!(&*results[0].event_type, "AvgTemp");
 
     // Average of 100, 200, 300 = 200
     if let Some(avg) = results[0].get_float("average") {
@@ -367,7 +370,7 @@ async fn test_context_with_to_connector() {
     let results = run_context_scenario(program, events).await;
 
     assert_eq!(results.len(), 1, "Should emit 1 alert event");
-    assert_eq!(results[0].event_type, "Alerts");
+    assert_eq!(&*results[0].event_type, "Alerts");
 }
 
 // =============================================================================
@@ -452,11 +455,11 @@ async fn test_parallel_dispatch_via_router() {
 
     let stream_a: Vec<_> = results
         .iter()
-        .filter(|e| e.event_type == "StreamA")
+        .filter(|e| &*e.event_type == "StreamA")
         .collect();
     let stream_b: Vec<_> = results
         .iter()
-        .filter(|e| e.event_type == "StreamB")
+        .filter(|e| &*e.event_type == "StreamB")
         .collect();
     assert_eq!(
         stream_a.len(),
@@ -593,11 +596,11 @@ async fn test_process_batch() {
 
     let stream_a: Vec<_> = results
         .iter()
-        .filter(|e| e.event_type == "StreamA")
+        .filter(|e| &*e.event_type == "StreamA")
         .collect();
     let stream_b: Vec<_> = results
         .iter()
-        .filter(|e| e.event_type == "StreamB")
+        .filter(|e| &*e.event_type == "StreamB")
         .collect();
 
     assert_eq!(stream_a.len(), 1, "Only EventA with value=20 passes filter");
@@ -642,7 +645,7 @@ async fn test_session_window_basic() {
         1,
         "Should emit 1 aggregation event when session closes"
     );
-    assert_eq!(results[0].event_type, "SessionAvg");
+    assert_eq!(&*results[0].event_type, "SessionAvg");
 
     // Average of session 1: (100 + 200 + 300) / 3 = 200
     if let Some(avg) = results[0].get_float("average") {
@@ -686,7 +689,7 @@ async fn test_session_window_in_context() {
     let results = run_context_scenario(program, events).await;
 
     assert_eq!(results.len(), 1, "Should emit 1 session aggregation");
-    assert_eq!(results[0].event_type, "SessionData");
+    assert_eq!(&*results[0].event_type, "SessionData");
     if let Some(count) = results[0].get_int("event_count") {
         assert_eq!(count, 2, "First session should have 2 events");
     }
@@ -909,7 +912,7 @@ async fn test_session_window_cross_context() {
     // SessionStats emits aggregated sessions. Filter to session results.
     let session_results: Vec<&Event> = results
         .iter()
-        .filter(|e| e.event_type == "SessionStats")
+        .filter(|e| &*e.event_type == "SessionStats")
         .collect();
 
     assert_eq!(
@@ -934,7 +937,7 @@ async fn test_session_window_cross_context() {
     // Validated stream should have emitted 4 events (temperature > 0)
     let validated_count = results
         .iter()
-        .filter(|e| e.event_type == "Validated")
+        .filter(|e| &*e.event_type == "Validated")
         .count();
     assert_eq!(
         validated_count, 4,
@@ -1051,7 +1054,7 @@ async fn test_session_window_sweep_closes_stale() {
         1,
         "Sweep should close the stale session and emit 1 aggregation event"
     );
-    assert_eq!(results[0].event_type, "SessionAvg");
+    assert_eq!(&*results[0].event_type, "SessionAvg");
 
     if let Some(avg) = results[0].get_float("average") {
         assert!(

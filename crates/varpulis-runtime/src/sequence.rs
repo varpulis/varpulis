@@ -241,7 +241,7 @@ impl SequenceTracker {
 
         // Check if event matches the first step
         let first_step = &self.steps[0];
-        if event.event_type != first_step.event_type {
+        if *event.event_type != first_step.event_type {
             return false;
         }
 
@@ -284,7 +284,7 @@ impl SequenceTracker {
         context: &SequenceContext,
     ) -> bool {
         // Check event type
-        if event.event_type != step.event_type {
+        if *event.event_type != step.event_type {
             return false;
         }
 
@@ -306,7 +306,7 @@ impl SequenceTracker {
 
         // Check each negation condition
         for negation in &self.negations {
-            if event.event_type != negation.event_type {
+            if *event.event_type != negation.event_type {
                 continue;
             }
 

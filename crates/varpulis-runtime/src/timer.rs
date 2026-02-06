@@ -50,7 +50,7 @@ pub fn spawn_timer(
             interval_timer.tick().await;
 
             // Create timer event
-            let mut event = Event::new(&timer_event_type);
+            let mut event = Event::new(timer_event_type.clone());
             event.data.insert(
                 "timestamp".to_string(),
                 varpulis_core::Value::Int(chrono::Utc::now().timestamp_millis()),

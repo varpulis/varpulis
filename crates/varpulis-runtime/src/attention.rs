@@ -1563,7 +1563,7 @@ mod attention_tests {
 
         let history = engine.get_history();
         assert_eq!(history.len(), 2);
-        assert_eq!(history[0].event_type, "Test1");
-        assert_eq!(history[1].event_type, "Test2");
+        assert_eq!(&*history[0].event_type, "Test1");
+        assert_eq!(&*history[1].event_type, "Test2");
     }
 }

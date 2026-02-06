@@ -126,7 +126,7 @@ impl From<&Event> for SerializableEvent {
             fields.insert(k.clone(), value_to_serializable(v));
         }
         Self {
-            event_type: event.event_type.clone(),
+            event_type: event.event_type.to_string(),
             timestamp_ms: event.timestamp.timestamp_millis(),
             fields,
         }
@@ -135,7 +135,7 @@ impl From<&Event> for SerializableEvent {
 
 impl From<SerializableEvent> for Event {
     fn from(se: SerializableEvent) -> Self {
-        let mut event = Event::new(&se.event_type);
+        let mut event = Event::new(se.event_type);
         event.timestamp = chrono::DateTime::from_timestamp_millis(se.timestamp_ms)
             .unwrap_or_else(chrono::Utc::now);
         for (k, v) in se.fields {
@@ -932,7 +932,7 @@ mod tests {
         let serializable: SerializableEvent = (&event).into();
         let restored: Event = serializable.into();
 
-        assert_eq!(restored.event_type, "TestEvent");
+        assert_eq!(&*restored.event_type, "TestEvent");
         assert_eq!(restored.get_int("count"), Some(42));
         assert_eq!(restored.get_float("value"), Some(1.5));
         assert_eq!(restored.get_str("name"), Some("test"));

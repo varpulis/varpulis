@@ -291,7 +291,7 @@ mod tests {
         // Should have temperature readings for each zone
         let mut temp_count = 0;
         while let Ok(event) = rx.try_recv() {
-            if event.event_type == "TemperatureReading" {
+            if &*event.event_type == "TemperatureReading" {
                 temp_count += 1;
             }
         }
@@ -312,7 +312,7 @@ mod tests {
 
         let mut humidity_count = 0;
         while let Ok(event) = rx.try_recv() {
-            if event.event_type == "HumidityReading" {
+            if &*event.event_type == "HumidityReading" {
                 humidity_count += 1;
             }
         }
@@ -333,7 +333,7 @@ mod tests {
 
         let mut hvac_count = 0;
         while let Ok(event) = rx.try_recv() {
-            if event.event_type == "HVACStatus" {
+            if &*event.event_type == "HVACStatus" {
                 hvac_count += 1;
             }
         }
@@ -372,7 +372,7 @@ mod tests {
 
         // Check temperature reading has correct fields
         if let Ok(event) = rx.try_recv() {
-            if event.event_type == "TemperatureReading" {
+            if &*event.event_type == "TemperatureReading" {
                 assert!(event.get_str("sensor_id").is_some());
                 assert!(event.get_str("zone").is_some());
                 assert!(event.get_float("value").is_some());

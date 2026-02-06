@@ -78,7 +78,7 @@ mod tests {
         sender.send(event).await.unwrap();
 
         let received = stream.next().await.unwrap();
-        assert_eq!(received.event_type, "TestEvent");
+        assert_eq!(&*received.event_type, "TestEvent");
         assert_eq!(received.get_int("id"), Some(1));
     }
 
@@ -92,10 +92,10 @@ mod tests {
 
         // Should receive from buffer first
         let first = stream.next().await.unwrap();
-        assert_eq!(first.event_type, "First");
+        assert_eq!(&*first.event_type, "First");
 
         let second = stream.next().await.unwrap();
-        assert_eq!(second.event_type, "Second");
+        assert_eq!(&*second.event_type, "Second");
     }
 
     #[tokio::test]
@@ -110,11 +110,11 @@ mod tests {
 
         // Buffer first
         let first = stream.next().await.unwrap();
-        assert_eq!(first.event_type, "Buffered");
+        assert_eq!(&*first.event_type, "Buffered");
 
         // Then channel
         let second = stream.next().await.unwrap();
-        assert_eq!(second.event_type, "FromChannel");
+        assert_eq!(&*second.event_type, "FromChannel");
     }
 
     #[tokio::test]
@@ -142,7 +142,7 @@ mod tests {
         drop(sender); // Close the channel
 
         let event = stream.next().await.unwrap();
-        assert_eq!(event.event_type, "Last");
+        assert_eq!(&*event.event_type, "Last");
 
         // Next call should return None (channel closed)
         assert!(stream.next().await.is_none());
@@ -164,9 +164,9 @@ mod tests {
         stream.push_back(Event::new("C"));
 
         // Should receive in FIFO order
-        assert_eq!(stream.next().await.unwrap().event_type, "A");
-        assert_eq!(stream.next().await.unwrap().event_type, "B");
-        assert_eq!(stream.next().await.unwrap().event_type, "C");
+        assert_eq!(&*stream.next().await.unwrap().event_type, "A");
+        assert_eq!(&*stream.next().await.unwrap().event_type, "B");
+        assert_eq!(&*stream.next().await.unwrap().event_type, "C");
     }
 
     #[tokio::test]
@@ -215,12 +215,12 @@ mod tests {
         sender.send(Event::new("Chan2")).await.unwrap();
 
         // Buffer events first (in order pushed)
-        assert_eq!(stream.next().await.unwrap().event_type, "Buf1");
-        assert_eq!(stream.next().await.unwrap().event_type, "Buf2");
+        assert_eq!(&*stream.next().await.unwrap().event_type, "Buf1");
+        assert_eq!(&*stream.next().await.unwrap().event_type, "Buf2");
 
         // Then channel events (in order sent)
-        assert_eq!(stream.next().await.unwrap().event_type, "Chan1");
-        assert_eq!(stream.next().await.unwrap().event_type, "Chan2");
+        assert_eq!(&*stream.next().await.unwrap().event_type, "Chan1");
+        assert_eq!(&*stream.next().await.unwrap().event_type, "Chan2");
     }
 
     #[test]

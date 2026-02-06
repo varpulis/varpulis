@@ -69,7 +69,7 @@ async fn test_timer_generates_events() {
     let mut received_count = 0;
     let timeout = tokio::time::timeout(Duration::from_millis(100), async {
         while let Some(event) = event_rx.recv().await {
-            assert_eq!(event.event_type, "Timer_test");
+            assert_eq!(&*event.event_type, "Timer_test");
             assert!(event.data.contains_key("timestamp"));
             received_count += 1;
             if received_count >= 3 {
@@ -110,7 +110,7 @@ async fn test_timer_manager() {
 
     let _ = tokio::time::timeout(Duration::from_millis(100), async {
         while let Some(event) = event_rx.recv().await {
-            match event.event_type.as_str() {
+            match &*event.event_type {
                 "Timer_A" => timer_a_count += 1,
                 "Timer_B" => timer_b_count += 1,
                 _ => {}

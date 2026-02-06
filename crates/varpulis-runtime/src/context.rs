@@ -395,7 +395,7 @@ impl ContextRuntime {
             self.output_events_emitted += 1;
 
             // Route to consuming context if any
-            if let Some(target_ctx) = self.ingress_routing.get(&output_event.event_type) {
+            if let Some(target_ctx) = self.ingress_routing.get(&*output_event.event_type) {
                 if let Some(tx) = self.all_context_txs.get(target_ctx) {
                     let shared = Arc::new(output_event);
                     let _ = tx.try_send(ContextMessage::Event(Arc::clone(&shared)));
@@ -550,7 +550,7 @@ impl EventTypeRouter {
     pub fn dispatch(&self, event: SharedEvent) -> Result<(), DispatchError> {
         let tx = self
             .routes
-            .get(&event.event_type)
+            .get(&*event.event_type)
             .unwrap_or(&self.default_tx);
         let msg = ContextMessage::Event(event);
         match tx.try_send(msg) {
@@ -565,7 +565,7 @@ impl EventTypeRouter {
     /// Waits for channel capacity if the channel is full.
     pub async fn dispatch_await(&self, event: SharedEvent) -> Result<(), String> {
         let event_type = event.event_type.clone();
-        let tx = self.routes.get(&event_type).unwrap_or(&self.default_tx);
+        let tx = self.routes.get(&*event_type).unwrap_or(&self.default_tx);
         tx.send(ContextMessage::Event(event))
             .await
             .map_err(|e| format!("Failed to send event type '{}': {}", event_type, e))

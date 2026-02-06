@@ -540,7 +540,7 @@ mod tests {
 
         let events = EventFileParser::parse(source).unwrap();
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event.event_type, "StockTick");
+        assert_eq!(&*events[0].event.event_type, "StockTick");
         assert_eq!(
             events[0].event.get("symbol"),
             Some(&Value::Str("AAPL".to_string()))
@@ -569,16 +569,16 @@ mod tests {
         assert_eq!(events.len(), 4);
 
         assert_eq!(events[0].time_offset_ms, 0);
-        assert_eq!(events[0].event.event_type, "Order");
+        assert_eq!(&*events[0].event.event_type, "Order");
 
         assert_eq!(events[1].time_offset_ms, 100);
-        assert_eq!(events[1].event.event_type, "Payment");
+        assert_eq!(&*events[1].event.event_type, "Payment");
 
         assert_eq!(events[2].time_offset_ms, 100);
-        assert_eq!(events[2].event.event_type, "Shipping");
+        assert_eq!(&*events[2].event.event_type, "Shipping");
 
         assert_eq!(events[3].time_offset_ms, 200);
-        assert_eq!(events[3].event.event_type, "Confirmation");
+        assert_eq!(&*events[3].event.event_type, "Confirmation");
     }
 
     #[test]
@@ -589,7 +589,7 @@ mod tests {
 
         let events = EventFileParser::parse(source).unwrap();
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event.event_type, "StockPrice");
+        assert_eq!(&*events[0].event.event_type, "StockPrice");
         assert_eq!(
             events[0].event.get("field_0"),
             Some(&Value::Str("AAPL".to_string()))
@@ -653,16 +653,16 @@ mod tests {
         assert_eq!(events.len(), 4);
 
         // Verify order sequence
-        assert_eq!(events[0].event.event_type, "Order");
+        assert_eq!(&*events[0].event.event_type, "Order");
         assert_eq!(events[0].time_offset_ms, 0);
 
-        assert_eq!(events[1].event.event_type, "Payment");
+        assert_eq!(&*events[1].event.event_type, "Payment");
         assert_eq!(events[1].time_offset_ms, 50);
 
-        assert_eq!(events[2].event.event_type, "Order");
+        assert_eq!(&*events[2].event.event_type, "Order");
         assert_eq!(events[2].time_offset_ms, 100);
 
-        assert_eq!(events[3].event.event_type, "Payment");
+        assert_eq!(&*events[3].event.event_type, "Payment");
         assert_eq!(events[3].time_offset_ms, 5000);
     }
 
@@ -859,10 +859,10 @@ mod tests {
         assert_eq!(count, 2);
 
         let e1 = rx.recv().await.unwrap();
-        assert_eq!(e1.event_type, "A");
+        assert_eq!(&*e1.event_type, "A");
 
         let e2 = rx.recv().await.unwrap();
-        assert_eq!(e2.event_type, "B");
+        assert_eq!(&*e2.event_type, "B");
     }
 
     #[tokio::test]

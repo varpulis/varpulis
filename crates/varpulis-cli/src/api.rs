@@ -466,7 +466,7 @@ async fn handle_inject(
         }
     };
 
-    let mut event = Event::new(&body.event_type);
+    let mut event = Event::new(body.event_type.clone());
     for (key, value) in &body.fields {
         let v = json_to_runtime_value(value);
         event = event.with_field(key.as_str(), v);
@@ -480,7 +480,7 @@ async fn handle_inject(
                     let mut map = serde_json::Map::new();
                     map.insert(
                         "event_type".into(),
-                        serde_json::Value::String(e.event_type.clone()),
+                        serde_json::Value::String(e.event_type.to_string()),
                     );
                     for (k, v) in &e.data {
                         map.insert(k.clone(), crate::websocket::value_to_json(v));

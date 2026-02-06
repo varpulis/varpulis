@@ -294,7 +294,7 @@ fn bench_parallel_streams(c: &mut Criterion) {
 
                             // Split events by type for concurrent dispatch
                             let (temp_events, press_events): (Vec<_>, Vec<_>) =
-                                events.iter().partition(|e| e.event_type == "TempReading");
+                                events.iter().partition(|e| &*e.event_type == "TempReading");
 
                             let router = orchestrator.router();
 
@@ -466,7 +466,7 @@ fn bench_cpu_intensive_parallel(c: &mut Criterion) {
 
                             // Split events by type for concurrent dispatch
                             let (temp_events, press_events): (Vec<_>, Vec<_>) =
-                                events.iter().partition(|e| e.event_type == "TempReading");
+                                events.iter().partition(|e| &*e.event_type == "TempReading");
 
                             let router = orchestrator.router();
 

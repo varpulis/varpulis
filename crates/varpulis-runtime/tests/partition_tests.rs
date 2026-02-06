@@ -82,7 +82,7 @@ async fn test_partition_by_tumbling_window_separate_state() {
     let mut btc_events = vec![];
     let mut eth_events = vec![];
     while let Ok(event) = output_rx.try_recv() {
-        if event.event_type == "PriceAverage" {
+        if &*event.event_type == "PriceAverage" {
             match event.data.get("symbol") {
                 Some(Value::Str(s)) if s == "BTC" => btc_events.push(event),
                 Some(Value::Str(s)) if s == "ETH" => eth_events.push(event),
@@ -154,7 +154,7 @@ async fn test_partition_by_sliding_window_separate_state() {
     let mut sensor_a_count = 0;
     let mut sensor_b_count = 0;
     while let Ok(event) = output_rx.try_recv() {
-        if event.event_type == "SensorAverage" {
+        if &*event.event_type == "SensorAverage" {
             match event.data.get("sensor_id") {
                 Some(Value::Str(s)) if s == "sensor_A" => sensor_a_count += 1,
                 Some(Value::Str(s)) if s == "sensor_B" => sensor_b_count += 1,
@@ -219,7 +219,7 @@ async fn test_partition_aggregate_independent_per_key() {
 
     // Verify each customer has independent totals
     while let Ok(event) = output_rx.try_recv() {
-        if event.event_type == "CustomerTotal" {
+        if &*event.event_type == "CustomerTotal" {
             let customer = event.data.get("customer_id");
             let total = event.data.get("total");
 

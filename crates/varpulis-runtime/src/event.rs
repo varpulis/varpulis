@@ -18,8 +18,8 @@ pub type SharedEvent = Arc<Event>;
 /// A runtime event
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Event {
-    /// Event type name
-    pub event_type: String,
+    /// Event type name (Arc<str> for O(1) clone instead of O(n) String clone)
+    pub event_type: Arc<str>,
     /// Timestamp of the event (defaults to current server time if not provided)
     #[serde(default = "Utc::now")]
     pub timestamp: DateTime<Utc>,
@@ -28,7 +28,7 @@ pub struct Event {
 }
 
 impl Event {
-    pub fn new(event_type: impl Into<String>) -> Self {
+    pub fn new(event_type: impl Into<Arc<str>>) -> Self {
         Self {
             event_type: event_type.into(),
             timestamp: Utc::now(),
@@ -38,11 +38,34 @@ impl Event {
 
     /// Creates a new event with pre-allocated capacity for fields.
     /// Use this when you know the approximate number of fields in advance.
-    pub fn with_capacity(event_type: impl Into<String>, capacity: usize) -> Self {
+    pub fn with_capacity(event_type: impl Into<Arc<str>>, capacity: usize) -> Self {
         Self {
             event_type: event_type.into(),
             timestamp: Utc::now(),
             data: IndexMap::with_capacity_and_hasher(capacity, FxBuildHasher),
+        }
+    }
+
+    /// Creates a new event from pre-built fields map.
+    /// Use this when you already have the fields constructed (e.g., from JSON parsing).
+    pub fn from_fields(event_type: impl Into<Arc<str>>, data: FxIndexMap<String, Value>) -> Self {
+        Self {
+            event_type: event_type.into(),
+            timestamp: Utc::now(),
+            data,
+        }
+    }
+
+    /// Creates a new event from pre-built fields map with a specific timestamp.
+    pub fn from_fields_with_timestamp(
+        event_type: impl Into<Arc<str>>,
+        timestamp: DateTime<Utc>,
+        data: FxIndexMap<String, Value>,
+    ) -> Self {
+        Self {
+            event_type: event_type.into(),
+            timestamp,
+            data,
         }
     }
 
@@ -149,14 +172,14 @@ mod tests {
     #[test]
     fn test_event_new() {
         let event = Event::new("TestEvent");
-        assert_eq!(event.event_type, "TestEvent");
+        assert_eq!(&*event.event_type, "TestEvent");
         assert!(event.data.is_empty());
     }
 
     #[test]
     fn test_event_new_from_string() {
         let event = Event::new("TestEvent".to_string());
-        assert_eq!(event.event_type, "TestEvent");
+        assert_eq!(&*event.event_type, "TestEvent");
     }
 
     #[test]
@@ -249,7 +272,7 @@ mod tests {
         };
 
         let event: Event = reading.into();
-        assert_eq!(event.event_type, "TemperatureReading");
+        assert_eq!(&*event.event_type, "TemperatureReading");
         assert_eq!(event.get_str("sensor_id"), Some("sensor1"));
         assert_eq!(event.get_str("zone"), Some("zone_a"));
         assert_eq!(event.get_float("value"), Some(22.5));
@@ -267,7 +290,7 @@ mod tests {
         };
 
         let event: Event = reading.into();
-        assert_eq!(event.event_type, "HumidityReading");
+        assert_eq!(&*event.event_type, "HumidityReading");
         assert_eq!(event.get_str("sensor_id"), Some("humid1"));
         assert_eq!(event.get_float("value"), Some(65.0));
     }
@@ -285,7 +308,7 @@ mod tests {
         };
 
         let event: Event = status.into();
-        assert_eq!(event.event_type, "HVACStatus");
+        assert_eq!(&*event.event_type, "HVACStatus");
         assert_eq!(event.get_str("unit_id"), Some("hvac1"));
         assert_eq!(event.get_str("mode"), Some("cooling"));
         assert_eq!(event.get_float("power_consumption"), Some(1500.0));
