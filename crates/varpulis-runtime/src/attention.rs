@@ -545,9 +545,15 @@ impl HnswIndex {
         // Create new HNSW with current data
         let max_elements = embeddings.len().max(1000);
         self.hnsw = Hnsw::new(self.max_nb_connection, max_elements, 16, 200, DistL2);
-        for (id, emb) in embeddings {
-            self.hnsw.insert((&emb.clone(), *id));
-        }
+
+        // Use parallel_insert for batch insertion (much faster than one-by-one)
+        let batch: Vec<(&Vec<f32>, usize)> =
+            embeddings.iter().map(|(id, emb)| (emb, *id)).collect();
+        self.hnsw.parallel_insert(&batch);
+    }
+
+    fn insert_batch(&mut self, embeddings: &[(&Vec<f32>, usize)]) {
+        self.hnsw.parallel_insert(embeddings);
     }
 }
 
@@ -628,6 +634,67 @@ impl AttentionEngine {
         if self.history.len() > self.config.max_history {
             self.history.pop_front();
             // Rebuild HNSW with new indices
+            if let Some(ref mut hnsw) = self.hnsw_index {
+                let embeddings: Vec<(usize, Vec<f32>)> = self
+                    .history
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (_, emb, _))| (i, emb.clone()))
+                    .collect();
+                hnsw.rebuild(&embeddings);
+            }
+        }
+    }
+
+    /// Add multiple events in a batch with optimized HNSW insertion.
+    /// More efficient than calling add_event() repeatedly when adding many events.
+    pub fn add_events_batch(&mut self, events: Vec<Event>) {
+        if events.is_empty() {
+            return;
+        }
+
+        let start_idx = self.history.len();
+        let mut batch_embeddings: Vec<(Vec<f32>, usize)> = Vec::with_capacity(events.len());
+
+        for (i, event) in events.into_iter().enumerate() {
+            let event_hash = self.hash_event(&event);
+            let embedding = self.cache.get(event_hash).unwrap_or_else(|| {
+                let emb = self.embedding_engine.embed(&event);
+                self.cache.insert(event_hash, emb.clone());
+                emb
+            });
+
+            // Pre-compute K projections for all heads
+            let k_projections: Vec<Vec<f32>> = (0..self.config.num_heads)
+                .map(|head| {
+                    self.embedding_engine
+                        .project(&embedding, head, ProjectionType::Key)
+                })
+                .collect();
+
+            let idx = start_idx + i;
+            batch_embeddings.push((embedding.clone(), idx));
+
+            self.history.push_back((event, embedding, k_projections));
+            self.total_events_processed += 1;
+        }
+
+        // Batch insert into HNSW index
+        if let Some(ref mut hnsw) = self.hnsw_index {
+            let batch: Vec<(&Vec<f32>, usize)> = batch_embeddings
+                .iter()
+                .map(|(emb, id)| (emb, *id))
+                .collect();
+            hnsw.insert_batch(&batch);
+        }
+
+        // Handle history overflow
+        while self.history.len() > self.config.max_history {
+            self.history.pop_front();
+        }
+
+        // Rebuild HNSW if we had overflow (indices shifted)
+        if self.history.len() < start_idx + batch_embeddings.len() {
             if let Some(ref mut hnsw) = self.hnsw_index {
                 let embeddings: Vec<(usize, Vec<f32>)> = self
                     .history
