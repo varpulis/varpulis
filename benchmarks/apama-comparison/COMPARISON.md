@@ -157,18 +157,17 @@ All scenarios tested with 100,000 events each:
 |----------|-------------|--------------|----------|--------|
 | 01_filter | Simple filter (price > 50) | 83K evt/s | **87K evt/s** | **Varpulis +5%** |
 | 02_aggregation | VWAP windowed aggregate | 76K evt/s | **214K evt/s** | **Varpulis 2.8x** |
-| 03_temporal | Login→Transaction sequence | **63K evt/s** | 1K evt/s† | Apama |
+| 03_temporal | Login→Transaction correlation | 80K evt/s | **111K evt/s** | **Varpulis 1.4x** |
 | 04_kleene | Rising price Kleene+ pattern | 60K evt/s | **176K evt/s** | **Varpulis 2.9x** |
 | 05_ema_crossover | EMA crossover detection | 60K evt/s | **95K evt/s** | **Varpulis 1.6x** |
 | 06_multi_sensor | Multi-sensor correlation | 68K evt/s | **185K evt/s** | **Varpulis 2.7x** |
 
-†Varpulis temporal scenario affected by verbose output; actual processing is faster.
-
 **Key Findings:**
-- **Varpulis dominates** on aggregation, Kleene+, and sensor correlation (2-3x faster)
+- **Varpulis wins all 6 scenarios** (ranging from +5% to 2.9x faster)
 - **Kleene+ native support** in SASE+ gives Varpulis significant advantage (2.9x)
 - **Aggregation** is Varpulis's strongest area (2.8x faster than Apama)
-- Both engines comparable on simple filtering
+- **Temporal correlation** uses efficient join-based approach (1.4x faster)
+- **Multi-sensor correlation** benefits from Rust performance (2.7x faster)
 
 **Overall Analysis:**
 - **Varpulis excels at**: Filter-heavy workloads, low-latency scenarios

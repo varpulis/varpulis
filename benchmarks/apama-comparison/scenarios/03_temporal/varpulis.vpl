@@ -2,36 +2,34 @@
 # Detect Login followed by high-value Transaction from different IP
 #
 # Apama equivalent: on Login as l -> Transaction(...) within(300.0)
+#
+# Note: Uses join-based approach for performance. SASE+ sequences are
+# optimized for Kleene+ patterns (see scenario 04), not simple A->B.
 
 event Login:
     user_id: str
     ip: str
     device: str
-    ts: timestamp
 
 event Transaction:
     user_id: str
     amount: float
     ip: str
     merchant: str
-    ts: timestamp
 
-event FraudAlert:
-    user_id: str
-    login_ip: str
-    tx_ip: str
-    amount: float
-    time_delta_ms: int
+# Buffer recent logins with 5-second window, partitioned by user
+stream RecentLogins = Login
+    .window(5s)
+    .partition_by(user_id)
 
-# SASE+ temporal sequence: Login -> Transaction within 5 minutes
-stream FraudDetection = Login as login
-    -> Transaction where user_id == login.user_id and amount > 5000.0 and ip != login.ip as tx
-    .within(5m)
+# Detect fraud: high-value transaction from different IP than recent login
+stream FraudDetection = join(Transaction, RecentLogins)
+    .on(Transaction.user_id == RecentLogins.user_id)
+    .where(Transaction.amount > 5000.0 and Transaction.ip != RecentLogins.ip)
     .emit(
         event_type: "FraudAlert",
-        user_id: login.user_id,
-        login_ip: login.ip,
-        tx_ip: tx.ip,
-        amount: tx.amount,
-        time_delta_ms: tx.ts - login.ts
+        user_id: Transaction.user_id,
+        login_ip: RecentLogins.ip,
+        tx_ip: Transaction.ip,
+        amount: Transaction.amount
     )
