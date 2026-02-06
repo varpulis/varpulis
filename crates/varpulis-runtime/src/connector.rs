@@ -1657,6 +1657,1096 @@ mod kafka_impl {
 pub use kafka_impl::{KafkaSinkImpl as KafkaSinkFull, KafkaSourceImpl as KafkaSourceFull};
 
 // =============================================================================
+// AWS Kinesis Connector
+// =============================================================================
+
+/// AWS Kinesis configuration
+///
+/// Configuration for connecting to AWS Kinesis Data Streams.
+///
+/// # Example
+///
+/// ```rust
+/// use varpulis_runtime::connector::KinesisConfig;
+///
+/// let config = KinesisConfig::new("my-stream", "us-east-1")
+///     .with_shard_iterator_type("LATEST")
+///     .with_batch_size(100);
+/// ```
+#[derive(Debug, Clone)]
+pub struct KinesisConfig {
+    /// Kinesis stream name
+    pub stream_name: String,
+    /// AWS region (e.g., "us-east-1")
+    pub region: String,
+    /// Shard iterator type: "TRIM_HORIZON", "LATEST", "AT_TIMESTAMP"
+    pub shard_iterator_type: String,
+    /// Maximum records per GetRecords call (1-10000, default 100)
+    pub batch_size: i32,
+    /// Poll interval in milliseconds
+    pub poll_interval_ms: u64,
+    /// Partition key for producing (optional, defaults to UUID)
+    pub partition_key: Option<String>,
+    /// Consumer group name (for enhanced fan-out)
+    pub consumer_name: Option<String>,
+    /// AWS profile name (optional, uses default credentials chain if not set)
+    pub profile: Option<String>,
+}
+
+impl KinesisConfig {
+    /// Create a new Kinesis configuration
+    ///
+    /// # Arguments
+    /// * `stream_name` - The name of the Kinesis stream
+    /// * `region` - The AWS region (e.g., "us-east-1")
+    pub fn new(stream_name: &str, region: &str) -> Self {
+        Self {
+            stream_name: stream_name.to_string(),
+            region: region.to_string(),
+            shard_iterator_type: "LATEST".to_string(),
+            batch_size: 100,
+            poll_interval_ms: 200,
+            partition_key: None,
+            consumer_name: None,
+            profile: None,
+        }
+    }
+
+    /// Set the shard iterator type
+    ///
+    /// - "TRIM_HORIZON": Start from the oldest record
+    /// - "LATEST": Start from the newest record (default)
+    /// - "AT_TIMESTAMP": Start from a specific timestamp
+    pub fn with_shard_iterator_type(mut self, iterator_type: &str) -> Self {
+        self.shard_iterator_type = iterator_type.to_string();
+        self
+    }
+
+    /// Set the batch size for GetRecords calls (1-10000)
+    pub fn with_batch_size(mut self, size: i32) -> Self {
+        self.batch_size = size.clamp(1, 10000);
+        self
+    }
+
+    /// Set the poll interval in milliseconds
+    pub fn with_poll_interval(mut self, ms: u64) -> Self {
+        self.poll_interval_ms = ms;
+        self
+    }
+
+    /// Set a fixed partition key for producing
+    pub fn with_partition_key(mut self, key: &str) -> Self {
+        self.partition_key = Some(key.to_string());
+        self
+    }
+
+    /// Set the consumer name for enhanced fan-out
+    pub fn with_consumer_name(mut self, name: &str) -> Self {
+        self.consumer_name = Some(name.to_string());
+        self
+    }
+
+    /// Set the AWS profile name
+    pub fn with_profile(mut self, profile: &str) -> Self {
+        self.profile = Some(profile.to_string());
+        self
+    }
+}
+
+/// Kinesis source connector (stub implementation)
+///
+/// This stub is always available. For full functionality, enable the `kinesis` feature.
+pub struct KinesisSource {
+    name: String,
+    config: KinesisConfig,
+    running: bool,
+}
+
+impl KinesisSource {
+    /// Create a new Kinesis source
+    pub fn new(name: &str, config: KinesisConfig) -> Self {
+        Self {
+            name: name.to_string(),
+            config,
+            running: false,
+        }
+    }
+}
+
+#[async_trait]
+impl SourceConnector for KinesisSource {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    async fn start(&mut self, _tx: mpsc::Sender<Event>) -> Result<(), ConnectorError> {
+        warn!(
+            "Kinesis source {} starting (stub implementation - requires kinesis feature)",
+            self.name
+        );
+        warn!("  Stream: {}", self.config.stream_name);
+        warn!("  Region: {}", self.config.region);
+
+        self.running = true;
+
+        Err(ConnectorError::NotAvailable(
+            "Kinesis connector requires 'kinesis' feature. Enable with: cargo build --features kinesis"
+                .to_string(),
+        ))
+    }
+
+    async fn stop(&mut self) -> Result<(), ConnectorError> {
+        self.running = false;
+        Ok(())
+    }
+
+    fn is_running(&self) -> bool {
+        self.running
+    }
+}
+
+/// Kinesis sink connector (stub implementation)
+///
+/// This stub is always available. For full functionality, enable the `kinesis` feature.
+pub struct KinesisSink {
+    name: String,
+    config: KinesisConfig,
+}
+
+impl KinesisSink {
+    /// Create a new Kinesis sink
+    pub fn new(name: &str, config: KinesisConfig) -> Self {
+        Self {
+            name: name.to_string(),
+            config,
+        }
+    }
+}
+
+#[async_trait]
+impl SinkConnector for KinesisSink {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    async fn send(&self, event: &Event) -> Result<(), ConnectorError> {
+        warn!(
+            "Kinesis sink {} send (stub) to {}/{} - event: {}",
+            self.name, self.config.region, self.config.stream_name, event.event_type
+        );
+
+        Err(ConnectorError::NotAvailable(
+            "Kinesis connector requires 'kinesis' feature".to_string(),
+        ))
+    }
+
+    async fn flush(&self) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+
+    async fn close(&self) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Kinesis with AWS SDK feature enabled
+// -----------------------------------------------------------------------------
+#[cfg(feature = "kinesis")]
+mod kinesis_impl {
+    use super::*;
+    use aws_config::BehaviorVersion;
+    use aws_sdk_kinesis::primitives::Blob;
+    use aws_sdk_kinesis::types::ShardIteratorType;
+    use aws_sdk_kinesis::Client as KinesisClient;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::sync::Mutex;
+
+    /// Full Kinesis source implementation with AWS SDK
+    pub struct KinesisSourceImpl {
+        name: String,
+        config: KinesisConfig,
+        running: Arc<AtomicBool>,
+        client: Option<KinesisClient>,
+    }
+
+    impl KinesisSourceImpl {
+        /// Create a new Kinesis source with AWS SDK
+        pub async fn new(name: &str, config: KinesisConfig) -> Result<Self, ConnectorError> {
+            let aws_config = if let Some(ref profile) = config.profile {
+                aws_config::defaults(BehaviorVersion::latest())
+                    .profile_name(profile)
+                    .region(aws_config::Region::new(config.region.clone()))
+                    .load()
+                    .await
+            } else {
+                aws_config::defaults(BehaviorVersion::latest())
+                    .region(aws_config::Region::new(config.region.clone()))
+                    .load()
+                    .await
+            };
+
+            let client = KinesisClient::new(&aws_config);
+
+            Ok(Self {
+                name: name.to_string(),
+                config,
+                running: Arc::new(AtomicBool::new(false)),
+                client: Some(client),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl SourceConnector for KinesisSourceImpl {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        async fn start(&mut self, tx: mpsc::Sender<Event>) -> Result<(), ConnectorError> {
+            let client = self
+                .client
+                .take()
+                .ok_or_else(|| ConnectorError::ConnectionFailed("Client already started".into()))?;
+
+            self.running.store(true, Ordering::SeqCst);
+            let running = self.running.clone();
+            let config = self.config.clone();
+            let name = self.name.clone();
+
+            info!("Kinesis source {} starting on {}", name, config.stream_name);
+
+            tokio::spawn(async move {
+                if let Err(e) = consume_kinesis_stream(client, config, tx, running.clone()).await {
+                    error!("Kinesis source {} error: {}", name, e);
+                }
+                running.store(false, Ordering::SeqCst);
+            });
+
+            Ok(())
+        }
+
+        async fn stop(&mut self) -> Result<(), ConnectorError> {
+            self.running.store(false, Ordering::SeqCst);
+            info!("Kinesis source {} stopped", self.name);
+            Ok(())
+        }
+
+        fn is_running(&self) -> bool {
+            self.running.load(Ordering::SeqCst)
+        }
+    }
+
+    async fn consume_kinesis_stream(
+        client: KinesisClient,
+        config: KinesisConfig,
+        tx: mpsc::Sender<Event>,
+        running: Arc<AtomicBool>,
+    ) -> Result<(), ConnectorError> {
+        // Describe stream to get shards
+        let describe_result = client
+            .describe_stream()
+            .stream_name(&config.stream_name)
+            .send()
+            .await
+            .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
+
+        let stream_desc = describe_result
+            .stream_description()
+            .ok_or_else(|| ConnectorError::ConnectionFailed("No stream description".into()))?;
+
+        let shards = stream_desc.shards();
+
+        // Get iterator type
+        let iterator_type = match config.shard_iterator_type.as_str() {
+            "TRIM_HORIZON" => ShardIteratorType::TrimHorizon,
+            "AT_TIMESTAMP" => ShardIteratorType::AtTimestamp,
+            _ => ShardIteratorType::Latest,
+        };
+
+        // Start consuming from each shard
+        for shard in shards {
+            let shard_id = shard
+                .shard_id()
+                .ok_or_else(|| ConnectorError::ConnectionFailed("No shard ID".into()))?;
+
+            // Get shard iterator
+            let iterator_result = client
+                .get_shard_iterator()
+                .stream_name(&config.stream_name)
+                .shard_id(shard_id)
+                .shard_iterator_type(iterator_type.clone())
+                .send()
+                .await
+                .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
+
+            let mut shard_iterator = iterator_result.shard_iterator().map(|s| s.to_string());
+
+            while running.load(Ordering::SeqCst) {
+                let Some(ref iterator) = shard_iterator else {
+                    break;
+                };
+
+                let records_result = client
+                    .get_records()
+                    .shard_iterator(iterator)
+                    .limit(config.batch_size)
+                    .send()
+                    .await
+                    .map_err(|e| ConnectorError::ReceiveFailed(e.to_string()))?;
+
+                // Process records
+                for record in records_result.records() {
+                    let data = record.data();
+                    let json_str = String::from_utf8_lossy(data.as_ref());
+
+                    // Try to parse as JSON event
+                    let event =
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                            json_to_event_from_json(&json)
+                        } else {
+                            // Create event with raw data
+                            let mut event = Event::new("KinesisRecord");
+                            event.data.insert(
+                                "data".to_string(),
+                                varpulis_core::Value::String(json_str.to_string()),
+                            );
+                            if let Some(partition_key) = record.partition_key() {
+                                event.data.insert(
+                                    "partition_key".to_string(),
+                                    varpulis_core::Value::String(partition_key.to_string()),
+                                );
+                            }
+                            event
+                        };
+
+                    if tx.send(event).await.is_err() {
+                        warn!("Channel closed, stopping Kinesis consumer");
+                        return Ok(());
+                    }
+                }
+
+                // Update iterator for next batch
+                shard_iterator = records_result.next_shard_iterator().map(|s| s.to_string());
+
+                // Rate limit polling
+                tokio::time::sleep(Duration::from_millis(config.poll_interval_ms)).await;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Full Kinesis sink implementation with AWS SDK
+    pub struct KinesisSinkImpl {
+        name: String,
+        config: KinesisConfig,
+        client: Arc<Mutex<KinesisClient>>,
+    }
+
+    impl KinesisSinkImpl {
+        /// Create a new Kinesis sink with AWS SDK
+        pub async fn new(name: &str, config: KinesisConfig) -> Result<Self, ConnectorError> {
+            let aws_config = if let Some(ref profile) = config.profile {
+                aws_config::defaults(BehaviorVersion::latest())
+                    .profile_name(profile)
+                    .region(aws_config::Region::new(config.region.clone()))
+                    .load()
+                    .await
+            } else {
+                aws_config::defaults(BehaviorVersion::latest())
+                    .region(aws_config::Region::new(config.region.clone()))
+                    .load()
+                    .await
+            };
+
+            let client = KinesisClient::new(&aws_config);
+
+            Ok(Self {
+                name: name.to_string(),
+                config,
+                client: Arc::new(Mutex::new(client)),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl SinkConnector for KinesisSinkImpl {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        async fn send(&self, event: &Event) -> Result<(), ConnectorError> {
+            let client = self.client.lock().await;
+
+            // Serialize event to JSON
+            let data = serde_json::to_vec(event)
+                .map_err(|e| ConnectorError::SendFailed(format!("Serialization error: {}", e)))?;
+
+            // Generate or use configured partition key
+            let partition_key = self
+                .config
+                .partition_key
+                .clone()
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+            // Put record
+            client
+                .put_record()
+                .stream_name(&self.config.stream_name)
+                .partition_key(&partition_key)
+                .data(Blob::new(data))
+                .send()
+                .await
+                .map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
+
+            Ok(())
+        }
+
+        async fn flush(&self) -> Result<(), ConnectorError> {
+            // Kinesis PutRecord is synchronous, no batching to flush
+            Ok(())
+        }
+
+        async fn close(&self) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+    }
+}
+
+#[cfg(feature = "kinesis")]
+pub use kinesis_impl::{
+    KinesisSinkImpl as KinesisSinkFull, KinesisSourceImpl as KinesisSourceFull,
+};
+
+// =============================================================================
+// AWS S3 Sink (JSON, CSV output)
+// =============================================================================
+
+/// S3 output format
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum S3OutputFormat {
+    /// JSON Lines (one JSON object per line)
+    #[default]
+    JsonLines,
+    /// CSV with header row
+    Csv,
+}
+
+/// S3 sink configuration
+///
+/// Configuration for writing events to Amazon S3.
+///
+/// # Example
+///
+/// ```rust
+/// use varpulis_runtime::connector::{S3Config, S3OutputFormat};
+///
+/// let config = S3Config::new("my-bucket", "events/", "us-east-1")
+///     .with_format(S3OutputFormat::JsonLines)
+///     .with_file_rotation_size(100 * 1024 * 1024)  // 100MB
+///     .with_file_rotation_seconds(3600);  // 1 hour
+/// ```
+#[derive(Debug, Clone)]
+pub struct S3Config {
+    /// S3 bucket name
+    pub bucket: String,
+    /// Key prefix (folder path)
+    pub prefix: String,
+    /// AWS region
+    pub region: String,
+    /// Output format
+    pub format: S3OutputFormat,
+    /// File rotation size in bytes (default 100MB)
+    pub file_rotation_size: usize,
+    /// File rotation time in seconds (default 3600 = 1 hour)
+    pub file_rotation_seconds: u64,
+    /// Compression (gzip for JSON/CSV)
+    pub compression: bool,
+    /// AWS profile name (optional)
+    pub profile: Option<String>,
+}
+
+impl S3Config {
+    /// Create a new S3 configuration
+    pub fn new(bucket: &str, prefix: &str, region: &str) -> Self {
+        Self {
+            bucket: bucket.to_string(),
+            prefix: prefix.trim_end_matches('/').to_string(),
+            region: region.to_string(),
+            format: S3OutputFormat::JsonLines,
+            file_rotation_size: 100 * 1024 * 1024, // 100MB
+            file_rotation_seconds: 3600,           // 1 hour
+            compression: false,
+            profile: None,
+        }
+    }
+
+    /// Set the output format
+    pub fn with_format(mut self, format: S3OutputFormat) -> Self {
+        self.format = format;
+        self
+    }
+
+    /// Set file rotation size in bytes
+    pub fn with_file_rotation_size(mut self, bytes: usize) -> Self {
+        self.file_rotation_size = bytes;
+        self
+    }
+
+    /// Set file rotation time in seconds
+    pub fn with_file_rotation_seconds(mut self, seconds: u64) -> Self {
+        self.file_rotation_seconds = seconds;
+        self
+    }
+
+    /// Enable gzip compression
+    pub fn with_compression(mut self) -> Self {
+        self.compression = true;
+        self
+    }
+
+    /// Set AWS profile name
+    pub fn with_profile(mut self, profile: &str) -> Self {
+        self.profile = Some(profile.to_string());
+        self
+    }
+}
+
+/// S3 sink connector (stub implementation)
+pub struct S3Sink {
+    name: String,
+    config: S3Config,
+}
+
+impl S3Sink {
+    /// Create a new S3 sink
+    pub fn new(name: &str, config: S3Config) -> Self {
+        Self {
+            name: name.to_string(),
+            config,
+        }
+    }
+}
+
+#[async_trait]
+impl SinkConnector for S3Sink {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    async fn send(&self, event: &Event) -> Result<(), ConnectorError> {
+        warn!(
+            "S3 sink {} send (stub) to s3://{}/{} - event: {}",
+            self.name, self.config.bucket, self.config.prefix, event.event_type
+        );
+
+        Err(ConnectorError::NotAvailable(
+            "S3 connector requires 's3' feature. Enable with: cargo build --features s3"
+                .to_string(),
+        ))
+    }
+
+    async fn flush(&self) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+
+    async fn close(&self) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+}
+
+// -----------------------------------------------------------------------------
+// S3 with AWS SDK feature enabled
+// -----------------------------------------------------------------------------
+#[cfg(feature = "s3")]
+mod s3_impl {
+    use super::*;
+    use aws_config::BehaviorVersion;
+    use aws_sdk_s3::primitives::ByteStream;
+    use aws_sdk_s3::Client as S3Client;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+    use tokio::sync::Mutex;
+
+    struct BufferState {
+        buffer: Vec<u8>,
+        event_count: usize,
+        start_time: Instant,
+        file_number: u64,
+    }
+
+    impl BufferState {
+        fn new() -> Self {
+            Self {
+                buffer: Vec::with_capacity(1024 * 1024), // 1MB initial
+                event_count: 0,
+                start_time: Instant::now(),
+                file_number: 0,
+            }
+        }
+    }
+
+    /// Full S3 sink implementation with AWS SDK
+    pub struct S3SinkImpl {
+        name: String,
+        config: S3Config,
+        client: S3Client,
+        state: Arc<Mutex<BufferState>>,
+    }
+
+    impl S3SinkImpl {
+        /// Create a new S3 sink with AWS SDK
+        pub async fn new(name: &str, config: S3Config) -> Result<Self, ConnectorError> {
+            let aws_config = if let Some(ref profile) = config.profile {
+                aws_config::defaults(BehaviorVersion::latest())
+                    .profile_name(profile)
+                    .region(aws_config::Region::new(config.region.clone()))
+                    .load()
+                    .await
+            } else {
+                aws_config::defaults(BehaviorVersion::latest())
+                    .region(aws_config::Region::new(config.region.clone()))
+                    .load()
+                    .await
+            };
+
+            let client = S3Client::new(&aws_config);
+
+            Ok(Self {
+                name: name.to_string(),
+                config,
+                client,
+                state: Arc::new(Mutex::new(BufferState::new())),
+            })
+        }
+
+        fn generate_key(&self, state: &BufferState) -> String {
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+
+            let extension = match self.config.format {
+                S3OutputFormat::JsonLines => {
+                    if self.config.compression {
+                        "jsonl.gz"
+                    } else {
+                        "jsonl"
+                    }
+                }
+                S3OutputFormat::Csv => {
+                    if self.config.compression {
+                        "csv.gz"
+                    } else {
+                        "csv"
+                    }
+                }
+            };
+
+            format!(
+                "{}/{}_{:08}_{}.{}",
+                self.config.prefix, timestamp, state.file_number, self.name, extension
+            )
+        }
+
+        async fn should_rotate(&self, state: &BufferState) -> bool {
+            state.buffer.len() >= self.config.file_rotation_size
+                || state.start_time.elapsed()
+                    >= Duration::from_secs(self.config.file_rotation_seconds)
+        }
+
+        async fn upload_buffer(&self, state: &mut BufferState) -> Result<(), ConnectorError> {
+            if state.buffer.is_empty() {
+                return Ok(());
+            }
+
+            let key = self.generate_key(state);
+            let data = std::mem::take(&mut state.buffer);
+
+            self.client
+                .put_object()
+                .bucket(&self.config.bucket)
+                .key(&key)
+                .body(ByteStream::from(data))
+                .send()
+                .await
+                .map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
+
+            info!(
+                "S3 sink {} uploaded {} events to s3://{}/{}",
+                self.name, state.event_count, self.config.bucket, key
+            );
+
+            state.event_count = 0;
+            state.start_time = Instant::now();
+            state.file_number += 1;
+
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl SinkConnector for S3SinkImpl {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        async fn send(&self, event: &Event) -> Result<(), ConnectorError> {
+            let mut state = self.state.lock().await;
+
+            // Serialize event based on format
+            match self.config.format {
+                S3OutputFormat::JsonLines => {
+                    let json = serde_json::to_string(event)
+                        .map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
+                    state.buffer.extend_from_slice(json.as_bytes());
+                    state.buffer.push(b'\n');
+                }
+                S3OutputFormat::Csv => {
+                    // If first event, write header
+                    if state.event_count == 0 {
+                        let header: Vec<&str> = event.data.keys().map(|s| s.as_str()).collect();
+                        state.buffer.extend_from_slice(header.join(",").as_bytes());
+                        state.buffer.push(b'\n');
+                    }
+                    // Write values
+                    let values: Vec<String> = event
+                        .data
+                        .values()
+                        .map(|v| match v {
+                            varpulis_core::Value::String(s) => {
+                                format!("\"{}\"", s.replace('"', "\"\""))
+                            }
+                            _ => v.to_string(),
+                        })
+                        .collect();
+                    state.buffer.extend_from_slice(values.join(",").as_bytes());
+                    state.buffer.push(b'\n');
+                }
+            }
+
+            state.event_count += 1;
+
+            // Check if rotation is needed
+            if self.should_rotate(&state).await {
+                self.upload_buffer(&mut state).await?;
+            }
+
+            Ok(())
+        }
+
+        async fn flush(&self) -> Result<(), ConnectorError> {
+            let mut state = self.state.lock().await;
+            self.upload_buffer(&mut state).await
+        }
+
+        async fn close(&self) -> Result<(), ConnectorError> {
+            self.flush().await
+        }
+    }
+}
+
+#[cfg(feature = "s3")]
+pub use s3_impl::S3SinkImpl as S3SinkFull;
+
+// =============================================================================
+// Elasticsearch Sink
+// =============================================================================
+
+/// Elasticsearch sink configuration
+///
+/// Configuration for indexing events in Elasticsearch.
+///
+/// # Example
+///
+/// ```rust
+/// use varpulis_runtime::connector::ElasticsearchConfig;
+///
+/// let config = ElasticsearchConfig::new("http://localhost:9200", "events")
+///     .with_batch_size(100)
+///     .with_username("elastic")
+///     .with_password("changeme");
+/// ```
+#[derive(Debug, Clone)]
+pub struct ElasticsearchConfig {
+    /// Elasticsearch URL(s), comma-separated
+    pub urls: String,
+    /// Index name or pattern (e.g., "events-{yyyy.MM.dd}")
+    pub index: String,
+    /// Document type (deprecated in ES 7+, use "_doc")
+    pub doc_type: String,
+    /// Batch size for bulk indexing
+    pub batch_size: usize,
+    /// Flush interval in milliseconds
+    pub flush_interval_ms: u64,
+    /// Username for authentication (optional)
+    pub username: Option<String>,
+    /// Password for authentication (optional)
+    pub password: Option<String>,
+    /// API key for authentication (optional)
+    pub api_key: Option<String>,
+}
+
+impl ElasticsearchConfig {
+    /// Create a new Elasticsearch configuration
+    pub fn new(urls: &str, index: &str) -> Self {
+        Self {
+            urls: urls.to_string(),
+            index: index.to_string(),
+            doc_type: "_doc".to_string(),
+            batch_size: 100,
+            flush_interval_ms: 1000,
+            username: None,
+            password: None,
+            api_key: None,
+        }
+    }
+
+    /// Set batch size for bulk indexing
+    pub fn with_batch_size(mut self, size: usize) -> Self {
+        self.batch_size = size.max(1);
+        self
+    }
+
+    /// Set flush interval in milliseconds
+    pub fn with_flush_interval(mut self, ms: u64) -> Self {
+        self.flush_interval_ms = ms;
+        self
+    }
+
+    /// Set username for basic authentication
+    pub fn with_username(mut self, username: &str) -> Self {
+        self.username = Some(username.to_string());
+        self
+    }
+
+    /// Set password for basic authentication
+    pub fn with_password(mut self, password: &str) -> Self {
+        self.password = Some(password.to_string());
+        self
+    }
+
+    /// Set API key for authentication
+    pub fn with_api_key(mut self, key: &str) -> Self {
+        self.api_key = Some(key.to_string());
+        self
+    }
+}
+
+/// Elasticsearch sink connector (stub implementation)
+pub struct ElasticsearchSink {
+    name: String,
+    config: ElasticsearchConfig,
+}
+
+impl ElasticsearchSink {
+    /// Create a new Elasticsearch sink
+    pub fn new(name: &str, config: ElasticsearchConfig) -> Self {
+        Self {
+            name: name.to_string(),
+            config,
+        }
+    }
+}
+
+#[async_trait]
+impl SinkConnector for ElasticsearchSink {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    async fn send(&self, event: &Event) -> Result<(), ConnectorError> {
+        warn!(
+            "Elasticsearch sink {} send (stub) to {}/{} - event: {}",
+            self.name, self.config.urls, self.config.index, event.event_type
+        );
+
+        Err(ConnectorError::NotAvailable(
+            "Elasticsearch connector requires 'elasticsearch' feature. Enable with: cargo build --features elasticsearch".to_string(),
+        ))
+    }
+
+    async fn flush(&self) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+
+    async fn close(&self) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Elasticsearch with elasticsearch crate feature enabled
+// -----------------------------------------------------------------------------
+#[cfg(feature = "elasticsearch")]
+mod elasticsearch_impl {
+    use super::*;
+    use elasticsearch::auth::Credentials;
+    use elasticsearch::http::transport::{SingleNodeConnectionPool, TransportBuilder};
+    use elasticsearch::{BulkParts, Elasticsearch};
+    use std::sync::Arc;
+    use std::time::Instant;
+    use tokio::sync::Mutex;
+
+    struct BulkBuffer {
+        operations: Vec<serde_json::Value>,
+        last_flush: Instant,
+    }
+
+    impl BulkBuffer {
+        fn new() -> Self {
+            Self {
+                operations: Vec::with_capacity(200),
+                last_flush: Instant::now(),
+            }
+        }
+    }
+
+    /// Full Elasticsearch sink implementation
+    pub struct ElasticsearchSinkImpl {
+        name: String,
+        config: ElasticsearchConfig,
+        client: Elasticsearch,
+        buffer: Arc<Mutex<BulkBuffer>>,
+    }
+
+    impl ElasticsearchSinkImpl {
+        /// Create a new Elasticsearch sink
+        pub fn new(name: &str, config: ElasticsearchConfig) -> Result<Self, ConnectorError> {
+            let url = config
+                .urls
+                .split(',')
+                .next()
+                .ok_or_else(|| ConnectorError::ConfigError("No URL provided".into()))?;
+
+            let url = url
+                .parse()
+                .map_err(|e| ConnectorError::ConfigError(format!("Invalid URL: {}", e)))?;
+
+            let pool = SingleNodeConnectionPool::new(url);
+            let mut builder = TransportBuilder::new(pool);
+
+            // Add authentication if configured
+            if let Some(ref api_key) = config.api_key {
+                builder = builder.auth(Credentials::ApiKey(api_key.clone().into(), "".into()));
+            } else if let (Some(ref username), Some(ref password)) =
+                (&config.username, &config.password)
+            {
+                builder = builder.auth(Credentials::Basic(username.clone(), password.clone()));
+            }
+
+            let transport = builder
+                .build()
+                .map_err(|e| ConnectorError::ConfigError(e.to_string()))?;
+
+            let client = Elasticsearch::new(transport);
+
+            Ok(Self {
+                name: name.to_string(),
+                config,
+                client,
+                buffer: Arc::new(Mutex::new(BulkBuffer::new())),
+            })
+        }
+
+        fn expand_index(&self, _event: &Event) -> String {
+            // Simple date expansion: replace {yyyy}, {MM}, {dd} with current date
+            let now = chrono::Utc::now();
+            self.config
+                .index
+                .replace("{yyyy}", &now.format("%Y").to_string())
+                .replace("{MM}", &now.format("%m").to_string())
+                .replace("{dd}", &now.format("%d").to_string())
+        }
+
+        async fn flush_buffer(&self, buffer: &mut BulkBuffer) -> Result<(), ConnectorError> {
+            if buffer.operations.is_empty() {
+                return Ok(());
+            }
+
+            let operations = std::mem::take(&mut buffer.operations);
+            let count = operations.len() / 2; // Each doc has action + source
+
+            let body: Vec<serde_json::Value> = operations;
+
+            let response = self
+                .client
+                .bulk(BulkParts::None)
+                .body(body)
+                .send()
+                .await
+                .map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
+
+            if !response.status_code().is_success() {
+                return Err(ConnectorError::SendFailed(format!(
+                    "Bulk request failed: {}",
+                    response.status_code()
+                )));
+            }
+
+            info!(
+                "Elasticsearch sink {} indexed {} documents",
+                self.name, count
+            );
+
+            buffer.last_flush = Instant::now();
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl SinkConnector for ElasticsearchSinkImpl {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        async fn send(&self, event: &Event) -> Result<(), ConnectorError> {
+            let mut buffer = self.buffer.lock().await;
+
+            let index = self.expand_index(event);
+
+            // Add index action
+            let action = serde_json::json!({
+                "index": {
+                    "_index": index
+                }
+            });
+            buffer.operations.push(action);
+
+            // Add document source
+            let doc = serde_json::to_value(event)
+                .map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
+            buffer.operations.push(doc);
+
+            // Check if we should flush
+            let should_flush = buffer.operations.len() >= self.config.batch_size * 2
+                || buffer.last_flush.elapsed().as_millis() as u64 >= self.config.flush_interval_ms;
+
+            if should_flush {
+                self.flush_buffer(&mut buffer).await?;
+            }
+
+            Ok(())
+        }
+
+        async fn flush(&self) -> Result<(), ConnectorError> {
+            let mut buffer = self.buffer.lock().await;
+            self.flush_buffer(&mut buffer).await
+        }
+
+        async fn close(&self) -> Result<(), ConnectorError> {
+            self.flush().await
+        }
+    }
+}
+
+#[cfg(feature = "elasticsearch")]
+pub use elasticsearch_impl::ElasticsearchSinkImpl as ElasticsearchSinkFull;
+
+// =============================================================================
 // REST API Client (for calling external APIs)
 // =============================================================================
 
@@ -2596,6 +3686,70 @@ impl ConnectorRegistry {
                     DatabaseSink::new("database", DatabaseConfig::new(&config.url, &table)).await?;
                 Ok(Box::new(sink))
             }
+            "kinesis" => {
+                let stream = config.topic.clone().unwrap_or_else(|| "events".to_string());
+                let region = config
+                    .properties
+                    .get("region")
+                    .cloned()
+                    .unwrap_or_else(|| "us-east-1".to_string());
+                #[cfg(feature = "kinesis")]
+                {
+                    let sink =
+                        KinesisSinkFull::new("kinesis", KinesisConfig::new(&stream, &region))
+                            .await?;
+                    Ok(Box::new(sink))
+                }
+                #[cfg(not(feature = "kinesis"))]
+                {
+                    Ok(Box::new(KinesisSink::new(
+                        "kinesis",
+                        KinesisConfig::new(&stream, &region),
+                    )))
+                }
+            }
+            "s3" => {
+                let prefix = config
+                    .topic
+                    .clone()
+                    .unwrap_or_else(|| "events/".to_string());
+                let region = config
+                    .properties
+                    .get("region")
+                    .cloned()
+                    .unwrap_or_else(|| "us-east-1".to_string());
+                #[cfg(feature = "s3")]
+                {
+                    let sink =
+                        S3SinkFull::new("s3", S3Config::new(&config.url, &prefix, &region)).await?;
+                    Ok(Box::new(sink))
+                }
+                #[cfg(not(feature = "s3"))]
+                {
+                    Ok(Box::new(S3Sink::new(
+                        "s3",
+                        S3Config::new(&config.url, &prefix, &region),
+                    )))
+                }
+            }
+            "elasticsearch" | "es" => {
+                let index = config.topic.clone().unwrap_or_else(|| "events".to_string());
+                #[cfg(feature = "elasticsearch")]
+                {
+                    let sink = ElasticsearchSinkFull::new(
+                        "elasticsearch",
+                        ElasticsearchConfig::new(&config.url, &index),
+                    )?;
+                    Ok(Box::new(sink))
+                }
+                #[cfg(not(feature = "elasticsearch"))]
+                {
+                    Ok(Box::new(ElasticsearchSink::new(
+                        "elasticsearch",
+                        ElasticsearchConfig::new(&config.url, &index),
+                    )))
+                }
+            }
             _ => Err(ConnectorError::ConfigError(format!(
                 "Unknown connector type: {}",
                 config.connector_type
@@ -2855,6 +4009,161 @@ mod tests {
     }
 
     // ==========================================================================
+    // Kinesis Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_kinesis_config() {
+        let config = KinesisConfig::new("my-stream", "us-west-2")
+            .with_batch_size(200)
+            .with_shard_iterator_type("TRIM_HORIZON")
+            .with_poll_interval(500)
+            .with_profile("production");
+
+        assert_eq!(config.stream_name, "my-stream");
+        assert_eq!(config.region, "us-west-2");
+        assert_eq!(config.batch_size, 200);
+        assert_eq!(config.shard_iterator_type, "TRIM_HORIZON");
+        assert_eq!(config.poll_interval_ms, 500);
+        assert_eq!(config.profile, Some("production".to_string()));
+    }
+
+    #[test]
+    fn test_kinesis_config_batch_size_clamping() {
+        let config = KinesisConfig::new("stream", "region").with_batch_size(50000);
+        assert_eq!(config.batch_size, 10000); // Clamped to max
+
+        let config = KinesisConfig::new("stream", "region").with_batch_size(0);
+        assert_eq!(config.batch_size, 1); // Clamped to min
+    }
+
+    #[tokio::test]
+    async fn test_kinesis_source_lifecycle() {
+        let config = KinesisConfig::new("test-stream", "us-east-1");
+        let mut source = KinesisSource::new("kinesis_src", config);
+
+        assert_eq!(source.name(), "kinesis_src");
+        assert!(!source.is_running());
+
+        // Stop should work even if not started
+        assert!(source.stop().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_kinesis_sink_stub() {
+        let config = KinesisConfig::new("test-stream", "us-east-1");
+        let sink = KinesisSink::new("kinesis_sink", config);
+
+        assert_eq!(sink.name(), "kinesis_sink");
+
+        // Stub send should return NotAvailable
+        let event = Event::new("TestEvent");
+        let result = sink.send(&event).await;
+        assert!(matches!(result, Err(ConnectorError::NotAvailable(_))));
+
+        // But flush and close should work
+        assert!(sink.flush().await.is_ok());
+        assert!(sink.close().await.is_ok());
+    }
+
+    // ==========================================================================
+    // S3 Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_s3_config() {
+        let config = S3Config::new("my-bucket", "events/", "us-west-2")
+            .with_format(S3OutputFormat::Csv)
+            .with_file_rotation_size(50 * 1024 * 1024)
+            .with_file_rotation_seconds(1800)
+            .with_compression()
+            .with_profile("dev");
+
+        assert_eq!(config.bucket, "my-bucket");
+        assert_eq!(config.prefix, "events"); // Trailing slash trimmed
+        assert_eq!(config.region, "us-west-2");
+        assert_eq!(config.format, S3OutputFormat::Csv);
+        assert_eq!(config.file_rotation_size, 50 * 1024 * 1024);
+        assert_eq!(config.file_rotation_seconds, 1800);
+        assert!(config.compression);
+        assert_eq!(config.profile, Some("dev".to_string()));
+    }
+
+    #[test]
+    fn test_s3_output_format_default() {
+        let format: S3OutputFormat = Default::default();
+        assert_eq!(format, S3OutputFormat::JsonLines);
+    }
+
+    #[tokio::test]
+    async fn test_s3_sink_stub() {
+        let config = S3Config::new("test-bucket", "events/", "us-east-1");
+        let sink = S3Sink::new("s3_sink", config);
+
+        assert_eq!(sink.name(), "s3_sink");
+
+        // Stub send should return NotAvailable
+        let event = Event::new("TestEvent");
+        let result = sink.send(&event).await;
+        assert!(matches!(result, Err(ConnectorError::NotAvailable(_))));
+
+        // But flush and close should work
+        assert!(sink.flush().await.is_ok());
+        assert!(sink.close().await.is_ok());
+    }
+
+    // ==========================================================================
+    // Elasticsearch Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_elasticsearch_config() {
+        let config = ElasticsearchConfig::new("http://localhost:9200", "events-{yyyy.MM.dd}")
+            .with_batch_size(500)
+            .with_flush_interval(2000)
+            .with_username("elastic")
+            .with_password("changeme");
+
+        assert_eq!(config.urls, "http://localhost:9200");
+        assert_eq!(config.index, "events-{yyyy.MM.dd}");
+        assert_eq!(config.batch_size, 500);
+        assert_eq!(config.flush_interval_ms, 2000);
+        assert_eq!(config.username, Some("elastic".to_string()));
+        assert_eq!(config.password, Some("changeme".to_string()));
+    }
+
+    #[test]
+    fn test_elasticsearch_config_api_key() {
+        let config =
+            ElasticsearchConfig::new("http://localhost:9200", "events").with_api_key("my-api-key");
+
+        assert_eq!(config.api_key, Some("my-api-key".to_string()));
+    }
+
+    #[test]
+    fn test_elasticsearch_config_batch_size_min() {
+        let config = ElasticsearchConfig::new("http://localhost:9200", "events").with_batch_size(0);
+        assert_eq!(config.batch_size, 1); // Clamped to minimum of 1
+    }
+
+    #[tokio::test]
+    async fn test_elasticsearch_sink_stub() {
+        let config = ElasticsearchConfig::new("http://localhost:9200", "events");
+        let sink = ElasticsearchSink::new("es_sink", config);
+
+        assert_eq!(sink.name(), "es_sink");
+
+        // Stub send should return NotAvailable
+        let event = Event::new("TestEvent");
+        let result = sink.send(&event).await;
+        assert!(matches!(result, Err(ConnectorError::NotAvailable(_))));
+
+        // But flush and close should work
+        assert!(sink.flush().await.is_ok());
+        assert!(sink.close().await.is_ok());
+    }
+
+    // ==========================================================================
     // Registry Tests
     // ==========================================================================
 
@@ -2896,6 +4205,38 @@ mod tests {
     #[tokio::test]
     async fn test_create_from_config_mqtt() {
         let config = ConnectorConfig::new("mqtt", "mqtt.local").with_topic("sensors");
+        let sink = ConnectorRegistry::create_from_config(&config).await;
+        assert!(sink.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_create_from_config_kinesis() {
+        let config =
+            ConnectorConfig::new("kinesis", "my-stream").with_property("region", "us-east-1");
+        let sink = ConnectorRegistry::create_from_config(&config).await;
+        assert!(sink.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_create_from_config_s3() {
+        let config = ConnectorConfig::new("s3", "my-bucket")
+            .with_topic("events/")
+            .with_property("region", "us-west-2");
+        let sink = ConnectorRegistry::create_from_config(&config).await;
+        assert!(sink.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_create_from_config_elasticsearch() {
+        let config =
+            ConnectorConfig::new("elasticsearch", "http://localhost:9200").with_topic("events");
+        let sink = ConnectorRegistry::create_from_config(&config).await;
+        assert!(sink.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_create_from_config_es_alias() {
+        let config = ConnectorConfig::new("es", "http://localhost:9200").with_topic("logs");
         let sink = ConnectorRegistry::create_from_config(&config).await;
         assert!(sink.is_ok());
     }
