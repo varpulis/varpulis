@@ -2252,11 +2252,14 @@ impl Engine {
                         new_event.timestamp = event.timestamp;
                         for (out_name, source) in &config.fields {
                             if let Some(value) = event.get(source) {
-                                new_event.data.insert(out_name.clone().into(), value.clone());
-                            } else {
                                 new_event
                                     .data
-                                    .insert(out_name.clone().into(), Value::Str(source.clone().into()));
+                                    .insert(out_name.clone().into(), value.clone());
+                            } else {
+                                new_event.data.insert(
+                                    out_name.clone().into(),
+                                    Value::Str(source.clone().into()),
+                                );
                             }
                         }
                         emitted.push(Arc::new(new_event));
@@ -2328,9 +2331,10 @@ impl Engine {
                             for match_result in matches {
                                 // Create synthetic event from completed sequence
                                 let mut seq_event = Event::new("SequenceMatch");
-                                seq_event
-                                    .data
-                                    .insert("stream".into(), Value::Str(stream.name.clone().into()));
+                                seq_event.data.insert(
+                                    "stream".into(),
+                                    Value::Str(stream.name.clone().into()),
+                                );
                                 seq_event.data.insert(
                                     "match_duration_ms".into(),
                                     Value::Int(match_result.duration.as_millis() as i64),
@@ -2389,7 +2393,8 @@ impl Engine {
                         current_events
                             .iter()
                             .map(|e| {
-                                let mut map: IndexMap<Arc<str>, Value, FxBuildHasher> = IndexMap::with_hasher(FxBuildHasher);
+                                let mut map: IndexMap<Arc<str>, Value, FxBuildHasher> =
+                                    IndexMap::with_hasher(FxBuildHasher);
                                 map.insert(
                                     "event_type".into(),
                                     Value::Str(e.event_type.to_string().into()),
@@ -2645,11 +2650,14 @@ impl Engine {
                         new_event.timestamp = event.timestamp;
                         for (out_name, source_field) in &config.fields {
                             if let Some(value) = event.get(source_field) {
-                                new_event.data.insert(out_name.clone().into(), value.clone());
-                            } else {
                                 new_event
                                     .data
-                                    .insert(out_name.clone().into(), Value::Str(source_field.clone().into()));
+                                    .insert(out_name.clone().into(), value.clone());
+                            } else {
+                                new_event.data.insert(
+                                    out_name.clone().into(),
+                                    Value::Str(source_field.clone().into()),
+                                );
                             }
                         }
                         emitted.push(Arc::new(new_event));
@@ -2958,11 +2966,14 @@ impl Engine {
                         new_event.timestamp = event.timestamp;
                         for (out_name, source) in &config.fields {
                             if let Some(value) = event.get(source) {
-                                new_event.data.insert(out_name.clone().into(), value.clone());
-                            } else {
                                 new_event
                                     .data
-                                    .insert(out_name.clone().into(), Value::Str(source.clone().into()));
+                                    .insert(out_name.clone().into(), value.clone());
+                            } else {
+                                new_event.data.insert(
+                                    out_name.clone().into(),
+                                    Value::Str(source.clone().into()),
+                                );
                             }
                         }
                         emitted.push(Arc::new(new_event));

@@ -176,10 +176,7 @@ async fn test_engine_sequence_with_timeout() {
         .await
         .unwrap();
     let output = rx.try_recv().expect("Should have output");
-    assert_eq!(
-        output.data.get("status"),
-        Some(&Value::Str("fast".into()))
-    );
+    assert_eq!(output.data.get("status"), Some(&Value::Str("fast".into())));
 }
 
 #[tokio::test]
@@ -909,10 +906,7 @@ async fn test_engine_join_derived_streams() {
         output.data.get("alert"),
         Some(&Value::Str("matched".into()))
     );
-    assert_eq!(
-        output.data.get("symbol"),
-        Some(&Value::Str("AAPL".into()))
-    );
+    assert_eq!(output.data.get("symbol"), Some(&Value::Str("AAPL".into())));
 }
 
 #[tokio::test]
@@ -1041,10 +1035,7 @@ async fn test_engine_derived_stream_filters_applied() {
     let output = rx
         .try_recv()
         .expect("Should have output after pattern match");
-    assert_eq!(
-        output.data.get("matched"),
-        Some(&Value::Str("yes".into()))
-    );
+    assert_eq!(output.data.get("matched"), Some(&Value::Str("yes".into())));
 }
 
 // ==========================================================================
@@ -1928,10 +1919,7 @@ async fn test_imperative_if_else() {
         .await
         .unwrap();
     let output = rx.try_recv().expect("Should have output");
-    assert_eq!(
-        output.data.get("class"),
-        Some(&Value::Str("high".into()))
-    );
+    assert_eq!(output.data.get("class"), Some(&Value::Str("high".into())));
 
     // Test medium value
     engine
@@ -1939,10 +1927,7 @@ async fn test_imperative_if_else() {
         .await
         .unwrap();
     let output = rx.try_recv().expect("Should have output");
-    assert_eq!(
-        output.data.get("class"),
-        Some(&Value::Str("medium".into()))
-    );
+    assert_eq!(output.data.get("class"), Some(&Value::Str("medium".into())));
 
     // Test low value
     engine
@@ -1950,10 +1935,7 @@ async fn test_imperative_if_else() {
         .await
         .unwrap();
     let output = rx.try_recv().expect("Should have output");
-    assert_eq!(
-        output.data.get("class"),
-        Some(&Value::Str("low".into()))
-    );
+    assert_eq!(output.data.get("class"), Some(&Value::Str("low".into())));
 }
 
 #[tokio::test]
@@ -2261,10 +2243,7 @@ async fn test_builtin_string_functions() {
 
     engine.process(Event::new("Input")).await.unwrap();
     let output = rx.try_recv().expect("Should have output");
-    assert_eq!(
-        output.data.get("result"),
-        Some(&Value::Str("HELLO".into()))
-    );
+    assert_eq!(output.data.get("result"), Some(&Value::Str("HELLO".into())));
 }
 
 #[tokio::test]
@@ -2747,10 +2726,7 @@ async fn test_builtin_substring() {
 
     engine.process(Event::new("Input")).await.unwrap();
     let output = rx.try_recv().expect("Should have output");
-    assert_eq!(
-        output.data.get("result"),
-        Some(&Value::Str("hello".into()))
-    );
+    assert_eq!(output.data.get("result"), Some(&Value::Str("hello".into())));
 }
 
 #[tokio::test]

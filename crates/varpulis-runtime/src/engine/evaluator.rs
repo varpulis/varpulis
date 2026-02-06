@@ -602,7 +602,9 @@ pub fn eval_filter_expr(
                         Value::Array(a) => Some(Value::Int(a.len() as i64)),
                         _ => None,
                     }),
-                    "to_string" => arg_values.first().map(|v| Value::Str(format!("{}", v).into())),
+                    "to_string" => arg_values
+                        .first()
+                        .map(|v| Value::Str(format!("{}", v).into())),
                     "to_int" => arg_values.first().and_then(|v| match v {
                         Value::Int(n) => Some(Value::Int(*n)),
                         Value::Float(f) => Some(Value::Int(*f as i64)),
@@ -691,7 +693,8 @@ pub fn eval_expr_with_functions(
 
         // Map literal: { "key": value, ... }
         Expr::Map(entries) => {
-            let mut map: IndexMap<std::sync::Arc<str>, Value, FxBuildHasher> = IndexMap::with_hasher(FxBuildHasher);
+            let mut map: IndexMap<std::sync::Arc<str>, Value, FxBuildHasher> =
+                IndexMap::with_hasher(FxBuildHasher);
             for (key, value_expr) in entries {
                 if let Some(value) =
                     eval_expr_with_functions(value_expr, event, ctx, functions, bindings)
@@ -771,7 +774,9 @@ pub fn eval_expr_with_functions(
                         .unwrap_or(chars.len() as i64) as usize;
                     let end_val = end_val.min(chars.len());
                     if start_val <= end_val {
-                        Some(Value::Str(chars[start_val..end_val].iter().collect::<String>().into()))
+                        Some(Value::Str(
+                            chars[start_val..end_val].iter().collect::<String>().into(),
+                        ))
                     } else {
                         Some(Value::Str("".into()))
                     }
@@ -984,7 +989,9 @@ pub fn eval_expr_with_functions(
                             arr.reverse();
                             Some(Value::Array(arr))
                         }
-                        Value::Str(s) => Some(Value::Str(s.chars().rev().collect::<String>().into())),
+                        Value::Str(s) => {
+                            Some(Value::Str(s.chars().rev().collect::<String>().into()))
+                        }
                         _ => None,
                     }),
                     "sort" => arg_values.first().and_then(|v| match v {
@@ -1004,10 +1011,10 @@ pub fn eval_expr_with_functions(
                     }),
                     "contains" if arg_values.len() == 2 => match (&arg_values[0], &arg_values[1]) {
                         (Value::Array(arr), val) => Some(Value::Bool(arr.contains(val))),
-                        (Value::Str(s), Value::Str(sub)) => {
-                            Some(Value::Bool(s.contains(&**sub)))
+                        (Value::Str(s), Value::Str(sub)) => Some(Value::Bool(s.contains(&**sub))),
+                        (Value::Map(m), Value::Str(key)) => {
+                            Some(Value::Bool(m.contains_key(&**key)))
                         }
-                        (Value::Map(m), Value::Str(key)) => Some(Value::Bool(m.contains_key(&**key))),
                         _ => None,
                     },
                     "keys" => arg_values.first().and_then(|v| match v {
@@ -1090,7 +1097,9 @@ pub fn eval_expr_with_functions(
                     }),
 
                     // String functions
-                    "to_string" => arg_values.first().map(|v| Value::Str(format!("{}", v).into())),
+                    "to_string" => arg_values
+                        .first()
+                        .map(|v| Value::Str(format!("{}", v).into())),
                     "to_int" => arg_values.first().and_then(|v| match v {
                         Value::Int(n) => Some(Value::Int(*n)),
                         Value::Float(f) => Some(Value::Int(*f as i64)),
@@ -1118,9 +1127,7 @@ pub fn eval_expr_with_functions(
                     }),
                     "split" if arg_values.len() == 2 => match (&arg_values[0], &arg_values[1]) {
                         (Value::Str(s), Value::Str(sep)) => Some(Value::array(
-                            s.split(&**sep)
-                                .map(|p| Value::Str(p.into()))
-                                .collect(),
+                            s.split(&**sep).map(|p| Value::Str(p.into())).collect(),
                         )),
                         _ => None,
                     },
@@ -1134,7 +1141,7 @@ pub fn eval_expr_with_functions(
                     "replace" if arg_values.len() == 3 => {
                         match (&arg_values[0], &arg_values[1], &arg_values[2]) {
                             (Value::Str(s), Value::Str(from), Value::Str(to)) => {
-                                Some(Value::Str(s.replace(&**from, &**to).into()))
+                                Some(Value::Str(s.replace(&**from, to).into()))
                             }
                             _ => None,
                         }
@@ -1170,8 +1177,9 @@ pub fn eval_expr_with_functions(
                                 s.len()
                             };
                             let chars: Vec<char> = s.chars().collect();
-                            (start <= end && end <= chars.len())
-                                .then(|| Value::Str(chars[start..end].iter().collect::<String>().into()))
+                            (start <= end && end <= chars.len()).then(|| {
+                                Value::Str(chars[start..end].iter().collect::<String>().into())
+                            })
                         }
                         _ => None,
                     },
@@ -1321,9 +1329,7 @@ pub fn eval_expr_with_functions(
                 BinOp::NotIn => match (&left_val, &right_val) {
                     (val, Value::Array(arr)) => Some(Value::Bool(!arr.contains(val))),
                     (Value::Str(key), Value::Map(m)) => Some(Value::Bool(!m.contains_key(&**key))),
-                    (Value::Str(sub), Value::Str(s)) => {
-                        Some(Value::Bool(!s.contains(&**sub)))
-                    }
+                    (Value::Str(sub), Value::Str(s)) => Some(Value::Bool(!s.contains(&**sub))),
                     _ => None,
                 },
                 BinOp::And => {
@@ -1453,8 +1459,8 @@ pub fn eval_pattern_expr(
 
                         if let (Some(Value::Map(m1)), Some(Value::Map(m2))) = (e1_val, e2_val) {
                             // Convert maps back to events for attention scoring
-                            let ev1 = map_to_event(&*m1);
-                            let ev2 = map_to_event(&*m2);
+                            let ev1 = map_to_event(&m1);
+                            let ev2 = map_to_event(&m2);
                             let score = aw.attention_score(&ev1, &ev2);
                             return Some(Value::Float(score as f64));
                         }
@@ -1907,7 +1913,8 @@ pub fn map_to_event(map: &IndexMap<std::sync::Arc<str>, Value, FxBuildHasher>) -
         .unwrap_or("unknown")
         .to_string();
 
-    let mut data: IndexMap<std::sync::Arc<str>, Value, FxBuildHasher> = IndexMap::with_hasher(FxBuildHasher);
+    let mut data: IndexMap<std::sync::Arc<str>, Value, FxBuildHasher> =
+        IndexMap::with_hasher(FxBuildHasher);
     for (k, v) in map {
         if &**k != "event_type" {
             data.insert(k.clone(), v.clone());
