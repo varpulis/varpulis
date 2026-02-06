@@ -27,6 +27,43 @@ use varpulis_core::{Stmt, Value};
 use super::UserFunction;
 
 // =============================================================================
+// Evaluation Context
+// =============================================================================
+
+/// Context for expression evaluation - bundles immutable references
+/// to reduce parameter passing overhead in recursive evaluation.
+///
+/// This struct is provided for callers who want to avoid repeatedly
+/// passing the same references. Use `eval_expr_ctx()` with this context
+/// for optimized recursive evaluation.
+#[derive(Clone, Copy)]
+#[allow(dead_code)] // Public API for external use
+pub struct EvalContext<'a> {
+    pub event: &'a Event,
+    pub seq_ctx: &'a SequenceContext,
+    pub functions: &'a FxHashMap<String, UserFunction>,
+    pub bindings: &'a FxHashMap<String, Value>,
+}
+
+#[allow(dead_code)] // Public API for external use
+impl<'a> EvalContext<'a> {
+    #[inline]
+    pub fn new(
+        event: &'a Event,
+        seq_ctx: &'a SequenceContext,
+        functions: &'a FxHashMap<String, UserFunction>,
+        bindings: &'a FxHashMap<String, Value>,
+    ) -> Self {
+        Self {
+            event,
+            seq_ctx,
+            functions,
+            bindings,
+        }
+    }
+}
+
+// =============================================================================
 // Thread-local emit collector
 // =============================================================================
 
@@ -1338,6 +1375,15 @@ pub fn eval_expr_with_functions(
         }
         _ => eval_filter_expr(expr, event, ctx),
     }
+}
+
+/// Evaluate expression using EvalContext.
+/// This is a convenience wrapper for callers who have already constructed an EvalContext.
+/// Internally delegates to eval_expr_with_functions.
+#[inline]
+#[allow(dead_code)] // Public API for external use
+pub fn eval_expr_ctx(expr: &varpulis_core::ast::Expr, ctx: &EvalContext) -> Option<Value> {
+    eval_expr_with_functions(expr, ctx.event, ctx.seq_ctx, ctx.functions, ctx.bindings)
 }
 
 /// Evaluate a pattern expression with support for attention_score builtin
