@@ -108,6 +108,8 @@ pub mod context;
 pub mod engine;
 pub mod event;
 pub mod event_file;
+pub mod greta;
+pub mod hamlet;
 pub mod join;
 pub mod metrics;
 pub mod persistence;
@@ -122,6 +124,7 @@ pub mod timer;
 pub mod watermark;
 pub mod window;
 pub mod worker_pool;
+pub mod zdd_unified;
 
 pub use context::{
     CheckpointAck, CheckpointBarrier, CheckpointCoordinator, ContextConfig, ContextMap,
