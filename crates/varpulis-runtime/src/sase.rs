@@ -2932,9 +2932,10 @@ fn advance_run_shared(
 
     // Check if we're at an accept state
     if current_state.state_type == StateType::Accept {
+        // PERF: Use std::mem::take since run is discarded after Complete
         return RunAdvanceResult::Complete(MatchResult {
-            captured: run.captured.clone(),
-            stack: run.stack.clone(),
+            captured: std::mem::take(&mut run.captured),
+            stack: std::mem::take(&mut run.stack),
             duration: run.started_at.elapsed(),
         });
     }
@@ -2972,9 +2973,10 @@ fn advance_run_shared(
             run.push(Arc::clone(&event), next_state.alias.clone());
 
             if next_state.state_type == StateType::Accept {
+                // PERF: Use std::mem::take since run is discarded after Complete
                 return RunAdvanceResult::Complete(MatchResult {
-                    captured: run.captured.clone(),
-                    stack: run.stack.clone(),
+                    captured: std::mem::take(&mut run.captured),
+                    stack: std::mem::take(&mut run.stack),
                     duration: run.started_at.elapsed(),
                 });
             }
@@ -3017,9 +3019,10 @@ fn advance_run_shared(
         let eps_state = &nfa.states[eps_id];
 
         if eps_state.state_type == StateType::Accept {
+            // PERF: Use std::mem::take since run is discarded after Complete
             return RunAdvanceResult::Complete(MatchResult {
-                captured: run.captured.clone(),
-                stack: run.stack.clone(),
+                captured: std::mem::take(&mut run.captured),
+                stack: std::mem::take(&mut run.stack),
                 duration: run.started_at.elapsed(),
             });
         }
@@ -3031,9 +3034,10 @@ fn advance_run_shared(
                 run.push(Arc::clone(&event), next_state.alias.clone());
 
                 if next_state.state_type == StateType::Accept {
+                    // PERF: Use std::mem::take since run is discarded after Complete
                     return RunAdvanceResult::Complete(MatchResult {
-                        captured: run.captured.clone(),
-                        stack: run.stack.clone(),
+                        captured: std::mem::take(&mut run.captured),
+                        stack: std::mem::take(&mut run.stack),
                         duration: run.started_at.elapsed(),
                     });
                 }
@@ -3121,9 +3125,10 @@ fn advance_and_state(
             // Check if join state is accept
             let join_state = &nfa.states[config.join_state];
             if join_state.state_type == StateType::Accept {
+                // PERF: Use std::mem::take since run is discarded after Complete
                 return RunAdvanceResult::Complete(MatchResult {
-                    captured: run.captured.clone(),
-                    stack: run.stack.clone(),
+                    captured: std::mem::take(&mut run.captured),
+                    stack: std::mem::take(&mut run.stack),
                     duration: run.started_at.elapsed(),
                 });
             }
