@@ -16,15 +16,16 @@ varpulis run my_patterns.vpl
 
 **Minimal VPL file with MQTT:**
 ```vpl
-config mqtt {
-    broker: "localhost",
+connector MqttBroker = mqtt (
+    host: "localhost",
     port: 1883,
-    client_id: "my-app",
-    input_topic: "events/#",
-    output_topic: "alerts"
-}
+    client_id: "my-app"
+)
 
-stream Alert = SomeEvent
+stream Events = SomeEvent
+    .from(MqttBroker, topic: "events/#")
+
+stream Alert = Events
     .where(value > 100)
     .emit(message: "High value detected")
 ```

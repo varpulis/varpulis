@@ -643,15 +643,3 @@ stream AllSignals = merge(
 .tap(counter: "trading_signals_total", labels: [signal_type, direction])
 .emit()
 
-# =============================================================================
-# Configuration
-# =============================================================================
-
-config:
-    mode: "low_latency"
-    state_backend: "rocksdb"
-    state_path: "/var/lib/varpulis/financial"
-    metrics_enabled: true
-    metrics_endpoint: "0.0.0.0:9090"
-    tracing_enabled: true
-    tracing_sample_rate: 0.1

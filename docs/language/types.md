@@ -117,7 +117,7 @@ let z = "hello"     # str
 let items = [1, 2]  # [int]
 
 stream Result = Input
-    .map(e => e.value * 2)  # return type inferred
+    .select(doubled: value * 2)  # return type inferred
 ```
 
 ## Type Conversions

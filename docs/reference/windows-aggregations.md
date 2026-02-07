@@ -11,8 +11,8 @@ Non-overlapping, fixed-duration windows. When the duration expires, the window e
 **Syntax:**
 ```vpl
 stream Name from EventType
-    window tumbling <duration>
-    aggregate { ... }
+    .window(<duration>)
+    .aggregate(...)
 ```
 
 **Parameters:**
@@ -27,13 +27,13 @@ stream Name from EventType
 **Example:**
 ```vpl
 stream MinuteStats from SensorReading
-    window tumbling 1m
-    aggregate {
+    .window(1m)
+    .aggregate(
         avg_value: avg(value),
         max_value: max(value),
         min_value: min(value),
         count: count()
-    }
+    )
 ```
 
 **Implementation:** `TumblingWindow` struct in `varpulis-runtime/src/window.rs:15`
@@ -47,7 +47,7 @@ Overlapping windows that slide at a specified interval, providing a rolling view
 **Syntax:**
 ```vpl
 stream Name from EventType
-    window sliding <size> by <slide>
+    .window(<size>, sliding: <slide>)
 ```
 
 **Parameters:**
@@ -63,11 +63,11 @@ stream Name from EventType
 **Example:**
 ```vpl
 stream RollingAverage from TemperatureReading
-    window sliding 5m by 30s
-    aggregate {
+    .window(5m, sliding: 30s)
+    .aggregate(
         rolling_avg: avg(temperature),
         recent_max: max(temperature)
-    }
+    )
 ```
 
 **Implementation:** `SlidingWindow` struct in `varpulis-runtime/src/window.rs:77`
@@ -81,8 +81,8 @@ Windows based on event count rather than time.
 **Syntax:**
 ```vpl
 stream Name from EventType
-    window count <n>
-    aggregate { ... }
+    .window(<n>)
+    .aggregate(...)
 ```
 
 **Parameters:**
@@ -96,11 +96,11 @@ stream Name from EventType
 **Example:**
 ```vpl
 stream BatchProcessor from Transaction
-    window count 100
-    aggregate {
+    .window(100)
+    .aggregate(
         batch_total: sum(amount),
         batch_count: count()
-    }
+    )
 ```
 
 **Implementation:** `CountWindow` struct in `varpulis-runtime/src/window.rs:146`
@@ -114,7 +114,7 @@ Count-based windows with overlap.
 **Syntax:**
 ```vpl
 stream Name from EventType
-    window count <size> by <slide>
+    .window(<size>, sliding: <slide>)
 ```
 
 **Parameters:**
@@ -124,10 +124,10 @@ stream Name from EventType
 **Example:**
 ```vpl
 stream RollingBatch from Reading
-    window count 100 by 25
-    aggregate {
+    .window(100, sliding: 25)
+    .aggregate(
         rolling_sum: sum(value)
-    }
+    )
 ```
 
 **Implementation:** `SlidingCountWindow` struct in `varpulis-runtime/src/window.rs:194`
@@ -141,9 +141,9 @@ Any window type can be partitioned by a key field.
 **Syntax:**
 ```vpl
 stream Name from EventType
-    partition by <field>
-    window <type> <params>
-    aggregate { ... }
+    .partition_by(<field>)
+    .window(<params>)
+    .aggregate(...)
 ```
 
 **Behavior:**
@@ -154,13 +154,13 @@ stream Name from EventType
 **Example:**
 ```vpl
 stream PerDeviceStats from SensorReading
-    partition by device_id
-    window tumbling 1m
-    aggregate {
+    .partition_by(device_id)
+    .window(1m)
+    .aggregate(
         device: device_id,
         avg_reading: avg(value),
         readings: count()
-    }
+    )
 ```
 
 **Implementations:**
@@ -181,11 +181,11 @@ stream PerDeviceStats from SensorReading
 
 **Examples:**
 ```vpl
-window tumbling 500ms   // Half second
-window tumbling 30s     // 30 seconds
-window sliding 5m by 1m // 5 min window, 1 min slide
-window tumbling 1h      // 1 hour
-window tumbling 1d      // 1 day
+.window(500ms)              // Half second
+.window(30s)                // 30 seconds
+.window(5m, sliding: 1m)    // 5 min window, 1 min slide
+.window(1h)                 // 1 hour
+.window(1d)                 // 1 day
 ```
 
 ---
@@ -202,7 +202,7 @@ Count the number of events in the window.
 
 **Example:**
 ```vpl
-aggregate { total_events: count() }
+.aggregate(total_events: count())
 ```
 
 ---
@@ -215,10 +215,10 @@ Sum numeric field values. SIMD-optimized on x86_64 with AVX2.
 
 **Example:**
 ```vpl
-aggregate {
+.aggregate(
     total_amount: sum(amount),
     total_quantity: sum(quantity)
-}
+)
 ```
 
 **Performance:** Uses SIMD (AVX2) for 4x parallel f64 addition when available.
@@ -235,7 +235,7 @@ Compute the arithmetic mean. SIMD-optimized.
 
 **Example:**
 ```vpl
-aggregate { average_price: avg(price) }
+.aggregate(average_price: avg(price))
 ```
 
 **Performance:** Extracts values to contiguous array for SIMD summation.
@@ -250,7 +250,7 @@ Find the minimum value. SIMD-optimized.
 
 **Example:**
 ```vpl
-aggregate { lowest_temp: min(temperature) }
+.aggregate(lowest_temp: min(temperature))
 ```
 
 **Performance:** Uses SIMD `_mm256_min_pd` for parallel comparison.
@@ -265,7 +265,7 @@ Find the maximum value. SIMD-optimized.
 
 **Example:**
 ```vpl
-aggregate { highest_temp: max(temperature) }
+.aggregate(highest_temp: max(temperature))
 ```
 
 **Performance:** Uses SIMD `_mm256_max_pd` for parallel comparison.
@@ -282,7 +282,7 @@ Compute the sample standard deviation using Welford's online algorithm.
 
 **Example:**
 ```vpl
-aggregate { temp_variance: stddev(temperature) }
+.aggregate(temp_variance: stddev(temperature))
 ```
 
 **Algorithm:** Single-pass Welford's algorithm for numerical stability.
@@ -297,11 +297,11 @@ Compute the p-th percentile (0-100).
 
 **Example:**
 ```vpl
-aggregate {
+.aggregate(
     p50_latency: percentile(latency, 50),
     p95_latency: percentile(latency, 95),
     p99_latency: percentile(latency, 99)
-}
+)
 ```
 
 ---
@@ -314,10 +314,10 @@ Collect all field values into an array.
 
 **Example:**
 ```vpl
-aggregate {
+.aggregate(
     all_sensors: collect(sensor_id),
     all_values: collect(value)
-}
+)
 ```
 
 ---
@@ -330,10 +330,10 @@ Return the first value in the window (by event order).
 
 **Example:**
 ```vpl
-aggregate {
+.aggregate(
     window_start: first(timestamp),
     initial_value: first(value)
-}
+)
 ```
 
 ---
@@ -346,10 +346,10 @@ Return the last value in the window (by event order).
 
 **Example:**
 ```vpl
-aggregate {
+.aggregate(
     window_end: last(timestamp),
     final_value: last(value)
-}
+)
 ```
 
 ---
@@ -362,10 +362,10 @@ Count unique values of a field.
 
 **Example:**
 ```vpl
-aggregate {
+.aggregate(
     unique_users: count(distinct(user_id)),
     unique_products: count(distinct(product_id))
-}
+)
 ```
 
 ---
@@ -463,43 +463,43 @@ On non-AVX2 systems, scalar 4-way loop unrolling provides ~2x speedup over naive
 
 ```vpl
 stream SensorAlerts from SensorReading
-    partition by sensor_id
-    window tumbling 1m
-    aggregate {
+    .partition_by(sensor_id)
+    .window(1m)
+    .aggregate(
         sensor: sensor_id,
         avg_value: avg(value),
         max_value: max(value),
         readings: count()
-    }
-    where avg_value > threshold or max_value > critical_threshold
-    emit alert("SensorAnomaly", "Sensor {sensor} avg={avg_value:.1}, max={max_value:.1}")
+    )
+    .where(avg_value > threshold or max_value > critical_threshold)
+    .emit(sensor: sensor, avg_value: avg_value, max_value: max_value)
 ```
 
 ### Rolling Statistics
 
 ```vpl
 stream RollingStats from MarketData
-    window sliding 5m by 10s
-    aggregate {
+    .window(5m, sliding: 10s)
+    .aggregate(
         vwap: sum(price * volume) / sum(volume),
         high: max(price),
         low: min(price),
         volatility: stddev(price)
-    }
+    )
 ```
 
 ### Batch Processing
 
 ```vpl
 stream BatchReport from Transaction
-    window count 1000
-    aggregate {
+    .window(1000)
+    .aggregate(
         batch_num: count(),
         total_value: sum(amount),
         avg_value: avg(amount),
         unique_customers: count(distinct(customer_id))
-    }
-    emit log("Processed batch: {batch_num} txns, ${total_value:.2} total")
+    )
+    .print("Processed batch: {batch_num} txns, ${total_value:.2} total")
 ```
 
 ### Multi-Level Aggregation
@@ -507,21 +507,21 @@ stream BatchReport from Transaction
 ```vpl
 // First level: per-device minute stats
 stream DeviceMinutes from SensorReading
-    partition by device_id
-    window tumbling 1m
-    aggregate {
+    .partition_by(device_id)
+    .window(1m)
+    .aggregate(
         device: device_id,
         minute_avg: avg(value)
-    }
+    )
 
 // Second level: all-device hour stats
 stream HourlyOverview from DeviceMinutes
-    window tumbling 1h
-    aggregate {
+    .window(1h)
+    .aggregate(
         active_devices: count(distinct(device)),
         overall_avg: avg(minute_avg),
         hottest_device: max(minute_avg)
-    }
+    )
 ```
 
 ---

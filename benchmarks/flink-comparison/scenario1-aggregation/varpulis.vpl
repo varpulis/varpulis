@@ -6,14 +6,12 @@
 #
 # LIGNES DE CODE: ~35 (vs ~180 en Flink avec MQTT)
 
-# MQTT Configuration for benchmark
-config mqtt {
-    broker: "localhost",
+# MQTT Connector for benchmark
+connector MqttBench = mqtt (
+    host: "localhost",
     port: 1883,
-    client_id: "varpulis-scenario1",
-    input_topic: "benchmark/input/PageView",
-    output_topic: "benchmark/output/varpulis"
-}
+    client_id: "varpulis-scenario1"
+)
 
 event PageView:
     user_id: str
@@ -42,7 +40,3 @@ stream PageViewsByCategory = PageView
         total_duration_ms: total_duration,
         window_end: now()
     )
-
-# Configuration
-config:
-    mode: "throughput"

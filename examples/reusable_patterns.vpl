@@ -120,7 +120,3 @@ stream SuspiciousActivity = LoginStream as login
         failed_amount: failed_tx.amount,
         severity: if failed_tx.amount > 1000 then "high" else "medium"
     )
-
-# Runtime configuration
-config:
-    mode: "low_latency"
