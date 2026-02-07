@@ -1,0 +1,17 @@
+# Scenario 7: SASE+ Sequence Pattern Benchmark
+# Simple A -> B sequence pattern to test batch processing order
+#
+# Apama equivalent: on all A() as a -> B(id=a.id) within(60.0)
+
+event A:
+    id: int
+
+event B:
+    id: int
+
+# SASE+ sequence pattern: A followed by B with matching ID
+stream Matches = A as a
+    -> B as b
+    .where(a.id == b.id)
+    .within(60s)
+    .emit(event_type: "Match", a_id: a.id, b_id: b.id)

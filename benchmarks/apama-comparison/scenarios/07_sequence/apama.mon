@@ -1,0 +1,29 @@
+/**
+ * Scenario 7: SASE+ Sequence Pattern Benchmark
+ * Simple A -> B sequence pattern
+ */
+
+event A {
+    integer id;
+}
+
+event B {
+    integer id;
+}
+
+event Match {
+    integer a_id;
+    integer b_id;
+}
+
+monitor SequenceDetection {
+    action onload() {
+        // Sequence: A followed by B with same ID within 60s
+        // Note: Apama 27.18 requires nested on syntax for inter-event refs
+        on all A() as a {
+            on B(id=a.id) as b within(60.0) {
+                send Match(a.id, b.id) to "output";
+            }
+        }
+    }
+}
