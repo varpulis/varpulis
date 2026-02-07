@@ -99,6 +99,7 @@ pub(crate) async fn execute_pipeline(
             op,
             &stream.name,
             &mut stream.sase_engine,
+            &mut stream.hamlet_aggregator,
             stream.attention_window.as_ref(),
             &mut current_events,
             &mut emitted_events,
@@ -143,10 +144,11 @@ fn should_skip_op(op: &RuntimeOp, flags: SkipFlags) -> bool {
         // Print/Log skipping
         RuntimeOp::Print(_) | RuntimeOp::Log(_) => flags.print_log,
 
-        // Sequence/Pattern skipping
-        RuntimeOp::Sequence | RuntimeOp::AttentionWindow(_) | RuntimeOp::Pattern(_) => {
-            flags.sequence_pattern
-        }
+        // Sequence/Pattern/TrendAggregate skipping
+        RuntimeOp::Sequence
+        | RuntimeOp::AttentionWindow(_)
+        | RuntimeOp::Pattern(_)
+        | RuntimeOp::TrendAggregate(_) => flags.sequence_pattern,
 
         // WhereClosure skipping
         RuntimeOp::WhereClosure(_) => flags.where_closure,
@@ -163,6 +165,7 @@ async fn execute_op(
     op: &mut RuntimeOp,
     stream_name: &str,
     sase_engine: &mut Option<crate::sase::SaseEngine>,
+    hamlet_aggregator: &mut Option<crate::hamlet::HamletAggregator>,
     attention_window: Option<&crate::attention::AttentionWindow>,
     current_events: &mut Vec<SharedEvent>,
     emitted_events: &mut Vec<SharedEvent>,
@@ -462,6 +465,41 @@ async fn execute_op(
             }
         }
 
+        RuntimeOp::TrendAggregate(config) => {
+            // Process events through Hamlet aggregator (async path)
+            let mut trend_results = Vec::new();
+
+            if let Some(ref mut hamlet) = hamlet_aggregator {
+                for event in current_events.iter() {
+                    let results = hamlet.process(Arc::clone(event));
+                    for agg_result in results {
+                        let mut trend_event = Event::new("TrendAggregateResult");
+                        trend_event
+                            .data
+                            .insert("stream".into(), Value::Str(stream_name.to_string().into()));
+                        trend_event
+                            .data
+                            .insert("query_id".into(), Value::Int(agg_result.query_id as i64));
+                        for (alias, _) in &config.fields {
+                            trend_event
+                                .data
+                                .insert(alias.clone().into(), Value::Int(agg_result.value as i64));
+                        }
+                        trend_event
+                            .data
+                            .insert("is_final".into(), Value::Bool(agg_result.is_final));
+                        trend_results.push(Arc::new(trend_event));
+                    }
+                }
+            }
+
+            if trend_results.is_empty() {
+                current_events.clear();
+            } else {
+                *current_events = trend_results;
+            }
+        }
+
         RuntimeOp::AttentionWindow(_config) => {
             // AttentionWindow is handled at stream level before operations
         }
@@ -578,6 +616,7 @@ pub(crate) fn execute_pipeline_sync(
             op,
             &stream.name,
             &mut stream.sase_engine,
+            &mut stream.hamlet_aggregator,
             stream.attention_window.as_ref(),
             &mut current_events,
             &mut emitted_events,
@@ -614,6 +653,7 @@ fn execute_op_sync(
     op: &mut RuntimeOp,
     stream_name: &str,
     sase_engine: &mut Option<crate::sase::SaseEngine>,
+    hamlet_aggregator: &mut Option<crate::hamlet::HamletAggregator>,
     attention_window: Option<&crate::attention::AttentionWindow>,
     current_events: &mut Vec<SharedEvent>,
     emitted_events: &mut Vec<SharedEvent>,
@@ -899,6 +939,41 @@ fn execute_op_sync(
                 current_events.clear();
             } else {
                 *current_events = sequence_results;
+            }
+        }
+
+        RuntimeOp::TrendAggregate(config) => {
+            // Process events through Hamlet aggregator (sync path)
+            let mut trend_results = Vec::new();
+
+            if let Some(ref mut hamlet) = hamlet_aggregator {
+                for event in current_events.iter() {
+                    let results = hamlet.process(Arc::clone(event));
+                    for agg_result in results {
+                        let mut trend_event = Event::new("TrendAggregateResult");
+                        trend_event
+                            .data
+                            .insert("stream".into(), Value::Str(stream_name.to_string().into()));
+                        trend_event
+                            .data
+                            .insert("query_id".into(), Value::Int(agg_result.query_id as i64));
+                        for (alias, _) in &config.fields {
+                            trend_event
+                                .data
+                                .insert(alias.clone().into(), Value::Int(agg_result.value as i64));
+                        }
+                        trend_event
+                            .data
+                            .insert("is_final".into(), Value::Bool(agg_result.is_final));
+                        trend_results.push(Arc::new(trend_event));
+                    }
+                }
+            }
+
+            if trend_results.is_empty() {
+                current_events.clear();
+            } else {
+                *current_events = trend_results;
             }
         }
 

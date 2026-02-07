@@ -175,7 +175,7 @@ impl NfaZdd {
     pub fn add_final(&mut self, state: ZddState) {
         self.final_states
             .entry(state.query_id)
-            .or_insert_with(SmallVec::new)
+            .or_default()
             .push(state.zdd_var);
 
         // Update query tracker
@@ -191,7 +191,7 @@ impl NfaZdd {
         let transition = ZddTransition::new(from, to, event_type);
         self.transitions_by_event
             .entry(event_type)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(transition);
     }
 
@@ -282,7 +282,8 @@ impl NfaZdd {
                 let entry = query_updates.entry(query_id).or_insert((false, None));
 
                 // Check if we're leaving initial state
-                if transition.from.zdd_var == self.initial_states.get(&query_id).copied().unwrap_or(0)
+                if transition.from.zdd_var
+                    == self.initial_states.get(&query_id).copied().unwrap_or(0)
                     && transition.from.zdd_var != transition.to.zdd_var
                 {
                     entry.0 = true; // Query became active
@@ -319,7 +320,12 @@ impl NfaZdd {
 
         // Keep initial states active for queries that haven't started yet
         for (&query_id, &initial_var) in &self.initial_states {
-            if !self.query_trackers.get(&query_id).map(|t| t.is_active).unwrap_or(false) {
+            if !self
+                .query_trackers
+                .get(&query_id)
+                .map(|t| t.is_active)
+                .unwrap_or(false)
+            {
                 self.active_state_set.insert(initial_var, true);
             }
         }
@@ -409,9 +415,7 @@ pub struct NfaZddBuilder {
 impl NfaZddBuilder {
     /// Create a new builder
     pub fn new() -> Self {
-        Self {
-            nfa: NfaZdd::new(),
-        }
+        Self { nfa: NfaZdd::new() }
     }
 
     /// Add a simple sequence query (A -> B -> C)

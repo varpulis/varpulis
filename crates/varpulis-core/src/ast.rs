@@ -322,6 +322,9 @@ pub enum StreamOp {
     Watermark(Vec<NamedArg>),
     /// Allowed lateness for late data: `.allowed_lateness(30s)`
     AllowedLateness(Expr),
+    /// Trend aggregation over Kleene patterns (Hamlet engine):
+    /// `.trend_aggregate(count: count_trends(), events: count_events(rising))`
+    TrendAggregate(Vec<TrendAggItem>),
 }
 
 /// A path in a fork construct
@@ -331,6 +334,17 @@ pub struct ForkPath {
     pub name: String,
     /// Sequence of operations for this path
     pub ops: Vec<StreamOp>,
+}
+
+/// Item in a trend_aggregate operation
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TrendAggItem {
+    /// Output alias for the aggregation result
+    pub alias: String,
+    /// Aggregation function name: "count_trends", "count_events", "sum_trends", etc.
+    pub func: String,
+    /// Optional argument (field reference for sum/avg/min/max, alias for count_events)
+    pub arg: Option<Expr>,
 }
 
 /// Followed-by clause for temporal sequences

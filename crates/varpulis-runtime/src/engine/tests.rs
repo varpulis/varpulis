@@ -2940,3 +2940,212 @@ async fn test_batch_sequence_processing() {
         outputs.len()
     );
 }
+
+// ===========================================================================
+// Trend Aggregation (Hamlet) Integration Tests
+// ===========================================================================
+
+#[tokio::test]
+async fn test_trend_aggregate_loads_without_error() {
+    let source = r#"
+        stream RisingTrend = StockTick as first
+            -> all StockTick as rising
+            .within(60s)
+            .trend_aggregate(count: count_trends())
+            .emit(trends: count)
+    "#;
+
+    let program = parse_program(source);
+    let (tx, _rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+
+    // Should load without error and create a Hamlet aggregator
+    engine.load(&program).unwrap();
+
+    // Verify the stream exists
+    let metrics = engine.metrics();
+    assert_eq!(metrics.streams_count, 1);
+}
+
+#[tokio::test]
+async fn test_trend_aggregate_processes_events() {
+    let source = r#"
+        stream RisingTrend = StockTick as first
+            -> all StockTick as rising
+            .within(60s)
+            .trend_aggregate(count: count_trends())
+            .emit(trends: count)
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    // Process A -> B+ pattern events
+    engine
+        .process(Event::new("StockTick").with_field("price", 100.0))
+        .await
+        .unwrap();
+
+    engine
+        .process(Event::new("StockTick").with_field("price", 110.0))
+        .await
+        .unwrap();
+
+    engine
+        .process(Event::new("StockTick").with_field("price", 120.0))
+        .await
+        .unwrap();
+
+    // Events should be processed without panicking
+    // Output depends on Hamlet aggregator incremental emission
+    let mut outputs = Vec::new();
+    while let Ok(output) = rx.try_recv() {
+        outputs.push(output);
+    }
+    // The aggregator is in incremental mode, so we may get results
+    // Main assertion: no panics, events processed cleanly
+    let metrics = engine.metrics();
+    assert!(metrics.events_processed > 0);
+}
+
+#[tokio::test]
+async fn test_trend_aggregate_backward_compat() {
+    // Verify that existing SASE detection mode still works unchanged
+    let source = r#"
+        stream OrderPayment = Order
+            -> Payment as payment
+            .emit(status: "matched")
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    engine
+        .process(Event::new("Order").with_field("id", 1i64))
+        .await
+        .unwrap();
+    engine
+        .process(Event::new("Payment").with_field("order_id", 1i64))
+        .await
+        .unwrap();
+
+    let output = rx.try_recv().expect("Should have output");
+    assert_eq!(&*output.event_type, "OrderPayment");
+}
+
+#[tokio::test]
+async fn test_trend_aggregate_with_partition() {
+    let source = r#"
+        stream TrendsBySymbol = StockTick as first
+            -> all StockTick as rising
+            .within(60s)
+            .partition_by(symbol)
+            .trend_aggregate(count: count_trends())
+            .emit(trends: count)
+    "#;
+
+    let program = parse_program(source);
+    let (tx, _rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+
+    // Should load with partition + trend_aggregate
+    engine.load(&program).unwrap();
+
+    // Process some events
+    engine
+        .process(
+            Event::new("StockTick")
+                .with_field("symbol", "AAPL")
+                .with_field("price", 100.0),
+        )
+        .await
+        .unwrap();
+    engine
+        .process(
+            Event::new("StockTick")
+                .with_field("symbol", "AAPL")
+                .with_field("price", 110.0),
+        )
+        .await
+        .unwrap();
+    engine
+        .process(
+            Event::new("StockTick")
+                .with_field("symbol", "GOOG")
+                .with_field("price", 200.0),
+        )
+        .await
+        .unwrap();
+
+    // No panic = success
+    let metrics = engine.metrics();
+    assert_eq!(metrics.events_processed, 3);
+}
+
+#[tokio::test]
+async fn test_trend_aggregate_multi_query_sharing() {
+    // Two streams using .trend_aggregate() on overlapping patterns
+    // The engine should detect the sharing opportunity
+    let source = r#"
+        stream TrendsBySymbol = StockTick as first
+            -> all StockTick as rising
+            .within(60s)
+            .partition_by(symbol)
+            .trend_aggregate(count: count_trends())
+            .emit(symbol: symbol, count: count)
+
+        stream TrendsByExchange = StockTick as first
+            -> all StockTick as rising
+            .within(60s)
+            .partition_by(exchange)
+            .trend_aggregate(count: count_trends())
+            .emit(exchange: exchange, count: count)
+    "#;
+
+    let program = parse_program(source);
+    let (tx, _rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    // Both streams should be registered
+    let metrics = engine.metrics();
+    assert_eq!(metrics.streams_count, 2);
+
+    // Process some events - should not panic even with sharing
+    engine
+        .process(
+            Event::new("StockTick")
+                .with_field("symbol", "AAPL")
+                .with_field("exchange", "NYSE")
+                .with_field("price", 100.0),
+        )
+        .await
+        .unwrap();
+
+    engine
+        .process(
+            Event::new("StockTick")
+                .with_field("symbol", "AAPL")
+                .with_field("exchange", "NYSE")
+                .with_field("price", 110.0),
+        )
+        .await
+        .unwrap();
+
+    engine
+        .process(
+            Event::new("StockTick")
+                .with_field("symbol", "GOOG")
+                .with_field("exchange", "NASDAQ")
+                .with_field("price", 200.0),
+        )
+        .await
+        .unwrap();
+
+    let metrics = engine.metrics();
+    assert_eq!(metrics.events_processed, 3);
+}

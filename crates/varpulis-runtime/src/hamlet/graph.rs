@@ -56,7 +56,7 @@ impl HamletGraph {
 
         self.type_to_graphlets
             .entry(type_index)
-            .or_insert_with(SmallVec::new)
+            .or_default()
             .push(id);
 
         id
@@ -65,11 +65,7 @@ impl HamletGraph {
     /// Add an event to the graph
     ///
     /// Returns (global_node_id, graphlet_id, local_index)
-    pub fn add_event(
-        &mut self,
-        event: SharedEvent,
-        type_index: u16,
-    ) -> (NodeId, GraphletId, u16) {
+    pub fn add_event(&mut self, event: SharedEvent, type_index: u16) -> (NodeId, GraphletId, u16) {
         let node_id = self.next_node_id;
         self.next_node_id += 1;
 
@@ -215,7 +211,11 @@ impl HamletGraph {
     }
 
     /// Set sharing queries for a graphlet
-    pub fn set_sharing_queries(&mut self, graphlet_id: GraphletId, queries: SmallVec<[QueryId; 8]>) {
+    pub fn set_sharing_queries(
+        &mut self,
+        graphlet_id: GraphletId,
+        queries: SmallVec<[QueryId; 8]>,
+    ) {
         if let Some(graphlet) = self.graphlets.get_mut(&graphlet_id) {
             graphlet.sharing_queries = queries;
             graphlet.is_shared = graphlet.sharing_queries.len() > 1;
@@ -283,10 +283,7 @@ mod tests {
         assert_ne!(g1, g2);
 
         // Check A graphlet is inactive
-        assert_eq!(
-            graph.graphlet(g1).unwrap().status,
-            GraphletStatus::Inactive
-        );
+        assert_eq!(graph.graphlet(g1).unwrap().status, GraphletStatus::Inactive);
     }
 
     #[test]

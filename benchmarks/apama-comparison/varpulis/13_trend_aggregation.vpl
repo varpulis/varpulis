@@ -1,0 +1,67 @@
+# Trend Aggregation Example
+#
+# Demonstrates two modes:
+# 1. Detection mode (SASE+) — finds individual pattern matches
+# 2. Aggregation mode (Hamlet) — counts trends without enumerating them
+#
+# For benchmark comparison with Apama's aggregate queries.
+
+# ============================================================================
+# Mode 1: Detection — Individual Rising Price Pattern Matches
+# ============================================================================
+# This uses the default SASE+ engine to detect each individual rising price
+# trend. Each match produces a separate output event with captured event data.
+
+stream RisingPriceDetected = StockTick as first
+    -> all StockTick where price > first.price as rising
+    -> StockTick where price < rising.price as drop
+    .within(60s)
+    .emit(
+        event_type: "PriceSpike",
+        symbol: first.symbol,
+        start_price: first.price,
+        end_price: drop.price
+    )
+
+# ============================================================================
+# Mode 2: Aggregation — Count Rising Trends (Hamlet Engine)
+# ============================================================================
+# This uses the Hamlet engine to count how many rising price trends exist
+# without constructing each one individually. O(n) per event vs O(2^n).
+
+stream RisingTrendCount = StockTick as first
+    -> all StockTick where price > first.price as rising
+    -> StockTick where price < rising.price as drop
+    .within(60s)
+    .partition_by(symbol)
+    .trend_aggregate(
+        trend_count: count_trends(),
+        event_count: count_events(rising)
+    )
+    .emit(
+        event_type: "TrendStats",
+        symbol: first.symbol,
+        trends: trend_count,
+        events: event_count
+    )
+
+# ============================================================================
+# Multi-Query Sharing Example
+# ============================================================================
+# These two queries share the "StockTick+" Kleene sub-pattern.
+# The engine automatically detects the sharing opportunity at compile time
+# and uses a single shared Hamlet graph. Results are dispatched per-query.
+
+stream TrendsBySymbol = StockTick as first
+    -> all StockTick where price > first.price
+    .within(60s)
+    .partition_by(symbol)
+    .trend_aggregate(count: count_trends())
+    .emit(symbol: first.symbol, count: count)
+
+stream TrendsByExchange = StockTick as first
+    -> all StockTick where price > first.price
+    .within(60s)
+    .partition_by(exchange)
+    .trend_aggregate(count: count_trends())
+    .emit(exchange: first.exchange, count: count)

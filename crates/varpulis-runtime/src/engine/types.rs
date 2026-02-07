@@ -109,6 +109,8 @@ pub(crate) struct StreamDefinition {
     pub join_buffer: Option<JoinBuffer>,
     /// Mapping from event type to join source name (for join streams)
     pub event_type_to_source: FxHashMap<String, String>,
+    /// Hamlet aggregator for trend aggregation mode
+    pub hamlet_aggregator: Option<crate::hamlet::HamletAggregator>,
 }
 
 /// Source of events for a stream
@@ -190,6 +192,16 @@ pub(crate) enum RuntimeOp {
     Process(varpulis_core::ast::Expr),
     /// Send to connector: `.to(ConnectorName)`
     To(ToConfig),
+    /// Trend aggregation via Hamlet engine (replaces Sequence for this stream)
+    TrendAggregate(TrendAggregateConfig),
+}
+
+/// Configuration for trend aggregation via Hamlet engine
+pub(crate) struct TrendAggregateConfig {
+    /// Fields to compute: (output_alias, aggregate_function)
+    pub fields: Vec<(String, crate::greta::GretaAggregate)>,
+    /// Query ID in the Hamlet aggregator
+    pub query_id: crate::greta::QueryId,
 }
 
 /// Configuration for .to() connector routing
