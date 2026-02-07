@@ -203,25 +203,12 @@ stream CompressorDegradation = HVAC
         heads: 4,
         embedding: "rule_based"
     )
-    .pattern(
-        degradation: events => {
-            let pressures = events.map(e => e.compressor_pressure)
-            # Simple trend: (last - first) / count as approximation of slope
-            let pressure_trend = (last(pressures) - first(pressures)) / len(pressures)
-            let powers = events.map(e => e.power_consumption)
-            let power_trend = (last(powers) - first(powers)) / len(powers)
-            let attention_scores = events.sliding_pairs().map((e1, e2) => attention_score(e1, e2))
-            let high_correlation = attention_scores.filter(s => s > 0.8).count() > events.len() * 0.7
-            let pressure_declining = pressure_trend < -0.01
-            let power_increasing = power_trend > 0.05
-            high_correlation and pressure_declining and power_increasing
-        }
-    )
+    .where(attention_score > 0.75 and attention_matches > 5)
     .emit(
         alert_type: "COMPRESSOR_DEGRADATION",
         severity: "warning",
-        unit_id: last(unit_id),
-        zone: last(zone),
+        unit_id: unit_id,
+        zone: zone,
         confidence: 0.75,
         attention_score: attention_score,
         attention_matches: attention_matches,
@@ -238,24 +225,12 @@ stream RefrigerantLeak = HVAC
         heads: 4,
         embedding: "rule_based"
     )
-    .pattern(
-        leak_pattern: events => {
-            let temps = events.map(e => e.refrigerant_temp)
-            # Simple trend: (last - first) / count as approximation of slope
-            let temp_trend = (last(temps) - first(temps)) / len(temps)
-            let pressures = events.map(e => e.compressor_pressure)
-            # Baseline pressure: typical operating pressure is ~150 PSI
-            let baseline_psi = 150.0
-            let pressure_elevated = avg(pressures) > baseline_psi * 1.15
-            let anomaly_correlation = events.filter(e => e.refrigerant_temp > 45).sliding_pairs().map((e1, e2) => attention_score(e1, e2)).filter(s => s > 0.85).count()
-            temp_trend > 0.1 and pressure_elevated and anomaly_correlation > 5
-        }
-    )
+    .where(attention_score > 0.85 and attention_matches > 5 and refrigerant_temp > 45)
     .emit(
         alert_type: "REFRIGERANT_LEAK_SUSPECTED",
         severity: "critical",
-        unit_id: last(unit_id),
-        zone: last(zone),
+        unit_id: unit_id,
+        zone: zone,
         confidence: 0.8,
         attention_score: attention_score,
         attention_matches: attention_matches,
@@ -272,22 +247,12 @@ stream FanDegradation = HVAC
         heads: 4,
         embedding: "rule_based"
     )
-    .pattern(
-        fan_issue: events => {
-            let speeds = events.map(e => e.fan_speed)
-            let speed_variance = variance(speeds)
-            let baseline_variance = 50
-            let powers = events.map(e => e.power_consumption)
-            # Simple trend: (last - first) / count as approximation of slope
-            let power_trend = (last(powers) - first(powers)) / len(powers)
-            speed_variance > baseline_variance * 2 and power_trend > 0.02
-        }
-    )
+    .where(attention_score > 0.7 and attention_matches > 3)
     .emit(
         alert_type: "FAN_MOTOR_DEGRADATION",
         severity: "warning",
-        unit_id: last(unit_id),
-        zone: last(zone),
+        unit_id: unit_id,
+        zone: zone,
         confidence: 0.7,
         attention_score: attention_score,
         attention_matches: attention_matches,
