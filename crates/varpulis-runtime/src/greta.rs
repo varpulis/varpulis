@@ -1,10 +1,26 @@
 //! # GRETA - Graph-based Real-time Event Trend Aggregation
 //!
 //! Foundation for online trend aggregation without explicit trend construction.
-//! Based on VLDB 2017 paper: "GRETA: Graph-based Real-time Event Trend Aggregation"
 //!
-//! This module provides the baseline non-shared aggregation that both
-//! Hamlet and ZDD-unified approaches build upon.
+//! ## References
+//!
+//! This implementation is based on:
+//!
+//! > **Olga Poppe, Chuan Lei, Elke A. Rundensteiner, and David Maier.**
+//! > *GRETA: Graph-based Real-time Event Trend Aggregation.*
+//! > Proceedings of the VLDB Endowment, Vol. 11, No. 1, pp. 80-92, 2017.
+//! > DOI: [10.14778/3151113.3151120](https://doi.org/10.14778/3151113.3151120)
+//!
+//! ## Overview
+//!
+//! GRETA solves the problem of computing aggregations over event trends (sequences
+//! matching a pattern) without explicitly constructing all matching trends, which
+//! can be exponential in the number of events.
+//!
+//! The key insight is that aggregations like COUNT, SUM, AVG can be computed
+//! incrementally by propagating partial results through an event graph, where:
+//! - Nodes represent events
+//! - Edges represent adjacency relations (event e' can precede event e in a trend)
 //!
 //! ## Key Concepts
 //!
@@ -14,8 +30,14 @@
 //!
 //! ## Complexity
 //!
-//! - Time: O(n²) per query (vs O(2^n) for explicit trend construction)
-//! - Space: O(n) per query
+//! - **Time**: O(n²) per query (vs O(2^n) for explicit trend construction)
+//! - **Space**: O(n) per query
+//!
+//! ## Usage in Varpulis
+//!
+//! This module provides the baseline non-shared aggregation that both the
+//! [`hamlet`](crate::hamlet) and [`zdd_unified`](crate::zdd_unified) approaches
+//! build upon for multi-query optimization.
 
 use crate::event::SharedEvent;
 use rustc_hash::FxHashMap;
