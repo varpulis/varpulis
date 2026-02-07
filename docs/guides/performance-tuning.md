@@ -208,22 +208,22 @@ Benefits:
 1. **Prefer count windows for bounded memory:**
 ```vpl
 // Fixed memory: exactly 1000 events
-window count 1000
+.window(1000)
 ```
 
 2. **Use shorter time windows:**
 ```vpl
 // 5 minutes instead of 1 hour = 12x less memory
-window tumbling 5m
+.window(5m)
 ```
 
 3. **Limit partition cardinality:**
 ```vpl
 // Bad: unbounded partitions
-partition by request_id
+.partition_by(request_id)
 
 // Good: bounded partitions
-partition by region  // Limited number of regions
+.partition_by(region)  // Limited number of regions
 ```
 
 ### ZDD Optimization
@@ -318,15 +318,15 @@ Put selective filters first to reduce data volume:
 ```vpl
 // Good: filter first, then aggregate
 stream Optimized from SensorReading
-    where sensor_type == "temperature"  // Filter first
-    window tumbling 1m
-    aggregate { avg: avg(value) }
+    .where(sensor_type == "temperature")  // Filter first
+    .window(1m)
+    .aggregate(avg: avg(value))
 
 // Less optimal: aggregate all, then filter
 stream LessOptimal from SensorReading
-    window tumbling 1m
-    aggregate { avg: avg(value), type: first(sensor_type) }
-    where type == "temperature"  // Filter after aggregation
+    .window(1m)
+    .aggregate(avg: avg(value), type: first(sensor_type))
+    .where(type == "temperature")  // Filter after aggregation
 ```
 
 ### Minimize Pattern Complexity
@@ -529,7 +529,7 @@ cgexec -g memory:varpulis varpulis simulate ...
 1. Add timeouts to patterns
 2. Reduce window durations
 3. Limit partition cardinality
-4. Enable checkpointing to offload state
+4. Use shorter window durations or count-based windows
 
 ---
 

@@ -49,12 +49,15 @@ Create a file called `temperature_monitor.vpl`:
 
 // Define what events we're listening for
 stream TemperatureReadings from TemperatureReading
-    where temperature > 0  // Basic validation
+    .where(temperature > 0)  // Basic validation
 
 // Create an alert stream for high temperatures
 stream HighTempAlerts from TemperatureReading
-    where temperature > 100
-    emit alert("HighTemperature", "Temperature exceeded 100 degrees")
+    .where(temperature > 100)
+    .emit(
+        alert_type: "HighTemperature",
+        message: "Temperature exceeded 100 degrees"
+    )
 ```
 
 ### Step 2: Validate the Syntax
@@ -183,21 +186,25 @@ stream Readings from TemperatureReading
 
 // Calculate average temperature over 1-minute windows
 stream AvgTemperature from TemperatureReading
-    window tumbling 1m
-    aggregate {
+    .window(1m)
+    .aggregate(
         avg_temp: avg(temperature),
         max_temp: max(temperature),
         min_temp: min(temperature),
         reading_count: count()
-    }
-    emit log("Minute summary: avg={avg_temp:.1}, max={max_temp:.1}, min={min_temp:.1}")
+    )
+    .print("Minute summary: avg={avg_temp}, max={max_temp}, min={min_temp}")
 
 // Alert on sustained high temperatures (average > 90 over window)
 stream SustainedHighTemp from TemperatureReading
-    window tumbling 1m
-    aggregate { avg_temp: avg(temperature) }
-    where avg_temp > 90
-    emit alert("SustainedHighTemp", "Average temperature {avg_temp:.1} exceeds threshold")
+    .window(1m)
+    .aggregate(avg_temp: avg(temperature))
+    .where(avg_temp > 90)
+    .emit(
+        alert_type: "SustainedHighTemp",
+        avg_temp: avg_temp,
+        message: "Average temperature exceeds threshold"
+    )
 ```
 
 ## Running the Built-in Demo

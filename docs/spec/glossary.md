@@ -74,11 +74,6 @@ Stream processing library for Apache Kafka. See [comparison](overview.md#vs-kafk
 ### Latency
 Time elapsed between receiving an event and producing the result.
 
-## O
-
-### OTLP (OpenTelemetry Protocol)
-Standard protocol for sending traces, metrics, and logs.
-
 ## P
 
 ### Partition

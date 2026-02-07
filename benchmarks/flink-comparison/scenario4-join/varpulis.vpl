@@ -6,14 +6,12 @@
 #
 # LIGNES DE CODE: ~55 (vs ~200 en Flink avec MQTT)
 
-# MQTT Configuration for benchmark
-config mqtt {
-    broker: "localhost",
+# MQTT Connector for benchmark
+connector MqttBench = mqtt (
+    host: "localhost",
     port: 1883,
-    client_id: "varpulis-scenario4",
-    input_topic: "benchmark/input/#",
-    output_topic: "benchmark/output/varpulis"
-}
+    client_id: "varpulis-scenario4"
+)
 
 event MarketATick:
     symbol: str
@@ -59,7 +57,3 @@ stream ArbitrageOpportunity = join(MarketA, MarketB)
         sell_on: if price_a > price_b then exchange_a else exchange_b,
         potential_profit: abs(price_a - price_b) * min_volume
     )
-
-# Configuration
-config:
-    mode: "low_latency"

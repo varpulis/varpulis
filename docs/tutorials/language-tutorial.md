@@ -62,71 +62,71 @@ stream Temperatures from TemperatureReading
 stream T = Temperatures
 ```
 
-### Filtering with `where`
+### Filtering with `.where()`
 
 Filter events based on conditions:
 
 ```vpl
 // Single condition
 stream HighTemps from TemperatureReading
-    where temperature > 100
+    .where(temperature > 100)
 
 // Multiple conditions (AND)
 stream CriticalTemps from TemperatureReading
-    where temperature > 100 and sensor_id == "critical-zone"
+    .where(temperature > 100 and sensor_id == "critical-zone")
 
 // OR conditions
 stream AlertZones from TemperatureReading
-    where sensor_id == "zone-1" or sensor_id == "zone-2"
+    .where(sensor_id == "zone-1" or sensor_id == "zone-2")
 
 // Compound conditions
 stream Filtered from TemperatureReading
-    where (temperature > 90 and humidity > 80) or emergency == true
+    .where((temperature > 90 and humidity > 80) or emergency == true)
 ```
 
 **Comparison operators**: `==`, `!=`, `<`, `<=`, `>`, `>=`
 
 **Logical operators**: `and`, `or`, `not`
 
-### Selecting Fields with `select`
+### Selecting Fields with `.select()`
 
 Transform events by selecting specific fields or computing new ones:
 
 ```vpl
 stream SimplifiedTemps from TemperatureReading
-    select {
+    .select(
         sensor: sensor_id,
         temp: temperature,
         is_high: temperature > 80
-    }
+    )
 
 // Computed fields
 stream EnhancedTemps from TemperatureReading
-    select {
+    .select(
         sensor_id,
         temp_celsius: (temperature - 32) * 5 / 9,
         reading_time: timestamp
-    }
+    )
 ```
 
 ### Emitting Alerts and Logs
 
-Use `emit` to output data when conditions are met:
+Use `.emit()` and `.print()` to output data when conditions are met:
 
 ```vpl
 // Emit an alert
 stream TempAlerts from TemperatureReading
-    where temperature > 100
-    emit alert("HighTemperature", "Sensor {sensor_id} reading {temperature}°F")
+    .where(temperature > 100)
+    .emit(alert_type: "HighTemperature", message: "Sensor {sensor_id} reading {temperature}°F")
 
-// Emit to log
+// Print to log
 stream TempLog from TemperatureReading
-    emit log("Received: {sensor_id} = {temperature}")
+    .print("Received: {sensor_id} = {temperature}")
 
 // Emit with severity
 stream CriticalAlerts from TemperatureReading
-    where temperature > 150
-    emit alert("CriticalTemperature", "DANGER: {sensor_id} at {temperature}°F", severity: "critical")
+    .where(temperature > 150)
+    .emit(alert_type: "CriticalTemperature", message: "DANGER: {sensor_id} at {temperature}°F", severity: "critical")
 ```
 
 ### Variables and Constants
@@ -145,8 +145,8 @@ const API_KEY = "secret123"
 
 // Use in streams
 stream Alerts from TemperatureReading
-    where temperature > threshold
-    emit alert("High", "Above threshold")
+    .where(temperature > threshold)
+    .emit(alert_type: "High", message: "Above threshold")
 ```
 
 ### Comments
@@ -175,25 +175,25 @@ Non-overlapping, fixed-duration windows:
 ```vpl
 // 1-minute tumbling window
 stream MinuteStats from TemperatureReading
-    window tumbling 1m
-    aggregate {
+    .window(1m)
+    .aggregate(
         avg_temp: avg(temperature),
         max_temp: max(temperature),
         count: count()
-    }
+    )
 
 // 5-second window
 stream RapidStats from SensorReading
-    window tumbling 5s
-    aggregate { readings: count() }
+    .window(5s)
+    .aggregate(readings: count())
 
 // 1-hour window
 stream HourlyReport from Transaction
-    window tumbling 1h
-    aggregate {
+    .window(1h)
+    .aggregate(
         total: sum(amount),
         avg_amount: avg(amount)
-    }
+    )
 ```
 
 **Duration units**: `s` (seconds), `m` (minutes), `h` (hours), `d` (days)
@@ -205,18 +205,18 @@ Overlapping windows with a slide interval:
 ```vpl
 // 5-minute window, slides every 1 minute
 stream SlidingAvg from TemperatureReading
-    window sliding 5m by 1m
-    aggregate {
+    .window(5m, sliding: 1m)
+    .aggregate(
         rolling_avg: avg(temperature)
-    }
+    )
 
 // 10-second window, slides every 2 seconds
 stream RecentTrend from SensorReading
-    window sliding 10s by 2s
-    aggregate {
+    .window(10s, sliding: 2s)
+    .aggregate(
         recent_max: max(value),
         recent_min: min(value)
-    }
+    )
 ```
 
 ### Count-Based Windows
@@ -226,16 +226,16 @@ Windows based on event count:
 ```vpl
 // Every 100 events
 stream BatchStats from Transaction
-    window count 100
-    aggregate {
+    .window(100)
+    .aggregate(
         batch_total: sum(amount),
         batch_avg: avg(amount)
-    }
+    )
 
 // Sliding count window: 50 events, slide by 10
 stream RollingBatch from Reading
-    window count 50 by 10
-    aggregate { rolling_sum: sum(value) }
+    .window(50, sliding: 10)
+    .aggregate(rolling_sum: sum(value))
 ```
 
 ### Aggregation Functions
@@ -260,22 +260,22 @@ Windows partitioned by a key:
 ```vpl
 // Per-sensor statistics
 stream PerSensorStats from TemperatureReading
-    partition by sensor_id
-    window tumbling 1m
-    aggregate {
+    .partition_by(sensor_id)
+    .window(1m)
+    .aggregate(
         sensor: sensor_id,
         avg_temp: avg(temperature),
         readings: count()
-    }
+    )
 
 // Per-customer totals
 stream CustomerTotals from Transaction
-    partition by customer_id
-    window tumbling 1h
-    aggregate {
+    .partition_by(customer_id)
+    .window(1h)
+    .aggregate(
         customer: customer_id,
         hourly_spend: sum(amount)
-    }
+    )
 ```
 
 ### Filtering After Aggregation
@@ -284,13 +284,13 @@ Apply conditions to aggregated results:
 
 ```vpl
 stream HighVolumeMinutes from Transaction
-    window tumbling 1m
-    aggregate {
+    .window(1m)
+    .aggregate(
         total: sum(amount),
         count: count()
-    }
-    where total > 10000 or count > 100
-    emit alert("HighVolume", "Minute had {count} transactions totaling {total}")
+    )
+    .having(total > 10000 or count > 100)
+    .emit(alert_type: "HighVolume", message: "Minute had {count} transactions totaling {total}")
 ```
 
 ---
@@ -308,10 +308,10 @@ pattern LoginLogout = Login -> Logout
 // A followed by B followed by C
 pattern ThreeStep = Start -> Process -> Complete
 
-// Use in stream
-stream Sessions from *
-    pattern Login -> Logout within 1h
-    emit log("Session: {Login.user_id} logged in and out")
+// Inline sequence in a stream
+stream Sessions = Login as l -> Logout where user_id == l.user_id
+    .within(1h)
+    .emit(user_id: l.user_id, message: "Session: user logged in and out")
 ```
 
 ### Sequences with Conditions
@@ -324,9 +324,11 @@ pattern FailedLogin =
     -> LoginAttempt[status == "failed" and user_id == first.user_id] as third
     within 5m
 
-stream BruteForceDetection from LoginAttempt
-    pattern FailedLogin
-    emit alert("BruteForce", "3 failed attempts for {first.user_id}")
+stream BruteForceDetection = LoginAttempt[status == "failed"] as first
+    -> LoginAttempt[status == "failed" and user_id == first.user_id] as second
+    -> LoginAttempt[status == "failed" and user_id == first.user_id] as third
+    .within(5m)
+    .emit(alert_type: "BruteForce", message: "3 failed attempts for {first.user_id}")
 ```
 
 ### Referencing Previous Events
@@ -339,9 +341,10 @@ pattern PriceSpike =
     -> Trade[symbol == t1.symbol and price > t1.price * 1.1] as t2
     within 1m
 
-stream Spikes from Trade
-    pattern PriceSpike
-    emit alert("PriceSpike", "{t1.symbol} jumped from {t1.price} to {t2.price}")
+stream Spikes = Trade as t1
+    -> Trade[symbol == t1.symbol and price > t1.price * 1.1] as t2
+    .within(1m)
+    .emit(alert_type: "PriceSpike", message: "{t1.symbol} jumped from {t1.price} to {t2.price}")
 ```
 
 ### Temporal Constraints
@@ -375,9 +378,9 @@ pattern BruteForceSuccess =
     LoginFailed+ -> LoginSuccess
     within 10m
 
-stream Attacks from *
-    pattern BruteForceSuccess
-    emit alert("BruteForce", "Multiple failures followed by success")
+stream Attacks = LoginFailed+ -> LoginSuccess
+    .within(10m)
+    .emit(alert_type: "BruteForce", message: "Multiple failures followed by success")
 ```
 
 ### Kleene Star (`*`) - Zero or More
@@ -401,9 +404,9 @@ pattern WithRetries =
 pattern AbandonedPayment =
     PaymentStart -> NOT(PaymentComplete) within 5m
 
-stream Abandoned from *
-    pattern AbandonedPayment
-    emit alert("Abandoned", "Payment started but not completed")
+stream Abandoned = PaymentStart -> NOT(PaymentComplete)
+    .within(5m)
+    .emit(alert_type: "Abandoned", message: "Payment started but not completed")
 
 // Order without confirmation
 pattern UnconfirmedOrder =
@@ -418,9 +421,9 @@ pattern BothRequired =
     AND(DocumentUploaded, SignatureProvided)
     within 1h
 
-stream Complete from *
-    pattern BothRequired
-    emit log("Both document and signature received")
+stream Complete = AND(DocumentUploaded, SignatureProvided)
+    .within(1h)
+    .emit(message: "Both document and signature received")
 ```
 
 ### OR - Either Event
@@ -430,9 +433,8 @@ stream Complete from *
 pattern PaymentReceived =
     OR(CreditCardPayment, BankTransfer)
 
-stream Payments from *
-    pattern PaymentReceived
-    emit log("Payment received via {match.event_type}")
+stream Payments = OR(CreditCardPayment, BankTransfer)
+    .emit(message: "Payment received via {match.event_type}")
 ```
 
 ### Complex Combinations
@@ -468,9 +470,10 @@ pattern UserFailures =
     within 10m
     partition by user_id
 
-stream UserAttacks from *
-    pattern UserFailures
-    emit alert("UserBruteForce", "User {user_id} had multiple failures")
+stream UserAttacks = LoginFailed+ as fails -> LoginSuccess
+    .within(10m)
+    .partition_by(user_id)
+    .emit(alert_type: "UserBruteForce", message: "User {user_id} had multiple failures")
 ```
 
 ---
@@ -483,14 +486,9 @@ Attention windows use machine learning-inspired correlation to find related even
 
 ```vpl
 stream CorrelatedEvents from SensorReading
-    attention_window {
-        duration: 30s,
-        heads: 4,
-        embedding: "rule_based",
-        threshold: 0.7
-    }
-    where attention_score > 0.85
-    emit alert("HighCorrelation", "Events highly correlated")
+    .attention_window(duration: 30s, heads: 4, embedding: "rule_based", threshold: 0.7)
+    .where(attention_score > 0.85)
+    .emit(alert_type: "HighCorrelation", message: "Events highly correlated")
 ```
 
 ### Configuration Options
@@ -507,7 +505,7 @@ stream CorrelatedEvents from SensorReading
 
 ```vpl
 stream FraudDetection from Transaction
-    attention_window {
+    .attention_window(
         duration: 1m,
         heads: 8,
         embedding: "composite",
@@ -521,9 +519,9 @@ stream FraudDetection from Transaction
                 { field: "country", method: "one_hot", vocab: ["US", "UK", "EU", "OTHER"] }
             ]
         }
-    }
-    where attention_score > 0.9
-    emit alert("SuspiciousPattern", "Transaction pattern detected")
+    )
+    .where(attention_score > 0.9)
+    .emit(alert_type: "SuspiciousPattern", message: "Transaction pattern detected")
 ```
 
 ### Numeric Transforms
@@ -541,14 +539,14 @@ stream FraudDetection from Transaction
 
 ```vpl
 stream Correlations from Event
-    attention_window { duration: 1m, heads: 4 }
-    select {
+    .attention_window(duration: 1m, heads: 4)
+    .select(
         current_event: event_type,
         score: attention_score,
         related_events: attention_matches
-    }
-    where score > 0.8
-    emit log("Found {related_events.len()} related events with score {score}")
+    )
+    .where(score > 0.8)
+    .print("Found {related_events.len()} related events with score {score}")
 ```
 
 ---
@@ -566,11 +564,11 @@ stream EnrichedOrders = join(
         on Orders.customer_id == Customers.id
 )
 .window(5m)
-.select {
+.select(
     order_id: Orders.id,
     customer_name: Customers.name,
     order_total: Orders.total
-}
+)
 ```
 
 ### Multi-Stream Join
@@ -586,12 +584,12 @@ stream FullOrderDetails = join(
         on Orders.product_id == Inventory.product_id
 )
 .window(10m)
-.select {
+.select(
     order_id: Orders.id,
     customer: Customers.name,
     product: Products.name,
     in_stock: Inventory.quantity > 0
-}
+)
 ```
 
 ### Join with Aggregation
@@ -603,12 +601,12 @@ stream CustomerStats = join(
         on Orders.customer_id == Customers.id
 )
 .window(1h)
-.aggregate {
+.aggregate(
     customer: Customers.name,
     order_count: count(),
     total_spent: sum(Orders.amount),
     avg_order: avg(Orders.amount)
-}
+)
 ```
 
 ### Merge Streams
@@ -617,15 +615,15 @@ Combine multiple streams of the same type:
 
 ```vpl
 stream AllSensors = merge(
-    stream Zone1 from SensorReading where zone == "1",
-    stream Zone2 from SensorReading where zone == "2",
-    stream Zone3 from SensorReading where zone == "3"
+    stream Zone1 from SensorReading .where(zone == "1"),
+    stream Zone2 from SensorReading .where(zone == "2"),
+    stream Zone3 from SensorReading .where(zone == "3")
 )
 .window(1m)
-.aggregate {
+.aggregate(
     total_sensors: count(),
     avg_value: avg(value)
-}
+)
 ```
 
 ---
@@ -704,21 +702,21 @@ Begin with basic filters before adding windows and patterns:
 ```vpl
 // Step 1: Basic filter
 stream HighTemps from TemperatureReading
-    where temperature > 100
+    .where(temperature > 100)
 
 // Step 2: Add window
 stream HighTempMinutes from TemperatureReading
-    where temperature > 100
-    window tumbling 1m
-    aggregate { count: count() }
+    .where(temperature > 100)
+    .window(1m)
+    .aggregate(count: count())
 
 // Step 3: Add alert
 stream HighTempAlerts from TemperatureReading
-    where temperature > 100
-    window tumbling 1m
-    aggregate { count: count() }
-    where count > 5
-    emit alert("SustainedHighTemp", "5+ high readings in 1 minute")
+    .where(temperature > 100)
+    .window(1m)
+    .aggregate(count: count())
+    .having(count > 5)
+    .emit(alert_type: "SustainedHighTemp", message: "5+ high readings in 1 minute")
 ```
 
 ### 2. Use Partitioning for Scale
@@ -726,10 +724,10 @@ stream HighTempAlerts from TemperatureReading
 ```vpl
 // Process per-device independently
 stream DeviceAlerts from SensorReading
-    partition by device_id
-    window tumbling 1m
-    aggregate { avg_val: avg(value) }
-    where avg_val > threshold
+    .partition_by(device_id)
+    .window(1m)
+    .aggregate(avg_val: avg(value))
+    .having(avg_val > threshold)
 ```
 
 ### 3. Set Appropriate Timeouts
@@ -767,16 +765,18 @@ varpulis simulate -p program.vpl -e test_events.evt --verbose
 
 | Operation | Syntax | Description |
 |-----------|--------|-------------|
-| Filter | `where condition` | Filter events |
-| Select | `select { fields }` | Transform/project fields |
-| Window | `window tumbling Xm` | Time-based window |
-| Window | `window count N` | Count-based window |
-| Aggregate | `aggregate { funcs }` | Compute aggregations |
-| Pattern | `pattern A -> B` | Sequence detection |
-| Partition | `partition by field` | Process per-key |
+| Filter | `.where(condition)` | Filter events |
+| Select | `.select(field: expr, ...)` | Transform/project fields |
+| Window (tumbling) | `.window(1m)` | Time-based tumbling window |
+| Window (sliding) | `.window(5m, sliding: 1m)` | Time-based sliding window |
+| Window (count) | `.window(100)` | Count-based window |
+| Aggregate | `.aggregate(name: func(), ...)` | Compute aggregations |
+| Pattern | `pattern A -> B` | Sequence detection (declaration) |
+| Partition | `.partition_by(field)` | Process per-key |
 | Context | `.context(name)` | Assign to execution context |
-| Emit | `emit alert(...)` | Output alert |
-| Emit | `emit log(...)` | Output log message |
+| Emit | `.emit(field: value, ...)` | Output alert/event |
+| Print | `.print("message")` | Output log message |
+| Having | `.having(condition)` | Post-aggregation filter |
 
 ### Pattern Operators
 

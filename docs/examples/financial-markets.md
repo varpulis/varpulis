@@ -175,13 +175,11 @@ The most powerful signals come from **indicator confluence** - when multiple ind
 # Parse and validate
 varpulis check examples/financial_markets.vpl
 
-# Run with simulated market data
-varpulis run examples/financial_markets.vpl --source mock
+# Run with event file simulation
+varpulis simulate -p examples/financial_markets.vpl -e market_data.evt --immediate
 
-# Run with live data (requires exchange API keys)
-varpulis run examples/financial_markets.vpl \
-  --source kafka://market-ticks \
-  --output kafka://trading-signals
+# Run with MQTT data source (configured via connectors in the VPL file)
+varpulis run --file examples/financial_markets.vpl
 ```
 
 ## See Also

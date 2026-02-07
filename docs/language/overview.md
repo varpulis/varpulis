@@ -26,12 +26,8 @@ stream HighValueTrades = Trades
 
 # Pattern detection with attention
 stream FraudAlert = Trades
-    .attention_window(30s, heads: 4)
-    .pattern(
-        suspicious: events =>
-            events.filter(e => e.amount > 10000).count() > 3
-            and attention_score(events[0], events[-1]) > 0.85
-    )
+    .attention_window(duration: 30s, heads: 4, embedding: "rule_based")
+    .where(attention_score > 0.85 and attention_matches > 3)
     .emit(
         alert_type: "fraud",
         severity: "high"

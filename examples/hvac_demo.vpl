@@ -424,18 +424,3 @@ stream AllAlerts = merge(
     )
     .emit()
 
-# =============================================================================
-# CONFIGURATION
-# =============================================================================
-
-config:
-    mode: "balanced"
-    state_backend: "rocksdb"
-    state_path: "/var/lib/varpulis/hvac"
-    checkpoint_enabled: true
-    checkpoint_interval: 5m
-    checkpoint_location: "s3://varpulis-checkpoints/hvac/"
-    metrics_enabled: true
-    metrics_endpoint: "0.0.0.0:9090"
-    tracing_enabled: true
-    tracing_sample_rate: 0.05

@@ -1,118 +1,104 @@
-# Observabilité
+# Observability
 
-## Métriques automatiques
+## Prometheus Metrics
 
-Pour chaque stream, Varpulis génère automatiquement :
+Varpulis exposes Prometheus metrics when started with `--metrics`:
+
+```bash
+varpulis server --metrics --metrics-port 9090
+varpulis demo --metrics --metrics-port 9090
+```
+
+### Available Metrics
 
 ```prometheus
 # Throughput
-varpulis_stream_events_total{stream="BuildingMetrics",status="success"}
-varpulis_stream_events_total{stream="BuildingMetrics",status="error"}
+varpulis_events_processed_total
+varpulis_alerts_generated_total
 
-# Latence
-varpulis_stream_latency_seconds{stream="BuildingMetrics",quantile="0.5"}
-varpulis_stream_latency_seconds{stream="BuildingMetrics",quantile="0.95"}
-varpulis_stream_latency_seconds{stream="BuildingMetrics",quantile="0.99"}
+# Latency
+varpulis_event_processing_duration_seconds
 
-# Backpressure
-varpulis_stream_queue_size{stream="BuildingMetrics"}
-varpulis_stream_queue_utilization{stream="BuildingMetrics"}
-
-# Pattern matching
-varpulis_pattern_matches_total{pattern="FraudDetection"}
-varpulis_attention_computation_seconds{stream="FraudDetection"}
+# State
+varpulis_active_patterns
+varpulis_window_events
 ```
 
-## Metrics Configuration
+### Prometheus Scrape Configuration
+
+```yaml
+scrape_configs:
+  - job_name: 'varpulis'
+    static_configs:
+      - targets: ['varpulis:9090']
+    scrape_interval: 15s
+```
+
+## In-Program Logging
+
+Use `.log()` and `.print()` within VPL for debugging and operational logging:
 
 ```varpulis
-observability:
-    metrics:
-        enabled: true
-        endpoint: "0.0.0.0:9090"
-        interval: 1s
-        format: "prometheus"  # ou "openmetrics"
+stream Debug = SensorReading
+    .where(value > 100)
+    .log(level: "warn", message: "High value detected")
+    .print("sensor={sensor_id} value={value}")
+    .emit(
+        alert_type: "HighValue",
+        sensor_id: sensor_id,
+        value: value
+    )
 ```
 
-## Distributed Tracing
+## Runtime Log Configuration
 
-### Automatic Spans
+Control logging levels via environment variable:
 
-Spans are automatically created for:
-- Event ingestion
-- Embedding calculation
-- Pattern matching
-- Attention computation
-- Aggregation
-- Output routing via `.to()`
+```bash
+# General logging
+RUST_LOG=info varpulis run --file rules.vpl
 
-### OpenTelemetry Configuration
+# Module-specific
+RUST_LOG=varpulis_runtime::engine=debug,varpulis_cli=info varpulis run --file rules.vpl
 
-```varpulis
-observability:
-    tracing:
-        enabled: true
-        exporter: "otlp"
-        endpoint: "localhost:4317"
-        service_name: "varpulis-engine"
-        sample_rate: 0.01  # 1% sampling
-        
-        # Context propagation
-        propagation: ["tracecontext", "baggage"]
+# Full trace
+RUST_LOG=trace varpulis run --file rules.vpl
 ```
 
-## Logging
-
-### Configuration
-
-```varpulis
-observability:
-    logging:
-        level: "info"  # trace, debug, info, warn, error
-        format: "json" # or "text"
-        output: "stdout"  # or file
-```
-
-### Structured logging
+### Structured JSON Logs
 
 ```json
-{
-  "timestamp": "2026-01-23T00:15:00Z",
-  "level": "info",
-  "stream": "FraudDetection",
-  "event_id": "evt-12345",
-  "message": "Pattern matched",
-  "pattern": "suspicious_activity",
-  "latency_ms": 2.3
-}
-```
-
-## Instrumentation in VarpulisQL Code
-
-```varpulis
-stream ProcessedTrades = RawTrades
-    .tap(log: "trades.ingestion", sample: 0.1)  # Log 10%
-    .validate(schema: TradeSchema)
-    .tap(metrics:
-        counter: "trades.validated"
-        histogram: "trade.value"
-    )
-    .where(price > 0)
-    .tap(trace:
-        name: "positive_trades"
-        when: debug_mode
-        span_context: true
-    )
-    .emit()
+{"timestamp":"2026-01-15T10:30:00Z","level":"INFO","message":"Event processed","event_type":"SensorReading","duration_ms":0.5}
 ```
 
 ## Recommended Dashboard
 
-### Suggested Grafana Panels
+### Grafana Panels
 
-1. **Throughput**: Events/sec per stream
-2. **Latency heatmap**: Latency distribution
-3. **Error rate**: Error rate per stream
-4. **Queue depth**: Queue depth (backpressure)
-5. **Pattern matches**: Matches/sec per pattern
-6. **Resource usage**: CPU, Memory, Disk I/O
+1. **Throughput**: `rate(varpulis_events_processed_total[1m])`
+2. **P99 Latency**: `histogram_quantile(0.99, varpulis_event_processing_duration_seconds_bucket)`
+3. **Alert rate**: `rate(varpulis_alerts_generated_total[1m])`
+4. **Active patterns**: `varpulis_active_patterns`
+
+### Alerting Rules
+
+```yaml
+groups:
+  - name: varpulis
+    rules:
+      - alert: HighLatency
+        expr: histogram_quantile(0.99, varpulis_event_processing_duration_seconds_bucket) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Varpulis p99 latency above 100ms"
+
+      - alert: LowThroughput
+        expr: rate(varpulis_events_processed_total[5m]) < 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Varpulis throughput below 1000 events/sec"
+```

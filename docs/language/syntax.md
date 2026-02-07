@@ -20,7 +20,7 @@ let count: int = 42
 
 # Mutable
 var counter = 0
-counter += 1
+counter := counter + 1
 
 # Global constant
 const MAX_RETRIES = 3
@@ -216,16 +216,6 @@ else:
 let status = if active then "enabled" else "disabled"
 ```
 
-### Pattern Matching
-
-```varpulis
-match event.type:
-    "trade" => process_trade(event)
-    "quote" => process_quote(event)
-    "order" => process_order(event)
-    _ => log_unknown(event)
-```
-
 ### Loops
 
 ```varpulis
@@ -317,34 +307,6 @@ connector KafkaBroker = kafka (
 stream Output = Processed
     .emit(result: value)
     .to(KafkaBroker)
-```
-
-## Configuration
-
-```varpulis
-config:
-    mode: "low_latency"
-
-    embedding:
-        type: "rule_based"
-        dim: 128
-
-    attention:
-        enabled: true
-        compute: "cpu"
-        num_heads: 4
-
-    state:
-        backend: "rocksdb"
-        path: "/var/lib/varpulis/state"
-
-    observability:
-        metrics:
-            enabled: true
-            endpoint: "0.0.0.0:9090"
-        tracing:
-            enabled: true
-            endpoint: "localhost:4317"
 ```
 
 ## Output Routing
