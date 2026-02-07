@@ -1,10 +1,10 @@
-//! Abstract Syntax Tree for VarpulisQL
+//! Abstract Syntax Tree for VPL
 
 use crate::span::Spanned;
 use crate::types::Type;
 use serde::{Deserialize, Serialize};
 
-/// A complete VarpulisQL program
+/// A complete VPL program
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub statements: Vec<Spanned<Stmt>>,

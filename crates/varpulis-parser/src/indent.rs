@@ -1,4 +1,4 @@
-//! Indentation preprocessor for VarpulisQL
+//! Indentation preprocessor for VPL
 //!
 //! Converts Python-style indentation to explicit INDENT/DEDENT tokens
 //! so that PEG parsers can handle block structures.

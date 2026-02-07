@@ -1,4 +1,4 @@
-# VarpulisQL - Overview
+# VPL - Overview
 
 ## Design Philosophy
 
@@ -36,7 +36,7 @@ stream FraudAlert = Trades
 
 ## Differences from Python
 
-| Aspect | Python | VarpulisQL |
+| Aspect | Python | VPL |
 |--------|--------|------------|
 | **Paradigm** | Imperative/OO | Declarative/Stream |
 | **Typing** | Dynamic | Static with inference |

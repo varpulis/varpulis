@@ -2,8 +2,8 @@
 
 ## Phase 1: Core Engine ✅ COMPLETED
 
-- [x] VarpulisQL Parser (Pest PEG)
-- [x] VarpulisQL → AST compilation
+- [x] VPL Parser (Pest PEG)
+- [x] VPL → AST compilation
 - [x] Basic execution engine (single-threaded)
 - [x] Simple aggregations (sum, avg, count, min, max)
 - [x] Backends: in-memory state
@@ -23,7 +23,7 @@
 - [x] Connector declaration syntax (`connector Name = type (params)`)
 
 ### Phase 2 Deliverables
-- End-to-end execution of VarpulisQL programs
+- End-to-end execution of VPL programs
 - Multiple output destinations via `.to()`
 - HVAC E2E integration test (MQTT → Varpulis → Kafka)
 

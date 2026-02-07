@@ -1,4 +1,4 @@
-# VarpulisQL Connectivity Architecture Design
+# VPL Connectivity Architecture Design
 
 ## Current Problems
 
@@ -16,7 +16,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                         VarpulisQL Program                          │
+│                         VPL Program                          │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                     │
 │  ┌─────────────┐     ┌─────────────┐     ┌─────────────┐           │

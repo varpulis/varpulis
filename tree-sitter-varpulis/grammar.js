@@ -1,4 +1,4 @@
-// Tree-sitter grammar for VarpulisQL
+// Tree-sitter grammar for VPL
 // A CEP (Complex Event Processing) language
 
 module.exports = grammar({

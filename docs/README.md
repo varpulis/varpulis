@@ -46,7 +46,7 @@ stream Alert = Events
 - [`spec/benchmarks.md`](spec/benchmarks.md) - Performance objectives
 - [`spec/glossary.md`](spec/glossary.md) - Glossary of terms
 
-### VarpulisQL Language
+### VPL Language
 - [`language/overview.md`](language/overview.md) - Language philosophy and design
 - [`language/syntax.md`](language/syntax.md) - Complete syntax reference
 - [`language/connectors.md`](language/connectors.md) - Connectors (MQTT, HTTP)

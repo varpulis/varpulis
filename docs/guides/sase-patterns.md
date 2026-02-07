@@ -519,7 +519,7 @@ See [Trend Aggregation Reference](../reference/trend-aggregation.md) and [Trend 
 
 ## See Also
 
-- [Language Tutorial](../tutorials/language-tutorial.md) - VarpulisQL basics
+- [Language Tutorial](../tutorials/language-tutorial.md) - VPL basics
 - [Windows & Aggregations](../reference/windows-aggregations.md) - Windowed pattern matching
 - [Trend Aggregation](../reference/trend-aggregation.md) - `.trend_aggregate()` reference
 - [Troubleshooting Guide](troubleshooting.md) - Pattern debugging tips

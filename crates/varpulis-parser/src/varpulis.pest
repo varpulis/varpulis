@@ -1,4 +1,4 @@
-// VarpulisQL Grammar for pest (PEG Parser)
+// VPL Grammar for pest (PEG Parser)
 // Handles ambiguity naturally via ordered choice
 
 // ============================================================================

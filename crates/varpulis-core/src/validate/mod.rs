@@ -1,4 +1,4 @@
-//! Semantic validation for VarpulisQL programs.
+//! Semantic validation for VPL programs.
 //!
 //! Two-pass validation:
 //! - **Pass 1**: Build symbol table from declarations, detect duplicates.
@@ -165,7 +165,7 @@ impl Validator {
     }
 }
 
-/// Validate a parsed VarpulisQL program.
+/// Validate a parsed VPL program.
 ///
 /// `source` is the original source text (used for formatting diagnostics).
 /// `program` is the parsed AST.

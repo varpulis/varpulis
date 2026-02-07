@@ -1,11 +1,11 @@
 //! # Varpulis Core
 //!
-//! Foundational types and AST definitions for the VarpulisQL language.
+//! Foundational types and AST definitions for the VPL language.
 //!
 //! This crate provides the core data structures used throughout the Varpulis
 //! streaming analytics engine, including:
 //!
-//! - **AST (Abstract Syntax Tree)**: Complete representation of VarpulisQL programs
+//! - **AST (Abstract Syntax Tree)**: Complete representation of VPL programs
 //! - **Type System**: Type definitions for the language
 //! - **Values**: Runtime value representation
 //! - **Source Spans**: Location tracking for error reporting
@@ -14,7 +14,7 @@
 //!
 //! - Zero-copy parsing support via spans
 //! - Serialization support via `serde`
-//! - Comprehensive AST for all VarpulisQL constructs
+//! - Comprehensive AST for all VPL constructs
 //!
 //! ## Modules
 //!
@@ -40,7 +40,7 @@
 //!
 //! ## AST Structure
 //!
-//! A VarpulisQL program consists of statements:
+//! A VPL program consists of statements:
 //!
 //! - `StreamDecl`: Stream definitions with operations
 //! - `EventDecl`: Event type definitions
@@ -50,8 +50,8 @@
 //!
 //! ## See Also
 //!
-//! - [`varpulis_parser`](../varpulis_parser): Parsing VarpulisQL source code
-//! - [`varpulis_runtime`](../varpulis_runtime): Executing VarpulisQL programs
+//! - [`varpulis_parser`](../varpulis_parser): Parsing VPL source code
+//! - [`varpulis_runtime`](../varpulis_runtime): Executing VPL programs
 
 pub mod ast;
 pub mod span;

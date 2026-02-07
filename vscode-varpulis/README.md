@@ -1,12 +1,12 @@
 # Varpulis VSCode Extension
 
-VSCode extension for VarpulisQL language support with full integration to the Varpulis CEP engine.
+VSCode extension for VPL language support with full integration to the Varpulis CEP engine.
 
 ## Features
 
 ### Language Support
 
-- **Syntax Highlighting** - Full syntax highlighting for VarpulisQL (.vpl files)
+- **Syntax Highlighting** - Full syntax highlighting for VPL (.vpl files)
 - **Auto-completion** - Intelligent code completion for keywords, stream operations, and functions
 - **Hover Documentation** - Inline documentation for keywords and functions
 - **Error Diagnostics** - Real-time syntax validation
@@ -14,7 +14,7 @@ VSCode extension for VarpulisQL language support with full integration to the Va
 ### Engine Integration
 
 - **Start/Stop Engine** - Control the Varpulis engine directly from VSCode
-- **Run Files** - Execute VarpulisQL files with one click (Ctrl+Shift+R)
+- **Run Files** - Execute VPL files with one click (Ctrl+Shift+R)
 - **Syntax Check** - Validate syntax without running (Ctrl+Shift+C)
 - **Event Injection** - Inject test events for debugging
 
@@ -132,5 +132,5 @@ MIT
 ## Links
 
 - [Varpulis Documentation](../docs/README.md)
-- [VarpulisQL Syntax](../docs/language/syntax.md)
+- [VPL Syntax](../docs/language/syntax.md)
 - [GitHub Repository](https://github.com/varpulis/varpulis)

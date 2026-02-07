@@ -46,18 +46,18 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Run a VarpulisQL program
+    /// Run a VPL program
     Run {
         /// Path to the .vpl file
         #[arg(short, long)]
         file: Option<PathBuf>,
 
-        /// Inline VarpulisQL code
+        /// Inline VPL code
         #[arg(short, long)]
         code: Option<String>,
     },
 
-    /// Parse a VarpulisQL file and show the AST
+    /// Parse a VPL file and show the AST
     Parse {
         /// Path to the .vpl file
         file: PathBuf,
@@ -86,7 +86,7 @@ enum Commands {
         metrics_port: u16,
     },
 
-    /// Check syntax of a VarpulisQL file
+    /// Check syntax of a VPL file
     Check {
         /// Path to the .vpl file
         file: PathBuf,
@@ -145,7 +145,7 @@ enum Commands {
 
     /// Simulate events from an event file (.evt)
     Simulate {
-        /// Path to the VarpulisQL program (.vpl)
+        /// Path to the VPL program (.vpl)
         #[arg(short, long)]
         program: PathBuf,
 
@@ -513,7 +513,7 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
     use varpulis_runtime::connector::{MqttConfig, MqttSource, SourceConnector};
     use varpulis_runtime::ContextOrchestrator;
 
-    info!("Parsing VarpulisQL program...");
+    info!("Parsing VPL program...");
     let mut program = parse(source).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
     info!("Parsed {} statements", program.statements.len());
 
@@ -780,7 +780,7 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
 }
 
 fn parse_and_show(source: &str) -> Result<()> {
-    println!("Parsing VarpulisQL...\n");
+    println!("Parsing VPL...\n");
 
     match parse(source) {
         Ok(program) => {

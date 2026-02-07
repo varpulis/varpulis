@@ -457,7 +457,7 @@ numactl --hardware
 taskset -c 0-7 varpulis simulate ... --workers 8
 ```
 
-For finer-grained control, use VarpulisQL contexts with CPU affinity:
+For finer-grained control, use VPL contexts with CPU affinity:
 
 ```vpl
 context ingest (cores: [0, 1])

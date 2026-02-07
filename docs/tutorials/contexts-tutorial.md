@@ -1,6 +1,6 @@
 # Parallel Stream Processing with Contexts
 
-This tutorial teaches you to use VarpulisQL contexts for parallel stream processing. You'll start with a single context and build up to multi-stage pipelines with session windows -- each step includes runnable code you can copy-paste and test.
+This tutorial teaches you to use VPL contexts for parallel stream processing. You'll start with a single context and build up to multi-stage pipelines with session windows -- each step includes runnable code you can copy-paste and test.
 
 ## What You'll Learn
 

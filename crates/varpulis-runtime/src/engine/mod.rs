@@ -1,7 +1,7 @@
 //! Main execution engine for Varpulis
 //!
 //! This module provides the core engine that processes events and executes
-//! stream definitions written in VarpulisQL.
+//! stream definitions written in VPL.
 
 mod compiler;
 mod evaluator;
@@ -2480,6 +2480,14 @@ impl Engine {
     // =========================================================================
     // Session Window Sweep
     // =========================================================================
+
+    /// Check if any registered stream uses `.to()` sink operations.
+    /// When no sinks are present, the sync processing path can be used safely.
+    pub fn has_sink_operations(&self) -> bool {
+        self.streams
+            .values()
+            .any(|s| s.operations.iter().any(|op| matches!(op, RuntimeOp::To(_))))
+    }
 
     /// Check if any registered stream has session windows.
     pub fn has_session_windows(&self) -> bool {

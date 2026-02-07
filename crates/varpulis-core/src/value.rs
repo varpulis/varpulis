@@ -1,4 +1,4 @@
-//! Runtime values for VarpulisQL
+//! Runtime values for VPL
 
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;

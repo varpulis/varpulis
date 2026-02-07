@@ -2,7 +2,7 @@
 name = "varpulis-core"
 version.workspace = true
 edition.workspace = true
-description = "Core types and AST for VarpulisQL"
+description = "Core types and AST for VPL"
 
 [dependencies]
 serde = { workspace = true }

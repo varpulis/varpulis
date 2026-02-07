@@ -21,7 +21,7 @@ Varpulis is a high-performance Complex Event Processing (CEP) engine written in 
 ## What Works
 
 ### Core Engine
-- VarpulisQL parser (Pest PEG)
+- VPL parser (Pest PEG)
 - Stream processing with filtering (`.where()`)
 - Tumbling and sliding windows (`.window()`)
 - Partitioning (`.partition_by()`)

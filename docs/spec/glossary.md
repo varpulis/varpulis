@@ -83,7 +83,7 @@ Logical division of a stream to enable parallel processing.
 Detection rule defining a sequence or combination of events to identify.
 
 ### Pest
-PEG (Parsing Expression Grammar) parser generator for Rust, used by VarpulisQL.
+PEG (Parsing Expression Grammar) parser generator for Rust, used by VPL.
 
 ## R
 
@@ -111,8 +111,8 @@ Fixed temporal window without overlap.
 
 ## V
 
-### VarpulisQL
-The query and stream definition language of Varpulis.
+### VPL (Varpulis Pipeline Language)
+The pipeline and stream definition language of Varpulis.
 
 ### Varpulis
 Streaming analytics engine. Named after the Slavic wind spirit.

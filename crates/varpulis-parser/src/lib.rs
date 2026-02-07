@@ -1,13 +1,13 @@
-//! # VarpulisQL Parser
+//! # VPL Parser
 //!
-//! Lexing and parsing for the VarpulisQL streaming analytics language.
+//! Lexing and parsing for the VPL streaming analytics language.
 //!
-//! This crate transforms VarpulisQL source code into an Abstract Syntax Tree (AST)
+//! This crate transforms VPL source code into an Abstract Syntax Tree (AST)
 //! that can be executed by the runtime engine.
 //!
 //! ## Features
 //!
-//! - Complete VarpulisQL grammar support
+//! - Complete VPL grammar support
 //! - Detailed error messages with line/column information
 //! - Syntax hints for common mistakes
 //! - PEG-based parsing via Pest
@@ -59,7 +59,7 @@
 //!
 //! ## Grammar
 //!
-//! The VarpulisQL grammar is defined in `varpulis.pest` and supports:
+//! The VPL grammar is defined in `varpulis.pest` and supports:
 //!
 //! - Stream declarations with filtering, selection, windowing, and aggregation
 //! - Event type definitions

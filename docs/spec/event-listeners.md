@@ -3,7 +3,7 @@
 ## Context
 
 ### Problem Statement
-Current VarpulisQL is **stream-centric**: everything is a stream transformation. This works well for:
+Current VPL is **stream-centric**: everything is a stream transformation. This works well for:
 - Temporal aggregations (`window`, `aggregate`)
 - Filtering and projection (`where`, `select`)
 - Joins (`join`, `merge`)
@@ -65,7 +65,7 @@ on all NewsItem as news {
 - Imperative paradigm (vs declarative streams)
 - Implicit state management (where are `news`, `tick` stored?)
 - Complex parallelism (each listener = isolated context?)
-- Two "languages" within VarpulisQL
+- Two "languages" within VPL
 
 ### Approach 2: `->` Operator (Declarative)
 
@@ -299,7 +299,7 @@ stream Correlation = sequence(
 
 ## Comparison with Apama
 
-| Feature | Apama | VarpulisQL Proposed |
+| Feature | Apama | VPL Proposed |
 |---------|-------|---------------------|
 | Single listener | `on A()` | `A` or `one A` |
 | Continuous listener | `on all A()` | `all A` |
@@ -312,7 +312,7 @@ stream Correlation = sequence(
 | Or | `A() or B()` | `.fork().any()` or `.first()` |
 | Not | `and not A()` | `.not(A)` |
 
-### VarpulisQL Advantages
+### VPL Advantages
 
 1. **Unified syntax**: Streams and sequences use the same operators
 2. **Declarative**: No manual state management

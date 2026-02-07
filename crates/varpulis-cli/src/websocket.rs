@@ -26,7 +26,7 @@ use crate::security;
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum WsMessage {
     // Client -> Server messages
-    /// Load a VarpulisQL file
+    /// Load a VPL file
     LoadFile { path: String },
     /// Inject an event into the engine
     InjectEvent {
