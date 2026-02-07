@@ -25,10 +25,13 @@ use crate::sequence::SequenceContext;
 use chrono::{DateTime, Utc};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 use varpulis_core::Value;
 use varpulis_zdd::{ZddArena, ZddHandle};
+
+/// PERF: Static empty captured map to avoid allocations in try_start_run
+static EMPTY_CAPTURED: LazyLock<FxHashMap<String, SharedEvent>> = LazyLock::new(FxHashMap::default);
 
 /// Shared event reference for efficient cloning in pattern matching.
 /// Using Arc allows multiple pattern runs to share the same event data
@@ -2520,13 +2523,14 @@ impl SaseEngine {
                 continue;
             }
 
-            // Clone run to avoid borrow issues, then update
-            let mut run = self.runs[i].clone();
-            match advance_run_shared(&self.nfa, self.strategy, &mut run, Arc::clone(&event)) {
-                RunAdvanceResult::Continue => {
-                    self.runs[i] = run;
-                    i += 1;
-                }
+            // PERF: Mutate run in place instead of clone + copy back
+            match advance_run_shared(
+                &self.nfa,
+                self.strategy,
+                &mut self.runs[i],
+                Arc::clone(&event),
+            ) {
+                RunAdvanceResult::Continue => i += 1,
                 RunAdvanceResult::Complete(result) => {
                     completed.push(result);
                     self.runs.swap_remove(i);
@@ -2534,7 +2538,6 @@ impl SaseEngine {
                 RunAdvanceResult::CompleteAndContinue(result) => {
                     // For `all` patterns: emit result but keep run active
                     completed.push(result);
-                    self.runs[i] = run;
                     i += 1;
                 }
                 RunAdvanceResult::Invalidate => {
@@ -2549,7 +2552,8 @@ impl SaseEngine {
 
     fn try_start_run_shared(&self, event: SharedEvent) -> Option<Run> {
         let start_state = &self.nfa.states[self.nfa.start_state];
-        let empty_captured: FxHashMap<String, SharedEvent> = FxHashMap::default();
+        // PERF: Use static empty map instead of allocating on every call
+        let empty_captured = &*EMPTY_CAPTURED;
 
         // Check if event matches any transition from start
         for &next_id in &start_state.transitions {
