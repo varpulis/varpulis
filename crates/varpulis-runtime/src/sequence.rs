@@ -32,9 +32,20 @@ pub struct SequenceContext {
     pub previous: Option<Event>,
 }
 
+/// PERF: Static empty context for read-only operations (avoids allocation)
+pub static EMPTY_CONTEXT: std::sync::LazyLock<SequenceContext> =
+    std::sync::LazyLock::new(SequenceContext::new);
+
 impl SequenceContext {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Returns a reference to a shared empty context for read-only operations.
+    /// PERF: Avoids allocating a new HashMap for each operation that doesn't need captured events.
+    #[inline]
+    pub fn empty() -> &'static Self {
+        &EMPTY_CONTEXT
     }
 
     pub fn with_captured(mut self, alias: String, event: Event) -> Self {

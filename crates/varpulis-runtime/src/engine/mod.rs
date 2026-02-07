@@ -53,6 +53,14 @@ use varpulis_core::Value;
 // Re-export NamedPattern from types
 pub use types::NamedPattern;
 
+/// Output channel type enumeration for zero-copy or owned event sending
+enum OutputChannel {
+    /// Legacy channel that requires cloning (for backwards compatibility)
+    Owned(mpsc::Sender<Event>),
+    /// Zero-copy channel using SharedEvent (Arc<Event>)
+    Shared(mpsc::Sender<SharedEvent>),
+}
+
 /// The main Varpulis engine
 pub struct Engine {
     /// Registered stream definitions
@@ -76,7 +84,7 @@ pub struct Engine {
     /// Sink registry for .to() operations
     sinks: sink_factory::SinkRegistry,
     /// Output event sender (None for benchmark/quiet mode - skips cloning overhead)
-    output_tx: Option<mpsc::Sender<Event>>,
+    output_channel: Option<OutputChannel>,
     /// Metrics
     events_processed: u64,
     output_events_emitted: u64,
@@ -107,7 +115,7 @@ impl Engine {
             connectors: FxHashMap::default(),
             source_bindings: Vec::new(),
             sinks: sink_factory::SinkRegistry::new(),
-            output_tx: Some(output_tx),
+            output_channel: Some(OutputChannel::Owned(output_tx)),
             events_processed: 0,
             output_events_emitted: 0,
             metrics: None,
@@ -121,11 +129,21 @@ impl Engine {
 
     /// Create engine without output channel (for benchmarking - skips Event cloning overhead)
     pub fn new_benchmark() -> Self {
-        Self::new_with_optional_output(None)
+        Self::new_internal(None)
     }
 
-    /// Create engine with optional output channel
+    /// Create engine with optional output channel (legacy API, requires cloning)
     pub fn new_with_optional_output(output_tx: Option<mpsc::Sender<Event>>) -> Self {
+        Self::new_internal(output_tx.map(OutputChannel::Owned))
+    }
+
+    /// Create engine with zero-copy SharedEvent output channel (PERF: avoids cloning)
+    pub fn new_shared(output_tx: mpsc::Sender<SharedEvent>) -> Self {
+        Self::new_internal(Some(OutputChannel::Shared(output_tx)))
+    }
+
+    /// Internal constructor
+    fn new_internal(output_channel: Option<OutputChannel>) -> Self {
         Self {
             streams: FxHashMap::default(),
             router: router::EventRouter::new(),
@@ -137,7 +155,7 @@ impl Engine {
             connectors: FxHashMap::default(),
             source_bindings: Vec::new(),
             sinks: sink_factory::SinkRegistry::new(),
-            output_tx,
+            output_channel,
             events_processed: 0,
             output_events_emitted: 0,
             metrics: None,
@@ -149,16 +167,60 @@ impl Engine {
         }
     }
 
+    /// Clone the output channel for use in engine reload
+    fn clone_output_channel(&self) -> Option<OutputChannel> {
+        match &self.output_channel {
+            Some(OutputChannel::Owned(tx)) => Some(OutputChannel::Owned(tx.clone())),
+            Some(OutputChannel::Shared(tx)) => Some(OutputChannel::Shared(tx.clone())),
+            None => None,
+        }
+    }
+
+    /// Send an output event to the output channel (if configured).
+    /// In benchmark mode (no output channel), this is a no-op to avoid cloning overhead.
+    /// PERF: Uses zero-copy for SharedEvent channels, clones only for legacy Owned channels.
+    #[inline]
+    fn send_output_shared(&mut self, event: &SharedEvent) {
+        match &self.output_channel {
+            Some(OutputChannel::Shared(tx)) => {
+                // PERF: Zero-copy - just increment Arc refcount
+                if let Err(e) = tx.try_send(Arc::clone(event)) {
+                    warn!("Failed to send output event: {}", e);
+                }
+            }
+            Some(OutputChannel::Owned(tx)) => {
+                // Legacy path: must clone the Event
+                let owned = (**event).clone();
+                if let Err(e) = tx.try_send(owned) {
+                    warn!("Failed to send output event: {}", e);
+                }
+            }
+            None => {
+                // Benchmark mode: skip sending entirely - no clone!
+            }
+        }
+    }
+
     /// Send an output event to the output channel (if configured).
     /// In benchmark mode (no output channel), this is a no-op to avoid cloning overhead.
     #[inline]
     fn send_output(&mut self, event: Event) {
-        if let Some(ref tx) = self.output_tx {
-            if let Err(e) = tx.try_send(event) {
-                warn!("Failed to send output event: {}", e);
+        match &self.output_channel {
+            Some(OutputChannel::Shared(tx)) => {
+                // Wrap in Arc for shared channel
+                if let Err(e) = tx.try_send(Arc::new(event)) {
+                    warn!("Failed to send output event: {}", e);
+                }
+            }
+            Some(OutputChannel::Owned(tx)) => {
+                if let Err(e) = tx.try_send(event) {
+                    warn!("Failed to send output event: {}", e);
+                }
+            }
+            None => {
+                // Benchmark mode: skip sending entirely
             }
         }
-        // In benchmark mode (output_tx is None), skip sending entirely
     }
 
     /// Set the context name for this engine instance.
@@ -1524,22 +1586,16 @@ impl Engine {
                             .any(|op| matches!(op, RuntimeOp::Process(_)));
 
                     // Send emitted events to output channel (non-blocking)
-                    // Access output_tx directly to avoid borrow conflict with stream
-                    if let Some(ref tx) = self.output_tx {
+                    // PERF: Use send_output_shared for zero-copy when using SharedEvent channel
+                    if self.output_channel.is_some() {
                         for emitted in &result.emitted_events {
                             self.output_events_emitted += 1;
-                            let owned = (**emitted).clone();
-                            if let Err(e) = tx.try_send(owned) {
-                                warn!("Failed to send output event: {}", e);
-                            }
+                            self.send_output_shared(emitted);
                         }
                         if send_outputs {
                             for output in &result.output_events {
                                 self.output_events_emitted += 1;
-                                let owned = (**output).clone();
-                                if let Err(e) = tx.try_send(owned) {
-                                    warn!("Failed to send output event: {}", e);
-                                }
+                                self.send_output_shared(output);
                             }
                         }
                     } else {
@@ -1641,12 +1697,182 @@ impl Engine {
         }
 
         // Send all emitted events in batch (non-blocking to avoid async overhead)
+        // PERF: Use send_output_shared to avoid cloning in benchmark mode
         for emitted in &emitted_batch {
-            let owned = (**emitted).clone();
-            self.send_output(owned);
+            self.send_output_shared(emitted);
         }
 
         Ok(())
+    }
+
+    /// Synchronous batch processing for maximum throughput.
+    /// Use this when no .to() sink operations are in the pipeline (e.g., benchmark mode).
+    /// Avoids async runtime overhead completely.
+    pub fn process_batch_sync(&mut self, events: Vec<Event>) -> Result<(), String> {
+        if events.is_empty() {
+            return Ok(());
+        }
+
+        let batch_size = events.len();
+        self.events_processed += batch_size as u64;
+
+        // Pre-allocate pending events with capacity for batch + some derived events
+        // Use VecDeque so we can process in FIFO order (push_back + pop_front)
+        let mut pending_events: std::collections::VecDeque<(SharedEvent, usize)> =
+            std::collections::VecDeque::with_capacity(batch_size + batch_size / 4);
+
+        // Convert all events to SharedEvents upfront
+        for event in events {
+            pending_events.push_back((Arc::new(event), 0));
+        }
+
+        const MAX_CHAIN_DEPTH: usize = 10;
+
+        // Collect emitted events to send in batch
+        let mut emitted_batch: Vec<SharedEvent> = Vec::with_capacity(batch_size / 10);
+
+        // Process all events in FIFO order (critical for sequence patterns!)
+        while let Some((current_event, depth)) = pending_events.pop_front() {
+            if depth >= MAX_CHAIN_DEPTH {
+                debug!(
+                    "Max chain depth reached for event type: {}",
+                    current_event.event_type
+                );
+                continue;
+            }
+
+            // Get stream names (Arc clone is O(1))
+            let stream_names: Arc<[String]> = self
+                .router
+                .get_routes(&current_event.event_type)
+                .cloned()
+                .unwrap_or_else(|| Arc::from([]));
+
+            for stream_name in stream_names.iter() {
+                if let Some(stream) = self.streams.get_mut(stream_name) {
+                    let result = Self::process_stream_sync(
+                        stream,
+                        Arc::clone(&current_event),
+                        &self.functions,
+                    )?;
+
+                    // Collect emitted events for batch sending
+                    self.output_events_emitted += result.emitted_events.len() as u64;
+                    let has_emitted = !result.emitted_events.is_empty();
+                    emitted_batch.extend(result.emitted_events);
+
+                    // If .process() was used but no .emit(), send output_events too
+                    if !has_emitted
+                        && stream
+                            .operations
+                            .iter()
+                            .any(|op| matches!(op, RuntimeOp::Process(_)))
+                    {
+                        self.output_events_emitted += result.output_events.len() as u64;
+                        emitted_batch.extend(result.output_events.iter().map(Arc::clone));
+                    }
+
+                    // Queue output events (push_back to maintain order)
+                    for output_event in result.output_events {
+                        pending_events.push_back((output_event, depth + 1));
+                    }
+                }
+            }
+        }
+
+        // Send all emitted events in batch (non-blocking to avoid async overhead)
+        // PERF: Use send_output_shared to avoid cloning in benchmark mode
+        for emitted in &emitted_batch {
+            self.send_output_shared(emitted);
+        }
+
+        Ok(())
+    }
+
+    /// Synchronous stream processing - no async operations.
+    /// Skips .to() sink operations (which are the only async parts).
+    fn process_stream_sync(
+        stream: &mut StreamDefinition,
+        event: SharedEvent,
+        functions: &FxHashMap<String, UserFunction>,
+    ) -> Result<StreamProcessResult, String> {
+        // For merge sources, check if the event passes the appropriate filter
+        if let RuntimeSource::Merge(ref sources) = stream.source {
+            let mut passes_filter = false;
+            for ms in sources {
+                if ms.event_type == *event.event_type {
+                    if let Some(ref filter) = ms.filter {
+                        let ctx = SequenceContext::new();
+                        if let Some(result) = evaluator::eval_expr_with_functions(
+                            filter,
+                            &event,
+                            &ctx,
+                            functions,
+                            &FxHashMap::default(),
+                        ) {
+                            if result.as_bool().unwrap_or(false) {
+                                passes_filter = true;
+                                break;
+                            }
+                        }
+                    } else {
+                        passes_filter = true;
+                        break;
+                    }
+                }
+            }
+            if !passes_filter {
+                return Ok(StreamProcessResult {
+                    emitted_events: vec![],
+                    output_events: vec![],
+                });
+            }
+        }
+
+        // For join sources - return empty (join requires async in some paths)
+        if matches!(stream.source, RuntimeSource::Join(_)) {
+            return Ok(StreamProcessResult {
+                emitted_events: vec![],
+                output_events: vec![],
+            });
+        }
+
+        // Process through attention window if present
+        let mut enriched_event = (*event).clone();
+        if let Some(ref mut attention_window) = stream.attention_window {
+            let result = attention_window.process((*event).clone());
+            let attention_score = if result.scores.is_empty() {
+                0.0
+            } else {
+                result
+                    .scores
+                    .iter()
+                    .map(|(_, s)| *s)
+                    .fold(f32::NEG_INFINITY, f32::max)
+            };
+            enriched_event.data.insert(
+                "attention_score".into(),
+                Value::Float(attention_score as f64),
+            );
+            let context_norm: f32 = result.context.iter().map(|x| x * x).sum::<f32>().sqrt();
+            enriched_event.data.insert(
+                "attention_context_norm".into(),
+                Value::Float(context_norm as f64),
+            );
+            enriched_event.data.insert(
+                "attention_matches".into(),
+                Value::Int(result.scores.len() as i64),
+            );
+        }
+
+        // Use synchronous pipeline execution
+        pipeline::execute_pipeline_sync(
+            stream,
+            vec![Arc::new(enriched_event)],
+            0,
+            pipeline::SkipFlags::none(),
+            functions,
+        )
     }
 
     /// Process a batch of pre-wrapped SharedEvents (zero-copy path for context pipelines)
@@ -1717,9 +1943,9 @@ impl Engine {
             }
         }
 
+        // PERF: Use send_output_shared to avoid cloning in benchmark mode
         for emitted in &emitted_batch {
-            let owned = (**emitted).clone();
-            self.send_output(owned);
+            self.send_output_shared(emitted);
         }
 
         Ok(())
@@ -2090,7 +2316,7 @@ impl Engine {
 
         // Parse new program to get new stream definitions
         // We need to compile the new program to compare with existing streams
-        let mut new_engine = Engine::new_with_optional_output(self.output_tx.clone());
+        let mut new_engine = Self::new_internal(self.clone_output_channel());
         new_engine.load(program)?;
 
         let new_streams: FxHashSet<String> = new_engine.streams.keys().cloned().collect();
