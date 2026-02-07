@@ -319,8 +319,31 @@ impl Engine {
         }
     }
 
-    /// Load a program into the engine
+    /// Load a program into the engine with semantic validation.
+    ///
+    /// `source` is the original VPL source text (used for diagnostic formatting).
+    /// Pass `""` if the source is unavailable.
+    pub fn load_with_source(&mut self, source: &str, program: &Program) -> Result<(), String> {
+        let validation = varpulis_core::validate::validate(source, program);
+        if validation.has_errors() {
+            return Err(validation.format(source));
+        }
+        for warning in validation
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == varpulis_core::validate::Severity::Warning)
+        {
+            warn!("{}", warning.message);
+        }
+        self.load_program(program)
+    }
+
+    /// Load a program into the engine (no semantic validation).
     pub fn load(&mut self, program: &Program) -> Result<(), String> {
+        self.load_program(program)
+    }
+
+    fn load_program(&mut self, program: &Program) -> Result<(), String> {
         for stmt in &program.statements {
             match &stmt.node {
                 Stmt::StreamDecl {

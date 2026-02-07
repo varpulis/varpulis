@@ -393,11 +393,28 @@ struct ValidateResponse {
 
 async fn handle_validate(_auth: (), body: ValidateRequest) -> Result<impl Reply, Infallible> {
     match varpulis_parser::parse(&body.source) {
-        Ok(_) => {
-            let resp = ValidateResponse {
-                valid: true,
-                diagnostics: vec![],
-            };
+        Ok(program) => {
+            // Run semantic validation after successful parse
+            let validation = varpulis_core::validate::validate(&body.source, &program);
+            let diagnostics: Vec<ValidateDiagnostic> = validation
+                .diagnostics
+                .iter()
+                .map(|d| {
+                    let (line, column) = position_to_line_col(&body.source, d.span.start);
+                    ValidateDiagnostic {
+                        severity: match d.severity {
+                            varpulis_core::validate::Severity::Error => "error",
+                            varpulis_core::validate::Severity::Warning => "warning",
+                        },
+                        line,
+                        column,
+                        message: d.message.clone(),
+                        hint: d.hint.clone(),
+                    }
+                })
+                .collect();
+            let valid = !validation.has_errors();
+            let resp = ValidateResponse { valid, diagnostics };
             Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
         }
         Err(e) => {
