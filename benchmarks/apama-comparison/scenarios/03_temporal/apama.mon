@@ -26,17 +26,17 @@ event FraudAlert {
 monitor FraudDetection {
     action onload() {
         // Temporal sequence: Login -> Transaction within 5 minutes
-        on all Login() as login
-            -> Transaction(user_id=login.user_id, amount>5000.0) as tx
-            within(300.0)
-        {
-            if tx.ip != login.ip {
-                send FraudAlert(
-                    login.user_id,
-                    login.ip,
-                    tx.ip,
-                    tx.amount
-                ) to "output";
+        // Note: Apama 27.18 requires nested on syntax for inter-event refs
+        on all Login() as login {
+            on Transaction(user_id=login.user_id, amount>5000.0) as tx within(300.0) {
+                if tx.ip != login.ip {
+                    send FraudAlert(
+                        login.user_id,
+                        login.ip,
+                        tx.ip,
+                        tx.amount
+                    ) to "output";
+                }
             }
         }
     }

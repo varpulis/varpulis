@@ -1610,6 +1610,25 @@ pub struct Run {
     pub kleene_capture: Option<KleeneCapture>,
 }
 
+impl Default for Run {
+    fn default() -> Self {
+        Self {
+            current_state: 0,
+            stack: Vec::new(),
+            captured: FxHashMap::default(),
+            started_at: Instant::now(),
+            deadline: None,
+            event_time_started_at: None,
+            event_time_deadline: None,
+            partition_key: None,
+            invalidated: false,
+            pending_negations: Vec::new(),
+            and_state: None,
+            kleene_capture: None,
+        }
+    }
+}
+
 impl Run {
     pub fn new(start_state: usize) -> Self {
         Self {

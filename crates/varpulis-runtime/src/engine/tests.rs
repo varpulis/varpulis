@@ -2902,3 +2902,41 @@ async fn test_process_with_while_loop_emit() {
     }
     assert!(rx.try_recv().is_err());
 }
+
+#[tokio::test]
+async fn test_batch_sequence_processing() {
+    // Test that batch processing works correctly with sequence patterns
+    let source = r#"
+        stream Matches = A as a
+            -> B as b
+            .emit(result: "matched")
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    // Create a batch of alternating A/B events
+    let batch = vec![
+        Event::new("A").with_field("id", 1i64),
+        Event::new("B").with_field("id", 1i64),
+        Event::new("A").with_field("id", 2i64),
+        Event::new("B").with_field("id", 2i64),
+    ];
+
+    engine.process_batch(batch).await.unwrap();
+
+    // Should get 2 matches (A1->B1, A2->B2)
+    let mut outputs = Vec::new();
+    while let Ok(output) = rx.try_recv() {
+        outputs.push(output);
+    }
+
+    assert_eq!(
+        outputs.len(),
+        2,
+        "Expected 2 sequence matches, got {}",
+        outputs.len()
+    );
+}

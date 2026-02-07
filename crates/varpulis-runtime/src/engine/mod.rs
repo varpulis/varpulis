@@ -1525,12 +1525,13 @@ impl Engine {
         self.events_processed += batch_size as u64;
 
         // Pre-allocate pending events with capacity for batch + some derived events
-        let mut pending_events: Vec<(SharedEvent, usize)> =
-            Vec::with_capacity(batch_size + batch_size / 4);
+        // Use VecDeque so we can process in FIFO order (push_back + pop_front)
+        let mut pending_events: std::collections::VecDeque<(SharedEvent, usize)> =
+            std::collections::VecDeque::with_capacity(batch_size + batch_size / 4);
 
         // Convert all events to SharedEvents upfront
         for event in events {
-            pending_events.push((Arc::new(event), 0));
+            pending_events.push_back((Arc::new(event), 0));
         }
 
         const MAX_CHAIN_DEPTH: usize = 10;
@@ -1538,8 +1539,8 @@ impl Engine {
         // Collect emitted events to send in batch
         let mut emitted_batch: Vec<SharedEvent> = Vec::with_capacity(batch_size / 10);
 
-        // Process all events
-        while let Some((current_event, depth)) = pending_events.pop() {
+        // Process all events in FIFO order (critical for sequence patterns!)
+        while let Some((current_event, depth)) = pending_events.pop_front() {
             if depth >= MAX_CHAIN_DEPTH {
                 debug!(
                     "Max chain depth reached for event type: {}",
@@ -1581,9 +1582,9 @@ impl Engine {
                         emitted_batch.extend(result.output_events.iter().map(Arc::clone));
                     }
 
-                    // Queue output events
+                    // Queue output events (push_back to maintain order)
                     for output_event in result.output_events {
-                        pending_events.push((output_event, depth + 1));
+                        pending_events.push_back((output_event, depth + 1));
                     }
                 }
             }
@@ -1609,18 +1610,20 @@ impl Engine {
         let batch_size = events.len();
         self.events_processed += batch_size as u64;
 
-        let mut pending_events: Vec<(SharedEvent, usize)> =
-            Vec::with_capacity(batch_size + batch_size / 4);
+        // Use VecDeque so we can process in FIFO order (critical for sequence patterns!)
+        let mut pending_events: std::collections::VecDeque<(SharedEvent, usize)> =
+            std::collections::VecDeque::with_capacity(batch_size + batch_size / 4);
 
         for event in events {
-            pending_events.push((event, 0));
+            pending_events.push_back((event, 0));
         }
 
         const MAX_CHAIN_DEPTH: usize = 10;
 
         let mut emitted_batch: Vec<SharedEvent> = Vec::with_capacity(batch_size / 10);
 
-        while let Some((current_event, depth)) = pending_events.pop() {
+        // Process all events in FIFO order
+        while let Some((current_event, depth)) = pending_events.pop_front() {
             if depth >= MAX_CHAIN_DEPTH {
                 debug!(
                     "Max chain depth reached for event type: {}",
@@ -1660,7 +1663,7 @@ impl Engine {
                     }
 
                     for output_event in result.output_events {
-                        pending_events.push((output_event, depth + 1));
+                        pending_events.push_back((output_event, depth + 1));
                     }
                 }
             }

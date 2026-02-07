@@ -174,6 +174,25 @@ All scenarios tested with 100,000 events each:
 - **Apama excels at**: Complex aggregations with windows
 - **Conclusion**: Varpulis now outperforms Apama on most common workloads
 
+### SASE+ Sequence Pattern Benchmark (2026-02-07)
+
+Head-to-head comparison after critical FIFO batch processing fix.
+
+**Bug Fixed:** Batch events were processed in LIFO order (Vec::pop), breaking sequence detection.
+Changed to VecDeque with FIFO ordering (pop_front) for correct A→B pattern matching.
+
+| Engine | Events | Time | Throughput | Matches |
+|--------|--------|------|------------|---------|
+| Varpulis SASE+ | 100,000 | 0.92s | **108K evt/s** | 50,000 ✓ |
+| Apama v27.18 | 100,000 | 0.45s | **223K evt/s** | 50,000 ✓ |
+
+**Finding:** Apama is ~2x faster for simple A→B sequences at scale.
+
+However, **Varpulis VPL syntax is more powerful**:
+- VPL: `A as a -> B as b .where(a.id == b.id)` (declarative, intuitive)
+- Apama EPL: Requires nested `on all A() { on B() within(...) {...} }` for inter-event refs
+- Apama's `A -> B(id=a.id)` syntax fails in v27.18 with "variable not initialized"
+
 ### Varpulis SASE+ Pattern Benchmarks (criterion)
 
 | Pattern Type | Events | Time | Throughput |
@@ -195,6 +214,20 @@ All scenarios tested with 100,000 events each:
 
 ## Conclusion
 
-- **Varpulis strengths**: SASE+ patterns, Rust performance, simple syntax
-- **Apama strengths**: Full EPL language, rstream/join, hot redeploy
-- **Recommendation**: Add rstream and having clauses to Varpulis for parity
+**Varpulis strengths:**
+- SASE+ native patterns with Kleene+ (`A -> B+ -> C`)
+- Declarative VPL syntax for sequences (`A as a -> B .where(a.id == b.id)`)
+- 2.9x faster aggregation, 2.7x faster multi-sensor correlation
+- Rust memory safety, no GC pauses
+- Open source
+
+**Apama strengths:**
+- ~2x faster on simple A→B sequences at high volume
+- Full EPL procedural language
+- Hot redeploy, contexts, spawn
+- Mature enterprise tooling
+
+**Key Finding (2026-02-07):**
+VPL's `->` sequence syntax is more expressive than Apama EPL. While Apama EPL's
+`A -> B(id=a.id)` syntax fails with "variable not initialized", VPL handles
+inter-event references cleanly: `A as a -> B as b .where(a.id == b.id)`
