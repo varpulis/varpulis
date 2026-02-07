@@ -75,8 +75,8 @@ pub struct Engine {
     source_bindings: Vec<SourceBinding>,
     /// Sink registry for .to() operations
     sinks: sink_factory::SinkRegistry,
-    /// Output event sender
-    output_tx: mpsc::Sender<Event>,
+    /// Output event sender (None for benchmark/quiet mode - skips cloning overhead)
+    output_tx: Option<mpsc::Sender<Event>>,
     /// Metrics
     events_processed: u64,
     output_events_emitted: u64,
@@ -107,6 +107,36 @@ impl Engine {
             connectors: FxHashMap::default(),
             source_bindings: Vec::new(),
             sinks: sink_factory::SinkRegistry::new(),
+            output_tx: Some(output_tx),
+            events_processed: 0,
+            output_events_emitted: 0,
+            metrics: None,
+            context_map: ContextMap::new(),
+            watermark_tracker: None,
+            last_applied_watermark: None,
+            late_data_configs: FxHashMap::default(),
+            context_name: None,
+        }
+    }
+
+    /// Create engine without output channel (for benchmarking - skips Event cloning overhead)
+    pub fn new_benchmark() -> Self {
+        Self::new_with_optional_output(None)
+    }
+
+    /// Create engine with optional output channel
+    pub fn new_with_optional_output(output_tx: Option<mpsc::Sender<Event>>) -> Self {
+        Self {
+            streams: FxHashMap::default(),
+            router: router::EventRouter::new(),
+            functions: FxHashMap::default(),
+            patterns: FxHashMap::default(),
+            configs: FxHashMap::default(),
+            variables: FxHashMap::default(),
+            mutable_vars: FxHashSet::default(),
+            connectors: FxHashMap::default(),
+            source_bindings: Vec::new(),
+            sinks: sink_factory::SinkRegistry::new(),
             output_tx,
             events_processed: 0,
             output_events_emitted: 0,
@@ -117,6 +147,18 @@ impl Engine {
             late_data_configs: FxHashMap::default(),
             context_name: None,
         }
+    }
+
+    /// Send an output event to the output channel (if configured).
+    /// In benchmark mode (no output channel), this is a no-op to avoid cloning overhead.
+    #[inline]
+    fn send_output(&mut self, event: Event) {
+        if let Some(ref tx) = self.output_tx {
+            if let Err(e) = tx.try_send(event) {
+                warn!("Failed to send output event: {}", e);
+            }
+        }
+        // In benchmark mode (output_tx is None), skip sending entirely
     }
 
     /// Set the context name for this engine instance.
@@ -1408,7 +1450,7 @@ impl Engine {
                                         // Create a late-data event with metadata
                                         let mut late_event = (*event).clone();
                                         late_event.event_type = side_stream.clone().into();
-                                        let _ = self.output_tx.try_send(late_event);
+                                        self.send_output(late_event);
                                         routed = true;
                                         break;
                                     }
@@ -1474,29 +1516,37 @@ impl Engine {
                     )
                     .await?;
 
-                    // Send emitted events to output channel (non-blocking)
-                    for emitted in &result.emitted_events {
-                        self.output_events_emitted += 1;
-                        let owned = (**emitted).clone();
-                        if let Err(e) = self.output_tx.try_send(owned) {
-                            warn!("Failed to send output event: {}", e);
-                        }
-                    }
-
-                    // If no explicit .emit() produced events but .process() was
-                    // used, send output_events to the output channel too
-                    if result.emitted_events.is_empty()
+                    // Check if we need to send output_events (has .process() but no .emit())
+                    let send_outputs = result.emitted_events.is_empty()
                         && stream
                             .operations
                             .iter()
-                            .any(|op| matches!(op, RuntimeOp::Process(_)))
-                    {
-                        for output in &result.output_events {
+                            .any(|op| matches!(op, RuntimeOp::Process(_)));
+
+                    // Send emitted events to output channel (non-blocking)
+                    // Access output_tx directly to avoid borrow conflict with stream
+                    if let Some(ref tx) = self.output_tx {
+                        for emitted in &result.emitted_events {
                             self.output_events_emitted += 1;
-                            let owned = (**output).clone();
-                            if let Err(e) = self.output_tx.try_send(owned) {
+                            let owned = (**emitted).clone();
+                            if let Err(e) = tx.try_send(owned) {
                                 warn!("Failed to send output event: {}", e);
                             }
+                        }
+                        if send_outputs {
+                            for output in &result.output_events {
+                                self.output_events_emitted += 1;
+                                let owned = (**output).clone();
+                                if let Err(e) = tx.try_send(owned) {
+                                    warn!("Failed to send output event: {}", e);
+                                }
+                            }
+                        }
+                    } else {
+                        // Benchmark mode: just count, don't send
+                        self.output_events_emitted += result.emitted_events.len() as u64;
+                        if send_outputs {
+                            self.output_events_emitted += result.output_events.len() as u64;
                         }
                     }
 
@@ -1593,9 +1643,7 @@ impl Engine {
         // Send all emitted events in batch (non-blocking to avoid async overhead)
         for emitted in &emitted_batch {
             let owned = (**emitted).clone();
-            if let Err(e) = self.output_tx.try_send(owned) {
-                warn!("Failed to send output event: {}", e);
-            }
+            self.send_output(owned);
         }
 
         Ok(())
@@ -1671,9 +1719,7 @@ impl Engine {
 
         for emitted in &emitted_batch {
             let owned = (**emitted).clone();
-            if let Err(e) = self.output_tx.try_send(owned) {
-                warn!("Failed to send output event: {}", e);
-            }
+            self.send_output(owned);
         }
 
         Ok(())
@@ -1954,9 +2000,7 @@ impl Engine {
             for emitted in &result.emitted_events {
                 self.output_events_emitted += 1;
                 let owned = (**emitted).clone();
-                if let Err(e) = self.output_tx.try_send(owned) {
-                    warn!("Failed to send swept session event: {}", e);
-                }
+                self.send_output(owned);
             }
         }
 
@@ -2046,7 +2090,7 @@ impl Engine {
 
         // Parse new program to get new stream definitions
         // We need to compile the new program to compare with existing streams
-        let mut new_engine = Engine::new(self.output_tx.clone());
+        let mut new_engine = Engine::new_with_optional_output(self.output_tx.clone());
         new_engine.load(program)?;
 
         let new_streams: FxHashSet<String> = new_engine.streams.keys().cloned().collect();
@@ -2456,9 +2500,7 @@ impl Engine {
             for emitted in &result.emitted_events {
                 self.output_events_emitted += 1;
                 let owned = (**emitted).clone();
-                if let Err(e) = self.output_tx.try_send(owned) {
-                    warn!("Failed to send watermark-triggered event: {}", e);
-                }
+                self.send_output(owned);
             }
         }
 

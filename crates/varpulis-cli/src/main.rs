@@ -171,6 +171,10 @@ enum Commands {
         /// Field to use for partitioning events (default: first string field)
         #[arg(long)]
         partition_by: Option<String>,
+
+        /// Quiet/benchmark mode - only count outputs, don't collect them (faster)
+        #[arg(long, short = 'q')]
+        quiet: bool,
     },
 
     /// Generate example configuration file
@@ -369,6 +373,7 @@ async fn main() -> Result<()> {
             preload,
             workers,
             partition_by,
+            quiet,
         } => {
             // Load config file if specified
             let config = if let Some(ref config_path) = cli.config {
@@ -391,6 +396,7 @@ async fn main() -> Result<()> {
                 preload,
                 workers,
                 partition_by.as_deref(),
+                quiet,
             )
             .await?;
         }
@@ -830,6 +836,7 @@ async fn run_simulation(
     preload: bool,
     workers: Option<usize>,
     partition_by: Option<&str>,
+    quiet: bool,
 ) -> Result<()> {
     // Determine number of workers
     let num_workers = workers.unwrap_or_else(|| {
@@ -879,10 +886,17 @@ async fn run_simulation(
     );
 
     // Create output event channel (shared across all engines)
-    let (output_tx, mut output_rx) = mpsc::channel::<Event>(1000 * num_workers);
+    // Use larger buffer in quiet mode since we're benchmarking throughput
+    let channel_size = if quiet { 100_000 } else { 1000 * num_workers };
+    let (output_tx, mut output_rx) = mpsc::channel::<Event>(channel_size);
 
     // Create initial engine to show metrics
-    let mut engine = Engine::new(output_tx.clone());
+    // In quiet mode, use benchmark engine to skip channel overhead entirely
+    let mut engine = if quiet {
+        Engine::new_benchmark()
+    } else {
+        Engine::new(output_tx.clone())
+    };
     engine
         .load(&program)
         .map_err(|e| anyhow::anyhow!("Load error: {}", e))?;
@@ -891,19 +905,31 @@ async fn run_simulation(
     println!("Program loaded: {} streams", metrics.streams_count);
     println!();
 
-    // Collect output events
-    let output_events = Arc::new(RwLock::new(Vec::<Event>::new()));
+    // Output event handling - use atomic counter in quiet mode for performance
+    let output_count = Arc::new(AtomicU64::new(0));
+    let output_emitted_count = Arc::new(AtomicU64::new(0)); // Track from engine metrics in quiet mode
+    let output_events = if quiet {
+        None
+    } else {
+        Some(Arc::new(RwLock::new(Vec::<Event>::new())))
+    };
+
+    let output_count_clone = output_count.clone();
     let output_events_clone = output_events.clone();
 
     tokio::spawn(async move {
         while let Some(output_event) = output_rx.recv().await {
+            output_count_clone.fetch_add(1, Ordering::Relaxed);
             if verbose {
                 println!(
                     "OUTPUT EVENT: {} - {:?}",
                     output_event.event_type, output_event.data
                 );
             }
-            output_events_clone.write().await.push(output_event);
+            // Only collect events if not in quiet mode
+            if let Some(ref events_vec) = output_events_clone {
+                events_vec.write().await.push(output_event);
+            }
         }
     });
 
@@ -957,8 +983,9 @@ async fn run_simulation(
 
         // Process partitions in parallel using spawn_blocking + rayon
         let program_arc = program.clone();
-        let output_tx_arc = output_tx.clone();
+        let output_tx_arc = if quiet { None } else { Some(output_tx.clone()) };
         let total_counter = total_events_processed.clone();
+        let output_counter = output_emitted_count.clone();
 
         let partition_vec: Vec<_> = partitions.into_iter().collect();
 
@@ -975,7 +1002,11 @@ async fn run_simulation(
                         .expect("Failed to create tokio runtime");
 
                     rt.block_on(async {
-                        let mut worker_engine = Engine::new(output_tx_arc.clone());
+                        // Use benchmark engine in quiet mode (skips channel overhead)
+                        let mut worker_engine = match &output_tx_arc {
+                            Some(tx) => Engine::new(tx.clone()),
+                            None => Engine::new_benchmark(),
+                        };
                         if let Err(e) = worker_engine.load(&program_arc) {
                             eprintln!("Worker {}: Failed to load program: {}", partition_id, e);
                             return;
@@ -992,6 +1023,8 @@ async fn run_simulation(
 
                         let worker_metrics = worker_engine.metrics();
                         total_counter.fetch_add(worker_metrics.events_processed, Ordering::Relaxed);
+                        output_counter
+                            .fetch_add(worker_metrics.output_events_emitted, Ordering::Relaxed);
                     });
                 });
         })
@@ -1078,8 +1111,9 @@ async fn run_simulation(
 
             // Process partitions in parallel using spawn_blocking + rayon
             let program_arc = program.clone();
-            let output_tx_arc = output_tx.clone();
+            let output_tx_arc = if quiet { None } else { Some(output_tx.clone()) };
             let total_counter = total_events_processed.clone();
+            let output_counter = output_emitted_count.clone();
 
             let partition_vec: Vec<_> = partitions.into_iter().collect();
 
@@ -1093,7 +1127,11 @@ async fn run_simulation(
                             .expect("Failed to create tokio runtime");
 
                         rt.block_on(async {
-                            let mut worker_engine = Engine::new(output_tx_arc.clone());
+                            // Use benchmark engine in quiet mode (skips channel overhead)
+                            let mut worker_engine = match &output_tx_arc {
+                                Some(tx) => Engine::new(tx.clone()),
+                                None => Engine::new_benchmark(),
+                            };
                             if let Err(e) = worker_engine.load(&program_arc) {
                                 eprintln!("Worker {}: Failed to load program: {}", partition_id, e);
                                 return;
@@ -1107,6 +1145,8 @@ async fn run_simulation(
                             let worker_metrics = worker_engine.metrics();
                             total_counter
                                 .fetch_add(worker_metrics.events_processed, Ordering::Relaxed);
+                            output_counter
+                                .fetch_add(worker_metrics.output_events_emitted, Ordering::Relaxed);
                         });
                     });
             })
@@ -1215,7 +1255,16 @@ async fn run_simulation(
         engine.metrics().events_processed
     };
 
-    let output_events_count = output_events.read().await.len();
+    // Use atomic counter for output count
+    // In quiet mode, use the engine metrics counter; otherwise use channel counter
+    let output_events_count = if quiet {
+        // For parallel mode, use the aggregated counter; for single-threaded, use engine metrics
+        let parallel_count = output_emitted_count.load(Ordering::Relaxed);
+        let single_count = engine.metrics().output_events_emitted;
+        (parallel_count + single_count) as usize
+    } else {
+        output_count.load(Ordering::Relaxed) as usize
+    };
 
     println!("\nSimulation Complete");
     println!("======================");
@@ -1228,10 +1277,13 @@ async fn run_simulation(
         events_processed as f64 / elapsed.as_secs_f64()
     );
 
+    // Show output events summary (only if collected, not in quiet mode)
     if output_events_count > 0 {
-        println!("\nOutput Events Summary:");
-        for output_event in output_events.read().await.iter() {
-            println!("  - {}: {:?}", output_event.event_type, output_event.data);
+        if let Some(ref events_vec) = output_events {
+            println!("\nOutput Events Summary:");
+            for output_event in events_vec.read().await.iter() {
+                println!("  - {}: {:?}", output_event.event_type, output_event.data);
+            }
         }
     }
 
