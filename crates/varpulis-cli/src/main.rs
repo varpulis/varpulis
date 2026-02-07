@@ -16,10 +16,10 @@ use varpulis_core::ast::{Program, Stmt};
 use varpulis_parser::parse;
 use varpulis_runtime::engine::Engine;
 use varpulis_runtime::event::Event;
-use varpulis_runtime::SharedEvent; // PERF: Zero-copy event sharing
 use varpulis_runtime::event_file::{EventFileParser, EventFilePlayer, StreamingEventReader};
 use varpulis_runtime::metrics::{Metrics, MetricsServer};
 use varpulis_runtime::simulator::{Simulator, SimulatorConfig};
+use varpulis_runtime::SharedEvent; // PERF: Zero-copy event sharing
 
 // Import our new modules
 use varpulis_cli::api;
@@ -829,6 +829,7 @@ fn check_syntax(source: &str) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_simulation(
     program_path: &PathBuf,
     events_path: &PathBuf,
