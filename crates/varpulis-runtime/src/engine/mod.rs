@@ -5,6 +5,7 @@
 
 mod compiler;
 mod evaluator;
+mod pattern_analyzer;
 mod pipeline;
 mod router;
 mod sink_factory;
@@ -24,7 +25,7 @@ use types::{
     AttentionWindowConfig, EmitConfig, EmitExprConfig, LogConfig, MergeSource,
     PartitionedAggregatorState, PartitionedSlidingCountWindowState, PartitionedWindowState,
     PatternConfig, PrintConfig, RuntimeOp, RuntimeSource, SelectConfig, StreamDefinition,
-    StreamProcessResult, TimerConfig, ToConfig, WindowType,
+    StreamProcessResult, TimerConfig, ToConfig, TrendAggregateConfig, WindowType,
 };
 
 use crate::aggregation::Aggregator;
@@ -100,6 +101,9 @@ pub struct Engine {
     late_data_configs: FxHashMap<String, types::LateDataConfig>,
     /// Context name when running inside a context thread (used for unique connector IDs)
     context_name: Option<String>,
+    /// Shared Hamlet aggregators for multi-query optimization
+    shared_hamlet_aggregators:
+        Vec<std::sync::Arc<std::sync::Mutex<crate::hamlet::HamletAggregator>>>,
 }
 
 impl Engine {
@@ -124,6 +128,7 @@ impl Engine {
             last_applied_watermark: None,
             late_data_configs: FxHashMap::default(),
             context_name: None,
+            shared_hamlet_aggregators: Vec::new(),
         }
     }
 
@@ -164,6 +169,7 @@ impl Engine {
             last_applied_watermark: None,
             late_data_configs: FxHashMap::default(),
             context_name: None,
+            shared_hamlet_aggregators: Vec::new(),
         }
     }
 
@@ -511,7 +517,181 @@ impl Engine {
             self.context_name.as_deref(),
         );
 
+        // Phase 2: Detect multi-query Hamlet sharing opportunities
+        self.setup_hamlet_sharing();
+
         Ok(())
+    }
+
+    /// Detect overlapping Kleene patterns across streams using `.trend_aggregate()`
+    /// and replace per-stream aggregators with shared ones.
+    fn setup_hamlet_sharing(&mut self) {
+        use crate::hamlet::template::TemplateBuilder;
+        use crate::hamlet::{HamletAggregator, HamletConfig, QueryRegistration};
+
+        // Collect streams that have Hamlet aggregators
+        let hamlet_streams: Vec<String> = self
+            .streams
+            .iter()
+            .filter(|(_, s)| s.hamlet_aggregator.is_some())
+            .map(|(name, _)| name.clone())
+            .collect();
+
+        if hamlet_streams.len() < 2 {
+            return; // No sharing possible with fewer than 2 queries
+        }
+
+        // Extract Kleene type info from each stream's TrendAggregate config
+        // Group streams by their Kleene event types
+        let mut kleene_groups: FxHashMap<Vec<String>, Vec<String>> = FxHashMap::default();
+
+        for stream_name in &hamlet_streams {
+            if let Some(stream) = self.streams.get(stream_name) {
+                // Find TrendAggregate op and extract event types
+                let mut kleene_types = Vec::new();
+                for op in &stream.operations {
+                    if let RuntimeOp::TrendAggregate(_) = op {
+                        // Get event types from the stream's hamlet aggregator
+                        if let Some(ref agg) = stream.hamlet_aggregator {
+                            for query in agg.registered_queries() {
+                                for &kt in query.kleene_types.iter() {
+                                    let type_name = format!("type_{}", kt);
+                                    if !kleene_types.contains(&type_name) {
+                                        kleene_types.push(type_name);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                kleene_types.sort();
+                kleene_groups
+                    .entry(kleene_types)
+                    .or_default()
+                    .push(stream_name.clone());
+            }
+        }
+
+        // For groups with 2+ streams sharing Kleene patterns, create shared aggregators
+        for (kleene_key, group_streams) in &kleene_groups {
+            if group_streams.len() < 2 || kleene_key.is_empty() {
+                continue;
+            }
+
+            info!(
+                "Hamlet sharing detected: {} streams share Kleene patterns {:?}: {:?}",
+                group_streams.len(),
+                kleene_key,
+                group_streams,
+            );
+
+            // Build a shared template from all queries in the group
+            let mut builder = TemplateBuilder::new();
+            // (stream_name, registration, fields_config)
+            type SharingEntry = (
+                String,
+                QueryRegistration,
+                Vec<(String, crate::greta::GretaAggregate)>,
+            );
+            let mut all_registrations: Vec<SharingEntry> = Vec::new();
+            let mut next_query_id: crate::greta::QueryId = 0;
+
+            for stream_name in group_streams {
+                if let Some(stream) = self.streams.get(stream_name) {
+                    if let Some(ref agg) = stream.hamlet_aggregator {
+                        for query in agg.registered_queries() {
+                            // Re-register with a new query ID in the shared template
+                            let new_id = next_query_id;
+                            next_query_id += 1;
+
+                            // Get event type names from template
+                            let event_names: Vec<String> = query
+                                .event_types
+                                .iter()
+                                .map(|&idx| format!("type_{}", idx))
+                                .collect();
+                            let name_strs: Vec<&str> =
+                                event_names.iter().map(|s| s.as_str()).collect();
+
+                            builder.add_sequence(new_id, &name_strs);
+
+                            // Add Kleene patterns
+                            for &kt in &query.kleene_types {
+                                let type_name = format!("type_{}", kt);
+                                // Find the state for this type in the sequence
+                                let position = event_names
+                                    .iter()
+                                    .position(|n| *n == type_name)
+                                    .unwrap_or(0);
+                                builder.add_kleene(new_id, &type_name, position as u16);
+                            }
+
+                            // Get fields from the TrendAggregate config
+                            let fields: Vec<(String, crate::greta::GretaAggregate)> = stream
+                                .operations
+                                .iter()
+                                .find_map(|op| {
+                                    if let RuntimeOp::TrendAggregate(config) = op {
+                                        Some(config.fields.clone())
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap_or_default();
+
+                            all_registrations.push((
+                                stream_name.clone(),
+                                QueryRegistration {
+                                    id: new_id,
+                                    event_types: query.event_types.clone(),
+                                    kleene_types: query.kleene_types.clone(),
+                                    aggregate: query.aggregate,
+                                },
+                                fields,
+                            ));
+                        }
+                    }
+                }
+            }
+
+            // Create shared aggregator
+            let template = builder.build();
+            let config = HamletConfig {
+                window_ms: 60_000,
+                incremental: true,
+                ..Default::default()
+            };
+            let mut shared_agg = HamletAggregator::new(config, template);
+
+            for (_, registration, _) in &all_registrations {
+                shared_agg.register_query(registration.clone());
+            }
+
+            let shared_ref = std::sync::Arc::new(std::sync::Mutex::new(shared_agg));
+            self.shared_hamlet_aggregators.push(shared_ref.clone());
+
+            // Update each stream to use the shared aggregator
+            // (We replace the per-stream aggregator with None and update the TrendAggregateConfig query_id)
+            for (stream_name, registration, fields) in &all_registrations {
+                if let Some(stream) = self.streams.get_mut(stream_name) {
+                    // Remove per-stream aggregator - shared one is used instead
+                    stream.hamlet_aggregator = None;
+
+                    // Update the TrendAggregate op's query_id
+                    for op in &mut stream.operations {
+                        if let RuntimeOp::TrendAggregate(config) = op {
+                            config.query_id = registration.id;
+                            config.fields = fields.clone();
+                        }
+                    }
+                }
+            }
+
+            info!(
+                "Created shared Hamlet aggregator with {} queries",
+                next_query_id,
+            );
+        }
     }
 
     /// Connect all sinks that require explicit connection.
@@ -587,7 +767,7 @@ impl Engine {
         }
 
         // Check if we have sequence operations and build SASE+ engine
-        let (runtime_ops, sase_engine, sequence_event_types) =
+        let (runtime_ops, sase_engine, sequence_event_types, hamlet_aggregator) =
             self.compile_ops_with_sequences(source, ops)?;
 
         // Mapping from event_type to source name (for join streams)
@@ -810,6 +990,7 @@ impl Engine {
                 sase_engine,
                 join_buffer,
                 event_type_to_source,
+                hamlet_aggregator,
             },
         );
 
@@ -822,7 +1003,15 @@ impl Engine {
         &self,
         source: &StreamSource,
         ops: &[StreamOp],
-    ) -> Result<(Vec<RuntimeOp>, Option<SaseEngine>, Vec<String>), String> {
+    ) -> Result<
+        (
+            Vec<RuntimeOp>,
+            Option<SaseEngine>,
+            Vec<String>,
+            Option<crate::hamlet::HamletAggregator>,
+        ),
+        String,
+    > {
         let mut runtime_ops = Vec::new();
         let mut sequence_event_types: Vec<String> = Vec::new();
         let mut partition_key: Option<String> = None;
@@ -831,6 +1020,10 @@ impl Engine {
         let mut followed_by_clauses: Vec<varpulis_core::ast::FollowedByClause> = Vec::new();
         let mut negation_clauses: Vec<varpulis_core::ast::FollowedByClause> = Vec::new();
         let mut global_within: Option<std::time::Duration> = None;
+
+        // For Hamlet trend aggregation
+        let mut trend_agg_items: Option<Vec<varpulis_core::ast::TrendAggItem>> = None;
+        let mut within_expr_for_hamlet: Option<varpulis_core::ast::Expr> = None;
 
         // Helper closure to resolve a stream/event name to the underlying event type
         let resolve_event_type = |name: &str| -> String {
@@ -906,6 +1099,7 @@ impl Engine {
                         _ => 300_000_000_000u64, // 5 minutes default
                     };
                     global_within = Some(std::time::Duration::from_nanos(duration_ns));
+                    within_expr_for_hamlet = Some(expr.clone());
                     continue;
                 }
                 StreamOp::Not(clause) => {
@@ -916,6 +1110,10 @@ impl Engine {
                     if !sequence_event_types.contains(&resolved) {
                         sequence_event_types.push(resolved);
                     }
+                    continue;
+                }
+                StreamOp::TrendAggregate(items) => {
+                    trend_agg_items = Some(items.clone());
                     continue;
                 }
                 StreamOp::Context(_) => {
@@ -1243,12 +1441,145 @@ impl Engine {
                 StreamOp::Process(expr) => {
                     runtime_ops.push(RuntimeOp::Process(expr.clone()));
                 }
-                _ => {
-                    debug!("Skipping operation: {:?}", op);
+                StreamOp::On(_) => {
+                    // Join condition - handled by extract_join_keys(), not a runtime op
+                }
+                other => {
+                    return Err(format!(
+                        "unsupported stream operation: {}",
+                        stream_op_name(other)
+                    ));
                 }
             }
         }
 
+        // Check if we're in trend aggregation mode (Hamlet) or detection mode (SASE)
+        if let Some(ref agg_items) = trend_agg_items {
+            // === Trend Aggregation Mode (Hamlet) ===
+            // Build Hamlet aggregator instead of SASE engine.
+
+            let event_types = pattern_analyzer::extract_event_types(source, &followed_by_clauses);
+            let kleene_info = pattern_analyzer::extract_kleene_info(source, &followed_by_clauses);
+            let window_ms = pattern_analyzer::extract_within_ms(within_expr_for_hamlet.as_ref());
+
+            // Build a type_indices map for aggregate function resolution
+            let mut type_indices_map = std::collections::HashMap::new();
+
+            // Build MergedTemplate via TemplateBuilder
+            use crate::hamlet::template::TemplateBuilder;
+            let mut builder = TemplateBuilder::new();
+            let query_id: crate::greta::QueryId = 0;
+
+            // Register event types as a sequence
+            let type_strs: Vec<&str> = event_types.iter().map(|s| s.as_str()).collect();
+            builder.add_sequence(query_id, &type_strs);
+
+            // Build type_indices from the template after adding sequence
+            // (TemplateBuilder registers types internally)
+            let template_preview = builder.build();
+            for et in &event_types {
+                if let Some(idx) = template_preview.type_index(et) {
+                    type_indices_map.insert(et.clone(), idx);
+                }
+            }
+
+            // Also map aliases to type indices
+            // Source alias
+            match source {
+                StreamSource::IdentWithAlias { name, alias } => {
+                    if let Some(idx) = type_indices_map.get(name) {
+                        type_indices_map.insert(alias.clone(), *idx);
+                    }
+                }
+                StreamSource::AllWithAlias {
+                    name,
+                    alias: Some(alias),
+                } => {
+                    if let Some(idx) = type_indices_map.get(name) {
+                        type_indices_map.insert(alias.clone(), *idx);
+                    }
+                }
+                _ => {}
+            }
+            for clause in &followed_by_clauses {
+                if let Some(ref alias) = clause.alias {
+                    if let Some(idx) = type_indices_map.get(&clause.event_type) {
+                        type_indices_map.insert(alias.clone(), *idx);
+                    }
+                }
+            }
+
+            // Rebuild template with Kleene info
+            let mut builder = TemplateBuilder::new();
+            builder.add_sequence(query_id, &type_strs);
+
+            for ki in &kleene_info {
+                // The Kleene state in the template is at position ki.position
+                // (the state index after the transition for that event type)
+                let state = ki.position as u16;
+                builder.add_kleene(query_id, &ki.event_type, state);
+            }
+
+            let template = builder.build();
+
+            // Create Hamlet aggregator
+            let config = crate::hamlet::HamletConfig {
+                window_ms,
+                incremental: true,
+                ..Default::default()
+            };
+            let mut aggregator = crate::hamlet::HamletAggregator::new(config, template);
+
+            // Convert trend_agg_items to GretaAggregate list
+            let fields: Vec<(String, crate::greta::GretaAggregate)> = agg_items
+                .iter()
+                .map(|item| {
+                    let agg = pattern_analyzer::trend_item_to_greta(item, &type_indices_map);
+                    (item.alias.clone(), agg)
+                })
+                .collect();
+
+            // Use the first aggregate for the query registration
+            let primary_aggregate = fields
+                .first()
+                .map(|(_, agg)| *agg)
+                .unwrap_or(crate::greta::GretaAggregate::CountTrends);
+
+            // Build Kleene types
+            let kleene_types: smallvec::SmallVec<[u16; 4]> = kleene_info
+                .iter()
+                .filter_map(|ki| type_indices_map.get(&ki.event_type).copied())
+                .collect();
+
+            // Build event type indices
+            let event_type_indices: smallvec::SmallVec<[u16; 4]> = event_types
+                .iter()
+                .filter_map(|et| type_indices_map.get(et).copied())
+                .collect();
+
+            aggregator.register_query(crate::hamlet::QueryRegistration {
+                id: query_id,
+                event_types: event_type_indices,
+                kleene_types,
+                aggregate: primary_aggregate,
+            });
+
+            // Insert TrendAggregate op at the beginning (replaces Sequence)
+            runtime_ops.insert(
+                0,
+                RuntimeOp::TrendAggregate(TrendAggregateConfig { fields, query_id }),
+            );
+
+            info!(
+                "Created Hamlet aggregator for trend aggregation ({} event types, {} Kleene patterns)",
+                event_types.len(),
+                kleene_info.len()
+            );
+
+            return Ok((runtime_ops, None, sequence_event_types, Some(aggregator)));
+        }
+
+        // === Detection Mode (SASE) ===
         // Build SASE+ engine if we have sequence patterns
         let sase_engine =
             if !followed_by_clauses.is_empty() || matches!(source, StreamSource::Sequence(_)) {
@@ -1312,7 +1643,7 @@ impl Engine {
                 None
             };
 
-        Ok((runtime_ops, sase_engine, sequence_event_types))
+        Ok((runtime_ops, sase_engine, sequence_event_types, None))
     }
 
     /// Extract and create AttentionWindow from runtime operations
@@ -2750,5 +3081,45 @@ impl Engine {
             (RuntimeSource::Join(a), RuntimeSource::Join(b)) => a == b,
             _ => false,
         }
+    }
+}
+
+fn stream_op_name(op: &StreamOp) -> &'static str {
+    match op {
+        StreamOp::Where(_) => ".where()",
+        StreamOp::Select(_) => ".select()",
+        StreamOp::Window(_) => ".window()",
+        StreamOp::Aggregate(_) => ".aggregate()",
+        StreamOp::Having(_) => ".having()",
+        StreamOp::PartitionBy(_) => ".partition_by()",
+        StreamOp::OrderBy(_) => ".order_by()",
+        StreamOp::Limit(_) => ".limit()",
+        StreamOp::Distinct(_) => ".distinct()",
+        StreamOp::Map(_) => ".map()",
+        StreamOp::Filter(_) => ".filter()",
+        StreamOp::Tap(_) => ".tap()",
+        StreamOp::Print(_) => ".print()",
+        StreamOp::Log(_) => ".log()",
+        StreamOp::Emit { .. } => ".emit()",
+        StreamOp::To { .. } => ".to()",
+        StreamOp::ToExpr(_) => ".to()",
+        StreamOp::Pattern(_) => ".pattern()",
+        StreamOp::AttentionWindow(_) => ".attention_window()",
+        StreamOp::Concurrent(_) => ".concurrent()",
+        StreamOp::Process(_) => ".process()",
+        StreamOp::OnError(_) => ".on_error()",
+        StreamOp::Collect => ".collect()",
+        StreamOp::On(_) => ".on()",
+        StreamOp::FollowedBy(_) => "-> (followed_by)",
+        StreamOp::Within(_) => ".within()",
+        StreamOp::Not(_) => ".not()",
+        StreamOp::Fork(_) => ".fork()",
+        StreamOp::Any(_) => ".any()",
+        StreamOp::All => ".all()",
+        StreamOp::First => ".first()",
+        StreamOp::Context(_) => ".context()",
+        StreamOp::Watermark(_) => ".watermark()",
+        StreamOp::AllowedLateness(_) => ".allowed_lateness()",
+        StreamOp::TrendAggregate(_) => ".trend_aggregate()",
     }
 }

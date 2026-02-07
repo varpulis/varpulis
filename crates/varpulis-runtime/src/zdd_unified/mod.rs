@@ -88,4 +88,4 @@ pub mod propagation;
 
 pub use aggregator::{ZddAggregator, ZddConfig, ZddQueryRegistration};
 pub use nfa_zdd::{NfaZdd, ZddState, ZddTransition};
-pub use propagation::{ZddPropagator, PropagationMode};
+pub use propagation::{PropagationMode, ZddPropagator};

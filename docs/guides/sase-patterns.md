@@ -496,9 +496,31 @@ stream CompletedOrders from *
 
 ---
 
+## Trend Aggregation Mode
+
+For patterns where you need **statistics over trends** (COUNT, SUM, AVG) rather than individual matches, use `.trend_aggregate()` instead of the default detection mode:
+
+```vpl
+# Instead of detecting each rising price pattern individually...
+# Count how many rising trends exist (without enumerating them)
+stream TrendCount = StockTick as first
+    -> all StockTick where price > first.price as rising
+    .within(60s)
+    .partition_by(symbol)
+    .trend_aggregate(count: count_trends())
+    .emit(symbol: first.symbol, trends: count)
+```
+
+This uses the **Hamlet engine** (SIGMOD 2021) for O(n) aggregation instead of explicit trend construction, which can be exponential. Multiple queries sharing Kleene sub-patterns are automatically optimized via shared aggregation.
+
+See [Trend Aggregation Reference](../reference/trend-aggregation.md) and [Trend Aggregation Tutorial](../tutorials/trend-aggregation-tutorial.md) for details.
+
+---
+
 ## See Also
 
 - [Language Tutorial](../tutorials/language-tutorial.md) - VarpulisQL basics
 - [Windows & Aggregations](../reference/windows-aggregations.md) - Windowed pattern matching
+- [Trend Aggregation](../reference/trend-aggregation.md) - `.trend_aggregate()` reference
 - [Troubleshooting Guide](troubleshooting.md) - Pattern debugging tips
 - [SIGMOD 2006 Paper](https://dl.acm.org/doi/10.1145/1142473.1142520) - Original SASE+ research

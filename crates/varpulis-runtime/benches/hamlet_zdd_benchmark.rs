@@ -42,13 +42,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use varpulis_runtime::event::Event;
 use varpulis_runtime::greta::{GretaAggregate, QueryId};
-use varpulis_runtime::hamlet::{
-    HamletAggregator, HamletConfig, QueryRegistration as HamletQuery,
-};
 use varpulis_runtime::hamlet::template::TemplateBuilder;
-use varpulis_runtime::zdd_unified::{
-    ZddAggregator, ZddConfig, ZddQueryRegistration,
-};
+use varpulis_runtime::hamlet::{HamletAggregator, HamletConfig, QueryRegistration as HamletQuery};
+use varpulis_runtime::zdd_unified::{ZddAggregator, ZddConfig, ZddQueryRegistration};
 
 // =============================================================================
 // Event generators
@@ -58,9 +54,7 @@ use varpulis_runtime::zdd_unified::{
 fn generate_ab_kleene_events(num_a: usize, b_per_a: usize) -> Vec<Arc<Event>> {
     let mut events = Vec::with_capacity(num_a * (1 + b_per_a));
     for seq in 0..num_a {
-        events.push(Arc::new(
-            Event::new("A").with_field("seq_id", seq as i64),
-        ));
+        events.push(Arc::new(Event::new("A").with_field("seq_id", seq as i64)));
         for b_idx in 0..b_per_a {
             events.push(Arc::new(
                 Event::new("B")
@@ -82,12 +76,15 @@ fn generate_shared_kleene_events(
     let start_types = ["A", "C", "D", "E", "F", "G", "H", "I", "J", "K"];
     let mut events = Vec::new();
 
-    for type_idx in 0..num_start_types.min(start_types.len()) {
+    for (type_idx, start_type) in start_types
+        .iter()
+        .enumerate()
+        .take(num_start_types.min(start_types.len()))
+    {
         for seq in 0..sequences_per_type {
             // Start event
             events.push(Arc::new(
-                Event::new(start_types[type_idx])
-                    .with_field("seq_id", (type_idx * 1000 + seq) as i64),
+                Event::new(*start_type).with_field("seq_id", (type_idx * 1000 + seq) as i64),
             ));
             // B events (shared Kleene)
             for b_idx in 0..b_per_seq {
@@ -103,10 +100,7 @@ fn generate_shared_kleene_events(
 }
 
 /// Generate bursty events (alternating periods of different types)
-fn generate_bursty_events(
-    num_bursts: usize,
-    events_per_burst: usize,
-) -> Vec<Arc<Event>> {
+fn generate_bursty_events(num_bursts: usize, events_per_burst: usize) -> Vec<Arc<Event>> {
     let mut events = Vec::with_capacity(num_bursts * events_per_burst);
     for burst in 0..num_bursts {
         let event_type = if burst % 2 == 0 { "A" } else { "B" };
@@ -126,9 +120,7 @@ fn generate_regular_events(total: usize) -> Vec<Arc<Event>> {
     let mut events = Vec::with_capacity(total);
     for i in 0..total {
         let event_type = if i % 2 == 0 { "A" } else { "B" };
-        events.push(Arc::new(
-            Event::new(event_type).with_field("idx", i as i64),
-        ));
+        events.push(Arc::new(Event::new(event_type).with_field("idx", i as i64)));
     }
     events
 }
@@ -242,9 +234,9 @@ fn bench_multi_query_scaling(c: &mut Criterion) {
 
     for &num_queries in &query_counts {
         let events = generate_shared_kleene_events(
-            num_queries.min(10),  // Up to 10 different start types
-            10,                   // 10 sequences per type
-            20,                   // 20 B's per sequence
+            num_queries.min(10), // Up to 10 different start types
+            10,                  // 10 sequences per type
+            20,                  // 20 B's per sequence
         );
         group.throughput(Throughput::Elements(events.len() as u64));
 
@@ -295,33 +287,25 @@ fn bench_kleene_length(c: &mut Criterion) {
         let events = generate_ab_kleene_events(1, length);
         group.throughput(Throughput::Elements(events.len() as u64));
 
-        group.bench_with_input(
-            BenchmarkId::new("hamlet", length),
-            &length,
-            |b, _| {
-                b.iter(|| {
-                    let mut aggregator = create_hamlet_single_query();
-                    for event in &events {
-                        black_box(aggregator.process(event.clone()));
-                    }
-                    black_box(aggregator.flush())
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("hamlet", length), &length, |b, _| {
+            b.iter(|| {
+                let mut aggregator = create_hamlet_single_query();
+                for event in &events {
+                    black_box(aggregator.process(event.clone()));
+                }
+                black_box(aggregator.flush())
+            })
+        });
 
-        group.bench_with_input(
-            BenchmarkId::new("zdd_unified", length),
-            &length,
-            |b, _| {
-                b.iter(|| {
-                    let mut aggregator = create_zdd_single_query();
-                    for event in &events {
-                        black_box(aggregator.process(event.clone()));
-                    }
-                    black_box(aggregator.flush())
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("zdd_unified", length), &length, |b, _| {
+            b.iter(|| {
+                let mut aggregator = create_zdd_single_query();
+                for event in &events {
+                    black_box(aggregator.process(event.clone()));
+                }
+                black_box(aggregator.flush())
+            })
+        });
     }
 
     group.finish();

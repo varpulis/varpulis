@@ -182,8 +182,7 @@ impl HamletAggregator {
         self.last_event_type = Some(type_index);
 
         // Add event to graph
-        let (_node_id, graphlet_id, _local_index) =
-            self.graph.add_event(event.clone(), type_index);
+        let (_node_id, graphlet_id, _local_index) = self.graph.add_event(event.clone(), type_index);
 
         // Set up sharing for this graphlet if needed
         self.setup_graphlet_sharing(graphlet_id, type_index);
@@ -463,6 +462,11 @@ impl HamletAggregator {
         self.graph.num_events()
     }
 
+    /// Get registered queries (for sharing detection)
+    pub fn registered_queries(&self) -> &[QueryRegistration] {
+        &self.queries
+    }
+
     /// Get query state (for debugging/testing)
     pub fn query_state(&self, query_id: QueryId) -> Option<(u16, u64, bool)> {
         self.query_states
@@ -620,6 +624,6 @@ mod tests {
 
         let results = aggregator.flush();
         // Both queries should have results (though values may differ based on when they started)
-        assert!(results.len() >= 1);
+        assert!(!results.is_empty());
     }
 }

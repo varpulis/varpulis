@@ -111,7 +111,8 @@ impl Graphlet {
     /// Add an event to the graphlet
     pub fn add_event(&mut self, node_id: NodeId, event: SharedEvent) -> u16 {
         let local_index = self.nodes.len() as u16;
-        self.nodes.push(GraphletNode::new(node_id, local_index, event));
+        self.nodes
+            .push(GraphletNode::new(node_id, local_index, event));
         local_index
     }
 

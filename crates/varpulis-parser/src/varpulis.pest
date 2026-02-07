@@ -133,6 +133,7 @@ dot_op = { "." ~ (
     | attention_window_op | concurrent_op | process_op | on_error_op
     | collect_op | on_op | within_op | not_op | fork_op | any_op
     | all_op | first_op | watermark_op | allowed_lateness_op
+    | trend_aggregate_op
 )}
 
 // followed_by: use filter_expr for filter (stops before stream ops), 'as identifier' handled at end
@@ -207,6 +208,12 @@ all_op = { "all" ~ "(" ~ ")" }
 first_op = { "first" ~ "(" ~ ")" }
 watermark_op = { "watermark" ~ "(" ~ named_arg_list ~ ")" }
 allowed_lateness_op = { "allowed_lateness" ~ "(" ~ expr ~ ")" }
+
+// .trend_aggregate(count: count_trends(), events: count_events(rising))
+trend_aggregate_op = { "trend_aggregate" ~ "(" ~ trend_agg_list ~ ")" }
+trend_agg_list = { trend_agg_item ~ ("," ~ trend_agg_item)* }
+trend_agg_item = { identifier ~ ":" ~ trend_agg_func }
+trend_agg_func = { identifier ~ "(" ~ expr? ~ ")" }
 
 select_list = { select_item ~ ("," ~ select_item)* }
 select_item = { (identifier ~ ":" ~ expr) | identifier }

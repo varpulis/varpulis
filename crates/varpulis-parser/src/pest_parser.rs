@@ -920,6 +920,32 @@ fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
             let expr = parse_expr(pair.into_inner().expect_next("allowed lateness duration")?)?;
             Ok(StreamOp::AllowedLateness(expr))
         }
+        Rule::trend_aggregate_op => {
+            let mut items = Vec::new();
+            for p in pair.into_inner() {
+                if p.as_rule() == Rule::trend_agg_list {
+                    for item_pair in p.into_inner() {
+                        if item_pair.as_rule() == Rule::trend_agg_item {
+                            let mut inner = item_pair.into_inner();
+                            let alias = inner.expect_next("trend agg alias")?.as_str().to_string();
+                            let func_pair = inner.expect_next("trend agg function")?;
+                            let mut func_inner = func_pair.into_inner();
+                            let func_name = func_inner
+                                .expect_next("function name")?
+                                .as_str()
+                                .to_string();
+                            let arg = func_inner.next().map(parse_expr).transpose()?;
+                            items.push(TrendAggItem {
+                                alias,
+                                func: func_name,
+                                arg,
+                            });
+                        }
+                    }
+                }
+            }
+            Ok(StreamOp::TrendAggregate(items))
+        }
         _ => Err(ParseError::UnexpectedToken {
             position: 0,
             expected: "stream operation".to_string(),
@@ -2669,5 +2695,71 @@ mod tests {
 stream S = timer(1s).process(do_work())"#,
         );
         assert!(result.is_ok(), "Failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_parse_trend_aggregate_count_trends() {
+        let result = parse(
+            r#"stream S = StockTick as first
+    -> all StockTick where price > first.price as rising
+    -> StockTick where price < rising.price as drop
+    .within(60s)
+    .trend_aggregate(count: count_trends())
+    .emit(event_type: "TrendStats", trends: count)"#,
+        );
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+        let program = result.unwrap();
+        // Find the stream declaration and check for TrendAggregate op
+        for stmt in &program.statements {
+            if let Stmt::StreamDecl { ops, .. } = &stmt.node {
+                let has_trend_agg = ops
+                    .iter()
+                    .any(|op| matches!(op, StreamOp::TrendAggregate(_)));
+                assert!(has_trend_agg, "Expected TrendAggregate op in stream ops");
+                // Check that TrendAggregate has the right item
+                for op in ops {
+                    if let StreamOp::TrendAggregate(items) = op {
+                        assert_eq!(items.len(), 1);
+                        assert_eq!(items[0].alias, "count");
+                        assert_eq!(items[0].func, "count_trends");
+                        assert!(items[0].arg.is_none());
+                    }
+                }
+                return;
+            }
+        }
+        panic!("No stream declaration found");
+    }
+
+    #[test]
+    fn test_parse_trend_aggregate_multiple_items() {
+        let result = parse(
+            r#"stream S = StockTick as first
+    -> all StockTick as rising
+    .within(60s)
+    .trend_aggregate(
+        trend_count: count_trends(),
+        event_count: count_events(rising)
+    )
+    .emit(trends: trend_count, events: event_count)"#,
+        );
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+        let program = result.unwrap();
+        for stmt in &program.statements {
+            if let Stmt::StreamDecl { ops, .. } = &stmt.node {
+                for op in ops {
+                    if let StreamOp::TrendAggregate(items) = op {
+                        assert_eq!(items.len(), 2);
+                        assert_eq!(items[0].alias, "trend_count");
+                        assert_eq!(items[0].func, "count_trends");
+                        assert_eq!(items[1].alias, "event_count");
+                        assert_eq!(items[1].func, "count_events");
+                        assert!(items[1].arg.is_some());
+                        return;
+                    }
+                }
+            }
+        }
+        panic!("No TrendAggregate found");
     }
 }
