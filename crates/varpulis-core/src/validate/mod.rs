@@ -79,6 +79,11 @@ impl ValidationResult {
 }
 
 /// Convert byte offset to 1-indexed line:column.
+pub fn diagnostic_position(source: &str, position: usize) -> (usize, usize) {
+    position_to_line_col(source, position)
+}
+
+/// Convert byte offset to 1-indexed line:column.
 fn position_to_line_col(source: &str, position: usize) -> (usize, usize) {
     let mut line = 1;
     let mut col = 1;
