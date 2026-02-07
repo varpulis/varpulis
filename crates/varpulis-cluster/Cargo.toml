@@ -5,6 +5,7 @@ edition.workspace = true
 description = "Distributed execution cluster for Varpulis streaming analytics"
 
 [dependencies]
+varpulis-core = { path = "../varpulis-core" }
 varpulis-runtime = { path = "../varpulis-runtime", features = ["mqtt"] }
 varpulis-parser = { path = "../varpulis-parser" }
 tokio = { workspace = true }
