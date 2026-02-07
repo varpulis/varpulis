@@ -131,10 +131,7 @@ impl MergedTemplate {
 
     /// Add a final state for a query
     pub fn add_final(&mut self, query: QueryId, state: TemplateState) {
-        self.final_states
-            .entry(query)
-            .or_insert_with(SmallVec::new)
-            .push(state);
+        self.final_states.entry(query).or_default().push(state);
     }
 
     /// Register an event type
@@ -163,12 +160,11 @@ impl MergedTemplate {
     /// Add a transition
     pub fn add_transition(&mut self, from: TemplateState, to: TemplateState, event_type: u16) {
         let key = (from, event_type);
-        if !self.transitions.contains_key(&key) {
-            self.transitions
-                .insert(key, TemplateTransition::new(from, to, event_type));
+        if let std::collections::hash_map::Entry::Vacant(e) = self.transitions.entry(key) {
+            e.insert(TemplateTransition::new(from, to, event_type));
             self.transitions_from
                 .entry(from)
-                .or_insert_with(SmallVec::new)
+                .or_default()
                 .push(event_type);
         }
     }
@@ -226,7 +222,10 @@ impl MergedTemplate {
     }
 
     /// Get all transitions from a state
-    pub fn transitions_from(&self, state: TemplateState) -> impl Iterator<Item = &TemplateTransition> {
+    pub fn transitions_from(
+        &self,
+        state: TemplateState,
+    ) -> impl Iterator<Item = &TemplateTransition> {
         self.transitions_from
             .get(&state)
             .into_iter()
@@ -309,20 +308,28 @@ impl TemplateBuilder {
         // Add transitions
         for (i, &type_name) in types.iter().enumerate() {
             let type_idx = self.template.register_type(type_name);
-            self.template.add_transition(states[i], states[i + 1], type_idx);
-            self.template.add_query_to_transition(states[i], type_idx, query);
+            self.template
+                .add_transition(states[i], states[i + 1], type_idx);
+            self.template
+                .add_query_to_transition(states[i], type_idx, query);
         }
 
         self
     }
 
     /// Add a Kleene pattern to a query (type+ at a state)
-    pub fn add_kleene(&mut self, query: QueryId, type_name: &str, at_state: TemplateState) -> &mut Self {
+    pub fn add_kleene(
+        &mut self,
+        query: QueryId,
+        type_name: &str,
+        at_state: TemplateState,
+    ) -> &mut Self {
         let type_idx = self.template.register_type(type_name);
 
         // Add self-loop transition
         self.template.add_transition(at_state, at_state, type_idx);
-        self.template.add_query_to_transition(at_state, type_idx, query);
+        self.template
+            .add_query_to_transition(at_state, type_idx, query);
         self.template.mark_kleene(at_state, type_idx);
 
         // Register Kleene pattern

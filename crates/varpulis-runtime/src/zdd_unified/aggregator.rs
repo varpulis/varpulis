@@ -135,7 +135,9 @@ impl ZddAggregator {
         }
 
         // Add final state
-        let final_state = self.nfa.add_state(query_id, registration.event_types.len() as u16);
+        let final_state = self
+            .nfa
+            .add_state(query_id, registration.event_types.len() as u16);
         states.push(final_state);
         self.nfa.add_final(final_state);
 
@@ -146,13 +148,15 @@ impl ZddAggregator {
 
             // Add Kleene self-loop if needed
             if registration.kleene_positions.contains(&(i as u16 + 1)) {
-                self.nfa.add_transition(states[i + 1], states[i + 1], type_idx);
+                self.nfa
+                    .add_transition(states[i + 1], states[i + 1], type_idx);
             }
         }
 
         // Register with propagator
         self.propagator.register_query(query_id);
-        self.query_aggregates.insert(query_id, registration.aggregate);
+        self.query_aggregates
+            .insert(query_id, registration.aggregate);
         self.queries.push(registration);
     }
 
@@ -350,7 +354,7 @@ mod tests {
         // Both queries should match since we processed A, C, then B
         // Query 0: A -> B matched
         // Query 1: C -> B matched
-        assert!(results.len() >= 1, "Should have at least 1 result");
+        assert!(!results.is_empty(), "Should have at least 1 result");
     }
 
     #[test]

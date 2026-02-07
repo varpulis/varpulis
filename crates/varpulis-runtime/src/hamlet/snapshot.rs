@@ -122,15 +122,9 @@ impl SnapshotManager {
         let snapshot = Snapshot::new(id, source_graphlet, target_graphlet);
         self.snapshots.push(snapshot);
 
-        self.by_target
-            .entry(target_graphlet)
-            .or_insert_with(SmallVec::new)
-            .push(id);
+        self.by_target.entry(target_graphlet).or_default().push(id);
 
-        self.by_source
-            .entry(source_graphlet)
-            .or_insert_with(SmallVec::new)
-            .push(id);
+        self.by_source.entry(source_graphlet).or_default().push(id);
 
         id
     }
@@ -220,7 +214,7 @@ impl PropagationCoefficients {
     /// For a Kleene pattern with self-loops:
     /// - First event: coeff = 1, local_sum = 0 (count = snapshot_value)
     /// - Event i: coeff = sum of coeffs of all predecessors
-    ///            local_sum = sum of local_sums of all predecessors
+    ///   local_sum = sum of local_sums of all predecessors
     pub fn compute_kleene(&mut self) {
         if self.coeffs.is_empty() {
             return;
@@ -276,7 +270,9 @@ impl PropagationCoefficients {
     pub fn resolve_count_at(&self, index: usize, snapshot_value: u64) -> u64 {
         let coeff = self.coeffs.get(index).copied().unwrap_or(0);
         let local_sum = self.local_sums.get(index).copied().unwrap_or(0);
-        coeff.saturating_mul(snapshot_value).saturating_add(local_sum)
+        coeff
+            .saturating_mul(snapshot_value)
+            .saturating_add(local_sum)
     }
 
     /// Get sum of final counts (for end events) per query

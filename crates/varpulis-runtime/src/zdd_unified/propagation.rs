@@ -20,20 +20,15 @@ use rustc_hash::FxHashMap;
 use varpulis_zdd::Zdd;
 
 /// Propagation mode for count computation
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PropagationMode {
     /// Propagate on every event
+    #[default]
     Eager,
     /// Batch and propagate periodically
     Lazy { batch_size: usize },
     /// Switch based on ZDD size
     Hybrid { threshold: usize },
-}
-
-impl Default for PropagationMode {
-    fn default() -> Self {
-        PropagationMode::Eager
-    }
 }
 
 /// Count accumulator for a query
@@ -107,7 +102,9 @@ impl ZddPropagator {
         match self.mode {
             PropagationMode::Eager => self.process_eager(nfa, event_type),
             PropagationMode::Lazy { batch_size } => self.process_lazy(nfa, event_type, batch_size),
-            PropagationMode::Hybrid { threshold } => self.process_hybrid(nfa, event_type, threshold),
+            PropagationMode::Hybrid { threshold } => {
+                self.process_hybrid(nfa, event_type, threshold)
+            }
         }
     }
 
@@ -275,8 +272,8 @@ impl Default for ZddTraversal {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::nfa_zdd::NfaZddBuilder;
+    use super::*;
 
     #[test]
     fn test_eager_propagation() {

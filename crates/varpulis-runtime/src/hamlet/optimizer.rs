@@ -68,8 +68,8 @@ impl KleeneStats {
 
         // Exponential moving average for graphlet size
         let alpha = 0.1;
-        self.avg_graphlet_size = alpha * graphlet_size as f64
-            + (1.0 - alpha) * self.avg_graphlet_size;
+        self.avg_graphlet_size =
+            alpha * graphlet_size as f64 + (1.0 - alpha) * self.avg_graphlet_size;
     }
 
     /// Compute the benefit of sharing
@@ -165,12 +165,7 @@ impl HamletOptimizer {
     }
 
     /// Report graphlet processing for statistics
-    pub fn report_graphlet(
-        &mut self,
-        event_type: u16,
-        graphlet_size: usize,
-        num_snapshots: usize,
-    ) {
+    pub fn report_graphlet(&mut self, event_type: u16, graphlet_size: usize, num_snapshots: usize) {
         if let Some(stats) = self.kleene_stats.get_mut(&event_type) {
             stats.update(graphlet_size, num_snapshots);
         }

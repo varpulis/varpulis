@@ -147,10 +147,7 @@ impl EventGraph {
         let node = EventNode::new(id, event, type_index, self.num_queries);
         self.nodes.push(node);
 
-        self.nodes_by_type
-            .entry(type_index)
-            .or_insert_with(Vec::new)
-            .push(id);
+        self.nodes_by_type.entry(type_index).or_default().push(id);
 
         id
     }
@@ -384,10 +381,7 @@ impl GretaExecutor {
         // For each query, find valid predecessors based on pattern structure
         for query in &self.queries {
             // Find position of this type in the pattern
-            let pos = query
-                .event_types
-                .iter()
-                .position(|&t| t == type_index);
+            let pos = query.event_types.iter().position(|&t| t == type_index);
 
             if let Some(pos) = pos {
                 // Predecessors are events of the previous type in the pattern
