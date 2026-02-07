@@ -527,8 +527,8 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
     // Create engine
     let mut engine = Engine::new(output_tx);
     engine
-        .load(&program)
-        .map_err(|e| anyhow::anyhow!("Load error: {}", e))?;
+        .load_with_source(source, &program)
+        .map_err(|e| anyhow::anyhow!("Load error:\n{}", e))?;
 
     let metrics = engine.metrics();
     println!("\nProgram loaded successfully!");
@@ -799,8 +799,60 @@ fn parse_and_show(source: &str) -> Result<()> {
 fn check_syntax(source: &str) -> Result<()> {
     match parse(source) {
         Ok(program) => {
-            println!("Syntax OK");
-            println!("   Statements: {}", program.statements.len());
+            // Run semantic validation
+            let validation = varpulis_core::validate::validate(source, &program);
+            let errors: Vec<_> = validation
+                .diagnostics
+                .iter()
+                .filter(|d| d.severity == varpulis_core::validate::Severity::Error)
+                .collect();
+            let warnings: Vec<_> = validation
+                .diagnostics
+                .iter()
+                .filter(|d| d.severity == varpulis_core::validate::Severity::Warning)
+                .collect();
+
+            if errors.is_empty() {
+                println!("Syntax OK");
+                println!("   Statements: {}", program.statements.len());
+                if !warnings.is_empty() {
+                    println!("   Warnings:   {}", warnings.len());
+                    for w in &warnings {
+                        let (line, col) =
+                            varpulis_core::validate::diagnostic_position(source, w.span.start);
+                        let code_str = w.code.map(|c| format!("[{}] ", c)).unwrap_or_default();
+                        println!("   {}:{}: warning: {}{}", line, col, code_str, w.message);
+                        if let Some(ref hint) = w.hint {
+                            println!("      hint: {}", hint);
+                        }
+                    }
+                }
+            } else {
+                println!("Validation failed:");
+                println!("   Errors:   {}", errors.len());
+                for e in &errors {
+                    let (line, col) =
+                        varpulis_core::validate::diagnostic_position(source, e.span.start);
+                    let code_str = e.code.map(|c| format!("[{}] ", c)).unwrap_or_default();
+                    println!("   {}:{}: error: {}{}", line, col, code_str, e.message);
+                    if let Some(ref hint) = e.hint {
+                        println!("      hint: {}", hint);
+                    }
+                }
+                if !warnings.is_empty() {
+                    println!("   Warnings: {}", warnings.len());
+                    for w in &warnings {
+                        let (line, col) =
+                            varpulis_core::validate::diagnostic_position(source, w.span.start);
+                        let code_str = w.code.map(|c| format!("[{}] ", c)).unwrap_or_default();
+                        println!("   {}:{}: warning: {}{}", line, col, code_str, w.message);
+                        if let Some(ref hint) = w.hint {
+                            println!("      hint: {}", hint);
+                        }
+                    }
+                }
+                std::process::exit(1);
+            }
         }
         Err(e) => {
             println!("Syntax error: {}", e);
@@ -902,8 +954,8 @@ async fn run_simulation(
         Engine::new_shared(output_tx.clone())
     };
     engine
-        .load(&program)
-        .map_err(|e| anyhow::anyhow!("Load error: {}", e))?;
+        .load_with_source(&program_source, &program)
+        .map_err(|e| anyhow::anyhow!("Load error:\n{}", e))?;
 
     let metrics = engine.metrics();
     println!("Program loaded: {} streams", metrics.streams_count);
@@ -1036,25 +1088,56 @@ async fn run_simulation(
             .map_err(|e| anyhow::anyhow!("Event file error: {}", e))?;
         info!("Preloaded {} events from file", events.len());
 
-        const BATCH_SIZE: usize = 1000;
-        let total_events = events.len();
+        // PERF: Extract owned events (zero-clone), use sync path when no sinks
+        let use_sync = !engine.has_sink_operations();
+        let mut all_events: Vec<Event> = events.into_iter().map(|te| te.event).collect();
+        let total_events = all_events.len();
 
-        for (batch_idx, chunk) in events.chunks(BATCH_SIZE).enumerate() {
-            if verbose {
-                let start_idx = batch_idx * BATCH_SIZE + 1;
-                let end_idx = (start_idx + chunk.len() - 1).min(total_events);
-                println!(
-                    "  [batch {}-{}] processing {} events",
-                    start_idx,
-                    end_idx,
-                    chunk.len()
-                );
+        const BATCH_SIZE: usize = 10000;
+
+        if use_sync {
+            // PERF: Sync path avoids async overhead (tokio runtime, .await suspension)
+            let mut batch_idx = 0;
+            while !all_events.is_empty() {
+                let end = BATCH_SIZE.min(all_events.len());
+                let batch: Vec<Event> = all_events.drain(..end).collect();
+                if verbose {
+                    let start_idx = batch_idx * BATCH_SIZE + 1;
+                    let end_idx = (start_idx + batch.len() - 1).min(total_events);
+                    println!(
+                        "  [batch {}-{}] processing {} events (sync)",
+                        start_idx,
+                        end_idx,
+                        batch.len()
+                    );
+                }
+                engine
+                    .process_batch_sync(batch)
+                    .map_err(|e| anyhow::anyhow!("Process error: {}", e))?;
+                batch_idx += 1;
             }
-            let batch: Vec<_> = chunk.iter().map(|te| te.event.clone()).collect();
-            engine
-                .process_batch(batch)
-                .await
-                .map_err(|e| anyhow::anyhow!("Process error: {}", e))?;
+        } else {
+            // Async path needed for .to() sink operations
+            let mut batch_idx = 0;
+            while !all_events.is_empty() {
+                let end = BATCH_SIZE.min(all_events.len());
+                let batch: Vec<Event> = all_events.drain(..end).collect();
+                if verbose {
+                    let start_idx = batch_idx * BATCH_SIZE + 1;
+                    let end_idx = (start_idx + batch.len() - 1).min(total_events);
+                    println!(
+                        "  [batch {}-{}] processing {} events",
+                        start_idx,
+                        end_idx,
+                        batch.len()
+                    );
+                }
+                engine
+                    .process_batch(batch)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Process error: {}", e))?;
+                batch_idx += 1;
+            }
         }
     } else if immediate && num_workers > 1 {
         // Parallel streaming mode
@@ -1169,6 +1252,7 @@ async fn run_simulation(
     } else if immediate {
         // Single-threaded streaming mode
         const BATCH_SIZE: usize = 10000;
+        let use_sync = !engine.has_sink_operations();
 
         let mut event_reader = StreamingEventReader::from_file(events_path)
             .map_err(|e| anyhow::anyhow!("Failed to open event file: {}", e))?;
@@ -1201,11 +1285,17 @@ async fn run_simulation(
                 );
             }
 
-            // Use std::mem::take to move batch without cloning
-            engine
-                .process_batch(std::mem::take(&mut batch))
-                .await
-                .map_err(|e| anyhow::anyhow!("Process error: {}", e))?;
+            // PERF: Use sync path when no .to() sinks to avoid async overhead
+            if use_sync {
+                engine
+                    .process_batch_sync(std::mem::take(&mut batch))
+                    .map_err(|e| anyhow::anyhow!("Process error: {}", e))?;
+            } else {
+                engine
+                    .process_batch(std::mem::take(&mut batch))
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Process error: {}", e))?;
+            }
         }
 
         info!("Streamed {} events from file", event_reader.events_read());
