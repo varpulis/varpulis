@@ -30,7 +30,7 @@ Varpulis is a next-generation streaming analytics engine combining:
 
 | Feature | Flink | Varpulis |
 |---------|-------|----------|
-| **Language** | Java/Scala API | Native DSL (VarpulisQL) |
+| **Language** | Java/Scala API | Native DSL (VPL) |
 | **Deployment** | JVM cluster, complex | Single binary, simple |
 | **Latency** | ~10-100ms typical | < 1ms possible |
 | **Learning curve** | Steep (DataStream API) | Gentle (Python-like syntax) |
@@ -42,7 +42,7 @@ Varpulis is a next-generation streaming analytics engine combining:
 | Feature | Kafka Streams | Varpulis |
 |---------|---------------|----------|
 | **Transport coupling** | Kafka-only | Any source (Kafka, HTTP, files) |
-| **Language** | Java/Kotlin | VarpulisQL DSL |
+| **Language** | Java/Kotlin | VPL DSL |
 | **Topology** | Builder pattern verbose | Declarative chaining |
 | **State stores** | RocksDB only | In-memory or RocksDB |
 | **CEP patterns** | Not built-in | Native support |
@@ -71,7 +71,7 @@ Varpulis is a next-generation streaming analytics engine combining:
 
 | Feature | Esper | Varpulis |
 |---------|-------|----------|
-| **Language** | EPL (SQL-like) | VarpulisQL (Python-like) |
+| **Language** | EPL (SQL-like) | VPL (Python-like) |
 | **Runtime** | JVM | Native (Rust) |
 | **Attention/ML** | Not built-in | Deterministic attention |
 | **Observability** | Manual | Automatic metrics/traces |
@@ -89,7 +89,7 @@ Varpulis is a next-generation streaming analytics engine combining:
 
 ## Main Components
 
-1. **Compiler** - VarpulisQL → Optimized IR compilation
+1. **Compiler** - VPL → Optimized IR compilation
 2. **Runtime Engine** - Processing graph execution
 3. **Pattern Matcher** - Pattern detection via hypertrees
 4. **Attention Engine** - Deterministic correlation between events
@@ -119,5 +119,5 @@ Varpulis is a next-generation streaming analytics engine combining:
 ## See Also
 
 - [System Architecture](../architecture/system.md)
-- [VarpulisQL Language](../language/overview.md)
+- [VPL Language](../language/overview.md)
 - [Roadmap](roadmap.md)

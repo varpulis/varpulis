@@ -184,6 +184,6 @@ varpulis run --file examples/financial_markets.vpl
 
 ## See Also
 
-- [VarpulisQL Syntax](../language/syntax.md)
+- [VPL Syntax](../language/syntax.md)
 - [Attention Engine](../architecture/attention-engine.md)
 - [HVAC Building Example](hvac-building.md)

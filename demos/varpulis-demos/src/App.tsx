@@ -146,7 +146,7 @@ function App() {
                 <Settings className="w-6 h-6 text-blue-400" />
               </div>
               <h3 className="text-lg font-semibold text-white mb-2">Declarative Rules</h3>
-              <p className="text-slate-400 text-sm">Express complex patterns with simple VarpulisQL syntax</p>
+              <p className="text-slate-400 text-sm">Express complex patterns with simple VPL syntax</p>
             </div>
             <div className="text-center">
               <div className="w-12 h-12 bg-purple-500/10 rounded-xl flex items-center justify-center mx-auto mb-4">

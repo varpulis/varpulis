@@ -1,4 +1,4 @@
-# VarpulisQL Connectors
+# VPL Connectors
 
 This document describes how to connect Varpulis to external systems for both event ingestion (sources) and output routing (sinks).
 
@@ -323,6 +323,6 @@ stream DebugOutput = SomeStream
 
 ## See Also
 
-- [Syntax Reference](syntax.md) - Complete VarpulisQL syntax
+- [Syntax Reference](syntax.md) - Complete VPL syntax
 - [Architecture](../architecture/system.md) - System architecture
 - [Configuration Guide](../guides/configuration.md) - CLI and server configuration

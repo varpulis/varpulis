@@ -1,4 +1,4 @@
-; VarpulisQL Syntax Highlighting for Tree-sitter
+; VPL Syntax Highlighting for Tree-sitter
 
 ; Keywords
 [

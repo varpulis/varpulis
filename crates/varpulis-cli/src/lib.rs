@@ -14,7 +14,7 @@ pub mod websocket;
 use anyhow::Result;
 use varpulis_parser::parse;
 
-/// Parse and validate VarpulisQL source code
+/// Parse and validate VPL source code
 pub fn check_syntax(source: &str) -> Result<()> {
     match parse(source) {
         Ok(program) => {

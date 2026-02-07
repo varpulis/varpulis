@@ -1,4 +1,4 @@
-# VarpulisQL Formal Grammar
+# VPL Formal Grammar
 
 ## Notation
 

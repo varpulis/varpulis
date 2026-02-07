@@ -1,7 +1,7 @@
 {
   "name": "tree-sitter-varpulis",
   "version": "0.1.0",
-  "description": "Tree-sitter grammar for VarpulisQL",
+  "description": "Tree-sitter grammar for VPL",
   "main": "bindings/node",
   "keywords": ["tree-sitter", "parser", "varpulis", "cep"],
   "repository": {

@@ -423,4 +423,4 @@ curl -s localhost:9090/metrics | grep varpulis_events_processed
 - [Performance Tuning](performance-tuning.md) - CPU pinning and NUMA optimization
 - [Architecture: Parallelism](../architecture/parallelism.md) - Worker pool parallelism
 - [Architecture: System](../architecture/system.md) - Overall system design
-- [Language Syntax](../language/syntax.md) - Complete VarpulisQL syntax reference
+- [Language Syntax](../language/syntax.md) - Complete VPL syntax reference

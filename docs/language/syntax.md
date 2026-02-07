@@ -1,4 +1,4 @@
-# VarpulisQL Syntax
+# VPL Syntax
 
 ## Comments
 
