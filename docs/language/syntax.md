@@ -116,6 +116,8 @@ stream EnrichedOrders = join(
 
 ## Pattern Matching with Attention
 
+The attention window scores correlations between recent events automatically. Use `.where()` on the built-in `attention_score` and `attention_matches` fields:
+
 ```varpulis
 stream FraudDetection = Trades
     .attention_window(
@@ -123,23 +125,11 @@ stream FraudDetection = Trades
         heads: 4,
         embedding: "rule_based"
     )
-    .pattern(
-        suspicious: events =>
-            let high_value = events.filter(e => e.amount > 10000)
-            let correlations = high_value
-                .map(e1 => 
-                    high_value
-                        .filter(e2 => e2.id != e1.id)
-                        .map(e2 => (e1, e2, attention_score(e1, e2)))
-                )
-                .flatten()
-                .filter((e1, e2, score) => score > 0.85)
-            
-            correlations.len() > 3
-    )
+    .where(attention_score > 0.85 and attention_matches > 3)
     .emit(
         alert_type: "attention_pattern_fraud",
-        events: events
+        score: attention_score,
+        correlated_events: attention_matches
     )
 ```
 
@@ -183,28 +173,17 @@ See the [Contexts Guide](../guides/contexts.md) for a full tutorial.
 
 ## Parallelization
 
+Use contexts for parallel execution across CPU cores:
+
 ```varpulis
+context fast_lane (cores: [0, 1])
+context analytics (cores: [2, 3])
+
 stream OrderProcessing = Orders
+    .context(fast_lane)
     .partition_by(customer_id)
-    .concurrent(
-        max_workers: 8,
-        strategy: "consistent_hash",
-        supervision:
-            restart: "always"
-            max_restarts: 3
-            backoff: "exponential"
-    )
-    .process(order =>
-        validate_order(order)?
-        check_inventory(order)?
-        calculate_shipping(order)?
-        Ok(order)
-    )
-    .on_error((error, order) =>
-        log_error(error)
-        emit_to_dlq(order)
-    )
-    .collect()
+    .where(quantity > 0 and price > 0)
+    .emit(order_id: id, customer: customer_id, total: price * quantity)
 ```
 
 ## Functions
@@ -314,10 +293,15 @@ stream FraudAlert = Transaction
 ### HTTP Connector
 
 ```varpulis
-# HTTP webhook output
+# HTTP webhook output — declare the connector first
+connector AlertWebhook = http (
+    url: "http://webhook.example.com/alerts",
+    method: "POST"
+)
+
 stream Alerts = DetectedPatterns
     .emit(severity: "high")
-    .to("http://webhook.example.com/alerts")
+    .to(AlertWebhook)
 ```
 
 ### Kafka Connector
@@ -365,20 +349,19 @@ config:
 
 ## Output Routing
 
-Use `.to()` to route stream output to connectors:
+Use `.to()` to route stream output to declared connectors:
 
 ```varpulis
+connector AlertKafka = kafka (
+    brokers: ["broker:9092"],
+    topic: "alerts"
+)
+
 stream Alerts = DetectedPatterns
     .emit(
         alert_id: uuid(),
         severity: "high",
         timestamp: now()
     )
-    .to("kafka://alerts-topic")
-
-# Or to multiple destinations
-stream Output = Processed
-    .tap(log: "output", sample: 0.01)
-    .emit()
-    .to(["kafka://topic1", "http://webhook.example.com"])
+    .to(AlertKafka)
 ```

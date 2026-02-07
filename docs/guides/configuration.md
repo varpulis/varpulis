@@ -248,10 +248,15 @@ curl -X POST http://localhost:8080/events/batch \
 Configure HTTP output in VPL using `.to()` to route events to a connector:
 
 ```vpl
+connector AlertWebhook = http (
+    url: "http://webhook.example.com/alerts",
+    method: "POST"
+)
+
 stream Alerts from TemperatureReading
     .where(temperature > 100)
     .emit(alert_type: "HighTemp", message: "Temperature exceeded threshold")
-    .to("http://webhook.example.com/alerts")
+    .to(AlertWebhook)
 ```
 
 ---

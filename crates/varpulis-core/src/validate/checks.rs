@@ -160,7 +160,20 @@ pub fn pass1_declarations(v: &mut Validator, program: &Program) {
                 );
             }
             Stmt::TypeDecl { name, .. } => {
-                v.symbols.types.insert(name.clone(), TypeInfo { span });
+                if let Some(prev) = v.symbols.types.get(name) {
+                    v.emit_with_related(
+                        Severity::Error,
+                        span,
+                        "E007",
+                        format!("duplicate type alias '{}'", name),
+                        vec![RelatedSpan {
+                            span: prev.span,
+                            message: "previously declared here".to_string(),
+                        }],
+                    );
+                } else {
+                    v.symbols.types.insert(name.clone(), TypeInfo { span });
+                }
             }
             _ => {}
         }
@@ -182,7 +195,46 @@ pub fn pass2_semantic(v: &mut Validator, program: &Program) {
             Stmt::PatternDecl { expr, .. } => {
                 check_sase_pattern_refs(v, expr, span);
             }
+            Stmt::Assignment { name, value } => {
+                check_assignment(v, name, span);
+                check_expr_functions(v, value, span);
+            }
+            Stmt::VarDecl { value, .. } | Stmt::ConstDecl { value, .. } => {
+                check_expr_functions(v, value, span);
+            }
             _ => {}
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Assignment mutability checks
+// ---------------------------------------------------------------------------
+
+fn check_assignment(v: &mut Validator, name: &str, span: Span) {
+    if let Some(var_info) = v.symbols.variables.get(name) {
+        if !var_info.mutable {
+            let decl_snippet = v
+                .snippet(var_info.span)
+                .unwrap_or("")
+                .lines()
+                .next()
+                .unwrap_or("");
+            let context = if decl_snippet.is_empty() {
+                String::new()
+            } else {
+                format!(" (from: {})", decl_snippet.trim())
+            };
+            v.emit_with_related(
+                Severity::Error,
+                span,
+                "E040",
+                format!("cannot assign to immutable variable '{}'{}", name, context),
+                vec![RelatedSpan {
+                    span: var_info.span,
+                    message: "declared as immutable here — use 'var' instead of 'let'".to_string(),
+                }],
+            );
         }
     }
 }
@@ -469,14 +521,26 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
             StreamOp::To { connector_name, .. } => {
                 if !v.symbols.connectors.contains_key(connector_name) {
                     let suggestion = did_you_mean(connector_name, &v.symbols.connector_names());
+                    // Include existing connector types in hint for context
+                    let available = v
+                        .symbols
+                        .connectors
+                        .values()
+                        .map(|c| c.connector_type.as_str())
+                        .collect::<Vec<_>>();
+                    let avail_hint = if available.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" (declared connector types: {})", available.join(", "))
+                    };
                     v.emit_with_hint(
                         Severity::Error,
                         span,
                         "E030",
                         format!("undefined connector '{}'", connector_name),
                         format!(
-                            "declare it with: connector {} = type (...){}",
-                            connector_name, suggestion
+                            "declare it with: connector {} = type (...){}{}",
+                            connector_name, suggestion, avail_hint
                         ),
                     );
                 }
@@ -505,11 +569,32 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
                 check_duration_expr(v, expr, ".allowed_lateness()", span);
             }
 
+            // --- Emit field validation ---
+            StreamOp::Emit { output_type, .. } => {
+                if let Some(type_name) = output_type {
+                    if let Some(event_info) = v.symbols.events.get(type_name) {
+                        // Validate that emitted type is a known event
+                        let _ = &event_info.field_names; // field_names used for future field-level validation
+                    } else if !v.symbols.is_declared(type_name) {
+                        let suggestion = did_you_mean(type_name, &v.symbols.all_names());
+                        v.emit_with_hint(
+                            Severity::Warning,
+                            span,
+                            "W031",
+                            format!(".emit as '{}' references an undeclared type", type_name),
+                            format!(
+                                "consider declaring: event {} {{ ... }}{}",
+                                type_name, suggestion
+                            ),
+                        );
+                    }
+                }
+            }
+
             // --- Operations that are fine ---
             StreamOp::Select(_)
             | StreamOp::Tap(_)
             | StreamOp::Print(_)
-            | StreamOp::Emit { .. }
             | StreamOp::Pattern(_)
             | StreamOp::Process(_)
             | StreamOp::On(_)
@@ -752,28 +837,148 @@ fn check_sase_pattern_refs(v: &mut Validator, expr: &SasePatternExpr, span: Span
 }
 
 // ---------------------------------------------------------------------------
-// Function call checks (for expressions outside aggregates)
+// Function call checks (for expressions)
 // ---------------------------------------------------------------------------
 
-#[allow(dead_code)]
-fn check_function_call(v: &mut Validator, name: &str, span: Span) {
-    if !builtins::is_known_function(name) && !v.symbols.functions.contains_key(name) {
-        let mut candidates: Vec<&str> = builtins::BUILTIN_FUNCTIONS.to_vec();
-        candidates.extend(builtins::AGGREGATE_FUNCTIONS);
-        for k in v.symbols.functions.keys() {
-            candidates.push(k);
+fn check_function_call(v: &mut Validator, name: &str, args_len: usize, span: Span) {
+    // Check user-declared functions first (with arity)
+    if let Some(func_info) = v.symbols.functions.get(name) {
+        if args_len != func_info.param_count {
+            v.emit_with_related(
+                Severity::Error,
+                span,
+                "E051",
+                format!(
+                    "function '{}' expects {} argument(s), but {} provided",
+                    name, func_info.param_count, args_len
+                ),
+                vec![RelatedSpan {
+                    span: func_info.span,
+                    message: "function declared here".to_string(),
+                }],
+            );
         }
-        let suggestion = suggest(name, &candidates);
-        let hint = match suggestion {
-            Some(s) => format!("did you mean '{}'?", s),
-            None => "check the function name or declare it with fn".to_string(),
-        };
-        v.emit_with_hint(
-            Severity::Error,
-            span,
-            "E050",
-            format!("unknown function '{}'", name),
-            hint,
-        );
+        return;
     }
+
+    // Check builtins
+    if builtins::is_known_function(name) {
+        return;
+    }
+
+    // Unknown function
+    let mut candidates: Vec<&str> = builtins::BUILTIN_FUNCTIONS.to_vec();
+    candidates.extend(builtins::AGGREGATE_FUNCTIONS);
+    candidates.extend(v.symbols.function_names());
+    let suggestion = suggest(name, &candidates);
+    let hint = match suggestion {
+        Some(s) => format!("did you mean '{}'?", s),
+        None => "check the function name or declare it with fn".to_string(),
+    };
+    v.emit_with_hint(
+        Severity::Error,
+        span,
+        "E050",
+        format!("unknown function '{}'", name),
+        hint,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Expression walking — validates function calls within expressions
+// ---------------------------------------------------------------------------
+
+/// Recursively walk an expression to validate function calls.
+pub fn check_expr_functions(v: &mut Validator, expr: &Expr, span: Span) {
+    match expr {
+        Expr::Call { func, args } => {
+            if let Some(name) = extract_ident(func) {
+                check_function_call(v, &name, count_positional_args(args), span);
+            }
+            // Walk arguments
+            for arg in args {
+                match arg {
+                    Arg::Positional(e) | Arg::Named(_, e) => check_expr_functions(v, e, span),
+                }
+            }
+        }
+        Expr::Binary { left, right, .. } => {
+            check_expr_functions(v, left, span);
+            check_expr_functions(v, right, span);
+        }
+        Expr::Unary { expr: inner, .. } => {
+            check_expr_functions(v, inner, span);
+        }
+        Expr::Member { expr: inner, .. } | Expr::OptionalMember { expr: inner, .. } => {
+            check_expr_functions(v, inner, span);
+        }
+        Expr::Index { expr: e, index } => {
+            check_expr_functions(v, e, span);
+            check_expr_functions(v, index, span);
+        }
+        Expr::Slice {
+            expr: e,
+            start,
+            end,
+        } => {
+            check_expr_functions(v, e, span);
+            if let Some(s) = start {
+                check_expr_functions(v, s, span);
+            }
+            if let Some(e) = end {
+                check_expr_functions(v, e, span);
+            }
+        }
+        Expr::If {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            check_expr_functions(v, cond, span);
+            check_expr_functions(v, then_branch, span);
+            check_expr_functions(v, else_branch, span);
+        }
+        Expr::Coalesce { expr: e, default } => {
+            check_expr_functions(v, e, span);
+            check_expr_functions(v, default, span);
+        }
+        Expr::Array(elems) => {
+            for e in elems {
+                check_expr_functions(v, e, span);
+            }
+        }
+        Expr::Map(entries) => {
+            for (_, e) in entries {
+                check_expr_functions(v, e, span);
+            }
+        }
+        Expr::Lambda { body, .. } => {
+            check_expr_functions(v, body, span);
+        }
+        Expr::Range { start, end, .. } => {
+            check_expr_functions(v, start, span);
+            check_expr_functions(v, end, span);
+        }
+        Expr::Block { stmts, result } => {
+            for (_, _, val, _) in stmts {
+                check_expr_functions(v, val, span);
+            }
+            check_expr_functions(v, result, span);
+        }
+        // Leaves — no recursion needed
+        Expr::Null
+        | Expr::Bool(_)
+        | Expr::Int(_)
+        | Expr::Float(_)
+        | Expr::Str(_)
+        | Expr::Duration(_)
+        | Expr::Timestamp(_)
+        | Expr::Ident(_) => {}
+    }
+}
+
+fn count_positional_args(args: &[Arg]) -> usize {
+    args.iter()
+        .filter(|a| matches!(a, Arg::Positional(_)))
+        .count()
 }

@@ -78,24 +78,20 @@ The key innovation in this example is using the **attention mechanism** to detec
 
 ### Compressor Degradation Pattern
 
+The attention window automatically computes correlation scores across recent events. Use `.where()` on the built-in `attention_score` and `attention_matches` fields:
+
 ```varpulis
 stream CompressorDegradation = HVAC
     .partition_by(unit_id)
     .attention_window(duration: 1h, heads: 4, embedding: "rule_based")
-    .pattern(
-        degradation: events =>
-            # Calculate trends
-            let pressure_trend = linear_regression_slope(events.map(e => e.compressor_pressure))
-            let power_trend = linear_regression_slope(events.map(e => e.power_consumption))
-            
-            # Calculate attention scores for correlation
-            let attention_scores = events.sliding_pairs()
-                .map((e1, e2) => attention_score(e1, e2))
-            
-            # Pattern: high correlation + declining pressure + increasing power
-            let high_correlation = attention_scores.filter(s => s > 0.8).count() > events.len() * 0.7
-            
-            high_correlation and pressure_trend < -0.01 and power_trend > 0.05
+    .where(attention_score > 0.75 and attention_matches > 5)
+    .emit(
+        alert_type: "COMPRESSOR_DEGRADATION",
+        severity: "warning",
+        unit_id: unit_id,
+        zone: zone,
+        attention_score: attention_score,
+        recommendation: "Schedule preventive maintenance"
     )
 ```
 

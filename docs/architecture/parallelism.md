@@ -85,25 +85,21 @@ See the [Contexts Guide](../guides/contexts.md) for a full tutorial.
 
 The following features are parsed by VarpulisQL but not yet evaluated at runtime:
 
-### Declarative Parallelization (Planned)
+### Parallelization via Contexts
+
+Use contexts for multi-threaded execution with CPU affinity:
 
 ```varpulis
-# Parsed but NOT evaluated -- will be implemented in a future release
+context fast_lane (cores: [0, 1])
+
 stream OrderProcessing = Orders
+    .context(fast_lane)
     .partition_by(customer_id)
-    .concurrent(
-        max_workers: 8,
-        strategy: "consistent_hash"
-    )
-    .process(order =>
-        validate_order(order)?
-        check_inventory(order)?
-        Ok(order)
-    )
-    .on_error((error, order) =>
-        log_error(error)
-    )
+    .where(quantity > 0 and price > 0)
+    .emit(order_id: id, total: price * quantity)
 ```
+
+> **Note:** `.concurrent()`, `.process()`, and `.on_error()` are reserved syntax but not yet implemented. Use contexts and `.partition_by()` for parallelism.
 
 ### Automatic Supervision (Planned)
 

@@ -1,7 +1,5 @@
 //! Symbol table for tracking declarations during validation.
 
-#![allow(dead_code)] // Public API fields used by consumers (LSP, runtime)
-
 use crate::span::Span;
 use std::collections::HashMap;
 
@@ -146,5 +144,10 @@ impl SymbolTable {
             names.push(k);
         }
         names
+    }
+
+    /// Collect user-declared function names for suggestions.
+    pub fn function_names(&self) -> Vec<&str> {
+        self.functions.keys().map(|s| s.as_str()).collect()
     }
 }

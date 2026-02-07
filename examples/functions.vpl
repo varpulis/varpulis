@@ -159,17 +159,17 @@ stream Statistics = SensorStream
 # LAMBDA EXPRESSIONS (Inline Functions)
 # =============================================================================
 
-# Lambda syntax for inline transformations
-stream Mapped = EventStream
-    .map(x => x.value * 2)
-    .filter(x => x > 100)
-    .emit(result: value)
+# Use .where() for filtering and .select() for transformations
+stream Filtered = EventStream
+    .where(value * 2 > 100)
+    .select(result: value * 2)
+    .emit(result: result)
 
-# Lambda with multiple fields
+# Multiple field projections
 stream Transformed = MeasurementStream
-    .map(m => {
-        normalized: m.value / 100,
-        category: m.type
-    })
+    .select(
+        normalized: value / 100,
+        category: type
+    )
     .emit(normalized: normalized, category: category)
 

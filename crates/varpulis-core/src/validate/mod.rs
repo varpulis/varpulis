@@ -98,8 +98,7 @@ fn position_to_line_col(source: &str, position: usize) -> (usize, usize) {
 
 /// Internal validator state.
 struct Validator {
-    #[allow(dead_code)]
-    source: String, // kept for future span-based error formatting
+    source: String,
     symbols: SymbolTable,
     diagnostics: Vec<Diagnostic>,
 }
@@ -111,6 +110,11 @@ impl Validator {
             symbols: SymbolTable::new(),
             diagnostics: Vec::new(),
         }
+    }
+
+    /// Extract a source snippet for a span (for diagnostic context).
+    fn snippet(&self, span: Span) -> Option<&str> {
+        self.source.get(span.start..span.end)
     }
 
     fn emit(&mut self, severity: Severity, span: Span, code: &'static str, message: String) {
@@ -473,5 +477,128 @@ mod tests {
         let result = validate("stream S = X.where(true).within(1m)", &prog);
         assert!(result.has_errors());
         assert!(result.diagnostics.iter().any(|d| d.code == Some("E020")));
+    }
+
+    #[test]
+    fn test_immutable_assignment() {
+        let prog = make_program(vec![
+            Stmt::VarDecl {
+                mutable: false,
+                name: "x".to_string(),
+                ty: None,
+                value: Expr::Int(1),
+            },
+            Stmt::Assignment {
+                name: "x".to_string(),
+                value: Expr::Int(2),
+            },
+        ]);
+        let result = validate("let x = 1\nx := 2", &prog);
+        assert!(result.has_errors());
+        assert!(result.diagnostics.iter().any(|d| d.code == Some("E040")));
+    }
+
+    #[test]
+    fn test_mutable_assignment_ok() {
+        let prog = make_program(vec![
+            Stmt::VarDecl {
+                mutable: true,
+                name: "x".to_string(),
+                ty: None,
+                value: Expr::Int(1),
+            },
+            Stmt::Assignment {
+                name: "x".to_string(),
+                value: Expr::Int(2),
+            },
+        ]);
+        let result = validate("var x = 1\nx := 2", &prog);
+        assert!(!result.has_errors());
+    }
+
+    #[test]
+    fn test_unknown_function_in_expr() {
+        let prog = make_program(vec![Stmt::VarDecl {
+            mutable: false,
+            name: "x".to_string(),
+            ty: None,
+            value: Expr::Call {
+                func: Box::new(Expr::Ident("nonexistent_fn".to_string())),
+                args: vec![],
+            },
+        }]);
+        let result = validate("let x = nonexistent_fn()", &prog);
+        assert!(result.has_errors());
+        assert!(result.diagnostics.iter().any(|d| d.code == Some("E050")));
+    }
+
+    #[test]
+    fn test_user_function_arity_mismatch() {
+        let prog = make_program(vec![
+            Stmt::FnDecl {
+                name: "add".to_string(),
+                params: vec![
+                    Param {
+                        name: "a".to_string(),
+                        ty: crate::types::Type::Int,
+                    },
+                    Param {
+                        name: "b".to_string(),
+                        ty: crate::types::Type::Int,
+                    },
+                ],
+                ret: None,
+                body: vec![],
+            },
+            Stmt::VarDecl {
+                mutable: false,
+                name: "x".to_string(),
+                ty: None,
+                value: Expr::Call {
+                    func: Box::new(Expr::Ident("add".to_string())),
+                    args: vec![Arg::Positional(Expr::Int(1))],
+                },
+            },
+        ]);
+        let result = validate(
+            "fn add(a: int, b: int):\n  return a + b\nlet x = add(1)",
+            &prog,
+        );
+        assert!(result.has_errors());
+        assert!(result.diagnostics.iter().any(|d| d.code == Some("E051")));
+    }
+
+    #[test]
+    fn test_duplicate_type_alias() {
+        let prog = make_program(vec![
+            Stmt::TypeDecl {
+                name: "MyType".to_string(),
+                ty: crate::types::Type::Int,
+            },
+            Stmt::TypeDecl {
+                name: "MyType".to_string(),
+                ty: crate::types::Type::Float,
+            },
+        ]);
+        let result = validate("type MyType = int\ntype MyType = float", &prog);
+        assert!(result.has_errors());
+        assert!(result.diagnostics.iter().any(|d| d.code == Some("E007")));
+    }
+
+    #[test]
+    fn test_emit_as_undeclared_type() {
+        let prog = make_program(vec![Stmt::StreamDecl {
+            name: "S".to_string(),
+            type_annotation: None,
+            source: StreamSource::Ident("X".to_string()),
+            ops: vec![StreamOp::Emit {
+                output_type: Some("UnknownAlert".to_string()),
+                fields: vec![],
+                target_context: None,
+            }],
+        }]);
+        let result = validate("stream S = X.emit as UnknownAlert ()", &prog);
+        // W031 warning — undeclared type in emit
+        assert!(result.diagnostics.iter().any(|d| d.code == Some("W031")));
     }
 }
