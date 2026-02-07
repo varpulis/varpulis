@@ -968,5 +968,5 @@ fn execute_op_sync(
         }
     }
 
-    Ok(()
-)}
+    Ok(())
+}
