@@ -41,6 +41,11 @@
 //! - [`attention`]: Attention-based event correlation
 //! - [`join`]: Multi-stream join operations
 //!
+//! ### Multi-Query Trend Aggregation
+//! - [`greta`]: GRETA baseline aggregation (VLDB 2017)
+//! - [`hamlet`]: Hamlet shared aggregation with graphlets (SIGMOD 2021) - **recommended**
+//! - [`zdd_unified`]: ZDD-based aggregation (experimental, for research)
+//!
 //! ### I/O & Connectors
 //! - [`connector`]: Source and sink connectors (MQTT, HTTP, Kafka)
 //! - [`sink`]: Output sinks (console, file, HTTP webhook)
