@@ -1,4 +1,4 @@
-//! Event file parser for VarpulisQL
+//! Event file parser for VPL
 //!
 //! Inspired by Apama's .evt file format, this module provides:
 //! - Event file parsing with timing control

@@ -1,6 +1,6 @@
 //! # Varpulis Runtime
 //!
-//! High-performance execution engine for VarpulisQL programs.
+//! High-performance execution engine for VPL programs.
 //!
 //! This crate is the heart of Varpulis, providing:
 //!
@@ -24,7 +24,7 @@
 //! ## Modules
 //!
 //! ### Core Processing
-//! - [`engine`]: Main execution engine, compiles and runs VarpulisQL programs
+//! - [`engine`]: Main execution engine, compiles and runs VPL programs
 //! - [`event`]: Event structure and field access
 //! - [`stream`]: Stream abstraction for event flows
 //!
@@ -67,7 +67,7 @@
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!     // Parse a VarpulisQL program
+//!     // Parse a VPL program
 //!     let program = parse(r#"
 //!         stream HighTemp = SensorReading
 //!             .where(temperature > 100)
@@ -102,7 +102,7 @@
 //! ## See Also
 //!
 //! - [`varpulis_core`](../varpulis_core): Core types and AST
-//! - [`varpulis_parser`](../varpulis_parser): Parsing VarpulisQL
+//! - [`varpulis_parser`](../varpulis_parser): Parsing VPL
 //! - [`varpulis_cli`](../varpulis_cli): Command-line interface
 
 pub mod aggregation;

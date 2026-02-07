@@ -5,11 +5,11 @@
 [![Release](https://img.shields.io/badge/release-v0.1.0-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 
-**Varpulis** is a high-performance Complex Event Processing (CEP) engine written in Rust. It provides a domain-specific language (VarpulisQL) for defining event streams, patterns, and real-time analytics.
+**Varpulis** is a high-performance Complex Event Processing (CEP) engine written in Rust. It provides a domain-specific language called VPL (Varpulis Pipeline Language) for defining event streams, patterns, and real-time analytics.
 
 ## Features
 
-- **VarpulisQL Language**: Expressive DSL for stream processing
+- **VPL Language**: Expressive DSL for stream processing
 - **SASE+ Pattern Matching**: Advanced pattern detection with Kleene closures, negation, AND/OR
 - **Real-time Analytics**: Window aggregations, joins, and transformations with SIMD optimization
 - **Attention Window**: AI-powered anomaly detection

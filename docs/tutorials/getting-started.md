@@ -1,6 +1,6 @@
 # Getting Started with Varpulis
 
-This tutorial will get you up and running with Varpulis in under 5 minutes. You'll learn to write, validate, and run your first VarpulisQL program.
+This tutorial will get you up and running with Varpulis in under 5 minutes. You'll learn to write, validate, and run your first VPL program.
 
 ## Prerequisites
 
@@ -35,7 +35,7 @@ varpulis --version
 cargo test --workspace
 ```
 
-## Your First VarpulisQL Program
+## Your First VPL Program
 
 Let's create a simple temperature monitoring program.
 

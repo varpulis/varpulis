@@ -1,7 +1,7 @@
 {
   "name": "varpulis",
   "displayName": "Varpulis",
-  "description": "VarpulisQL language support - syntax highlighting, execution, and debugging for Varpulis CEP engine",
+  "description": "VPL language support - syntax highlighting, execution, and debugging for Varpulis CEP engine",
   "version": "0.1.0",
   "publisher": "varpulis",
   "license": "MIT",
@@ -36,7 +36,7 @@
       {
         "id": "varpulis",
         "aliases": [
-          "VarpulisQL",
+          "VPL",
           "varpulis"
         ],
         "extensions": [

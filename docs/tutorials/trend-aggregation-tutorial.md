@@ -22,14 +22,14 @@ In complex event processing, a **trend** is a sequence of events that matches a 
 
 ### Prerequisites
 
-- Familiarity with VarpulisQL basics (streams, filters, patterns). See the [Language Tutorial](language-tutorial.md) if you are new.
+- Familiarity with VPL basics (streams, filters, patterns). See the [Language Tutorial](language-tutorial.md) if you are new.
 - Familiarity with SASE+ Kleene closures (`+`, `*`). See the [SASE+ Pattern Guide](../guides/sase-patterns.md) for details.
 
 ---
 
 ## Step 1: Detection Mode
 
-Detection mode finds individual event sequences that match a pattern and returns the actual matched events. This is the standard behavior when you write a SASE+ pattern in VarpulisQL.
+Detection mode finds individual event sequences that match a pattern and returns the actual matched events. This is the standard behavior when you write a SASE+ pattern in VPL.
 
 ### The Scenario
 

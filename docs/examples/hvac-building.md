@@ -159,4 +159,4 @@ varpulis run examples/hvac_demo.vpl \
 
 - [Financial Markets Example](financial-markets.md)
 - [Attention Engine Architecture](../architecture/attention-engine.md)
-- [VarpulisQL Syntax](../language/syntax.md)
+- [VPL Syntax](../language/syntax.md)

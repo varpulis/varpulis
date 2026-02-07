@@ -2,7 +2,7 @@
 name = "varpulis-parser"
 version.workspace = true
 edition.workspace = true
-description = "Parser for VarpulisQL language"
+description = "Parser for VPL language"
 build = "build.rs"
 
 [dependencies]

@@ -1,4 +1,4 @@
-# VarpulisQL - Reusable SASE+ Patterns
+# VPL - Reusable SASE+ Patterns
 #
 # This example demonstrates the pattern declaration syntax for defining
 # reusable complex event patterns that can be referenced across your application.

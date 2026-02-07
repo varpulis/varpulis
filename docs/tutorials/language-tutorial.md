@@ -1,6 +1,6 @@
-# VarpulisQL Language Tutorial
+# VPL Language Tutorial
 
-A comprehensive guide to writing VarpulisQL programs, from basic event processing to advanced pattern matching.
+A comprehensive guide to writing VPL programs, from basic event processing to advanced pattern matching.
 
 ## Table of Contents
 

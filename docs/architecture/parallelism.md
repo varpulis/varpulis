@@ -83,7 +83,7 @@ See the [Contexts Guide](../guides/contexts.md) for a full tutorial.
 
 ## Planned Features
 
-The following features are parsed by VarpulisQL but not yet evaluated at runtime:
+The following features are parsed by VPL but not yet evaluated at runtime:
 
 ### Parallelization via Contexts
 

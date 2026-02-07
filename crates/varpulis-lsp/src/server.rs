@@ -44,7 +44,7 @@ impl Backend {
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
-        tracing::info!("Initializing VarpulisQL LSP");
+        tracing::info!("Initializing VPL LSP");
 
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
@@ -80,14 +80,14 @@ impl LanguageServer for Backend {
     }
 
     async fn initialized(&self, _: InitializedParams) {
-        tracing::info!("VarpulisQL LSP initialized");
+        tracing::info!("VPL LSP initialized");
         self.client
-            .log_message(MessageType::INFO, "VarpulisQL Language Server initialized")
+            .log_message(MessageType::INFO, "VPL Language Server initialized")
             .await;
     }
 
     async fn shutdown(&self) -> Result<()> {
-        tracing::info!("Shutting down VarpulisQL LSP");
+        tracing::info!("Shutting down VPL LSP");
         Ok(())
     }
 

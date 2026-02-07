@@ -1,6 +1,6 @@
 # Built-in Functions
 
-This document lists all built-in functions in VarpulisQL. Functions are marked as:
+This document lists all built-in functions in VPL. Functions are marked as:
 - **Implemented** - Working in current version
 - **Planned** - Documented for future implementation
 

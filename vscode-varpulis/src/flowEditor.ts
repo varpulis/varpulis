@@ -49,7 +49,7 @@ export class FlowEditorProvider implements vscode.CustomTextEditorProvider {
                         canSelectFiles: true,
                         canSelectFolders: false,
                         canSelectMany: false,
-                        filters: { 'VarpulisQL': ['vpl'] },
+                        filters: { 'VPL': ['vpl'] },
                         openLabel: 'Import VPL',
                     });
                     if (vplUri && vplUri[0]) {
@@ -132,7 +132,7 @@ export class FlowEditorProvider implements vscode.CustomTextEditorProvider {
 
     private async exportVPL(vplCode: string): Promise<void> {
         const uri = await vscode.window.showSaveDialog({
-            filters: { 'VarpulisQL': ['vpl'] },
+            filters: { 'VPL': ['vpl'] },
             saveLabel: 'Export VPL',
         });
 
@@ -206,7 +206,7 @@ export class FlowEditorPanel {
                             canSelectFiles: true,
                             canSelectFolders: false,
                             canSelectMany: false,
-                            filters: { 'VarpulisQL': ['vpl'] },
+                            filters: { 'VPL': ['vpl'] },
                             openLabel: 'Import VPL',
                         });
                         if (vplUri && vplUri[0]) {
@@ -279,7 +279,7 @@ export class FlowEditorPanel {
 
     private async _exportVPL(vplCode: string): Promise<void> {
         const uri = await vscode.window.showSaveDialog({
-            filters: { 'VarpulisQL': ['vpl'] },
+            filters: { 'VPL': ['vpl'] },
             saveLabel: 'Export VPL',
         });
 

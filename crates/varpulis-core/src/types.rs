@@ -1,9 +1,9 @@
-//! Type system for VarpulisQL
+//! Type system for VPL
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-/// VarpulisQL type
+/// VPL type
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Type {
     /// 64-bit signed integer

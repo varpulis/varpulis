@@ -450,7 +450,7 @@ pub struct MqttConfig {
 - Alert severity color coding
 
 **Missing Features:**
-- No VarpulisQL code display
+- No VPL code display
 - No alert export (CSV/JSON)
 - No time range selection
 - No pause/playback controls
@@ -491,7 +491,7 @@ pub struct MqttConfig {
 
 | # | Issue | Location | Status |
 |---|-------|----------|--------|
-| 14 | Add VarpulisQL code display to dashboard | `demos/` | Open |
+| 14 | Add VPL code display to dashboard | `demos/` | Open |
 | 15 | Add alert export to CSV/JSON | `demos/` | Open |
 | 16 | Implement import statement loading | `engine.rs` | Open |
 | 17 | Add accessibility improvements | `demos/` | Open |

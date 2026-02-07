@@ -27,7 +27,7 @@ cargo build --release
 
 ### `varpulis run`
 
-Execute a VarpulisQL program with optional MQTT connectivity.
+Execute a VPL program with optional MQTT connectivity.
 
 ```bash
 varpulis run --file program.vpl
@@ -39,7 +39,7 @@ varpulis run --code 'stream Readings from SensorReading'
 | Option | Description |
 |--------|-------------|
 | `-f, --file <PATH>` | Path to the .vpl file to execute |
-| `-c, --code <STRING>` | Inline VarpulisQL code to execute |
+| `-c, --code <STRING>` | Inline VPL code to execute |
 
 **Notes:**
 - Either `--file` or `--code` must be provided
@@ -69,7 +69,7 @@ stream Readings = SensorReading
 
 ### `varpulis parse`
 
-Parse a VarpulisQL file and display the Abstract Syntax Tree (AST).
+Parse a VPL file and display the Abstract Syntax Tree (AST).
 
 ```bash
 varpulis parse program.vpl
@@ -89,7 +89,7 @@ varpulis parse program.vpl
 
 ### `varpulis check`
 
-Validate the syntax of a VarpulisQL file without executing it.
+Validate the syntax of a VPL file without executing it.
 
 ```bash
 varpulis check program.vpl
@@ -216,7 +216,7 @@ varpulis server \
 
 ### `varpulis simulate`
 
-Play events from an event file through a VarpulisQL program.
+Play events from an event file through a VPL program.
 
 ```bash
 varpulis simulate --program rules.vpl --events data.evt --immediate --workers 8
@@ -226,7 +226,7 @@ varpulis simulate --program rules.vpl --events data.evt --immediate --workers 8
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `-p, --program <PATH>` | required | Path to the VarpulisQL program (.vpl) |
+| `-p, --program <PATH>` | required | Path to the VPL program (.vpl) |
 | `-e, --events <PATH>` | required | Path to the event file (.evt) |
 | `--immediate` | disabled | Run without timing delays (batch mode) |
 | `-v, --verbose` | disabled | Show each event as it's processed |

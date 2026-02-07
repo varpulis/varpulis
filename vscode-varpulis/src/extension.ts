@@ -135,7 +135,7 @@ async function startLanguageServer(context: vscode.ExtensionContext) {
 
     languageClient = new LanguageClient(
         'varpulis-lsp',
-        'VarpulisQL Language Server',
+        'VPL Language Server',
         serverOptions,
         clientOptions
     );
@@ -248,7 +248,7 @@ async function stopEngine() {
 async function runCurrentFile() {
     const editor = vscode.window.activeTextEditor;
     if (!editor || editor.document.languageId !== 'varpulis') {
-        vscode.window.showErrorMessage('No VarpulisQL file is open');
+        vscode.window.showErrorMessage('No VPL file is open');
         return;
     }
 
@@ -290,7 +290,7 @@ async function runCurrentFile() {
 async function checkSyntax() {
     const editor = vscode.window.activeTextEditor;
     if (!editor || editor.document.languageId !== 'varpulis') {
-        vscode.window.showErrorMessage('No VarpulisQL file is open');
+        vscode.window.showErrorMessage('No VPL file is open');
         return;
     }
 

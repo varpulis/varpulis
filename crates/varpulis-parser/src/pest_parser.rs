@@ -1,4 +1,4 @@
-//! Pest-based parser for VarpulisQL
+//! Pest-based parser for VPL
 //!
 //! This module provides parsing using the pest PEG parser generator.
 
@@ -34,7 +34,7 @@ impl<'a> IteratorExt<'a> for pest::iterators::Pairs<'a, Rule> {
 #[grammar = "varpulis.pest"]
 pub struct VarpulisParser;
 
-/// Parse a VarpulisQL source string into a Program AST
+/// Parse a VPL source string into a Program AST
 pub fn parse(source: &str) -> ParseResult<Program> {
     // Expand compile-time declaration loops (top-level for with {var} interpolation)
     let expanded = crate::expand::expand_declaration_loops(source);

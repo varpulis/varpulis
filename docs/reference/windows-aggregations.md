@@ -1,6 +1,6 @@
 # Windows & Aggregations Reference
 
-Complete reference for window types and aggregation functions in VarpulisQL.
+Complete reference for window types and aggregation functions in VPL.
 
 ## Window Types
 
@@ -528,6 +528,6 @@ stream HourlyOverview from DeviceMinutes
 
 ## See Also
 
-- [Language Tutorial](../tutorials/language-tutorial.md) - Learn VarpulisQL basics
+- [Language Tutorial](../tutorials/language-tutorial.md) - Learn VPL basics
 - [Performance Tuning](../guides/performance-tuning.md) - Optimize window performance
 - [SASE+ Pattern Guide](../guides/sase-patterns.md) - Pattern matching over windows

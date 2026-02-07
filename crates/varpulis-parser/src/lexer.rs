@@ -1,9 +1,9 @@
-//! Lexer for VarpulisQL using Logos
+//! Lexer for VPL using Logos
 
 use logos::Logos;
 use std::fmt;
 
-/// Token type for VarpulisQL
+/// Token type for VPL
 #[derive(Logos, Debug, Clone, PartialEq)]
 #[logos(skip r"[ \t\r\n\f]+")]
 #[logos(skip r"#[^\n]*")]

@@ -1,6 +1,6 @@
-//! VarpulisQL Language Server
+//! VPL Language Server
 //!
-//! Provides IDE features for VarpulisQL via the Language Server Protocol:
+//! Provides IDE features for VPL via the Language Server Protocol:
 //! - Real-time diagnostics
 //! - Hover documentation
 //! - Code completion
@@ -27,7 +27,7 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .init();
 
-    tracing::info!("Starting VarpulisQL Language Server");
+    tracing::info!("Starting VPL Language Server");
 
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
