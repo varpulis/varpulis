@@ -2568,7 +2568,7 @@ impl SaseEngine {
                             let pred_matches = branch
                                 .predicate
                                 .as_ref()
-                                .is_none_or(|p| eval_predicate(p, &event, &empty_captured));
+                                .is_none_or(|p| eval_predicate(p, &event, empty_captured));
 
                             if pred_matches {
                                 let mut run = match self.time_semantics {
@@ -2597,7 +2597,7 @@ impl SaseEngine {
                 continue;
             }
 
-            if event_matches_state(&self.nfa, &event, next_state, &empty_captured) {
+            if event_matches_state(&self.nfa, &event, next_state, empty_captured) {
                 let mut run = match self.time_semantics {
                     TimeSemantics::ProcessingTime => Run::new(next_id),
                     TimeSemantics::EventTime => Run::new_with_event_time(next_id, event.timestamp),
@@ -2637,7 +2637,7 @@ impl SaseEngine {
                                 let pred_matches = branch
                                     .predicate
                                     .as_ref()
-                                    .is_none_or(|p| eval_predicate(p, &event, &empty_captured));
+                                    .is_none_or(|p| eval_predicate(p, &event, empty_captured));
 
                                 if pred_matches {
                                     let mut run = match self.time_semantics {
@@ -2664,7 +2664,7 @@ impl SaseEngine {
                     continue;
                 }
 
-                if event_matches_state(&self.nfa, &event, next_state, &empty_captured) {
+                if event_matches_state(&self.nfa, &event, next_state, empty_captured) {
                     let mut run = match self.time_semantics {
                         TimeSemantics::ProcessingTime => Run::new(next_id),
                         TimeSemantics::EventTime => {
