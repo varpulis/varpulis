@@ -3,11 +3,58 @@
 use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
 use varpulis_parser::{parse, ParseError};
 
-/// Convert parser errors to LSP diagnostics
+/// Convert parser errors and semantic validation results to LSP diagnostics
 pub fn get_diagnostics(text: &str) -> Vec<Diagnostic> {
     match parse(text) {
-        Ok(_) => vec![],
+        Ok(program) => {
+            // Run semantic validation on successfully parsed programs
+            let validation = varpulis_core::validate::validate(text, &program);
+            validation
+                .diagnostics
+                .iter()
+                .map(|d| semantic_to_lsp_diagnostic(text, d))
+                .collect()
+        }
         Err(error) => vec![error_to_diagnostic(text, &error)],
+    }
+}
+
+fn semantic_to_lsp_diagnostic(source: &str, d: &varpulis_core::validate::Diagnostic) -> Diagnostic {
+    let (start_line, start_col) = position_to_line_col(source, d.span.start);
+    let (end_line, end_col) = position_to_line_col(source, d.span.end);
+
+    let severity = match d.severity {
+        varpulis_core::validate::Severity::Error => DiagnosticSeverity::ERROR,
+        varpulis_core::validate::Severity::Warning => DiagnosticSeverity::WARNING,
+    };
+
+    let mut message = d.message.clone();
+    if let Some(ref hint) = d.hint {
+        message.push_str("\n\nHint: ");
+        message.push_str(hint);
+    }
+
+    Diagnostic {
+        range: Range {
+            start: Position {
+                line: start_line as u32,
+                character: start_col as u32,
+            },
+            end: Position {
+                line: end_line as u32,
+                character: end_col as u32,
+            },
+        },
+        severity: Some(severity),
+        code: d
+            .code
+            .map(|c| tower_lsp::lsp_types::NumberOrString::String(c.to_string())),
+        code_description: None,
+        source: Some("varpulis".to_string()),
+        message,
+        related_information: None,
+        tags: None,
+        data: None,
     }
 }
 

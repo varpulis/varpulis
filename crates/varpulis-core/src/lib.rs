@@ -56,6 +56,7 @@
 pub mod ast;
 pub mod span;
 pub mod types;
+pub mod validate;
 pub mod value;
 
 pub use ast::*;
