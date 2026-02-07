@@ -46,18 +46,13 @@
 
 | Operator | Description | Example |
 |----------|-------------|---------|
-| `=` | Assignment | `x = 5` |
-| `+=` | Addition assignment | `x += 1` |
-| `-=` | Subtraction assignment | `x -= 1` |
-| `*=` | Multiplication assignment | `x *= 2` |
-| `/=` | Division assignment | `x /= 2` |
-| `%=` | Modulo assignment | `x %= 3` |
+| `:=` | Assignment | `x := 5` |
 
 ## Chaining Operators
 
 | Operator | Description | Example |
 |----------|-------------|---------|
-| `.` | Member access / chaining | `stream.where(...).map(...)` |
+| `.` | Member access / chaining | `stream.where(...).select(...)` |
 | `?.` | Optional access | `user?.name` |
 | `??` | Null coalesce | `value ?? default` |
 
@@ -112,4 +107,4 @@
 11. `and`
 12. `or`
 13. `??`
-14. `=`, `+=`, `-=`, etc.
+14. `:=`

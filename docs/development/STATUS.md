@@ -85,9 +85,8 @@ Varpulis is a high-performance Complex Event Processing (CEP) engine written in 
 ## What Doesn't Work Yet
 
 ### Not Implemented
-- Engine checkpoint integration (window/pattern state is not saved/restored)
-- Clustering (single-node only)
-- Distributed mode
+- Automatic periodic checkpoint triggers in the engine event loop
+- Distributed mode / clustering (single-node only)
 - Declarative parallelization (`.concurrent()`)
 - Web UI for monitoring (Grafana dashboards exist, no custom UI)
 
@@ -95,11 +94,17 @@ Varpulis is a high-performance Complex Event Processing (CEP) engine written in 
 - `.concurrent()` - parallelization
 - `.process()` - custom processing
 - `.on_error()` - error handling
+- `.tap()` - instrumentation
+- `.map()`, `.filter()`, `.distinct()`, `.order_by()`, `.limit()` - reserved syntax
+- `.fork()`, `.any()`, `.all()`, `.first()`, `.collect()` - reserved syntax
+
+### Engine Checkpointing
+- `create_checkpoint()` and `restore_checkpoint()` are implemented and save/restore window state, SASE+ engines, join buffers, variables, and watermark trackers
+- Checkpointing is available programmatically (via API calls) but is NOT automatically triggered during the event processing loop
+- Tenant/pipeline metadata persists with `--state-dir`
 
 ### Known Limitations
-- Window and pattern matcher state is in-memory only (lost on restart)
-- Tenant/pipeline metadata persists with `--state-dir`, but engine processing state does not
-- Checkpoint infrastructure exists but is not wired into the engine event loop
+- No automatic checkpoint barriers in the event stream pipeline
 - Limited to single-node deployment
 
 ---

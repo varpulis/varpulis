@@ -56,6 +56,3 @@ stream AnomalousPeak = Sensors
         correlated_events: attention_matches,
         reason: "High correlation detected in recent readings"
     )
-
-config:
-    mode: "balanced"

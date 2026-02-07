@@ -129,10 +129,14 @@ stream Temps from temperature_reading  // Must match exactly!
 
 3. **Verify topic subscription:**
 ```vpl
-config mqtt {
-    input_topic: "sensors/#",  // Make sure wildcard is correct
-    ...
-}
+connector Sensors = mqtt (
+    host: "localhost",
+    port: 1883,
+    client_id: "my-app"
+)
+
+stream Events = SensorReading
+    .from(Sensors, topic: "sensors/#")  // Make sure wildcard is correct
 ```
 
 ### Events Processed but No Alerts
@@ -144,25 +148,25 @@ config mqtt {
 1. **Check filter conditions:**
 ```vpl
 // Too restrictive?
-where temperature > 1000  // Maybe threshold is too high
+.where(temperature > 1000)  // Maybe threshold is too high
 
 // Debug: remove filters temporarily
 stream Debug from TemperatureReading
-    emit log("Got event: {temperature}")
+    .print("Got event: {temperature}")
 ```
 
 2. **Verify field names:**
 ```vpl
 // Field names are case-sensitive
-where Temperature > 100  // Wrong if field is "temperature"
-where temperature > 100  // Correct
+.where(Temperature > 100)  // Wrong if field is "temperature"
+.where(temperature > 100)  // Correct
 ```
 
 3. **Check data types:**
 ```vpl
 // String comparison vs numeric
-where value > 100      // Works if value is numeric
-where value > "100"    // String comparison - different!
+.where(value > 100)      // Works if value is numeric
+.where(value > "100")    // String comparison - different!
 ```
 
 ### Memory Growing Unbounded
@@ -175,20 +179,20 @@ where value > "100"    // String comparison - different!
 ```vpl
 // Bad: no time limit
 stream Bad from Event
-    window sliding 1h by 1s  // 3600 overlapping windows!
+    .window(1h, sliding: 1s)  // 3600 overlapping windows!
 
 // Better: reasonable window
 stream Better from Event
-    window tumbling 1m
+    .window(1m)
 ```
 
 2. **Too many partitions:**
 ```vpl
 // Bad: high-cardinality partition
-partition by request_id  // Every request = new partition!
+.partition_by(request_id)  // Every request = new partition!
 
 // Better: use low-cardinality
-partition by customer_id  // Bounded number of customers
+.partition_by(customer_id)  // Bounded number of customers
 ```
 
 3. **Pattern state accumulation:**
@@ -247,13 +251,14 @@ RUST_LOG=varpulis_runtime::engine=trace varpulis run ...
 
 1. **Simplify the pattern:**
 ```vpl
-// Start with just the first event
-pattern Debug1 = A
-    emit log("Matched A")
+// Start with just the first event type
+stream Debug1 from A
+    .print("Matched A")
 
-// Then add second
-pattern Debug2 = A -> B within 1h
-    emit log("Matched A -> B")
+// Then test with a sequence
+stream Debug2 = A as a -> B
+    .within(1h)
+    .print("Matched A -> B")
 ```
 
 2. **Check event types exactly:**
