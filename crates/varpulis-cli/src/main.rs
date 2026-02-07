@@ -16,6 +16,7 @@ use varpulis_core::ast::{Program, Stmt};
 use varpulis_parser::parse;
 use varpulis_runtime::engine::Engine;
 use varpulis_runtime::event::Event;
+use varpulis_runtime::SharedEvent; // PERF: Zero-copy event sharing
 use varpulis_runtime::event_file::{EventFileParser, EventFilePlayer, StreamingEventReader};
 use varpulis_runtime::metrics::{Metrics, MetricsServer};
 use varpulis_runtime::simulator::{Simulator, SimulatorConfig};
@@ -886,16 +887,18 @@ async fn run_simulation(
     );
 
     // Create output event channel (shared across all engines)
+    // PERF: Use SharedEvent (Arc<Event>) channel for zero-copy event passing
     // Use larger buffer in quiet mode since we're benchmarking throughput
     let channel_size = if quiet { 100_000 } else { 1000 * num_workers };
-    let (output_tx, mut output_rx) = mpsc::channel::<Event>(channel_size);
+    let (output_tx, mut output_rx) = mpsc::channel::<SharedEvent>(channel_size);
 
     // Create initial engine to show metrics
     // In quiet mode, use benchmark engine to skip channel overhead entirely
+    // PERF: Use new_shared() for zero-copy SharedEvent channel
     let mut engine = if quiet {
         Engine::new_benchmark()
     } else {
-        Engine::new(output_tx.clone())
+        Engine::new_shared(output_tx.clone())
     };
     engine
         .load(&program)
@@ -908,10 +911,10 @@ async fn run_simulation(
     // Output event handling - use atomic counter in quiet mode for performance
     let output_count = Arc::new(AtomicU64::new(0));
     let output_emitted_count = Arc::new(AtomicU64::new(0)); // Track from engine metrics in quiet mode
-    let output_events = if quiet {
+    let output_events: Option<Arc<RwLock<Vec<SharedEvent>>>> = if quiet {
         None
     } else {
-        Some(Arc::new(RwLock::new(Vec::<Event>::new())))
+        Some(Arc::new(RwLock::new(Vec::new())))
     };
 
     let output_count_clone = output_count.clone();
@@ -927,6 +930,7 @@ async fn run_simulation(
                 );
             }
             // Only collect events if not in quiet mode
+            // PERF: Zero-copy - just store the Arc reference
             if let Some(ref events_vec) = output_events_clone {
                 events_vec.write().await.push(output_event);
             }
@@ -954,11 +958,11 @@ async fn run_simulation(
 
         for timed_event in events {
             let event = timed_event.event;
-            // Get partition key value and hash it to a partition number
+            // PERF: Hash Value directly instead of format!("{}", val) to avoid string allocation
             let key_hash = if let Some(val) = event.get(partition_key) {
                 use std::hash::{Hash, Hasher};
                 let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                format!("{}", val).hash(&mut hasher);
+                val.hash(&mut hasher); // Direct hash, no string allocation
                 hasher.finish() % num_workers as u64
             } else {
                 // If no partition key, use event type hash
@@ -982,6 +986,7 @@ async fn run_simulation(
         }
 
         // Process partitions in parallel using spawn_blocking + rayon
+        // PERF: Use sync processing to avoid per-partition Tokio runtime overhead
         let program_arc = program.clone();
         let output_tx_arc = if quiet { None } else { Some(output_tx.clone()) };
         let total_counter = total_events_processed.clone();
@@ -995,37 +1000,30 @@ async fn run_simulation(
             partition_vec
                 .into_par_iter()
                 .for_each(|(partition_id, events)| {
-                    // Create a new tokio runtime for this rayon thread (outside main runtime)
-                    let rt = tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                        .expect("Failed to create tokio runtime");
+                    // PERF: Use new_shared() for zero-copy SharedEvent channel
+                    let mut worker_engine = match &output_tx_arc {
+                        Some(tx) => Engine::new_shared(tx.clone()),
+                        None => Engine::new_benchmark(),
+                    };
+                    if let Err(e) = worker_engine.load(&program_arc) {
+                        eprintln!("Worker {}: Failed to load program: {}", partition_id, e);
+                        return;
+                    }
 
-                    rt.block_on(async {
-                        // Use benchmark engine in quiet mode (skips channel overhead)
-                        let mut worker_engine = match &output_tx_arc {
-                            Some(tx) => Engine::new(tx.clone()),
-                            None => Engine::new_benchmark(),
-                        };
-                        if let Err(e) = worker_engine.load(&program_arc) {
-                            eprintln!("Worker {}: Failed to load program: {}", partition_id, e);
+                    // PERF: Use synchronous batch processing - no per-partition runtime needed
+                    const BATCH_SIZE: usize = 5000;
+                    for chunk in events.chunks(BATCH_SIZE) {
+                        let batch: Vec<_> = chunk.to_vec();
+                        if let Err(e) = worker_engine.process_batch_sync(batch) {
+                            eprintln!("Worker {}: Process error: {}", partition_id, e);
                             return;
                         }
+                    }
 
-                        const BATCH_SIZE: usize = 5000;
-                        for chunk in events.chunks(BATCH_SIZE) {
-                            let batch: Vec<_> = chunk.to_vec();
-                            if let Err(e) = worker_engine.process_batch(batch).await {
-                                eprintln!("Worker {}: Process error: {}", partition_id, e);
-                                return;
-                            }
-                        }
-
-                        let worker_metrics = worker_engine.metrics();
-                        total_counter.fetch_add(worker_metrics.events_processed, Ordering::Relaxed);
-                        output_counter
-                            .fetch_add(worker_metrics.output_events_emitted, Ordering::Relaxed);
-                    });
+                    let worker_metrics = worker_engine.metrics();
+                    total_counter.fetch_add(worker_metrics.events_processed, Ordering::Relaxed);
+                    output_counter
+                        .fetch_add(worker_metrics.output_events_emitted, Ordering::Relaxed);
                 });
         })
         .await
@@ -1059,6 +1057,7 @@ async fn run_simulation(
         }
     } else if immediate && num_workers > 1 {
         // Parallel streaming mode
+        // PERF: Pre-create persistent worker engines to avoid re-loading program per batch
         const BATCH_SIZE: usize = 50000; // Larger batches for parallel mode
 
         let mut event_reader = StreamingEventReader::from_file(events_path)
@@ -1066,6 +1065,24 @@ async fn run_simulation(
 
         let partition_key = partition_by.unwrap_or("symbol");
         let mut batch_count = 0;
+
+        // PERF: Pre-create engines for each partition (load program once, reuse across batches)
+        use std::sync::Mutex;
+        let worker_engines: Vec<Mutex<Engine>> = (0..num_workers)
+            .map(|_| {
+                // PERF: Use new_shared() for zero-copy SharedEvent channel
+                let mut engine = if quiet {
+                    Engine::new_benchmark()
+                } else {
+                    Engine::new_shared(output_tx.clone())
+                };
+                if let Err(e) = engine.load(&program) {
+                    eprintln!("Failed to load program: {}", e);
+                }
+                Mutex::new(engine)
+            })
+            .collect();
+        let worker_engines = Arc::new(worker_engines);
 
         loop {
             // Read a large batch
@@ -1093,12 +1110,13 @@ async fn run_simulation(
             }
 
             // Partition events
+            // PERF: Hash Value directly instead of format!("{}", val) to avoid string allocation
             let mut partitions: HashMap<u64, Vec<Event>> = HashMap::new();
             for event in events {
                 let key_hash = if let Some(val) = event.get(partition_key) {
                     use std::hash::{Hash, Hasher};
                     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                    format!("{}", val).hash(&mut hasher);
+                    val.hash(&mut hasher); // Direct hash, no string allocation
                     hasher.finish() % num_workers as u64
                 } else {
                     use std::hash::{Hash, Hasher};
@@ -1110,10 +1128,8 @@ async fn run_simulation(
             }
 
             // Process partitions in parallel using spawn_blocking + rayon
-            let program_arc = program.clone();
-            let output_tx_arc = if quiet { None } else { Some(output_tx.clone()) };
-            let total_counter = total_events_processed.clone();
-            let output_counter = output_emitted_count.clone();
+            // PERF: Reuse pre-created engines instead of creating new ones per batch
+            let engines = worker_engines.clone();
 
             let partition_vec: Vec<_> = partitions.into_iter().collect();
 
@@ -1121,37 +1137,31 @@ async fn run_simulation(
                 partition_vec
                     .into_par_iter()
                     .for_each(|(partition_id, partition_events)| {
-                        let rt = tokio::runtime::Builder::new_current_thread()
-                            .enable_all()
-                            .build()
-                            .expect("Failed to create tokio runtime");
+                        // Get the pre-created engine for this partition
+                        let mut engine_guard = engines[partition_id as usize].lock().unwrap();
 
-                        rt.block_on(async {
-                            // Use benchmark engine in quiet mode (skips channel overhead)
-                            let mut worker_engine = match &output_tx_arc {
-                                Some(tx) => Engine::new(tx.clone()),
-                                None => Engine::new_benchmark(),
-                            };
-                            if let Err(e) = worker_engine.load(&program_arc) {
-                                eprintln!("Worker {}: Failed to load program: {}", partition_id, e);
-                                return;
-                            }
-
-                            if let Err(e) = worker_engine.process_batch(partition_events).await {
-                                eprintln!("Worker {}: Process error: {}", partition_id, e);
-                                return;
-                            }
-
-                            let worker_metrics = worker_engine.metrics();
-                            total_counter
-                                .fetch_add(worker_metrics.events_processed, Ordering::Relaxed);
-                            output_counter
-                                .fetch_add(worker_metrics.output_events_emitted, Ordering::Relaxed);
-                        });
+                        // PERF: Use synchronous batch processing - no per-partition runtime needed
+                        if let Err(e) = engine_guard.process_batch_sync(partition_events) {
+                            eprintln!("Worker {}: Process error: {}", partition_id, e);
+                        }
                     });
             })
             .await
             .ok();
+        }
+
+        // Collect final metrics from all worker engines
+        for (i, engine_mutex) in worker_engines.iter().enumerate() {
+            let engine = engine_mutex.lock().unwrap();
+            let worker_metrics = engine.metrics();
+            total_events_processed.fetch_add(worker_metrics.events_processed, Ordering::Relaxed);
+            output_emitted_count.fetch_add(worker_metrics.output_events_emitted, Ordering::Relaxed);
+            if verbose {
+                info!(
+                    "Worker {}: processed {} events, emitted {}",
+                    i, worker_metrics.events_processed, worker_metrics.output_events_emitted
+                );
+            }
         }
 
         info!("Streamed {} events from file", event_reader.events_read());
