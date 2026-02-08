@@ -604,15 +604,14 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
                     let client_id = config
                         .properties
                         .get("client_id")
-                        .map(|id| format!("{}-source", id))
-                        .unwrap_or_else(|| format!("{}-source", binding.connector_name));
+                        .cloned()
+                        .unwrap_or_else(|| binding.connector_name.clone());
 
                     let mqtt_config = MqttConfig::new(broker, topic)
                         .with_port(port)
                         .with_client_id(&client_id);
 
-                    let mut mqtt_source =
-                        MqttSource::new(&format!("{}-source", binding.connector_name), mqtt_config);
+                    let mut mqtt_source = MqttSource::new(&binding.connector_name, mqtt_config);
 
                     println!("\nMQTT Source: {}:{} topic={}", broker, port, topic);
 
@@ -620,6 +619,51 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
                         .start(event_tx.clone())
                         .await
                         .map_err(|e| anyhow::anyhow!("MQTT source error: {}", e))?;
+
+                    // Share the source's MQTT client with every sink that
+                    // targets the same MQTT connector, avoiding duplicate
+                    // broker connections.
+                    let sink_keys = engine.sink_keys_for_connector(&binding.connector_name);
+                    if !sink_keys.is_empty() {
+                        if let Some(shared_client) = mqtt_source.client() {
+                            use varpulis_runtime::connector::MqttSink;
+                            use varpulis_runtime::engine::SinkConnectorAdapter;
+
+                            for sink_key in &sink_keys {
+                                // Derive the topic: topic-override keys look
+                                // like "ConnectorName::topic/path".
+                                let sink_topic = if let Some(topic) =
+                                    sink_key.strip_prefix(&format!("{}::", binding.connector_name))
+                                {
+                                    topic.to_string()
+                                } else {
+                                    config.topic.clone().unwrap_or_else(|| {
+                                        format!("{}-output", binding.connector_name)
+                                    })
+                                };
+
+                                let sink_mqtt_config = MqttConfig::new(broker, &sink_topic)
+                                    .with_port(port)
+                                    .with_client_id(&client_id);
+
+                                let sink = MqttSink::with_client(
+                                    &binding.connector_name,
+                                    sink_mqtt_config,
+                                    shared_client.clone(),
+                                );
+                                let adapter = SinkConnectorAdapter::new(
+                                    &binding.connector_name,
+                                    Box::new(sink),
+                                );
+                                engine.inject_sink(sink_key, std::sync::Arc::new(adapter));
+                            }
+                            println!(
+                                "  Sharing MQTT connection for {} sink(s) on '{}'",
+                                sink_keys.len(),
+                                binding.connector_name,
+                            );
+                        }
+                    }
 
                     active_sources.push(Box::new(mqtt_source));
                 }
