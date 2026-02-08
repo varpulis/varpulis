@@ -56,7 +56,7 @@ Streams are continuous flows of events. Create streams with the `stream` keyword
 
 ```vpl
 // Basic stream: listen for all TemperatureReading events
-stream Temperatures from TemperatureReading
+stream Temperatures = TemperatureReading
 
 // Stream with alias
 stream T = Temperatures
@@ -68,19 +68,19 @@ Filter events based on conditions:
 
 ```vpl
 // Single condition
-stream HighTemps from TemperatureReading
+stream HighTemps = TemperatureReading
     .where(temperature > 100)
 
 // Multiple conditions (AND)
-stream CriticalTemps from TemperatureReading
+stream CriticalTemps = TemperatureReading
     .where(temperature > 100 and sensor_id == "critical-zone")
 
 // OR conditions
-stream AlertZones from TemperatureReading
+stream AlertZones = TemperatureReading
     .where(sensor_id == "zone-1" or sensor_id == "zone-2")
 
 // Compound conditions
-stream Filtered from TemperatureReading
+stream Filtered = TemperatureReading
     .where((temperature > 90 and humidity > 80) or emergency == true)
 ```
 
@@ -93,7 +93,7 @@ stream Filtered from TemperatureReading
 Transform events by selecting specific fields or computing new ones:
 
 ```vpl
-stream SimplifiedTemps from TemperatureReading
+stream SimplifiedTemps = TemperatureReading
     .select(
         sensor: sensor_id,
         temp: temperature,
@@ -101,7 +101,7 @@ stream SimplifiedTemps from TemperatureReading
     )
 
 // Computed fields
-stream EnhancedTemps from TemperatureReading
+stream EnhancedTemps = TemperatureReading
     .select(
         sensor_id,
         temp_celsius: (temperature - 32) * 5 / 9,
@@ -115,16 +115,16 @@ Use `.emit()` and `.print()` to output data when conditions are met:
 
 ```vpl
 // Emit an alert
-stream TempAlerts from TemperatureReading
+stream TempAlerts = TemperatureReading
     .where(temperature > 100)
     .emit(alert_type: "HighTemperature", message: "Sensor {sensor_id} reading {temperature}°F")
 
 // Print to log
-stream TempLog from TemperatureReading
+stream TempLog = TemperatureReading
     .print("Received: {sensor_id} = {temperature}")
 
 // Emit with severity
-stream CriticalAlerts from TemperatureReading
+stream CriticalAlerts = TemperatureReading
     .where(temperature > 150)
     .emit(alert_type: "CriticalTemperature", message: "DANGER: {sensor_id} at {temperature}°F", severity: "critical")
 ```
@@ -144,7 +144,7 @@ const MAX_TEMP = 200
 const API_KEY = "secret123"
 
 // Use in streams
-stream Alerts from TemperatureReading
+stream Alerts = TemperatureReading
     .where(temperature > threshold)
     .emit(alert_type: "High", message: "Above threshold")
 ```
@@ -174,7 +174,7 @@ Non-overlapping, fixed-duration windows:
 
 ```vpl
 // 1-minute tumbling window
-stream MinuteStats from TemperatureReading
+stream MinuteStats = TemperatureReading
     .window(1m)
     .aggregate(
         avg_temp: avg(temperature),
@@ -183,12 +183,12 @@ stream MinuteStats from TemperatureReading
     )
 
 // 5-second window
-stream RapidStats from SensorReading
+stream RapidStats = SensorReading
     .window(5s)
     .aggregate(readings: count())
 
 // 1-hour window
-stream HourlyReport from Transaction
+stream HourlyReport = Transaction
     .window(1h)
     .aggregate(
         total: sum(amount),
@@ -204,14 +204,14 @@ Overlapping windows with a slide interval:
 
 ```vpl
 // 5-minute window, slides every 1 minute
-stream SlidingAvg from TemperatureReading
+stream SlidingAvg = TemperatureReading
     .window(5m, sliding: 1m)
     .aggregate(
         rolling_avg: avg(temperature)
     )
 
 // 10-second window, slides every 2 seconds
-stream RecentTrend from SensorReading
+stream RecentTrend = SensorReading
     .window(10s, sliding: 2s)
     .aggregate(
         recent_max: max(value),
@@ -225,7 +225,7 @@ Windows based on event count:
 
 ```vpl
 // Every 100 events
-stream BatchStats from Transaction
+stream BatchStats = Transaction
     .window(100)
     .aggregate(
         batch_total: sum(amount),
@@ -233,7 +233,7 @@ stream BatchStats from Transaction
     )
 
 // Sliding count window: 50 events, slide by 10
-stream RollingBatch from Reading
+stream RollingBatch = Reading
     .window(50, sliding: 10)
     .aggregate(rolling_sum: sum(value))
 ```
@@ -259,7 +259,7 @@ Windows partitioned by a key:
 
 ```vpl
 // Per-sensor statistics
-stream PerSensorStats from TemperatureReading
+stream PerSensorStats = TemperatureReading
     .partition_by(sensor_id)
     .window(1m)
     .aggregate(
@@ -269,7 +269,7 @@ stream PerSensorStats from TemperatureReading
     )
 
 // Per-customer totals
-stream CustomerTotals from Transaction
+stream CustomerTotals = Transaction
     .partition_by(customer_id)
     .window(1h)
     .aggregate(
@@ -283,7 +283,7 @@ stream CustomerTotals from Transaction
 Apply conditions to aggregated results:
 
 ```vpl
-stream HighVolumeMinutes from Transaction
+stream HighVolumeMinutes = Transaction
     .window(1m)
     .aggregate(
         total: sum(amount),
@@ -485,7 +485,7 @@ Attention windows use machine learning-inspired correlation to find related even
 ### Basic Attention Window
 
 ```vpl
-stream CorrelatedEvents from SensorReading
+stream CorrelatedEvents = SensorReading
     .attention_window(duration: 30s, heads: 4, embedding: "rule_based", threshold: 0.7)
     .where(attention_score > 0.85)
     .emit(alert_type: "HighCorrelation", message: "Events highly correlated")
@@ -504,7 +504,7 @@ stream CorrelatedEvents from SensorReading
 ### Feature Configuration
 
 ```vpl
-stream FraudDetection from Transaction
+stream FraudDetection = Transaction
     .attention_window(
         duration: 1m,
         heads: 8,
@@ -538,7 +538,7 @@ stream FraudDetection from Transaction
 ### Accessing Attention Scores
 
 ```vpl
-stream Correlations from Event
+stream Correlations = Event
     .attention_window(duration: 1m, heads: 4)
     .select(
         current_event: event_type,
@@ -559,8 +559,8 @@ Join multiple event streams based on conditions.
 
 ```vpl
 stream EnrichedOrders = join(
-    stream Orders from OrderEvent,
-    stream Customers from CustomerEvent
+    stream Orders = OrderEvent,
+    stream Customers = CustomerEvent
         on Orders.customer_id == Customers.id
 )
 .window(5m)
@@ -575,12 +575,12 @@ stream EnrichedOrders = join(
 
 ```vpl
 stream FullOrderDetails = join(
-    stream Orders from OrderEvent,
-    stream Customers from CustomerEvent
+    stream Orders = OrderEvent,
+    stream Customers = CustomerEvent
         on Orders.customer_id == Customers.id,
-    stream Products from ProductEvent
+    stream Products = ProductEvent
         on Orders.product_id == Products.id,
-    stream Inventory from InventoryEvent
+    stream Inventory = InventoryEvent
         on Orders.product_id == Inventory.product_id
 )
 .window(10m)
@@ -596,8 +596,8 @@ stream FullOrderDetails = join(
 
 ```vpl
 stream CustomerStats = join(
-    stream Orders from OrderEvent,
-    stream Customers from CustomerEvent
+    stream Orders = OrderEvent,
+    stream Customers = CustomerEvent
         on Orders.customer_id == Customers.id
 )
 .window(1h)
@@ -615,9 +615,9 @@ Combine multiple streams of the same type:
 
 ```vpl
 stream AllSensors = merge(
-    stream Zone1 from SensorReading .where(zone == "1"),
-    stream Zone2 from SensorReading .where(zone == "2"),
-    stream Zone3 from SensorReading .where(zone == "3")
+    stream Zone1 = SensorReading .where(zone == "1"),
+    stream Zone2 = SensorReading .where(zone == "2"),
+    stream Zone3 = SensorReading .where(zone == "3")
 )
 .window(1m)
 .aggregate(
@@ -701,17 +701,17 @@ Begin with basic filters before adding windows and patterns:
 
 ```vpl
 // Step 1: Basic filter
-stream HighTemps from TemperatureReading
+stream HighTemps = TemperatureReading
     .where(temperature > 100)
 
 // Step 2: Add window
-stream HighTempMinutes from TemperatureReading
+stream HighTempMinutes = TemperatureReading
     .where(temperature > 100)
     .window(1m)
     .aggregate(count: count())
 
 // Step 3: Add alert
-stream HighTempAlerts from TemperatureReading
+stream HighTempAlerts = TemperatureReading
     .where(temperature > 100)
     .window(1m)
     .aggregate(count: count())
@@ -723,7 +723,7 @@ stream HighTempAlerts from TemperatureReading
 
 ```vpl
 // Process per-device independently
-stream DeviceAlerts from SensorReading
+stream DeviceAlerts = SensorReading
     .partition_by(device_id)
     .window(1m)
     .aggregate(avg_val: avg(value))

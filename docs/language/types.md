@@ -92,7 +92,7 @@ event OrderEvent extends BaseEvent:
 
 ```varpulis
 # Explicitly typed stream
-stream Trades: Stream<TradeEvent> from TradeEvent
+stream Trades: Stream<TradeEvent> = TradeEvent
 
 # Type inference
 stream HighValue = Trades.where(price > 1000)  # Stream<TradeEvent>

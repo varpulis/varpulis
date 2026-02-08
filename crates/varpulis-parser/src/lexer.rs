@@ -518,7 +518,7 @@ mod tests {
 
     #[test]
     fn test_stream_decl() {
-        let tokens: Vec<_> = tokenize("stream Trades from TradeEvent")
+        let tokens: Vec<_> = tokenize("stream Trades = TradeEvent")
             .into_iter()
             .map(|t| t.token)
             .collect();
@@ -527,7 +527,7 @@ mod tests {
             vec![
                 Token::Stream,
                 Token::Ident("Trades".to_string()),
-                Token::From,
+                Token::Eq,
                 Token::Ident("TradeEvent".to_string()),
                 Token::Eof,
             ]

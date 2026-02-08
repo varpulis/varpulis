@@ -5,7 +5,7 @@
 1. **Unclear connection model**: How do sources/sinks relate to connectors?
 2. **No support for multiple connectors**: Can't have 2 MQTT brokers or 3 Kafka clusters
 3. **Inline vs config confusion**: When to use inline URIs vs config blocks?
-4. **Stream declaration ambiguity**: `stream X from "mqtt://..."` mixes source with stream
+4. **Stream declaration ambiguity**: `stream X = "mqtt://..."` mixes source with stream
 5. **Emit vs Sink unclear**: What's the difference? When to use which?
 
 ---

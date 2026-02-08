@@ -22,7 +22,7 @@ fn make_event(event_type: &str, data: Vec<(&str, Value)>) -> Event {
 async fn test_basic_stream_reference() {
     // Stream B references Stream A
     let code = r#"
-        stream Ticks from Tick
+        stream Ticks = Tick
 
         stream FilteredTicks = Ticks
             .where(symbol == "IBM")
@@ -71,7 +71,7 @@ async fn test_basic_stream_reference() {
 async fn test_three_stage_pipeline() {
     // Three-stage pipeline: Raw -> Filtered -> Aggregated
     let code = r#"
-        stream RawTicks from Tick
+        stream RawTicks = Tick
 
         stream FilteredTicks = RawTicks
             .where(price > 100.0)
@@ -107,7 +107,7 @@ async fn test_three_stage_pipeline() {
 async fn test_nested_with_output_event() {
     // Nested stream that generates output events
     let code = r#"
-        stream Ticks from Tick
+        stream Ticks = Tick
 
         stream HighPriceTicks = Ticks
             .where(price > 200.0)
@@ -146,7 +146,7 @@ async fn test_nested_with_output_event() {
 async fn test_parallel_derived_streams() {
     // Two streams derive from the same source
     let code = r#"
-        stream Ticks from Tick
+        stream Ticks = Tick
 
         stream HighTicks = Ticks
             .where(price > 150.0)
@@ -175,7 +175,7 @@ async fn test_parallel_derived_streams() {
 async fn test_diamond_dependency() {
     // Diamond pattern: A -> B, A -> C, B+C -> D (join)
     let code = r#"
-        stream Source from Event
+        stream Source = Event
 
         stream Branch1 = Source
             .where(type == "a")
@@ -211,7 +211,7 @@ async fn test_diamond_dependency() {
 async fn test_deep_nesting() {
     // Deep pipeline: 5 stages
     let code = r#"
-        stream L1 from Event
+        stream L1 = Event
         stream L2 = L1.where(level >= 1)
         stream L3 = L2.where(level >= 2)
         stream L4 = L3.where(level >= 3)
@@ -237,7 +237,7 @@ async fn test_deep_nesting() {
 async fn test_nested_with_aggregation_window() {
     // Nested stream with windowing and aggregation
     let code = r#"
-        stream Trades from Trade
+        stream Trades = Trade
 
         stream BigTrades = Trades
             .where(amount > 1000.0)
@@ -277,7 +277,7 @@ async fn test_nested_with_aggregation_window() {
 async fn test_nested_with_partition() {
     // Nested stream with partitioning
     let code = r#"
-        stream Orders from Order
+        stream Orders = Order
 
         stream HighValueOrders = Orders
             .where(total > 500.0)
@@ -315,7 +315,7 @@ async fn test_stream_from_event_type_vs_stream() {
     // Verify that stream source is correctly resolved
     let code = r#"
         # Direct from event type
-        stream DirectStream from SensorReading
+        stream DirectStream = SensorReading
 
         # From another stream
         stream DerivedStream = DirectStream
@@ -349,7 +349,7 @@ async fn test_stream_from_event_type_vs_stream() {
 async fn test_chained_transforms() {
     // Multiple transforms in a chain
     let code = r#"
-        stream Raw from Measurement
+        stream Raw = Measurement
 
         stream Filtered = Raw
             .where(quality > 0.5)

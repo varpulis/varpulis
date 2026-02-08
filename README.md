@@ -120,7 +120,7 @@ varpulis server --port 9000 --api-key "my-key" --metrics
 curl -X POST http://localhost:9000/api/v1/pipelines \
   -H "X-API-Key: my-key" \
   -H "Content-Type: application/json" \
-  -d '{"name": "temp-monitor", "source": "stream Alerts from SensorReading\n  where temperature > 100\n  emit alert(\"High\", \"temp\")"}'
+  -d '{"name": "temp-monitor", "source": "stream Alerts = SensorReading\n  .where(temperature > 100)\n  .emit(alert_type: \"High\", message: \"temp\")"}'
 
 # List pipelines
 curl http://localhost:9000/api/v1/pipelines -H "X-API-Key: my-key"

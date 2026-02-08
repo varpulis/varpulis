@@ -32,7 +32,7 @@
 
 | Keyword | Description |
 |---------|-------------|
-| `from` | Stream source |
+| `from` | Connector source binding (`.from()`) |
 | `where` | Filtering |
 | `select` | Projection |
 | `join` | Stream join |

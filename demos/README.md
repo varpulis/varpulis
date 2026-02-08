@@ -231,7 +231,7 @@ config mqtt {
 import "../../examples/hvac_demo.vpl"
 
 // Streams spécifiques au dashboard
-stream DashboardAlerts from TemperatureAnomaly
+stream DashboardAlerts = TemperatureAnomaly
     emit to "varpulis/dashboard/alerts"
 ```
 

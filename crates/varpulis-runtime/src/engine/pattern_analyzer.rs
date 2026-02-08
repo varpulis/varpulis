@@ -23,7 +23,6 @@ pub(crate) fn extract_event_types(
     // Get the initial event type from the source
     match source {
         StreamSource::Ident(name)
-        | StreamSource::From(name)
         | StreamSource::IdentWithAlias { name, .. }
         | StreamSource::AllWithAlias { name, .. } => {
             types.push(name.clone());

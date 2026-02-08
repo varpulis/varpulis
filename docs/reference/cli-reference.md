@@ -31,7 +31,7 @@ Execute a VPL program with optional MQTT connectivity.
 
 ```bash
 varpulis run --file program.vpl
-varpulis run --code 'stream Readings from SensorReading'
+varpulis run --code 'stream Readings = SensorReading'
 ```
 
 **Options:**
@@ -192,7 +192,7 @@ Authentication: `X-API-Key` header. When `--api-key` is set, a default tenant is
 
 ```json
 // Load a program
-{"type": "load", "source": "stream X from Y"}
+{"type": "load", "source": "stream X = Y"}
 
 // Send an event
 {"type": "event", "data": {"event_type": "Sensor", "value": 42}}

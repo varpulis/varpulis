@@ -141,7 +141,7 @@ pub fn compile_to_sase_pattern_with_resolver(
                 steps.push(pattern);
             }
         }
-        StreamSource::Ident(name) | StreamSource::From(name) => {
+        StreamSource::Ident(name) => {
             // Check if this is a derived stream
             let (event_type, predicate) = if let Some(info) = stream_resolver(name) {
                 let pred = info.filter.as_ref().and_then(expr_to_sase_predicate);
