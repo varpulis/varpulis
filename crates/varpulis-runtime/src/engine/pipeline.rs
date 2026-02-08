@@ -590,12 +590,15 @@ async fn execute_op(
 
 /// Synchronous pipeline execution - for maximum throughput when no .to() sinks are used.
 /// Skips all async operations (.to() sink sends).
+/// When `skip_output_rename` is true, output events pass through without cloning
+/// (used when there are no downstream routes that need the renamed event_type).
 pub(crate) fn execute_pipeline_sync(
     stream: &mut StreamDefinition,
     initial_events: Vec<SharedEvent>,
     start_idx: usize,
     skip_flags: SkipFlags,
     functions: &FxHashMap<String, UserFunction>,
+    skip_output_rename: bool,
 ) -> Result<StreamProcessResult, String> {
     let mut current_events = initial_events;
     let mut emitted_events: Vec<SharedEvent> = Vec::new();
@@ -631,15 +634,19 @@ pub(crate) fn execute_pipeline_sync(
         }
     }
 
-    // Rename event_type to stream name for downstream routing
-    let output_events = current_events
-        .into_iter()
-        .map(|e| {
-            let mut owned = (*e).clone();
-            owned.event_type = stream.name.clone().into();
-            Arc::new(owned)
-        })
-        .collect();
+    // Skip rename + clone when no downstream consumers need the renamed event_type
+    let output_events = if skip_output_rename {
+        current_events
+    } else {
+        current_events
+            .into_iter()
+            .map(|e| {
+                let mut owned = (*e).clone();
+                owned.event_type = stream.name.clone().into();
+                Arc::new(owned)
+            })
+            .collect()
+    };
 
     Ok(StreamProcessResult {
         emitted_events,
