@@ -859,8 +859,8 @@ async fn test_engine_join_derived_streams() {
     // This is the key fix for scenario 4 - events arrive as MarketATick/MarketBTick
     // but join sources reference MarketA/MarketB streams
     let source = r#"
-        stream MarketA from MarketATick
-        stream MarketB from MarketBTick
+        stream MarketA = MarketATick
+        stream MarketB = MarketBTick
 
         stream Arbitrage = join(MarketA, MarketB)
             .on(MarketA.symbol == MarketB.symbol)
@@ -912,8 +912,8 @@ async fn test_engine_join_derived_streams() {
 #[tokio::test]
 async fn test_engine_join_no_correlation_different_keys() {
     let source = r#"
-        stream MarketA from MarketATick
-        stream MarketB from MarketBTick
+        stream MarketA = MarketATick
+        stream MarketB = MarketBTick
 
         stream Arbitrage = join(MarketA, MarketB)
             .on(MarketA.symbol == MarketB.symbol)

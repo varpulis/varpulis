@@ -43,7 +43,7 @@ Create a file called `rising_prices_detect.vpl`:
 // rising_prices_detect.vpl
 // Detect individual rising price trends in stock ticks
 
-stream RisingPrices from StockTick
+stream RisingPrices = StockTick
     pattern
         StockTick as first
         -> all StockTick where price > first.price as rising
@@ -110,7 +110,7 @@ Create a file called `rising_prices_count.vpl`:
 // rising_prices_count.vpl
 // Count rising price trends without enumerating them
 
-stream RisingTrendCount from StockTick
+stream RisingTrendCount = StockTick
     pattern
         StockTick as first
         -> all StockTick where price > first.price as rising
@@ -194,7 +194,7 @@ Create a file called `rising_prices_stats.vpl`:
 // rising_prices_stats.vpl
 // Compute multiple trend statistics simultaneously
 
-stream RisingTrendStats from StockTick
+stream RisingTrendStats = StockTick
     pattern
         StockTick as first
         -> all StockTick where price > first.price as rising
@@ -245,7 +245,7 @@ You have two analytics streams monitoring the same stock ticks, each with a diff
 // Two streams sharing the rising-price Kleene sub-pattern
 
 // Stream 1: Rising trends starting from a low price
-stream LowStartRising from StockTick
+stream LowStartRising = StockTick
     pattern
         StockTick[price < 50] as first
         -> all StockTick where price > first.price as rising
@@ -255,7 +255,7 @@ stream LowStartRising from StockTick
     emit log("Low-start rising: {count} trends for {symbol}")
 
 // Stream 2: Rising trends starting from a high price
-stream HighStartRising from StockTick
+stream HighStartRising = StockTick
     pattern
         StockTick[price >= 50] as first
         -> all StockTick where price > first.price as rising
@@ -318,7 +318,7 @@ You need the **actual matched events** for downstream processing:
 
 ```vpl
 // Good use of detection mode: few matches expected
-stream PriceSpikes from StockTick
+stream PriceSpikes = StockTick
     pattern
         StockTick as t1
         -> StockTick[symbol == t1.symbol and price > t1.price * 1.1] as t2
@@ -336,7 +336,7 @@ You need **statistics over trends** without caring about individual matches:
 
 ```vpl
 // Good use of aggregation mode: exponential matches, only count needed
-stream TrendDashboard from StockTick
+stream TrendDashboard = StockTick
     pattern
         StockTick as first
         -> all StockTick where price > first.price as rising
@@ -357,13 +357,13 @@ You have **multiple queries with overlapping Kleene sub-patterns**:
 
 ```vpl
 // Ideal for sharing: N streams with the same Kleene body
-stream Sector1 from StockTick
+stream Sector1 = StockTick
     pattern StockTick[sector == "tech"] as first
         -> all StockTick where price > first.price as rising
     within 1m
     .trend_aggregate(count: count_trends())
 
-stream Sector2 from StockTick
+stream Sector2 = StockTick
     pattern StockTick[sector == "finance"] as first
         -> all StockTick where price > first.price as rising
     within 1m

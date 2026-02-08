@@ -28,8 +28,8 @@ event MarketBTick:
     ts: timestamp
 
 # Base streams
-stream MarketA from MarketATick
-stream MarketB from MarketBTick
+stream MarketA = MarketATick
+stream MarketB = MarketBTick
 
 # Jointure des deux marchés sur le même symbole
 stream ArbitrageOpportunity = join(MarketA, MarketB)

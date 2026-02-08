@@ -688,13 +688,10 @@ impl ContextOrchestrator {
         for stmt in &program.statements {
             if let Stmt::StreamDecl { name, source, .. } = &stmt.node {
                 if let Some(ctx_name) = context_map.stream_context(name) {
-                    match source {
-                        StreamSource::Ident(source_stream) | StreamSource::From(source_stream) => {
-                            if context_map.stream_context(source_stream).is_some() {
-                                ingress_routing.insert(source_stream.clone(), ctx_name.to_string());
-                            }
+                    if let StreamSource::Ident(source_stream) = source {
+                        if context_map.stream_context(source_stream).is_some() {
+                            ingress_routing.insert(source_stream.clone(), ctx_name.to_string());
                         }
-                        _ => {}
                     }
                 }
             }
@@ -928,7 +925,6 @@ impl ContextOrchestrator {
     /// Extract event types consumed by a stream source
     fn event_types_from_source(source: &StreamSource) -> Vec<String> {
         match source {
-            StreamSource::From(et) => vec![et.clone()],
             StreamSource::Ident(name) => vec![name.clone()],
             StreamSource::IdentWithAlias { name, .. } => vec![name.clone()],
             StreamSource::AllWithAlias { name, .. } => vec![name.clone()],
@@ -1066,7 +1062,7 @@ mod tests {
 
     #[test]
     fn test_context_orchestrator_event_types_from_source() {
-        let types = ContextOrchestrator::event_types_from_source(&StreamSource::From(
+        let types = ContextOrchestrator::event_types_from_source(&StreamSource::Ident(
             "SensorReading".to_string(),
         ));
         assert_eq!(types, vec!["SensorReading"]);
@@ -1101,7 +1097,7 @@ mod tests {
                     node: Stmt::StreamDecl {
                         name: "StreamA".to_string(),
                         type_annotation: None,
-                        source: StreamSource::From("EventA".to_string()),
+                        source: StreamSource::Ident("EventA".to_string()),
                         ops: vec![],
                     },
                     span: varpulis_core::span::Span::dummy(),
@@ -1110,7 +1106,7 @@ mod tests {
                     node: Stmt::StreamDecl {
                         name: "StreamB".to_string(),
                         type_annotation: None,
-                        source: StreamSource::From("EventB".to_string()),
+                        source: StreamSource::Ident("EventB".to_string()),
                         ops: vec![],
                     },
                     span: varpulis_core::span::Span::dummy(),
@@ -1186,7 +1182,7 @@ mod tests {
                     node: Stmt::StreamDecl {
                         name: "RawData".to_string(),
                         type_annotation: None,
-                        source: StreamSource::From("SensorReading".to_string()),
+                        source: StreamSource::Ident("SensorReading".to_string()),
                         ops: vec![],
                     },
                     span: varpulis_core::span::Span::dummy(),

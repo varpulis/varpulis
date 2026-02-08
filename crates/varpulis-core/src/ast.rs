@@ -19,7 +19,7 @@ pub enum Stmt {
         connector_type: String,
         params: Vec<ConnectorParam>,
     },
-    /// Stream declaration: `stream X from Y` or `stream X = Y.where(...)`
+    /// Stream declaration: `stream X = Y` or `stream X = Y.where(...)`
     StreamDecl {
         name: String,
         type_annotation: Option<Type>,
@@ -174,8 +174,6 @@ pub enum StreamSource {
     IdentWithAlias { name: String, alias: String },
     /// Event type with all quantifier and optional alias: `all EventType as alias`
     AllWithAlias { name: String, alias: Option<String> },
-    /// From event type: `from EventType`
-    From(String),
     /// From connector: `EventType.from(Connector, topic: "...", qos: 1)`
     FromConnector {
         event_type: String,

@@ -48,11 +48,11 @@ Create a file called `temperature_monitor.vpl`:
 // Simple temperature monitoring with alerts
 
 // Define what events we're listening for
-stream TemperatureReadings from TemperatureReading
+stream TemperatureReadings = TemperatureReading
     .where(temperature > 0)  // Basic validation
 
 // Create an alert stream for high temperatures
-stream HighTempAlerts from TemperatureReading
+stream HighTempAlerts = TemperatureReading
     .where(temperature > 100)
     .emit(
         alert_type: "HighTemperature",
@@ -182,10 +182,10 @@ Let's enhance our program with windowed aggregations:
 // temperature_monitor_v2.vpl
 
 // Raw temperature readings
-stream Readings from TemperatureReading
+stream Readings = TemperatureReading
 
 // Calculate average temperature over 1-minute windows
-stream AvgTemperature from TemperatureReading
+stream AvgTemperature = TemperatureReading
     .window(1m)
     .aggregate(
         avg_temp: avg(temperature),
@@ -196,7 +196,7 @@ stream AvgTemperature from TemperatureReading
     .print("Minute summary: avg={avg_temp}, max={max_temp}, min={min_temp}")
 
 // Alert on sustained high temperatures (average > 90 over window)
-stream SustainedHighTemp from TemperatureReading
+stream SustainedHighTemp = TemperatureReading
     .window(1m)
     .aggregate(avg_temp: avg(temperature))
     .where(avg_temp > 90)
@@ -248,13 +248,13 @@ Now that you have Varpulis running:
 ## Troubleshooting
 
 **"Parse error: unexpected token"**
-- Check for typos in keywords (`from`, `where`, `emit`)
+- Check for typos in keywords (`where`, `emit`)
 - Ensure strings are quoted: `"value"` not `value`
 - Verify brackets match: `{ }` for blocks, `( )` for function calls
 
 **"No events processed"**
 - Check event file format matches expected event types
-- Verify the `from` clause matches the event type exactly
+- Verify the stream declaration (`stream Name = EventType`) matches the event type exactly
 
 **"Simulation runs slowly"**
 - Use `--immediate` to skip timing delays

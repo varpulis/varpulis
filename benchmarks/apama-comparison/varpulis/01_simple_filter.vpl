@@ -5,7 +5,7 @@ event Tick:
     name: str
     price: float
 
-stream Ticks from Tick
+stream Ticks = Tick
 
 stream HighPriceTicks = Ticks
     .where(price > 10.0)

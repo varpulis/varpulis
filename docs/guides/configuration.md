@@ -253,7 +253,7 @@ connector AlertWebhook = http (
     method: "POST"
 )
 
-stream Alerts from TemperatureReading
+stream Alerts = TemperatureReading
     .where(temperature > 100)
     .emit(alert_type: "HighTemp", message: "Temperature exceeded threshold")
     .to(AlertWebhook)

@@ -35,7 +35,7 @@ Real-time building automation system monitoring temperature zones, humidity leve
 
 **VPL Pattern Example:**
 ```vpl
-stream TemperatureAnomalies from TemperatureReading
+stream TemperatureAnomalies = TemperatureReading
   where value > 28 or value < 15
   emit { zone, value, alert_type: "temperature_anomaly" }
 ```
@@ -52,7 +52,7 @@ Technical analysis dashboard with moving averages, crossover detection, and trad
 
 **VPL Pattern Example:**
 ```vpl
-stream GoldenCross from MarketTick
+stream GoldenCross = MarketTick
   where sma(20) > sma(50)
     and prev(sma(20)) <= prev(sma(50))
   emit { symbol, signal: "buy" }
