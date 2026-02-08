@@ -1118,6 +1118,11 @@ mod mqtt_impl {
                 client: None,
             }
         }
+
+        /// Get a clone of the underlying MQTT client (for sharing with a sink).
+        pub fn client(&self) -> Option<AsyncClient> {
+            self.client.clone()
+        }
     }
 
     #[async_trait]
@@ -1248,7 +1253,23 @@ mod mqtt_impl {
             }
         }
 
+        /// Create a sink that shares an existing MQTT client (from a source).
+        /// The shared client publishes through the source's eventloop, so no
+        /// separate connection or eventloop is needed.
+        pub fn with_client(name: &str, config: MqttConfig, client: AsyncClient) -> Self {
+            Self {
+                name: name.to_string(),
+                config,
+                client: Some(client),
+            }
+        }
+
         pub async fn connect(&mut self) -> Result<(), ConnectorError> {
+            // Already connected via shared client — nothing to do.
+            if self.client.is_some() {
+                return Ok(());
+            }
+
             let client_id = self
                 .config
                 .client_id

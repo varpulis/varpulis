@@ -48,10 +48,19 @@ pub(crate) fn connector_params_to_config(
 }
 
 /// Adapter: wraps a SinkConnector as a Sink for use in the sink registry
-#[allow(dead_code)]
-pub(super) struct SinkConnectorAdapter {
+pub struct SinkConnectorAdapter {
     name: String,
     inner: tokio::sync::Mutex<Box<dyn connector::SinkConnector>>,
+}
+
+impl SinkConnectorAdapter {
+    /// Create a new adapter wrapping a SinkConnector.
+    pub fn new(name: &str, connector: Box<dyn connector::SinkConnector>) -> Self {
+        Self {
+            name: name.to_string(),
+            inner: tokio::sync::Mutex::new(connector),
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -160,13 +169,11 @@ pub(crate) fn create_sink_from_config(
                     .map(|s| s.to_string())
                     .or_else(|| config.topic.clone())
                     .unwrap_or_else(|| format!("{}-output", name));
-                // Append "-sink" to the configured client_id to avoid collisions
-                // with the source connector that uses the same client_id.
                 let base_id = config
                     .properties
                     .get("client_id")
-                    .map(|id| format!("{}-sink", id))
-                    .unwrap_or_else(|| format!("{}-sink", name));
+                    .cloned()
+                    .unwrap_or_else(|| name.to_string());
                 let client_id = match context_name {
                     Some(ctx) => format!("{}-{}", base_id, ctx),
                     None => base_id,
@@ -212,6 +219,11 @@ impl SinkRegistry {
         Self {
             cache: FxHashMap::default(),
         }
+    }
+
+    /// Insert a pre-built sink into the registry.
+    pub fn insert(&mut self, key: String, sink: Arc<dyn crate::sink::Sink>) {
+        self.cache.insert(key, sink);
     }
 
     /// Get the internal cache (for compatibility with existing code)

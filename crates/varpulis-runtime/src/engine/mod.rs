@@ -15,6 +15,7 @@ mod types;
 mod tests;
 
 // Re-export public types
+pub use sink_factory::SinkConnectorAdapter;
 pub use types::{EngineConfig, EngineMetrics, ReloadReport, SourceBinding, UserFunction};
 
 // Re-export evaluator for use by other modules (e.g., SASE+)
@@ -724,6 +725,34 @@ impl Engine {
     /// events if any `.to()` operations are used.
     pub async fn connect_sinks(&self) -> Result<(), String> {
         self.sinks.connect_all().await
+    }
+
+    /// Inject a pre-built sink into the engine's registry.
+    ///
+    /// Use this to share connections — e.g. when a source and sink use the
+    /// same MQTT broker, clone the source's client into a sink and inject it
+    /// here so that `connect_sinks()` becomes a no-op for that sink.
+    pub fn inject_sink(&mut self, key: &str, sink: Arc<dyn crate::sink::Sink>) {
+        self.sinks.insert(key.to_string(), sink);
+    }
+
+    /// Check whether a given key has a registered sink.
+    pub fn has_sink(&self, key: &str) -> bool {
+        self.sinks.cache().contains_key(key)
+    }
+
+    /// Return all sink keys that belong to a given connector name.
+    ///
+    /// A key matches if it equals the connector name exactly, or if it
+    /// starts with `connector_name::` (topic-override keys).
+    pub fn sink_keys_for_connector(&self, connector_name: &str) -> Vec<String> {
+        let prefix = format!("{}::", connector_name);
+        self.sinks
+            .cache()
+            .keys()
+            .filter(|k| *k == connector_name || k.starts_with(&prefix))
+            .cloned()
+            .collect()
     }
 
     fn register_stream(
