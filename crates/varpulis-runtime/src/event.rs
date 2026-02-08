@@ -39,12 +39,34 @@ impl Event {
         }
     }
 
+    /// Creates a new event with a specific timestamp (avoids Utc::now() syscall).
+    pub fn new_at(event_type: impl Into<Arc<str>>, timestamp: DateTime<Utc>) -> Self {
+        Self {
+            event_type: event_type.into(),
+            timestamp,
+            data: IndexMap::with_hasher(FxBuildHasher),
+        }
+    }
+
     /// Creates a new event with pre-allocated capacity for fields.
     /// Use this when you know the approximate number of fields in advance.
     pub fn with_capacity(event_type: impl Into<Arc<str>>, capacity: usize) -> Self {
         Self {
             event_type: event_type.into(),
             timestamp: Utc::now(),
+            data: IndexMap::with_capacity_and_hasher(capacity, FxBuildHasher),
+        }
+    }
+
+    /// Creates a new event with pre-allocated capacity and a specific timestamp.
+    pub fn with_capacity_at(
+        event_type: impl Into<Arc<str>>,
+        capacity: usize,
+        timestamp: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            event_type: event_type.into(),
+            timestamp,
             data: IndexMap::with_capacity_and_hasher(capacity, FxBuildHasher),
         }
     }

@@ -26,15 +26,37 @@
 
 use crate::event::Event;
 use indexmap::IndexMap;
-use rustc_hash::FxBuildHasher;
+use rustc_hash::{FxBuildHasher, FxHashMap};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time;
 use tracing::{debug, info};
 use varpulis_core::Value;
+
+thread_local! {
+    static FIELD_INTERNER: RefCell<FxHashMap<Box<str>, Arc<str>>> =
+        RefCell::new(FxHashMap::default());
+}
+
+/// Intern a field name to reuse the same `Arc<str>` across events.
+/// After the first occurrence, subsequent calls for the same name are O(1) Arc clones.
+fn intern_field_name(name: &str) -> Arc<str> {
+    FIELD_INTERNER.with(|interner| {
+        let mut map = interner.borrow_mut();
+        if let Some(arc) = map.get(name) {
+            arc.clone()
+        } else {
+            let arc: Arc<str> = name.into();
+            map.insert(name.into(), arc.clone());
+            arc
+        }
+    })
+}
 
 /// A parsed event with optional timing
 #[derive(Debug, Clone)]
@@ -164,33 +186,42 @@ impl EventFileParser {
             return Err(format!("Invalid event format: {}", line));
         };
 
-        let mut event = Event::new(*event_type);
-
         // Parse fields
         if rest.starts_with('{') {
             // JSON-style: { field: value, ... }
             let content = rest.trim_start_matches('{').trim_end_matches('}').trim();
+            let fields = Self::split_fields(content);
 
-            for field_str in Self::split_fields(content) {
+            // Pre-allocate event with known capacity, skip Utc::now() syscall
+            let mut event =
+                Event::with_capacity_at(*event_type, fields.len(), chrono::DateTime::UNIX_EPOCH);
+
+            for field_str in &fields {
                 let field_str = field_str.trim();
                 if field_str.is_empty() {
                     continue;
                 }
 
-                let parts: Vec<&str> = field_str.splitn(2, ':').collect();
-                if parts.len() != 2 {
-                    return Err(format!("Invalid field format: {}", field_str));
-                }
-
-                let field_name = parts[0].trim();
-                let field_value = Self::parse_value(parts[1].trim())?;
-                event.data.insert(field_name.into(), field_value);
+                let colon_pos = field_str
+                    .find(':')
+                    .ok_or_else(|| format!("Invalid field format: {}", field_str))?;
+                let field_name = field_str[..colon_pos].trim();
+                let field_value = Self::parse_value(field_str[colon_pos + 1..].trim())?;
+                event
+                    .data
+                    .insert(intern_field_name(field_name), field_value);
             }
+
+            Ok(event)
         } else if rest.starts_with('(') {
             // Positional: (value1, value2, ...)
             let content = rest.trim_start_matches('(').trim_end_matches(')').trim();
+            let fields = Self::split_fields(content);
 
-            for (i, value_str) in Self::split_fields(content).iter().enumerate() {
+            let mut event =
+                Event::with_capacity_at(*event_type, fields.len(), chrono::DateTime::UNIX_EPOCH);
+
+            for (i, value_str) in fields.iter().enumerate() {
                 let value_str = value_str.trim();
                 if value_str.is_empty() {
                     continue;
@@ -201,53 +232,56 @@ impl EventFileParser {
                     .data
                     .insert(format!("field_{}", i).into(), field_value);
             }
-        }
 
-        Ok(event)
+            Ok(event)
+        } else {
+            Ok(Event::new_at(*event_type, chrono::DateTime::UNIX_EPOCH))
+        }
     }
 
-    /// Split fields by comma, respecting nested structures
-    fn split_fields(content: &str) -> Vec<String> {
+    /// Split fields by comma, respecting nested structures.
+    /// Uses byte-level scanning since all delimiters are ASCII.
+    /// Returns slices into the original content string to avoid allocations.
+    fn split_fields(content: &str) -> Vec<&str> {
+        let bytes = content.as_bytes();
         let mut fields = Vec::new();
-        let mut current = String::new();
-        let mut depth = 0;
+        let mut field_start = 0;
+        let mut depth = 0i32;
         let mut in_string = false;
         let mut escape_next = false;
 
-        for ch in content.chars() {
+        for i in 0..bytes.len() {
             if escape_next {
-                current.push(ch);
                 escape_next = false;
                 continue;
             }
-
-            match ch {
-                '\\' => {
-                    current.push(ch);
+            match bytes[i] {
+                b'\\' => {
                     escape_next = true;
                 }
-                '"' => {
-                    current.push(ch);
+                b'"' => {
                     in_string = !in_string;
                 }
-                '{' | '[' | '(' if !in_string => {
-                    current.push(ch);
+                b'{' | b'[' | b'(' if !in_string => {
                     depth += 1;
                 }
-                '}' | ']' | ')' if !in_string => {
-                    current.push(ch);
+                b'}' | b']' | b')' if !in_string => {
                     depth -= 1;
                 }
-                ',' if !in_string && depth == 0 => {
-                    fields.push(current.trim().to_string());
-                    current = String::new();
+                b',' if !in_string && depth == 0 => {
+                    let field = content[field_start..i].trim();
+                    if !field.is_empty() {
+                        fields.push(field);
+                    }
+                    field_start = i + 1;
                 }
-                _ => current.push(ch),
+                _ => {}
             }
         }
 
-        if !current.trim().is_empty() {
-            fields.push(current.trim().to_string());
+        let last = content[field_start..].trim();
+        if !last.is_empty() {
+            fields.push(last);
         }
 
         fields
@@ -273,14 +307,32 @@ impl EventFileParser {
         // String (quoted)
         if (s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')) {
             let inner = &s[1..s.len() - 1];
-            // Handle escape sequences
-            let unescaped = inner
-                .replace("\\n", "\n")
-                .replace("\\t", "\t")
-                .replace("\\\"", "\"")
-                .replace("\\'", "'")
-                .replace("\\\\", "\\");
-            return Ok(Value::Str(unescaped.into()));
+            // Fast path: no escape sequences (common case) — zero allocations
+            if !inner.contains('\\') {
+                return Ok(Value::Str(inner.into()));
+            }
+            // Slow path: single-pass escape processing
+            let mut result = String::with_capacity(inner.len());
+            let mut chars = inner.chars();
+            while let Some(ch) = chars.next() {
+                if ch == '\\' {
+                    match chars.next() {
+                        Some('n') => result.push('\n'),
+                        Some('t') => result.push('\t'),
+                        Some('"') => result.push('"'),
+                        Some('\'') => result.push('\''),
+                        Some('\\') => result.push('\\'),
+                        Some(other) => {
+                            result.push('\\');
+                            result.push(other);
+                        }
+                        None => result.push('\\'),
+                    }
+                } else {
+                    result.push(ch);
+                }
+            }
+            return Ok(Value::Str(result.into()));
         }
 
         // Integer
