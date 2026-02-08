@@ -604,7 +604,7 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
                     let client_id = config
                         .properties
                         .get("client_id")
-                        .cloned()
+                        .map(|id| format!("{}-source", id))
                         .unwrap_or_else(|| format!("{}-source", binding.connector_name));
 
                     let mqtt_config = MqttConfig::new(broker, topic)
@@ -665,6 +665,14 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
                     );
                 }
             }
+        }
+
+        // Connect sink connectors (.to() operations)
+        if engine.has_sink_operations() {
+            engine
+                .connect_sinks()
+                .await
+                .map_err(|e| anyhow::anyhow!("Sink connection error: {}", e))?;
         }
 
         // Spawn output event handler

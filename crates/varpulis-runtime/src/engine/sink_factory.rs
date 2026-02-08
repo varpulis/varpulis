@@ -160,12 +160,12 @@ pub(crate) fn create_sink_from_config(
                     .map(|s| s.to_string())
                     .or_else(|| config.topic.clone())
                     .unwrap_or_else(|| format!("{}-output", name));
-                // Use exact client_id from config; append context name only
-                // when running inside a context to avoid MQTT broker conflicts
+                // Append "-sink" to the configured client_id to avoid collisions
+                // with the source connector that uses the same client_id.
                 let base_id = config
                     .properties
                     .get("client_id")
-                    .cloned()
+                    .map(|id| format!("{}-sink", id))
                     .unwrap_or_else(|| format!("{}-sink", name));
                 let client_id = match context_name {
                     Some(ctx) => format!("{}-{}", base_id, ctx),
