@@ -73,9 +73,11 @@ event TemperatureReading:
     value: float
     timestamp: timestamp
 
+# Ingest from MQTT
+stream Readings = TemperatureReading.from(MqttSensors, topic: "sensors/temperature/#")
+
 # Stream with filtering and output
-stream HighTempAlert = TemperatureReading
-    .from(MqttSensors, topic: "sensors/temperature/#")
+stream HighTempAlert = Readings
     .where(value > 28)
     .emit(
         alert_type: "HIGH_TEMPERATURE",
@@ -84,15 +86,15 @@ stream HighTempAlert = TemperatureReading
     )
 
 # Windowed aggregation per zone
-stream ZoneStats = TemperatureReading
+stream ZoneStats = Readings
     .partition_by(zone)
     .window(5m)
     .aggregate(zone: last(zone), avg_temp: avg(value), max_temp: max(value))
 
 # SASE+ pattern: rapid temperature swing (arrow syntax)
-stream RapidSwing = TemperatureReading as t1
-    -> TemperatureReading where sensor_id == t1.sensor_id and value > t1.value + 5 as t2
-    -> TemperatureReading where sensor_id == t1.sensor_id and value < t2.value - 5 as t3
+stream RapidSwing = Readings as t1
+    -> Readings where sensor_id == t1.sensor_id and value > t1.value + 5 as t2
+    -> Readings where sensor_id == t1.sensor_id and value < t2.value - 5 as t3
     .within(10m)
     .emit(alert_type: "RAPID_SWING", zone: t1.zone, peak: t2.value)
 ```
