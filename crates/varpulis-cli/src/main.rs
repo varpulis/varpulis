@@ -510,7 +510,7 @@ async fn main() -> Result<()> {
 }
 
 async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
-    use varpulis_runtime::connector::{MqttConfig, MqttSource, SourceConnector};
+    use varpulis_runtime::connector::ManagedConnectorRegistry;
     use varpulis_runtime::ContextOrchestrator;
 
     info!("Parsing VPL program...");
@@ -574,13 +574,14 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
         // Create shared event channel for all source connectors
         let (event_tx, mut event_rx) = mpsc::channel::<Event>(1000);
 
-        // Track active sources for cleanup
-        let mut active_sources: Vec<Box<dyn SourceConnector>> = Vec::new();
+        // Build managed connector registry — one connection per connector
+        let mut registry = ManagedConnectorRegistry::from_configs(engine.connector_configs())
+            .map_err(|e| anyhow::anyhow!("Registry build error: {}", e))?;
 
-        // Start a source connector for each .from() binding
+        // Start sources (connector-type-agnostic)
         for binding in &bindings {
-            let connector_config = engine.get_connector(&binding.connector_name).cloned();
-            let Some(config) = connector_config else {
+            let config = engine.get_connector(&binding.connector_name).cloned();
+            let Some(config) = config else {
                 anyhow::bail!(
                     "Connector '{}' referenced in .from() but not declared",
                     binding.connector_name
@@ -593,125 +594,54 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
                 .or(config.topic.as_deref())
                 .unwrap_or("varpulis/events/#");
 
-            match config.connector_type.as_str() {
-                "mqtt" => {
-                    let broker = &config.url;
-                    let port: u16 = config
-                        .properties
-                        .get("port")
-                        .and_then(|v| v.parse().ok())
-                        .unwrap_or(1883);
-                    let client_id = config
-                        .properties
-                        .get("client_id")
-                        .cloned()
-                        .unwrap_or_else(|| binding.connector_name.clone());
+            println!(
+                "\n{} source: {} topic={}",
+                config.connector_type, binding.connector_name, topic
+            );
 
-                    let mqtt_config = MqttConfig::new(broker, topic)
-                        .with_port(port)
-                        .with_client_id(&client_id);
+            registry
+                .start_source(&binding.connector_name, topic, event_tx.clone())
+                .await
+                .map_err(|e| anyhow::anyhow!("Source start error: {}", e))?;
+        }
 
-                    let mut mqtt_source = MqttSource::new(&binding.connector_name, mqtt_config);
+        // Create shared sinks and inject into engine
+        for binding in &bindings {
+            let sink_keys = engine.sink_keys_for_connector(&binding.connector_name);
+            if sink_keys.is_empty() {
+                continue;
+            }
 
-                    println!("\nMQTT Source: {}:{} topic={}", broker, port, topic);
+            let default_topic = engine
+                .get_connector(&binding.connector_name)
+                .and_then(|c| c.topic.clone())
+                .unwrap_or_else(|| format!("{}-output", binding.connector_name));
 
-                    mqtt_source
-                        .start(event_tx.clone())
-                        .await
-                        .map_err(|e| anyhow::anyhow!("MQTT source error: {}", e))?;
+            for sink_key in &sink_keys {
+                let sink_topic = if let Some(topic) =
+                    sink_key.strip_prefix(&format!("{}::", binding.connector_name))
+                {
+                    topic.to_string()
+                } else {
+                    default_topic.clone()
+                };
 
-                    // Share the source's MQTT client with every sink that
-                    // targets the same MQTT connector, avoiding duplicate
-                    // broker connections.
-                    let sink_keys = engine.sink_keys_for_connector(&binding.connector_name);
-                    if !sink_keys.is_empty() {
-                        if let Some(shared_client) = mqtt_source.client() {
-                            use varpulis_runtime::connector::MqttSink;
-                            use varpulis_runtime::engine::SinkConnectorAdapter;
-
-                            for sink_key in &sink_keys {
-                                // Derive the topic: topic-override keys look
-                                // like "ConnectorName::topic/path".
-                                let sink_topic = if let Some(topic) =
-                                    sink_key.strip_prefix(&format!("{}::", binding.connector_name))
-                                {
-                                    topic.to_string()
-                                } else {
-                                    config.topic.clone().unwrap_or_else(|| {
-                                        format!("{}-output", binding.connector_name)
-                                    })
-                                };
-
-                                let sink_mqtt_config = MqttConfig::new(broker, &sink_topic)
-                                    .with_port(port)
-                                    .with_client_id(&client_id);
-
-                                let sink = MqttSink::with_client(
-                                    &binding.connector_name,
-                                    sink_mqtt_config,
-                                    shared_client.clone(),
-                                );
-                                let adapter = SinkConnectorAdapter::new(
-                                    &binding.connector_name,
-                                    Box::new(sink),
-                                );
-                                engine.inject_sink(sink_key, std::sync::Arc::new(adapter));
-                            }
-                            println!(
-                                "  Sharing MQTT connection for {} sink(s) on '{}'",
-                                sink_keys.len(),
-                                binding.connector_name,
-                            );
-                        }
+                match registry.create_sink(&binding.connector_name, &sink_topic) {
+                    Ok(sink) => {
+                        engine.inject_sink(sink_key, sink);
                     }
-
-                    active_sources.push(Box::new(mqtt_source));
-                }
-                "kafka" => {
-                    #[cfg(feature = "kafka")]
-                    {
-                        use varpulis_runtime::connector::{KafkaConfig, KafkaSourceFull};
-
-                        let brokers = config
-                            .properties
-                            .get("brokers")
-                            .cloned()
-                            .unwrap_or_else(|| config.url.clone());
-
-                        let kafka_config = KafkaConfig::new(&brokers, topic);
-                        let mut kafka_source = KafkaSourceFull::new(
-                            &format!("{}-source", binding.connector_name),
-                            kafka_config,
-                        );
-
-                        println!("\nKafka Source: {} topic={}", brokers, topic);
-
-                        kafka_source
-                            .start(event_tx.clone())
-                            .await
-                            .map_err(|e| anyhow::anyhow!("Kafka source error: {}", e))?;
-
-                        active_sources.push(Box::new(kafka_source));
-                    }
-                    #[cfg(not(feature = "kafka"))]
-                    {
-                        anyhow::bail!(
-                            "Kafka connector '{}' requires 'kafka' feature flag",
-                            binding.connector_name
-                        );
+                    Err(e) => {
+                        tracing::warn!("Failed to create sink for {}: {}", sink_key, e);
                     }
                 }
-                other => {
-                    anyhow::bail!(
-                        "Unsupported source connector type '{}' for connector '{}'",
-                        other,
-                        binding.connector_name
-                    );
-                }
+            }
+
+            if !sink_keys.is_empty() {
+                println!("  Sharing connection for {} sink(s)", sink_keys.len(),);
             }
         }
 
-        // Connect sink connectors (.to() operations)
+        // Connect any remaining sinks that aren't registry-managed
         if engine.has_sink_operations() {
             engine
                 .connect_sinks()
@@ -782,9 +712,7 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
                 }
                 _ = tokio::signal::ctrl_c() => {
                     println!("\n\nStopping...");
-                    for source in &mut active_sources {
-                        source.stop().await.ok();
-                    }
+                    registry.shutdown().await;
                     break;
                 }
             }
