@@ -131,7 +131,7 @@ event Temperature:
     sensor_id: str
     value: float
 
-stream TempStream from Temperature
+stream TempStream = Temperature
 "#,
         r#"
 stream Filtered = SomeEvent

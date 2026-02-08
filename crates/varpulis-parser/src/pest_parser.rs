@@ -249,9 +249,6 @@ fn parse_stream_decl(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
             Rule::type_annotation => {
                 type_annotation = Some(parse_type(p.into_inner().expect_next("type")?)?);
             }
-            Rule::identifier => {
-                source = StreamSource::From(p.as_str().to_string());
-            }
             Rule::stream_expr => {
                 let (s, o) = parse_stream_expr(p)?;
                 source = s;
@@ -2245,7 +2242,7 @@ mod tests {
 
     #[test]
     fn test_parse_simple_stream() {
-        let result = parse("stream output from input");
+        let result = parse("stream output = input");
         assert!(result.is_ok(), "Failed: {:?}", result.err());
     }
 
@@ -2511,14 +2508,14 @@ mod tests {
 
     #[test]
     fn test_parse_nested_stream_reference() {
-        let result = parse("stream Base from Event\nstream Derived = Base.where(x > 0)");
+        let result = parse("stream Base = Event\nstream Derived = Base.where(x > 0)");
         assert!(result.is_ok(), "Failed: {:?}", result.err());
     }
 
     #[test]
     fn test_parse_multi_stage_pipeline() {
         let result = parse(
-            "stream L1 from Raw\nstream L2 = L1.where(a > 1)\nstream L3 = L2.window(5).aggregate(cnt: count())",
+            "stream L1 = Raw\nstream L2 = L1.where(a > 1)\nstream L3 = L2.window(5).aggregate(cnt: count())",
         );
         assert!(result.is_ok(), "Failed: {:?}", result.err());
     }

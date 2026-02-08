@@ -11,7 +11,7 @@ event TradeAlert:
     symbol: str
     total_traded: float
 
-stream Orders from Order
+stream Orders = Order
 
 # IBM trade volume in 6-second window
 stream IBMVolume = Orders

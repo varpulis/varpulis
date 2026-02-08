@@ -26,9 +26,9 @@
 //! use varpulis_parser::parse;
 //!
 //! let source = r#"
-//!     stream Readings from SensorReading
-//!         where temperature > 100
-//!         emit alert("HighTemp", "Temperature exceeded threshold")
+//!     stream Readings = SensorReading
+//!         .where(temperature > 100)
+//!         .emit(alert("HighTemp", "Temperature exceeded threshold"))
 //! "#;
 //!
 //! match parse(source) {

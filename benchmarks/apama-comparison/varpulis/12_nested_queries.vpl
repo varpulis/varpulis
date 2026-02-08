@@ -7,7 +7,7 @@
 // Stage 1: Raw event ingestion
 // =============================================================================
 
-stream RawTicks from Tick
+stream RawTicks = Tick
 
 // =============================================================================
 // Stage 2: Filter to specific symbols
@@ -61,7 +61,7 @@ stream IBMAlerts = IBMAvg
 // Deep Pipeline Example: 5 stages
 // =============================================================================
 
-stream Level1 from SensorReading
+stream Level1 = SensorReading
 stream Level2 = Level1.where(quality > 0.5)
 stream Level3 = Level2.where(value > 10.0)
 stream Level4 = Level3.window(20).aggregate(avg_value: avg(value))
@@ -76,7 +76,7 @@ stream Level5 = Level4.having(avg_value > 15.0)
 // Parallel Branches from Single Source
 // =============================================================================
 
-stream Trades from Trade
+stream Trades = Trade
 
 // Branch 1: Large trades
 stream LargeTrades = Trades

@@ -10,7 +10,7 @@ Non-overlapping, fixed-duration windows. When the duration expires, the window e
 
 **Syntax:**
 ```vpl
-stream Name from EventType
+stream Name = EventType
     .window(<duration>)
     .aggregate(...)
 ```
@@ -26,7 +26,7 @@ stream Name from EventType
 
 **Example:**
 ```vpl
-stream MinuteStats from SensorReading
+stream MinuteStats = SensorReading
     .window(1m)
     .aggregate(
         avg_value: avg(value),
@@ -46,7 +46,7 @@ Overlapping windows that slide at a specified interval, providing a rolling view
 
 **Syntax:**
 ```vpl
-stream Name from EventType
+stream Name = EventType
     .window(<size>, sliding: <slide>)
 ```
 
@@ -62,7 +62,7 @@ stream Name from EventType
 
 **Example:**
 ```vpl
-stream RollingAverage from TemperatureReading
+stream RollingAverage = TemperatureReading
     .window(5m, sliding: 30s)
     .aggregate(
         rolling_avg: avg(temperature),
@@ -80,7 +80,7 @@ Windows based on event count rather than time.
 
 **Syntax:**
 ```vpl
-stream Name from EventType
+stream Name = EventType
     .window(<n>)
     .aggregate(...)
 ```
@@ -95,7 +95,7 @@ stream Name from EventType
 
 **Example:**
 ```vpl
-stream BatchProcessor from Transaction
+stream BatchProcessor = Transaction
     .window(100)
     .aggregate(
         batch_total: sum(amount),
@@ -113,7 +113,7 @@ Count-based windows with overlap.
 
 **Syntax:**
 ```vpl
-stream Name from EventType
+stream Name = EventType
     .window(<size>, sliding: <slide>)
 ```
 
@@ -123,7 +123,7 @@ stream Name from EventType
 
 **Example:**
 ```vpl
-stream RollingBatch from Reading
+stream RollingBatch = Reading
     .window(100, sliding: 25)
     .aggregate(
         rolling_sum: sum(value)
@@ -140,7 +140,7 @@ Any window type can be partitioned by a key field.
 
 **Syntax:**
 ```vpl
-stream Name from EventType
+stream Name = EventType
     .partition_by(<field>)
     .window(<params>)
     .aggregate(...)
@@ -153,7 +153,7 @@ stream Name from EventType
 
 **Example:**
 ```vpl
-stream PerDeviceStats from SensorReading
+stream PerDeviceStats = SensorReading
     .partition_by(device_id)
     .window(1m)
     .aggregate(
@@ -462,7 +462,7 @@ On non-AVX2 systems, scalar 4-way loop unrolling provides ~2x speedup over naive
 ### Real-time Monitoring
 
 ```vpl
-stream SensorAlerts from SensorReading
+stream SensorAlerts = SensorReading
     .partition_by(sensor_id)
     .window(1m)
     .aggregate(
@@ -478,7 +478,7 @@ stream SensorAlerts from SensorReading
 ### Rolling Statistics
 
 ```vpl
-stream RollingStats from MarketData
+stream RollingStats = MarketData
     .window(5m, sliding: 10s)
     .aggregate(
         vwap: sum(price * volume) / sum(volume),
@@ -491,7 +491,7 @@ stream RollingStats from MarketData
 ### Batch Processing
 
 ```vpl
-stream BatchReport from Transaction
+stream BatchReport = Transaction
     .window(1000)
     .aggregate(
         batch_num: count(),
@@ -506,7 +506,7 @@ stream BatchReport from Transaction
 
 ```vpl
 // First level: per-device minute stats
-stream DeviceMinutes from SensorReading
+stream DeviceMinutes = SensorReading
     .partition_by(device_id)
     .window(1m)
     .aggregate(
@@ -515,7 +515,7 @@ stream DeviceMinutes from SensorReading
     )
 
 // Second level: all-device hour stats
-stream HourlyOverview from DeviceMinutes
+stream HourlyOverview = DeviceMinutes
     .window(1h)
     .aggregate(
         active_devices: count(distinct(device)),

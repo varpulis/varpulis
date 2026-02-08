@@ -13,7 +13,7 @@ event VWAPUpdate:
     cumulative_pv: float
     cumulative_v: float
 
-stream Trades from Trade
+stream Trades = Trade
 
 # Calculate VWAP for ACME stock over 5-second window
 stream ACMEVwap = Trades

@@ -1080,9 +1080,9 @@ async fn test_attention_window_fraud_detection_scenario() {
 async fn test_merge_stream_basic() {
     let program = r#"
         stream BuildingMetrics = merge(
-            stream S1 from SensorEvent where sensor_id == "S1",
-            stream S2 from SensorEvent where sensor_id == "S2",
-            stream S3 from SensorEvent where sensor_id == "S3"
+            stream S1 = SensorEvent .where(sensor_id == "S1"),
+            stream S2 = SensorEvent .where(sensor_id == "S2"),
+            stream S3 = SensorEvent .where(sensor_id == "S3")
         )
         .emit(
             sensor: sensor_id,
@@ -1107,8 +1107,8 @@ async fn test_merge_stream_basic() {
 async fn test_merge_with_window_and_aggregation() {
     let program = r#"
         stream BuildingMetrics = merge(
-            stream S1 from SensorEvent where sensor_id == "S1",
-            stream S2 from SensorEvent where sensor_id == "S2"
+            stream S1 = SensorEvent .where(sensor_id == "S1"),
+            stream S2 = SensorEvent .where(sensor_id == "S2")
         )
         .window(1m)
         .aggregate(
@@ -1331,9 +1331,9 @@ async fn test_fraud_detection_with_attention_pattern() {
 async fn test_building_metrics_comprehensive() {
     let program = r#"
         stream BuildingMetrics = merge(
-            stream S1 from SensorEvent where sensor_id == "S1",
-            stream S2 from SensorEvent where sensor_id == "S2",
-            stream S3 from SensorEvent where sensor_id == "S3"
+            stream S1 = SensorEvent .where(sensor_id == "S1"),
+            stream S2 = SensorEvent .where(sensor_id == "S2"),
+            stream S3 = SensorEvent .where(sensor_id == "S3")
         )
         .emit(
             sensor: sensor_id,

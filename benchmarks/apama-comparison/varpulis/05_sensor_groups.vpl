@@ -17,7 +17,7 @@ event SensorStats:
     stddev: float
     count: int
 
-stream SensorUpdates from SensorUpdate
+stream SensorUpdates = SensorUpdate
 
 # Simple threshold alert - all sensors
 stream TempAlerts = SensorUpdates

@@ -1434,9 +1434,9 @@ async fn run_demo(
 
     // Create engine with a simple stream
     let demo_program = r#"
-        stream TemperatureReadings from TemperatureReading
-        stream HumidityReadings from HumidityReading
-        stream HVACStatuses from HVACStatus
+        stream TemperatureReadings = TemperatureReading
+        stream HumidityReadings = HumidityReading
+        stream HVACStatuses = HVACStatus
     "#;
 
     let program = parse(demo_program).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;

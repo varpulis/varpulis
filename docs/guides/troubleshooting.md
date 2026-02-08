@@ -32,7 +32,7 @@ mosquitto_sub -h localhost -t '#' -v  # In separate terminal
 **Symptom:** Program fails to load with syntax error.
 
 **Common causes:**
-1. Typo in keyword (e.g., `form` instead of `from`)
+1. Typo in keyword or syntax (e.g., `form` instead of `=`)
 2. Missing or extra brackets
 3. Unquoted strings where quotes are required
 
@@ -48,7 +48,7 @@ varpulis check program.vpl
 stream Readings form SensorReading
 
 // Correct
-stream Readings from SensorReading
+stream Readings = SensorReading
 ```
 
 ### "Failed to bind to address"
@@ -124,7 +124,7 @@ head -5 events.evt
 2. **Check event type matches:**
 ```vpl
 // If events come as "temperature_reading" (snake_case)
-stream Temps from temperature_reading  // Must match exactly!
+stream Temps = temperature_reading  // Must match exactly!
 ```
 
 3. **Verify topic subscription:**
@@ -151,7 +151,7 @@ stream Events = SensorReading
 .where(temperature > 1000)  // Maybe threshold is too high
 
 // Debug: remove filters temporarily
-stream Debug from TemperatureReading
+stream Debug = TemperatureReading
     .print("Got event: {temperature}")
 ```
 
@@ -178,11 +178,11 @@ stream Debug from TemperatureReading
 1. **Unbounded windows:**
 ```vpl
 // Bad: no time limit
-stream Bad from Event
+stream Bad = Event
     .window(1h, sliding: 1s)  // 3600 overlapping windows!
 
 // Better: reasonable window
-stream Better from Event
+stream Better = Event
     .window(1m)
 ```
 
@@ -252,7 +252,7 @@ RUST_LOG=varpulis_runtime::engine=trace varpulis run ...
 1. **Simplify the pattern:**
 ```vpl
 // Start with just the first event type
-stream Debug1 from A
+stream Debug1 = A
     .print("Matched A")
 
 // Then test with a sequence

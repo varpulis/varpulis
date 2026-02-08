@@ -33,7 +33,7 @@ const API_URL = "https://api.example.com"
 
 ```varpulis
 # From an event source
-stream Trades from TradeEvent
+stream Trades = TradeEvent
 
 # With alias
 stream T = Trades
@@ -83,9 +83,9 @@ stream SlidingMetrics = Trades
 
 ```varpulis
 stream BuildingMetrics = merge(
-    stream S1 from SensorEvent where sensor_id == "S1",
-    stream S2 from SensorEvent where sensor_id == "S2",
-    stream S3 from SensorEvent where sensor_id == "S3"
+    stream S1 = SensorEvent .where(sensor_id == "S1"),
+    stream S2 = SensorEvent .where(sensor_id == "S2"),
+    stream S3 = SensorEvent .where(sensor_id == "S3")
 )
 .window(1m, sliding: 10s)
 .aggregate(
@@ -100,10 +100,10 @@ stream BuildingMetrics = merge(
 
 ```varpulis
 stream EnrichedOrders = join(
-    stream Orders from OrderEvent,
-    stream Customers from CustomerEvent
+    stream Orders = OrderEvent,
+    stream Customers = CustomerEvent
         on Orders.customer_id == Customers.id,
-    stream Inventory from InventoryEvent
+    stream Inventory = InventoryEvent
         on Orders.product_id == Inventory.product_id
 )
 .window(5m, policy: "watermark")

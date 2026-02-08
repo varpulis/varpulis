@@ -71,10 +71,7 @@ connector_param = { identifier ~ ":" ~ config_value }
 // ============================================================================
 
 stream_decl = {
-    "stream" ~ identifier ~ type_annotation? ~ (
-        ("from" ~ identifier)
-        | ("=" ~ stream_expr)
-    )
+    "stream" ~ identifier ~ type_annotation? ~ "=" ~ stream_expr
 }
 
 stream_expr = { stream_source ~ stream_op* }
@@ -103,15 +100,15 @@ all_source = { "all" ~ identifier ~ ("as" ~ identifier)? }
 aliased_source = { identifier ~ "as" ~ identifier }
 
 inline_stream_list = { inline_stream ~ ("," ~ inline_stream)* }
-inline_stream = { 
-    ("stream" ~ identifier ~ "from" ~ identifier ~ ("where" ~ expr)?)
-    | identifier 
+inline_stream = {
+    ("stream" ~ identifier ~ "=" ~ identifier ~ ("." ~ "where" ~ "(" ~ expr ~ ")")?)
+    | identifier
 }
 
 join_clause_list = { join_clause ~ ("," ~ join_clause)* }
-join_clause = { 
-    ("stream" ~ identifier ~ "from" ~ identifier ~ ("on" ~ expr)?)
-    | identifier 
+join_clause = {
+    ("stream" ~ identifier ~ "=" ~ identifier ~ ("." ~ "on" ~ "(" ~ expr ~ ")")?)
+    | identifier
 }
 
 sequence_decl = { sequence_step ~ ("," ~ sequence_step)* }

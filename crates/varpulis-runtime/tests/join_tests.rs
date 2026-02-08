@@ -29,8 +29,8 @@ async fn test_join_two_streams_correlates_by_key() {
             symbol: str
             ema_26: float
 
-        stream EMA12 from EMA12Event
-        stream EMA26 from EMA26Event
+        stream EMA12 = EMA12Event
+        stream EMA26 = EMA26Event
 
         stream MACD = join(EMA12, EMA26)
             .on(EMA12.symbol == EMA26.symbol)
@@ -112,8 +112,8 @@ async fn test_join_buffer_window_expiration() {
             key: str
             value: float
 
-        stream A from StreamA
-        stream B from StreamB
+        stream A = StreamA
+        stream B = StreamB
 
         stream Joined = join(A, B)
             .on(A.key == B.key)
@@ -180,8 +180,8 @@ async fn test_join_multi_stream_all_fields_accessible() {
             symbol: str
             volume: int
 
-        stream Prices from PriceEvent
-        stream Volumes from VolumeEvent
+        stream Prices = PriceEvent
+        stream Volumes = VolumeEvent
 
         stream Combined = join(Prices, Volumes)
             .on(Prices.symbol == Volumes.symbol)
@@ -255,8 +255,8 @@ async fn test_join_no_match_returns_empty() {
             key: str
             value: float
 
-        stream A from EventA
-        stream B from EventB
+        stream A = EventA
+        stream B = EventB
 
         stream Joined = join(A, B)
             .on(A.key == B.key)

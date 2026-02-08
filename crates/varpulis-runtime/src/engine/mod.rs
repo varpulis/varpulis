@@ -761,7 +761,6 @@ impl Engine {
                         }
                     }
                     let source_et = match source {
-                        StreamSource::From(et) => Some(et.as_str()),
                         StreamSource::Ident(s) => Some(s.as_str()),
                         StreamSource::IdentWithAlias { name: et, .. } => Some(et.as_str()),
                         StreamSource::FromConnector { event_type, .. } => Some(event_type.as_str()),
@@ -797,10 +796,6 @@ impl Engine {
         let mut event_type_to_source: FxHashMap<String, String> = FxHashMap::default();
 
         let runtime_source = match source {
-            StreamSource::From(event_type) => {
-                self.router.add_route(event_type, name);
-                RuntimeSource::EventType(event_type.clone())
-            }
             StreamSource::FromConnector {
                 event_type,
                 connector_name,
@@ -1085,7 +1080,7 @@ impl Engine {
                     }
                 }
             }
-            StreamSource::Ident(name) | StreamSource::From(name) if has_sequence_ops => {
+            StreamSource::Ident(name) if has_sequence_ops => {
                 // Initial source for a sequence pattern - resolve to underlying event type
                 let resolved = resolve_event_type(name);
                 if !sequence_event_types.contains(&resolved) {
@@ -2104,10 +2099,13 @@ impl Engine {
 
             for stream_name in stream_names.iter() {
                 if let Some(stream) = self.streams.get_mut(stream_name) {
+                    // Skip output clone+rename when stream has no downstream routes
+                    let skip_rename = self.router.get_routes(stream_name).is_none();
                     let result = Self::process_stream_sync(
                         stream,
                         Arc::clone(&current_event),
                         &self.functions,
+                        skip_rename,
                     )?;
 
                     // Collect emitted events for batch sending
@@ -2145,10 +2143,12 @@ impl Engine {
 
     /// Synchronous stream processing - no async operations.
     /// Skips .to() sink operations (which are the only async parts).
+    /// When `skip_output_rename` is true, output events skip the clone+rename step.
     fn process_stream_sync(
         stream: &mut StreamDefinition,
         event: SharedEvent,
         functions: &FxHashMap<String, UserFunction>,
+        skip_output_rename: bool,
     ) -> Result<StreamProcessResult, String> {
         // For merge sources, check if the event passes the appropriate filter
         if let RuntimeSource::Merge(ref sources) = stream.source {
@@ -2191,41 +2191,47 @@ impl Engine {
             });
         }
 
-        // Process through attention window if present
-        let mut enriched_event = (*event).clone();
-        if let Some(ref mut attention_window) = stream.attention_window {
-            let result = attention_window.process((*event).clone());
-            let attention_score = if result.scores.is_empty() {
-                0.0
-            } else {
-                result
-                    .scores
-                    .iter()
-                    .map(|(_, s)| *s)
-                    .fold(f32::NEG_INFINITY, f32::max)
-            };
-            enriched_event.data.insert(
-                "attention_score".into(),
-                Value::Float(attention_score as f64),
-            );
-            let context_norm: f32 = result.context.iter().map(|x| x * x).sum::<f32>().sqrt();
-            enriched_event.data.insert(
-                "attention_context_norm".into(),
-                Value::Float(context_norm as f64),
-            );
-            enriched_event.data.insert(
-                "attention_matches".into(),
-                Value::Int(result.scores.len() as i64),
-            );
-        }
+        // Process through attention window if present — skip clone when not needed
+        let pipeline_event = if stream.attention_window.is_some() {
+            let mut enriched_event = (*event).clone();
+            if let Some(ref mut attention_window) = stream.attention_window {
+                let result = attention_window.process((*event).clone());
+                let attention_score = if result.scores.is_empty() {
+                    0.0
+                } else {
+                    result
+                        .scores
+                        .iter()
+                        .map(|(_, s)| *s)
+                        .fold(f32::NEG_INFINITY, f32::max)
+                };
+                enriched_event.data.insert(
+                    "attention_score".into(),
+                    Value::Float(attention_score as f64),
+                );
+                let context_norm: f32 = result.context.iter().map(|x| x * x).sum::<f32>().sqrt();
+                enriched_event.data.insert(
+                    "attention_context_norm".into(),
+                    Value::Float(context_norm as f64),
+                );
+                enriched_event.data.insert(
+                    "attention_matches".into(),
+                    Value::Int(result.scores.len() as i64),
+                );
+            }
+            Arc::new(enriched_event)
+        } else {
+            event // zero-copy: reuse the existing Arc
+        };
 
         // Use synchronous pipeline execution
         pipeline::execute_pipeline_sync(
             stream,
-            vec![Arc::new(enriched_event)],
+            vec![pipeline_event],
             0,
             pipeline::SkipFlags::none(),
             functions,
+            skip_output_rename,
         )
     }
 

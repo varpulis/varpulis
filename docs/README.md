@@ -110,7 +110,7 @@ varpulis server --port 9000 --api-key "my-key" --metrics
 # Deploy a pipeline
 curl -X POST http://localhost:9000/api/v1/pipelines \
   -H "X-API-Key: my-key" -H "Content-Type: application/json" \
-  -d '{"name": "my-pipeline", "source": "stream X from Y where z > 10"}'
+  -d '{"name": "my-pipeline", "source": "stream X = Y .where(z > 10)"}'
 ```
 
 Full SaaS stack with monitoring:

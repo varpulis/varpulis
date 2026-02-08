@@ -13,7 +13,7 @@ event SensorReading:
     location: str
     ts: timestamp
 
-stream Sensors from SensorReading
+stream Sensors = SensorReading
 
 # Détection d'anomalies avec mécanisme d'attention
 # L'attention calcule automatiquement les corrélations entre événements

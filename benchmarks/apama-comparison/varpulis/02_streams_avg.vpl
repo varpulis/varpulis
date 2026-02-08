@@ -10,7 +10,7 @@ event PriceAverage:
     symbol: str
     avg_price: float
 
-stream Ticks from Tick
+stream Ticks = Tick
 
 # IBM stream with sliding window of 10
 stream IBMAvg = Ticks

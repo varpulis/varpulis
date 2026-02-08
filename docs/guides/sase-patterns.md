@@ -426,7 +426,7 @@ pattern SmurfingPattern =
     within 1h
     partition by account_id
 
-stream FraudAlerts from Transaction
+stream FraudAlerts = Transaction
     pattern SmurfingPattern
     emit alert("Smurfing", "Account {account_id} suspicious pattern")
 ```
@@ -442,7 +442,7 @@ pattern UserSession =
     within 24h
     partition by user_id
 
-stream Sessions from *
+stream Sessions = *
     pattern UserSession
     emit log("Session: {start.user_id}, duration: {end.timestamp - start.timestamp}")
 ```
@@ -455,7 +455,7 @@ pattern SLABreach =
     Request as req
     -> NOT(Response[request_id == req.id]) within 5s
 
-stream SLAAlerts from *
+stream SLAAlerts = *
     pattern SLABreach
     emit alert("SLABreach", "Request {req.id} not responded within SLA")
 ```
@@ -469,7 +469,7 @@ pattern DeviceOffline =
     -> NOT(Heartbeat[device_id == last_beat.device_id]) within 1m
     partition by device_id
 
-stream OfflineAlerts from Heartbeat
+stream OfflineAlerts = Heartbeat
     pattern DeviceOffline
     emit alert("DeviceOffline", "Device {last_beat.device_id} stopped responding")
 ```
@@ -489,7 +489,7 @@ pattern OrderComplete =
     within 7d
     partition by order_id
 
-stream CompletedOrders from *
+stream CompletedOrders = *
     pattern OrderComplete
     emit log("Order {order.id} completed successfully")
 ```

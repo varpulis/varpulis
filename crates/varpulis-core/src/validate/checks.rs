@@ -245,7 +245,7 @@ fn check_assignment(v: &mut Validator, name: &str, span: Span) {
 
 fn check_stream_source(v: &mut Validator, source: &StreamSource, span: Span) {
     match source {
-        StreamSource::Ident(name) | StreamSource::From(name) => {
+        StreamSource::Ident(name) => {
             check_source_name(v, name, span);
         }
         StreamSource::IdentWithAlias { name, .. } | StreamSource::AllWithAlias { name, .. } => {

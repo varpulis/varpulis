@@ -317,13 +317,13 @@ Put selective filters first to reduce data volume:
 
 ```vpl
 // Good: filter first, then aggregate
-stream Optimized from SensorReading
+stream Optimized = SensorReading
     .where(sensor_type == "temperature")  // Filter first
     .window(1m)
     .aggregate(avg: avg(value))
 
 // Less optimal: aggregate all, then filter
-stream LessOptimal from SensorReading
+stream LessOptimal = SensorReading
     .window(1m)
     .aggregate(avg: avg(value), type: first(sensor_type))
     .where(type == "temperature")  // Filter after aggregation

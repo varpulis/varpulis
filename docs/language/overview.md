@@ -13,7 +13,7 @@
 
 ```varpulis
 # Simple stream definition
-stream Trades from TradeEvent
+stream Trades = TradeEvent
 
 # Filtering and aggregation
 stream HighValueTrades = Trades
