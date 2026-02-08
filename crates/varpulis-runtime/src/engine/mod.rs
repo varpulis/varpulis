@@ -260,6 +260,11 @@ impl Engine {
         self.connectors.get(name)
     }
 
+    /// Get all declared connector configs (for building a ManagedConnectorRegistry).
+    pub fn connector_configs(&self) -> &FxHashMap<String, connector::ConnectorConfig> {
+        &self.connectors
+    }
+
     /// Get source connector bindings from .from() declarations
     pub fn source_bindings(&self) -> &[SourceBinding] {
         &self.source_bindings
