@@ -1325,10 +1325,8 @@ mod mqtt_impl {
             let payload =
                 serde_json::to_vec(event).map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
 
-            let topic = format!("{}/{}", self.config.topic, event.event_type);
-
             client
-                .publish(&topic, qos_from_u8(self.config.qos), false, payload)
+                .publish(&self.config.topic, qos_from_u8(self.config.qos), false, payload)
                 .await
                 .map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
 
