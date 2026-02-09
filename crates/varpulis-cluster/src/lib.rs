@@ -26,6 +26,7 @@
 //! ```
 
 pub mod api;
+pub mod connector_config;
 pub mod coordinator;
 pub mod health;
 pub mod pipeline_group;
@@ -34,6 +35,7 @@ pub mod worker;
 
 // Re-exports
 pub use api::{cluster_routes, shared_coordinator, SharedCoordinator};
+pub use connector_config::ClusterConnector;
 pub use coordinator::{Coordinator, InjectEventRequest, InjectResponse};
 pub use health::{HEARTBEAT_INTERVAL, HEARTBEAT_TIMEOUT};
 pub use pipeline_group::{
@@ -42,8 +44,8 @@ pub use pipeline_group::{
 };
 pub use routing::{event_type_matches, find_target_pipeline, RoutingTable};
 pub use worker::{
-    HeartbeatRequest, HeartbeatResponse, RegisterWorkerRequest, RegisterWorkerResponse,
-    WorkerCapacity, WorkerId, WorkerInfo, WorkerNode, WorkerStatus,
+    HeartbeatRequest, HeartbeatResponse, PipelineMetrics, RegisterWorkerRequest,
+    RegisterWorkerResponse, WorkerCapacity, WorkerId, WorkerInfo, WorkerNode, WorkerStatus,
 };
 
 /// Errors that can occur in the cluster.
@@ -63,6 +65,12 @@ pub enum ClusterError {
 
     #[error("Event routing failed: {0}")]
     RoutingFailed(String),
+
+    #[error("Connector not found: {0}")]
+    ConnectorNotFound(String),
+
+    #[error("Connector validation failed: {0}")]
+    ConnectorValidation(String),
 }
 
 /// Trait for pipeline placement strategies.
@@ -185,6 +193,7 @@ pub async fn worker_registration_loop(
         let hb = HeartbeatRequest {
             events_processed: 0, // Workers don't track this globally yet
             pipelines_running: 0,
+            pipeline_metrics: Vec::new(),
         };
 
         match client.post(&heartbeat_url).json(&hb).send().await {

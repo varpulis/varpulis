@@ -4,6 +4,7 @@ import { VueMonacoEditor } from '@guolao/vue-monaco-editor'
 import type { editor } from 'monaco-editor'
 import { registerVplLanguage } from './vpl-language'
 import { validateVpl } from '@/api/cluster'
+import { useConnectorsStore } from '@/stores/connectors'
 
 const props = defineProps<{
   modelValue: string
@@ -15,6 +16,8 @@ const emit = defineEmits<{
   'update:modelValue': [value: string]
   validate: [result: { valid: boolean; errors?: string[] }]
 }>()
+
+const connectorsStore = useConnectorsStore()
 
 const editorRef = ref<editor.IStandaloneCodeEditor | null>(null)
 const isLanguageRegistered = ref(false)
@@ -72,7 +75,9 @@ function handleEditorMount(editor: editor.IStandaloneCodeEditor): void {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const monaco = (window as any).monaco
   if (monaco && !isLanguageRegistered.value) {
-    registerVplLanguage()
+    // Fetch connectors for auto-complete, pass getter to language registration
+    connectorsStore.fetchConnectors()
+    registerVplLanguage(() => connectorsStore.connectorNames)
     isLanguageRegistered.value = true
 
     // Set the model language to VPL

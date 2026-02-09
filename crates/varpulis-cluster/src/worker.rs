@@ -106,11 +106,21 @@ pub struct RegisterWorkerResponse {
     pub status: String,
 }
 
+/// Per-pipeline metrics reported in heartbeats.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineMetrics {
+    pub pipeline_name: String,
+    pub events_in: u64,
+    pub events_out: u64,
+}
+
 /// Request body for worker heartbeat.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HeartbeatRequest {
     pub events_processed: u64,
     pub pipelines_running: usize,
+    #[serde(default)]
+    pub pipeline_metrics: Vec<PipelineMetrics>,
 }
 
 /// Response body for worker heartbeat.
@@ -304,6 +314,7 @@ mod tests {
         let hb = HeartbeatRequest {
             events_processed: 42,
             pipelines_running: 3,
+            pipeline_metrics: vec![],
         };
         let json = serde_json::to_string(&hb).unwrap();
         let parsed: HeartbeatRequest = serde_json::from_str(&json).unwrap();

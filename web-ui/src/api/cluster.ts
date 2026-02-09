@@ -145,6 +145,80 @@ export async function checkHealth(): Promise<{ status: string; version: string }
   return response.data
 }
 
+// === Connectors ===
+
+export interface ClusterConnector {
+  name: string
+  connector_type: string
+  params: Record<string, string>
+  description?: string
+}
+
+interface ConnectorsResponse {
+  total: number
+  connectors: ClusterConnector[]
+}
+
+/**
+ * List all cluster connectors
+ */
+export async function listConnectors(): Promise<ClusterConnector[]> {
+  const response = await api.get<ConnectorsResponse>(`${CLUSTER_BASE}/connectors`)
+  return response.data.connectors
+}
+
+/**
+ * Get a specific connector
+ */
+export async function getConnector(name: string): Promise<ClusterConnector> {
+  const response = await api.get<ClusterConnector>(`${CLUSTER_BASE}/connectors/${name}`)
+  return response.data
+}
+
+/**
+ * Create a new connector
+ */
+export async function createConnector(connector: ClusterConnector): Promise<ClusterConnector> {
+  const response = await api.post<ClusterConnector>(`${CLUSTER_BASE}/connectors`, connector)
+  return response.data
+}
+
+/**
+ * Update an existing connector
+ */
+export async function updateConnector(name: string, connector: ClusterConnector): Promise<ClusterConnector> {
+  const response = await api.put<ClusterConnector>(`${CLUSTER_BASE}/connectors/${name}`, connector)
+  return response.data
+}
+
+/**
+ * Delete a connector
+ */
+export async function deleteConnector(name: string): Promise<void> {
+  await api.delete(`${CLUSTER_BASE}/connectors/${name}`)
+}
+
+// === Metrics ===
+
+export interface PipelineWorkerMetrics {
+  pipeline_name: string
+  worker_id: string
+  events_in: number
+  events_out: number
+}
+
+export interface ClusterMetricsResponse {
+  pipelines: PipelineWorkerMetrics[]
+}
+
+/**
+ * Fetch real-time cluster metrics
+ */
+export async function fetchClusterMetrics(): Promise<ClusterMetricsResponse> {
+  const response = await api.get<ClusterMetricsResponse>(`${CLUSTER_BASE}/metrics`)
+  return response.data
+}
+
 // === Validation ===
 
 export interface ValidateDiagnostic {

@@ -70,6 +70,7 @@ function toggleDrawer() {
 const navItems = [
   { title: 'Dashboard', icon: 'mdi-view-dashboard', to: '/' },
   { title: 'Cluster', icon: 'mdi-server-network', to: '/cluster' },
+  { title: 'Connectors', icon: 'mdi-connection', to: '/connectors' },
   { title: 'Pipelines', icon: 'mdi-pipe', to: '/pipelines' },
   { title: 'Editor', icon: 'mdi-code-braces', to: '/editor' },
   { title: 'Metrics', icon: 'mdi-chart-line', to: '/metrics' },
