@@ -1,0 +1,27 @@
+connector Broker = kafka(brokers: "localhost:9092", group_id: "varpulis-bench-02")
+
+event Trade:
+    symbol: str
+    price: float
+    volume: float
+
+stream Input = Trade.from(Broker, topic: "bench-02-input")
+
+stream VWAP = Input
+    .partition_by(symbol)
+    .window(100)
+    .aggregate(
+        symbol: last(symbol),
+        total_pv: sum(price * volume),
+        total_volume: sum(volume),
+        trade_count: count()
+    )
+    .where(total_volume > 0.0)
+    .emit(
+        event_type: "VWAPUpdate",
+        symbol: symbol,
+        vwap: total_pv / total_volume,
+        total_volume: total_volume,
+        trade_count: trade_count
+    )
+    .to(Broker, topic: "bench-02-output")

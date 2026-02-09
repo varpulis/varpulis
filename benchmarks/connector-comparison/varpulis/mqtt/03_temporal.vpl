@@ -1,0 +1,36 @@
+connector Broker = mqtt(host: "localhost", port: 1884)
+
+event Login:
+    user_id: str
+    ip: str
+    device: str
+
+event Transaction:
+    user_id: str
+    amount: float
+    ip: str
+    merchant: str
+
+stream Logins = Login.from(Broker, topic: "bench/03/Login")
+stream Transactions = Transaction.from(Broker, topic: "bench/03/Transaction")
+
+stream RecentLogins = Logins
+    .partition_by(user_id)
+    .window(1)
+    .aggregate(
+        user_id: last(user_id),
+        ip: last(ip)
+    )
+
+stream FraudDetection = join(Transactions, RecentLogins)
+    .on(Transaction.user_id == RecentLogins.user_id)
+    .window(5s)
+    .where(Transaction.amount > 5000.0 and Transaction.ip != RecentLogins.ip)
+    .emit(
+        event_type: "FraudAlert",
+        user_id: Transaction.user_id,
+        login_ip: RecentLogins.ip,
+        tx_ip: Transaction.ip,
+        amount: Transaction.amount
+    )
+    .to(Broker, topic: "bench/03/output")

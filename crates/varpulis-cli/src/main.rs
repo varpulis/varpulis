@@ -521,7 +521,7 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
     resolve_imports(&mut program, base_path)?;
 
     // Create output event channel — clone tx before giving it to the engine
-    let (output_tx, mut output_rx) = mpsc::channel::<Event>(100);
+    let (output_tx, mut output_rx) = mpsc::channel::<Event>(10_000);
     let output_tx_for_ctx = output_tx.clone();
 
     // Create engine
@@ -572,7 +572,7 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
 
     if !bindings.is_empty() {
         // Create shared event channel for all source connectors
-        let (event_tx, mut event_rx) = mpsc::channel::<Event>(1000);
+        let (event_tx, mut event_rx) = mpsc::channel::<Event>(10_000);
 
         // Build managed connector registry — one connection per connector
         let mut registry = ManagedConnectorRegistry::from_configs(engine.connector_configs())
@@ -666,7 +666,7 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
         let mut last_report = std::time::Instant::now();
         let mut event_count = 0u64;
 
-        // Process events from all sources
+        // Process events from all sources — batch when multiple are available
         loop {
             tokio::select! {
                 Some(event) = event_rx.recv() => {
@@ -687,8 +687,24 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
                                 tracing::warn!("Context channel closed");
                             }
                         }
-                    } else if let Err(e) = engine.process(event).await {
-                        tracing::warn!("Engine error: {}", e);
+                    } else {
+                        // Check if more events are immediately available for batch processing
+                        if event_rx.is_empty() {
+                            // Single event — fast path
+                            if let Err(e) = engine.process(event).await {
+                                tracing::warn!("Engine error: {}", e);
+                            }
+                        } else {
+                            // Multiple events buffered — drain and batch
+                            let mut batch = vec![event];
+                            while let Ok(extra) = event_rx.try_recv() {
+                                batch.push(extra);
+                            }
+                            event_count += (batch.len() - 1) as u64;
+                            if let Err(e) = engine.process_batch(batch).await {
+                                tracing::warn!("Engine batch error: {}", e);
+                            }
+                        }
                     }
 
                     // Progress report every 2 seconds

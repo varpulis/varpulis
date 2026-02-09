@@ -1,0 +1,69 @@
+using com.apama.aggregates.mean;
+using com.apama.aggregates.stddev;
+using com.apama.aggregates.count;
+using com.apama.aggregates.last;
+
+event TemperatureReading {
+    string sensor_id;
+    string location;
+    float value;
+}
+
+event PressureReading {
+    string sensor_id;
+    string location;
+    float value;
+}
+
+event TempStats {
+    string location;
+    float temp_avg;
+    float temp_std;
+}
+
+event PressureStats {
+    string location;
+    float pressure_avg;
+    float pressure_std;
+}
+
+event CorrelatedAnomaly {
+    string location;
+    float temp_avg;
+    float temp_std;
+    float pressure_avg;
+    float pressure_std;
+    float correlation_score;
+}
+
+monitor MultiSensorCorrelationKafka {
+    action onload() {
+        monitor.subscribe("kafka:bench-06-TemperatureReading");
+        monitor.subscribe("kafka:bench-06-PressureReading");
+
+        stream<TempStats> tempAnomalies :=
+            from t in all TemperatureReading()
+                retain 100
+                group by t.location
+                having stddev(t.value) > 5.0
+                select TempStats(last(t.location), mean(t.value), stddev(t.value));
+
+        stream<PressureStats> pressureAnomalies :=
+            from p in all PressureReading()
+                retain 100
+                group by p.location
+                having stddev(p.value) > 10.0
+                select PressureStats(last(p.location), mean(p.value), stddev(p.value));
+
+        from t in tempAnomalies within 30.0
+            join p in pressureAnomalies within 30.0
+            on t.location equals p.location
+            select CorrelatedAnomaly(t.location, t.temp_avg, t.temp_std,
+                p.pressure_avg, p.pressure_std,
+                (t.temp_std / 10.0) * (p.pressure_std / 20.0)) as result {
+            if result.correlation_score > 0.5 {
+                send result to "kafka:bench-06-output";
+            }
+        }
+    }
+}

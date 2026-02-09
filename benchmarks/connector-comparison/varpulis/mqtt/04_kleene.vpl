@@ -1,0 +1,24 @@
+connector Broker = mqtt(host: "localhost", port: 1884)
+
+event StockTick:
+    symbol: str
+    price: float
+    volume: int
+
+stream Input = StockTick.from(Broker, topic: "bench/04/input")
+
+pattern RisingSequence = SEQ(
+    StockTick as first,
+    StockTick+ where price > first.price as rising,
+    StockTick where price > rising.price as last
+) within 60s partition by symbol
+
+stream PriceSpikes = RisingSequence
+    .emit(
+        event_type: "PriceSpike",
+        symbol: last.symbol,
+        start_price: first.price,
+        end_price: last.price,
+        spike_count: len(rising)
+    )
+    .to(Broker, topic: "bench/04/output")

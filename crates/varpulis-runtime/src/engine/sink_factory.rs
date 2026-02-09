@@ -31,7 +31,7 @@ pub(crate) fn connector_params_to_config(
             varpulis_core::ast::ConfigValue::Map(_) => continue,
         };
         match param.name.as_str() {
-            "url" | "host" => url = value_str,
+            "url" | "host" | "brokers" => url = value_str,
             "topic" => topic = Some(value_str),
             other => {
                 properties.insert(other.to_string(), value_str);
@@ -78,6 +78,20 @@ impl crate::sink::Sink for SinkConnectorAdapter {
             .send(event)
             .await
             .map_err(|e| anyhow::anyhow!("{}", e))
+    }
+    async fn send_batch(
+        &self,
+        events: &[std::sync::Arc<crate::event::Event>],
+    ) -> anyhow::Result<()> {
+        // Acquire lock once for the entire batch
+        let inner = self.inner.lock().await;
+        for event in events {
+            inner
+                .send(event)
+                .await
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+        }
+        Ok(())
     }
     async fn flush(&self) -> anyhow::Result<()> {
         let inner = self.inner.lock().await;

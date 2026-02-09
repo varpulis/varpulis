@@ -854,9 +854,21 @@ impl Engine {
                 RuntimeSource::EventType(event_type.clone())
             }
             StreamSource::Ident(stream_name) => {
-                // Register for the stream source event type
-                self.router.add_route(stream_name, name);
-                RuntimeSource::Stream(stream_name.clone())
+                // Check if this refers to a named SASE+ pattern
+                if self.patterns.contains_key(stream_name) {
+                    let event_types = compiler::extract_event_types_from_pattern_expr(
+                        &self.patterns[stream_name].expr,
+                    );
+                    for et in &event_types {
+                        self.router.add_route(et, name);
+                    }
+                    let first_type = event_types.first().cloned().unwrap_or_default();
+                    RuntimeSource::EventType(first_type)
+                } else {
+                    // Regular stream reference
+                    self.router.add_route(stream_name, name);
+                    RuntimeSource::Stream(stream_name.clone())
+                }
             }
             StreamSource::IdentWithAlias {
                 name: event_type, ..
@@ -1109,6 +1121,17 @@ impl Engine {
             StreamSource::Sequence(decl) => {
                 for step in &decl.steps {
                     let resolved = resolve_event_type(&step.event_type);
+                    if !sequence_event_types.contains(&resolved) {
+                        sequence_event_types.push(resolved);
+                    }
+                }
+            }
+            StreamSource::Ident(name) if self.patterns.contains_key(name) => {
+                // Named pattern reference - extract event types from pattern
+                let event_types =
+                    compiler::extract_event_types_from_pattern_expr(&self.patterns[name].expr);
+                for et in event_types {
+                    let resolved = resolve_event_type(&et);
                     if !sequence_event_types.contains(&resolved) {
                         sequence_event_types.push(resolved);
                     }
@@ -1632,7 +1655,9 @@ impl Engine {
         }
 
         // === Detection Mode (SASE) ===
-        // Build SASE+ engine if we have sequence patterns
+        // Build SASE+ engine if we have sequence patterns or a named pattern reference
+        let is_pattern_ref =
+            matches!(source, StreamSource::Ident(name) if self.patterns.contains_key(name));
         let sase_engine =
             if !followed_by_clauses.is_empty() || matches!(source, StreamSource::Sequence(_)) {
                 // Add Sequence operation marker at the beginning
@@ -1691,6 +1716,52 @@ impl Engine {
                     warn!("Failed to compile SASE+ pattern");
                     None
                 }
+            } else if is_pattern_ref {
+                // Named pattern reference: compile the pattern's SasePatternExpr directly
+                let pattern_name = match source {
+                    StreamSource::Ident(name) => name,
+                    _ => unreachable!(),
+                };
+                let named_pattern = &self.patterns[pattern_name];
+
+                // Extract within duration from the pattern declaration
+                let within_duration = named_pattern.within.as_ref().and_then(|expr| {
+                    if let varpulis_core::ast::Expr::Duration(ns) = expr {
+                        Some(std::time::Duration::from_nanos(*ns))
+                    } else {
+                        None
+                    }
+                });
+
+                // Extract partition key from the pattern declaration
+                if let Some(varpulis_core::ast::Expr::Ident(field)) =
+                    named_pattern.partition_by.as_ref()
+                {
+                    partition_key = Some(field.clone());
+                }
+
+                // Add Sequence operation marker
+                runtime_ops.insert(0, RuntimeOp::Sequence);
+
+                // Compile the named pattern expression to a SASE pattern
+                if let Some(pattern) =
+                    compiler::compile_sase_pattern_expr(&named_pattern.expr, within_duration)
+                {
+                    let mut engine = SaseEngine::new(pattern);
+
+                    if let Some(ref key) = partition_key {
+                        engine = engine.with_partition_by(key.clone());
+                    }
+
+                    info!("Created SASE+ engine from named pattern '{}'", pattern_name);
+                    Some(engine)
+                } else {
+                    warn!(
+                        "Failed to compile named pattern '{}' to SASE+ engine",
+                        pattern_name
+                    );
+                    None
+                }
             } else {
                 None
             };
@@ -1745,14 +1816,46 @@ impl Engine {
             }
         }
 
-        // If no join keys found, use "symbol" as default (common join key)
-        if join_keys.is_empty() {
-            for clause in clauses {
-                join_keys.insert(clause.source.clone(), "symbol".to_string());
+        // Normalize join key source names to match clause source names.
+        // The .on() expression may use event type names (e.g., "Transaction") while
+        // the clause sources use stream names (e.g., "Transactions").
+        let clause_sources: Vec<String> = clauses.iter().map(|c| c.source.clone()).collect();
+        let mut normalized_keys: FxHashMap<String, String> = FxHashMap::default();
+        for (src, field) in &join_keys {
+            if clause_sources.contains(src) {
+                // Already matches a clause source
+                normalized_keys.insert(src.clone(), field.clone());
+            } else {
+                // Try to find a clause source whose underlying event type matches
+                let mut found = false;
+                for clause in clauses {
+                    if let Some(stream_def) = self.streams.get(&clause.source) {
+                        let matches = match &stream_def.source {
+                            RuntimeSource::EventType(et) => et == src,
+                            RuntimeSource::Stream(s) => s == src,
+                            _ => false,
+                        };
+                        if matches {
+                            normalized_keys.insert(clause.source.clone(), field.clone());
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+                if !found {
+                    normalized_keys.insert(src.clone(), field.clone());
+                }
             }
         }
 
-        join_keys
+        // If no join keys found, use "symbol" as default (common join key)
+        if normalized_keys.is_empty() {
+            for clause in clauses {
+                normalized_keys.insert(clause.source.clone(), "symbol".to_string());
+            }
+        }
+
+        normalized_keys
     }
 
     /// Extract join keys from an expression (e.g., EMA12.symbol == EMA26.symbol)

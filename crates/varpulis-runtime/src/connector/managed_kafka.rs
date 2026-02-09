@@ -19,7 +19,7 @@ use rdkafka::producer::{FutureProducer, FutureRecord};
 use rdkafka::Message;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use tracing::{error, warn};
+use tracing::warn;
 
 /// Managed Kafka connector that owns a single producer connection.
 ///
@@ -97,6 +97,7 @@ impl ManagedConnector for ManagedKafkaConnector {
             .subscribe(&[topic])
             .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
 
+        self.running.store(true, Ordering::SeqCst);
         let running = self.running.clone();
         let name = self.connector_name.clone();
         let topic_owned = topic.to_string();
@@ -182,7 +183,7 @@ impl Sink for KafkaSharedSink {
     async fn send(&self, event: &Event) -> anyhow::Result<()> {
         let payload = serde_json::to_string(event).map_err(|e| anyhow!("serialize: {}", e))?;
 
-        let record = FutureRecord::to(&self.topic).payload(&payload);
+        let record: FutureRecord<'_, str, String> = FutureRecord::to(&self.topic).payload(&payload);
 
         self.producer
             .send(record, Duration::from_secs(5))
