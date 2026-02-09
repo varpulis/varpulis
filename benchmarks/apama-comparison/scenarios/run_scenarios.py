@@ -15,7 +15,7 @@ Fairness notes:
   - Varpulis timing includes event file parsing from disk
   - Apama timing includes engine_send process startup, file read, TCP send, and event processing
   - Neither includes program/monitor compilation
-  - Both are single-threaded event processing
+  - Varpulis supports multi-threaded processing via --workers flag
 """
 
 import subprocess
@@ -279,7 +279,7 @@ def write_apama_evt(events: List[Dict], path: Path):
 # ---------------------------------------------------------------------------
 
 def run_varpulis(scenario: str, events: List[Dict], runs: int,
-                 data_dir: Path = None) -> BenchmarkResult:
+                 data_dir: Path = None, workers: int = 1) -> BenchmarkResult:
     """Run Varpulis benchmark using simulate command.
 
     Uses --preload --immediate --quiet --workers 1 for single-threaded processing.
@@ -314,7 +314,7 @@ def run_varpulis(scenario: str, events: List[Dict], runs: int,
                     str(varpulis_bin), "simulate",
                     "--program", str(vpl_file),
                     "--events", str(evt_file),
-                    "--immediate", "--preload", "--quiet", "--workers", "1",
+                    "--immediate", "--preload", "--quiet", "--workers", str(workers),
                 ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -651,6 +651,8 @@ Examples:
     parser.add_argument("--runs", "-r", type=int, default=3, help="Number of runs per scenario (default: 3)")
     parser.add_argument("--tmpfs", action="store_true",
                         help="Write event files to /dev/shm (ramdisk) to eliminate disk I/O")
+    parser.add_argument("--workers", "-w", type=int, default=1,
+                        help="Number of worker threads for Varpulis (default: 1)")
     args = parser.parse_args()
 
     # Find scenarios
@@ -673,7 +675,7 @@ Examples:
     print()
     print("Methodology:")
     print(f"  Storage:  {io_mode}")
-    print("  Varpulis: simulate --preload --immediate --quiet --workers 1, .evt format")
+    print(f"  Varpulis: simulate --preload --immediate --quiet --workers {args.workers}, .evt format")
     print("            Timing: engine internal clock (processing only)")
     print("  Apama:    engine_send from file to running correlator, native format")
     print("            Timing: engine_send start to completion")
@@ -716,7 +718,7 @@ Examples:
 
         if args.engine in ["varpulis", "both"]:
             print(f"    Running Varpulis ({args.runs} runs)...", end="", flush=True)
-            result = run_varpulis(scenario, events, args.runs, data_dir)
+            result = run_varpulis(scenario, events, args.runs, data_dir, args.workers)
             results.append(result)
             if result.error:
                 print(f" ERROR: {result.error}")
