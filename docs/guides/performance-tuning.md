@@ -226,13 +226,15 @@ Benefits:
 .partition_by(region)  // Limited number of regions
 ```
 
-### ZDD Optimization
+### ZDD Optimization (Pattern Matching)
 
-Zero-suppressed Decision Diagrams (ZDD) compress pattern representations:
+Zero-suppressed Decision Diagrams (ZDD) compress Kleene capture combinations during SASE+ pattern matching:
 
-- Reduces memory for complex patterns
-- Faster subset/superset operations
-- Automatic sharing of common subpatterns
+- Exponential compression: 100 matching events → ~100 ZDD nodes instead of 2^100 subsets
+- Efficient subset enumeration for match reporting
+- Automatic sharing of common substructures
+
+> For multi-query **trend aggregation** optimization, see the Hamlet engine in [trend aggregation](../architecture/trend-aggregation.md).
 
 ### Monitoring Memory
 

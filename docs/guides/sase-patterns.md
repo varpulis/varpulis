@@ -394,23 +394,25 @@ Typical throughput on modern hardware:
 
 ## ZDD Optimization
 
-Varpulis uses Zero-suppressed Decision Diagrams (ZDD) for pattern compilation.
+Varpulis uses Zero-suppressed Decision Diagrams (ZDD) to represent Kleene capture combinations during SASE+ pattern matching. When a Kleene pattern like `A -> B+ -> C` matches many B events, ZDD compactly encodes all possible subsets — e.g., 100 matching B events produce ~100 ZDD nodes instead of 2^100 explicit combinations.
 
 ### Benefits
 
-- Compact representation of pattern sets
-- Efficient subset/superset operations
-- Reduced memory for complex patterns
+- Exponential compression of Kleene match combinations
+- Efficient subset/superset operations for match enumeration
+- Reduced memory for patterns with many Kleene captures
 
 ### When ZDD Helps
 
-- Patterns with many alternatives
-- Patterns with shared prefixes
-- Large pattern libraries
+- Kleene+ patterns with many matching events
+- Patterns with overlapping match candidates
+- High-throughput streams where match combination count would explode
 
 ### Implementation
 
-See `varpulis-zdd` crate for ZDD data structures.
+See `varpulis-zdd` crate for ZDD data structures and `sase.rs` for integration with the pattern matcher.
+
+> **Note**: ZDD is used for **pattern matching** (Kleene captures). For **trend aggregation** over patterns, Varpulis uses the Hamlet engine — see [trend aggregation](../architecture/trend-aggregation.md).
 
 ---
 
