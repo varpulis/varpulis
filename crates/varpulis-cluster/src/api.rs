@@ -1,5 +1,6 @@
 //! Coordinator REST API routes (warp-based).
 
+use crate::connector_config::{self, ClusterConnector};
 use crate::coordinator::{Coordinator, InjectEventRequest};
 use crate::pipeline_group::{PipelineGroupInfo, PipelineGroupSpec};
 use crate::routing::{GroupTopology, PipelineTopologyEntry, RouteTopologyEntry, TopologyInfo};
@@ -137,13 +138,71 @@ pub fn cluster_routes(
         .and(warp::path("validate"))
         .and(warp::path::end())
         .and(warp::post())
-        .and(with_optional_auth(admin_key))
+        .and(with_optional_auth(admin_key.clone()))
         .and(warp::body::json())
+        .and(with_coordinator(coordinator.clone()))
         .and_then(handle_validate);
+
+    // --- Connector CRUD endpoints ---
+
+    let list_connectors = api
+        .and(warp::path("connectors"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(with_optional_auth(admin_key.clone()))
+        .and(with_coordinator(coordinator.clone()))
+        .and_then(handle_list_connectors);
+
+    let get_connector = api
+        .and(warp::path("connectors"))
+        .and(warp::path::param::<String>())
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(with_optional_auth(admin_key.clone()))
+        .and(with_coordinator(coordinator.clone()))
+        .and_then(handle_get_connector);
+
+    let create_connector = api
+        .and(warp::path("connectors"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(with_optional_auth(admin_key.clone()))
+        .and(warp::body::json())
+        .and(with_coordinator(coordinator.clone()))
+        .and_then(handle_create_connector);
+
+    let update_connector = api
+        .and(warp::path("connectors"))
+        .and(warp::path::param::<String>())
+        .and(warp::path::end())
+        .and(warp::put())
+        .and(with_optional_auth(admin_key.clone()))
+        .and(warp::body::json())
+        .and(with_coordinator(coordinator.clone()))
+        .and_then(handle_update_connector);
+
+    let delete_connector = api
+        .and(warp::path("connectors"))
+        .and(warp::path::param::<String>())
+        .and(warp::path::end())
+        .and(warp::delete())
+        .and(with_optional_auth(admin_key.clone()))
+        .and(with_coordinator(coordinator.clone()))
+        .and_then(handle_delete_connector);
+
+    // --- Metrics endpoint ---
+
+    let metrics = api
+        .and(warp::path("metrics"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(with_optional_auth(admin_key))
+        .and(with_coordinator(coordinator.clone()))
+        .and_then(handle_metrics);
 
     let cors = warp::cors()
         .allow_any_origin()
-        .allow_methods(vec!["GET", "POST", "DELETE", "OPTIONS"])
+        .allow_methods(vec!["GET", "POST", "PUT", "DELETE", "OPTIONS"])
         .allow_headers(vec!["content-type", "x-api-key", "authorization"]);
 
     register_worker
@@ -158,6 +217,12 @@ pub fn cluster_routes(
         .or(inject_event)
         .or(topology)
         .or(validate)
+        .or(list_connectors)
+        .or(get_connector)
+        .or(create_connector)
+        .or(update_connector)
+        .or(delete_connector)
+        .or(metrics)
         .with(cors)
 }
 
@@ -391,26 +456,40 @@ struct ValidateResponse {
     diagnostics: Vec<ValidateDiagnostic>,
 }
 
-async fn handle_validate(_auth: (), body: ValidateRequest) -> Result<impl Reply, Infallible> {
-    match varpulis_parser::parse(&body.source) {
+async fn handle_validate(
+    _auth: (),
+    body: ValidateRequest,
+    coordinator: SharedCoordinator,
+) -> Result<impl Reply, Infallible> {
+    // Inject cluster connectors so .from(mqtt-market) doesn't produce "undefined connector"
+    let coord = coordinator.read().await;
+    let (effective_source, preamble_lines) =
+        connector_config::inject_connectors(&body.source, &coord.connectors);
+    drop(coord);
+
+    match varpulis_parser::parse(&effective_source) {
         Ok(program) => {
             // Run semantic validation after successful parse
-            let validation = varpulis_core::validate::validate(&body.source, &program);
+            let validation = varpulis_core::validate::validate(&effective_source, &program);
             let diagnostics: Vec<ValidateDiagnostic> = validation
                 .diagnostics
                 .iter()
-                .map(|d| {
-                    let (line, column) = position_to_line_col(&body.source, d.span.start);
-                    ValidateDiagnostic {
+                .filter_map(|d| {
+                    let (line, column) = position_to_line_col(&effective_source, d.span.start);
+                    // Skip diagnostics in the injected preamble
+                    if line <= preamble_lines {
+                        return None;
+                    }
+                    Some(ValidateDiagnostic {
                         severity: match d.severity {
                             varpulis_core::validate::Severity::Error => "error",
                             varpulis_core::validate::Severity::Warning => "warning",
                         },
-                        line,
+                        line: line - preamble_lines,
                         column,
                         message: d.message.clone(),
                         hint: d.hint.clone(),
-                    }
+                    })
                 })
                 .collect();
             let valid = !validation.has_errors();
@@ -427,7 +506,7 @@ async fn handle_validate(_auth: (), body: ValidateRequest) -> Result<impl Reply,
                     ..
                 } => ValidateDiagnostic {
                     severity: "error",
-                    line,
+                    line: line.saturating_sub(preamble_lines),
                     column,
                     message,
                     hint,
@@ -437,11 +516,10 @@ async fn handle_validate(_auth: (), body: ValidateRequest) -> Result<impl Reply,
                     expected,
                     found,
                 } => {
-                    // Calculate line/column from position
-                    let (line, column) = position_to_line_col(&body.source, position);
+                    let (line, column) = position_to_line_col(&effective_source, position);
                     ValidateDiagnostic {
                         severity: "error",
-                        line,
+                        line: line.saturating_sub(preamble_lines),
                         column,
                         message: format!("Expected {}, found {}", expected, found),
                         hint: None,
@@ -457,10 +535,10 @@ async fn handle_validate(_auth: (), body: ValidateRequest) -> Result<impl Reply,
                     ),
                 },
                 ParseError::InvalidToken { position, message } => {
-                    let (line, column) = position_to_line_col(&body.source, position);
+                    let (line, column) = position_to_line_col(&effective_source, position);
                     ValidateDiagnostic {
                         severity: "error",
-                        line,
+                        line: line.saturating_sub(preamble_lines),
                         column,
                         message,
                         hint: None,
@@ -488,10 +566,10 @@ async fn handle_validate(_auth: (), body: ValidateRequest) -> Result<impl Reply,
                     hint: None,
                 },
                 ParseError::UnterminatedString(position) => {
-                    let (line, column) = position_to_line_col(&body.source, position);
+                    let (line, column) = position_to_line_col(&effective_source, position);
                     ValidateDiagnostic {
                         severity: "error",
-                        line,
+                        line: line.saturating_sub(preamble_lines),
                         column,
                         message: "Unterminated string".to_string(),
                         hint: Some("Add a closing quote".to_string()),
@@ -505,10 +583,10 @@ async fn handle_validate(_auth: (), body: ValidateRequest) -> Result<impl Reply,
                     hint: None,
                 },
                 ParseError::Custom { span, message } => {
-                    let (line, column) = position_to_line_col(&body.source, span.start);
+                    let (line, column) = position_to_line_col(&effective_source, span.start);
                     ValidateDiagnostic {
                         severity: "error",
-                        line,
+                        line: line.saturating_sub(preamble_lines),
                         column,
                         message,
                         hint: None,
@@ -584,6 +662,97 @@ async fn handle_topology(
 }
 
 // =============================================================================
+// Connector handlers
+// =============================================================================
+
+async fn handle_list_connectors(
+    _auth: (),
+    coordinator: SharedCoordinator,
+) -> Result<impl Reply, Infallible> {
+    let coord = coordinator.read().await;
+    let connectors: Vec<&ClusterConnector> = coord.list_connectors();
+    let resp = serde_json::json!({
+        "connectors": connectors,
+        "total": connectors.len(),
+    });
+    Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+}
+
+async fn handle_get_connector(
+    name: String,
+    _auth: (),
+    coordinator: SharedCoordinator,
+) -> Result<impl Reply, Infallible> {
+    let coord = coordinator.read().await;
+    match coord.get_connector(&name) {
+        Ok(connector) => Ok(
+            warp::reply::with_status(warp::reply::json(connector), StatusCode::OK).into_response(),
+        ),
+        Err(e) => Ok(cluster_error_response(e)),
+    }
+}
+
+async fn handle_create_connector(
+    _auth: (),
+    body: ClusterConnector,
+    coordinator: SharedCoordinator,
+) -> Result<impl Reply, Infallible> {
+    let mut coord = coordinator.write().await;
+    match coord.create_connector(body) {
+        Ok(connector) => Ok(warp::reply::with_status(
+            warp::reply::json(connector),
+            StatusCode::CREATED,
+        )
+        .into_response()),
+        Err(e) => Ok(cluster_error_response(e)),
+    }
+}
+
+async fn handle_update_connector(
+    name: String,
+    _auth: (),
+    body: ClusterConnector,
+    coordinator: SharedCoordinator,
+) -> Result<impl Reply, Infallible> {
+    let mut coord = coordinator.write().await;
+    match coord.update_connector(&name, body) {
+        Ok(connector) => Ok(
+            warp::reply::with_status(warp::reply::json(connector), StatusCode::OK).into_response(),
+        ),
+        Err(e) => Ok(cluster_error_response(e)),
+    }
+}
+
+async fn handle_delete_connector(
+    name: String,
+    _auth: (),
+    coordinator: SharedCoordinator,
+) -> Result<impl Reply, Infallible> {
+    let mut coord = coordinator.write().await;
+    match coord.delete_connector(&name) {
+        Ok(()) => Ok(warp::reply::with_status(
+            warp::reply::json(&serde_json::json!({"deleted": true})),
+            StatusCode::OK,
+        )
+        .into_response()),
+        Err(e) => Ok(cluster_error_response(e)),
+    }
+}
+
+// =============================================================================
+// Metrics handler
+// =============================================================================
+
+async fn handle_metrics(
+    _auth: (),
+    coordinator: SharedCoordinator,
+) -> Result<impl Reply, Infallible> {
+    let coord = coordinator.read().await;
+    let metrics = coord.get_cluster_metrics();
+    Ok(warp::reply::with_status(warp::reply::json(&metrics), StatusCode::OK).into_response())
+}
+
+// =============================================================================
 // Error handling
 // =============================================================================
 
@@ -610,6 +779,8 @@ fn cluster_error_response(err: ClusterError) -> warp::reply::Response {
         }
         ClusterError::DeployFailed(_) => (StatusCode::INTERNAL_SERVER_ERROR, "deploy_failed"),
         ClusterError::RoutingFailed(_) => (StatusCode::BAD_GATEWAY, "routing_failed"),
+        ClusterError::ConnectorNotFound(_) => (StatusCode::NOT_FOUND, "connector_not_found"),
+        ClusterError::ConnectorValidation(_) => (StatusCode::BAD_REQUEST, "connector_validation"),
     };
     let body = ApiError {
         error: err.to_string(),
@@ -720,6 +891,7 @@ mod tests {
             .json(&HeartbeatRequest {
                 events_processed: 42,
                 pipelines_running: 1,
+                pipeline_metrics: vec![],
             })
             .reply(&routes)
             .await;
@@ -868,6 +1040,7 @@ mod tests {
             .json(&HeartbeatRequest {
                 events_processed: 0,
                 pipelines_running: 0,
+                pipeline_metrics: vec![],
             })
             .reply(&routes)
             .await;
@@ -1267,6 +1440,7 @@ mod tests {
             .json(&HeartbeatRequest {
                 events_processed: 500,
                 pipelines_running: 3,
+                pipeline_metrics: vec![],
             })
             .reply(&routes)
             .await;

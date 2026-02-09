@@ -6,6 +6,7 @@ import { usePipelinesStore } from '@/stores/pipelines'
 import { useMetricsStore } from '@/stores/metrics'
 import ThroughputChart from '@/components/metrics/ThroughputChart.vue'
 import { formatDistanceToNow } from 'date-fns'
+import { fetchClusterMetrics, type PipelineWorkerMetrics } from '@/api/cluster'
 
 const router = useRouter()
 const clusterStore = useClusterStore()
@@ -13,6 +14,7 @@ const pipelinesStore = usePipelinesStore()
 const metricsStore = useMetricsStore()
 
 const loading = ref(true)
+const pipelineActivity = ref<PipelineWorkerMetrics[]>([])
 let pollInterval: ReturnType<typeof setInterval> | null = null
 
 // Computed summary
@@ -61,6 +63,9 @@ async function fetchData(): Promise<void> {
   await Promise.all([
     clusterStore.fetchWorkers(),
     pipelinesStore.fetchGroups(),
+    fetchClusterMetrics()
+      .then((m) => { pipelineActivity.value = m.pipelines })
+      .catch(() => { /* metrics endpoint may not exist yet */ }),
   ])
   loading.value = false
 }
@@ -241,6 +246,40 @@ onUnmounted(() => {
               <v-icon size="48" class="mb-2">mdi-check-circle-outline</v-icon>
               <div>No recent alerts</div>
             </div>
+          </v-card-text>
+        </v-card>
+      </v-col>
+    </v-row>
+
+    <!-- Pipeline Activity -->
+    <v-row v-if="pipelineActivity.length > 0" class="mt-2">
+      <v-col cols="12">
+        <v-card>
+          <v-card-title class="d-flex align-center">
+            <v-icon class="mr-2">mdi-pipe</v-icon>
+            Pipeline Activity
+          </v-card-title>
+          <v-card-text class="pa-0">
+            <v-table density="compact">
+              <thead>
+                <tr>
+                  <th>Pipeline</th>
+                  <th>Worker</th>
+                  <th class="text-right">Events In</th>
+                  <th class="text-right">Events Out</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in pipelineActivity" :key="row.pipeline_name + row.worker_id">
+                  <td><code>{{ row.pipeline_name }}</code></td>
+                  <td>
+                    <v-chip size="x-small" variant="tonal">{{ row.worker_id }}</v-chip>
+                  </td>
+                  <td class="text-right">{{ row.events_in.toLocaleString() }}</td>
+                  <td class="text-right">{{ row.events_out.toLocaleString() }}</td>
+                </tr>
+              </tbody>
+            </v-table>
           </v-card-text>
         </v-card>
       </v-col>

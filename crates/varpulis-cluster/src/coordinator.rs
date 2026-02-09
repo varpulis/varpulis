@@ -1,5 +1,6 @@
 //! Coordinator state machine: worker registry, pipeline group management, event routing.
 
+use crate::connector_config::{self, ClusterConnector};
 use crate::health::{self, HealthSweepResult, HEARTBEAT_TIMEOUT};
 use crate::pipeline_group::{
     DeployedPipelineGroup, GroupStatus, PipelineDeployment, PipelineDeploymentStatus,
@@ -13,10 +14,30 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tracing::{error, info, warn};
 
+use crate::worker::PipelineMetrics;
+
+/// Aggregated cluster metrics.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ClusterMetrics {
+    pub pipelines: Vec<PipelineWorkerMetrics>,
+}
+
+/// Metrics for a single pipeline on a single worker.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineWorkerMetrics {
+    pub pipeline_name: String,
+    pub worker_id: String,
+    pub events_in: u64,
+    pub events_out: u64,
+}
+
 /// Central coordinator managing the cluster.
 pub struct Coordinator {
     pub workers: HashMap<WorkerId, WorkerNode>,
     pub pipeline_groups: HashMap<String, DeployedPipelineGroup>,
+    pub connectors: HashMap<String, ClusterConnector>,
+    /// Per-worker pipeline metrics from heartbeats.
+    pub worker_metrics: HashMap<WorkerId, Vec<PipelineMetrics>>,
     placement: Box<dyn PlacementStrategy>,
     http_client: reqwest::Client,
 }
@@ -26,6 +47,8 @@ impl Coordinator {
         Self {
             workers: HashMap::new(),
             pipeline_groups: HashMap::new(),
+            connectors: HashMap::new(),
+            worker_metrics: HashMap::new(),
             placement: Box::new(RoundRobinPlacement::new()),
             http_client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(10))
@@ -63,6 +86,11 @@ impl Coordinator {
             worker.status = WorkerStatus::Ready;
         }
 
+        // Store per-pipeline metrics if provided
+        if !hb.pipeline_metrics.is_empty() {
+            self.update_worker_metrics(worker_id, hb.pipeline_metrics.clone());
+        }
+
         Ok(())
     }
 
@@ -96,7 +124,18 @@ impl Coordinator {
             available_workers.len()
         );
 
-        for pipeline in &spec.pipelines {
+        // Inject cluster connectors into pipeline sources
+        let enriched_pipelines: Vec<_> = spec
+            .pipelines
+            .iter()
+            .map(|p| {
+                let (enriched_source, _) =
+                    connector_config::inject_connectors(&p.source, &self.connectors);
+                (p, enriched_source)
+            })
+            .collect();
+
+        for (pipeline, effective_source) in &enriched_pipelines {
             // Select worker: use affinity if specified, otherwise placement strategy
             let selected_worker_id = if let Some(ref affinity) = pipeline.worker_affinity {
                 let wid = WorkerId(affinity.clone());
@@ -135,7 +174,7 @@ impl Coordinator {
             let deploy_url = format!("{}/api/v1/pipelines", worker_address);
             let deploy_body = serde_json::json!({
                 "name": pipeline.name,
-                "source": pipeline.source,
+                "source": effective_source,
             });
 
             info!(
@@ -341,6 +380,89 @@ impl Coordinator {
     pub fn health_sweep(&mut self) -> HealthSweepResult {
         health::health_sweep(&mut self.workers, HEARTBEAT_TIMEOUT)
     }
+
+    // =========================================================================
+    // Connector CRUD
+    // =========================================================================
+
+    /// List all cluster connectors.
+    pub fn list_connectors(&self) -> Vec<&ClusterConnector> {
+        self.connectors.values().collect()
+    }
+
+    /// Get a connector by name.
+    pub fn get_connector(&self, name: &str) -> Result<&ClusterConnector, ClusterError> {
+        self.connectors
+            .get(name)
+            .ok_or_else(|| ClusterError::ConnectorNotFound(name.to_string()))
+    }
+
+    /// Create a new connector. Errors if name already exists.
+    pub fn create_connector(
+        &mut self,
+        connector: ClusterConnector,
+    ) -> Result<&ClusterConnector, ClusterError> {
+        if self.connectors.contains_key(&connector.name) {
+            return Err(ClusterError::ConnectorValidation(format!(
+                "Connector '{}' already exists",
+                connector.name
+            )));
+        }
+        connector_config::validate_connector(&connector)?;
+        let name = connector.name.clone();
+        self.connectors.insert(name.clone(), connector);
+        info!("Connector created: {}", name);
+        Ok(&self.connectors[&name])
+    }
+
+    /// Update an existing connector.
+    pub fn update_connector(
+        &mut self,
+        name: &str,
+        connector: ClusterConnector,
+    ) -> Result<&ClusterConnector, ClusterError> {
+        if !self.connectors.contains_key(name) {
+            return Err(ClusterError::ConnectorNotFound(name.to_string()));
+        }
+        connector_config::validate_connector(&connector)?;
+        self.connectors.insert(name.to_string(), connector);
+        info!("Connector updated: {}", name);
+        Ok(&self.connectors[name])
+    }
+
+    /// Delete a connector.
+    pub fn delete_connector(&mut self, name: &str) -> Result<(), ClusterError> {
+        self.connectors
+            .remove(name)
+            .ok_or_else(|| ClusterError::ConnectorNotFound(name.to_string()))?;
+        info!("Connector deleted: {}", name);
+        Ok(())
+    }
+
+    // =========================================================================
+    // Metrics
+    // =========================================================================
+
+    /// Store per-pipeline metrics from a worker heartbeat.
+    pub fn update_worker_metrics(&mut self, worker_id: &WorkerId, metrics: Vec<PipelineMetrics>) {
+        self.worker_metrics.insert(worker_id.clone(), metrics);
+    }
+
+    /// Aggregate metrics across all workers.
+    pub fn get_cluster_metrics(&self) -> ClusterMetrics {
+        let mut pipelines = Vec::new();
+        for (worker_id, metrics) in &self.worker_metrics {
+            for m in metrics {
+                pipelines.push(PipelineWorkerMetrics {
+                    pipeline_name: m.pipeline_name.clone(),
+                    worker_id: worker_id.0.clone(),
+                    events_in: m.events_in,
+                    events_out: m.events_out,
+                });
+            }
+        }
+        ClusterMetrics { pipelines }
+    }
 }
 
 impl Default for Coordinator {
@@ -428,6 +550,7 @@ mod tests {
         let hb = HeartbeatRequest {
             events_processed: 100,
             pipelines_running: 2,
+            pipeline_metrics: vec![],
         };
         assert!(coord.heartbeat(&WorkerId("w1".into()), &hb).is_ok());
         assert_eq!(
@@ -460,6 +583,7 @@ mod tests {
         let hb = HeartbeatRequest {
             events_processed: 0,
             pipelines_running: 0,
+            pipeline_metrics: vec![],
         };
         let result = coord.heartbeat(&WorkerId("nonexistent".into()), &hb);
         assert!(result.is_err());
@@ -495,6 +619,7 @@ mod tests {
         let hb = HeartbeatRequest {
             events_processed: 50,
             pipelines_running: 1,
+            pipeline_metrics: vec![],
         };
         assert!(coord.heartbeat(&WorkerId("w1".into()), &hb).is_ok());
         assert_eq!(
@@ -590,6 +715,7 @@ mod tests {
         let hb = HeartbeatRequest {
             events_processed: 1000,
             pipelines_running: 5,
+            pipeline_metrics: vec![],
         };
         coord.heartbeat(&WorkerId("w1".into()), &hb).unwrap();
         assert_eq!(

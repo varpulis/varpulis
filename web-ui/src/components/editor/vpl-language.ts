@@ -1,6 +1,6 @@
 // VPL (Varpulis Pipeline Language) Monaco Language Definition
 
-export function registerVplLanguage(): void {
+export function registerVplLanguage(getConnectorNames?: () => string[]): void {
   // Check if monaco is available
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const monaco = (window as any).monaco
@@ -125,7 +125,29 @@ export function registerVplLanguage(): void {
 
   // Define completion items
   monaco.languages.registerCompletionItemProvider('vpl', {
-    provideCompletionItems: (_model: unknown, _position: unknown) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    provideCompletionItems: (model: any, position: any) => {
+      // Context-aware: detect .from( or .to( and suggest cluster connectors
+      const textUntilPosition = model.getValueInRange({
+        startLineNumber: position.lineNumber,
+        startColumn: 1,
+        endLineNumber: position.lineNumber,
+        endColumn: position.column,
+      })
+
+      if (/\.(from|to)\(\s*$/.test(textUntilPosition) && getConnectorNames) {
+        const names = getConnectorNames()
+        const connectorSuggestions = names.map((name: string) => ({
+          label: name,
+          kind: monaco.languages.CompletionItemKind.Reference,
+          insertText: name,
+          detail: 'Cluster connector',
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          range: undefined as any,
+        }))
+        return { suggestions: connectorSuggestions }
+      }
+
       const suggestions = [
         // Keywords
         { label: 'stream', kind: monaco.languages.CompletionItemKind.Keyword, insertText: 'stream ${1:name} {\n\t$0\n}', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet },
@@ -142,7 +164,7 @@ export function registerVplLanguage(): void {
         { label: 'NOT', kind: monaco.languages.CompletionItemKind.Function, insertText: 'NOT(${1:EventType})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, documentation: 'Negation - event must not occur' },
 
         // Stream clauses
-        { label: 'from', kind: monaco.languages.CompletionItemKind.Keyword, insertText: 'from ${1:source}', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet },
+        { label: 'from', kind: monaco.languages.CompletionItemKind.Keyword, insertText: 'from(${1:Connector})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, documentation: 'Bind to a connector source: EventType.from(Connector, key: value)' },
         { label: 'where', kind: monaco.languages.CompletionItemKind.Keyword, insertText: 'where ${1:condition}', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet },
         { label: 'select', kind: monaco.languages.CompletionItemKind.Keyword, insertText: 'select {\n\t${1:field}: ${2:value}$0\n}', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet },
         { label: 'emit', kind: monaco.languages.CompletionItemKind.Keyword, insertText: 'emit to "${1:sink}"', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet },

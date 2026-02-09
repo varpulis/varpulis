@@ -1,0 +1,37 @@
+# Financial Markets CEP Pipeline
+# Connectors 'mqtt-market' and 'kafka-signals' are managed via the Connectors UI.
+# The coordinator injects their declarations at deploy time.
+
+event MarketTick:
+    symbol: str
+    price: float
+    bid: float
+    ask: float
+    volume: int
+
+event OHLCV:
+    symbol: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+
+stream Ticks = MarketTick.from(mqtt-market, topic: "varpulis/events/MarketTick")
+stream Candles = OHLCV.from(mqtt-market, topic: "varpulis/events/OHLCV")
+
+# Kleene pattern: 3+ consecutive price increases (breakout detection)
+stream Breakout = Ticks
+    .pattern(SEQ(a, b+, c: a.symbol == b.symbol && b.symbol == c.symbol && b.price > a.price && c.price > b.price) within 120)
+    .to(kafka-signals, topic: "trading/breakouts")
+
+# Windowed aggregation: 60s moving average price
+stream AvgPrice = Ticks
+    .window(60, sliding: 10)
+    .aggregate(avg_price: avg(price), max_price: max(price), total_vol: sum(volume))
+    .to(kafka-signals, topic: "trading/averages")
+
+# Simple filter: large trades
+stream LargeTrades = Ticks
+    .where(volume > 5000)
+    .to(kafka-signals, topic: "trading/large-trades")

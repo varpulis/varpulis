@@ -978,6 +978,7 @@ async fn test_health_sweep_and_heartbeat_recovery() {
             &HeartbeatRequest {
                 events_processed: 0,
                 pipelines_running: 0,
+                pipeline_metrics: vec![],
             },
         )
         .unwrap();

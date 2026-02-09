@@ -16,6 +16,12 @@ const router = createRouter({
       meta: { title: 'Cluster' },
     },
     {
+      path: '/connectors',
+      name: 'connectors',
+      component: () => import('@/views/ConnectorsView.vue'),
+      meta: { title: 'Connectors' },
+    },
+    {
       path: '/pipelines',
       name: 'pipelines',
       component: () => import('@/views/PipelinesView.vue'),
