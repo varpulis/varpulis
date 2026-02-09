@@ -330,7 +330,7 @@ Phase 3 (3-4 semaines) - SaaS Ready
 ## TERMINE - SASE+ Improvements
 
 > **Statut**: 6 taches terminees - corrections de correctness et ameliorations production-ready
-> **Reference**: Voir `SASE_IMPROVMENT.md` pour analyse complete
+> **Reference**: Analysis originally in `SASE_IMPROVMENT.md` (removed — all improvements implemented)
 
 ### P1 - Correctness (Haute priorite) - TERMINE
 
@@ -408,8 +408,8 @@ Phase 3 (3-4 semaines) - SaaS Ready
 
 ## TERMINE - Runtime Optimization
 
-> **Statut**: 6 taches terminees - tous les P0, P2, P3 issues de RUNTIME_ANALYSIS.md
-> **Reference**: Voir `RUNTIME_ANALYSIS.md` pour analyse complete
+> **Statut**: 6 taches terminees - tous les P0, P2, P3 issues de RUNTIME_ANALYSIS.md (removed — all optimizations implemented)
+> **Reference**: Analysis originally in `RUNTIME_ANALYSIS.md`
 
 ### P0 - Bloquants pour production
 
@@ -463,7 +463,7 @@ Phase 3 (3-4 semaines) - SaaS Ready
 ### Consolidation
 
 - [x] **PATTERN-DEL**: Suppression de pattern.rs
-  - **Contexte**: DELTA_ANALYSIS.md identifiait deux moteurs de patterns:
+  - **Contexte**: Analysis (formerly in DELTA_ANALYSIS.md) identified deux moteurs de patterns:
     - `pattern.rs`: Moteur AST recursif style Apama (PatternEngine, PatternExpr)
     - `sase.rs`: Moteur NFA SASE+ (SaseEngine, SasePattern)
   - **Decision**: SASE+ couvre tous les cas d'usage avec de meilleures performances
