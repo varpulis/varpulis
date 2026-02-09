@@ -71,10 +71,10 @@ Event Sources → Ingestion → Embedding → Pattern Matching → Aggregation �
 - Deserialization (JSON, Avro, Protobuf)
 - Schema validation
 
-### Pattern Matcher
-- Hypertree structures for efficient matching
-- Temporal pattern support
-- Sequence detection
+### Pattern Matcher (SASE+ with ZDD)
+- NFA-based SASE+ engine for sequence and Kleene pattern detection
+- **ZDD** (`varpulis-zdd` crate): compactly represents Kleene capture combinations — e.g., 100 matching events produce ~100 ZDD nodes instead of 2^100 explicit subsets
+- Temporal constraints, negation, partition-by support
 
 ### Attention Engine
 - See [attention-engine.md](attention-engine.md)
@@ -86,10 +86,12 @@ Event Sources → Ingestion → Embedding → Pattern Matching → Aggregation �
 ### State Manager
 - See [state-management.md](state-management.md)
 
-### Aggregation Engine
+### Aggregation Engine (Hamlet)
 - Aggregation functions (sum, avg, count, min, max, stddev, etc.)
 - Temporal windows (tumbling, sliding, session)
 - Key-based grouping
+- **Hamlet** (`hamlet/` module): multi-query trend aggregation with graphlet-based sharing — O(1) per-event propagation, 3-100x faster than ZDD-based aggregation
+- See [trend-aggregation.md](trend-aggregation.md)
 
 ### Parallelism Manager
 - See [parallelism.md](parallelism.md)
