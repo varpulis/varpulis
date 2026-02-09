@@ -3,7 +3,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use rayon::prelude::*;
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -1001,72 +1000,98 @@ async fn run_simulation(
         let total_events = events.len();
         info!("Preloaded {} events from file", total_events);
 
-        // Partition events by key
-        let partition_key = partition_by.unwrap_or("symbol");
-        let mut partitions: HashMap<u64, Vec<Event>> = HashMap::new();
+        // Probe pipeline to decide distribution strategy
+        let mut probe_engine = Engine::new_benchmark();
+        probe_engine
+            .load(&program)
+            .map_err(|e| anyhow::anyhow!("Probe engine load error: {}", e))?;
+        let stateless = probe_engine.is_stateless();
+        let auto_partition_key = probe_engine.partition_key();
+        drop(probe_engine);
 
-        for timed_event in events {
-            let event = timed_event.event;
-            // PERF: Hash Value directly instead of format!("{}", val) to avoid string allocation
-            let key_hash = if let Some(val) = event.get(partition_key) {
-                use std::hash::{Hash, Hasher};
-                let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                val.hash(&mut hasher); // Direct hash, no string allocation
-                hasher.finish() % num_workers as u64
-            } else {
-                // If no partition key, use event type hash
-                use std::hash::{Hash, Hasher};
-                let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                event.event_type.hash(&mut hasher);
-                hasher.finish() % num_workers as u64
-            };
-            partitions.entry(key_hash).or_default().push(event);
-        }
+        // Extract owned events
+        let mut all_events: Vec<Event> = events.into_iter().map(|te| te.event).collect();
+
+        let partitions: Vec<Vec<Event>> = if stateless {
+            // Round-robin: split owned Vec into N chunks (zero-copy via drain)
+            let chunk_size = all_events.len().div_ceil(num_workers);
+            let mut chunks = Vec::with_capacity(num_workers);
+            while !all_events.is_empty() {
+                let end = chunk_size.min(all_events.len());
+                chunks.push(all_events.drain(..end).collect());
+            }
+            chunks
+        } else {
+            // Hash-partition by key for stateful pipelines
+            let partition_key = partition_by
+                .map(|s| s.to_string())
+                .or(auto_partition_key)
+                .unwrap_or_else(|| "symbol".to_string());
+            if verbose {
+                println!("  Partition key: {}", partition_key);
+            }
+            let mut buckets: Vec<Vec<Event>> = (0..num_workers).map(|_| Vec::new()).collect();
+            for event in all_events {
+                let key_hash = if let Some(val) = event.get(&partition_key) {
+                    use std::hash::{Hash, Hasher};
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    val.hash(&mut hasher);
+                    hasher.finish() % num_workers as u64
+                } else {
+                    use std::hash::{Hash, Hasher};
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    event.event_type.hash(&mut hasher);
+                    hasher.finish() % num_workers as u64
+                };
+                buckets[key_hash as usize].push(event);
+            }
+            buckets
+        };
 
         if verbose {
+            let mode = if stateless {
+                "round-robin"
+            } else {
+                "hash-partition"
+            };
             println!(
-                "  Partitioned {} events into {} partitions:",
+                "  Distributed {} events into {} partitions ({})",
                 total_events,
-                partitions.len()
+                partitions.len(),
+                mode,
             );
-            for (k, v) in &partitions {
-                println!("    Partition {}: {} events", k, v.len());
+            for (i, p) in partitions.iter().enumerate() {
+                println!("    Worker {}: {} events", i, p.len());
             }
         }
 
         // Process partitions in parallel using spawn_blocking + rayon
-        // PERF: Use sync processing to avoid per-partition Tokio runtime overhead
         let program_arc = program.clone();
         let output_tx_arc = if quiet { None } else { Some(output_tx.clone()) };
         let total_counter = total_events_processed.clone();
         let output_counter = output_emitted_count.clone();
 
-        let partition_vec: Vec<_> = partitions.into_iter().collect();
-
-        // Use spawn_blocking to move rayon work off the tokio runtime
         tokio::task::spawn_blocking(move || {
-            // Use rayon's parallel iterator for true CPU parallelism
-            partition_vec
+            partitions
                 .into_par_iter()
-                .for_each(|(partition_id, events)| {
-                    // PERF: Use new_shared() for zero-copy SharedEvent channel
+                .enumerate()
+                .for_each(|(worker_id, partition_events)| {
+                    if partition_events.is_empty() {
+                        return;
+                    }
                     let mut worker_engine = match &output_tx_arc {
                         Some(tx) => Engine::new_shared(tx.clone()),
                         None => Engine::new_benchmark(),
                     };
                     if let Err(e) = worker_engine.load(&program_arc) {
-                        eprintln!("Worker {}: Failed to load program: {}", partition_id, e);
+                        eprintln!("Worker {}: Failed to load program: {}", worker_id, e);
                         return;
                     }
 
-                    // PERF: Use synchronous batch processing - no per-partition runtime needed
-                    const BATCH_SIZE: usize = 5000;
-                    for chunk in events.chunks(BATCH_SIZE) {
-                        let batch: Vec<_> = chunk.to_vec();
-                        if let Err(e) = worker_engine.process_batch_sync(batch) {
-                            eprintln!("Worker {}: Process error: {}", partition_id, e);
-                            return;
-                        }
+                    // PERF: Pass entire partition as single batch — no extra copy
+                    if let Err(e) = worker_engine.process_batch_sync(partition_events) {
+                        eprintln!("Worker {}: Process error: {}", worker_id, e);
+                        return;
                     }
 
                     let worker_metrics = worker_engine.metrics();
@@ -1137,35 +1162,44 @@ async fn run_simulation(
         }
     } else if immediate && num_workers > 1 {
         // Parallel streaming mode
-        // PERF: Pre-create persistent worker engines to avoid re-loading program per batch
-        const BATCH_SIZE: usize = 50000; // Larger batches for parallel mode
+        const BATCH_SIZE: usize = 50000;
 
         let mut event_reader = StreamingEventReader::from_file(events_path)
             .map_err(|e| anyhow::anyhow!("Failed to open event file: {}", e))?;
 
-        let partition_key = partition_by.unwrap_or("symbol");
+        // Probe pipeline to decide distribution strategy
+        let mut probe_engine = Engine::new_benchmark();
+        probe_engine
+            .load(&program)
+            .map_err(|e| anyhow::anyhow!("Probe engine load error: {}", e))?;
+        let stateless = probe_engine.is_stateless();
+        let auto_partition_key = probe_engine.partition_key();
+        drop(probe_engine);
+
+        let partition_key = partition_by
+            .map(|s| s.to_string())
+            .or(auto_partition_key)
+            .unwrap_or_else(|| "symbol".to_string());
         let mut batch_count = 0;
 
-        // PERF: Pre-create engines for each partition (load program once, reuse across batches)
+        // Pre-create engines for each worker (load program once, reuse across batches)
         use std::sync::Mutex;
         let worker_engines: Vec<Mutex<Engine>> = (0..num_workers)
             .map(|_| {
-                // PERF: Use new_shared() for zero-copy SharedEvent channel
-                let mut engine = if quiet {
+                let mut w_engine = if quiet {
                     Engine::new_benchmark()
                 } else {
                     Engine::new_shared(output_tx.clone())
                 };
-                if let Err(e) = engine.load(&program) {
+                if let Err(e) = w_engine.load(&program) {
                     eprintln!("Failed to load program: {}", e);
                 }
-                Mutex::new(engine)
+                Mutex::new(w_engine)
             })
             .collect();
         let worker_engines = Arc::new(worker_engines);
 
         loop {
-            // Read a large batch
             let mut events: Vec<Event> = Vec::with_capacity(BATCH_SIZE);
             for _ in 0..BATCH_SIZE {
                 match event_reader.next() {
@@ -1189,40 +1223,49 @@ async fn run_simulation(
                 );
             }
 
-            // Partition events
-            // PERF: Hash Value directly instead of format!("{}", val) to avoid string allocation
-            let mut partitions: HashMap<u64, Vec<Event>> = HashMap::new();
-            for event in events {
-                let key_hash = if let Some(val) = event.get(partition_key) {
-                    use std::hash::{Hash, Hasher};
-                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                    val.hash(&mut hasher); // Direct hash, no string allocation
-                    hasher.finish() % num_workers as u64
-                } else {
-                    use std::hash::{Hash, Hasher};
-                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                    event.event_type.hash(&mut hasher);
-                    hasher.finish() % num_workers as u64
-                };
-                partitions.entry(key_hash).or_default().push(event);
-            }
+            // Distribute events to workers
+            let partitions: Vec<Vec<Event>> = if stateless {
+                // Round-robin: split owned Vec into N chunks (zero-copy via drain)
+                let chunk_size = events.len().div_ceil(num_workers);
+                let mut chunks = Vec::with_capacity(num_workers);
+                while !events.is_empty() {
+                    let end = chunk_size.min(events.len());
+                    chunks.push(events.drain(..end).collect());
+                }
+                chunks
+            } else {
+                // Hash-partition by key
+                let mut buckets: Vec<Vec<Event>> = (0..num_workers).map(|_| Vec::new()).collect();
+                for event in events {
+                    let key_hash = if let Some(val) = event.get(&partition_key) {
+                        use std::hash::{Hash, Hasher};
+                        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                        val.hash(&mut hasher);
+                        hasher.finish() % num_workers as u64
+                    } else {
+                        use std::hash::{Hash, Hasher};
+                        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                        event.event_type.hash(&mut hasher);
+                        hasher.finish() % num_workers as u64
+                    };
+                    buckets[key_hash as usize].push(event);
+                }
+                buckets
+            };
 
-            // Process partitions in parallel using spawn_blocking + rayon
-            // PERF: Reuse pre-created engines instead of creating new ones per batch
             let engines = worker_engines.clone();
 
-            let partition_vec: Vec<_> = partitions.into_iter().collect();
-
             tokio::task::spawn_blocking(move || {
-                partition_vec
+                partitions
                     .into_par_iter()
-                    .for_each(|(partition_id, partition_events)| {
-                        // Get the pre-created engine for this partition
-                        let mut engine_guard = engines[partition_id as usize].lock().unwrap();
-
-                        // PERF: Use synchronous batch processing - no per-partition runtime needed
+                    .enumerate()
+                    .for_each(|(worker_id, partition_events)| {
+                        if partition_events.is_empty() {
+                            return;
+                        }
+                        let mut engine_guard = engines[worker_id].lock().unwrap();
                         if let Err(e) = engine_guard.process_batch_sync(partition_events) {
-                            eprintln!("Worker {}: Process error: {}", partition_id, e);
+                            eprintln!("Worker {}: Process error: {}", worker_id, e);
                         }
                     });
             })
@@ -1232,8 +1275,8 @@ async fn run_simulation(
 
         // Collect final metrics from all worker engines
         for (i, engine_mutex) in worker_engines.iter().enumerate() {
-            let engine = engine_mutex.lock().unwrap();
-            let worker_metrics = engine.metrics();
+            let w_engine = engine_mutex.lock().unwrap();
+            let worker_metrics = w_engine.metrics();
             total_events_processed.fetch_add(worker_metrics.events_processed, Ordering::Relaxed);
             output_emitted_count.fetch_add(worker_metrics.output_events_emitted, Ordering::Relaxed);
             if verbose {
