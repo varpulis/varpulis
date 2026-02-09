@@ -1,0 +1,107 @@
+[
+  {
+    "scenario": "01_filter",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 100000,
+    "elapsed_ms": 15056.027406011708,
+    "throughput": 6641.858260703689,
+    "output_count": 50325,
+    "error": null,
+    "all_runs_throughput": [
+      6641.858260703689,
+      6566.353267432687,
+      6749.288108999357
+    ]
+  },
+  {
+    "scenario": "02_aggregation",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 100000,
+    "elapsed_ms": 9415.366441011429,
+    "throughput": 10620.93553410946,
+    "output_count": 1000,
+    "error": null,
+    "all_runs_throughput": [
+      10307.572702304675,
+      10620.93553410946,
+      10653.943379736094
+    ]
+  },
+  {
+    "scenario": "03_temporal",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 100000,
+    "elapsed_ms": 13010.47701004427,
+    "throughput": 7686.113270312734,
+    "output_count": 36440,
+    "error": null,
+    "all_runs_throughput": [
+      7292.361623320939,
+      7686.113270312734,
+      8445.007379665969
+    ]
+  },
+  {
+    "scenario": "04_kleene",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 100000,
+    "elapsed_ms": 11431.509761023337,
+    "throughput": 8747.750917464826,
+    "output_count": 39622,
+    "error": null,
+    "all_runs_throughput": [
+      8932.524701650813,
+      8538.46279517272,
+      8747.750917464826
+    ]
+  },
+  {
+    "scenario": "05_ema_crossover",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 100000,
+    "elapsed_ms": 10859.017853043042,
+    "throughput": 9208.935960260607,
+    "output_count": 10176,
+    "error": null,
+    "all_runs_throughput": [
+      10183.862696632883,
+      9084.63844156626,
+      9208.935960260607
+    ]
+  },
+  {
+    "scenario": "06_multi_sensor",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 100000,
+    "elapsed_ms": 9334.001882001758,
+    "throughput": 10713.518302671922,
+    "output_count": 200,
+    "error": null,
+    "all_runs_throughput": [
+      10713.518302671922,
+      10604.026449659006,
+      10746.848163747667
+    ]
+  },
+  {
+    "scenario": "07_sequence",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 100000,
+    "elapsed_ms": 14241.672360978555,
+    "throughput": 7021.647280272703,
+    "output_count": 50000,
+    "error": null,
+    "all_runs_throughput": [
+      7079.066238904456,
+      6919.732009344837,
+      7021.647280272703
+    ]
+  }
+]

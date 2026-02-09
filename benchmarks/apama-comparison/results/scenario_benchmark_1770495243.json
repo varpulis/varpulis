@@ -1,0 +1,170 @@
+[
+  {
+    "scenario": "01_filter",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 582.1419797717306,
+    "throughput": 171779.4,
+    "output_count": 89000,
+    "error": null,
+    "all_runs_throughput": [
+      159339.3,
+      174971.0,
+      171779.4
+    ]
+  },
+  {
+    "scenario": "01_filter",
+    "engine": "apama",
+    "events": 100000,
+    "elapsed_ms": 0,
+    "throughput": 0,
+    "output_count": 0,
+    "error": "[Errno 32] Broken pipe",
+    "all_runs_throughput": []
+  },
+  {
+    "scenario": "02_aggregation",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 417.62598836410467,
+    "throughput": 239448.7,
+    "output_count": 1000,
+    "error": null,
+    "all_runs_throughput": [
+      239448.7,
+      252743.0,
+      235464.7
+    ]
+  },
+  {
+    "scenario": "02_aggregation",
+    "engine": "apama",
+    "events": 100000,
+    "elapsed_ms": 0,
+    "throughput": 0,
+    "output_count": 0,
+    "error": "No Apama listener for Trade (monitor not loaded)",
+    "all_runs_throughput": []
+  },
+  {
+    "scenario": "03_temporal",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 578.0590741690256,
+    "throughput": 172992.7,
+    "output_count": 0,
+    "error": null,
+    "all_runs_throughput": [
+      168684.5,
+      174949.8,
+      172992.7
+    ]
+  },
+  {
+    "scenario": "03_temporal",
+    "engine": "apama",
+    "events": 100000,
+    "elapsed_ms": 0,
+    "throughput": 0,
+    "output_count": 0,
+    "error": "[Errno 32] Broken pipe",
+    "all_runs_throughput": []
+  },
+  {
+    "scenario": "04_kleene",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 375.11023552046356,
+    "throughput": 266588.3,
+    "output_count": 0,
+    "error": null,
+    "all_runs_throughput": [
+      276666.3,
+      266588.3,
+      263480.7
+    ]
+  },
+  {
+    "scenario": "04_kleene",
+    "engine": "apama",
+    "events": 100000,
+    "elapsed_ms": 0,
+    "throughput": 0,
+    "output_count": 0,
+    "error": "[Errno 32] Broken pipe",
+    "all_runs_throughput": []
+  },
+  {
+    "scenario": "05_ema_crossover",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 569.4897030566791,
+    "throughput": 175595.8,
+    "output_count": 0,
+    "error": null,
+    "all_runs_throughput": [
+      175595.8,
+      177159.8,
+      171301.6
+    ]
+  },
+  {
+    "scenario": "05_ema_crossover",
+    "engine": "apama",
+    "events": 100000,
+    "elapsed_ms": 0,
+    "throughput": 0,
+    "output_count": 0,
+    "error": "[Errno 32] Broken pipe",
+    "all_runs_throughput": []
+  },
+  {
+    "scenario": "06_multi_sensor",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 528.3856708146702,
+    "throughput": 189255.7,
+    "output_count": 0,
+    "error": null,
+    "all_runs_throughput": [
+      198023.9,
+      189255.7,
+      188290.0
+    ]
+  },
+  {
+    "scenario": "06_multi_sensor",
+    "engine": "apama",
+    "events": 100000,
+    "elapsed_ms": 0,
+    "throughput": 0,
+    "output_count": 0,
+    "error": "No Apama listener for TemperatureReading (monitor not loaded)",
+    "all_runs_throughput": []
+  },
+  {
+    "scenario": "07_sequence",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 462.967678374502,
+    "throughput": 215997.8,
+    "output_count": 50000,
+    "error": null,
+    "all_runs_throughput": [
+      215997.8,
+      217739.4,
+      205184.1
+    ]
+  },
+  {
+    "scenario": "07_sequence",
+    "engine": "apama",
+    "events": 100000,
+    "elapsed_ms": 0,
+    "throughput": 0,
+    "output_count": 0,
+    "error": "[Errno 32] Broken pipe",
+    "all_runs_throughput": []
+  }
+]

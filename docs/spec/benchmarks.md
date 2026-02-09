@@ -16,13 +16,17 @@
 | With attention | > 100K events/sec |
 | With complex aggregations | > 500K events/sec |
 
-## Comparison vs Apama (indicative)
+## Comparison vs Apama (measured)
 
-| Metric | Apama | Varpulis (target) |
-|--------|-------|-------------------|
-| Latency | Reference | Similar in low_latency mode |
-| Throughput | Reference | 2-3x higher thanks to Rust |
-| Memory footprint | Reference | -40% |
+Benchmarked against Apama Community Edition v27.18, 100K events, 7 scenarios.
+See [`benchmarks-apama-comparison.md`](../benchmarks-apama-comparison.md) for full details.
+
+| Metric | Apama | Varpulis | Result |
+|--------|-------|----------|--------|
+| Throughput (CLI) | 195–221K/s | 234–335K/s | **V 1.2–1.3x faster** |
+| Throughput (MQTT) | ~6K/s | ~6K/s | Tie (I/O-bound) |
+| Memory (connector) | 85–153 MB | 10–57 MB | **V 2x–16x less** |
+| Kleene matches | 20K | 100K | **V 5x more complete** |
 
 ## Performance Modes
 

@@ -1,0 +1,16 @@
+[
+  {
+    "scenario": "01_filter",
+    "engine": "varpulis",
+    "connector": "kafka",
+    "events": 10000,
+    "elapsed_ms": 60095.431509020265,
+    "throughput": 166.4020001004404,
+    "output_count": 8260,
+    "peak_rss_mb": 21.5,
+    "error": null,
+    "all_runs_throughput": [
+      166.4020001004404
+    ]
+  }
+]

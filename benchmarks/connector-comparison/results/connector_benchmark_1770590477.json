@@ -1,0 +1,28 @@
+[
+  {
+    "scenario": "04_kleene",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 100000,
+    "elapsed_ms": 19062.579686986282,
+    "throughput": 5245.879709988486,
+    "output_count": 65731,
+    "error": null,
+    "all_runs_throughput": [
+      5245.879709988486
+    ]
+  },
+  {
+    "scenario": "04_kleene",
+    "engine": "apama",
+    "connector": "mqtt",
+    "events": 100000,
+    "elapsed_ms": 20481.727208010852,
+    "throughput": 4882.400736246883,
+    "output_count": 20000,
+    "error": null,
+    "all_runs_throughput": [
+      4882.400736246883
+    ]
+  }
+]

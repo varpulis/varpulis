@@ -1,0 +1,14 @@
+[
+  {
+    "scenario": "01_filter",
+    "engine": "varpulis",
+    "events": 10000,
+    "elapsed_ms": 158.24587611246852,
+    "throughput": 63192.8,
+    "output_count": 8900,
+    "error": null,
+    "all_runs_throughput": [
+      63192.8
+    ]
+  }
+]

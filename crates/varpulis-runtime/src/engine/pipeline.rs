@@ -571,13 +571,11 @@ async fn execute_op(
             // Send current events to the named connector as a side-effect.
             // Events continue flowing through the pipeline unchanged.
             if let Some(sink) = sinks.get(&config.sink_key) {
-                for event in current_events.iter() {
-                    if let Err(e) = sink.send(event).await {
-                        warn!(
-                            "Failed to send to connector '{}': {}",
-                            config.connector_name, e
-                        );
-                    }
+                if let Err(e) = sink.send_batch(current_events).await {
+                    warn!(
+                        "Failed to send batch to connector '{}': {}",
+                        config.connector_name, e
+                    );
                 }
             } else {
                 warn!("Connector '{}' not found for .to()", config.connector_name);

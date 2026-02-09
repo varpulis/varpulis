@@ -1,0 +1,15 @@
+[
+  {
+    "scenario": "03_temporal",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 1213.027786987368,
+    "throughput": 824.3834236341477,
+    "output_count": 1000,
+    "error": null,
+    "all_runs_throughput": [
+      824.3834236341477
+    ]
+  }
+]

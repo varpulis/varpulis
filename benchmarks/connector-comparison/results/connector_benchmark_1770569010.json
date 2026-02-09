@@ -1,0 +1,15 @@
+[
+  {
+    "scenario": "04_kleene",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 1162.5836140010506,
+    "throughput": 860.153186366083,
+    "output_count": 996,
+    "error": null,
+    "all_runs_throughput": [
+      860.153186366083
+    ]
+  }
+]

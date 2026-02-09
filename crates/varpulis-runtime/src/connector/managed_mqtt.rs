@@ -12,9 +12,10 @@ use tokio::sync::mpsc;
 #[cfg(feature = "mqtt")]
 mod mqtt_managed_impl {
     use super::*;
+    use crate::event::{FieldKey, FxIndexMap};
     use anyhow::anyhow;
     use rumqttc::{AsyncClient, MqttOptions, QoS};
-    use rustc_hash::FxHashSet;
+    use rustc_hash::{FxBuildHasher, FxHashSet};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
     use tracing::{error, info, warn};
@@ -27,11 +28,18 @@ mod mqtt_managed_impl {
         }
     }
 
-    /// Managed MQTT connector that owns a single rumqttc connection.
+    /// Managed MQTT connector with separate connections for source and sink.
+    ///
+    /// Uses two MQTT connections to avoid eventloop contention:
+    /// - Source connection: dedicated to receiving subscribed messages
+    /// - Sink connection: dedicated to publishing output events
     pub struct ManagedMqttConnector {
         connector_name: String,
         config: MqttConfig,
-        client: Option<AsyncClient>,
+        /// Source connection (subscriptions + event receive)
+        source_client: Option<AsyncClient>,
+        /// Sink connection (publish only, no subscriptions)
+        sink_client: Option<AsyncClient>,
         running: Arc<AtomicBool>,
         subscribed_topics: FxHashSet<String>,
     }
@@ -41,19 +49,19 @@ mod mqtt_managed_impl {
             Self {
                 connector_name: name.to_string(),
                 config,
-                client: None,
+                source_client: None,
+                sink_client: None,
                 running: Arc::new(AtomicBool::new(false)),
                 subscribed_topics: FxHashSet::default(),
             }
         }
 
-        /// Ensure the MQTT client and event loop are running.
-        /// Returns the shared `AsyncClient`.
-        fn ensure_connected(
+        /// Ensure the source MQTT client and event loop are running.
+        fn ensure_source_connected(
             &mut self,
-            tx: Option<mpsc::Sender<Event>>,
+            tx: mpsc::Sender<Event>,
         ) -> Result<AsyncClient, ConnectorError> {
-            if let Some(client) = &self.client {
+            if let Some(client) = &self.source_client {
                 return Ok(client.clone());
             }
 
@@ -72,13 +80,13 @@ mod mqtt_managed_impl {
 
             let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 10_000);
 
-            self.client = Some(client.clone());
+            self.source_client = Some(client.clone());
             self.running.store(true, Ordering::SeqCst);
 
             let running = self.running.clone();
             let name = self.connector_name.clone();
 
-            // Spawn the event loop task
+            // Spawn the source event loop task
             tokio::spawn(async move {
                 let mut consecutive_errors: u32 = 0;
                 const MAX_CONSECUTIVE_ERRORS: u32 = 10;
@@ -88,17 +96,11 @@ mod mqtt_managed_impl {
                     match eventloop.poll().await {
                         Ok(rumqttc::Event::Incoming(rumqttc::Packet::Publish(publish))) => {
                             consecutive_errors = 0;
-                            if let Some(tx) = &tx {
-                                if let Ok(payload) = std::str::from_utf8(&publish.payload) {
-                                    if let Ok(json) =
-                                        serde_json::from_str::<serde_json::Value>(payload)
-                                    {
-                                        let topic = &publish.topic;
-                                        let event = json_to_event_with_topic(&json, topic);
-                                        if tx.send(event).await.is_err() {
-                                            warn!("Managed MQTT {} channel closed", name);
-                                            break;
-                                        }
+                            if let Ok(payload) = std::str::from_utf8(&publish.payload) {
+                                if let Some(event) = parse_mqtt_payload(payload, &publish.topic) {
+                                    if tx.send(event).await.is_err() {
+                                        warn!("Managed MQTT {} source channel closed", name);
+                                        break;
                                     }
                                 }
                             }
@@ -126,11 +128,60 @@ mod mqtt_managed_impl {
                         }
                     }
                 }
-                info!("Managed MQTT {} eventloop stopped", name);
+                info!("Managed MQTT {} source eventloop stopped", name);
             });
 
             info!(
-                "Managed MQTT {} connected to {}:{}",
+                "Managed MQTT {} source connected to {}:{}",
+                self.connector_name, self.config.broker, self.config.port
+            );
+
+            Ok(client)
+        }
+
+        /// Ensure the sink MQTT client and event loop are running.
+        fn ensure_sink_connected(&mut self) -> Result<AsyncClient, ConnectorError> {
+            if let Some(client) = &self.sink_client {
+                return Ok(client.clone());
+            }
+
+            let base_id = self
+                .config
+                .client_id
+                .clone()
+                .unwrap_or_else(|| format!("varpulis-{}", self.connector_name));
+            let client_id = format!("{}-sink", base_id);
+
+            let mut mqtt_opts = MqttOptions::new(&client_id, &self.config.broker, self.config.port);
+            mqtt_opts.set_keep_alive(Duration::from_secs(60));
+
+            if let (Some(user), Some(pass)) = (&self.config.username, &self.config.password) {
+                mqtt_opts.set_credentials(user, pass);
+            }
+
+            let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 10_000);
+
+            self.sink_client = Some(client.clone());
+
+            let name = self.connector_name.clone();
+            let running = self.running.clone();
+
+            // Spawn the sink event loop task (only drives outgoing publishes)
+            tokio::spawn(async move {
+                while running.load(Ordering::SeqCst) {
+                    match eventloop.poll().await {
+                        Ok(_) => {}
+                        Err(e) => {
+                            warn!("Managed MQTT {} sink eventloop error: {}", name, e);
+                            break;
+                        }
+                    }
+                }
+                info!("Managed MQTT {} sink eventloop stopped", name);
+            });
+
+            info!(
+                "Managed MQTT {} sink connected to {}:{}",
                 self.connector_name, self.config.broker, self.config.port
             );
 
@@ -153,7 +204,7 @@ mod mqtt_managed_impl {
             topic: &str,
             tx: mpsc::Sender<Event>,
         ) -> Result<(), ConnectorError> {
-            let client = self.ensure_connected(Some(tx))?;
+            let client = self.ensure_source_connected(tx)?;
 
             if self.subscribed_topics.insert(topic.to_string()) {
                 client
@@ -170,7 +221,7 @@ mod mqtt_managed_impl {
         }
 
         fn create_sink(&mut self, topic: &str) -> Result<Arc<dyn Sink>, ConnectorError> {
-            let client = self.ensure_connected(None)?;
+            let client = self.ensure_sink_connected()?;
             let qos = qos_from_u8(self.config.qos);
             Ok(Arc::new(MqttSharedSink {
                 sink_name: format!("{}::{}", self.connector_name, topic),
@@ -182,10 +233,14 @@ mod mqtt_managed_impl {
 
         async fn shutdown(&mut self) -> Result<(), ConnectorError> {
             self.running.store(false, Ordering::SeqCst);
-            if let Some(client) = &self.client {
+            if let Some(client) = &self.source_client {
                 let _ = client.disconnect().await;
             }
-            self.client = None;
+            if let Some(client) = &self.sink_client {
+                let _ = client.disconnect().await;
+            }
+            self.source_client = None;
+            self.sink_client = None;
             self.subscribed_topics.clear();
             info!("Managed MQTT {} shut down", self.connector_name);
             Ok(())
@@ -207,13 +262,25 @@ mod mqtt_managed_impl {
         }
 
         async fn send(&self, event: &Event) -> anyhow::Result<()> {
-            let payload = serde_json::to_vec(event).map_err(|e| anyhow!("serialize: {}", e))?;
+            let mut buf = Vec::with_capacity(256);
+            serde_json::to_writer(&mut buf, event).map_err(|e| anyhow!("serialize: {}", e))?;
 
             self.client
-                .publish(&self.topic, self.qos, false, payload)
-                .await
+                .try_publish(&self.topic, self.qos, false, buf)
                 .map_err(|e| anyhow!("mqtt publish: {}", e))?;
 
+            Ok(())
+        }
+
+        async fn send_batch(&self, events: &[Arc<Event>]) -> anyhow::Result<()> {
+            for event in events {
+                let mut buf = Vec::with_capacity(256);
+                serde_json::to_writer(&mut buf, event.as_ref())
+                    .map_err(|e| anyhow!("serialize: {}", e))?;
+                self.client
+                    .try_publish(&self.topic, self.qos, false, buf)
+                    .map_err(|e| anyhow!("mqtt publish: {}", e))?;
+            }
             Ok(())
         }
 
@@ -226,40 +293,55 @@ mod mqtt_managed_impl {
         }
     }
 
-    /// Convert JSON to Event, using the MQTT topic to determine event type
-    fn json_to_event_with_topic(json: &serde_json::Value, topic: &str) -> Event {
-        let event_type = json
-            .get("event_type")
-            .or_else(|| json.get("type"))
+    /// Parse JSON payload directly into an Event, avoiding intermediate serde_json::Value.
+    fn parse_mqtt_payload(payload: &str, topic: &str) -> Option<Event> {
+        let map: indexmap::IndexMap<Arc<str>, serde_json::Value> =
+            serde_json::from_str(payload).ok()?;
+
+        let event_type: Arc<str> = map
+            .get("event_type" as &str)
+            .or_else(|| map.get("type" as &str))
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
+            .map(Arc::from)
             .unwrap_or_else(|| {
-                topic
-                    .rsplit('/')
-                    .next()
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("Unknown")
-                    .to_string()
+                Arc::from(
+                    topic
+                        .rsplit('/')
+                        .next()
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or("Unknown"),
+                )
             });
 
-        let mut event = Event::new(event_type);
+        let has_data = map
+            .get("data" as &str)
+            .and_then(|v| v.as_object())
+            .is_some();
 
-        if let Some(data) = json.get("data").and_then(|v| v.as_object()) {
-            for (k, v) in data {
-                event = event.with_field(k.as_str(), json_value_to_native(v));
+        if has_data {
+            let data_obj = map.get("data" as &str).unwrap().as_object().unwrap();
+            let mut fields: FxIndexMap<FieldKey, varpulis_core::Value> =
+                indexmap::IndexMap::with_capacity_and_hasher(data_obj.len(), FxBuildHasher);
+            for (k, v) in data_obj {
+                fields.insert(Arc::from(k.as_str()), json_value_to_native(v));
             }
-        } else if let Some(obj) = json.as_object() {
-            for (k, v) in obj {
-                if k != "event_type" && k != "type" {
-                    event = event.with_field(k.as_str(), json_value_to_native(v));
+            Some(Event::from_fields(event_type, fields))
+        } else {
+            let capacity = map.len().saturating_sub(1);
+            let mut fields: FxIndexMap<FieldKey, varpulis_core::Value> =
+                indexmap::IndexMap::with_capacity_and_hasher(capacity, FxBuildHasher);
+            for (k, v) in &map {
+                let ks: &str = k;
+                if ks != "event_type" && ks != "type" {
+                    fields.insert(k.clone(), json_value_to_native(v));
                 }
             }
+            Some(Event::from_fields(event_type, fields))
         }
-
-        event
     }
 
-    fn json_value_to_native(v: &serde_json::Value) -> impl Into<varpulis_core::Value> {
+    #[inline]
+    fn json_value_to_native(v: &serde_json::Value) -> varpulis_core::Value {
         match v {
             serde_json::Value::Bool(b) => varpulis_core::Value::Bool(*b),
             serde_json::Value::Number(n) => {

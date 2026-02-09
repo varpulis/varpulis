@@ -1,0 +1,19 @@
+event StockTick {
+    string symbol;
+    float price;
+    integer volume;
+}
+
+event FilteredTick {
+    string symbol;
+    float price;
+}
+
+monitor FilterBenchmarkKafka {
+    action onload() {
+        monitor.subscribe("kafka:bench-01-input");
+        on all StockTick(*, >50.0, *) as t {
+            send FilteredTick(t.symbol, t.price) to "kafka:bench-01-output";
+        }
+    }
+}

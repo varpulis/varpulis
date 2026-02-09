@@ -1,0 +1,178 @@
+[
+  {
+    "scenario": "01_filter",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 1180.3469290025532,
+    "throughput": 847.2085413438957,
+    "output_count": 890,
+    "error": null,
+    "all_runs_throughput": [
+      847.2085413438957
+    ]
+  },
+  {
+    "scenario": "01_filter",
+    "engine": "apama",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 1393.212124996353,
+    "throughput": 717.7657888978089,
+    "output_count": 890,
+    "error": null,
+    "all_runs_throughput": [
+      717.7657888978089
+    ]
+  },
+  {
+    "scenario": "02_aggregation",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 1168.8696760102175,
+    "throughput": 855.5273701798545,
+    "output_count": 10,
+    "error": null,
+    "all_runs_throughput": [
+      855.5273701798545
+    ]
+  },
+  {
+    "scenario": "02_aggregation",
+    "engine": "apama",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 0,
+    "throughput": 0,
+    "output_count": 0,
+    "error": "Unsupported EPL stream query syntax",
+    "all_runs_throughput": []
+  },
+  {
+    "scenario": "03_temporal",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 1233.6216890253127,
+    "throughput": 810.6212860038983,
+    "output_count": 1000,
+    "error": null,
+    "all_runs_throughput": [
+      810.6212860038983
+    ]
+  },
+  {
+    "scenario": "03_temporal",
+    "engine": "apama",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 1255.2462350577116,
+    "throughput": 796.6564424341999,
+    "output_count": 334,
+    "error": null,
+    "all_runs_throughput": [
+      796.6564424341999
+    ]
+  },
+  {
+    "scenario": "04_kleene",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 1229.2500049807131,
+    "throughput": 813.5041659126858,
+    "output_count": 996,
+    "error": null,
+    "all_runs_throughput": [
+      813.5041659126858
+    ]
+  },
+  {
+    "scenario": "04_kleene",
+    "engine": "apama",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 1275.6300719920546,
+    "throughput": 783.9263293929532,
+    "output_count": 200,
+    "error": null,
+    "all_runs_throughput": [
+      783.9263293929532
+    ]
+  },
+  {
+    "scenario": "05_ema_crossover",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 1181.0319530195557,
+    "throughput": 846.7171421088908,
+    "output_count": 103,
+    "error": null,
+    "all_runs_throughput": [
+      846.7171421088908
+    ]
+  },
+  {
+    "scenario": "05_ema_crossover",
+    "engine": "apama",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 0,
+    "throughput": 0,
+    "output_count": 0,
+    "error": "engine_inject failed: MonitorScript injection failed: /tmp/05_ema_crossover_mqtt.mon: Syntax error on line 18: unexpected token: '/'",
+    "all_runs_throughput": []
+  },
+  {
+    "scenario": "06_multi_sensor",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 1169.7383710416034,
+    "throughput": 854.892020947848,
+    "output_count": 2,
+    "error": null,
+    "all_runs_throughput": [
+      854.892020947848
+    ]
+  },
+  {
+    "scenario": "06_multi_sensor",
+    "engine": "apama",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 0,
+    "throughput": 0,
+    "output_count": 0,
+    "error": "Unsupported EPL stream query syntax",
+    "all_runs_throughput": []
+  },
+  {
+    "scenario": "07_sequence",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 1214.084995968733,
+    "throughput": 823.6655615714021,
+    "output_count": 500,
+    "error": null,
+    "all_runs_throughput": [
+      823.6655615714021
+    ]
+  },
+  {
+    "scenario": "07_sequence",
+    "engine": "apama",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 1294.5576739730313,
+    "throughput": 772.4646186917064,
+    "output_count": 500,
+    "error": null,
+    "all_runs_throughput": [
+      772.4646186917064
+    ]
+  }
+]

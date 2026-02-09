@@ -1,0 +1,32 @@
+using com.apama.aggregates.sum;
+using com.apama.aggregates.count;
+using com.apama.aggregates.last;
+
+event Trade {
+    string symbol;
+    float price;
+    float volume;
+}
+
+event VWAPUpdate {
+    string symbol;
+    float vwap;
+    float total_volume;
+    integer trade_count;
+}
+
+monitor VWAPBenchmarkMQTT {
+    action onload() {
+        monitor.subscribe("mqtt:bench/02/input");
+
+        from t in all Trade()
+            retain 100
+            group by t.symbol
+            select VWAPUpdate(last(t.symbol),
+                sum(t.price * t.volume) / sum(t.volume),
+                sum(t.volume),
+                count()) as agg {
+            send agg to "mqtt:bench/02/output";
+        }
+    }
+}

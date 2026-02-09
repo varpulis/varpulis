@@ -45,6 +45,7 @@ stream Alert = Events
 - [`spec/roadmap.md`](spec/roadmap.md) - Roadmap and development phases
 - [`spec/benchmarks.md`](spec/benchmarks.md) - Performance objectives
 - [`spec/glossary.md`](spec/glossary.md) - Glossary of terms
+- [`benchmarks-apama-comparison.md`](benchmarks-apama-comparison.md) - **Varpulis vs Apama benchmarks**
 
 ### VPL Language
 - [`language/overview.md`](language/overview.md) - Language philosophy and design

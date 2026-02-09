@@ -1,0 +1,26 @@
+connectivityPlugins:
+  mqttTransport:
+    libraryName: connectivity-mqtt
+    class: MQTTTransport
+  jsonCodec:
+    libraryName: connectivity-json-codec
+    class: JSONCodec
+  stringCodec:
+    libraryName: connectivity-string-codec
+    class: StringCodec
+
+dynamicChainManagers:
+  mqttManager:
+    transport: mqttTransport
+    managerConfig:
+      brokerURL: "tcp://mosquitto:1883"
+      channelPrefix: "mqtt:"
+      cleanSession: true
+
+dynamicChains:
+  mqttChain:
+    - apama.eventString:
+        suppressLoopback: true
+    - stringCodec:
+        nullTerminated: false
+    - mqttTransport

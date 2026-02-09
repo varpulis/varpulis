@@ -1,0 +1,65 @@
+[
+  {
+    "scenario": "01_filter",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 12.633559003006667,
+    "throughput": 7915425.888793565,
+    "output_count": 0,
+    "error": null
+  },
+  {
+    "scenario": "02_aggregation",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 6.719130964484066,
+    "throughput": 14882877.045942293,
+    "output_count": 0,
+    "error": null
+  },
+  {
+    "scenario": "03_temporal",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 6.823731993790716,
+    "throughput": 14654737.33303058,
+    "output_count": 0,
+    "error": null
+  },
+  {
+    "scenario": "04_kleene",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 14.111265016254038,
+    "throughput": 7086536.882753967,
+    "output_count": 0,
+    "error": null
+  },
+  {
+    "scenario": "05_ema_crossover",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 9.339844051282853,
+    "throughput": 10706816.885905577,
+    "output_count": 0,
+    "error": null
+  },
+  {
+    "scenario": "06_multi_sensor",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 7.37163401208818,
+    "throughput": 13565513.403950553,
+    "output_count": 0,
+    "error": null
+  },
+  {
+    "scenario": "07_sequence",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 7.0816330262459815,
+    "throughput": 14121036.719832774,
+    "output_count": 0,
+    "error": null
+  }
+]

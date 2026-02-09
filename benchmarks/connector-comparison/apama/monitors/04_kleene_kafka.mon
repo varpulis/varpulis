@@ -1,0 +1,43 @@
+event StockTick {
+    string symbol;
+    float price;
+    integer volume;
+}
+
+event PriceSpike {
+    string symbol;
+    float start_price;
+    float end_price;
+    integer spike_count;
+}
+
+monitor RisingSequenceDetectorKafka {
+    dictionary<string, float> startPrices;
+    dictionary<string, float> lastPrices;
+    dictionary<string, integer> counts;
+
+    action onload() {
+        monitor.subscribe("kafka:bench-04-input");
+        on all StockTick() as tick {
+            string sym := tick.symbol;
+            if not startPrices.hasKey(sym) {
+                startPrices[sym] := tick.price;
+                lastPrices[sym] := tick.price;
+                counts[sym] := 0;
+            } else {
+                if tick.price > lastPrices[sym] {
+                    lastPrices[sym] := tick.price;
+                    counts[sym] := counts[sym] + 1;
+                } else {
+                    if counts[sym] > 0 {
+                        send PriceSpike(sym, startPrices[sym], lastPrices[sym], counts[sym])
+                            to "kafka:bench-04-output";
+                    }
+                    startPrices[sym] := tick.price;
+                    lastPrices[sym] := tick.price;
+                    counts[sym] := 0;
+                }
+            }
+        }
+    }
+}

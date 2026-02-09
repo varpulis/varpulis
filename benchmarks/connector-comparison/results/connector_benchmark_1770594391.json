@@ -1,0 +1,15 @@
+[
+  {
+    "scenario": "01_filter",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 2230.2941809757613,
+    "throughput": 448.3713442513205,
+    "output_count": 890,
+    "error": null,
+    "all_runs_throughput": [
+      448.3713442513205
+    ]
+  }
+]

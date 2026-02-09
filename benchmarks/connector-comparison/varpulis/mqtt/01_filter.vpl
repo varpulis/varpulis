@@ -1,0 +1,13 @@
+connector Broker = mqtt(host: "localhost", port: 1884)
+
+event StockTick:
+    symbol: str
+    price: float
+    volume: int
+
+stream Input = StockTick.from(Broker, topic: "bench/01/input")
+
+stream Filtered = Input
+    .where(price > 50.0)
+    .emit(event_type: "FilteredTick", symbol: symbol, price: price)
+    .to(Broker, topic: "bench/01/output")

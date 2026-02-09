@@ -1,0 +1,26 @@
+[
+  {
+    "scenario": "01_filter",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 1224.0710299811326,
+    "throughput": 816.9460558309379,
+    "output_count": 890,
+    "error": null,
+    "all_runs_throughput": [
+      816.9460558309379
+    ]
+  },
+  {
+    "scenario": "01_filter",
+    "engine": "apama",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 0,
+    "throughput": 0,
+    "output_count": 0,
+    "error": "engine_inject failed: MonitorScript injection failed: /tmp/01_filter_mqtt.mon: Error on line 12: A monitor or query called \"FilterBenchmarkMQTT\" already exists in the top level namespace in \"/apama_config/monitors/01_filte",
+    "all_runs_throughput": []
+  }
+]

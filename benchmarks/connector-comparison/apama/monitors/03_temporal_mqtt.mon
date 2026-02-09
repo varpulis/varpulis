@@ -1,0 +1,63 @@
+event Login {
+    string user_id;
+    string ip;
+    string device;
+}
+
+event Transaction {
+    string user_id;
+    float amount;
+    string ip;
+    string merchant;
+}
+
+event FraudAlert {
+    string user_id;
+    string login_ip;
+    string tx_ip;
+    float amount;
+}
+
+// Matches Varpulis bidirectional join semantics:
+// - Keeps latest Login IP and latest Transaction per user
+// - When a Transaction arrives, check against latest Login IP
+// - When a Login arrives, check against latest Transaction
+// This mirrors join(Transactions, RecentLogins) where both sides
+// use window(1) (keep-latest) semantics.
+monitor FraudDetectionMQTT {
+    dictionary<string, string> lastLoginIp;
+    dictionary<string, float> lastTxAmount;
+    dictionary<string, string> lastTxIp;
+
+    action onload() {
+        monitor.subscribe("mqtt:bench/03/Login");
+        monitor.subscribe("mqtt:bench/03/Transaction");
+
+        on all Login() as login {
+            lastLoginIp[login.user_id] := login.ip;
+            // Bidirectional: check latest transaction against new login
+            if lastTxAmount.hasKey(login.user_id) {
+                if lastTxAmount[login.user_id] > 5000.0
+                        and lastTxIp[login.user_id] != login.ip {
+                    send FraudAlert(login.user_id, login.ip,
+                            lastTxIp[login.user_id], lastTxAmount[login.user_id])
+                        to "mqtt:bench/03/output";
+                }
+            }
+        }
+
+        on all Transaction() as tx {
+            lastTxAmount[tx.user_id] := tx.amount;
+            lastTxIp[tx.user_id] := tx.ip;
+            // Forward: check new transaction against latest login
+            if tx.amount > 5000.0 {
+                if lastLoginIp.hasKey(tx.user_id) {
+                    if tx.ip != lastLoginIp[tx.user_id] {
+                        send FraudAlert(tx.user_id, lastLoginIp[tx.user_id], tx.ip, tx.amount)
+                            to "mqtt:bench/03/output";
+                    }
+                }
+            }
+        }
+    }
+}

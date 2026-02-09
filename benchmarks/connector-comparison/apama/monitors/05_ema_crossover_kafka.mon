@@ -1,0 +1,51 @@
+event StockTick {
+    string symbol;
+    float price;
+    integer volume;
+}
+
+event CrossoverSignal {
+    string symbol;
+    float fast_ema;
+    float slow_ema;
+    string signal;
+    float strength;
+}
+
+// Matches Varpulis semantics: running EMA updated on every tick, but
+// crossover check only every 12 ticks (matching tumbling window(12)).
+monitor EMACrossoverKafka {
+    dictionary<string, float> fastEMA;
+    dictionary<string, float> slowEMA;
+    dictionary<string, integer> tickCount;
+
+    action onload() {
+        monitor.subscribe("kafka:bench-05-input");
+        float FAST_ALPHA := 0.153846;  // 2/13
+        float SLOW_ALPHA := 0.074074;  // 2/27
+        on all StockTick() as tick {
+            string sym := tick.symbol;
+            float price := tick.price;
+            if not fastEMA.hasKey(sym) {
+                fastEMA[sym] := price;
+                slowEMA[sym] := price;
+                tickCount[sym] := 0;
+            }
+            fastEMA[sym] := FAST_ALPHA * price + (1.0 - FAST_ALPHA) * fastEMA[sym];
+            slowEMA[sym] := SLOW_ALPHA * price + (1.0 - SLOW_ALPHA) * slowEMA[sym];
+            tickCount[sym] := tickCount[sym] + 1;
+            // Check every 12 ticks to match Varpulis tumbling window(12)
+            if (tickCount[sym] % 12) = 0 {
+                float diff := fastEMA[sym] - slowEMA[sym];
+                float absDiff := diff;
+                if absDiff < 0.0 { absDiff := -absDiff; }
+                if absDiff > 0.5 {
+                    string signal := "sell";
+                    if diff > 0.0 { signal := "buy"; }
+                    send CrossoverSignal(sym, fastEMA[sym], slowEMA[sym], signal, absDiff)
+                        to "kafka:bench-05-output";
+                }
+            }
+        }
+    }
+}

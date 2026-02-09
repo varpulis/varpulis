@@ -1,0 +1,204 @@
+[
+  {
+    "scenario": "01_filter",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 100000,
+    "elapsed_ms": 14939.372210996225,
+    "throughput": 6693.721703137855,
+    "output_count": 89000,
+    "error": null,
+    "all_runs_throughput": [
+      6789.732915981258,
+      6693.721703137855,
+      6118.74316941867
+    ]
+  },
+  {
+    "scenario": "01_filter",
+    "engine": "apama",
+    "connector": "mqtt",
+    "events": 100000,
+    "elapsed_ms": 22255.64339797711,
+    "throughput": 4493.2423750593225,
+    "output_count": 89000,
+    "error": null,
+    "all_runs_throughput": [
+      5884.068139771383,
+      4476.836743740189,
+      4493.2423750593225
+    ]
+  },
+  {
+    "scenario": "02_aggregation",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 100000,
+    "elapsed_ms": 12018.789199995808,
+    "throughput": 8320.3056760522,
+    "output_count": 1000,
+    "error": null,
+    "all_runs_throughput": [
+      8320.3056760522,
+      8474.90405963911,
+      8194.528501326446
+    ]
+  },
+  {
+    "scenario": "02_aggregation",
+    "engine": "apama",
+    "connector": "mqtt",
+    "events": 100000,
+    "elapsed_ms": 0,
+    "throughput": 0,
+    "output_count": 0,
+    "error": "Unsupported EPL stream query syntax",
+    "all_runs_throughput": []
+  },
+  {
+    "scenario": "03_temporal",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 100000,
+    "elapsed_ms": 17526.255225995556,
+    "throughput": 5705.72542226114,
+    "output_count": 100000,
+    "error": null,
+    "all_runs_throughput": [
+      5779.533401598151,
+      5705.72542226114,
+      5579.1146488051445
+    ]
+  },
+  {
+    "scenario": "03_temporal",
+    "engine": "apama",
+    "connector": "mqtt",
+    "events": 100000,
+    "elapsed_ms": 19862.214695021976,
+    "throughput": 5034.685282354882,
+    "output_count": 33334,
+    "error": null,
+    "all_runs_throughput": [
+      5045.721032165448,
+      5034.685282354882,
+      5031.124917951947
+    ]
+  },
+  {
+    "scenario": "04_kleene",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 100000,
+    "elapsed_ms": 16136.489411001094,
+    "throughput": 6197.1347951199805,
+    "output_count": 61816,
+    "error": null,
+    "all_runs_throughput": [
+      6197.1347951199805,
+      6322.916313942949,
+      6005.668489254947
+    ]
+  },
+  {
+    "scenario": "04_kleene",
+    "engine": "apama",
+    "connector": "mqtt",
+    "events": 100000,
+    "elapsed_ms": 18052.79096000595,
+    "throughput": 5539.3096957439675,
+    "output_count": 20000,
+    "error": null,
+    "all_runs_throughput": [
+      5562.3642580785545,
+      5532.717469150445,
+      5539.3096957439675
+    ]
+  },
+  {
+    "scenario": "05_ema_crossover",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 100000,
+    "elapsed_ms": 13332.20456802519,
+    "throughput": 7500.634984241944,
+    "output_count": 10176,
+    "error": null,
+    "all_runs_throughput": [
+      7500.634984241944,
+      7693.158687039341,
+      7358.475435003061
+    ]
+  },
+  {
+    "scenario": "05_ema_crossover",
+    "engine": "apama",
+    "connector": "mqtt",
+    "events": 100000,
+    "elapsed_ms": 22304.716889979314,
+    "throughput": 4483.3566143548005,
+    "output_count": 88083,
+    "error": null,
+    "all_runs_throughput": [
+      4483.3566143548005,
+      4540.56977881302,
+      4474.275131946951
+    ]
+  },
+  {
+    "scenario": "06_multi_sensor",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 100000,
+    "elapsed_ms": 11479.917905991899,
+    "throughput": 8710.863685515154,
+    "output_count": 200,
+    "error": null,
+    "all_runs_throughput": [
+      8710.863685515154,
+      8894.408125261947,
+      8686.295867012495
+    ]
+  },
+  {
+    "scenario": "06_multi_sensor",
+    "engine": "apama",
+    "connector": "mqtt",
+    "events": 100000,
+    "elapsed_ms": 0,
+    "throughput": 0,
+    "output_count": 0,
+    "error": "Unsupported EPL stream query syntax",
+    "all_runs_throughput": []
+  },
+  {
+    "scenario": "07_sequence",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 100000,
+    "elapsed_ms": 15188.598864013331,
+    "throughput": 6583.885774805214,
+    "output_count": 50000,
+    "error": null,
+    "all_runs_throughput": [
+      6583.885774805214,
+      6610.580711534371,
+      6514.328971209448
+    ]
+  },
+  {
+    "scenario": "07_sequence",
+    "engine": "apama",
+    "connector": "mqtt",
+    "events": 100000,
+    "elapsed_ms": 20482.44573100237,
+    "throughput": 4882.229461916226,
+    "output_count": 50000,
+    "error": null,
+    "all_runs_throughput": [
+      5085.388593842511,
+      4882.229461916226,
+      4778.518049008852
+    ]
+  }
+]

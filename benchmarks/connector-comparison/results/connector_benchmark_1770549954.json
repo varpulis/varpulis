@@ -1,0 +1,93 @@
+[
+  {
+    "scenario": "01_filter",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 100000,
+    "elapsed_ms": 14490.511565993074,
+    "throughput": 6901.067608591825,
+    "output_count": 16037,
+    "error": null,
+    "all_runs_throughput": [
+      6901.067608591825
+    ]
+  },
+  {
+    "scenario": "02_aggregation",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 100000,
+    "elapsed_ms": 11365.149884019047,
+    "throughput": 8798.828085902647,
+    "output_count": 1000,
+    "error": null,
+    "all_runs_throughput": [
+      8798.828085902647
+    ]
+  },
+  {
+    "scenario": "03_temporal",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 100000,
+    "elapsed_ms": 120050.02193298424,
+    "throughput": 832.9861035412655,
+    "output_count": 0,
+    "error": null,
+    "all_runs_throughput": [
+      832.9861035412655
+    ]
+  },
+  {
+    "scenario": "04_kleene",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 100000,
+    "elapsed_ms": 120037.66596800415,
+    "throughput": 833.0718461874695,
+    "output_count": 0,
+    "error": null,
+    "all_runs_throughput": [
+      833.0718461874695
+    ]
+  },
+  {
+    "scenario": "05_ema_crossover",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 100000,
+    "elapsed_ms": 13362.244932970498,
+    "throughput": 7483.772412617306,
+    "output_count": 10176,
+    "error": null,
+    "all_runs_throughput": [
+      7483.772412617306
+    ]
+  },
+  {
+    "scenario": "06_multi_sensor",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 100000,
+    "elapsed_ms": 120092.02130901394,
+    "throughput": 832.6947861314259,
+    "output_count": 0,
+    "error": null,
+    "all_runs_throughput": [
+      832.6947861314259
+    ]
+  },
+  {
+    "scenario": "07_sequence",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 100000,
+    "elapsed_ms": 120073.27683694893,
+    "throughput": 832.8247769551002,
+    "output_count": 0,
+    "error": null,
+    "all_runs_throughput": [
+      832.8247769551002
+    ]
+  }
+]

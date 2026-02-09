@@ -30,6 +30,17 @@ pub trait Sink: Send + Sync {
     /// Send an event to this sink
     async fn send(&self, event: &Event) -> Result<()>;
 
+    /// Send a batch of events to this sink.
+    ///
+    /// Default implementation calls `send()` for each event.
+    /// Connectors should override this to amortize lock/syscall overhead.
+    async fn send_batch(&self, events: &[Arc<Event>]) -> Result<()> {
+        for event in events {
+            self.send(event).await?;
+        }
+        Ok(())
+    }
+
     /// Flush any buffered data
     async fn flush(&self) -> Result<()>;
 

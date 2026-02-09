@@ -339,6 +339,111 @@ pub fn expr_to_sase_predicate(expr: &varpulis_core::ast::Expr) -> Option<Predica
     }
 }
 
+/// Compile a `SasePatternExpr` (from a named `pattern` declaration) into a runtime `SasePattern`.
+pub fn compile_sase_pattern_expr(
+    expr: &varpulis_core::ast::SasePatternExpr,
+    within: Option<Duration>,
+) -> Option<SasePattern> {
+    use varpulis_core::ast::SasePatternExpr;
+
+    let pattern = match expr {
+        SasePatternExpr::Seq(items) => {
+            let steps: Vec<SasePattern> = items.iter().map(compile_sase_pattern_item).collect();
+            if steps.len() == 1 {
+                steps.into_iter().next().unwrap()
+            } else {
+                SasePattern::Seq(steps)
+            }
+        }
+        SasePatternExpr::And(left, right) => {
+            let l = compile_sase_pattern_expr(left, None)?;
+            let r = compile_sase_pattern_expr(right, None)?;
+            SasePattern::And(Box::new(l), Box::new(r))
+        }
+        SasePatternExpr::Or(left, right) => {
+            let l = compile_sase_pattern_expr(left, None)?;
+            let r = compile_sase_pattern_expr(right, None)?;
+            SasePattern::Or(Box::new(l), Box::new(r))
+        }
+        SasePatternExpr::Not(inner) => {
+            let i = compile_sase_pattern_expr(inner, None)?;
+            SasePattern::Not(Box::new(i))
+        }
+        SasePatternExpr::Event(name) => SasePattern::Event {
+            event_type: name.clone(),
+            predicate: None,
+            alias: None,
+        },
+        SasePatternExpr::Group(inner) => {
+            return compile_sase_pattern_expr(inner, within);
+        }
+    };
+
+    // Wrap with Within if specified
+    if let Some(duration) = within {
+        Some(SasePattern::Within(Box::new(pattern), duration))
+    } else {
+        Some(pattern)
+    }
+}
+
+/// Compile a single `SasePatternItem` to a `SasePattern`, handling Kleene operators.
+fn compile_sase_pattern_item(item: &varpulis_core::ast::SasePatternItem) -> SasePattern {
+    let predicate = item.filter.as_ref().and_then(expr_to_sase_predicate);
+    let base = SasePattern::Event {
+        event_type: item.event_type.clone(),
+        predicate,
+        alias: item.alias.clone(),
+    };
+
+    match &item.kleene {
+        Some(varpulis_core::ast::KleeneOp::Plus) => SasePattern::KleenePlus(Box::new(base)),
+        Some(varpulis_core::ast::KleeneOp::Star) => SasePattern::KleeneStar(Box::new(base)),
+        Some(varpulis_core::ast::KleeneOp::Optional) => {
+            // Optional is equivalent to Or(base, empty match) — use KleeneStar for now
+            SasePattern::KleeneStar(Box::new(base))
+        }
+        None => base,
+    }
+}
+
+/// Extract all event type names from a `SasePatternExpr`.
+pub fn extract_event_types_from_pattern_expr(
+    expr: &varpulis_core::ast::SasePatternExpr,
+) -> Vec<String> {
+    use varpulis_core::ast::SasePatternExpr;
+
+    let mut types = Vec::new();
+    match expr {
+        SasePatternExpr::Seq(items) => {
+            for item in items {
+                if !types.contains(&item.event_type) {
+                    types.push(item.event_type.clone());
+                }
+            }
+        }
+        SasePatternExpr::And(left, right) | SasePatternExpr::Or(left, right) => {
+            for t in extract_event_types_from_pattern_expr(left) {
+                if !types.contains(&t) {
+                    types.push(t);
+                }
+            }
+            for t in extract_event_types_from_pattern_expr(right) {
+                if !types.contains(&t) {
+                    types.push(t);
+                }
+            }
+        }
+        SasePatternExpr::Not(inner) | SasePatternExpr::Group(inner) => {
+            types = extract_event_types_from_pattern_expr(inner);
+        }
+        SasePatternExpr::Event(name) => {
+            types.push(name.clone());
+        }
+    }
+    types
+}
+
 /// Convert an AST expression to a Value (for predicates)
 fn expr_to_value(expr: &varpulis_core::ast::Expr) -> Option<varpulis_core::Value> {
     use varpulis_core::ast::Expr;

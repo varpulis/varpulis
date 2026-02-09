@@ -1,0 +1,24 @@
+event A {
+    integer id;
+}
+
+event B {
+    integer id;
+}
+
+event Match {
+    integer a_id;
+    integer b_id;
+}
+
+monitor SequenceDetectionMQTT {
+    action onload() {
+        monitor.subscribe("mqtt:bench/07/A");
+        monitor.subscribe("mqtt:bench/07/B");
+        on all A() as a {
+            on B(id=a.id) as b within(60.0) {
+                send Match(a.id, b.id) to "mqtt:bench/07/output";
+            }
+        }
+    }
+}

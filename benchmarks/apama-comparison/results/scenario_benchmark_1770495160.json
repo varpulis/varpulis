@@ -1,0 +1,170 @@
+[
+  {
+    "scenario": "01_filter",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 575.0302322144587,
+    "throughput": 173903.9,
+    "output_count": 89000,
+    "error": null,
+    "all_runs_throughput": [
+      169369.2,
+      173903.9,
+      180873.2
+    ]
+  },
+  {
+    "scenario": "01_filter",
+    "engine": "apama",
+    "events": 100000,
+    "elapsed_ms": 0,
+    "throughput": 0,
+    "output_count": 0,
+    "error": "[Errno 32] Broken pipe",
+    "all_runs_throughput": []
+  },
+  {
+    "scenario": "02_aggregation",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 417.37219958905536,
+    "throughput": 239594.3,
+    "output_count": 1000,
+    "error": null,
+    "all_runs_throughput": [
+      239594.3,
+      231542.7,
+      246414.5
+    ]
+  },
+  {
+    "scenario": "02_aggregation",
+    "engine": "apama",
+    "events": 100000,
+    "elapsed_ms": 0,
+    "throughput": 0,
+    "output_count": 0,
+    "error": "[Errno 32] Broken pipe",
+    "all_runs_throughput": []
+  },
+  {
+    "scenario": "03_temporal",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 544.5997219273819,
+    "throughput": 183621.1,
+    "output_count": 0,
+    "error": null,
+    "all_runs_throughput": [
+      176995.3,
+      183621.1,
+      184077.1
+    ]
+  },
+  {
+    "scenario": "03_temporal",
+    "engine": "apama",
+    "events": 100000,
+    "elapsed_ms": 0,
+    "throughput": 0,
+    "output_count": 0,
+    "error": "[Errno 32] Broken pipe",
+    "all_runs_throughput": []
+  },
+  {
+    "scenario": "04_kleene",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 391.9788582283026,
+    "throughput": 255115.8,
+    "output_count": 0,
+    "error": null,
+    "all_runs_throughput": [
+      243095.8,
+      273244.0,
+      255115.8
+    ]
+  },
+  {
+    "scenario": "04_kleene",
+    "engine": "apama",
+    "events": 100000,
+    "elapsed_ms": 0,
+    "throughput": 0,
+    "output_count": 0,
+    "error": "[Errno 32] Broken pipe",
+    "all_runs_throughput": []
+  },
+  {
+    "scenario": "05_ema_crossover",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 760.067281155728,
+    "throughput": 131567.3,
+    "output_count": 0,
+    "error": null,
+    "all_runs_throughput": [
+      131567.3,
+      128404.5,
+      164881.1
+    ]
+  },
+  {
+    "scenario": "05_ema_crossover",
+    "engine": "apama",
+    "events": 100000,
+    "elapsed_ms": 0,
+    "throughput": 0,
+    "output_count": 0,
+    "error": "[Errno 32] Broken pipe",
+    "all_runs_throughput": []
+  },
+  {
+    "scenario": "06_multi_sensor",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 504.8355674831373,
+    "throughput": 198084.3,
+    "output_count": 0,
+    "error": null,
+    "all_runs_throughput": [
+      190565.9,
+      198084.3,
+      206063.1
+    ]
+  },
+  {
+    "scenario": "06_multi_sensor",
+    "engine": "apama",
+    "events": 100000,
+    "elapsed_ms": 0,
+    "throughput": 0,
+    "output_count": 0,
+    "error": "[Errno 32] Broken pipe",
+    "all_runs_throughput": []
+  },
+  {
+    "scenario": "07_sequence",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 464.91776999402117,
+    "throughput": 215091.8,
+    "output_count": 50000,
+    "error": null,
+    "all_runs_throughput": [
+      215091.8,
+      197443.8,
+      219144.8
+    ]
+  },
+  {
+    "scenario": "07_sequence",
+    "engine": "apama",
+    "events": 100000,
+    "elapsed_ms": 0,
+    "throughput": 0,
+    "output_count": 0,
+    "error": "[Errno 32] Broken pipe",
+    "all_runs_throughput": []
+  }
+]

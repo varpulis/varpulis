@@ -1,0 +1,28 @@
+[
+  {
+    "scenario": "05_ema_crossover",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 10000,
+    "elapsed_ms": 3131.003463990055,
+    "throughput": 3193.8642403340896,
+    "output_count": 1023,
+    "error": null,
+    "all_runs_throughput": [
+      3193.8642403340896
+    ]
+  },
+  {
+    "scenario": "05_ema_crossover",
+    "engine": "apama",
+    "connector": "mqtt",
+    "events": 10000,
+    "elapsed_ms": 3409.7968959831633,
+    "throughput": 2932.7259966070947,
+    "output_count": 734,
+    "error": null,
+    "all_runs_throughput": [
+      2932.7259966070947
+    ]
+  }
+]

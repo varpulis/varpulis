@@ -1,0 +1,190 @@
+[
+  {
+    "scenario": "01_filter",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 602.5784331153003,
+    "throughput": 165953.5,
+    "output_count": 89000,
+    "error": null,
+    "all_runs_throughput": [
+      169394.8,
+      165953.5,
+      165281.8
+    ]
+  },
+  {
+    "scenario": "01_filter",
+    "engine": "apama",
+    "events": 100000,
+    "elapsed_ms": 512.3172010062262,
+    "throughput": 195191.57233759304,
+    "output_count": -1,
+    "error": null,
+    "all_runs_throughput": [
+      195191.57233759304,
+      161880.454905871,
+      197200.43184317046
+    ]
+  },
+  {
+    "scenario": "02_aggregation",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 449.4111365877291,
+    "throughput": 222513.4,
+    "output_count": 1000,
+    "error": null,
+    "all_runs_throughput": [
+      227676.4,
+      222513.4,
+      221997.4
+    ]
+  },
+  {
+    "scenario": "02_aggregation",
+    "engine": "apama",
+    "events": 100000,
+    "elapsed_ms": 0,
+    "throughput": 0,
+    "output_count": 0,
+    "error": "No Apama listener for Trade (monitor not loaded)",
+    "all_runs_throughput": []
+  },
+  {
+    "scenario": "03_temporal",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 546.6473299284494,
+    "throughput": 182933.3,
+    "output_count": 0,
+    "error": null,
+    "all_runs_throughput": [
+      171692.6,
+      182933.3,
+      185342.6
+    ]
+  },
+  {
+    "scenario": "03_temporal",
+    "engine": "apama",
+    "events": 100000,
+    "elapsed_ms": 553.418611001689,
+    "throughput": 180695.04352049122,
+    "output_count": -1,
+    "error": null,
+    "all_runs_throughput": [
+      180695.04352049122,
+      164607.32858087495,
+      195189.85137528935
+    ]
+  },
+  {
+    "scenario": "04_kleene",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 424.88356066020106,
+    "throughput": 235358.6,
+    "output_count": 0,
+    "error": null,
+    "all_runs_throughput": [
+      265241.5,
+      235358.6,
+      227053.1
+    ]
+  },
+  {
+    "scenario": "04_kleene",
+    "engine": "apama",
+    "events": 100000,
+    "elapsed_ms": 510.0723060313612,
+    "throughput": 196050.63599326566,
+    "output_count": -1,
+    "error": null,
+    "all_runs_throughput": [
+      209339.40369992997,
+      196050.63599326566,
+      138317.17732092677
+    ]
+  },
+  {
+    "scenario": "05_ema_crossover",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 637.0144914426659,
+    "throughput": 156982.3,
+    "output_count": 0,
+    "error": null,
+    "all_runs_throughput": [
+      151122.9,
+      156982.3,
+      172994.7
+    ]
+  },
+  {
+    "scenario": "05_ema_crossover",
+    "engine": "apama",
+    "events": 100000,
+    "elapsed_ms": 555.4279669886455,
+    "throughput": 180041.3481916806,
+    "output_count": -1,
+    "error": null,
+    "all_runs_throughput": [
+      180041.3481916806,
+      197553.91118566573,
+      163152.72860645445
+    ]
+  },
+  {
+    "scenario": "06_multi_sensor",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 505.8286636917197,
+    "throughput": 197695.4,
+    "output_count": 0,
+    "error": null,
+    "all_runs_throughput": [
+      197695.4,
+      178329.9,
+      199828.1
+    ]
+  },
+  {
+    "scenario": "06_multi_sensor",
+    "engine": "apama",
+    "events": 100000,
+    "elapsed_ms": 0,
+    "throughput": 0,
+    "output_count": 0,
+    "error": "No Apama listener for TemperatureReading (monitor not loaded)",
+    "all_runs_throughput": []
+  },
+  {
+    "scenario": "07_sequence",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 478.12300383645896,
+    "throughput": 209151.2,
+    "output_count": 50000,
+    "error": null,
+    "all_runs_throughput": [
+      209151.2,
+      213570.3,
+      192565.2
+    ]
+  },
+  {
+    "scenario": "07_sequence",
+    "engine": "apama",
+    "events": 100000,
+    "elapsed_ms": 495.62252301257104,
+    "throughput": 201766.45603626771,
+    "output_count": -1,
+    "error": null,
+    "all_runs_throughput": [
+      201766.45603626771,
+      245119.96063038695,
+      137771.7509568066
+    ]
+  }
+]

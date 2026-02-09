@@ -1,0 +1,15 @@
+[
+  {
+    "scenario": "01_filter",
+    "engine": "apama",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 30099.73898704629,
+    "throughput": 33.222879455212535,
+    "output_count": 0,
+    "error": null,
+    "all_runs_throughput": [
+      33.222879455212535
+    ]
+  }
+]

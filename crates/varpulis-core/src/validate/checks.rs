@@ -287,7 +287,10 @@ fn check_stream_source(v: &mut Validator, source: &StreamSource, span: Span) {
 
 fn check_source_name(v: &mut Validator, name: &str, span: Span) {
     // Only warn — implicit event types are valid
-    if !v.symbols.events.contains_key(name) && !v.symbols.streams.contains_key(name) {
+    if !v.symbols.events.contains_key(name)
+        && !v.symbols.streams.contains_key(name)
+        && !v.symbols.patterns.contains_key(name)
+    {
         let suggestion = did_you_mean(name, &v.symbols.source_names());
         v.emit_with_hint(
             Severity::Warning,

@@ -1,0 +1,28 @@
+[
+  {
+    "scenario": "03_temporal",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 10000,
+    "elapsed_ms": 3663.0728619638826,
+    "throughput": 2729.948427681207,
+    "output_count": 10000,
+    "error": null,
+    "all_runs_throughput": [
+      2729.948427681207
+    ]
+  },
+  {
+    "scenario": "03_temporal",
+    "engine": "apama",
+    "connector": "mqtt",
+    "events": 10000,
+    "elapsed_ms": 6737.437453994063,
+    "throughput": 1484.2438342892278,
+    "output_count": 68208,
+    "error": null,
+    "all_runs_throughput": [
+      1484.2438342892278
+    ]
+  }
+]

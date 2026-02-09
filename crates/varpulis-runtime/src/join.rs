@@ -216,10 +216,21 @@ impl JoinBuffer {
 
         // Merge fields from all events, prefixed by source name
         for (source, event) in source_events {
-            // Add prefixed fields (e.g., "EMA12.ema_12")
             for (field, value) in &event.data {
+                // Add source name prefix (e.g., "Transactions.amount")
                 let prefixed_key = format!("{}.{}", source, field);
                 correlated.data.insert(prefixed_key.into(), value.clone());
+
+                // Also add event type prefix if different from source name
+                // This handles the common case where .on()/.where()/.emit() use the
+                // event type name (e.g., "Transaction.amount") but the join source is
+                // a stream with a different name (e.g., "Transactions")
+                if *source != &*event.event_type {
+                    let et_prefixed_key = format!("{}.{}", event.event_type, field);
+                    correlated
+                        .data
+                        .insert(et_prefixed_key.into(), value.clone());
+                }
 
                 // Also add unprefixed for common fields (first source wins for conflicts)
                 if !correlated.data.contains_key(field) {

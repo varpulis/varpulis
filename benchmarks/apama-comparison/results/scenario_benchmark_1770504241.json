@@ -1,0 +1,100 @@
+[
+  {
+    "scenario": "01_filter",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 409.56565153089497,
+    "throughput": 244161.1,
+    "output_count": 89000,
+    "error": null,
+    "all_runs_throughput": [
+      292226.2,
+      244161.1,
+      224166.5
+    ]
+  },
+  {
+    "scenario": "02_aggregation",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 317.6893563581871,
+    "throughput": 314772.9,
+    "output_count": 1000,
+    "error": null,
+    "all_runs_throughput": [
+      314627.2,
+      335434.4,
+      314772.9
+    ]
+  },
+  {
+    "scenario": "03_temporal",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 324.6920863771864,
+    "throughput": 307984.1,
+    "output_count": 0,
+    "error": null,
+    "all_runs_throughput": [
+      307984.1,
+      328431.9,
+      281286.3
+    ]
+  },
+  {
+    "scenario": "04_kleene",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 261.3306433699109,
+    "throughput": 382657.0,
+    "output_count": 0,
+    "error": null,
+    "all_runs_throughput": [
+      382657.0,
+      319875.8,
+      393127.5
+    ]
+  },
+  {
+    "scenario": "05_ema_crossover",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 364.95418000270064,
+    "throughput": 274007.0,
+    "output_count": 0,
+    "error": null,
+    "all_runs_throughput": [
+      274007.0,
+      289535.5,
+      260514.2
+    ]
+  },
+  {
+    "scenario": "06_multi_sensor",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 324.3371926215884,
+    "throughput": 308321.1,
+    "output_count": 0,
+    "error": null,
+    "all_runs_throughput": [
+      308321.1,
+      314702.2,
+      295813.5
+    ]
+  },
+  {
+    "scenario": "07_sequence",
+    "engine": "varpulis",
+    "events": 100000,
+    "elapsed_ms": 424.8900596970534,
+    "throughput": 235355.0,
+    "output_count": 50000,
+    "error": null,
+    "all_runs_throughput": [
+      233829.0,
+      284296.6,
+      235355.0
+    ]
+  }
+]

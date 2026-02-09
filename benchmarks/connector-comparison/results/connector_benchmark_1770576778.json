@@ -1,0 +1,180 @@
+[
+  {
+    "scenario": "01_filter",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 1224.491413042415,
+    "throughput": 816.6655881361916,
+    "output_count": 890,
+    "error": null,
+    "all_runs_throughput": [
+      816.6655881361916
+    ]
+  },
+  {
+    "scenario": "01_filter",
+    "engine": "apama",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 1265.0191630236804,
+    "throughput": 790.5018589677131,
+    "output_count": 890,
+    "error": null,
+    "all_runs_throughput": [
+      790.5018589677131
+    ]
+  },
+  {
+    "scenario": "02_aggregation",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 1174.36407902278,
+    "throughput": 851.5246829008316,
+    "output_count": 10,
+    "error": null,
+    "all_runs_throughput": [
+      851.5246829008316
+    ]
+  },
+  {
+    "scenario": "02_aggregation",
+    "engine": "apama",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 0,
+    "throughput": 0,
+    "output_count": 0,
+    "error": "Unsupported EPL stream query syntax",
+    "all_runs_throughput": []
+  },
+  {
+    "scenario": "03_temporal",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 1240.9204799914733,
+    "throughput": 805.8534097260376,
+    "output_count": 1000,
+    "error": null,
+    "all_runs_throughput": [
+      805.8534097260376
+    ]
+  },
+  {
+    "scenario": "03_temporal",
+    "engine": "apama",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 1283.6128500057384,
+    "throughput": 779.0510978411672,
+    "output_count": 334,
+    "error": null,
+    "all_runs_throughput": [
+      779.0510978411672
+    ]
+  },
+  {
+    "scenario": "04_kleene",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 1222.4316969513893,
+    "throughput": 818.041615326149,
+    "output_count": 996,
+    "error": null,
+    "all_runs_throughput": [
+      818.041615326149
+    ]
+  },
+  {
+    "scenario": "04_kleene",
+    "engine": "apama",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 1260.9769849805161,
+    "throughput": 793.0358855958433,
+    "output_count": 200,
+    "error": null,
+    "all_runs_throughput": [
+      793.0358855958433
+    ]
+  },
+  {
+    "scenario": "05_ema_crossover",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 1179.8898780252784,
+    "throughput": 847.5367223877274,
+    "output_count": 103,
+    "error": null,
+    "all_runs_throughput": [
+      847.5367223877274
+    ]
+  },
+  {
+    "scenario": "05_ema_crossover",
+    "engine": "apama",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 1253.791650000494,
+    "throughput": 797.5806825636508,
+    "output_count": 879,
+    "error": null,
+    "all_runs_throughput": [
+      797.5806825636508
+    ]
+  },
+  {
+    "scenario": "06_multi_sensor",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 1177.287075028289,
+    "throughput": 849.410497414975,
+    "output_count": 2,
+    "error": null,
+    "all_runs_throughput": [
+      849.410497414975
+    ]
+  },
+  {
+    "scenario": "06_multi_sensor",
+    "engine": "apama",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 0,
+    "throughput": 0,
+    "output_count": 0,
+    "error": "Unsupported EPL stream query syntax",
+    "all_runs_throughput": []
+  },
+  {
+    "scenario": "07_sequence",
+    "engine": "varpulis",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 1199.497296998743,
+    "throughput": 833.682578945443,
+    "output_count": 500,
+    "error": null,
+    "all_runs_throughput": [
+      833.682578945443
+    ]
+  },
+  {
+    "scenario": "07_sequence",
+    "engine": "apama",
+    "connector": "mqtt",
+    "events": 1000,
+    "elapsed_ms": 1270.068824000191,
+    "throughput": 787.3589061499944,
+    "output_count": 500,
+    "error": null,
+    "all_runs_throughput": [
+      787.3589061499944
+    ]
+  }
+]
