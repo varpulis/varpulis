@@ -1,0 +1,31 @@
+connectivityPlugins:
+  kafkaTransport:
+    libraryName: connectivity-kafka
+    class: KafkaTransport
+  jsonCodec:
+    libraryName: connectivity-json-codec
+    class: JSONCodec
+  mapperCodec:
+    libraryName: connectivity-mapper-codec
+    class: MapperCodec
+
+dynamicChainManagers:
+  kafkaManager:
+    transport: kafkaTransport
+    managerConfig:
+      brokerList: "kafka:29092"
+      channelPrefix: "kafka:"
+      groupId: "apama-bench"
+
+dynamicChains:
+  kafkaChain:
+    - apama.eventMap:
+        allowMissing: true
+        suppressLoopback: true
+    - mapperCodec:
+        "*":
+          towardsHost:
+            mapFrom:
+              - payload.event_type: metadata.sag.type
+    - jsonCodec
+    - kafkaTransport

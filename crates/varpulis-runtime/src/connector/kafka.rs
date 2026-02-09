@@ -161,6 +161,7 @@ mod kafka_impl {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
+    use tracing::{error, info, warn};
 
     /// Kafka source connector with rdkafka
     pub struct KafkaSourceImpl {
@@ -235,7 +236,7 @@ mod kafka_impl {
                                             for (key, value) in obj {
                                                 if key != "event_type" {
                                                     if let Some(v) = json_to_value(value) {
-                                                        event = event.with_field(key, v);
+                                                        event = event.with_field(key.as_str(), v);
                                                     }
                                                 }
                                             }

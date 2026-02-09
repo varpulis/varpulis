@@ -1,0 +1,16 @@
+connector Broker = kafka(brokers: "localhost:9092", group_id: "varpulis-bench-07")
+
+event A:
+    id: int
+
+event B:
+    id: int
+
+stream InputA = A.from(Broker, topic: "bench-07-A")
+stream InputB = B.from(Broker, topic: "bench-07-B")
+
+stream Matches = A as a -> B as b
+    .where(a.id == b.id)
+    .within(60s)
+    .emit(event_type: "Match", a_id: a.id, b_id: b.id)
+    .to(Broker, topic: "bench-07-output")

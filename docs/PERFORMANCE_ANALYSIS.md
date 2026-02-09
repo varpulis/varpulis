@@ -1,119 +1,43 @@
 # Varpulis vs Apama Performance Analysis
 
-## Benchmark Results (100K events)
+> **For comprehensive benchmark results**, see [`benchmarks-apama-comparison.md`](benchmarks-apama-comparison.md) —
+> 7 scenarios, MQTT connector + CLI ramdisk modes, memory + throughput comparisons.
 
-### After PERF-04 Optimization (2026-01-31)
+## Current Benchmark Results (2026-02-09)
 
-| Engine | Throughput | Notes |
-|--------|------------|-------|
-| Varpulis (before PERF-04) | ~140K evt/s | Rust native |
-| Varpulis (after PERF-04) | **~146K evt/s** | +4% improvement |
-| Apama | ~163K evt/s | C++ native |
+Measured across 7 CEP scenarios with 100K events, median of 3 runs:
 
-**PERF-04 Results**: Changed `event_sources: HashMap<String, Vec<String>>` to `Arc<[String]>`.
+| Mode | Varpulis | Apama | Varpulis Memory | Apama Memory |
+|------|----------|-------|-----------------|--------------|
+| MQTT Connector | 6–10K/s | 6K/s | 10–57 MB | 85–153 MB |
+| CLI Ramdisk | 234–335K/s | 195–221K/s | 36–66 MB | 166–190 MB |
+
+Varpulis wins 4 of 5 CPU-bound scenarios (1.2–1.3x) and uses 2x–16x less memory in every scenario.
+
+### Optimization History
+
+**PERF-04 (2026-01-31)**: Changed `event_sources: HashMap<String, Vec<String>>` to `Arc<[String]>`.
 Arc clone is O(1) atomic increment vs O(n) deep copy. Improvement: ~4-6%.
 
-## Analysis: Why Apama Scales Better
+**PERF-05 (2026-02-07)**: Sync processing path, zero-clone preload, batch size increase (1K→10K),
+zero-alloc field splitting. Improvement: ~40% (140K→234K evt/s on filter benchmark).
 
-### 1. Memory Allocation Patterns
+## Optimization Analysis
 
-**Varpulis bottlenecks identified:**
+### Resolved Bottlenecks
 
-- **Stream name Vec cloning** (`engine/mod.rs:1180`):
-  ```rust
-  let stream_names: Vec<String> = self.event_sources.get(...).cloned().unwrap_or_default();
-  ```
-  - Clones a Vec<String> for **every event** processed
-  - At 100K events, this creates 100K+ temporary Vec allocations
+The following bottlenecks from the January 2026 analysis have been fixed:
 
-- **Event cloning for joins** (`engine/mod.rs:1279`):
-  ```rust
-  join_buffer.add_event(&source_name, (*event).clone())
-  ```
-  - Full deep clone of Event including IndexMap
+1. **Stream name Vec cloning** — Resolved: Changed to `Arc<[String]>` (PERF-04)
+2. **Event file parsing** — Resolved: Zero-alloc `split_fields()` returns `Vec<&str>` (PERF-05)
+3. **Batch processing** — Resolved: Batch size 10K in preload mode, sync path (PERF-05)
+4. **Event cloning** — Resolved: Zero-clone preload with `into_iter()` + `drain()` (PERF-05)
 
-- **SequenceContext allocation** (`engine/mod.rs:1226`):
-  ```rust
-  let ctx = SequenceContext::new();
-  ```
-  - Creates a new context object per merge source check
+### Remaining Optimization Opportunities
 
-- **Event file parsing** (`event_file.rs:201-244`):
-  ```rust
-  fn split_fields(content: &str) -> Vec<String>
-  ```
-  - Character-by-character iteration with String allocation per field
-
-### 2. Apama Advantages
-
-1. **Batch processing**: Apama's correlator processes events in batches, amortizing per-event overhead
-2. **Pre-compiled EPL**: Event patterns are compiled to efficient bytecode
-3. **Memory pools**: Apama uses pre-allocated memory pools for events
-4. **No Arc overhead**: Native C++ avoids atomic reference counting
-
-### 3. Proposed Optimizations
-
-#### High Impact
-
-1. **Cache stream_names lookup**:
-   ```rust
-   // Instead of cloning per event, use Arc<[String]>
-   event_sources: HashMap<String, Arc<[String]>>
-   ```
-
-2. **Object pooling for events**:
-   ```rust
-   use crossbeam::queue::ArrayQueue;
-   static EVENT_POOL: ArrayQueue<Event> = ArrayQueue::new(1024);
-   ```
-
-3. **Batch processing mode**:
-   - Process events in batches of 100-1000
-   - Single allocation per batch, not per event
-
-#### Medium Impact
-
-4. **Pre-allocate SequenceContext**:
-   - Use thread-local static context or pool
-
-5. **Optimize event file parsing**:
-   - Use memchr for fast field splitting
-   - Zero-copy parsing with &str references
-
-6. **SmallVec for small collections**:
-   ```rust
-   use smallvec::SmallVec;
-   // Avoid heap for collections < 8 items
-   ```
-
-#### Low Impact
-
-7. **Reduce tracing overhead**:
-   - Use conditional compilation for debug traces
-   - Batch log writes
-
-### 4. Performance Scaling Characteristics
-
-```
-Events    Varpulis   Apama     Ratio
-10K       57K/s      24K/s     V 2.3x faster
-100K      140K/s     163K/s    A 1.16x faster
-```
-
-**Varpulis excels at**: Low latency, small batches (< 50K events)
-- Lower per-event startup overhead
-- Faster JIT warming for short runs
-
-**Apama excels at**: High throughput, large batches (> 50K events)
-- Better amortized overhead at scale
-- More aggressive memory pooling
-
-### 5. Next Steps
-
-1. Profile with `perf record` to identify exact hotspots
-2. Implement Arc<[String]> caching for stream_names
-3. Add batch processing mode to CLI
-4. Benchmark after optimizations
+1. **Object pooling for events**: Pre-allocated pools for high-throughput scenarios
+2. **SmallVec for small collections**: Avoid heap for collections < 8 items
+3. **SIMD-accelerated field parsing**: Use `memchr` for delimiter scanning
 
 ## Test Coverage Status
 

@@ -114,7 +114,16 @@ fn create_managed(
             use super::managed_kafka::ManagedKafkaConnector;
 
             let topic = config.topic.as_deref().unwrap_or("events");
-            let mut kafka_config = KafkaConfig::new(&config.url, topic);
+            let brokers = if config.url.is_empty() {
+                config
+                    .properties
+                    .get("brokers")
+                    .cloned()
+                    .unwrap_or_default()
+            } else {
+                config.url.clone()
+            };
+            let mut kafka_config = KafkaConfig::new(&brokers, topic);
 
             if let Some(group_id) = config.properties.get("group_id") {
                 kafka_config = kafka_config.with_group_id(group_id);

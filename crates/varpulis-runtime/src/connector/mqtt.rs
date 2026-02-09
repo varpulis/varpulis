@@ -8,6 +8,7 @@ use super::types::{ConnectorError, SinkConnector, SourceConnector};
 use crate::event::Event;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
+#[cfg(feature = "mqtt")]
 use tracing::{error, info, warn};
 
 // =============================================================================
@@ -35,7 +36,7 @@ impl MqttConfig {
             client_id: None,
             username: None,
             password: None,
-            qos: 1,
+            qos: 0,
         }
     }
 
@@ -67,7 +68,9 @@ impl MqttConfig {
 #[cfg(feature = "mqtt")]
 mod mqtt_impl {
     use super::*;
+    use crate::event::{FieldKey, FxIndexMap};
     use rumqttc::{AsyncClient, Event as MqttEvent, MqttOptions, Packet, QoS};
+    use rustc_hash::FxBuildHasher;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
@@ -139,7 +142,7 @@ mod mqtt_impl {
                 mqtt_opts.set_credentials(user, pass);
             }
 
-            let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 100);
+            let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 10_000);
 
             client
                 .subscribe(&self.config.topic, qos_from_u8(self.config.qos))
@@ -169,11 +172,7 @@ mod mqtt_impl {
                             // Reset error counter on successful message
                             consecutive_errors = 0;
                             if let Ok(payload) = std::str::from_utf8(&publish.payload) {
-                                if let Ok(json) = serde_json::from_str::<serde_json::Value>(payload)
-                                {
-                                    // Extract event type from topic (last segment) or from JSON
-                                    let topic = &publish.topic;
-                                    let event = json_to_event_with_topic(&json, topic);
+                                if let Some(event) = parse_mqtt_payload(payload, &publish.topic) {
                                     if tx.send(event).await.is_err() {
                                         warn!("MQTT source {} channel closed", name);
                                         break;
@@ -316,17 +315,15 @@ mod mqtt_impl {
         async fn send(&self, event: &Event) -> Result<(), ConnectorError> {
             let client = self.client.as_ref().ok_or(ConnectorError::NotConnected)?;
 
-            let payload =
-                serde_json::to_vec(event).map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
+            // Serialize directly into a pre-sized buffer to avoid reallocation
+            let mut buf = Vec::with_capacity(256);
+            serde_json::to_writer(&mut buf, event)
+                .map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
 
+            // With QoS 0, try_publish avoids the async overhead of .await
+            // (just pushes to rumqttc's internal channel synchronously)
             client
-                .publish(
-                    &self.config.topic,
-                    qos_from_u8(self.config.qos),
-                    false,
-                    payload,
-                )
-                .await
+                .try_publish(&self.config.topic, qos_from_u8(self.config.qos), false, buf)
                 .map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
 
             Ok(())
@@ -344,45 +341,63 @@ mod mqtt_impl {
         }
     }
 
-    /// Convert JSON to Event, using the MQTT topic to determine event type if not in JSON
-    fn json_to_event_with_topic(json: &serde_json::Value, topic: &str) -> Event {
-        // Priority: 1) event_type field, 2) type field, 3) last segment of MQTT topic
-        let event_type = json
-            .get("event_type")
-            .or_else(|| json.get("type"))
+    /// Parse JSON payload directly into an Event, avoiding intermediate serde_json::Value.
+    ///
+    /// Uses serde_json::from_str into a HashMap first, then builds the Event
+    /// with pre-allocated capacity. Falls back to topic-based event type
+    /// if not found in the payload.
+    fn parse_mqtt_payload(payload: &str, topic: &str) -> Option<Event> {
+        // Parse into ordered map directly — avoids the generic Value tree
+        let map: indexmap::IndexMap<Arc<str>, serde_json::Value> =
+            serde_json::from_str(payload).ok()?;
+
+        // Extract event type: check "event_type" then "type" then topic
+        let event_type: Arc<str> = map
+            .get("event_type" as &str)
+            .or_else(|| map.get("type" as &str))
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
+            .map(Arc::from)
             .unwrap_or_else(|| {
-                // Extract event type from MQTT topic (last segment)
-                // e.g., "benchmark/input/MarketATick" -> "MarketATick"
-                topic
-                    .rsplit('/')
-                    .next()
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("Unknown")
-                    .to_string()
+                Arc::from(
+                    topic
+                        .rsplit('/')
+                        .next()
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or("Unknown"),
+                )
             });
 
-        let mut event = Event::new(event_type);
+        // Check for nested "data" object
+        let has_data = map
+            .get("data" as &str)
+            .and_then(|v| v.as_object())
+            .is_some();
 
-        // First try nested "data" object, then fall back to top-level fields
-        if let Some(data) = json.get("data").and_then(|v| v.as_object()) {
-            for (k, v) in data {
-                event = event.with_field(k.as_str(), json_value_to_native(v));
+        if has_data {
+            let data_obj = map.get("data" as &str).unwrap().as_object().unwrap();
+            let mut fields: FxIndexMap<FieldKey, varpulis_core::Value> =
+                indexmap::IndexMap::with_capacity_and_hasher(data_obj.len(), FxBuildHasher);
+            for (k, v) in data_obj {
+                fields.insert(Arc::from(k.as_str()), json_value_to_native(v));
             }
-        } else if let Some(obj) = json.as_object() {
-            // Parse fields directly from root object (excluding type fields)
-            for (k, v) in obj {
-                if k != "event_type" && k != "type" {
-                    event = event.with_field(k.as_str(), json_value_to_native(v));
+            Some(Event::from_fields(event_type, fields))
+        } else {
+            // Build fields from top-level, excluding type keys
+            let capacity = map.len().saturating_sub(1); // minus event_type
+            let mut fields: FxIndexMap<FieldKey, varpulis_core::Value> =
+                indexmap::IndexMap::with_capacity_and_hasher(capacity, FxBuildHasher);
+            for (k, v) in &map {
+                let ks: &str = k;
+                if ks != "event_type" && ks != "type" {
+                    fields.insert(k.clone(), json_value_to_native(v));
                 }
             }
+            Some(Event::from_fields(event_type, fields))
         }
-
-        event
     }
 
-    fn json_value_to_native(v: &serde_json::Value) -> impl Into<varpulis_core::Value> {
+    #[inline]
+    fn json_value_to_native(v: &serde_json::Value) -> varpulis_core::Value {
         match v {
             serde_json::Value::Bool(b) => varpulis_core::Value::Bool(*b),
             serde_json::Value::Number(n) => {

@@ -1,0 +1,44 @@
+connector Broker = mqtt(host: "localhost", port: 1884)
+
+event StockTick:
+    symbol: str
+    price: float
+    volume: int
+
+stream Input = StockTick.from(Broker, topic: "bench/05/input")
+
+stream FastEMA = Input
+    .partition_by(symbol)
+    .window(12)
+    .aggregate(
+        symbol: last(symbol),
+        ema_fast: ema(price, 12)
+    )
+
+stream SlowEMA = Input
+    .partition_by(symbol)
+    .window(26)
+    .aggregate(
+        symbol: last(symbol),
+        ema_slow: ema(price, 26)
+    )
+
+stream Crossover = join(FastEMA, SlowEMA)
+    .on(FastEMA.symbol == SlowEMA.symbol)
+    .window(2)
+    .select(
+        symbol: FastEMA.symbol,
+        fast: FastEMA.ema_fast,
+        slow: SlowEMA.ema_slow,
+        diff: FastEMA.ema_fast - SlowEMA.ema_slow
+    )
+    .where(abs(diff) > 0.5)
+    .emit(
+        event_type: "CrossoverSignal",
+        symbol: symbol,
+        fast_ema: fast,
+        slow_ema: slow,
+        signal: if fast > slow then "buy" else "sell",
+        strength: abs(diff)
+    )
+    .to(Broker, topic: "bench/05/output")
