@@ -1696,7 +1696,8 @@ impl Engine {
                 ) {
                     let mut engine = SaseEngine::new(pattern);
 
-                    // Apply partition if specified
+                    // Apply explicit partition_by to SASE engine (NOT auto-inferred keys,
+                    // which are high-cardinality join keys that would degrade SASE performance)
                     if let Some(ref key) = partition_key {
                         engine = engine.with_partition_by(key.clone());
                     }
@@ -2632,6 +2633,69 @@ impl Engine {
             .any(|s| s.operations.iter().any(|op| matches!(op, RuntimeOp::To(_))))
     }
 
+    /// Check if all streams are stateless (safe for round-robin distribution).
+    /// Stateless pipelines contain only filter, select, emit, print, log, pattern, and process ops.
+    /// Stateful ops (windows, aggregation, sequence, join, SASE, Hamlet) need partition affinity.
+    pub fn is_stateless(&self) -> bool {
+        self.streams.values().all(|s| {
+            s.sase_engine.is_none()
+                && s.join_buffer.is_none()
+                && s.hamlet_aggregator.is_none()
+                && s.operations.iter().all(|op| {
+                    matches!(
+                        op,
+                        RuntimeOp::WhereExpr(_)
+                            | RuntimeOp::WhereClosure(_)
+                            | RuntimeOp::Select(_)
+                            | RuntimeOp::Emit(_)
+                            | RuntimeOp::EmitExpr(_)
+                            | RuntimeOp::Print(_)
+                            | RuntimeOp::Log(_)
+                            | RuntimeOp::Having(_)
+                            | RuntimeOp::Process(_)
+                            | RuntimeOp::Pattern(_)
+                            | RuntimeOp::To(_)
+                    )
+                })
+        })
+    }
+
+    /// Return the partition key used by partitioned operations, if any.
+    /// Checks SASE engine partition_by, partitioned windows, partitioned aggregates,
+    /// and infers join keys from sequence where clauses (e.g., `a.id == b.id` → "id").
+    pub fn partition_key(&self) -> Option<String> {
+        for stream in self.streams.values() {
+            // Check SASE engine partition_by
+            if let Some(ref sase) = stream.sase_engine {
+                if let Some(key) = sase.partition_by() {
+                    return Some(key.to_string());
+                }
+            }
+            // Check partitioned operations
+            for op in &stream.operations {
+                match op {
+                    RuntimeOp::PartitionedWindow(pw) => return Some(pw.partition_key.clone()),
+                    RuntimeOp::PartitionedSlidingCountWindow(pw) => {
+                        return Some(pw.partition_key.clone())
+                    }
+                    RuntimeOp::PartitionedAggregate(pa) => return Some(pa.partition_key.clone()),
+                    _ => {}
+                }
+            }
+            // Infer join key from sequence where clauses (e.g., a.id == b.id → "id")
+            if stream.sase_engine.is_some() {
+                for op in &stream.operations {
+                    if let RuntimeOp::WhereExpr(expr) = op {
+                        if let Some(key) = extract_equality_join_key(expr) {
+                            return Some(key);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
     /// Check if any registered stream has session windows.
     pub fn has_session_windows(&self) -> bool {
         self.streams.values().any(|s| {
@@ -3295,5 +3359,53 @@ fn stream_op_name(op: &StreamOp) -> &'static str {
         StreamOp::Watermark(_) => ".watermark()",
         StreamOp::AllowedLateness(_) => ".allowed_lateness()",
         StreamOp::TrendAggregate(_) => ".trend_aggregate()",
+    }
+}
+
+/// Extract the common field name from a cross-alias equality expression.
+/// For `a.id == b.id`, returns `Some("id")`.
+/// Handles both `Binary { Eq, Member, Member }` and `And` combinations.
+fn extract_equality_join_key(expr: &varpulis_core::ast::Expr) -> Option<String> {
+    use varpulis_core::ast::{BinOp, Expr};
+    match expr {
+        Expr::Binary {
+            op: BinOp::Eq,
+            left,
+            right,
+        } => {
+            // Check for Member { Ident(alias_a), field } == Member { Ident(alias_b), field }
+            if let (
+                Expr::Member {
+                    expr: left_expr,
+                    member: left_field,
+                },
+                Expr::Member {
+                    expr: right_expr,
+                    member: right_field,
+                },
+            ) = (left.as_ref(), right.as_ref())
+            {
+                if left_field == right_field {
+                    // Ensure they're different aliases (cross-alias join)
+                    if let (Expr::Ident(left_alias), Expr::Ident(right_alias)) =
+                        (left_expr.as_ref(), right_expr.as_ref())
+                    {
+                        if left_alias != right_alias {
+                            return Some(left_field.clone());
+                        }
+                    }
+                }
+            }
+            None
+        }
+        Expr::Binary {
+            op: BinOp::And,
+            left,
+            right,
+        } => {
+            // Try left side first, then right
+            extract_equality_join_key(left).or_else(|| extract_equality_join_key(right))
+        }
+        _ => None,
     }
 }

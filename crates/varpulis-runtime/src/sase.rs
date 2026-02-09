@@ -1840,6 +1840,11 @@ impl SaseEngine {
         }
     }
 
+    /// Get the partition-by field name, if set.
+    pub fn partition_by(&self) -> Option<&str> {
+        self.partition_by.as_deref()
+    }
+
     /// Enable event-time processing with watermarks
     pub fn with_event_time(mut self) -> Self {
         self.time_semantics = TimeSemantics::EventTime;
