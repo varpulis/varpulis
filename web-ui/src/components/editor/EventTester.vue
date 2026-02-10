@@ -61,13 +61,11 @@ async function injectEvent(): Promise<void> {
 
     // Push output events to the shared event log
     for (const evt of mapped.output_events ?? []) {
-      const evtType = (evt.event_type as string) ?? 'Unknown'
-      const { event_type: _, ...data } = evt
       wsStore.eventLog.push({
         id: `inject-out-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
         direction: 'out',
-        eventType: evtType,
-        data,
+        eventType: (evt.event_type as string) ?? 'Unknown',
+        data: (evt.fields as Record<string, unknown>) ?? evt,
         timestamp: new Date(),
         pipelineId: mapped.routed_to,
       })
@@ -112,10 +110,6 @@ function formatJson(data: unknown): string {
   return JSON.stringify(data, null, 2)
 }
 
-function stripEventType(evt: Record<string, unknown>): Record<string, unknown> {
-  const { event_type: _, ...rest } = evt
-  return rest
-}
 
 onMounted(() => {
   pipelinesStore.fetchGroups()
@@ -229,7 +223,7 @@ onMounted(() => {
                 {{ evt.event_type }}
               </v-card-subtitle>
               <v-card-text class="pa-2">
-                <pre class="font-monospace text-caption">{{ formatJson(stripEventType(evt)) }}</pre>
+                <pre class="font-monospace text-caption">{{ formatJson(evt.fields ?? evt) }}</pre>
               </v-card-text>
             </v-card>
           </div>
