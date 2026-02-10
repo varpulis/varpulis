@@ -32,7 +32,7 @@
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
       "targets": [
         {
-          "expr": "rate(varpulis_events_processed_total[1m])",
+          "expr": "rate(varpulis_events_processed[1m])",
           "legendFormat": "{{stream}} ({{instance}})",
           "refId": "A"
         }
@@ -115,7 +115,7 @@
       "gridPos": { "h": 4, "w": 6, "x": 12, "y": 16 },
       "targets": [
         {
-          "expr": "sum(varpulis_events_processed_total)",
+          "expr": "sum(varpulis_events_processed)",
           "refId": "A"
         }
       ],
