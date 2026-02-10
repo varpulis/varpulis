@@ -69,7 +69,12 @@ mod mqtt_managed_impl {
                 .config
                 .client_id
                 .clone()
-                .unwrap_or_else(|| format!("varpulis-{}", self.connector_name));
+                .unwrap_or_else(|| {
+                    let worker = std::env::var("VARPULIS_WORKER_ID")
+                        .or_else(|_| std::env::var("HOSTNAME"))
+                        .unwrap_or_else(|_| format!("p{}", std::process::id()));
+                    format!("{}-{}", self.connector_name, worker)
+                });
 
             let mut mqtt_opts = MqttOptions::new(&client_id, &self.config.broker, self.config.port);
             mqtt_opts.set_keep_alive(Duration::from_secs(60));
@@ -149,7 +154,12 @@ mod mqtt_managed_impl {
                 .config
                 .client_id
                 .clone()
-                .unwrap_or_else(|| format!("varpulis-{}", self.connector_name));
+                .unwrap_or_else(|| {
+                    let worker = std::env::var("VARPULIS_WORKER_ID")
+                        .or_else(|_| std::env::var("HOSTNAME"))
+                        .unwrap_or_else(|_| format!("p{}", std::process::id()));
+                    format!("{}-{}", self.connector_name, worker)
+                });
             let client_id = format!("{}-sink", base_id);
 
             let mut mqtt_opts = MqttOptions::new(&client_id, &self.config.broker, self.config.port);
