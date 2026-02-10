@@ -2158,6 +2158,7 @@ impl Engine {
 
             for stream_name in stream_names.iter() {
                 if let Some(stream) = self.streams.get_mut(stream_name) {
+                    let start = std::time::Instant::now();
                     let result = Self::process_stream_with_functions(
                         stream,
                         Arc::clone(&current_event),
@@ -2165,6 +2166,11 @@ impl Engine {
                         self.sinks.cache(),
                     )
                     .await?;
+
+                    // Record per-stream processing in Prometheus
+                    if let Some(ref m) = self.metrics {
+                        m.record_processing(stream_name, start.elapsed().as_secs_f64());
+                    }
 
                     // Collect emitted events for batch sending
                     self.output_events_emitted += result.emitted_events.len() as u64;
@@ -2434,6 +2440,7 @@ impl Engine {
 
             for stream_name in stream_names.iter() {
                 if let Some(stream) = self.streams.get_mut(stream_name) {
+                    let start = std::time::Instant::now();
                     let result = Self::process_stream_with_functions(
                         stream,
                         Arc::clone(&current_event),
@@ -2441,6 +2448,10 @@ impl Engine {
                         self.sinks.cache(),
                     )
                     .await?;
+
+                    if let Some(ref m) = self.metrics {
+                        m.record_processing(stream_name, start.elapsed().as_secs_f64());
+                    }
 
                     self.output_events_emitted += result.emitted_events.len() as u64;
                     let has_emitted = !result.emitted_events.is_empty();
