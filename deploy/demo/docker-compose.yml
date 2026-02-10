@@ -1,0 +1,293 @@
+# Varpulis Demo - Full Stack
+#
+# Public demo at https://demo.varpulis-cep.com
+# Only Caddy exposes ports 80/443 to the host.
+#
+# Usage:
+#   docker compose build
+#   docker compose up -d
+
+services:
+  # ─── Reverse Proxy (TLS termination) ───────────────────────
+  caddy:
+    image: caddy:2-alpine
+    container_name: demo-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - $HOME/varpulis-demo/certs:/etc/caddy/certs:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      web-ui:
+        condition: service_healthy
+      coordinator:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - varpulis-demo
+
+  # ─── Web UI (Vue SPA + Nginx) ─────────────────────────────
+  web-ui:
+    build:
+      context: ../../web-ui
+      dockerfile: Dockerfile
+    container_name: demo-web-ui
+    expose:
+      - "8080"
+    depends_on:
+      coordinator:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - varpulis-demo
+
+  # ─── Coordinator (control plane) ───────────────────────────
+  coordinator:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      args:
+        FEATURES: kafka
+    container_name: demo-coordinator
+    command:
+      - "coordinator"
+      - "--bind"
+      - "0.0.0.0"
+      - "--port"
+      - "9100"
+      - "--api-key"
+      - "${VARPULIS_API_KEY}"
+    expose:
+      - "9100"
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9100/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - varpulis-demo
+
+  # ─── Worker 0 ─────────────────────────────────────────────
+  worker-0:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      args:
+        FEATURES: kafka
+    container_name: demo-worker-0
+    command:
+      - "server"
+      - "--bind"
+      - "0.0.0.0"
+      - "--port"
+      - "9000"
+      - "--api-key"
+      - "${VARPULIS_WORKER_KEY}"
+      - "--metrics"
+      - "--coordinator"
+      - "http://coordinator:9100"
+      - "--worker-id"
+      - "worker-0"
+    expose:
+      - "9000"
+      - "9090"
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+    depends_on:
+      coordinator:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - varpulis-demo
+
+  # ─── Worker 1 ─────────────────────────────────────────────
+  worker-1:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      args:
+        FEATURES: kafka
+    container_name: demo-worker-1
+    command:
+      - "server"
+      - "--bind"
+      - "0.0.0.0"
+      - "--port"
+      - "9000"
+      - "--api-key"
+      - "${VARPULIS_WORKER_KEY}"
+      - "--metrics"
+      - "--coordinator"
+      - "http://coordinator:9100"
+      - "--worker-id"
+      - "worker-1"
+    expose:
+      - "9000"
+      - "9090"
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+    depends_on:
+      coordinator:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - varpulis-demo
+
+  # ─── MQTT Broker (market data ingest) ─────────────────────
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: demo-mosquitto
+    expose:
+      - "1883"
+    command: mosquitto -c /dev/null -p 1883 -v
+    restart: unless-stopped
+    networks:
+      - varpulis-demo
+
+  # ─── Zookeeper (Kafka dependency) ─────────────────────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: demo-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 2181 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - varpulis-demo
+
+  # ─── Kafka (output signal topics) ─────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: demo-kafka
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - varpulis-demo
+
+  # ─── Setup (one-shot: create connectors + deploy pipeline) ─
+  setup:
+    image: python:3.12-slim
+    container_name: demo-setup
+    command: >
+      bash -c "pip install --quiet requests &&
+      python /app/setup.py
+        --coordinator http://coordinator:9100
+        --api-key ${VARPULIS_API_KEY}
+        --mqtt-host mosquitto --mqtt-port 1883
+        --kafka-brokers kafka:9092"
+    volumes:
+      - ../../demos/e2e-showcase/setup.py:/app/setup.py:ro
+      - ../../demos/e2e-showcase/pipeline.vpl:/app/pipeline.vpl:ro
+    depends_on:
+      coordinator:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - varpulis-demo
+
+  # ─── Generator (continuous market event stream) ────────────
+  generator:
+    image: python:3.12-slim
+    container_name: demo-generator
+    command: >
+      bash -c "pip install --quiet paho-mqtt &&
+      python /app/generator.py --broker mosquitto --port 1883 --rate 10 --duration 0"
+    volumes:
+      - ../../demos/e2e-showcase/generator.py:/app/generator.py:ro
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - varpulis-demo
+
+  # ─── Prometheus (metrics collection) ───────────────────────
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: demo-prometheus
+    expose:
+      - "9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+    restart: unless-stopped
+    networks:
+      - varpulis-demo
+
+  # ─── Grafana (monitoring dashboard) ────────────────────────
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: demo-grafana
+    expose:
+      - "3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-varpulis}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ../docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    restart: unless-stopped
+    networks:
+      - varpulis-demo
+
+volumes:
+  caddy-data:
+  caddy-config:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  varpulis-demo:
+    driver: bridge
