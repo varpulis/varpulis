@@ -135,9 +135,11 @@ const navItems = [
           </div>
         </v-alert>
 
-        <router-view v-slot="{ Component }">
+        <router-view v-slot="{ Component, route }">
           <transition name="fade" mode="out-in">
-            <component :is="Component" />
+            <keep-alive :include="['EditorView']">
+              <component :is="Component" :key="route.path" />
+            </keep-alive>
           </transition>
         </router-view>
       </v-container>
