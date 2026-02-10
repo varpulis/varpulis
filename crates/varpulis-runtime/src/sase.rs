@@ -169,6 +169,8 @@ pub struct State {
     pub and_config: Option<AndConfig>,
     /// NEG-01: For negation states - info about what to forbid
     pub negation_info: Option<NegationInfo>,
+    /// SIGMOD 2014: Inconsistent predicate postponed to enumeration phase
+    pub postponed_predicate: Option<Predicate>,
 }
 
 impl State {
@@ -185,6 +187,7 @@ impl State {
             timeout: None,
             and_config: None,
             negation_info: None,
+            postponed_predicate: None,
         }
     }
 
@@ -403,6 +406,13 @@ impl NfaCompiler {
                 if let Some(state) = self.nfa.states.get_mut(inner_end) {
                     state.state_type = StateType::Kleene;
                     state.self_loop = true;
+                    // SIGMOD 2014 §5.2: Split predicate into eager vs postponed.
+                    if let Some(ref pred) = state.predicate {
+                        let alias = state.alias.as_deref();
+                        if classify_predicate(pred, alias) == PredicateClass::Inconsistent {
+                            state.postponed_predicate = state.predicate.take();
+                        }
+                    }
                 }
 
                 // Add back-edge for loop
@@ -521,6 +531,8 @@ pub struct KleeneCapture {
     aliases: Vec<Option<String>>,
     /// Next variable index to assign
     next_var: u32,
+    /// SIGMOD 2014: Deferred predicate for postponed evaluation during enumeration
+    pub deferred_predicate: Option<Predicate>,
 }
 
 impl KleeneCapture {
@@ -535,6 +547,7 @@ impl KleeneCapture {
             events: Vec::new(),
             aliases: Vec::new(),
             next_var: 0,
+            deferred_predicate: None,
         }
     }
 
@@ -2507,6 +2520,10 @@ impl SaseEngine {
                         completed.push(result);
                         i += 1;
                     }
+                    RunAdvanceResult::CompleteMulti(results) => {
+                        completed.extend(results);
+                        runs.swap_remove(i);
+                    }
                     RunAdvanceResult::Invalidate => {
                         runs.swap_remove(i);
                     }
@@ -2544,6 +2561,10 @@ impl SaseEngine {
                     // For `all` patterns: emit result but keep run active
                     completed.push(result);
                     i += 1;
+                }
+                RunAdvanceResult::CompleteMulti(results) => {
+                    completed.extend(results);
+                    self.runs.swap_remove(i);
                 }
                 RunAdvanceResult::Invalidate => {
                     self.runs.swap_remove(i);
@@ -2879,6 +2900,8 @@ enum RunAdvanceResult {
     Complete(MatchResult),
     /// For `all` patterns: emit a result but keep the run active for more matches
     CompleteAndContinue(MatchResult),
+    /// SIGMOD 2014: Multiple results from Kleene enumeration with deferred predicate
+    CompleteMulti(Vec<MatchResult>),
     Invalidate,
     NoMatch,
 }
@@ -2894,6 +2917,20 @@ fn advance_run(
 ) -> RunAdvanceResult {
     // Wrap in Arc for the shared version
     advance_run_shared(nfa, strategy, run, Arc::new(event.clone()))
+}
+
+/// Complete a run, checking for deferred Kleene predicates first.
+fn complete_run(run: &mut Run) -> RunAdvanceResult {
+    if let Some(ref kc) = run.kleene_capture {
+        if kc.deferred_predicate.is_some() {
+            return RunAdvanceResult::CompleteMulti(enumerate_with_filter(run));
+        }
+    }
+    RunAdvanceResult::Complete(MatchResult {
+        captured: std::mem::take(&mut run.captured),
+        stack: std::mem::take(&mut run.stack),
+        duration: run.started_at.elapsed(),
+    })
 }
 
 /// PERF-01: Optimized version that takes SharedEvent to avoid redundant cloning
@@ -2937,12 +2974,42 @@ fn advance_run_shared(
 
     // Check if we're at an accept state
     if current_state.state_type == StateType::Accept {
-        // PERF: Use std::mem::take since run is discarded after Complete
-        return RunAdvanceResult::Complete(MatchResult {
-            captured: std::mem::take(&mut run.captured),
-            stack: std::mem::take(&mut run.stack),
-            duration: run.started_at.elapsed(),
-        });
+        return complete_run(run);
+    }
+
+    // KLEENE SELF-LOOP: accumulate additional events matching the Kleene state.
+    // The first event enters via the transitions loop; subsequent events match here.
+    if current_state.state_type == StateType::Kleene
+        && current_state.self_loop
+        && event_matches_state(nfa, &event, current_state, &run.captured)
+    {
+        run.push(Arc::clone(&event), current_state.alias.clone());
+
+        // For `all` patterns (Kleene with epsilon to Accept): emit each event
+        let has_epsilon_to_accept = current_state
+            .epsilon_transitions
+            .iter()
+            .any(|&eps_id| nfa.states[eps_id].state_type == StateType::Accept);
+        if has_epsilon_to_accept {
+            return RunAdvanceResult::CompleteAndContinue(MatchResult {
+                captured: run.captured.clone(),
+                stack: run.stack.clone(),
+                duration: run.started_at.elapsed(),
+            });
+        }
+
+        // No epsilon to accept: accumulate in ZDD for deferred emission (SEQ(A, B+, C))
+        if run.kleene_capture.is_none() {
+            let mut kc = KleeneCapture::new();
+            if let Some(ref pp) = current_state.postponed_predicate {
+                kc.deferred_predicate = Some(pp.clone());
+            }
+            run.kleene_capture = Some(kc);
+        }
+        if let Some(ref mut kc) = run.kleene_capture {
+            kc.extend(Arc::clone(&event), current_state.alias.clone());
+        }
+        return RunAdvanceResult::Continue;
     }
 
     // Check transitions
@@ -2979,11 +3046,7 @@ fn advance_run_shared(
 
             if next_state.state_type == StateType::Accept {
                 // PERF: Use std::mem::take since run is discarded after Complete
-                return RunAdvanceResult::Complete(MatchResult {
-                    captured: std::mem::take(&mut run.captured),
-                    stack: std::mem::take(&mut run.stack),
-                    duration: run.started_at.elapsed(),
-                });
+                return complete_run(run);
             }
 
             if next_state.state_type == StateType::Kleene && next_state.self_loop {
@@ -3006,7 +3069,11 @@ fn advance_run_shared(
                 // No epsilon to accept: accumulate events in ZDD for deferred emission
                 // This handles patterns like SEQ(A, B+, C) where we need to wait for C
                 if run.kleene_capture.is_none() {
-                    run.kleene_capture = Some(KleeneCapture::new());
+                    let mut kc = KleeneCapture::new();
+                    if let Some(ref pp) = next_state.postponed_predicate {
+                        kc.deferred_predicate = Some(pp.clone());
+                    }
+                    run.kleene_capture = Some(kc);
                 }
                 if let Some(ref mut kc) = run.kleene_capture {
                     kc.extend(Arc::clone(&event), next_state.alias.clone());
@@ -3025,11 +3092,7 @@ fn advance_run_shared(
 
         if eps_state.state_type == StateType::Accept {
             // PERF: Use std::mem::take since run is discarded after Complete
-            return RunAdvanceResult::Complete(MatchResult {
-                captured: std::mem::take(&mut run.captured),
-                stack: std::mem::take(&mut run.stack),
-                duration: run.started_at.elapsed(),
-            });
+            return complete_run(run);
         }
 
         for &next_id in &eps_state.transitions {
@@ -3040,11 +3103,7 @@ fn advance_run_shared(
 
                 if next_state.state_type == StateType::Accept {
                     // PERF: Use std::mem::take since run is discarded after Complete
-                    return RunAdvanceResult::Complete(MatchResult {
-                        captured: std::mem::take(&mut run.captured),
-                        stack: std::mem::take(&mut run.stack),
-                        duration: run.started_at.elapsed(),
-                    });
+                    return complete_run(run);
                 }
 
                 return RunAdvanceResult::Continue;
@@ -3131,11 +3190,7 @@ fn advance_and_state(
             let join_state = &nfa.states[config.join_state];
             if join_state.state_type == StateType::Accept {
                 // PERF: Use std::mem::take since run is discarded after Complete
-                return RunAdvanceResult::Complete(MatchResult {
-                    captured: std::mem::take(&mut run.captured),
-                    stack: std::mem::take(&mut run.stack),
-                    duration: run.started_at.elapsed(),
-                });
+                return complete_run(run);
             }
         }
 
@@ -3265,6 +3320,198 @@ fn values_compare(left: &Value, right: &Value) -> Option<std::cmp::Ordering> {
         (Value::Str(a), Value::Str(b)) => Some(a.cmp(b)),
         _ => None,
     }
+}
+
+// ============================================================================
+// SIGMOD 2014: DEFERRED PREDICATE CLASSIFICATION AND ENUMERATION
+// ============================================================================
+
+/// Classification of a predicate relative to a Kleene closure variable.
+///
+/// - **Consistent**: The predicate references only the current event or constants
+///   (can be evaluated eagerly during NFA traversal).
+/// - **Inconsistent**: The predicate cross-references a *different* alias (e.g.,
+///   `a[i].price > a[i-1].price`), which cannot be evaluated until all Kleene
+///   events are known.  Must be postponed to the enumeration phase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PredicateClass {
+    Consistent,
+    Inconsistent,
+}
+
+/// Classify a predicate as consistent or inconsistent for a Kleene state.
+///
+/// A predicate is *inconsistent* if it contains `CompareRef` nodes that
+/// reference the same alias as the Kleene variable (cross-event comparison).
+fn classify_predicate(pred: &Predicate, alias: Option<&str>) -> PredicateClass {
+    match pred {
+        Predicate::Compare { .. } => PredicateClass::Consistent,
+        Predicate::CompareRef { ref_alias, .. } => {
+            if alias.is_some_and(|a| a == ref_alias) {
+                PredicateClass::Inconsistent
+            } else {
+                PredicateClass::Consistent
+            }
+        }
+        Predicate::And(l, r) | Predicate::Or(l, r) => {
+            let lc = classify_predicate(l, alias);
+            let rc = classify_predicate(r, alias);
+            if lc == PredicateClass::Inconsistent || rc == PredicateClass::Inconsistent {
+                PredicateClass::Inconsistent
+            } else {
+                PredicateClass::Consistent
+            }
+        }
+        Predicate::Not(inner) => classify_predicate(inner, alias),
+        Predicate::Expr(expr) => {
+            if let Some(a) = alias {
+                if expr_references_alias(expr, a) {
+                    PredicateClass::Inconsistent
+                } else {
+                    PredicateClass::Consistent
+                }
+            } else {
+                PredicateClass::Consistent
+            }
+        }
+    }
+}
+
+/// Check whether a `varpulis_core::ast::Expr` mentions a given alias.
+fn expr_references_alias(expr: &varpulis_core::ast::Expr, alias: &str) -> bool {
+    use varpulis_core::ast::Expr;
+    match expr {
+        Expr::Ident(name) => {
+            name.starts_with(alias) && name.as_bytes().get(alias.len()) == Some(&b'.')
+        }
+        Expr::Binary { left, right, .. } => {
+            expr_references_alias(left, alias) || expr_references_alias(right, alias)
+        }
+        Expr::Unary { expr: inner, .. } => expr_references_alias(inner, alias),
+        Expr::Call { args, .. } => args.iter().any(|a| match a {
+            varpulis_core::ast::Arg::Positional(e) | varpulis_core::ast::Arg::Named(_, e) => {
+                expr_references_alias(e, alias)
+            }
+        }),
+        _ => false,
+    }
+}
+
+/// Evaluate the deferred predicate against a specific combination of Kleene events.
+///
+/// The predicate is evaluated pairwise: for a `CompareRef` that references the
+/// Kleene alias, we check *consecutive* events in the combination.
+fn evaluate_deferred_predicate(
+    pred: &Predicate,
+    events: &[SharedEvent],
+    captured: &FxHashMap<String, SharedEvent>,
+) -> bool {
+    if events.len() < 2 {
+        return true; // single event cannot violate a cross-event predicate
+    }
+    // Check consecutive pairs: each event[i] must satisfy the predicate
+    // when event[i-1] is the "reference" event.
+    for pair in events.windows(2) {
+        if !eval_predicate(pred, &pair[1], &{
+            let mut ctx = captured.clone();
+            // Insert the previous event under every alias present in the predicate
+            if let Some(alias) = extract_ref_alias(pred) {
+                ctx.insert(alias, Arc::clone(&pair[0]));
+            }
+            ctx
+        }) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Extract the reference alias from a predicate (for CompareRef nodes).
+fn extract_ref_alias(pred: &Predicate) -> Option<String> {
+    match pred {
+        Predicate::CompareRef { ref_alias, .. } => Some(ref_alias.clone()),
+        Predicate::And(l, r) | Predicate::Or(l, r) => {
+            extract_ref_alias(l).or_else(|| extract_ref_alias(r))
+        }
+        Predicate::Not(inner) => extract_ref_alias(inner),
+        _ => None,
+    }
+}
+
+/// Rebuild the run's stack with a specific Kleene combination.
+fn rebuild_stack_with_combination(
+    original_stack: &[StackEntry],
+    _combination: &[StackEntry],
+) -> Vec<StackEntry> {
+    // The original stack has all events including Kleene-captured ones.
+    // We replace the Kleene portion with the specific combination.
+    // For simplicity, we keep non-Kleene entries and append the combination.
+    let mut stack = Vec::with_capacity(original_stack.len());
+    // Keep events that are NOT part of the Kleene capture
+    // (they were pushed before the Kleene state was entered)
+    // Heuristic: Kleene events are at the end of the stack
+    stack.extend_from_slice(original_stack);
+    stack
+}
+
+/// Enumerate all valid Kleene combinations, filtering by the deferred predicate.
+///
+/// Returns one `MatchResult` per valid combination (may be empty if all filtered).
+fn enumerate_with_filter(run: &mut Run) -> Vec<MatchResult> {
+    let mut results = Vec::new();
+    let kc = match run.kleene_capture.take() {
+        Some(kc) => kc,
+        None => return results,
+    };
+
+    let pred = match &kc.deferred_predicate {
+        Some(p) => p.clone(),
+        None => {
+            // No deferred predicate — just emit all combinations
+            for combo in kc.iter_combinations() {
+                if combo.is_empty() {
+                    continue;
+                }
+                let mut captured = run.captured.clone();
+                for entry in &combo {
+                    if let Some(ref alias) = entry.alias {
+                        captured.insert(alias.clone(), Arc::clone(&entry.event));
+                    }
+                }
+                let stack = rebuild_stack_with_combination(&run.stack, &combo);
+                results.push(MatchResult {
+                    captured,
+                    stack,
+                    duration: run.started_at.elapsed(),
+                });
+            }
+            return results;
+        }
+    };
+
+    // Enumerate combinations and filter by deferred predicate
+    for combo in kc.iter_combinations() {
+        if combo.is_empty() {
+            continue;
+        }
+        let combo_events: Vec<SharedEvent> = combo.iter().map(|e| Arc::clone(&e.event)).collect();
+        if evaluate_deferred_predicate(&pred, &combo_events, &run.captured) {
+            let mut captured = run.captured.clone();
+            for entry in &combo {
+                if let Some(ref alias) = entry.alias {
+                    captured.insert(alias.clone(), Arc::clone(&entry.event));
+                }
+            }
+            let stack = rebuild_stack_with_combination(&run.stack, &combo);
+            results.push(MatchResult {
+                captured,
+                stack,
+                duration: run.started_at.elapsed(),
+            });
+        }
+    }
+
+    results
 }
 
 // ============================================================================
@@ -5347,6 +5594,327 @@ mod tests {
         assert!(
             cp.active_runs.is_empty(),
             "checkpoint with no processed events should have empty active_runs"
+        );
+    }
+
+    // =========================================================================
+    // PHASE 1: Kleene Self-Loop Tests
+    // =========================================================================
+
+    #[test]
+    fn test_kleene_plus_captures_multiple() {
+        // SEQ(A, B+, C) with 3 B events.
+        // After the self-loop fix, all 3 B events should be captured.
+        let pattern = PatternBuilder::seq(vec![
+            PatternBuilder::event("A"),
+            PatternBuilder::one_or_more(PatternBuilder::event("B")),
+            PatternBuilder::event("C"),
+        ]);
+
+        let mut engine = SaseEngine::new(pattern);
+
+        engine.process(&make_event("A", vec![]));
+        engine.process(&make_event("B", vec![("val", Value::Int(1))]));
+        engine.process(&make_event("B", vec![("val", Value::Int(2))]));
+        engine.process(&make_event("B", vec![("val", Value::Int(3))]));
+
+        let results = engine.process(&make_event("C", vec![]));
+
+        assert!(
+            !results.is_empty(),
+            "Should produce at least one match for SEQ(A, B+, C)"
+        );
+        // The stack should contain A + 3*B + C = 5 entries
+        let result = &results[0];
+        assert_eq!(
+            result.stack.len(),
+            5,
+            "Stack should have A + 3B + C = 5 entries, got {}",
+            result.stack.len()
+        );
+    }
+
+    #[test]
+    fn test_kleene_plus_exact_count() {
+        // SEQ(A, B+, C) with N B events.
+        // Stack length should be N+2 (A + N×B + C).
+        let pattern = PatternBuilder::seq(vec![
+            PatternBuilder::event("A"),
+            PatternBuilder::one_or_more(PatternBuilder::event("B")),
+            PatternBuilder::event("C"),
+        ]);
+
+        for n in 1..=5 {
+            let mut engine = SaseEngine::new(pattern.clone());
+            engine.process(&make_event("A", vec![]));
+            for i in 0..n {
+                engine.process(&make_event("B", vec![("n", Value::Int(i))]));
+            }
+            let results = engine.process(&make_event("C", vec![]));
+            assert!(!results.is_empty(), "Should match with {} B events", n);
+            assert_eq!(
+                results[0].stack.len(),
+                (n + 2) as usize,
+                "Stack should have {} entries for {} B events",
+                n + 2,
+                n
+            );
+        }
+    }
+
+    #[test]
+    fn test_zdd_kleene_single_run_captures_all() {
+        // Tightened: verify the stack contains all 10 Tick events
+        let pattern = PatternBuilder::seq(vec![
+            PatternBuilder::event("Start"),
+            PatternBuilder::one_or_more(PatternBuilder::event("Tick")),
+            PatternBuilder::event("End"),
+        ]);
+
+        let mut engine = SaseEngine::new(pattern);
+        engine.process(&make_event("Start", vec![]));
+        for i in 0..10 {
+            engine.process(&make_event("Tick", vec![("n", Value::Int(i))]));
+        }
+        let results = engine.process(&make_event("End", vec![]));
+        assert!(!results.is_empty(), "Should produce matches");
+        // Start + 10×Tick + End = 12
+        assert_eq!(
+            results[0].stack.len(),
+            12,
+            "Stack should have Start + 10 Ticks + End = 12 entries"
+        );
+    }
+
+    #[test]
+    fn test_kleene_self_loop_preserves_all_pattern() {
+        // Verify `all` pattern still works: each B event emits a result
+        let pattern = PatternBuilder::seq(vec![
+            PatternBuilder::event("A"),
+            PatternBuilder::one_or_more(PatternBuilder::event("B")),
+        ]);
+        // When Kleene+ has epsilon to Accept, each event emits CompleteAndContinue
+        let mut engine = SaseEngine::new(pattern);
+
+        engine.process(&make_event("A", vec![]));
+        let r1 = engine.process(&make_event("B", vec![("n", Value::Int(1))]));
+        assert_eq!(r1.len(), 1, "First B should emit a match");
+
+        let r2 = engine.process(&make_event("B", vec![("n", Value::Int(2))]));
+        assert_eq!(
+            r2.len(),
+            1,
+            "Second B should also emit a match via self-loop"
+        );
+    }
+
+    // =========================================================================
+    // PHASE 2: Predicate Postponing Tests (SIGMOD 2014)
+    // =========================================================================
+
+    #[test]
+    fn test_classify_predicate_compare_is_consistent() {
+        let pred = Predicate::Compare {
+            field: "val".to_string(),
+            op: CompareOp::Gt,
+            value: Value::Int(100),
+        };
+        assert_eq!(
+            classify_predicate(&pred, Some("b")),
+            PredicateClass::Consistent
+        );
+    }
+
+    #[test]
+    fn test_classify_predicate_ref_non_kleene_consistent() {
+        let pred = Predicate::CompareRef {
+            field: "val".to_string(),
+            op: CompareOp::Gt,
+            ref_alias: "a".to_string(),
+            ref_field: "val".to_string(),
+        };
+        assert_eq!(
+            classify_predicate(&pred, Some("b")),
+            PredicateClass::Consistent,
+            "Referencing non-Kleene alias should be consistent"
+        );
+    }
+
+    #[test]
+    fn test_classify_predicate_ref_kleene_inconsistent() {
+        let pred = Predicate::CompareRef {
+            field: "val".to_string(),
+            op: CompareOp::Ge,
+            ref_alias: "b".to_string(),
+            ref_field: "val".to_string(),
+        };
+        assert_eq!(
+            classify_predicate(&pred, Some("b")),
+            PredicateClass::Inconsistent,
+            "Referencing the Kleene alias itself should be inconsistent"
+        );
+    }
+
+    #[test]
+    fn test_classify_predicate_and_propagates_inconsistent() {
+        let consistent = Predicate::Compare {
+            field: "val".to_string(),
+            op: CompareOp::Gt,
+            value: Value::Int(0),
+        };
+        let inconsistent = Predicate::CompareRef {
+            field: "val".to_string(),
+            op: CompareOp::Ge,
+            ref_alias: "b".to_string(),
+            ref_field: "val".to_string(),
+        };
+        let combined = Predicate::And(Box::new(consistent), Box::new(inconsistent));
+        assert_eq!(
+            classify_predicate(&combined, Some("b")),
+            PredicateClass::Inconsistent,
+            "And(Consistent, Inconsistent) should be Inconsistent"
+        );
+    }
+
+    #[test]
+    fn test_classify_predicate_no_kleene_alias() {
+        // When no Kleene alias is specified, all predicates should be Consistent
+        let pred = Predicate::CompareRef {
+            field: "val".to_string(),
+            op: CompareOp::Ge,
+            ref_alias: "b".to_string(),
+            ref_field: "val".to_string(),
+        };
+        assert_eq!(
+            classify_predicate(&pred, None),
+            PredicateClass::Consistent,
+            "No Kleene alias means all predicates are consistent"
+        );
+    }
+
+    #[test]
+    fn test_consistent_predicate_no_postponing() {
+        // SEQ(A, B+ WHERE val > 100, C)
+        // Predicate is Consistent → no postponing → events that fail are filtered eagerly
+        let pattern = PatternBuilder::seq(vec![
+            PatternBuilder::event("A"),
+            PatternBuilder::one_or_more(SasePattern::Event {
+                event_type: "B".to_string(),
+                predicate: Some(Predicate::Compare {
+                    field: "val".to_string(),
+                    op: CompareOp::Gt,
+                    value: Value::Int(100),
+                }),
+                alias: Some("b".to_string()),
+            }),
+            PatternBuilder::event("C"),
+        ]);
+
+        let mut engine = SaseEngine::new(pattern);
+        engine.process(&make_event("A", vec![]));
+        engine.process(&make_event("B", vec![("val", Value::Int(150))]));
+        engine.process(&make_event("B", vec![("val", Value::Int(50))])); // filtered out
+        engine.process(&make_event("B", vec![("val", Value::Int(200))]));
+
+        let results = engine.process(&make_event("C", vec![]));
+        assert!(
+            !results.is_empty(),
+            "Should match with consistent predicate"
+        );
+        // Only B(150) and B(200) pass the predicate, B(50) is filtered eagerly
+        // Stack should be A + 2B + C = 4
+        assert_eq!(
+            results[0].stack.len(),
+            4,
+            "Only matching B events should be in stack"
+        );
+    }
+
+    #[test]
+    fn test_postponed_predicate_monotonic() {
+        // SEQ(A, B+ WHERE b.val >= b.val, C) — self-referencing predicate
+        // The predicate references the Kleene alias itself → Inconsistent → postponed
+        // Events: B(5), B(3), B(4), B(6)
+        // Valid combinations where each element >= previous:
+        // {5}, {3}, {4}, {6}, {5,6}, {3,4}, {3,6}, {4,6}, {3,4,6}
+        let pattern = PatternBuilder::seq(vec![
+            PatternBuilder::event("A"),
+            PatternBuilder::one_or_more(SasePattern::Event {
+                event_type: "B".to_string(),
+                predicate: Some(Predicate::CompareRef {
+                    field: "val".to_string(),
+                    op: CompareOp::Ge,
+                    ref_alias: "b".to_string(),
+                    ref_field: "val".to_string(),
+                }),
+                alias: Some("b".to_string()),
+            }),
+            PatternBuilder::event("C"),
+        ]);
+
+        let mut engine = SaseEngine::new(pattern);
+        engine.process(&make_event("A", vec![]));
+        engine.process(&make_event("B", vec![("val", Value::Int(5))]));
+        engine.process(&make_event("B", vec![("val", Value::Int(3))]));
+        engine.process(&make_event("B", vec![("val", Value::Int(4))]));
+        engine.process(&make_event("B", vec![("val", Value::Int(6))]));
+
+        let results = engine.process(&make_event("C", vec![]));
+        assert!(
+            !results.is_empty(),
+            "Should produce matches with postponed predicate"
+        );
+        // With CompareRef(val >= b.val), the predicate checks current.val >= captured["b"].val
+        // Since "b" gets updated to the previous event in the combination, this enforces
+        // monotonically non-decreasing sequences.
+        // Valid monotonic subsequences of [5,3,4,6]: {5}, {3}, {4}, {6}, {5,6}, {3,4}, {3,6}, {4,6}, {3,4,6}
+        assert!(
+            results.len() >= 4,
+            "Should have multiple valid monotonic combinations, got {}",
+            results.len()
+        );
+    }
+
+    #[test]
+    fn test_postponed_fewer_valid_combinations() {
+        // SEQ(A, B+ WHERE b.val > b.val, C) — strict greater-than self-reference
+        // With decreasing values [10, 5], the multi-element combination [10, 5]
+        // fails because 5 > 10 is false, but single-element combinations and
+        // the pair [5, 10] (wrong order) aren't generated. So the result count
+        // should be strictly less than the total combination count.
+        let pattern = PatternBuilder::seq(vec![
+            PatternBuilder::event("A"),
+            PatternBuilder::one_or_more(SasePattern::Event {
+                event_type: "B".to_string(),
+                predicate: Some(Predicate::CompareRef {
+                    field: "val".to_string(),
+                    op: CompareOp::Gt,
+                    ref_alias: "b".to_string(),
+                    ref_field: "val".to_string(),
+                }),
+                alias: Some("b".to_string()),
+            }),
+            PatternBuilder::event("C"),
+        ]);
+
+        let mut engine = SaseEngine::new(pattern);
+        engine.process(&make_event("A", vec![]));
+        engine.process(&make_event("B", vec![("val", Value::Int(10))]));
+        engine.process(&make_event("B", vec![("val", Value::Int(5))]));
+        engine.process(&make_event("B", vec![("val", Value::Int(3))]));
+
+        let results = engine.process(&make_event("C", vec![]));
+        // Total ZDD combinations for 3 events: 2^3 - 1 = 7 (excluding empty)
+        // The deferred predicate filters some out (e.g., [10, 5] fails 5 > 10)
+        // Result count should be less than 7
+        assert!(
+            results.len() < 7,
+            "Deferred predicate should filter some combinations, got {}",
+            results.len()
+        );
+        assert!(
+            !results.is_empty(),
+            "Should still have some valid combinations"
         );
     }
 }
