@@ -1969,6 +1969,11 @@ impl Engine {
 
     /// Internal processing logic shared by process() and process_shared()
     async fn process_inner(&mut self, event: SharedEvent) -> Result<(), String> {
+        // Record incoming event in Prometheus
+        if let Some(ref m) = self.metrics {
+            m.record_event(&event.event_type);
+        }
+
         // Check for late data against the watermark
         if let Some(ref tracker) = self.watermark_tracker {
             if let Some(effective_wm) = tracker.effective_watermark() {
@@ -2057,6 +2062,7 @@ impl Engine {
 
             for stream_name in stream_names.iter() {
                 if let Some(stream) = self.streams.get_mut(stream_name) {
+                    let start = std::time::Instant::now();
                     let result = Self::process_stream_with_functions(
                         stream,
                         Arc::clone(&current_event),
@@ -2064,6 +2070,11 @@ impl Engine {
                         self.sinks.cache(),
                     )
                     .await?;
+
+                    // Record per-stream processing metrics
+                    if let Some(ref m) = self.metrics {
+                        m.record_processing(stream_name, start.elapsed().as_secs_f64());
+                    }
 
                     // Check if we need to send output_events (has .process() but no .emit())
                     let send_outputs = result.emitted_events.is_empty()
@@ -2077,11 +2088,17 @@ impl Engine {
                     if self.output_channel.is_some() {
                         for emitted in &result.emitted_events {
                             self.output_events_emitted += 1;
+                            if let Some(ref m) = self.metrics {
+                                m.record_output_event("pipeline", &emitted.event_type);
+                            }
                             self.send_output_shared(emitted);
                         }
                         if send_outputs {
                             for output in &result.output_events {
                                 self.output_events_emitted += 1;
+                                if let Some(ref m) = self.metrics {
+                                    m.record_output_event("pipeline", &output.event_type);
+                                }
                                 self.send_output_shared(output);
                             }
                         }
@@ -2099,6 +2116,11 @@ impl Engine {
                     }
                 }
             }
+        }
+
+        // Update active streams gauge
+        if let Some(ref m) = self.metrics {
+            m.set_stream_count(self.streams.len());
         }
 
         Ok(())
