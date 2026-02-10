@@ -112,34 +112,43 @@ export const useVplSourcesStore = defineStore('vplSources', () => {
       eventSchemas.set(eventName, fields)
     }
 
-    // 2. Find input event types: stream X = EventName
-    const streamRegex = /stream\s+\w+\s*=\s*(\w+)/g
-    const inputNames = new Set<string>()
+    // 2. Parse all stream declarations: stream Name = Source
+    const streamDefs = new Map<string, string>() // stream name → source name
+    const streamRegex = /stream\s+(\w+)\s*=\s*(\w+)/g
 
     while ((match = streamRegex.exec(source)) !== null) {
-      inputNames.add(match[1])
+      streamDefs.set(match[1], match[2])
+    }
+
+    // 3. Find input events: streams whose source is an event type (not another stream)
+    const streamNames = new Set(streamDefs.keys())
+    const inputNames = new Set<string>()
+
+    for (const [, sourceName] of streamDefs) {
+      if (!streamNames.has(sourceName)) {
+        inputNames.add(sourceName)
+      }
     }
 
     for (const name of inputNames) {
       inputs.push({ name, fields: eventSchemas.get(name) || [] })
     }
 
-    // 3. Find output event types: .emit() with event_type field or .to() sinks
-    const emitRegex = /\.emit\s*\(\s*[\s\S]*?event_type\s*:\s*["'](\w+)["']/g
+    // 4. Find output streams: streams with .emit() or .to()
+    // Split source into per-stream blocks to avoid cross-stream regex matching
+    const streamBlockRegex = /stream\s+(\w+)\s*=([\s\S]*?)(?=\nstream\s|\nevent\s|$)/g
     const outputNames = new Set<string>()
 
-    while ((match = emitRegex.exec(source)) !== null) {
-      outputNames.add(match[1])
-    }
-
-    // Also detect streams with .to() sinks as outputs
-    const toRegex = /stream\s+(\w+)\s*=[\s\S]*?\.to\s*\(/g
-    while ((match = toRegex.exec(source)) !== null) {
-      // The stream itself produces output
+    while ((match = streamBlockRegex.exec(source)) !== null) {
+      const streamName = match[1]
+      const block = match[2]
+      if (/\.emit\s*\(/.test(block) || /\.to\s*\(/.test(block)) {
+        outputNames.add(streamName)
+      }
     }
 
     for (const name of outputNames) {
-      outputs.push({ name, fields: eventSchemas.get(name) || [] })
+      outputs.push({ name, fields: [] })
     }
 
     return { inputs, outputs }
