@@ -51,6 +51,10 @@ class MarketGenerator:
     def update_price(self, asset: Asset):
         change_pct = random.gauss(0, asset.volatility)
         asset.price *= 1 + change_pct
+        # Mean-revert: drift back toward initial price to prevent unrealistic values
+        initial = {"BTC": 45000, "ETH": 2500, "SOL": 100, "AVAX": 35, "LINK": 15}
+        target = initial.get(asset.symbol, asset.price)
+        asset.price += (target - asset.price) * 0.001
 
     def generate_tick(self, asset: Asset):
         self.update_price(asset)
