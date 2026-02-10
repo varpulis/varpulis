@@ -1,6 +1,10 @@
-# Varpulis
+<p align="center">
+  <img src="web-ui/varpulis.png" width="200" alt="Varpulis">
+</p>
 
-**A modern Complex Event Processing engine.** Rust performance. Pipeline syntax. SASE+ pattern matching.
+<h1 align="center">Varpulis</h1>
+
+<p align="center"><strong>A modern Complex Event Processing engine.</strong> Rust performance. Pipeline syntax. SASE+ pattern matching.</p>
 
 [![Tests](https://img.shields.io/badge/tests-1134%20passing-brightgreen)]()
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange)]()
