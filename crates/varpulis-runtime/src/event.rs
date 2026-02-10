@@ -134,16 +134,15 @@ impl Event {
         self.data.get(key).and_then(|v| v.as_str())
     }
 
-    /// Serialize for sink output: timestamp + data fields only (no event_type).
-    ///
-    /// The event type is conveyed by the sink topic/stream name, making the
-    /// `event_type` field redundant in the payload.
+    /// Serialize for sink output: event_type + timestamp + data fields.
     pub fn to_sink_payload(&self) -> Vec<u8> {
         use serde::ser::SerializeMap;
         use serde::Serializer;
         let mut buf = Vec::with_capacity(256);
         let mut ser = serde_json::Serializer::new(&mut buf);
-        let mut map = ser.serialize_map(Some(1 + self.data.len())).unwrap();
+        let mut map = ser.serialize_map(Some(2 + self.data.len())).unwrap();
+        map.serialize_entry("event_type", self.event_type.as_ref())
+            .unwrap();
         map.serialize_entry("timestamp", &self.timestamp).unwrap();
         for (k, v) in &self.data {
             if k.as_ref() != "timestamp" {
