@@ -1831,6 +1831,12 @@ pub struct SaseEngine {
     metrics: Arc<SaseMetrics>,
     /// MET-01: Whether instrumented processing is enabled
     instrumentation_enabled: bool,
+    /// Maximum events in a single Kleene closure before accumulation stops.
+    /// Bounds ZDD enumeration from 2^n growth. Default: `MAX_KLEENE_EVENTS` (20).
+    max_kleene_events: u32,
+    /// Maximum results emitted by deferred-predicate enumeration.
+    /// Default: `MAX_ENUMERATION_RESULTS` (10 000).
+    max_enumeration_results: usize,
 }
 
 impl SaseEngine {
@@ -1860,6 +1866,8 @@ impl SaseEngine {
             event_time_config: EventTimeConfig::default(),
             metrics: Arc::new(SaseMetrics::new()),
             instrumentation_enabled: false,
+            max_kleene_events: MAX_KLEENE_EVENTS,
+            max_enumeration_results: MAX_ENUMERATION_RESULTS,
         }
     }
 
@@ -1869,6 +1877,13 @@ impl SaseEngine {
     }
 
     /// Enable event-time processing with watermarks
+    fn kleene_limits(&self) -> KleeneLimits {
+        KleeneLimits {
+            max_events: self.max_kleene_events,
+            max_results: self.max_enumeration_results,
+        }
+    }
+
     pub fn with_event_time(mut self) -> Self {
         self.time_semantics = TimeSemantics::EventTime;
         self
@@ -1986,6 +2001,21 @@ impl SaseEngine {
     /// BP-01: Set the backpressure strategy
     pub fn with_backpressure(mut self, strategy: BackpressureStrategy) -> Self {
         self.backpressure = strategy;
+        self
+    }
+
+    /// Set the maximum number of events accumulated in a single Kleene closure.
+    /// With `n` events the ZDD enumerates up to 2^n − 1 combinations, so this
+    /// cap bounds the exponential blowup.  Default: 20 (~1 M combinations).
+    pub fn with_max_kleene_events(mut self, max: u32) -> Self {
+        self.max_kleene_events = max;
+        self
+    }
+
+    /// Set the maximum number of results emitted by deferred-predicate
+    /// enumeration.  Default: 10 000.
+    pub fn with_max_enumeration_results(mut self, max: usize) -> Self {
+        self.max_enumeration_results = max;
         self
     }
 
@@ -2509,6 +2539,7 @@ impl SaseEngine {
         event: SharedEvent,
     ) -> Vec<MatchResult> {
         let mut completed = Vec::with_capacity(4);
+        let limits = self.kleene_limits();
 
         if let Some(runs) = self.partitioned_runs.get_mut(partition_key) {
             let mut i = 0;
@@ -2518,8 +2549,13 @@ impl SaseEngine {
                     continue;
                 }
 
-                match advance_run_shared(&self.nfa, self.strategy, &mut runs[i], Arc::clone(&event))
-                {
+                match advance_run_shared(
+                    &self.nfa,
+                    self.strategy,
+                    &mut runs[i],
+                    Arc::clone(&event),
+                    limits,
+                ) {
                     RunAdvanceResult::Continue => i += 1,
                     RunAdvanceResult::Complete(result) => {
                         completed.push(result);
@@ -2547,6 +2583,7 @@ impl SaseEngine {
 
     fn process_runs_shared(&mut self, event: SharedEvent) -> Vec<MatchResult> {
         let mut completed = Vec::with_capacity(4);
+        let limits = self.kleene_limits();
         let mut i = 0;
 
         while i < self.runs.len() {
@@ -2561,6 +2598,7 @@ impl SaseEngine {
                 self.strategy,
                 &mut self.runs[i],
                 Arc::clone(&event),
+                limits,
             ) {
                 RunAdvanceResult::Continue => i += 1,
                 RunAdvanceResult::Complete(result) => {
@@ -2918,22 +2956,39 @@ enum RunAdvanceResult {
 
 // Free functions to avoid borrow checker issues
 
+/// Configurable limits for Kleene closure accumulation and enumeration.
+#[derive(Debug, Clone, Copy)]
+struct KleeneLimits {
+    max_events: u32,
+    max_results: usize,
+}
+
+impl Default for KleeneLimits {
+    fn default() -> Self {
+        Self {
+            max_events: MAX_KLEENE_EVENTS,
+            max_results: MAX_ENUMERATION_RESULTS,
+        }
+    }
+}
+
 #[allow(dead_code)]
 fn advance_run(
     nfa: &Nfa,
     strategy: SelectionStrategy,
     run: &mut Run,
     event: &Event,
+    limits: KleeneLimits,
 ) -> RunAdvanceResult {
     // Wrap in Arc for the shared version
-    advance_run_shared(nfa, strategy, run, Arc::new(event.clone()))
+    advance_run_shared(nfa, strategy, run, Arc::new(event.clone()), limits)
 }
 
 /// Complete a run, checking for deferred Kleene predicates first.
-fn complete_run(run: &mut Run) -> RunAdvanceResult {
+fn complete_run(run: &mut Run, limits: KleeneLimits) -> RunAdvanceResult {
     if let Some(ref kc) = run.kleene_capture {
         if kc.deferred_predicate.is_some() {
-            return RunAdvanceResult::CompleteMulti(enumerate_with_filter(run));
+            return RunAdvanceResult::CompleteMulti(enumerate_with_filter(run, limits.max_results));
         }
     }
     RunAdvanceResult::Complete(MatchResult {
@@ -2949,6 +3004,7 @@ fn advance_run_shared(
     strategy: SelectionStrategy,
     run: &mut Run,
     event: SharedEvent,
+    limits: KleeneLimits,
 ) -> RunAdvanceResult {
     let current_state = &nfa.states[run.current_state];
 
@@ -2961,7 +3017,7 @@ fn advance_run_shared(
 
     // AND-01: Handle AND states specially
     if current_state.state_type == StateType::And {
-        return advance_and_state(nfa, run, current_state, event);
+        return advance_and_state(nfa, run, current_state, event, limits);
     }
 
     // NEG-01: Handle Negation states - check if event matches forbidden pattern
@@ -2984,7 +3040,7 @@ fn advance_run_shared(
 
     // Check if we're at an accept state
     if current_state.state_type == StateType::Accept {
-        return complete_run(run);
+        return complete_run(run, limits);
     }
 
     // KLEENE SELF-LOOP: accumulate additional events matching the Kleene state.
@@ -2995,7 +3051,7 @@ fn advance_run_shared(
     {
         // Safety: check Kleene cap before accumulating (prevents 2^n blowup)
         if let Some(ref kc) = run.kleene_capture {
-            if kc.next_var >= MAX_KLEENE_EVENTS {
+            if kc.next_var >= limits.max_events {
                 return RunAdvanceResult::Continue;
             }
         }
@@ -3054,7 +3110,7 @@ fn advance_run_shared(
         if next_state.state_type == StateType::And {
             run.current_state = next_id;
             // Try to advance the AND state with the current event
-            return advance_and_state(nfa, run, next_state, event);
+            return advance_and_state(nfa, run, next_state, event, limits);
         }
 
         if event_matches_state(nfa, &event, next_state, &run.captured) {
@@ -3063,7 +3119,7 @@ fn advance_run_shared(
 
             if next_state.state_type == StateType::Accept {
                 // PERF: Use std::mem::take since run is discarded after Complete
-                return complete_run(run);
+                return complete_run(run, limits);
             }
 
             if next_state.state_type == StateType::Kleene && next_state.self_loop {
@@ -3093,7 +3149,7 @@ fn advance_run_shared(
                     run.kleene_capture = Some(kc);
                 }
                 if let Some(ref mut kc) = run.kleene_capture {
-                    if kc.next_var >= MAX_KLEENE_EVENTS {
+                    if kc.next_var >= limits.max_events {
                         // Safety: stop accumulating to prevent 2^n enumeration blowup
                         return RunAdvanceResult::Continue;
                     }
@@ -3113,7 +3169,7 @@ fn advance_run_shared(
 
         if eps_state.state_type == StateType::Accept {
             // PERF: Use std::mem::take since run is discarded after Complete
-            return complete_run(run);
+            return complete_run(run, limits);
         }
 
         for &next_id in &eps_state.transitions {
@@ -3124,7 +3180,7 @@ fn advance_run_shared(
 
                 if next_state.state_type == StateType::Accept {
                     // PERF: Use std::mem::take since run is discarded after Complete
-                    return complete_run(run);
+                    return complete_run(run, limits);
                 }
 
                 return RunAdvanceResult::Continue;
@@ -3144,6 +3200,7 @@ fn advance_and_state(
     run: &mut Run,
     state: &State,
     event: SharedEvent,
+    limits: KleeneLimits,
 ) -> RunAdvanceResult {
     let config = match &state.and_config {
         Some(c) => c,
@@ -3211,7 +3268,7 @@ fn advance_and_state(
             let join_state = &nfa.states[config.join_state];
             if join_state.state_type == StateType::Accept {
                 // PERF: Use std::mem::take since run is discarded after Complete
-                return complete_run(run);
+                return complete_run(run, limits);
             }
         }
 
@@ -3478,7 +3535,7 @@ fn rebuild_stack_with_combination(
 /// Enumerate all valid Kleene combinations, filtering by the deferred predicate.
 ///
 /// Returns one `MatchResult` per valid combination (may be empty if all filtered).
-fn enumerate_with_filter(run: &mut Run) -> Vec<MatchResult> {
+fn enumerate_with_filter(run: &mut Run, max_results: usize) -> Vec<MatchResult> {
     let mut results = Vec::new();
     let kc = match run.kleene_capture.take() {
         Some(kc) => kc,
@@ -3505,7 +3562,7 @@ fn enumerate_with_filter(run: &mut Run) -> Vec<MatchResult> {
                     stack,
                     duration: run.started_at.elapsed(),
                 });
-                if results.len() >= MAX_ENUMERATION_RESULTS {
+                if results.len() >= max_results {
                     break;
                 }
             }
@@ -3532,7 +3589,7 @@ fn enumerate_with_filter(run: &mut Run) -> Vec<MatchResult> {
                 stack,
                 duration: run.started_at.elapsed(),
             });
-            if results.len() >= MAX_ENUMERATION_RESULTS {
+            if results.len() >= max_results {
                 break;
             }
         }
@@ -6059,6 +6116,64 @@ mod tests {
             results.len() <= MAX_ENUMERATION_RESULTS,
             "Results capped at {}, got {}",
             MAX_ENUMERATION_RESULTS,
+            results.len()
+        );
+    }
+
+    #[test]
+    fn test_configurable_kleene_limits() {
+        // Verify builder methods override the defaults.
+        let pattern = PatternBuilder::seq(vec![
+            PatternBuilder::event("A"),
+            PatternBuilder::one_or_more(PatternBuilder::event("B")),
+            PatternBuilder::event("C"),
+        ]);
+
+        // Cap at 5 Kleene events instead of default 20
+        let mut engine = SaseEngine::new(pattern).with_max_kleene_events(5);
+
+        engine.process(&make_event("A", vec![]));
+        for i in 0..20 {
+            engine.process(&make_event("B", vec![("n", Value::Int(i))]));
+        }
+        let results = engine.process(&make_event("C", vec![]));
+        assert!(!results.is_empty());
+        // A + at most 5 B's + C = 7
+        assert!(
+            results[0].stack.len() <= 7,
+            "Custom max_kleene_events=5 should cap stack at 7, got {}",
+            results[0].stack.len()
+        );
+    }
+
+    #[test]
+    fn test_configurable_enumeration_limit() {
+        // Verify with_max_enumeration_results caps output.
+        let pattern = PatternBuilder::seq(vec![
+            PatternBuilder::event("A"),
+            PatternBuilder::one_or_more(SasePattern::Event {
+                event_type: "B".to_string(),
+                predicate: Some(Predicate::CompareRef {
+                    field: "val".to_string(),
+                    op: CompareOp::Ge,
+                    ref_alias: "b".to_string(),
+                    ref_field: "val".to_string(),
+                }),
+                alias: Some("b".to_string()),
+            }),
+            PatternBuilder::event("C"),
+        ]);
+
+        let mut engine = SaseEngine::new(pattern).with_max_enumeration_results(3);
+
+        engine.process(&make_event("A", vec![]));
+        for i in 0..15 {
+            engine.process(&make_event("B", vec![("val", Value::Int(i))]));
+        }
+        let results = engine.process(&make_event("C", vec![]));
+        assert!(
+            results.len() <= 3,
+            "Custom max_enumeration_results=3 should cap at 3, got {}",
             results.len()
         );
     }
