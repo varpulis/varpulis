@@ -27,7 +27,6 @@ let languageRegistered = false
 const isValidating = ref(false)
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 let validationTimer: ReturnType<typeof setTimeout> | null = null
-let settingValueProgrammatically = false
 
 onUnmounted(() => {
   if (debounceTimer) {
@@ -102,10 +101,12 @@ function handleEditorMount(editor: editor.IStandaloneCodeEditor): void {
 
 function handleChange(value: string | undefined): void {
   const newValue = value || ''
-  internalValue.value = newValue
 
-  // If this change was triggered by setValue(), don't echo back to parent
-  if (settingValueProgrammatically) return
+  // If this change matches the current prop, it was triggered by a programmatic
+  // setValue (e.g., New/Open). Don't echo it back to the parent.
+  if (newValue === props.modelValue) return
+
+  internalValue.value = newValue
 
   // Debounce the emit to prevent freezing on rapid typing
   if (debounceTimer) {
@@ -234,24 +235,13 @@ function scheduleValidation(): void {
 defineExpose({ validate, isValidating })
 
 // Watch for external changes (e.g., loading from storage or "New" button)
+// Only update internalValue — VueMonacoEditor handles editor.setValue() via its :value prop.
+// The guard in handleChange prevents echoing prop changes back to the parent.
 watch(
   () => props.modelValue,
   (newValue) => {
-    // Only update if the value is different from internal state
-    // This prevents loops when we emit changes
     if (newValue !== internalValue.value) {
       internalValue.value = newValue
-      if (editorRef.value) {
-        const currentValue = editorRef.value.getValue()
-        if (currentValue !== newValue) {
-          // Prevent the onChange callback from echoing back
-          settingValueProgrammatically = true
-          editorRef.value.setValue(newValue)
-          settingValueProgrammatically = false
-        }
-      }
-      // Don't auto-validate on programmatic changes (Open, New, etc.)
-      // Only user typing triggers auto-validation via handleChange
     }
   }
 )
