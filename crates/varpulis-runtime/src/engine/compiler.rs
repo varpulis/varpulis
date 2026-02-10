@@ -68,6 +68,7 @@ pub fn compile_agg_expr(
                 "first" => Box::new(First),
                 "stddev" => Box::new(StdDev),
                 "ema" => Box::new(Ema::new(period)),
+                "count_distinct" => Box::new(CountDistinct),
                 _ => {
                     warn!("Unknown aggregation function: {}", func_name);
                     return None;
