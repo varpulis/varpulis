@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="web-ui/varpulis.png" width="320" alt="Varpulis">
+  <img src="web-ui/logo.png" width="320" alt="Varpulis">
 </p>
 
 <h1 align="center">Varpulis</h1>
