@@ -1646,7 +1646,7 @@ async fn run_server(
     let state = Arc::new(RwLock::new(ServerState::new(output_tx.clone(), workdir)));
 
     // Create metrics if enabled
-    let _prom_metrics = enable_metrics.then(|| {
+    let prom_metrics = enable_metrics.then(|| {
         let metrics = Metrics::new();
         let server = MetricsServer::new(metrics.clone(), format!("{}:{}", bind, metrics_port));
         tokio::spawn(async move {
@@ -1763,6 +1763,11 @@ async fn run_server(
     } else {
         varpulis_runtime::shared_tenant_manager()
     };
+
+    // Pass Prometheus metrics to tenant manager for engine instrumentation
+    if let Some(ref m) = prom_metrics {
+        tenant_manager.write().await.set_prometheus_metrics(m.clone());
+    }
 
     // Auto-provision a default tenant if an API key is configured
     if auth_config.is_required() {

@@ -2117,6 +2117,13 @@ impl Engine {
         let batch_size = events.len();
         self.events_processed += batch_size as u64;
 
+        // Update Prometheus metrics
+        if let Some(ref m) = self.metrics {
+            for event in &events {
+                m.record_event(&event.event_type);
+            }
+        }
+
         // Pre-allocate pending events with capacity for batch + some derived events
         // Use VecDeque so we can process in FIFO order (push_back + pop_front)
         let mut pending_events: std::collections::VecDeque<(SharedEvent, usize)> =
@@ -2187,6 +2194,14 @@ impl Engine {
         // PERF: Use send_output_shared to avoid cloning in benchmark mode
         for emitted in &emitted_batch {
             self.send_output_shared(emitted);
+        }
+
+        // Update Prometheus output metrics
+        if let Some(ref m) = self.metrics {
+            for emitted in &emitted_batch {
+                m.record_output_event("pipeline", &emitted.event_type);
+            }
+            m.set_stream_count(self.streams.len());
         }
 
         Ok(())
@@ -2382,6 +2397,13 @@ impl Engine {
         let batch_size = events.len();
         self.events_processed += batch_size as u64;
 
+        // Update Prometheus metrics
+        if let Some(ref m) = self.metrics {
+            for event in &events {
+                m.record_event(&event.event_type);
+            }
+        }
+
         // Use VecDeque so we can process in FIFO order (critical for sequence patterns!)
         let mut pending_events: std::collections::VecDeque<(SharedEvent, usize)> =
             std::collections::VecDeque::with_capacity(batch_size + batch_size / 4);
@@ -2444,6 +2466,14 @@ impl Engine {
         // PERF: Use send_output_shared to avoid cloning in benchmark mode
         for emitted in &emitted_batch {
             self.send_output_shared(emitted);
+        }
+
+        // Update Prometheus output metrics
+        if let Some(ref m) = self.metrics {
+            for emitted in &emitted_batch {
+                m.record_output_event("pipeline", &emitted.event_type);
+            }
+            m.set_stream_count(self.streams.len());
         }
 
         Ok(())

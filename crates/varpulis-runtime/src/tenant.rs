@@ -5,6 +5,7 @@
 use crate::context::ContextOrchestrator;
 use crate::engine::Engine;
 use crate::event::Event;
+use crate::metrics::Metrics;
 use crate::persistence::{StateStore, StoreError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -241,6 +242,15 @@ impl Tenant {
         name: String,
         source: String,
     ) -> Result<String, TenantError> {
+        self.deploy_pipeline_with_metrics(name, source, None).await
+    }
+
+    pub async fn deploy_pipeline_with_metrics(
+        &mut self,
+        name: String,
+        source: String,
+        prometheus_metrics: Option<Metrics>,
+    ) -> Result<String, TenantError> {
         // Check pipeline quota
         if self.pipelines.len() >= self.quota.max_pipelines {
             return Err(TenantError::QuotaExceeded(format!(
@@ -270,6 +280,9 @@ impl Tenant {
         let (output_tx, output_rx) = mpsc::channel(1000);
         let output_tx_for_ctx = output_tx.clone();
         let mut engine = Engine::new(output_tx);
+        if let Some(m) = prometheus_metrics {
+            engine = engine.with_metrics(m);
+        }
         engine
             .load(&program)
             .map_err(|e| TenantError::EngineError(e.to_string()))?;
@@ -525,6 +538,8 @@ pub struct TenantManager {
     api_key_index: HashMap<String, TenantId>,
     /// Optional persistent state store
     store: Option<Arc<dyn StateStore>>,
+    /// Shared Prometheus metrics (passed to engines on deploy)
+    prometheus_metrics: Option<Metrics>,
 }
 
 impl TenantManager {
@@ -533,6 +548,7 @@ impl TenantManager {
             tenants: HashMap::new(),
             api_key_index: HashMap::new(),
             store: None,
+            prometheus_metrics: None,
         }
     }
 
@@ -542,7 +558,13 @@ impl TenantManager {
             tenants: HashMap::new(),
             api_key_index: HashMap::new(),
             store: Some(store),
+            prometheus_metrics: None,
         }
+    }
+
+    /// Set Prometheus metrics to be shared with all engines
+    pub fn set_prometheus_metrics(&mut self, metrics: Metrics) {
+        self.prometheus_metrics = Some(metrics);
     }
 
     /// Create a new tenant
@@ -579,6 +601,23 @@ impl TenantManager {
     /// Get a mutable tenant by ID
     pub fn get_tenant_mut(&mut self, id: &TenantId) -> Option<&mut Tenant> {
         self.tenants.get_mut(id)
+    }
+
+    /// Deploy a pipeline on a tenant, passing through Prometheus metrics
+    pub async fn deploy_pipeline_on_tenant(
+        &mut self,
+        tenant_id: &TenantId,
+        name: String,
+        source: String,
+    ) -> Result<String, TenantError> {
+        let metrics = self.prometheus_metrics.clone();
+        let tenant = self
+            .tenants
+            .get_mut(tenant_id)
+            .ok_or_else(|| TenantError::NotFound(tenant_id.to_string()))?;
+        tenant
+            .deploy_pipeline_with_metrics(name, source, metrics)
+            .await
     }
 
     /// Remove a tenant and all its pipelines

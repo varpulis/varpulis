@@ -269,17 +269,9 @@ async fn handle_deploy(
         }
     };
 
-    let tenant = match mgr.get_tenant_mut(&tenant_id) {
-        Some(t) => t,
-        None => {
-            return Ok(error_response(
-                StatusCode::NOT_FOUND,
-                "tenant_not_found",
-                "Tenant not found",
-            ))
-        }
-    };
-    let result = tenant.deploy_pipeline(body.name.clone(), body.source).await;
+    let result = mgr
+        .deploy_pipeline_on_tenant(&tenant_id, body.name.clone(), body.source)
+        .await;
 
     match result {
         Ok(id) => {
