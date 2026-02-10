@@ -958,9 +958,10 @@ impl ContextOrchestrator {
 
         #[cfg(not(target_os = "linux"))]
         {
-            debug!(
+            tracing::debug!(
                 "CPU affinity not supported on this platform for context '{}' (cores: {:?})",
-                ctx_name, core_ids
+                ctx_name,
+                core_ids
             );
         }
     }
