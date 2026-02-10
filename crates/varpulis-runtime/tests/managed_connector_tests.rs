@@ -155,12 +155,19 @@ async fn test_managed_connector_single_source_single_sink() {
     // Start source — subscribes to input topic
     let (tx, mut rx) = mpsc::channel(100);
     registry
-        .start_source("Broker", "e2e/1/input", tx)
+        .start_source(
+            "Broker",
+            "e2e/1/input",
+            tx,
+            &std::collections::HashMap::new(),
+        )
         .await
         .unwrap();
 
     // Create sink — publishes to output topic
-    let sink: Arc<dyn Sink> = registry.create_sink("Broker", "e2e/1/output").unwrap();
+    let sink: Arc<dyn Sink> = registry
+        .create_sink("Broker", "e2e/1/output", &std::collections::HashMap::new())
+        .unwrap();
 
     // Allow subscriptions to propagate
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -228,11 +235,21 @@ async fn test_managed_connector_two_sources_same_connector() {
     // Both sources share the same mpsc channel
     let (tx, mut rx) = mpsc::channel(100);
     registry
-        .start_source("Broker", "e2e/2/temperature", tx.clone())
+        .start_source(
+            "Broker",
+            "e2e/2/temperature",
+            tx.clone(),
+            &std::collections::HashMap::new(),
+        )
         .await
         .unwrap();
     registry
-        .start_source("Broker", "e2e/2/humidity", tx)
+        .start_source(
+            "Broker",
+            "e2e/2/humidity",
+            tx,
+            &std::collections::HashMap::new(),
+        )
         .await
         .unwrap();
 
@@ -291,12 +308,21 @@ async fn test_managed_connector_two_sinks_same_connector() {
     // Need a source to establish the connection (or sink-only would also work)
     let (tx, _rx) = mpsc::channel(100);
     registry
-        .start_source("Broker", "e2e/3/dummy", tx)
+        .start_source(
+            "Broker",
+            "e2e/3/dummy",
+            tx,
+            &std::collections::HashMap::new(),
+        )
         .await
         .unwrap();
 
-    let sink_a: Arc<dyn Sink> = registry.create_sink("Broker", "e2e/3/alerts").unwrap();
-    let sink_b: Arc<dyn Sink> = registry.create_sink("Broker", "e2e/3/metrics").unwrap();
+    let sink_a: Arc<dyn Sink> = registry
+        .create_sink("Broker", "e2e/3/alerts", &std::collections::HashMap::new())
+        .unwrap();
+    let sink_b: Arc<dyn Sink> = registry
+        .create_sink("Broker", "e2e/3/metrics", &std::collections::HashMap::new())
+        .unwrap();
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -355,17 +381,39 @@ async fn test_managed_connector_multiple_sources_and_sinks() {
     // Two sources on different topics, shared channel
     let (tx, mut rx) = mpsc::channel(100);
     registry
-        .start_source("Broker", "e2e/4/input_a", tx.clone())
+        .start_source(
+            "Broker",
+            "e2e/4/input_a",
+            tx.clone(),
+            &std::collections::HashMap::new(),
+        )
         .await
         .unwrap();
     registry
-        .start_source("Broker", "e2e/4/input_b", tx)
+        .start_source(
+            "Broker",
+            "e2e/4/input_b",
+            tx,
+            &std::collections::HashMap::new(),
+        )
         .await
         .unwrap();
 
     // Two sinks on different topics
-    let sink_x: Arc<dyn Sink> = registry.create_sink("Broker", "e2e/4/output_x").unwrap();
-    let sink_y: Arc<dyn Sink> = registry.create_sink("Broker", "e2e/4/output_y").unwrap();
+    let sink_x: Arc<dyn Sink> = registry
+        .create_sink(
+            "Broker",
+            "e2e/4/output_x",
+            &std::collections::HashMap::new(),
+        )
+        .unwrap();
+    let sink_y: Arc<dyn Sink> = registry
+        .create_sink(
+            "Broker",
+            "e2e/4/output_y",
+            &std::collections::HashMap::new(),
+        )
+        .unwrap();
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -442,7 +490,9 @@ async fn test_managed_connector_sink_only() {
     let mut registry = ManagedConnectorRegistry::from_configs(&configs).unwrap();
 
     // Only create a sink — no start_source()
-    let sink: Arc<dyn Sink> = registry.create_sink("Broker", "e2e/5/output").unwrap();
+    let sink: Arc<dyn Sink> = registry
+        .create_sink("Broker", "e2e/5/output", &std::collections::HashMap::new())
+        .unwrap();
 
     // External subscriber
     let collector = tokio::spawn(async move {

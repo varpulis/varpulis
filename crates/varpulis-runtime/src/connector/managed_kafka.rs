@@ -92,12 +92,14 @@ impl ManagedConnector for ManagedKafkaConnector {
         &mut self,
         topic: &str,
         tx: mpsc::Sender<Event>,
+        params: &std::collections::HashMap<String, String>,
     ) -> Result<(), ConnectorError> {
         // Each source gets its own consumer (consumers are not Clone)
-        let group_id = self
-            .config
-            .group_id
-            .clone()
+        // Allow per-stream group_id override
+        let group_id = params
+            .get("group_id")
+            .cloned()
+            .or_else(|| self.config.group_id.clone())
             .unwrap_or_else(|| format!("varpulis-{}", self.connector_name));
 
         let mut client_config = ClientConfig::new();
@@ -190,7 +192,11 @@ impl ManagedConnector for ManagedKafkaConnector {
         Ok(())
     }
 
-    fn create_sink(&mut self, topic: &str) -> Result<Arc<dyn Sink>, ConnectorError> {
+    fn create_sink(
+        &mut self,
+        topic: &str,
+        _params: &std::collections::HashMap<String, String>,
+    ) -> Result<Arc<dyn Sink>, ConnectorError> {
         let producer = self.ensure_producer()?;
         Ok(Arc::new(KafkaSharedSink {
             sink_name: format!("{}::{}", self.connector_name, topic),

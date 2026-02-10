@@ -46,6 +46,7 @@ use crate::window::{
 use chrono::Duration;
 use chrono::{DateTime, Utc};
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
@@ -849,10 +850,26 @@ impl Engine {
                     .iter()
                     .find(|p| p.name == "topic")
                     .and_then(|p| p.value.as_string().map(|s| s.to_string()));
+                let extra_params: HashMap<String, String> = params
+                    .iter()
+                    .filter(|p| p.name != "topic")
+                    .filter_map(|p| {
+                        let val = match &p.value {
+                            varpulis_core::ast::ConfigValue::Str(s) => s.clone(),
+                            varpulis_core::ast::ConfigValue::Ident(s) => s.clone(),
+                            varpulis_core::ast::ConfigValue::Int(i) => i.to_string(),
+                            varpulis_core::ast::ConfigValue::Bool(b) => b.to_string(),
+                            varpulis_core::ast::ConfigValue::Float(f) => f.to_string(),
+                            _ => return None,
+                        };
+                        Some((p.name.clone(), val))
+                    })
+                    .collect();
                 self.source_bindings.push(SourceBinding {
                     connector_name: connector_name.clone(),
                     event_type: event_type.clone(),
                     topic_override,
+                    extra_params,
                 });
                 self.router.add_route(event_type, name);
                 RuntimeSource::EventType(event_type.clone())
@@ -1506,6 +1523,21 @@ impl Engine {
                         .iter()
                         .find(|p| p.name == "topic")
                         .and_then(|p| p.value.as_string().map(|s| s.to_string()));
+                    let extra_params: HashMap<String, String> = params
+                        .iter()
+                        .filter(|p| p.name != "topic")
+                        .filter_map(|p| {
+                            let val = match &p.value {
+                                varpulis_core::ast::ConfigValue::Str(s) => s.clone(),
+                                varpulis_core::ast::ConfigValue::Ident(s) => s.clone(),
+                                varpulis_core::ast::ConfigValue::Int(i) => i.to_string(),
+                                varpulis_core::ast::ConfigValue::Bool(b) => b.to_string(),
+                                varpulis_core::ast::ConfigValue::Float(f) => f.to_string(),
+                                _ => return None,
+                            };
+                            Some((p.name.clone(), val))
+                        })
+                        .collect();
                     let sink_key = if let Some(ref topic) = topic_override {
                         format!("{}::{}", connector_name, topic)
                     } else {
@@ -1515,6 +1547,7 @@ impl Engine {
                         connector_name: connector_name.clone(),
                         topic_override,
                         sink_key,
+                        extra_params,
                     }));
                 }
                 StreamOp::Process(expr) => {

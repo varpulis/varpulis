@@ -4,7 +4,7 @@
 //! - **Pass 1**: Build symbol table from declarations, detect duplicates.
 //! - **Pass 2**: Validate references, operation ordering, parameters, expressions, aggregates.
 
-mod builtins;
+pub mod builtins;
 mod checks;
 mod scope;
 mod suggest;

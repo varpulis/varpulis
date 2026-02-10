@@ -7,6 +7,7 @@ use super::types::ConnectorError;
 use crate::event::Event;
 use crate::sink::Sink;
 use async_trait::async_trait;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
@@ -28,17 +29,26 @@ pub trait ManagedConnector: Send + Sync {
     ///
     /// The first call establishes the connection; subsequent calls add
     /// subscriptions on the existing connection.
+    ///
+    /// `params` contains extra per-stream parameters (e.g., `client_id`, `qos`).
     async fn start_source(
         &mut self,
         topic: &str,
         tx: mpsc::Sender<Event>,
+        params: &HashMap<String, String>,
     ) -> Result<(), ConnectorError>;
 
     /// Create a sink that publishes to `topic` using the shared connection.
     ///
     /// If no source has been started yet, the connection is established lazily
     /// (supports sink-only connectors).
-    fn create_sink(&mut self, topic: &str) -> Result<Arc<dyn Sink>, ConnectorError>;
+    ///
+    /// `params` contains extra per-stream parameters (e.g., `client_id`, `qos`).
+    fn create_sink(
+        &mut self,
+        topic: &str,
+        params: &HashMap<String, String>,
+    ) -> Result<Arc<dyn Sink>, ConnectorError>;
 
     /// Disconnect everything and release resources.
     async fn shutdown(&mut self) -> Result<(), ConnectorError>;
