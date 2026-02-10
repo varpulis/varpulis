@@ -10,8 +10,9 @@ demo.varpulis-cep.com {
     # Metrics → coordinator (for Grafana/internal use)
     reverse_proxy /metrics coordinator:9100
 
-    # Grafana dashboard
-    reverse_proxy /grafana/* grafana:3000
+    # Grafana dashboard (matches /grafana and /grafana/*)
+    @grafana path /grafana /grafana/*
+    reverse_proxy @grafana grafana:3000
 
     # Everything else → web UI
     reverse_proxy /* web-ui:8080

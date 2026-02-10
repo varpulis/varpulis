@@ -44,21 +44,15 @@ const editingPipelineName = ref<string | null>(null)
 const vplSource = ref(`# Varpulis Pipeline Language (VPL)
 # Define your event processing pipeline here
 
-# Event type definitions
 event UserLogin:
     user_id: str
     timestamp: str
     ip_address: str
 
-event Alert:
-    alert_type: str
-    user_id: str
-    message: str
-
-# Input stream from UserLogin events
+# Input stream
 stream Logins = UserLogin
 
-# Filter for suspicious logins (multiple IPs)
+# Detect suspicious logins: multiple IPs within a window
 stream SuspiciousLogins = Logins
     .window(5, sliding: 1)
     .aggregate(
@@ -68,7 +62,6 @@ stream SuspiciousLogins = Logins
     )
     .where(unique_ips > 1)
     .emit(
-        event_type: "Alert",
         alert_type: "suspicious_login",
         user_id: user_id,
         message: "Multiple IP addresses detected"
@@ -247,12 +240,9 @@ event MyEvent:
 
 stream Input = MyEvent
 
-stream Output = Input
+stream Filtered = Input
     .where(field2 > 0)
-    .emit(
-        event_type: "ProcessedEvent",
-        value: field1
-    )
+    .emit(value: field1)
 `
   addOutput('Created new source')
 }

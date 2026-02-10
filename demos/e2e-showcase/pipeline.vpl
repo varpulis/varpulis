@@ -22,9 +22,9 @@ stream Candles = OHLCV.from(mqtt_market, topic: "varpulis/events/OHLCV")
 
 # Kleene pattern: 3+ consecutive price increases (breakout detection)
 pattern Breakout = SEQ(
-    MarketTick as first,
-    MarketTick+ where price > first.price as rising,
-    MarketTick where price > rising.price as last
+    Ticks as first,
+    Ticks+ where price > first.price as rising,
+    Ticks where price > rising.price as last
 ) within 120s partition by symbol
 
 stream BreakoutSignals = Breakout

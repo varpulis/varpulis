@@ -459,10 +459,9 @@ async fn test_teardown_group_success() {
 
     // Teardown
     coord.teardown_group(&group_id).await.unwrap();
-    assert_eq!(
-        coord.pipeline_groups[&group_id].status,
-        GroupStatus::TornDown
-    );
+
+    // Group should be removed after teardown
+    assert!(!coord.pipeline_groups.contains_key(&group_id));
 
     // Verify mock worker received DELETE requests
     let state = worker_state.lock().await;
@@ -820,10 +819,7 @@ async fn test_full_lifecycle_register_deploy_inject_teardown() {
 
     // 5. Teardown
     coord.teardown_group(&group_id).await.unwrap();
-    assert_eq!(
-        coord.pipeline_groups[&group_id].status,
-        GroupStatus::TornDown
-    );
+    assert!(!coord.pipeline_groups.contains_key(&group_id));
 
     {
         let state = worker_state.lock().await;
@@ -941,10 +937,7 @@ async fn test_distributed_mandelbrot_style_deployment() {
 
     // Teardown
     coord.teardown_group(&group_id).await.unwrap();
-    assert_eq!(
-        coord.pipeline_groups[&group_id].status,
-        GroupStatus::TornDown
-    );
+    assert!(!coord.pipeline_groups.contains_key(&group_id));
 }
 
 // =============================================================================
@@ -1101,14 +1094,12 @@ async fn test_api_deploy_inject_teardown_e2e() {
         .await;
     assert_eq!(resp.status(), 200);
 
-    // Verify torn down
+    // Verify group is removed (404)
     let resp = warp::test::request()
         .method("GET")
         .path(&format!("/api/v1/cluster/pipeline-groups/{}", group_id))
         .header("x-api-key", "admin")
         .reply(&routes)
         .await;
-    assert_eq!(resp.status(), 200);
-    let body: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
-    assert_eq!(body["status"], "torn_down");
+    assert_eq!(resp.status(), 404);
 }
