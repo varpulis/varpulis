@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import VplEditor from '@/components/editor/VplEditor.vue'
 import EventTester from '@/components/editor/EventTester.vue'
 import QuickDeployDialog from '@/components/pipelines/QuickDeployDialog.vue'
 import { useVplSourcesStore, type SavedVplSource } from '@/stores/vplSources'
+import { getPipelineGroup } from '@/api/cluster'
 
+const route = useRoute()
 const vplSourcesStore = useVplSourcesStore()
 
 // Deploy dialog
@@ -88,15 +91,21 @@ function clearOutput(): void {
   outputPanel.value = []
 }
 
-function handleValidate(result: { valid: boolean; errors?: string[] }): void {
+function handleValidate(result: { valid: boolean; errors?: string[]; isAuto?: boolean }): void {
   if (result.valid) {
     validationStatus.value = 'valid'
     lastValidationErrors.value = []
-    addOutput('✓ Validation successful - no errors found')
+    // Only show output for manual validation (button click)
+    if (!result.isAuto) {
+      addOutput('✓ Validation successful - no errors found')
+    }
   } else {
     validationStatus.value = 'invalid'
     lastValidationErrors.value = result.errors || []
-    result.errors?.forEach((err) => addOutput(`✗ Error: ${err}`))
+    // Only show output for manual validation (button click)
+    if (!result.isAuto) {
+      result.errors?.forEach((err) => addOutput(`✗ Error: ${err}`))
+    }
   }
 }
 
@@ -208,11 +217,33 @@ function formatDate(dateStr: string): string {
   return new Date(dateStr).toLocaleString()
 }
 
-// Load last saved source on mount
-const savedSource = localStorage.getItem('varpulis_vpl_source')
-if (savedSource) {
-  vplSource.value = savedSource
-}
+// Load pipeline source from route query (e.g., /editor?groupId=xxx&pipeline=name)
+onMounted(async () => {
+  const groupId = route.query.groupId as string | undefined
+  const pipelineName = route.query.pipeline as string | undefined
+
+  if (groupId && pipelineName) {
+    try {
+      const group = await getPipelineGroup(groupId)
+      const source = group.sources?.[pipelineName]
+      if (source) {
+        vplSource.value = source
+        currentSourceName.value = `${group.name}/${pipelineName}`
+        addOutput(`Loaded pipeline "${pipelineName}" from group "${group.name}"`)
+        localStorage.setItem('varpulis_vpl_source', source)
+        return
+      }
+    } catch {
+      // Fall through to localStorage
+    }
+  }
+
+  // Load last saved source
+  const savedSource = localStorage.getItem('varpulis_vpl_source')
+  if (savedSource) {
+    vplSource.value = savedSource
+  }
+})
 </script>
 
 <template>

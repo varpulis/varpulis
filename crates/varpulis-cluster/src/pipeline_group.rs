@@ -137,6 +137,9 @@ pub struct PipelineGroupInfo {
     pub status: String,
     pub pipeline_count: usize,
     pub placements: Vec<PipelinePlacementInfo>,
+    /// Maps pipeline name → VPL source code (for viewing/editing deployed pipelines).
+    #[serde(default)]
+    pub sources: HashMap<String, String>,
 }
 
 /// Serializable placement info for API responses.
@@ -162,12 +165,19 @@ impl From<&DeployedPipelineGroup> for PipelineGroupInfo {
                 status: format!("{:?}", dep.status),
             })
             .collect();
+        let sources = group
+            .spec
+            .pipelines
+            .iter()
+            .map(|p| (p.name.clone(), p.source.clone()))
+            .collect();
         Self {
             id: group.id.clone(),
             name: group.name.clone(),
             status: group.status.to_string(),
             pipeline_count: group.spec.pipelines.len(),
             placements,
+            sources,
         }
     }
 }
@@ -447,6 +457,9 @@ mod tests {
         assert_eq!(info.status, "running");
         assert_eq!(info.pipeline_count, 2);
         assert_eq!(info.placements.len(), 1); // only placed pipelines
+        assert_eq!(info.sources.len(), 2);
+        assert_eq!(info.sources["p1"], "stream A = X");
+        assert_eq!(info.sources["p2"], "stream B = Y");
 
         let p = &info.placements[0];
         assert_eq!(p.pipeline_name, "p1");
@@ -468,6 +481,7 @@ mod tests {
                 pipeline_id: "pid1".into(),
                 status: "Running".into(),
             }],
+            sources: HashMap::new(),
         };
 
         let json = serde_json::to_string(&info).unwrap();

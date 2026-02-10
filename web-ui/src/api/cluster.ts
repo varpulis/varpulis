@@ -108,13 +108,6 @@ export async function injectEvent(groupId: string, event: EventPayload): Promise
   return response.data
 }
 
-/**
- * Reload a pipeline group with updated VPL source
- */
-export async function reloadPipelineGroup(id: string): Promise<void> {
-  await api.post(`${CLUSTER_BASE}/pipeline-groups/${id}/reload`)
-}
-
 // === Topology ===
 
 /**

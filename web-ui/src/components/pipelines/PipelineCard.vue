@@ -1,16 +1,33 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+import { useRouter } from 'vue-router'
 import type { PipelineGroup } from '@/types/pipeline'
 import StatusChip from '@/components/common/StatusChip.vue'
 
-defineProps<{
+const props = defineProps<{
   group: PipelineGroup
 }>()
 
 const emit = defineEmits<{
   close: []
   teardown: []
-  reload: []
 }>()
+
+const router = useRouter()
+
+// Get the first pipeline source (most groups have a single pipeline)
+const firstPipelineName = computed(() => {
+  if (!props.group.sources) return null
+  const names = Object.keys(props.group.sources)
+  return names.length > 0 ? names[0] : null
+})
+
+function editInEditor(pipelineName: string): void {
+  router.push({
+    name: 'editor',
+    query: { groupId: props.group.id, pipeline: pipelineName },
+  })
+}
 </script>
 
 <template>
@@ -62,6 +79,17 @@ const emit = defineEmits<{
             </v-list-item-subtitle>
 
             <template #append>
+              <v-btn
+                v-if="group.sources?.[placement.pipeline_name]"
+                icon
+                size="x-small"
+                variant="text"
+                class="mr-1"
+                @click="editInEditor(placement.pipeline_name)"
+              >
+                <v-icon size="small">mdi-pencil</v-icon>
+                <v-tooltip activator="parent" location="top">Edit in Editor</v-tooltip>
+              </v-btn>
               <StatusChip :status="placement.status" size="x-small" />
             </template>
           </v-list-item>
@@ -99,11 +127,12 @@ const emit = defineEmits<{
 
     <v-card-actions>
       <v-btn
+        v-if="firstPipelineName"
         variant="outlined"
-        prepend-icon="mdi-refresh"
-        @click="emit('reload')"
+        prepend-icon="mdi-pencil"
+        @click="editInEditor(firstPipelineName)"
       >
-        Reload
+        Edit in Editor
       </v-btn>
       <v-spacer />
       <v-btn

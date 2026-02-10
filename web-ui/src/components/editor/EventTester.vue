@@ -44,10 +44,10 @@ async function injectEvent(): Promise<void> {
   response.value = null
 
   try {
-    const data = JSON.parse(eventDataJson.value)
+    const fields = JSON.parse(eventDataJson.value)
     const result = await clusterStore.injectEvent(selectedGroupId.value, {
       event_type: eventType.value,
-      data,
+      fields,
     })
 
     response.value = result
@@ -57,7 +57,7 @@ async function injectEvent(): Promise<void> {
       id: `inject-${Date.now()}`,
       timestamp: new Date(),
       eventType: eventType.value,
-      data,
+      data: fields,
       response: result,
     })
 
@@ -65,10 +65,18 @@ async function injectEvent(): Promise<void> {
     if (history.value.length > 50) {
       history.value = history.value.slice(0, 50)
     }
-  } catch (err) {
+  } catch (err: unknown) {
+    // Extract detailed error from Axios response if available
+    let errorMsg = 'Unknown error'
+    if (err && typeof err === 'object' && 'response' in err) {
+      const axiosErr = err as { response?: { data?: { error?: string; message?: string } }; message?: string }
+      errorMsg = axiosErr.response?.data?.error || axiosErr.response?.data?.message || axiosErr.message || 'Request failed'
+    } else if (err instanceof Error) {
+      errorMsg = err.message
+    }
     response.value = {
       success: false,
-      error: err instanceof Error ? err.message : 'Unknown error',
+      error: errorMsg,
     }
   } finally {
     loading.value = false
