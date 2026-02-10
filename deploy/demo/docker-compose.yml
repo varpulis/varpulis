@@ -101,6 +101,8 @@ services:
       - "http://coordinator:9100"
       - "--worker-id"
       - "worker-0"
+      - "--advertise-address"
+      - "http://worker-0:9000"
     expose:
       - "9000"
       - "9090"
@@ -138,6 +140,8 @@ services:
       - "http://coordinator:9100"
       - "--worker-id"
       - "worker-1"
+      - "--advertise-address"
+      - "http://worker-1:9000"
     expose:
       - "9000"
       - "9090"
