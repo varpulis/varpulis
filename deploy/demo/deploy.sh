@@ -17,14 +17,9 @@ else
     git clone "$REPO_URL" "$DEMO_DIR/repo"
 fi
 
-# Ensure certs are in place
-mkdir -p "$DEMO_DIR/certs"
-if [ -f "$HOME/origin.pem" ] && [ -f "$HOME/origin-key.pem" ]; then
-    mv "$HOME/origin.pem" "$HOME/origin-key.pem" "$DEMO_DIR/certs/"
-    echo "Moved origin certs to $DEMO_DIR/certs/"
-fi
-if [ ! -f "$DEMO_DIR/certs/origin.pem" ]; then
-    echo "ERROR: Place origin.pem and origin-key.pem in $DEMO_DIR/certs/"
+# Verify TLS certs
+if [ ! -f "/etc/caddy/certs/origin.pem" ]; then
+    echo "ERROR: Place origin.pem and origin-key.pem in /etc/caddy/certs/"
     exit 1
 fi
 
