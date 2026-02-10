@@ -108,6 +108,7 @@ services:
       - "9090"
     environment:
       - RUST_LOG=${RUST_LOG:-info}
+      - VARPULIS_WORKER_ID=worker-0
     depends_on:
       coordinator:
         condition: service_healthy
@@ -147,6 +148,7 @@ services:
       - "9090"
     environment:
       - RUST_LOG=${RUST_LOG:-info}
+      - VARPULIS_WORKER_ID=worker-1
     depends_on:
       coordinator:
         condition: service_healthy
