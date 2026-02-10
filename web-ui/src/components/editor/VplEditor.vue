@@ -20,8 +20,10 @@ const emit = defineEmits<{
 const connectorsStore = useConnectorsStore()
 
 const editorRef = ref<editor.IStandaloneCodeEditor | null>(null)
-const isLanguageRegistered = ref(false)
 const internalValue = ref(props.modelValue)
+
+// Module-level flag — survives component unmount/remount
+let languageRegistered = false
 const isValidating = ref(false)
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 let validationTimer: ReturnType<typeof setTimeout> | null = null
@@ -72,31 +74,30 @@ const editorOptions: editor.IStandaloneEditorConstructionOptions = {
 function handleEditorMount(editor: editor.IStandaloneCodeEditor): void {
   editorRef.value = editor
 
-  // Register VPL language - Monaco should be available now
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const monaco = (window as any).monaco
-  if (monaco && !isLanguageRegistered.value) {
-    // Fetch connectors for auto-complete, pass getter to language registration
+  if (!monaco) return
+
+  // Register VPL language once globally (survives remounts)
+  if (!languageRegistered) {
     connectorsStore.fetchConnectors()
     registerVplLanguage(() => connectorsStore.connectorNames)
-    isLanguageRegistered.value = true
+    languageRegistered = true
+  }
 
-    // Set the model language to VPL
-    const model = editor.getModel()
-    if (model) {
-      monaco.editor.setModelLanguage(model, 'vpl')
-    }
+  // Set the model language to VPL
+  const model = editor.getModel()
+  if (model) {
+    monaco.editor.setModelLanguage(model, 'vpl')
   }
 
   // Add keyboard shortcuts for Ctrl/Cmd + S
-  if (monaco) {
-    editor.addCommand(
-      monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
-      () => {
-        validate()
-      }
-    )
-  }
+  editor.addCommand(
+    monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
+    () => {
+      validate()
+    }
+  )
 }
 
 function handleChange(value: string | undefined): void {
@@ -249,8 +250,8 @@ watch(
           settingValueProgrammatically = false
         }
       }
-      // Trigger auto-validation for the new content
-      scheduleValidation()
+      // Don't auto-validate on programmatic changes (Open, New, etc.)
+      // Only user typing triggers auto-validation via handleChange
     }
   }
 )
