@@ -141,7 +141,7 @@ impl ManagedConnector for ManagedKafkaConnector {
         });
 
         // Also ensure producer is available for sinks
-        self.ensure_producer()?;
+        let _ = self.ensure_producer()?;
 
         info!(
             "Managed Kafka {} source started on topic: {}",
@@ -181,9 +181,9 @@ impl Sink for KafkaSharedSink {
     }
 
     async fn send(&self, event: &Event) -> anyhow::Result<()> {
-        let payload = serde_json::to_string(event).map_err(|e| anyhow!("serialize: {}", e))?;
+        let payload = event.to_sink_payload();
 
-        let record: FutureRecord<'_, str, String> = FutureRecord::to(&self.topic).payload(&payload);
+        let record: FutureRecord<'_, str, [u8]> = FutureRecord::to(&self.topic).payload(&payload);
 
         self.producer
             .send(record, Duration::from_secs(5))

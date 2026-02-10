@@ -299,7 +299,10 @@ mod tests {
     #[test]
     fn test_valid_code_no_diagnostics() {
         let code = r#"
-stream SensorData from "mqtt://localhost:1883/sensors"
+event SensorReading:
+    temperature: int
+
+stream SensorData = SensorReading
     .where(temperature > 25)
     .emit()
 "#;

@@ -199,7 +199,7 @@ mod redis_impl {
         }
 
         async fn send(&self, event: &Event) -> Result<(), ConnectorError> {
-            let payload = serde_json::to_string(event)
+            let payload = String::from_utf8(event.to_sink_payload())
                 .map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
 
             let mut conn = self.conn.clone();

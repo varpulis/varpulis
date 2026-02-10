@@ -137,8 +137,8 @@ pub struct Pipeline {
     pub name: String,
     /// The VPL source code
     pub source: String,
-    /// The engine running this pipeline
-    pub engine: Engine,
+    /// The engine running this pipeline (shared with source ingestion loop)
+    pub engine: Arc<tokio::sync::Mutex<Engine>>,
     /// Output event receiver for this pipeline
     pub output_rx: mpsc::Receiver<Event>,
     /// When the pipeline was created
@@ -147,6 +147,8 @@ pub struct Pipeline {
     pub status: PipelineStatus,
     /// Optional context orchestrator for multi-threaded execution
     pub orchestrator: Option<ContextOrchestrator>,
+    /// Managed connector registry (keeps source connections alive)
+    pub connector_registry: Option<crate::connector::ManagedConnectorRegistry>,
 }
 
 /// Pipeline status
@@ -298,6 +300,107 @@ impl Tenant {
             None
         };
 
+        // Start source connectors (MQTT/Kafka subscriptions)
+        let bindings = engine.source_bindings().to_vec();
+        let mut connector_registry = None;
+
+        if !bindings.is_empty() {
+            let (event_tx, event_rx) = mpsc::channel::<Event>(10_000);
+
+            let mut registry = crate::connector::ManagedConnectorRegistry::from_configs(
+                engine.connector_configs(),
+            )
+            .map_err(|e| TenantError::EngineError(format!("Registry build error: {}", e)))?;
+
+            for binding in &bindings {
+                let config = engine.get_connector(&binding.connector_name).cloned();
+                let Some(config) = config else {
+                    return Err(TenantError::EngineError(format!(
+                        "Connector '{}' referenced in .from() but not declared",
+                        binding.connector_name
+                    )));
+                };
+
+                let topic = binding
+                    .topic_override
+                    .as_deref()
+                    .or(config.topic.as_deref())
+                    .unwrap_or("varpulis/events/#");
+
+                info!(
+                    "Starting {} source: {} topic={}",
+                    config.connector_type, binding.connector_name, topic
+                );
+
+                registry
+                    .start_source(&binding.connector_name, topic, event_tx.clone())
+                    .await
+                    .map_err(|e| TenantError::EngineError(format!("Source start error: {}", e)))?;
+
+                // Create shared sinks for this connector
+                let sink_keys = engine.sink_keys_for_connector(&binding.connector_name);
+                for sink_key in &sink_keys {
+                    let sink_topic = if let Some(t) =
+                        sink_key.strip_prefix(&format!("{}::", binding.connector_name))
+                    {
+                        t.to_string()
+                    } else {
+                        config
+                            .topic
+                            .clone()
+                            .unwrap_or_else(|| format!("{}-output", binding.connector_name))
+                    };
+
+                    match registry.create_sink(&binding.connector_name, &sink_topic) {
+                        Ok(sink) => {
+                            engine.inject_sink(sink_key, sink);
+                        }
+                        Err(e) => {
+                            warn!("Failed to create sink for {}: {}", sink_key, e);
+                        }
+                    }
+                }
+            }
+
+            connector_registry = Some(registry);
+
+            // Wrap engine in Arc<Mutex> for sharing with source ingestion loop
+            let engine = Arc::new(tokio::sync::Mutex::new(engine));
+            let engine_for_source = Arc::clone(&engine);
+
+            // Spawn source event ingestion loop
+            tokio::spawn(async move {
+                let mut event_rx = event_rx;
+                while let Some(event) = event_rx.recv().await {
+                    let mut eng = engine_for_source.lock().await;
+                    if let Err(e) = eng.process(event).await {
+                        warn!("Source event processing error: {}", e);
+                    }
+                }
+                info!("Source ingestion loop ended");
+            });
+
+            let id = Uuid::new_v4().to_string();
+            let pipeline = Pipeline {
+                id: id.clone(),
+                name,
+                source,
+                engine,
+                output_rx,
+                created_at: Instant::now(),
+                status: PipelineStatus::Running,
+                orchestrator,
+                connector_registry,
+            };
+
+            self.pipelines.insert(id.clone(), pipeline);
+            self.usage.active_pipelines = self.pipelines.len();
+
+            return Ok(id);
+        }
+
+        // No source bindings — standard path without Arc<Mutex>
+        let engine = Arc::new(tokio::sync::Mutex::new(engine));
         let id = Uuid::new_v4().to_string();
         let pipeline = Pipeline {
             id: id.clone(),
@@ -308,6 +411,7 @@ impl Tenant {
             created_at: Instant::now(),
             status: PipelineStatus::Running,
             orchestrator,
+            connector_registry,
         };
 
         self.pipelines.insert(id.clone(), pipeline);
@@ -372,6 +476,8 @@ impl Tenant {
             // Direct engine processing (no contexts, zero overhead)
             pipeline
                 .engine
+                .lock()
+                .await
                 .process(event)
                 .await
                 .map_err(|e| TenantError::EngineError(e.to_string()))?;
@@ -387,7 +493,7 @@ impl Tenant {
     }
 
     /// Reload a pipeline with new VPL source
-    pub fn reload_pipeline(
+    pub async fn reload_pipeline(
         &mut self,
         pipeline_id: &str,
         source: String,
@@ -402,6 +508,8 @@ impl Tenant {
 
         pipeline
             .engine
+            .lock()
+            .await
             .reload(&program)
             .map_err(|e| TenantError::EngineError(e.to_string()))?;
         pipeline.source = source;
@@ -496,6 +604,19 @@ impl TenantManager {
     /// Get total number of tenants
     pub fn tenant_count(&self) -> usize {
         self.tenants.len()
+    }
+
+    /// Collect pipeline metrics across all tenants (pipeline_name, events_in, events_out).
+    pub async fn collect_pipeline_metrics(&self) -> Vec<(String, u64, u64)> {
+        let mut metrics = Vec::new();
+        for tenant in self.tenants.values() {
+            for (name, pipeline) in &tenant.pipelines {
+                let engine = pipeline.engine.lock().await;
+                let (events_in, events_out) = engine.event_counters();
+                metrics.push((name.clone(), events_in, events_out));
+            }
+        }
+        metrics
     }
 
     /// Persist a tenant's current state to the store (if configured)
@@ -674,11 +795,12 @@ impl TenantManager {
             id: snapshot.id,
             name: snapshot.name,
             source: snapshot.source,
-            engine,
+            engine: Arc::new(tokio::sync::Mutex::new(engine)),
             output_rx,
             created_at: Instant::now(),
             status: snapshot.status,
             orchestrator: None,
+            connector_registry: None,
         })
     }
 }
@@ -1019,7 +1141,7 @@ mod tests {
             .unwrap();
 
         let vpl2 = "stream B = SensorReading .where(x > 50)";
-        tenant.reload_pipeline(&pid, vpl2.into()).unwrap();
+        tenant.reload_pipeline(&pid, vpl2.into()).await.unwrap();
 
         assert_eq!(tenant.pipelines[&pid].source, vpl2);
     }

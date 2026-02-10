@@ -125,11 +125,13 @@ impl PlacementStrategy for LeastLoadedPlacement {
 /// Background task: worker registration loop.
 ///
 /// Registers with the coordinator and sends periodic heartbeats.
+/// If a `tenant_manager` is provided, heartbeats include real pipeline metrics.
 pub async fn worker_registration_loop(
     coordinator_url: String,
     worker_id: String,
     worker_address: String,
     api_key: String,
+    tenant_manager: Option<varpulis_runtime::SharedTenantManager>,
 ) {
     use tracing::{error, info, warn};
 
@@ -190,10 +192,28 @@ pub async fn worker_registration_loop(
     loop {
         tokio::time::sleep(interval).await;
 
+        let (pipelines_running, pipeline_metrics) = if let Some(ref tm) = tenant_manager {
+            let mgr = tm.read().await;
+            let metrics = mgr.collect_pipeline_metrics().await;
+            let count = metrics.len();
+            let pm: Vec<PipelineMetrics> = metrics
+                .into_iter()
+                .map(|(name, events_in, events_out)| PipelineMetrics {
+                    pipeline_name: name,
+                    events_in,
+                    events_out,
+                })
+                .collect();
+            (count, pm)
+        } else {
+            (0, Vec::new())
+        };
+
+        let total_events: u64 = pipeline_metrics.iter().map(|m| m.events_in).sum();
         let hb = HeartbeatRequest {
-            events_processed: 0, // Workers don't track this globally yet
-            pipelines_running: 0,
-            pipeline_metrics: Vec::new(),
+            events_processed: total_events,
+            pipelines_running,
+            pipeline_metrics,
         };
 
         match client.post(&heartbeat_url).json(&hb).send().await {

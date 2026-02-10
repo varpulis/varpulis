@@ -569,7 +569,7 @@ function provideHover(
     const word = document.getText(range);
     
     const docs: { [key: string]: string } = {
-        'stream': '**stream** - Declares a new event stream\n\n```varpulis\nstream Name from EventType\nstream Name = OtherStream.where(...)\n```',
+        'stream': '**stream** - Declares a new event stream\n\n```varpulis\nstream Name = EventType\nstream Name = OtherStream.where(...)\n```',
         'event': '**event** - Declares an event type\n\n```varpulis\nevent MyEvent:\n    field1: string\n    field2: float\n```',
         'where': '**.where(condition)** - Filters events based on a condition\n\n```varpulis\n.where(value > 10)\n.where(status == "active" and count > 0)\n```',
         'window': '**.window(duration)** - Creates a temporal window\n\n```varpulis\n.window(5m)              # Tumbling window\n.window(5m, sliding: 1m) # Sliding window\n```',

@@ -1771,6 +1771,7 @@ async fn run_server(
     }
 
     let admin_key = auth_config.api_key().map(|s| s.to_string());
+    let tenant_manager_for_heartbeat = tenant_manager.clone();
     let api_routes = api::api_routes(tenant_manager, admin_key);
 
     // Combined routes
@@ -1799,6 +1800,7 @@ async fn run_server(
             worker_id,
             worker_addr,
             worker_api_key,
+            Some(tenant_manager_for_heartbeat.clone()),
         ));
     }
 

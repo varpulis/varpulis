@@ -42,7 +42,7 @@ const typeParamFields: Record<string, Array<{ key: string; label: string; requir
 
 const currentFields = computed(() => typeParamFields[formType.value] || [])
 
-const nameValid = computed(() => /^[a-zA-Z][a-zA-Z0-9_-]*$/.test(formName.value))
+const nameValid = computed(() => /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(formName.value))
 const formValid = computed(() => {
   if (!nameValid.value) return false
   const required = currentFields.value.filter((f) => f.required)
@@ -226,8 +226,8 @@ onMounted(() => {
           <v-text-field
             v-model="formName"
             label="Name"
-            placeholder="mqtt-market"
-            hint="Valid identifier: starts with letter, a-z, 0-9, _, -"
+            placeholder="mqtt_market"
+            hint="Valid VPL identifier: starts with letter or underscore, then a-z, 0-9, _"
             :rules="[() => nameValid || 'Invalid name format']"
             :disabled="editMode"
             persistent-hint

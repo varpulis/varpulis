@@ -2633,6 +2633,11 @@ impl Engine {
             .any(|s| s.operations.iter().any(|op| matches!(op, RuntimeOp::To(_))))
     }
 
+    /// Returns (events_in, events_out) counters for this engine.
+    pub fn event_counters(&self) -> (u64, u64) {
+        (self.events_processed, self.output_events_emitted)
+    }
+
     /// Check if all streams are stateless (safe for round-robin distribution).
     /// Stateless pipelines contain only filter, select, emit, print, log, pattern, and process ops.
     /// Stateful ops (windows, aggregation, sequence, join, SASE, Hamlet) need partition affinity.

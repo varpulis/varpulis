@@ -298,27 +298,56 @@ pub async fn handle_rejection(
         return Ok(reply);
     }
 
-    let (code, message) = if err.find::<AuthRejection>().is_some() {
-        let auth_err = err.find::<AuthRejection>().unwrap();
-        match auth_err {
-            AuthRejection::MissingCredentials => (
-                warp::http::StatusCode::UNAUTHORIZED,
-                "Authentication required",
-            ),
-            AuthRejection::InvalidCredentials => {
-                (warp::http::StatusCode::UNAUTHORIZED, "Invalid API key")
+    let (code, message): (warp::http::StatusCode, String) =
+        if let Some(auth_err) = err.find::<AuthRejection>() {
+            match auth_err {
+                AuthRejection::MissingCredentials => (
+                    warp::http::StatusCode::UNAUTHORIZED,
+                    "Authentication required".into(),
+                ),
+                AuthRejection::InvalidCredentials => (
+                    warp::http::StatusCode::UNAUTHORIZED,
+                    "Invalid API key".into(),
+                ),
+                AuthRejection::MalformedHeader => (
+                    warp::http::StatusCode::BAD_REQUEST,
+                    "Malformed authorization header".into(),
+                ),
             }
-            AuthRejection::MalformedHeader => (
+        } else if let Some(e) = err.find::<warp::filters::body::BodyDeserializeError>() {
+            (
                 warp::http::StatusCode::BAD_REQUEST,
-                "Malformed authorization header",
-            ),
-        }
-    } else {
-        (
-            warp::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "Internal server error",
-        )
-    };
+                format!("Invalid request body: {}", e),
+            )
+        } else if err.find::<warp::reject::InvalidQuery>().is_some() {
+            (
+                warp::http::StatusCode::BAD_REQUEST,
+                "Invalid query parameters".into(),
+            )
+        } else if err.find::<warp::reject::PayloadTooLarge>().is_some() {
+            (
+                warp::http::StatusCode::PAYLOAD_TOO_LARGE,
+                "Request payload too large".into(),
+            )
+        } else if err.find::<warp::reject::UnsupportedMediaType>().is_some() {
+            (
+                warp::http::StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "Unsupported media type".into(),
+            )
+        } else if err.find::<warp::reject::MethodNotAllowed>().is_some() {
+            (
+                warp::http::StatusCode::METHOD_NOT_ALLOWED,
+                "Method not allowed".into(),
+            )
+        } else if err.is_not_found() {
+            (warp::http::StatusCode::NOT_FOUND, "Not found".into())
+        } else {
+            tracing::error!("Unhandled rejection: {:?}", err);
+            (
+                warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Internal server error".into(),
+            )
+        };
 
     Ok(warp::reply::with_status(
         warp::reply::json(&serde_json::json!({

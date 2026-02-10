@@ -110,16 +110,13 @@ fn get_documentation(word: &str) -> Option<String> {
         )),
 
         "from" => Some(format!(
-            "## from\n\n\
-            Specifies the data source for a stream.\n\n\
-            **Supported sources:**\n\
-            - `mqtt://` - MQTT broker\n\
-            - `kafka://` - Kafka topic\n\
-            - `file://` - File input\n\
-            - `http://` - HTTP endpoint\n\n\
+            "## .from()\n\n\
+            Binds a stream to a connector source.\n\n\
+            **Syntax:** `EventType.from(Connector, key: value, ...)`\n\n\
             **Example:**\n\
             ```vpl\n\
-            stream Data from \"mqtt://localhost:1883/topic\"\n\
+            connector MqttSensors = mqtt(url: \"localhost:1883\")\n\
+            stream Temperatures = TemperatureReading.from(MqttSensors, topic: \"sensors/#\")\n\
             ```"
         )),
 

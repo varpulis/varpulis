@@ -124,7 +124,7 @@ event EventTest:
     action: str
     timestamp: str
 
-stream Events from EventTest
+stream Events = EventTest
 
 stream ProcessedEvents = Events
     .emit(
@@ -142,7 +142,7 @@ event AlertTest:
     severity: str
     message: str
 
-stream Alerts from AlertTest
+stream Alerts = AlertTest
 
 stream CriticalAlerts = Alerts
     .where(severity == "critical")
@@ -210,6 +210,25 @@ function cleanupProcesses(): void {
     }
   }
   processes.length = 0
+}
+
+/**
+ * Set Monaco editor content via its API (avoids auto-indent issues with keyboard.type).
+ * Returns true if the value was set successfully.
+ */
+async function setEditorContent(page: Page, code: string): Promise<void> {
+  await page.evaluate((text) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const monaco = (window as any).monaco
+    if (monaco) {
+      const editors = monaco.editor.getEditors()
+      if (editors.length > 0) {
+        editors[0].getModel()?.setValue(text)
+      }
+    }
+  }, code)
+  // Small delay for change handlers to propagate
+  await page.waitForTimeout(200)
 }
 
 // Setup and teardown for all tests
@@ -416,29 +435,33 @@ test.describe('Varpulis Control Plane E2E', () => {
     })
   })
 
-  test('Deploy dialog opens correctly', async ({ page }) => {
+  test('Create Group builder opens correctly', async ({ page }) => {
     await page.goto('/pipelines')
     await page.waitForLoadState('networkidle')
 
     // Wait for page to be ready
-    await page.waitForSelector('text=Deploy New Group', { timeout: 10000 })
+    await page.waitForSelector('text=Create Group', { timeout: 10000 })
 
-    // Click deploy button
-    const deployButton = page.locator('button:has-text("Deploy New Group")')
-    await deployButton.click()
+    // Click Create Group button to toggle inline group builder
+    const createButton = page.locator('button:has-text("Create Group")')
+    await createButton.click()
     await page.waitForTimeout(500)
 
-    // Verify dialog is open - use flexible selector
-    const dialog = page.locator('.v-dialog, [role="dialog"]')
-    await expect(dialog).toBeVisible({ timeout: 5000 })
+    // Verify inline group builder card is visible (not a dialog)
+    const builderCard = page.locator('text=Create Pipeline Group')
+    await expect(builderCard).toBeVisible({ timeout: 5000 })
 
     // Verify form elements are shown
     const nameInput = page.locator('label:has-text("Group Name"), input[placeholder*="name"]')
     await expect(nameInput.first()).toBeVisible({ timeout: 5000 })
 
+    // Verify Deploy Group button is present
+    const deployGroupBtn = page.locator('button:has-text("Deploy Group")')
+    await expect(deployGroupBtn).toBeVisible({ timeout: 5000 })
+
     // Take screenshot
     await page.screenshot({
-      path: path.join(SCREENSHOT_DIR, 'pipelines-deploy.png'),
+      path: path.join(SCREENSHOT_DIR, 'pipelines-create-group.png'),
     })
   })
 
@@ -692,5 +715,414 @@ test.describe('Varpulis Control Plane E2E', () => {
     const data = await response.json()
     expect(data.pipeline_groups).toBeDefined()
     expect(Array.isArray(data.pipeline_groups)).toBeTruthy()
+  })
+
+  // =====================
+  // Validation API Tests
+  // =====================
+
+  test('Validation API accepts valid VPL', async ({ page }) => {
+    const response = await page.request.post(
+      `http://localhost:${COORDINATOR_PORT}/api/v1/cluster/validate`,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': API_KEY,
+        },
+        data: {
+          source: `event Foo:\n    x: int\n\nstream S = Foo\n`,
+        },
+      }
+    )
+    expect(response.ok()).toBeTruthy()
+
+    const data = await response.json()
+    expect(data.valid).toBe(true)
+    expect(data.diagnostics).toBeDefined()
+    expect(data.diagnostics.length).toBe(0)
+  })
+
+  test('Validation API rejects invalid VPL', async ({ page }) => {
+    const response = await page.request.post(
+      `http://localhost:${COORDINATOR_PORT}/api/v1/cluster/validate`,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': API_KEY,
+        },
+        data: {
+          source: 'this is not valid VPL at all !!!',
+        },
+      }
+    )
+    expect(response.ok()).toBeTruthy()
+
+    const data = await response.json()
+    expect(data.valid).toBe(false)
+    expect(data.diagnostics).toBeDefined()
+    expect(data.diagnostics.length).toBeGreaterThan(0)
+
+    // Each diagnostic should have required fields
+    const diag = data.diagnostics[0]
+    expect(diag.severity).toBeDefined()
+    expect(diag.line).toBeDefined()
+    expect(diag.column).toBeDefined()
+    expect(diag.message).toBeDefined()
+  })
+
+  // =====================
+  // Editor Validation UX Tests
+  // =====================
+
+  test('Invalid VPL shows validation errors in editor', async ({ page }) => {
+    await page.goto('/editor')
+    await page.waitForLoadState('networkidle')
+    await page.waitForSelector('.monaco-editor', { timeout: 10000 })
+    await page.waitForTimeout(1000)
+
+    // Set invalid VPL content (triggers parse error)
+    await setEditorContent(page, 'this is not valid VPL at all !!!')
+
+    // Wait for auto-validation debounce (1s) + API round trip
+    await page.waitForTimeout(3000)
+
+    // Verify status chip shows error count
+    const errorChip = page.locator('.v-chip').filter({ hasText: /error/ })
+    await expect(errorChip).toBeVisible({ timeout: 10000 })
+
+    // Verify Deploy button is disabled
+    const deployButton = page.locator('button').filter({ hasText: 'Deploy' })
+    await expect(deployButton).toBeDisabled()
+
+    // Take screenshot
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, 'editor-validation-error.png'),
+      fullPage: true,
+    })
+  })
+
+  test('Valid VPL clears validation errors in editor', async ({ page }) => {
+    await page.goto('/editor')
+    await page.waitForLoadState('networkidle')
+    await page.waitForSelector('.monaco-editor', { timeout: 10000 })
+    await page.waitForTimeout(1000)
+
+    // Set valid VPL content
+    await setEditorContent(page, 'event Foo:\n    x: int\n\nstream S = Foo')
+
+    // Wait for auto-validation debounce (1s) + API round trip
+    await page.waitForTimeout(2500)
+
+    // Verify "Valid" chip appears
+    const validChip = page.locator('.v-chip').filter({ hasText: 'Valid' })
+    await expect(validChip).toBeVisible({ timeout: 10000 })
+
+    // Take screenshot
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, 'editor-validation-valid.png'),
+      fullPage: true,
+    })
+  })
+
+  test('Manual Validate button triggers validation', async ({ page }) => {
+    await page.goto('/editor')
+    await page.waitForLoadState('networkidle')
+    await page.waitForSelector('.monaco-editor', { timeout: 10000 })
+    await page.waitForTimeout(1000)
+
+    // Click Validate button
+    const validateButton = page.locator('button').filter({ hasText: 'Validate' })
+    await validateButton.click()
+
+    // Wait for validation to complete
+    await page.waitForTimeout(2000)
+
+    // Verify a validation status chip appeared (either Valid or error count)
+    const statusChip = page.locator('.v-chip').filter({ hasText: /Valid|error/ })
+    await expect(statusChip).toBeVisible({ timeout: 5000 })
+  })
+
+  // =====================
+  // Source Management UX Tests
+  // =====================
+
+  test('Save and load VPL source', async ({ page }) => {
+    await page.goto('/editor')
+    await page.waitForLoadState('networkidle')
+    await page.waitForSelector('.monaco-editor', { timeout: 10000 })
+    await page.waitForTimeout(1000)
+
+    // Clear any previously saved sources from localStorage
+    await page.evaluate(() => localStorage.removeItem('varpulis_saved_sources'))
+
+    // Set a recognizable VPL source
+    await setEditorContent(page, 'event TestSave:\n    value: int\n\nstream Input = TestSave')
+
+    // Click "Save As" button in the button group
+    const btnGroup = page.locator('.v-btn-group')
+    await btnGroup.locator('button', { hasText: 'Save As' }).click()
+    await page.waitForTimeout(500)
+
+    // Verify save dialog opens
+    const saveDialog = page.locator('.v-dialog').filter({ hasText: 'Save VPL Source' })
+    await expect(saveDialog).toBeVisible({ timeout: 5000 })
+
+    // Fill in the name
+    const nameInput = saveDialog.locator('input').first()
+    await nameInput.fill('test-source')
+
+    // Click Save in dialog
+    await saveDialog.locator('button', { hasText: 'Save' }).click()
+
+    // Wait for dialog to fully close (including overlay/scrim animation)
+    await expect(saveDialog).not.toBeVisible({ timeout: 5000 })
+    await page.waitForTimeout(500)
+
+    // Dismiss any remaining overlays
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(300)
+
+    // Verify the source name chip shows in the header
+    const sourceChip = page.locator('.v-chip').filter({ hasText: 'test-source' })
+    await expect(sourceChip).toBeVisible({ timeout: 5000 })
+
+    // Reload the page to get a clean editor state — this verifies localStorage persistence
+    await page.reload()
+    await page.waitForLoadState('networkidle')
+    await page.waitForSelector('.monaco-editor', { timeout: 10000 })
+    await page.waitForTimeout(1000)
+
+    // Open load dialog
+    const btnGroup2 = page.locator('.v-btn-group')
+    await btnGroup2.locator('button', { hasText: 'Open' }).click()
+    await page.waitForTimeout(500)
+
+    // Verify load dialog opens and shows "test-source"
+    const loadDialog = page.locator('.v-dialog').filter({ hasText: 'Open VPL Source' })
+    await expect(loadDialog).toBeVisible({ timeout: 5000 })
+
+    const sourceItem = loadDialog.locator('.v-list-item').filter({ hasText: 'test-source' })
+    await expect(sourceItem).toBeVisible({ timeout: 5000 })
+
+    // Select and load it
+    await sourceItem.click()
+    await loadDialog.locator('button', { hasText: 'Open' }).click()
+    await page.waitForTimeout(500)
+
+    // Verify the source name chip is restored
+    await expect(page.locator('.v-chip').filter({ hasText: 'test-source' })).toBeVisible()
+  })
+
+  test('Delete saved VPL source', async ({ page }) => {
+    await page.goto('/editor')
+    await page.waitForLoadState('networkidle')
+    await page.waitForSelector('.monaco-editor', { timeout: 10000 })
+    await page.waitForTimeout(1000)
+
+    // Seed a source via localStorage
+    await page.evaluate(() => {
+      const sources = [{
+        id: 'vpl-delete-test',
+        name: 'delete-me',
+        source: 'event X:\\n    y: int\\nstream S = X',
+        savedAt: new Date().toISOString(),
+      }]
+      localStorage.setItem('varpulis_saved_sources', JSON.stringify(sources))
+    })
+
+    // Reload to pick up seeded localStorage
+    await page.reload()
+    await page.waitForLoadState('networkidle')
+    await page.waitForSelector('.monaco-editor', { timeout: 10000 })
+    await page.waitForTimeout(1000)
+
+    // Open load dialog
+    const openButton = page.locator('button').filter({ hasText: 'Open' })
+    await openButton.click()
+    await page.waitForTimeout(500)
+
+    // Verify the source is listed
+    const loadDialog = page.locator('.v-dialog').filter({ hasText: 'Open VPL Source' })
+    await expect(loadDialog).toBeVisible({ timeout: 5000 })
+    const sourceItem = loadDialog.locator('.v-list-item').filter({ hasText: 'delete-me' })
+    await expect(sourceItem).toBeVisible()
+
+    // Click the delete button on the source item
+    const deleteButton = sourceItem.locator('button').filter({ has: page.locator('.mdi-delete') })
+    await deleteButton.click()
+    await page.waitForTimeout(500)
+
+    // Verify the source is gone — either the list item disappears or the "No saved sources" alert shows
+    await expect(sourceItem).not.toBeVisible({ timeout: 5000 })
+  })
+
+  // =====================
+  // Pipeline Deployment UX Tests
+  // =====================
+
+  test('Quick Deploy from editor', async ({ page }) => {
+    await page.goto('/editor')
+    await page.waitForLoadState('networkidle')
+    await page.waitForSelector('.monaco-editor', { timeout: 10000 })
+    await page.waitForTimeout(1000)
+
+    // Seed a saved source so Deploy button can be enabled
+    await page.evaluate(() => {
+      const sources = [{
+        id: 'vpl-deploy-test',
+        name: 'deploy-test',
+        source: 'event Foo:\\n    x: int\\nstream S = Foo',
+        savedAt: new Date().toISOString(),
+      }]
+      localStorage.setItem('varpulis_saved_sources', JSON.stringify(sources))
+    })
+
+    // Reload and set up current source state via the save flow
+    await page.reload()
+    await page.waitForLoadState('networkidle')
+    await page.waitForSelector('.monaco-editor', { timeout: 10000 })
+    await page.waitForTimeout(1000)
+
+    // Set valid VPL content so currentSourceName/Id can be set
+    await setEditorContent(page, 'event Foo:\n    x: int\n\nstream S = Foo')
+
+    // Save As to set currentSourceName
+    const saveAsButton = page.locator('button').filter({ hasText: 'Save As' })
+    await saveAsButton.click()
+    await page.waitForTimeout(500)
+
+    const saveDialog = page.locator('.v-dialog').filter({ hasText: 'Save VPL Source' })
+    const nameInput = saveDialog.locator('input').first()
+    await nameInput.fill('editor-deploy-test')
+    await saveDialog.locator('button').filter({ hasText: 'Save' }).click()
+    await page.waitForTimeout(500)
+
+    // Trigger validation manually and wait for it to complete
+    const validateButton = page.locator('button').filter({ hasText: 'Validate' })
+    await validateButton.click()
+    await page.waitForTimeout(2500)
+
+    // Wait for "Valid" chip to confirm validation passed
+    const validChip = page.locator('.v-chip').filter({ hasText: 'Valid' })
+    await expect(validChip).toBeVisible({ timeout: 10000 })
+
+    // Click Deploy button in the action bar
+    const deployButton = page.locator('button').filter({ hasText: 'Deploy' })
+    await deployButton.click()
+    await page.waitForTimeout(500)
+
+    // Verify QuickDeployDialog opens
+    const deployDialog = page.locator('.v-dialog').filter({ hasText: 'Quick Deploy' })
+    await expect(deployDialog).toBeVisible({ timeout: 5000 })
+
+    // Take screenshot
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, 'editor-quick-deploy.png'),
+      fullPage: true,
+    })
+  })
+
+  test('Quick Deploy from Pipelines view', async ({ page }) => {
+    await page.goto('/pipelines')
+    await page.waitForLoadState('networkidle')
+    await page.waitForSelector('text=Pipeline Groups', { timeout: 10000 })
+
+    // Click Quick Deploy button
+    const quickDeployButton = page.locator('button').filter({ hasText: 'Quick Deploy' })
+    await quickDeployButton.click()
+    await page.waitForTimeout(500)
+
+    // Verify QuickDeployDialog opens
+    const deployDialog = page.locator('.v-dialog').filter({ hasText: 'Quick Deploy' })
+    await expect(deployDialog).toBeVisible({ timeout: 5000 })
+
+    // Take screenshot
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, 'pipelines-quick-deploy.png'),
+      fullPage: true,
+    })
+  })
+
+  // =====================
+  // Full Editor Workflow Test
+  // =====================
+
+  test('End-to-end editor workflow: type, validate, save, deploy', async ({ page }) => {
+    await page.goto('/editor')
+    await page.waitForLoadState('networkidle')
+    await page.waitForSelector('.monaco-editor', { timeout: 10000 })
+    await page.waitForTimeout(1000)
+
+    // Clear any previous saved sources
+    await page.evaluate(() => localStorage.removeItem('varpulis_saved_sources'))
+
+    // Step 1: Set VPL source
+    const pipelineVpl = [
+      'event SensorReading:',
+      '    sensor_id: str',
+      '    temperature: int',
+      '',
+      'stream Readings = SensorReading',
+      '',
+      'stream HighTemp = Readings',
+      '    .where(temperature > 100)',
+      '    .emit(',
+      '        event_type: "TempAlert",',
+      '        sensor_id: sensor_id,',
+      '        temperature: temperature',
+      '    )',
+    ].join('\n')
+
+    await setEditorContent(page, pipelineVpl)
+
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, 'editor-workflow-01-typed.png'),
+      fullPage: true,
+    })
+
+    // Step 2: Wait for auto-validation and verify it passes
+    await page.waitForTimeout(2500)
+
+    const validChip = page.locator('.v-chip').filter({ hasText: 'Valid' })
+    await expect(validChip).toBeVisible({ timeout: 5000 })
+
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, 'editor-workflow-02-validated.png'),
+      fullPage: true,
+    })
+
+    // Step 3: Save as "demo-pipeline"
+    const saveAsButton = page.locator('button').filter({ hasText: 'Save As' })
+    await saveAsButton.click()
+    await page.waitForTimeout(500)
+
+    const saveDialog = page.locator('.v-dialog').filter({ hasText: 'Save VPL Source' })
+    await expect(saveDialog).toBeVisible()
+
+    const nameInput = saveDialog.locator('input').first()
+    await nameInput.fill('demo-pipeline')
+    await saveDialog.locator('button').filter({ hasText: 'Save' }).click()
+    await page.waitForTimeout(500)
+
+    // Verify source name chip
+    await expect(page.locator('.v-chip').filter({ hasText: 'demo-pipeline' })).toBeVisible()
+
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, 'editor-workflow-03-saved.png'),
+      fullPage: true,
+    })
+
+    // Step 4: Click Deploy to open QuickDeployDialog
+    const deployButton = page.locator('button').filter({ hasText: 'Deploy' })
+    await deployButton.click()
+    await page.waitForTimeout(500)
+
+    const deployDialog = page.locator('.v-dialog').filter({ hasText: 'Quick Deploy' })
+    await expect(deployDialog).toBeVisible({ timeout: 5000 })
+
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, 'editor-workflow-04-deploy.png'),
+      fullPage: true,
+    })
   })
 })

@@ -461,7 +461,7 @@ async fn handle_validate(
     body: ValidateRequest,
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
-    // Inject cluster connectors so .from(mqtt-market) doesn't produce "undefined connector"
+    // Inject cluster connectors so .from(mqtt_market) doesn't produce "undefined connector"
     let coord = coordinator.read().await;
     let (effective_source, preamble_lines) =
         connector_config::inject_connectors(&body.source, &coord.connectors);
@@ -506,7 +506,7 @@ async fn handle_validate(
                     ..
                 } => ValidateDiagnostic {
                     severity: "error",
-                    line: line.saturating_sub(preamble_lines),
+                    line: line.saturating_sub(preamble_lines).max(1),
                     column,
                     message,
                     hint,
@@ -519,7 +519,7 @@ async fn handle_validate(
                     let (line, column) = position_to_line_col(&effective_source, position);
                     ValidateDiagnostic {
                         severity: "error",
-                        line: line.saturating_sub(preamble_lines),
+                        line: line.saturating_sub(preamble_lines).max(1),
                         column,
                         message: format!("Expected {}, found {}", expected, found),
                         hint: None,
@@ -538,7 +538,7 @@ async fn handle_validate(
                     let (line, column) = position_to_line_col(&effective_source, position);
                     ValidateDiagnostic {
                         severity: "error",
-                        line: line.saturating_sub(preamble_lines),
+                        line: line.saturating_sub(preamble_lines).max(1),
                         column,
                         message,
                         hint: None,
@@ -569,7 +569,7 @@ async fn handle_validate(
                     let (line, column) = position_to_line_col(&effective_source, position);
                     ValidateDiagnostic {
                         severity: "error",
-                        line: line.saturating_sub(preamble_lines),
+                        line: line.saturating_sub(preamble_lines).max(1),
                         column,
                         message: "Unterminated string".to_string(),
                         hint: Some("Add a closing quote".to_string()),
@@ -586,7 +586,7 @@ async fn handle_validate(
                     let (line, column) = position_to_line_col(&effective_source, span.start);
                     ValidateDiagnostic {
                         severity: "error",
-                        line: line.saturating_sub(preamble_lines),
+                        line: line.saturating_sub(preamble_lines).max(1),
                         column,
                         message,
                         hint: None,
@@ -789,7 +789,7 @@ fn cluster_error_response(err: ClusterError) -> warp::reply::Response {
     warp::reply::with_status(warp::reply::json(&body), status).into_response()
 }
 
-/// Handle warp rejections (auth failures, etc.).
+/// Handle warp rejections with specific HTTP status codes and messages.
 pub async fn handle_rejection(err: Rejection) -> Result<impl Reply, Infallible> {
     if err.find::<Unauthorized>().is_some() {
         Ok(error_response(
@@ -801,7 +801,35 @@ pub async fn handle_rejection(err: Rejection) -> Result<impl Reply, Infallible> 
             StatusCode::UNAUTHORIZED,
             "Missing API key header",
         ))
+    } else if let Some(e) = err.find::<warp::filters::body::BodyDeserializeError>() {
+        Ok(error_response(
+            StatusCode::BAD_REQUEST,
+            &format!("Invalid request body: {}", e),
+        ))
+    } else if err.find::<warp::reject::InvalidQuery>().is_some() {
+        Ok(error_response(
+            StatusCode::BAD_REQUEST,
+            "Invalid query parameters",
+        ))
+    } else if err.find::<warp::reject::PayloadTooLarge>().is_some() {
+        Ok(error_response(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "Request payload too large",
+        ))
+    } else if err.find::<warp::reject::UnsupportedMediaType>().is_some() {
+        Ok(error_response(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "Unsupported media type",
+        ))
+    } else if err.find::<warp::reject::MethodNotAllowed>().is_some() {
+        Ok(error_response(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "Method not allowed",
+        ))
+    } else if err.is_not_found() {
+        Ok(error_response(StatusCode::NOT_FOUND, "Not found"))
     } else {
+        tracing::error!("Unhandled rejection: {:?}", err);
         Ok(error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "Internal server error",

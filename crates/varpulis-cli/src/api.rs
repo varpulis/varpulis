@@ -576,7 +576,7 @@ async fn handle_reload(
                 ))
             }
         };
-        tenant.reload_pipeline(&pipeline_id, body.source)
+        tenant.reload_pipeline(&pipeline_id, body.source).await
     };
 
     match result {
