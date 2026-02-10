@@ -88,13 +88,13 @@ export const useVplSourcesStore = defineStore('vplSources', () => {
     }
   }
 
-  // Parse VPL source to extract event definitions
+  // Parse VPL source to extract event definitions and categorize as input/output
   function parseEvents(source: string): ParsedEvents {
     const inputs: EventDefinition[] = []
     const outputs: EventDefinition[] = []
 
-    // Parse event definitions (input event types)
-    // Pattern: event EventName:\n    field1: type1\n    field2: type2
+    // 1. Parse all event schema definitions: event EventName:\n    field: type
+    const eventSchemas = new Map<string, { name: string; type: string }[]>()
     const eventRegex = /event\s+(\w+)\s*:\s*((?:\n\s+\w+\s*:\s*\w+)*)/g
     let match
 
@@ -103,42 +103,43 @@ export const useVplSourcesStore = defineStore('vplSources', () => {
       const fieldsBlock = match[2]
       const fields: { name: string; type: string }[] = []
 
-      // Parse fields
       const fieldRegex = /(\w+)\s*:\s*(\w+)/g
       let fieldMatch
       while ((fieldMatch = fieldRegex.exec(fieldsBlock)) !== null) {
-        fields.push({
-          name: fieldMatch[1],
-          type: fieldMatch[2],
-        })
+        fields.push({ name: fieldMatch[1], type: fieldMatch[2] })
       }
 
-      inputs.push({ name: eventName, fields })
+      eventSchemas.set(eventName, fields)
     }
 
-    // Parse output events from .emit() calls
-    // Pattern: .emit(\n    event_type: "EventName",
-    const emitRegex = /\.emit\s*\(\s*\n?\s*event_type\s*:\s*["'](\w+)["']/g
+    // 2. Find input event types: stream X = EventName
+    const streamRegex = /stream\s+\w+\s*=\s*(\w+)/g
+    const inputNames = new Set<string>()
+
+    while ((match = streamRegex.exec(source)) !== null) {
+      inputNames.add(match[1])
+    }
+
+    for (const name of inputNames) {
+      inputs.push({ name, fields: eventSchemas.get(name) || [] })
+    }
+
+    // 3. Find output event types: .emit() with event_type field or .to() sinks
+    const emitRegex = /\.emit\s*\(\s*[\s\S]*?event_type\s*:\s*["'](\w+)["']/g
     const outputNames = new Set<string>()
 
     while ((match = emitRegex.exec(source)) !== null) {
       outputNames.add(match[1])
     }
 
-    // Also check for simple emit patterns
-    const simpleEmitRegex = /emit\s*\(\s*event_type\s*:\s*["'](\w+)["']/g
-    while ((match = simpleEmitRegex.exec(source)) !== null) {
-      outputNames.add(match[1])
+    // Also detect streams with .to() sinks as outputs
+    const toRegex = /stream\s+(\w+)\s*=[\s\S]*?\.to\s*\(/g
+    while ((match = toRegex.exec(source)) !== null) {
+      // The stream itself produces output
     }
 
-    // Create output event definitions (fields unknown from emit)
     for (const name of outputNames) {
-      // Try to find if this event type is defined in the source
-      const defined = inputs.find(e => e.name === name)
-      outputs.push({
-        name,
-        fields: defined?.fields || [],
-      })
+      outputs.push({ name, fields: eventSchemas.get(name) || [] })
     }
 
     return { inputs, outputs }
