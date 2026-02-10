@@ -10,13 +10,30 @@
   "liveNow": false,
   "panels": [
     {
-      "title": "Events Processed / sec",
+      "title": "Events Ingested / sec",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
       "targets": [
         {
+          "expr": "sum(rate(varpulis_events_total[1m])) by (instance)",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        }
+      }
+    },
+    {
+      "title": "Events Processed / sec (per stream)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
           "expr": "rate(varpulis_events_processed_total[1m])",
-          "legendFormat": "{{stream}}",
+          "legendFormat": "{{stream}} ({{instance}})",
           "refId": "A"
         }
       ],
@@ -29,11 +46,11 @@
     {
       "title": "Output Events / sec",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
       "targets": [
         {
           "expr": "rate(varpulis_output_events_total[1m])",
-          "legendFormat": "{{stream}}",
+          "legendFormat": "{{stream}} ({{instance}})",
           "refId": "A"
         }
       ],
@@ -44,18 +61,18 @@
       }
     },
     {
-      "title": "Processing Latency (p99)",
+      "title": "Processing Latency (p99 / p50)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, rate(varpulis_processing_latency_seconds_bucket[5m]))",
-          "legendFormat": "p99",
+          "expr": "histogram_quantile(0.99, sum(rate(varpulis_processing_latency_seconds_bucket[5m])) by (le, stream))",
+          "legendFormat": "p99 {{stream}}",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.50, rate(varpulis_processing_latency_seconds_bucket[5m]))",
-          "legendFormat": "p50",
+          "expr": "histogram_quantile(0.50, sum(rate(varpulis_processing_latency_seconds_bucket[5m])) by (le, stream))",
+          "legendFormat": "p50 {{stream}}",
           "refId": "B"
         }
       ],
@@ -68,41 +85,34 @@
     {
       "title": "Active Streams",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 8 },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 16 },
       "targets": [
         {
-          "expr": "varpulis_active_streams",
+          "expr": "sum(varpulis_active_streams)",
           "refId": "A"
         }
       ]
     },
     {
-      "title": "Queue Depth",
-      "type": "gauge",
-      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 8 },
+      "title": "Total Events In",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 16 },
       "targets": [
         {
-          "expr": "varpulis_stream_queue_size",
-          "legendFormat": "{{stream}}",
+          "expr": "sum(varpulis_events_total)",
           "refId": "A"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "thresholds": {
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 100 },
-              { "color": "red", "value": 1000 }
-            ]
-          }
+          "unit": "short"
         }
       }
     },
     {
       "title": "Total Events Processed",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 12 },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 16 },
       "targets": [
         {
           "expr": "sum(varpulis_events_processed_total)",
@@ -118,7 +128,7 @@
     {
       "title": "Total Output Events",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 12 },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 16 },
       "targets": [
         {
           "expr": "sum(varpulis_output_events_total)",
