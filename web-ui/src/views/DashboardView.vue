@@ -16,6 +16,12 @@ const metricsStore = useMetricsStore()
 const loading = ref(true)
 const pipelineActivity = ref<PipelineWorkerMetrics[]>([])
 let pollInterval: ReturnType<typeof setInterval> | null = null
+let prevEventsIn = 0
+let prevTimestamp = Date.now()
+
+const totalEventsOut = computed(() =>
+  pipelineActivity.value.reduce((sum, p) => sum + p.events_out, 0)
+)
 
 // Computed summary
 const workersSummary = computed(() => ({
@@ -64,7 +70,29 @@ async function fetchData(): Promise<void> {
     clusterStore.fetchWorkers(),
     pipelinesStore.fetchGroups(),
     fetchClusterMetrics()
-      .then((m) => { pipelineActivity.value = m.pipelines })
+      .then((m) => {
+        pipelineActivity.value = m.pipelines
+        // Update metricsStore with throughput from pipeline data
+        const totalIn = m.pipelines.reduce((s, p) => s + p.events_in, 0)
+        const totalOut = m.pipelines.reduce((s, p) => s + p.events_out, 0)
+        const now = Date.now()
+        const dtSecs = (now - prevTimestamp) / 1000
+        const throughput = dtSecs > 0 && prevEventsIn > 0
+          ? (totalIn - prevEventsIn) / dtSecs : 0
+        prevEventsIn = totalIn
+        prevTimestamp = now
+        const workers = clusterStore.workers
+        const totalPipelines = workers.reduce((s, w) => s + w.pipelines_running, 0)
+        metricsStore.updateMetrics({
+          events_processed: totalIn,
+          events_emitted: totalOut,
+          errors: 0,
+          active_streams: totalPipelines,
+          uptime_secs: metricsStore.aggregated.uptime_secs + 5,
+          throughput_eps: Math.max(0, throughput),
+          avg_latency_ms: 0,
+        })
+      })
       .catch(() => { /* metrics endpoint may not exist yet */ }),
   ])
   loading.value = false
@@ -170,17 +198,16 @@ onUnmounted(() => {
         </v-card>
       </v-col>
 
-      <!-- Latency Card -->
+      <!-- Events Emitted Card -->
       <v-col cols="12" md="6" lg="3">
         <v-card class="h-100" @click="navigateToMetrics" style="cursor: pointer">
           <v-card-text>
             <div class="d-flex align-center mb-2">
-              <v-icon color="warning" size="32">mdi-timer-outline</v-icon>
-              <span class="text-h6 ml-2">Avg Latency</span>
+              <v-icon color="warning" size="32">mdi-arrow-up-bold</v-icon>
+              <span class="text-h6 ml-2">Events Out</span>
             </div>
             <div class="text-h3 font-weight-bold">
-              {{ metrics.avg_latency_ms.toFixed(2) }}
-              <span class="text-h6 text-medium-emphasis">ms</span>
+              {{ totalEventsOut.toLocaleString() }}
             </div>
             <div class="text-caption text-medium-emphasis mt-2">
               {{ metrics.active_streams }} active streams

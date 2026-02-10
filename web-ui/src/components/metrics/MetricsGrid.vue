@@ -19,9 +19,8 @@ const workerData = computed(() => {
       status: worker.status,
       pipelineCount: worker.pipelines_running,
       eventsProcessed: metrics?.events_processed || 0,
+      eventsEmitted: metrics?.events_emitted || 0,
       throughput: metrics?.throughput_eps || 0,
-      latency: metrics?.avg_latency_ms || 0,
-      errors: metrics?.errors || 0,
     }
   })
 })
@@ -79,9 +78,8 @@ function formatNumber(num: number): string {
             <th class="text-left">Status</th>
             <th class="text-right">Pipelines</th>
             <th class="text-right">Throughput</th>
-            <th class="text-right">Latency</th>
-            <th class="text-right">Events</th>
-            <th class="text-right">Errors</th>
+            <th class="text-right">Events In</th>
+            <th class="text-right">Events Out</th>
           </tr>
         </thead>
         <tbody>
@@ -116,16 +114,10 @@ function formatNumber(num: number): string {
               <span class="text-caption text-medium-emphasis"> evt/s</span>
             </td>
             <td class="text-right">
-              <span class="font-weight-medium">{{ worker.latency.toFixed(2) }}</span>
-              <span class="text-caption text-medium-emphasis"> ms</span>
-            </td>
-            <td class="text-right">
               {{ formatNumber(worker.eventsProcessed) }}
             </td>
             <td class="text-right">
-              <span :class="{ 'text-error': worker.errors > 0 }">
-                {{ formatNumber(worker.errors) }}
-              </span>
+              {{ formatNumber(worker.eventsEmitted) }}
             </td>
           </tr>
         </tbody>

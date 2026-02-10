@@ -4,10 +4,10 @@ import { useMetricsStore } from '@/stores/metrics'
 import { useClusterStore } from '@/stores/cluster'
 import { fetchClusterMetrics } from '@/api/cluster'
 import ThroughputChart from '@/components/metrics/ThroughputChart.vue'
-import LatencyHistogram from '@/components/metrics/LatencyHistogram.vue'
 import MetricCard from '@/components/metrics/MetricCard.vue'
 import MetricsGrid from '@/components/metrics/MetricsGrid.vue'
 import type { TimeRangePreset } from '@/types/metrics'
+import type { PipelineWorkerMetrics } from '@/api/cluster'
 
 const metricsStore = useMetricsStore()
 const clusterStore = useClusterStore()
@@ -15,7 +15,9 @@ const clusterStore = useClusterStore()
 // Track previous values for throughput calculation
 let prevEventsIn = 0
 let prevTimestamp = Date.now()
+const prevWorkerEvents = new Map<string, number>()
 
+const pipelineActivity = ref<PipelineWorkerMetrics[]>([])
 const autoRefresh = ref(true)
 const refreshInterval = ref(5000)
 const fetchError = ref<string | null>(null)
@@ -41,6 +43,7 @@ async function fetchMetrics(): Promise<void> {
   try {
     fetchError.value = null
     const clusterMetrics = await fetchClusterMetrics()
+    pipelineActivity.value = clusterMetrics.pipelines
     const workers = clusterStore.workers
     const totalPipelines = workers.reduce((sum, w) => sum + w.pipelines_running, 0)
 
@@ -66,6 +69,34 @@ async function fetchMetrics(): Promise<void> {
       throughput_eps: Math.max(0, throughput),
       avg_latency_ms: 0,
     })
+
+    // Aggregate per-worker metrics from pipeline-level data
+    const workerAgg = new Map<string, { events_in: number; events_out: number }>()
+    for (const p of clusterMetrics.pipelines) {
+      const existing = workerAgg.get(p.worker_id) || { events_in: 0, events_out: 0 }
+      existing.events_in += p.events_in
+      existing.events_out += p.events_out
+      workerAgg.set(p.worker_id, existing)
+    }
+
+    const workerMetricsList = Array.from(workerAgg.entries()).map(([workerId, agg]) => {
+      const prevEvents = prevWorkerEvents.get(workerId) || 0
+      const workerThroughput = dtSecs > 0 && prevEvents > 0
+        ? (agg.events_in - prevEvents) / dtSecs
+        : 0
+      prevWorkerEvents.set(workerId, agg.events_in)
+      return {
+        worker_id: workerId,
+        events_processed: agg.events_in,
+        events_emitted: agg.events_out,
+        errors: 0,
+        throughput_eps: Math.max(0, workerThroughput),
+        avg_latency_ms: 0,
+        cpu_usage: 0,
+        memory_usage_mb: 0,
+      }
+    })
+    metricsStore.updateWorkerMetrics(workerMetricsList)
   } catch (e) {
     fetchError.value = e instanceof Error ? e.message : 'Failed to fetch metrics'
   }
@@ -189,12 +220,11 @@ onUnmounted(() => {
       </v-col>
       <v-col cols="12" sm="6" md="3">
         <MetricCard
-          title="Avg Latency"
-          :value="aggregated.avg_latency_ms"
-          unit="ms"
-          icon="mdi-timer-outline"
+          title="Events Emitted"
+          :value="aggregated.events_emitted_total"
+          icon="mdi-arrow-up-bold"
           color="warning"
-          :decimals="2"
+          :format-number="true"
         />
       </v-col>
       <v-col cols="12" sm="6" md="3">
@@ -239,11 +269,25 @@ onUnmounted(() => {
       <v-col cols="12" lg="4">
         <v-card class="h-100">
           <v-card-title>
-            <v-icon class="mr-2">mdi-chart-histogram</v-icon>
-            Latency Distribution
+            <v-icon class="mr-2">mdi-chart-bar</v-icon>
+            Pipeline Activity
           </v-card-title>
           <v-card-text>
-            <LatencyHistogram :height="350" />
+            <v-list v-if="pipelineActivity.length > 0" density="compact">
+              <v-list-item v-for="p in pipelineActivity" :key="p.pipeline_name + p.worker_id">
+                <v-list-item-title class="text-body-2 font-weight-medium">
+                  {{ p.pipeline_name }}
+                </v-list-item-title>
+                <v-list-item-subtitle class="text-caption">
+                  <v-chip size="x-small" variant="tonal" class="mr-1">{{ p.worker_id }}</v-chip>
+                  In: {{ p.events_in.toLocaleString() }} | Out: {{ p.events_out.toLocaleString() }}
+                </v-list-item-subtitle>
+              </v-list-item>
+            </v-list>
+            <div v-else class="text-center text-medium-emphasis pa-8">
+              <v-icon size="48" class="mb-2">mdi-pipe-disconnected</v-icon>
+              <div>No pipeline activity</div>
+            </div>
           </v-card-text>
         </v-card>
       </v-col>
@@ -326,47 +370,31 @@ onUnmounted(() => {
       <v-col cols="12" md="6">
         <v-card>
           <v-card-title>
-            <v-icon class="mr-2">mdi-timer-sand</v-icon>
-            Latency Percentiles
+            <v-icon class="mr-2">mdi-pipe</v-icon>
+            Pipeline Metrics
           </v-card-title>
           <v-card-text>
-            <v-list density="compact">
-              <v-list-item>
-                <v-list-item-title>P50 (Median)</v-list-item-title>
-                <template #append>
-                  <v-chip size="small" color="success">
-                    {{ metricsStore.latencyPercentiles.p50.toFixed(2) }} ms
-                  </v-chip>
+            <v-list v-if="pipelineActivity.length > 0" density="compact">
+              <v-list-item v-for="p in pipelineActivity" :key="p.pipeline_name + '-' + p.worker_id">
+                <template #prepend>
+                  <v-icon>mdi-arrow-right-bold</v-icon>
                 </template>
-              </v-list-item>
-
-              <v-list-item>
-                <v-list-item-title>P90</v-list-item-title>
+                <v-list-item-title>{{ p.pipeline_name }}</v-list-item-title>
                 <template #append>
-                  <v-chip size="small" color="info">
-                    {{ metricsStore.latencyPercentiles.p90.toFixed(2) }} ms
-                  </v-chip>
-                </template>
-              </v-list-item>
-
-              <v-list-item>
-                <v-list-item-title>P95</v-list-item-title>
-                <template #append>
-                  <v-chip size="small" color="warning">
-                    {{ metricsStore.latencyPercentiles.p95.toFixed(2) }} ms
-                  </v-chip>
-                </template>
-              </v-list-item>
-
-              <v-list-item>
-                <v-list-item-title>P99</v-list-item-title>
-                <template #append>
-                  <v-chip size="small" color="error">
-                    {{ metricsStore.latencyPercentiles.p99.toFixed(2) }} ms
-                  </v-chip>
+                  <div class="d-flex gap-2">
+                    <v-chip size="small" color="success" variant="tonal">
+                      {{ p.events_in.toLocaleString() }} in
+                    </v-chip>
+                    <v-chip size="small" color="info" variant="tonal">
+                      {{ p.events_out.toLocaleString() }} out
+                    </v-chip>
+                  </div>
                 </template>
               </v-list-item>
             </v-list>
+            <div v-else class="text-center text-medium-emphasis pa-4">
+              No active pipelines
+            </div>
           </v-card-text>
         </v-card>
       </v-col>
