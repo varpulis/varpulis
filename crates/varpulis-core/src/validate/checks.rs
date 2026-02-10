@@ -4,7 +4,7 @@ use crate::ast::*;
 use crate::span::Span;
 
 use super::builtins::{
-    self, AGGREGATE_FUNCTIONS, AGGREGATE_REQUIRES_FIELD, AGGREGATE_REQUIRES_TWO_ARGS,
+    self, ParamContext, AGGREGATE_FUNCTIONS, AGGREGATE_REQUIRES_FIELD, AGGREGATE_REQUIRES_TWO_ARGS,
     ATTENTION_WINDOW_PARAMS, LOG_PARAMS, WATERMARK_PARAMS,
 };
 use super::scope::*;
@@ -251,7 +251,11 @@ fn check_stream_source(v: &mut Validator, source: &StreamSource, span: Span) {
         StreamSource::IdentWithAlias { name, .. } | StreamSource::AllWithAlias { name, .. } => {
             check_source_name(v, name, span);
         }
-        StreamSource::FromConnector { connector_name, .. } => {
+        StreamSource::FromConnector {
+            connector_name,
+            params,
+            ..
+        } => {
             if !v.symbols.connectors.contains_key(connector_name) {
                 let suggestion = did_you_mean(connector_name, &v.symbols.connector_names());
                 v.emit_with_hint(
@@ -263,6 +267,16 @@ fn check_stream_source(v: &mut Validator, source: &StreamSource, span: Span) {
                         "declare it with: connector {} = type (...){}",
                         connector_name, suggestion
                     ),
+                );
+            } else {
+                let connector_type = v.symbols.connectors[connector_name].connector_type.clone();
+                check_connector_params(
+                    v,
+                    params,
+                    &connector_type,
+                    ParamContext::Source,
+                    ".from()",
+                    span,
                 );
             }
         }
@@ -521,7 +535,10 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
             }
 
             // --- Name resolution ---
-            StreamOp::To { connector_name, .. } => {
+            StreamOp::To {
+                connector_name,
+                params,
+            } => {
                 if !v.symbols.connectors.contains_key(connector_name) {
                     let suggestion = did_you_mean(connector_name, &v.symbols.connector_names());
                     // Include existing connector types in hint for context
@@ -545,6 +562,17 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
                             "declare it with: connector {} = type (...){}{}",
                             connector_name, suggestion, avail_hint
                         ),
+                    );
+                } else {
+                    let connector_type =
+                        v.symbols.connectors[connector_name].connector_type.clone();
+                    check_connector_params(
+                        v,
+                        params,
+                        &connector_type,
+                        ParamContext::Sink,
+                        ".to()",
+                        span,
                     );
                 }
             }
@@ -700,6 +728,107 @@ fn literal_type_name(expr: &Expr) -> &'static str {
         Expr::Array(_) => "array",
         Expr::Map(_) => "map",
         _ => "expression",
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Connector parameter validation
+// ---------------------------------------------------------------------------
+
+fn check_connector_params(
+    v: &mut Validator,
+    params: &[ConnectorParam],
+    connector_type: &str,
+    ctx: builtins::ParamContext,
+    op_name: &str,
+    span: Span,
+) {
+    let schema = match builtins::connector_params_for_type(connector_type) {
+        Some(s) => s,
+        None => return, // unknown connector type — skip validation for forward compat
+    };
+
+    let valid_names: Vec<&str> = schema
+        .iter()
+        .filter(|p| p.valid_in(ctx))
+        .map(|p| p.name)
+        .collect();
+
+    for param in params {
+        // Look up in full schema (any context)
+        let def = schema.iter().find(|d| d.name == param.name);
+        match def {
+            None => {
+                // Unknown parameter name
+                let suggestion = did_you_mean(&param.name, &valid_names);
+                v.emit_with_hint(
+                    Severity::Warning,
+                    span,
+                    "W080",
+                    format!(
+                        "unknown parameter '{}' for {} connector in {}",
+                        param.name, connector_type, op_name
+                    ),
+                    format!("valid parameters: {}{}", valid_names.join(", "), suggestion),
+                );
+            }
+            Some(def) => {
+                // Check context validity
+                if !def.valid_in(ctx) {
+                    let ctx_name = match ctx {
+                        builtins::ParamContext::Source => "source (.from())",
+                        builtins::ParamContext::Sink => "sink (.to())",
+                        builtins::ParamContext::Both => "both",
+                    };
+                    v.emit_with_hint(
+                        Severity::Warning,
+                        span,
+                        "W080",
+                        format!(
+                            "parameter '{}' is not valid in {} context",
+                            param.name, ctx_name
+                        ),
+                        format!(
+                            "'{}' is only valid for {}",
+                            param.name,
+                            match def.context {
+                                builtins::ParamContext::Source => ".from() (source)",
+                                builtins::ParamContext::Sink => ".to() (sink)",
+                                builtins::ParamContext::Both => "both",
+                            }
+                        ),
+                    );
+                }
+
+                // Check type match
+                let type_ok = match def.param_type {
+                    builtins::ParamType::Str => matches!(
+                        param.value,
+                        crate::ast::ConfigValue::Str(_) | crate::ast::ConfigValue::Ident(_)
+                    ),
+                    builtins::ParamType::Int => {
+                        matches!(param.value, crate::ast::ConfigValue::Int(_))
+                    }
+                    builtins::ParamType::Bool => {
+                        matches!(param.value, crate::ast::ConfigValue::Bool(_))
+                    }
+                };
+                if !type_ok {
+                    let expected = match def.param_type {
+                        builtins::ParamType::Str => "string",
+                        builtins::ParamType::Int => "integer",
+                        builtins::ParamType::Bool => "boolean",
+                    };
+                    v.emit_with_hint(
+                        Severity::Warning,
+                        span,
+                        "W081",
+                        format!("parameter '{}' expects {} value", param.name, expected),
+                        format!("{}: {}", def.name, def.description),
+                    );
+                }
+            }
+        }
     }
 }
 

@@ -7,6 +7,7 @@ use super::types::{ConnectorConfig, ConnectorError};
 use crate::event::Event;
 use crate::sink::Sink;
 use rustc_hash::FxHashMap;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
@@ -48,12 +49,13 @@ impl ManagedConnectorRegistry {
         connector_name: &str,
         topic: &str,
         tx: mpsc::Sender<Event>,
+        params: &HashMap<String, String>,
     ) -> Result<(), ConnectorError> {
         let connector = self.connectors.get_mut(connector_name).ok_or_else(|| {
             ConnectorError::ConfigError(format!("Unknown connector: {}", connector_name))
         })?;
 
-        connector.start_source(topic, tx).await
+        connector.start_source(topic, tx, params).await
     }
 
     /// Create a shared sink for the named connector.
@@ -63,12 +65,13 @@ impl ManagedConnectorRegistry {
         &mut self,
         connector_name: &str,
         topic: &str,
+        params: &HashMap<String, String>,
     ) -> Result<Arc<dyn Sink>, ConnectorError> {
         let connector = self.connectors.get_mut(connector_name).ok_or_else(|| {
             ConnectorError::ConfigError(format!("Unknown connector: {}", connector_name))
         })?;
 
-        connector.create_sink(topic)
+        connector.create_sink(topic, params)
     }
 
     /// Shut down all managed connectors.

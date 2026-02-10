@@ -77,6 +77,8 @@ pub struct SourceBinding {
     pub connector_name: String,
     pub event_type: String,
     pub topic_override: Option<String>,
+    /// Extra parameters from .from() (e.g., client_id, qos) — excludes topic
+    pub extra_params: HashMap<String, String>,
 }
 
 /// Named SASE+ pattern definition
@@ -215,6 +217,9 @@ pub(crate) struct ToConfig {
     pub topic_override: Option<String>,
     /// Cache key for sink lookup (connector_name or connector_name::topic)
     pub sink_key: String,
+    /// Extra parameters from .to() (e.g., client_id, qos) — excludes topic
+    #[allow(dead_code)]
+    pub extra_params: HashMap<String, String>,
 }
 
 /// State for .distinct() — tracks seen values to deduplicate events
