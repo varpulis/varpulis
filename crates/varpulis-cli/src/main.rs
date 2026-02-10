@@ -619,7 +619,12 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
             );
 
             registry
-                .start_source(&binding.connector_name, topic, event_tx.clone())
+                .start_source(
+                    &binding.connector_name,
+                    topic,
+                    event_tx.clone(),
+                    &binding.extra_params,
+                )
                 .await
                 .map_err(|e| anyhow::anyhow!("Source start error: {}", e))?;
         }
@@ -645,7 +650,8 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
                     default_topic.clone()
                 };
 
-                match registry.create_sink(&binding.connector_name, &sink_topic) {
+                let empty_params = std::collections::HashMap::new();
+                match registry.create_sink(&binding.connector_name, &sink_topic, &empty_params) {
                     Ok(sink) => {
                         engine.inject_sink(sink_key, sink);
                     }

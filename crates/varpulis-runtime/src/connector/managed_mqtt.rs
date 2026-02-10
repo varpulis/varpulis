@@ -42,6 +42,8 @@ mod mqtt_managed_impl {
         sink_client: Option<AsyncClient>,
         running: Arc<AtomicBool>,
         subscribed_topics: FxHashSet<String>,
+        /// Dedicated clients created via `client_id` param (kept alive for cleanup)
+        dedicated_clients: Vec<AsyncClient>,
     }
 
     impl ManagedMqttConnector {
@@ -53,6 +55,7 @@ mod mqtt_managed_impl {
                 sink_client: None,
                 running: Arc::new(AtomicBool::new(false)),
                 subscribed_topics: FxHashSet::default(),
+                dedicated_clients: Vec::new(),
             }
         }
 
@@ -140,6 +143,96 @@ mod mqtt_managed_impl {
             Ok(client)
         }
 
+        /// Create a dedicated source connection with a specific client ID.
+        fn create_dedicated_source(
+            &mut self,
+            client_id: &str,
+            tx: mpsc::Sender<Event>,
+        ) -> Result<AsyncClient, ConnectorError> {
+            let mut mqtt_opts = MqttOptions::new(client_id, &self.config.broker, self.config.port);
+            mqtt_opts.set_keep_alive(Duration::from_secs(60));
+
+            if let (Some(user), Some(pass)) = (&self.config.username, &self.config.password) {
+                mqtt_opts.set_credentials(user, pass);
+            }
+
+            let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 10_000);
+            self.dedicated_clients.push(client.clone());
+            self.running.store(true, Ordering::SeqCst);
+
+            let running = self.running.clone();
+            let name = format!("{}/{}", self.connector_name, client_id);
+
+            tokio::spawn(async move {
+                while running.load(Ordering::SeqCst) {
+                    match eventloop.poll().await {
+                        Ok(rumqttc::Event::Incoming(rumqttc::Packet::Publish(publish))) => {
+                            if let Ok(payload) = std::str::from_utf8(&publish.payload) {
+                                if let Some(event) = parse_mqtt_payload(payload, &publish.topic) {
+                                    if tx.send(event).await.is_err() {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            warn!("Dedicated MQTT {} error: {:?}", name, e);
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+                        }
+                    }
+                }
+                info!("Dedicated MQTT {} source eventloop stopped", name);
+            });
+
+            info!(
+                "Managed MQTT {} dedicated source '{}' connected to {}:{}",
+                self.connector_name, client_id, self.config.broker, self.config.port
+            );
+
+            Ok(client)
+        }
+
+        /// Create a dedicated sink connection with a specific client ID.
+        fn create_dedicated_sink(
+            &mut self,
+            client_id: &str,
+        ) -> Result<AsyncClient, ConnectorError> {
+            let sink_id = format!("{}-sink", client_id);
+            let mut mqtt_opts = MqttOptions::new(&sink_id, &self.config.broker, self.config.port);
+            mqtt_opts.set_keep_alive(Duration::from_secs(60));
+
+            if let (Some(user), Some(pass)) = (&self.config.username, &self.config.password) {
+                mqtt_opts.set_credentials(user, pass);
+            }
+
+            let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 10_000);
+            self.dedicated_clients.push(client.clone());
+
+            let name = format!("{}/{}", self.connector_name, sink_id);
+            let running = self.running.clone();
+
+            tokio::spawn(async move {
+                while running.load(Ordering::SeqCst) {
+                    match eventloop.poll().await {
+                        Ok(_) => {}
+                        Err(e) => {
+                            warn!("Dedicated MQTT {} sink error: {}", name, e);
+                            break;
+                        }
+                    }
+                }
+                info!("Dedicated MQTT {} sink eventloop stopped", name);
+            });
+
+            info!(
+                "Managed MQTT {} dedicated sink '{}' connected to {}:{}",
+                self.connector_name, sink_id, self.config.broker, self.config.port
+            );
+
+            Ok(client)
+        }
+
         /// Ensure the sink MQTT client and event loop are running.
         fn ensure_sink_connected(&mut self) -> Result<AsyncClient, ConnectorError> {
             if let Some(client) = &self.sink_client {
@@ -205,12 +298,33 @@ mod mqtt_managed_impl {
             &mut self,
             topic: &str,
             tx: mpsc::Sender<Event>,
+            params: &std::collections::HashMap<String, String>,
         ) -> Result<(), ConnectorError> {
+            let qos_override = params
+                .get("qos")
+                .and_then(|v| v.parse::<u8>().ok())
+                .map(qos_from_u8);
+            let qos = qos_override.unwrap_or_else(|| qos_from_u8(self.config.qos));
+
+            // If client_id is specified, create a dedicated connection
+            if let Some(dedicated_id) = params.get("client_id") {
+                let client = self.create_dedicated_source(dedicated_id, tx)?;
+                client
+                    .subscribe(topic, qos)
+                    .await
+                    .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
+                info!(
+                    "Managed MQTT {} dedicated client '{}' subscribed to: {}",
+                    self.connector_name, dedicated_id, topic
+                );
+                return Ok(());
+            }
+
             let client = self.ensure_source_connected(tx)?;
 
             if self.subscribed_topics.insert(topic.to_string()) {
                 client
-                    .subscribe(topic, qos_from_u8(self.config.qos))
+                    .subscribe(topic, qos)
                     .await
                     .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
                 info!(
@@ -222,9 +336,24 @@ mod mqtt_managed_impl {
             Ok(())
         }
 
-        fn create_sink(&mut self, topic: &str) -> Result<Arc<dyn Sink>, ConnectorError> {
-            let client = self.ensure_sink_connected()?;
-            let qos = qos_from_u8(self.config.qos);
+        fn create_sink(
+            &mut self,
+            topic: &str,
+            params: &std::collections::HashMap<String, String>,
+        ) -> Result<Arc<dyn Sink>, ConnectorError> {
+            let qos_override = params
+                .get("qos")
+                .and_then(|v| v.parse::<u8>().ok())
+                .map(qos_from_u8);
+            let qos = qos_override.unwrap_or_else(|| qos_from_u8(self.config.qos));
+
+            // If client_id is specified, create a dedicated sink connection
+            let client = if let Some(dedicated_id) = params.get("client_id") {
+                self.create_dedicated_sink(dedicated_id)?
+            } else {
+                self.ensure_sink_connected()?
+            };
+
             Ok(Arc::new(MqttSharedSink {
                 sink_name: format!("{}::{}", self.connector_name, topic),
                 topic: topic.to_string(),
@@ -241,8 +370,12 @@ mod mqtt_managed_impl {
             if let Some(client) = &self.sink_client {
                 let _ = client.disconnect().await;
             }
+            for client in &self.dedicated_clients {
+                let _ = client.disconnect().await;
+            }
             self.source_client = None;
             self.sink_client = None;
+            self.dedicated_clients.clear();
             self.subscribed_topics.clear();
             info!("Managed MQTT {} shut down", self.connector_name);
             Ok(())
@@ -396,13 +529,18 @@ impl ManagedConnector for ManagedMqttConnector {
         &mut self,
         _topic: &str,
         _tx: mpsc::Sender<Event>,
+        _params: &std::collections::HashMap<String, String>,
     ) -> Result<(), ConnectorError> {
         Err(ConnectorError::NotAvailable(
             "MQTT requires 'mqtt' feature".to_string(),
         ))
     }
 
-    fn create_sink(&mut self, _topic: &str) -> Result<Arc<dyn Sink>, ConnectorError> {
+    fn create_sink(
+        &mut self,
+        _topic: &str,
+        _params: &std::collections::HashMap<String, String>,
+    ) -> Result<Arc<dyn Sink>, ConnectorError> {
         Err(ConnectorError::NotAvailable(
             "MQTT requires 'mqtt' feature".to_string(),
         ))

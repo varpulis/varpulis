@@ -346,7 +346,12 @@ impl Tenant {
                 );
 
                 registry
-                    .start_source(&binding.connector_name, topic, event_tx.clone())
+                    .start_source(
+                        &binding.connector_name,
+                        topic,
+                        event_tx.clone(),
+                        &binding.extra_params,
+                    )
                     .await
                     .map_err(|e| TenantError::EngineError(format!("Source start error: {}", e)))?;
 
@@ -364,7 +369,9 @@ impl Tenant {
                             .unwrap_or_else(|| format!("{}-output", binding.connector_name))
                     };
 
-                    match registry.create_sink(&binding.connector_name, &sink_topic) {
+                    let empty_params = std::collections::HashMap::new();
+                    match registry.create_sink(&binding.connector_name, &sink_topic, &empty_params)
+                    {
                         Ok(sink) => {
                             engine.inject_sink(sink_key, sink);
                         }

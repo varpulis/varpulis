@@ -4,6 +4,7 @@ use tower_lsp::lsp_types::{
     CompletionItem, CompletionItemKind, Documentation, InsertTextFormat, MarkupContent, MarkupKind,
     Position,
 };
+use varpulis_core::validate::builtins::{self, ParamContext, ParamType};
 
 /// Get completion items for a position in the document
 pub fn get_completions(text: &str, position: Position) -> Vec<CompletionItem> {
@@ -18,6 +19,12 @@ pub fn get_completions(text: &str, position: Position) -> Vec<CompletionItem> {
         CompletionContext::InPattern => get_pattern_completions(),
         CompletionContext::Type => get_type_completions(),
         CompletionContext::Expression => get_expression_completions(),
+        CompletionContext::InFromParams(connector_type) => {
+            get_connector_param_completions(connector_type.as_deref(), ParamContext::Source)
+        }
+        CompletionContext::InToParams(connector_type) => {
+            get_connector_param_completions(connector_type.as_deref(), ParamContext::Sink)
+        }
     }
 }
 
@@ -31,6 +38,10 @@ enum CompletionContext {
     InPattern,
     Type,
     Expression,
+    /// Inside `.from(Connector, <cursor>)` with resolved connector type
+    InFromParams(Option<String>),
+    /// Inside `.to(Connector, <cursor>)` with resolved connector type
+    InToParams(Option<String>),
 }
 
 /// Determine what kind of completion to provide based on context
@@ -39,6 +50,11 @@ fn get_completion_context(text: &str, position: Position) -> CompletionContext {
     let line = lines.get(position.line as usize).unwrap_or(&"");
     let col = position.character as usize;
     let prefix = &line[..col.min(line.len())];
+
+    // Check if we're inside .from(...) or .to(...) params — before other checks
+    if let Some(ctx) = detect_connector_param_context(prefix, text) {
+        return ctx;
+    }
 
     // Check if we're after a dot (stream operation)
     if prefix.trim_end().ends_with('.') {
@@ -76,6 +92,124 @@ fn get_completion_context(text: &str, position: Position) -> CompletionContext {
     }
 
     CompletionContext::Expression
+}
+
+/// Detect if cursor is inside `.from(Connector, ...)` or `.to(Connector, ...)`.
+///
+/// Returns the appropriate context with the resolved connector type if found.
+fn detect_connector_param_context(prefix: &str, full_text: &str) -> Option<CompletionContext> {
+    // Look for .from( or .to( in the prefix, with no closing )
+    let (op_name, connector_name) = if let Some(idx) = prefix.rfind(".from(") {
+        let after = &prefix[idx + 6..]; // after ".from("
+        if after.contains(')') {
+            return None; // already closed
+        }
+        // First token after the paren is the connector name
+        let connector = extract_first_identifier(after)?;
+        // Need at least a comma after the connector name to be in param context
+        if !after[connector.len()..].trim_start().starts_with(',') && after.trim() != connector {
+            return None;
+        }
+        ("from", connector)
+    } else if let Some(idx) = prefix.rfind(".to(") {
+        let after = &prefix[idx + 4..]; // after ".to("
+        if after.contains(')') {
+            return None;
+        }
+        let connector = extract_first_identifier(after)?;
+        if !after[connector.len()..].trim_start().starts_with(',') && after.trim() != connector {
+            return None;
+        }
+        ("to", connector)
+    } else {
+        return None;
+    };
+
+    // Resolve connector type by scanning for `connector <name> = <type>(...)`
+    let connector_type = resolve_connector_type(full_text, &connector_name);
+
+    match op_name {
+        "from" => Some(CompletionContext::InFromParams(connector_type)),
+        "to" => Some(CompletionContext::InToParams(connector_type)),
+        _ => None,
+    }
+}
+
+/// Extract the first identifier from text (e.g., "MyConn, topic:" → "MyConn").
+fn extract_first_identifier(text: &str) -> Option<String> {
+    let trimmed = text.trim_start();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let first_char = trimmed.chars().next()?;
+    if !first_char.is_alphabetic() && first_char != '_' {
+        return None;
+    }
+    let end = trimmed
+        .find(|c: char| !c.is_alphanumeric() && c != '_')
+        .unwrap_or(trimmed.len());
+    Some(trimmed[..end].to_string())
+}
+
+/// Scan the document for `connector <name> = <type>(...)` and return the type.
+fn resolve_connector_type(text: &str, connector_name: &str) -> Option<String> {
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("connector ") {
+            let rest = rest.trim_start();
+            if let Some(after_name) = rest.strip_prefix(connector_name) {
+                let after_name = after_name.trim_start();
+                if let Some(after_eq) = after_name.strip_prefix('=') {
+                    let type_part = after_eq.trim_start();
+                    // Type is the identifier before the '('
+                    let type_end = type_part.find('(').unwrap_or(type_part.len());
+                    let connector_type = type_part[..type_end].trim();
+                    if !connector_type.is_empty() {
+                        return Some(connector_type.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Generate completion items for connector parameters.
+fn get_connector_param_completions(
+    connector_type: Option<&str>,
+    ctx: ParamContext,
+) -> Vec<CompletionItem> {
+    let Some(connector_type) = connector_type else {
+        return Vec::new();
+    };
+
+    let Some(schema) = builtins::connector_params_for_type(connector_type) else {
+        return Vec::new();
+    };
+
+    schema
+        .iter()
+        .filter(|p| p.valid_in(ctx))
+        .map(|p| {
+            let insert = match p.param_type {
+                ParamType::Str => format!("{}: \"$1\"", p.name),
+                ParamType::Int => format!("{}: $1", p.name),
+                ParamType::Bool => format!("{}: ${{1:true}}", p.name),
+            };
+            let type_label = match p.param_type {
+                ParamType::Str => "string",
+                ParamType::Int => "integer",
+                ParamType::Bool => "boolean",
+            };
+            completion_item(
+                p.name,
+                CompletionItemKind::PROPERTY,
+                &format!("{} ({}) — {}", p.name, type_label, p.description),
+                &insert,
+                Some(&format!("{}: {}", p.name, type_label)),
+            )
+        })
+        .collect()
 }
 
 fn get_stream_operation_completions() -> Vec<CompletionItem> {
@@ -742,5 +876,44 @@ mod tests {
         );
         assert_eq!(item.insert_text_format, Some(InsertTextFormat::SNIPPET));
         assert_eq!(item.insert_text, Some("test($1)".to_string()));
+    }
+
+    #[test]
+    fn test_from_params_mqtt_completions() {
+        let text = "connector MyMqtt = mqtt(url: \"localhost\")\nstream X = Event.from(MyMqtt, ";
+        let position = Position {
+            line: 1,
+            character: 30,
+        };
+        let completions = get_completions(text, position);
+        let labels: Vec<&str> = completions.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels.contains(&"topic"));
+        assert!(labels.contains(&"client_id"));
+        assert!(labels.contains(&"qos"));
+    }
+
+    #[test]
+    fn test_to_params_kafka_completions() {
+        let text =
+            "connector MyKafka = kafka(url: \"localhost\")\nstream X = Event\n    .to(MyKafka, ";
+        let position = Position {
+            line: 2,
+            character: 18,
+        };
+        let completions = get_completions(text, position);
+        let labels: Vec<&str> = completions.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels.contains(&"topic"));
+        assert!(labels.contains(&"partition"));
+        // group_id is source-only, should not appear in .to() context
+        assert!(!labels.contains(&"group_id"));
+    }
+
+    #[test]
+    fn test_resolve_connector_type_from_document() {
+        let text = "connector MarketData = mqtt(url: \"broker.example.com\")\n";
+        assert_eq!(
+            resolve_connector_type(text, "MarketData"),
+            Some("mqtt".to_string())
+        );
     }
 }
