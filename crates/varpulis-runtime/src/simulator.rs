@@ -141,7 +141,7 @@ impl Simulator {
             self.sender.send(reading.into()).await?;
 
             // Generate humidity reading (less frequent)
-            if self.tick_count.is_multiple_of(3) {
+            if self.tick_count % 3 == 0 {
                 let humidity = zone.target_humidity
                     + rng.gen_range(-zone.humidity_variance..zone.humidity_variance);
 
@@ -156,7 +156,7 @@ impl Simulator {
         }
 
         // Generate HVAC status (less frequent)
-        if self.tick_count.is_multiple_of(5) {
+        if self.tick_count % 5 == 0 {
             for hvac in &self.config.hvac_units {
                 let power = hvac.base_power * self.degradation_factor + rng.gen_range(-0.5..0.5);
                 let pressure =
