@@ -581,6 +581,32 @@ async fn execute_op(
                 warn!("Connector '{}' not found for .to()", config.connector_name);
             }
         }
+
+        RuntimeOp::Distinct(state) => {
+            current_events.retain(|event| {
+                let key = if let Some(ref expr) = state.expr {
+                    evaluator::eval_expr_with_functions(
+                        expr,
+                        event.as_ref(),
+                        SequenceContext::empty(),
+                        functions,
+                        empty_vars(),
+                    )
+                    .map(|v| format!("{}", v))
+                    .unwrap_or_default()
+                } else {
+                    // Hash all fields for whole-event dedup
+                    format!("{:?}", event.data)
+                };
+                state.seen.insert(key)
+            });
+        }
+
+        RuntimeOp::Limit(state) => {
+            let remaining = state.max.saturating_sub(state.count);
+            current_events.truncate(remaining);
+            state.count += current_events.len();
+        }
     }
 
     Ok(())
@@ -1045,6 +1071,31 @@ fn execute_op_sync(
 
         RuntimeOp::To(_) => {
             // Skip .to() operations in sync mode - they require async
+        }
+
+        RuntimeOp::Distinct(state) => {
+            current_events.retain(|event| {
+                let key = if let Some(ref expr) = state.expr {
+                    evaluator::eval_expr_with_functions(
+                        expr,
+                        event.as_ref(),
+                        SequenceContext::empty(),
+                        functions,
+                        empty_vars(),
+                    )
+                    .map(|v| format!("{}", v))
+                    .unwrap_or_default()
+                } else {
+                    format!("{:?}", event.data)
+                };
+                state.seen.insert(key)
+            });
+        }
+
+        RuntimeOp::Limit(state) => {
+            let remaining = state.max.saturating_sub(state.count);
+            current_events.truncate(remaining);
+            state.count += current_events.len();
         }
     }
 

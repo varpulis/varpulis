@@ -152,7 +152,8 @@ pub(crate) fn create_sink_from_config(
                     .map(|s| s.to_string())
                     .or_else(|| config.topic.clone())
                     .unwrap_or_else(|| format!("{}-output", name));
-                let kafka_config = connector::KafkaConfig::new(&brokers, &topic);
+                let kafka_config = connector::KafkaConfig::new(&brokers, &topic)
+                    .with_properties(config.properties.clone());
                 match connector::KafkaSinkFull::new(name, kafka_config) {
                     Ok(sink) => Some(Arc::new(SinkConnectorAdapter {
                         name: name.to_string(),

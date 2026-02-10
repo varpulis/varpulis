@@ -194,6 +194,10 @@ pub(crate) enum RuntimeOp {
     To(ToConfig),
     /// Trend aggregation via Hamlet engine (replaces Sequence for this stream)
     TrendAggregate(TrendAggregateConfig),
+    /// Deduplicate events by expression value (or entire event if None)
+    Distinct(DistinctState),
+    /// Pass at most N events, then stop the stream
+    Limit(LimitState),
 }
 
 /// Configuration for trend aggregation via Hamlet engine
@@ -211,6 +215,20 @@ pub(crate) struct ToConfig {
     pub topic_override: Option<String>,
     /// Cache key for sink lookup (connector_name or connector_name::topic)
     pub sink_key: String,
+}
+
+/// State for .distinct() — tracks seen values to deduplicate events
+pub(crate) struct DistinctState {
+    /// Optional expression to evaluate for distinct key; None = entire event
+    pub expr: Option<varpulis_core::ast::Expr>,
+    /// Set of seen value representations
+    pub seen: std::collections::HashSet<String>,
+}
+
+/// State for .limit(n) — passes at most `max` events
+pub(crate) struct LimitState {
+    pub max: usize,
+    pub count: usize,
 }
 
 /// Configuration for select/projection operation

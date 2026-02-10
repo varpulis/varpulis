@@ -23,10 +23,10 @@ pub use evaluator::eval_filter_expr;
 
 // Re-export internal types for use within the engine module
 use types::{
-    AttentionWindowConfig, EmitConfig, EmitExprConfig, LogConfig, MergeSource,
-    PartitionedAggregatorState, PartitionedSlidingCountWindowState, PartitionedWindowState,
-    PatternConfig, PrintConfig, RuntimeOp, RuntimeSource, SelectConfig, StreamDefinition,
-    StreamProcessResult, TimerConfig, ToConfig, TrendAggregateConfig, WindowType,
+    AttentionWindowConfig, DistinctState, EmitConfig, EmitExprConfig, LimitState, LogConfig,
+    MergeSource, PartitionedAggregatorState, PartitionedSlidingCountWindowState,
+    PartitionedWindowState, PatternConfig, PrintConfig, RuntimeOp, RuntimeSource, SelectConfig,
+    StreamDefinition, StreamProcessResult, TimerConfig, ToConfig, TrendAggregateConfig, WindowType,
 };
 
 use crate::aggregation::Aggregator;
@@ -105,6 +105,8 @@ pub struct Engine {
     /// Shared Hamlet aggregators for multi-query optimization
     shared_hamlet_aggregators:
         Vec<std::sync::Arc<std::sync::Mutex<crate::hamlet::HamletAggregator>>>,
+    /// Auto-checkpointing manager (None = checkpointing disabled)
+    checkpoint_manager: Option<crate::persistence::CheckpointManager>,
 }
 
 impl Engine {
@@ -130,6 +132,7 @@ impl Engine {
             late_data_configs: FxHashMap::default(),
             context_name: None,
             shared_hamlet_aggregators: Vec::new(),
+            checkpoint_manager: None,
         }
     }
 
@@ -171,6 +174,7 @@ impl Engine {
             late_data_configs: FxHashMap::default(),
             context_name: None,
             shared_hamlet_aggregators: Vec::new(),
+            checkpoint_manager: None,
         }
     }
 
@@ -1518,6 +1522,80 @@ impl Engine {
                 }
                 StreamOp::On(_) => {
                     // Join condition - handled by extract_join_keys(), not a runtime op
+                }
+                StreamOp::Filter(expr) => {
+                    // .filter(expr) is an alias for .where(expr)
+                    runtime_ops.push(RuntimeOp::WhereExpr(expr.clone()));
+                }
+                StreamOp::Distinct(expr) => {
+                    runtime_ops.push(RuntimeOp::Distinct(DistinctState {
+                        expr: expr.clone(),
+                        seen: std::collections::HashSet::new(),
+                    }));
+                }
+                StreamOp::Limit(expr) => {
+                    let max = match expr {
+                        varpulis_core::ast::Expr::Int(n) => *n as usize,
+                        _ => {
+                            return Err(
+                                ".limit() requires an integer argument (e.g., .limit(100))"
+                                    .to_string(),
+                            );
+                        }
+                    };
+                    runtime_ops.push(RuntimeOp::Limit(LimitState { max, count: 0 }));
+                }
+                StreamOp::First => {
+                    // .first() is shorthand for .limit(1)
+                    runtime_ops.push(RuntimeOp::Limit(LimitState { max: 1, count: 0 }));
+                }
+                StreamOp::Map(_) => {
+                    return Err(
+                        ".map() is not supported — use .emit() for field projection or .process() for arbitrary transformation"
+                            .to_string(),
+                    );
+                }
+                StreamOp::Tap(_) => {
+                    return Err(
+                        ".tap() is not yet implemented — use .print() or .log() for debugging"
+                            .to_string(),
+                    );
+                }
+                StreamOp::Collect => {
+                    return Err(
+                        ".collect() is not yet implemented — use .window() with .aggregate() for batching"
+                            .to_string(),
+                    );
+                }
+                StreamOp::OnError(_) => {
+                    return Err(
+                        ".on_error() is not yet implemented — errors are logged via tracing"
+                            .to_string(),
+                    );
+                }
+                StreamOp::Fork(_) | StreamOp::Any(_) | StreamOp::All => {
+                    return Err(
+                        ".fork()/.any()/.all() are not yet implemented — use multiple streams for parallel processing"
+                            .to_string(),
+                    );
+                }
+                StreamOp::Concurrent(_) => {
+                    return Err(
+                        ".concurrent() is not yet implemented — use .context() for thread-isolated parallelism"
+                            .to_string(),
+                    );
+                }
+                StreamOp::OrderBy(_) => {
+                    return Err(
+                        ".order_by() is not yet implemented — use .window() with .aggregate() for ordered output"
+                            .to_string(),
+                    );
+                }
+                StreamOp::ToExpr(_) => {
+                    return Err(
+                        ".to(expr) is not supported — use .to(ConnectorName, topic: \"...\") instead"
+                            .to_string(),
+                    );
                 }
                 other => {
                     return Err(format!(
@@ -3249,6 +3327,82 @@ impl Engine {
             cp.events_processed,
             cp.window_states.len() + cp.sase_states.len() + cp.join_states.len()
         );
+    }
+
+    /// Enable auto-checkpointing with the given store and config.
+    ///
+    /// Must be called **after** `load()` so that stream definitions exist.
+    /// If a previous checkpoint exists in the store, the engine state is
+    /// automatically restored from it.
+    pub fn enable_checkpointing(
+        &mut self,
+        store: std::sync::Arc<dyn crate::persistence::StateStore>,
+        config: crate::persistence::CheckpointConfig,
+    ) -> Result<(), crate::persistence::StoreError> {
+        let manager = crate::persistence::CheckpointManager::new(store, config)?;
+
+        // Try to restore from latest checkpoint
+        if let Some(cp) = manager.recover()? {
+            if let Some(engine_cp) = cp.context_states.get("main") {
+                self.restore_checkpoint(engine_cp);
+                info!(
+                    "Auto-restored from checkpoint {} ({} events)",
+                    cp.id, cp.events_processed
+                );
+            }
+        }
+
+        self.checkpoint_manager = Some(manager);
+        Ok(())
+    }
+
+    /// Check if a checkpoint is due and create one if needed.
+    ///
+    /// Call this periodically in event processing loops (e.g., after each batch).
+    /// The checkpoint interval is controlled by `CheckpointConfig::interval`.
+    pub fn checkpoint_tick(&mut self) -> Result<(), crate::persistence::StoreError> {
+        let should = self
+            .checkpoint_manager
+            .as_ref()
+            .is_some_and(|m| m.should_checkpoint());
+
+        if should {
+            self.force_checkpoint()?;
+        }
+        Ok(())
+    }
+
+    /// Force an immediate checkpoint regardless of the interval.
+    pub fn force_checkpoint(&mut self) -> Result<(), crate::persistence::StoreError> {
+        if self.checkpoint_manager.is_none() {
+            return Ok(());
+        }
+
+        // Create checkpoint while self is only immutably borrowed
+        let engine_cp = self.create_checkpoint();
+        let events_processed = self.events_processed;
+
+        let mut context_states = std::collections::HashMap::new();
+        context_states.insert("main".to_string(), engine_cp);
+
+        let cp = crate::persistence::Checkpoint {
+            id: 0,           // Set by manager
+            timestamp_ms: 0, // Set by manager
+            events_processed,
+            window_states: std::collections::HashMap::new(),
+            pattern_states: std::collections::HashMap::new(),
+            metadata: std::collections::HashMap::new(),
+            context_states,
+        };
+
+        // Now mutably borrow checkpoint_manager
+        self.checkpoint_manager.as_mut().unwrap().checkpoint(cp)?;
+        Ok(())
+    }
+
+    /// Returns true if auto-checkpointing is enabled.
+    pub fn has_checkpointing(&self) -> bool {
+        self.checkpoint_manager.is_some()
     }
 
     /// Enable per-source watermark tracking for this engine.
