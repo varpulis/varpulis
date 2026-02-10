@@ -11,6 +11,7 @@ export interface PipelineGroup {
   status: PipelineGroupStatus
   pipeline_count: number
   placements: PipelinePlacementInfo[]
+  sources?: Record<string, string>
 }
 
 // Pipeline placement info from coordinator
@@ -85,11 +86,10 @@ export interface RouteSpec {
   mqtt_topic?: string
 }
 
-// Event injection payload
+// Event injection payload (matches Rust InjectEventRequest: event_type + fields)
 export interface EventPayload {
   event_type: string
-  data: Record<string, unknown>
-  timestamp?: string
+  fields: Record<string, unknown>
 }
 
 // Event injection response

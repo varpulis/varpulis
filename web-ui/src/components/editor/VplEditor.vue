@@ -14,7 +14,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
-  validate: [result: { valid: boolean; errors?: string[] }]
+  validate: [result: { valid: boolean; errors?: string[]; isAuto?: boolean }]
 }>()
 
 const connectorsStore = useConnectorsStore()
@@ -25,6 +25,7 @@ const internalValue = ref(props.modelValue)
 const isValidating = ref(false)
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 let validationTimer: ReturnType<typeof setTimeout> | null = null
+let settingValueProgrammatically = false
 
 onUnmounted(() => {
   if (debounceTimer) {
@@ -102,6 +103,9 @@ function handleChange(value: string | undefined): void {
   const newValue = value || ''
   internalValue.value = newValue
 
+  // If this change was triggered by setValue(), don't echo back to parent
+  if (settingValueProgrammatically) return
+
   // Debounce the emit to prevent freezing on rapid typing
   if (debounceTimer) {
     clearTimeout(debounceTimer)
@@ -114,12 +118,12 @@ function handleChange(value: string | undefined): void {
   scheduleValidation()
 }
 
-async function validate(): Promise<void> {
+async function validate(isAuto = false): Promise<void> {
   if (isValidating.value) return
 
   const source = internalValue.value
   if (!source.trim()) {
-    emit('validate', { valid: true })
+    emit('validate', { valid: true, isAuto })
     clearMarkers()
     return
   }
@@ -143,14 +147,16 @@ async function validate(): Promise<void> {
 
     emit('validate', {
       valid: result.valid,
-      errors: errors.length > 0 ? errors : undefined
+      errors: errors.length > 0 ? errors : undefined,
+      isAuto,
     })
   } catch (error) {
     // Fallback to basic validation if API is unavailable
     const errors = basicValidation(source)
     emit('validate', {
       valid: errors.length === 0,
-      errors: errors.length > 0 ? errors : undefined
+      errors: errors.length > 0 ? errors : undefined,
+      isAuto,
     })
   } finally {
     isValidating.value = false
@@ -213,20 +219,20 @@ function clearMarkers(): void {
   }
 }
 
-// Debounced auto-validation on content change
+// Debounced auto-validation on content change (markers only, no output)
 function scheduleValidation(): void {
   if (validationTimer) {
     clearTimeout(validationTimer)
   }
   validationTimer = setTimeout(() => {
-    validate()
+    validate(true) // isAuto=true: only update markers, skip output panel
   }, 1000) // Validate 1 second after last keystroke
 }
 
 // Expose validate method and validating state
 defineExpose({ validate, isValidating })
 
-// Watch for external changes (e.g., loading from storage)
+// Watch for external changes (e.g., loading from storage or "New" button)
 watch(
   () => props.modelValue,
   (newValue) => {
@@ -237,9 +243,14 @@ watch(
       if (editorRef.value) {
         const currentValue = editorRef.value.getValue()
         if (currentValue !== newValue) {
+          // Prevent the onChange callback from echoing back
+          settingValueProgrammatically = true
           editorRef.value.setValue(newValue)
+          settingValueProgrammatically = false
         }
       }
+      // Trigger auto-validation for the new content
+      scheduleValidation()
     }
   }
 )

@@ -83,10 +83,6 @@ async function executeTeardown(): Promise<void> {
   }
 }
 
-async function reloadGroup(groupId: string): Promise<void> {
-  await pipelinesStore.reload(groupId)
-}
-
 async function deployGroup(): Promise<void> {
   if (!canDeployGroup.value) return
 
@@ -379,7 +375,6 @@ onUnmounted(() => {
           :group="selectedGroup"
           @close="selectGroup(null)"
           @teardown="confirmTeardown(selectedGroup.id)"
-          @reload="reloadGroup(selectedGroup.id)"
         />
       </v-col>
     </v-row>

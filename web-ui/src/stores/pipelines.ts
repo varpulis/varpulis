@@ -166,17 +166,6 @@ export const usePipelinesStore = defineStore('pipelines', () => {
     }
   }
 
-  async function reload(id: string): Promise<void> {
-    try {
-      await clusterApi.reloadPipelineGroup(id)
-      // Refresh the group
-      await fetchGroupDetail(id)
-    } catch (e) {
-      error.value = e instanceof Error ? e.message : 'Failed to reload pipeline group'
-      throw e
-    }
-  }
-
   function openDeployDialog(): void {
     resetForm()
     deployDialogOpen.value = true
@@ -238,7 +227,6 @@ export const usePipelinesStore = defineStore('pipelines', () => {
     fetchGroupDetail,
     deploy,
     teardown,
-    reload,
     openDeployDialog,
     closeDeployDialog,
     resetForm,
