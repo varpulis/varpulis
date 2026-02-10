@@ -263,7 +263,7 @@ Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your 
 
 ## Acknowledgments
 
-- SASE+ algorithm: Diao, Immerman, Gyllstrom — [*High-Performance Complex Event Processing over Streams*](https://www.lix.polytechnique.fr/Labo/Yanlei.Diao/publications/07-03.pdf) (SIGMOD 2006)
+- SASE+ algorithm: Diao, Immerman, Gyllstrom — [*SASE+: An Agile Language for Kleene Closure over Event Streams*](https://www.lix.polytechnique.fr/Labo/Yanlei.Diao/publications/07-03.pdf)
 - Hamlet framework: Poppe, Lei, Ma, Rozet, Rundensteiner — [*To Share, or not to Share: Online Event Trend Aggregation Over Bursty Event Streams*](https://arxiv.org/abs/2101.00361) (SIGMOD 2021)
 - [Pest](https://pest.rs/) parser generator
 - [Tower-LSP](https://github.com/ebkalderon/tower-lsp) for Language Server Protocol
