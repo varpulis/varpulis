@@ -59,6 +59,20 @@ async function injectEvent(): Promise<void> {
 
     response.value = mapped
 
+    // Push output events to the shared event log
+    for (const evt of mapped.output_events ?? []) {
+      const evtType = (evt.event_type as string) ?? 'Unknown'
+      const { event_type: _, ...data } = evt
+      wsStore.eventLog.push({
+        id: `inject-out-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        direction: 'out',
+        eventType: evtType,
+        data,
+        timestamp: new Date(),
+        pipelineId: mapped.routed_to,
+      })
+    }
+
     // Add to history
     history.value.unshift({
       id: `inject-${Date.now()}`,
@@ -96,6 +110,11 @@ function clearHistory(): void {
 
 function formatJson(data: unknown): string {
   return JSON.stringify(data, null, 2)
+}
+
+function stripEventType(evt: Record<string, unknown>): Record<string, unknown> {
+  const { event_type: _, ...rest } = evt
+  return rest
 }
 
 onMounted(() => {
@@ -206,8 +225,11 @@ onMounted(() => {
               variant="outlined"
               class="mb-2"
             >
+              <v-card-subtitle v-if="evt.event_type" class="pt-2 pb-0 text-caption font-weight-medium">
+                {{ evt.event_type }}
+              </v-card-subtitle>
               <v-card-text class="pa-2">
-                <pre class="font-monospace text-caption">{{ formatJson(evt) }}</pre>
+                <pre class="font-monospace text-caption">{{ formatJson(stripEventType(evt)) }}</pre>
               </v-card-text>
             </v-card>
           </div>
