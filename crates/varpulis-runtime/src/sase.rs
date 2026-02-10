@@ -33,6 +33,16 @@ use varpulis_zdd::{ZddArena, ZddHandle};
 /// PERF: Static empty captured map to avoid allocations in try_start_run
 static EMPTY_CAPTURED: LazyLock<FxHashMap<String, SharedEvent>> = LazyLock::new(FxHashMap::default);
 
+/// Safety cap on events accumulated in a single Kleene closure.
+/// With n events the ZDD enumerates up to 2^n - 1 combinations.
+/// 20 events → ~1 M combinations (safe); 30 → ~1 B (OOM risk).
+const MAX_KLEENE_EVENTS: u32 = 20;
+
+/// Safety cap on results emitted by `enumerate_with_filter`.
+/// Prevents unbounded memory growth when the deferred predicate
+/// passes most combinations of a large Kleene closure.
+const MAX_ENUMERATION_RESULTS: usize = 10_000;
+
 /// Shared event reference for efficient cloning in pattern matching.
 /// Using Arc allows multiple pattern runs to share the same event data
 /// without expensive deep copies.
@@ -2983,6 +2993,13 @@ fn advance_run_shared(
         && current_state.self_loop
         && event_matches_state(nfa, &event, current_state, &run.captured)
     {
+        // Safety: check Kleene cap before accumulating (prevents 2^n blowup)
+        if let Some(ref kc) = run.kleene_capture {
+            if kc.next_var >= MAX_KLEENE_EVENTS {
+                return RunAdvanceResult::Continue;
+            }
+        }
+
         run.push(Arc::clone(&event), current_state.alias.clone());
 
         // For `all` patterns (Kleene with epsilon to Accept): emit each event
@@ -3076,6 +3093,10 @@ fn advance_run_shared(
                     run.kleene_capture = Some(kc);
                 }
                 if let Some(ref mut kc) = run.kleene_capture {
+                    if kc.next_var >= MAX_KLEENE_EVENTS {
+                        // Safety: stop accumulating to prevent 2^n enumeration blowup
+                        return RunAdvanceResult::Continue;
+                    }
                     kc.extend(Arc::clone(&event), next_state.alias.clone());
                 }
 
@@ -3484,6 +3505,9 @@ fn enumerate_with_filter(run: &mut Run) -> Vec<MatchResult> {
                     stack,
                     duration: run.started_at.elapsed(),
                 });
+                if results.len() >= MAX_ENUMERATION_RESULTS {
+                    break;
+                }
             }
             return results;
         }
@@ -3508,6 +3532,9 @@ fn enumerate_with_filter(run: &mut Run) -> Vec<MatchResult> {
                 stack,
                 duration: run.started_at.elapsed(),
             });
+            if results.len() >= MAX_ENUMERATION_RESULTS {
+                break;
+            }
         }
     }
 
@@ -5915,6 +5942,124 @@ mod tests {
         assert!(
             !results.is_empty(),
             "Should still have some valid combinations"
+        );
+    }
+
+    // =========================================================================
+    // PHASE 3: Safety Cap Stress Tests
+    // =========================================================================
+
+    #[test]
+    fn test_kleene_accumulation_cap() {
+        // Send more events than MAX_KLEENE_EVENTS into a Kleene+ state.
+        // The engine must not OOM or hang — it should cap accumulation.
+        let pattern = PatternBuilder::seq(vec![
+            PatternBuilder::event("A"),
+            PatternBuilder::one_or_more(PatternBuilder::event("B")),
+            PatternBuilder::event("C"),
+        ]);
+
+        let mut engine = SaseEngine::new(pattern);
+        engine.process(&make_event("A", vec![]));
+
+        // Send 50 B events (well above MAX_KLEENE_EVENTS = 20)
+        for i in 0..50 {
+            engine.process(&make_event("B", vec![("n", Value::Int(i))]));
+        }
+
+        let results = engine.process(&make_event("C", vec![]));
+        assert!(!results.is_empty(), "Should still produce a match");
+        // Stack should have at most A + MAX_KLEENE_EVENTS B's + C
+        assert!(
+            results[0].stack.len() <= (MAX_KLEENE_EVENTS as usize + 2),
+            "Stack length {} should be capped at {} (A + {} B's + C)",
+            results[0].stack.len(),
+            MAX_KLEENE_EVENTS + 2,
+            MAX_KLEENE_EVENTS
+        );
+    }
+
+    #[test]
+    fn test_kleene_deferred_predicate_enumeration_cap() {
+        // With a deferred predicate and MAX_KLEENE_EVENTS events,
+        // enumeration should not produce more than MAX_ENUMERATION_RESULTS.
+        let pattern = PatternBuilder::seq(vec![
+            PatternBuilder::event("A"),
+            PatternBuilder::one_or_more(SasePattern::Event {
+                event_type: "B".to_string(),
+                predicate: Some(Predicate::CompareRef {
+                    field: "val".to_string(),
+                    op: CompareOp::Ge,
+                    ref_alias: "b".to_string(),
+                    ref_field: "val".to_string(),
+                }),
+                alias: Some("b".to_string()),
+            }),
+            PatternBuilder::event("C"),
+        ]);
+
+        let mut engine = SaseEngine::new(pattern);
+        engine.process(&make_event("A", vec![]));
+
+        // 20 monotonically increasing events → most combinations pass the
+        // deferred predicate (val >= prev.val), producing potentially
+        // many results. The cap should limit output.
+        for i in 0..20 {
+            engine.process(&make_event("B", vec![("val", Value::Int(i))]));
+        }
+
+        let results = engine.process(&make_event("C", vec![]));
+        assert!(
+            results.len() <= MAX_ENUMERATION_RESULTS,
+            "Enumeration should be capped at {}, got {}",
+            MAX_ENUMERATION_RESULTS,
+            results.len()
+        );
+    }
+
+    #[test]
+    fn test_large_kleene_no_hang() {
+        // Regression test: sending 100 events into a Kleene+ with deferred
+        // predicate must complete in bounded time and memory.
+        use std::time::Instant;
+
+        let pattern = PatternBuilder::seq(vec![
+            PatternBuilder::event("A"),
+            PatternBuilder::one_or_more(SasePattern::Event {
+                event_type: "B".to_string(),
+                predicate: Some(Predicate::CompareRef {
+                    field: "val".to_string(),
+                    op: CompareOp::Gt,
+                    ref_alias: "b".to_string(),
+                    ref_field: "val".to_string(),
+                }),
+                alias: Some("b".to_string()),
+            }),
+            PatternBuilder::event("C"),
+        ]);
+
+        let mut engine = SaseEngine::new(pattern);
+        engine.process(&make_event("A", vec![]));
+
+        for i in 0..100 {
+            engine.process(&make_event("B", vec![("val", Value::Int(i))]));
+        }
+
+        let start = Instant::now();
+        let results = engine.process(&make_event("C", vec![]));
+        let elapsed = start.elapsed();
+
+        // Must complete within 5 seconds (without caps this would hang/OOM)
+        assert!(
+            elapsed.as_secs() < 5,
+            "Enumeration took {:?} — should be bounded",
+            elapsed
+        );
+        assert!(
+            results.len() <= MAX_ENUMERATION_RESULTS,
+            "Results capped at {}, got {}",
+            MAX_ENUMERATION_RESULTS,
+            results.len()
         );
     }
 }
