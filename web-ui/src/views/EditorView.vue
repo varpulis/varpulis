@@ -3,7 +3,7 @@ export default { name: 'EditorView' }
 </script>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onActivated } from 'vue'
 import { useRoute } from 'vue-router'
 import VplEditor from '@/components/editor/VplEditor.vue'
 import EventTester from '@/components/editor/EventTester.vue'
@@ -262,7 +262,7 @@ function formatDate(dateStr: string): string {
 }
 
 // Load pipeline source from route query (e.g., /editor?groupId=xxx&pipeline=name)
-onMounted(async () => {
+async function loadFromRoute(): Promise<boolean> {
   const groupId = route.query.groupId as string | undefined
   const pipelineName = route.query.pipeline as string | undefined
 
@@ -278,18 +278,28 @@ onMounted(async () => {
         editingPipelineName.value = pipelineName
         addOutput(`Loaded pipeline "${pipelineName}" from group "${group.name}"`)
         localStorage.setItem('varpulis_vpl_source', source)
-        return
+        return true
       }
     } catch {
-      // Fall through to localStorage
+      // Fall through
     }
   }
+  return false
+}
+
+onMounted(async () => {
+  if (await loadFromRoute()) return
 
   // Load last saved source
   const savedSource = localStorage.getItem('varpulis_vpl_source')
   if (savedSource) {
     vplSource.value = savedSource
   }
+})
+
+// Re-check route params when component is reactivated by keep-alive
+onActivated(() => {
+  loadFromRoute()
 })
 </script>
 
