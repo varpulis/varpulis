@@ -140,6 +140,12 @@ enum Commands {
         /// Worker identifier (auto-generated if not set)
         #[arg(long, env = "VARPULIS_WORKER_ID")]
         worker_id: Option<String>,
+
+        /// Address to advertise to the coordinator (e.g., http://worker-0:9000).
+        /// Defaults to http://<bind>:<port>. Use this when the bind address (0.0.0.0)
+        /// is not reachable from the coordinator (e.g., in Docker networks).
+        #[arg(long, env = "VARPULIS_ADVERTISE_ADDRESS")]
+        advertise_address: Option<String>,
     },
 
     /// Simulate events from an event file (.evt)
@@ -319,6 +325,7 @@ async fn main() -> Result<()> {
             state_dir,
             coordinator,
             worker_id,
+            advertise_address,
         } => {
             // Use security module to validate workdir - NO unwrap()!
             let workdir =
@@ -361,6 +368,7 @@ async fn main() -> Result<()> {
                 state_dir,
                 coordinator,
                 worker_id,
+                advertise_address,
             )
             .await?;
         }
@@ -1588,6 +1596,7 @@ async fn run_server(
     state_dir: Option<PathBuf>,
     coordinator_url: Option<String>,
     worker_id: Option<String>,
+    advertise_address: Option<String>,
 ) -> Result<()> {
     let tls_enabled = tls_config.is_some();
     let protocol = if tls_enabled { "wss" } else { "ws" };
@@ -1789,7 +1798,8 @@ async fn run_server(
     // Optionally register with a coordinator
     if let Some(coordinator_url) = coordinator_url {
         let worker_id = worker_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-        let worker_addr = format!("{}://{}:{}", http_protocol, bind, port);
+        let worker_addr = advertise_address
+            .unwrap_or_else(|| format!("{}://{}:{}", http_protocol, bind, port));
         let worker_api_key = auth_config.api_key().unwrap_or("no-key").to_string();
         info!(
             "Registering with coordinator at {} as worker '{}'",
