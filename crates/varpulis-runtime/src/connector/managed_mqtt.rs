@@ -257,6 +257,7 @@ mod mqtt_managed_impl {
             let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 10_000);
 
             self.sink_client = Some(client.clone());
+            self.running.store(true, Ordering::SeqCst);
 
             let name = self.connector_name.clone();
             let running = self.running.clone();
