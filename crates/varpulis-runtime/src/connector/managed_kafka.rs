@@ -14,12 +14,12 @@ use anyhow::anyhow;
 use tracing::info;
 
 use rdkafka::config::ClientConfig;
-use rdkafka::consumer::{Consumer, StreamConsumer};
-use rdkafka::producer::{FutureProducer, FutureRecord};
+use rdkafka::consumer::{CommitMode, Consumer, StreamConsumer};
+use rdkafka::producer::{FutureProducer, FutureRecord, Producer};
 use rdkafka::Message;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use tracing::warn;
+use tracing::{error, warn};
 
 /// Managed Kafka connector that owns a single producer connection.
 ///
@@ -48,9 +48,23 @@ impl ManagedKafkaConnector {
             return Ok(producer.clone());
         }
 
-        let producer: FutureProducer = ClientConfig::new()
+        let mut client_config = ClientConfig::new();
+        client_config
             .set("bootstrap.servers", &self.config.brokers)
-            .set("message.timeout.ms", "5000")
+            .set("message.timeout.ms", "30000")
+            .set("linger.ms", "5")
+            .set("batch.size", "65536")
+            .set("compression.type", "lz4")
+            .set("acks", "all");
+
+        // Apply user-provided properties (can override any of the above)
+        for (k, v) in &self.config.properties {
+            if k != "bootstrap.servers" && k != "group.id" {
+                client_config.set(k, v);
+            }
+        }
+
+        let producer: FutureProducer = client_config
             .create()
             .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
 
@@ -86,10 +100,21 @@ impl ManagedConnector for ManagedKafkaConnector {
             .clone()
             .unwrap_or_else(|| format!("varpulis-{}", self.connector_name));
 
-        let consumer: StreamConsumer = ClientConfig::new()
+        let mut client_config = ClientConfig::new();
+        client_config
             .set("bootstrap.servers", &self.config.brokers)
             .set("group.id", &group_id)
-            .set("auto.offset.reset", "latest")
+            .set("enable.auto.commit", "false")
+            .set("auto.offset.reset", "latest");
+
+        // Apply user-provided properties
+        for (k, v) in &self.config.properties {
+            if k != "bootstrap.servers" && k != "group.id" {
+                client_config.set(k, v);
+            }
+        }
+
+        let consumer: StreamConsumer = client_config
             .create()
             .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
 
@@ -111,10 +136,13 @@ impl ManagedConnector for ManagedKafkaConnector {
 
             let stream = consumer.stream();
             tokio::pin!(stream);
+            let mut consecutive_errors: u32 = 0;
 
             while running.load(Ordering::SeqCst) {
                 match tokio::time::timeout(Duration::from_millis(100), stream.next()).await {
                     Ok(Some(Ok(msg))) => {
+                        consecutive_errors = 0;
+
                         if let Some(payload) = msg.payload() {
                             if let Ok(text) = std::str::from_utf8(payload) {
                                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(text) {
@@ -129,9 +157,21 @@ impl ManagedConnector for ManagedKafkaConnector {
                                 }
                             }
                         }
+
+                        // Commit offset after successful processing
+                        if let Err(e) = consumer.commit_message(&msg, CommitMode::Async) {
+                            warn!("Managed Kafka {} offset commit failed: {}", name, e);
+                        }
                     }
                     Ok(Some(Err(e))) => {
-                        warn!("Managed Kafka {} consumer error: {}", name, e);
+                        consecutive_errors += 1;
+                        let backoff =
+                            Duration::from_millis(100 * 2u64.pow(consecutive_errors.min(7)));
+                        error!(
+                            "Managed Kafka {} consumer error (backoff {:?}): {}",
+                            name, backoff, e
+                        );
+                        tokio::time::sleep(backoff).await;
                     }
                     Ok(None) => break,
                     Err(_) => {} // timeout
@@ -183,10 +223,13 @@ impl Sink for KafkaSharedSink {
     async fn send(&self, event: &Event) -> anyhow::Result<()> {
         let payload = event.to_sink_payload();
 
-        let record: FutureRecord<'_, str, [u8]> = FutureRecord::to(&self.topic).payload(&payload);
+        let record = FutureRecord::to(&self.topic)
+            .payload(&payload)
+            .key(&*event.event_type);
 
+        // Fire-and-forget: enqueue into librdkafka's internal batch buffer
         self.producer
-            .send(record, Duration::from_secs(5))
+            .send(record, Duration::ZERO)
             .await
             .map_err(|(e, _)| anyhow!("kafka send: {}", e))?;
 
@@ -194,10 +237,12 @@ impl Sink for KafkaSharedSink {
     }
 
     async fn flush(&self) -> anyhow::Result<()> {
-        Ok(())
+        self.producer
+            .flush(Duration::from_secs(10))
+            .map_err(|e| anyhow!("kafka flush: {}", e))
     }
 
     async fn close(&self) -> anyhow::Result<()> {
-        Ok(())
+        self.flush().await
     }
 }

@@ -3149,3 +3149,183 @@ async fn test_trend_aggregate_multi_query_sharing() {
     let metrics = engine.metrics();
     assert_eq!(metrics.events_processed, 3);
 }
+
+// =============================================================================
+// .distinct() tests
+// =============================================================================
+
+#[tokio::test]
+async fn test_engine_distinct_by_field() {
+    let source = r#"
+        stream Unique = Input
+            .distinct(category)
+            .emit(category: category, value: value)
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    // Send 3 events, 2 with same category
+    engine
+        .process(
+            Event::new("Input")
+                .with_field("category", "A")
+                .with_field("value", 1i64),
+        )
+        .await
+        .unwrap();
+    engine
+        .process(
+            Event::new("Input")
+                .with_field("category", "B")
+                .with_field("value", 2i64),
+        )
+        .await
+        .unwrap();
+    engine
+        .process(
+            Event::new("Input")
+                .with_field("category", "A")
+                .with_field("value", 3i64),
+        )
+        .await
+        .unwrap();
+
+    // Should get 2 outputs (A and B), not 3
+    let first = rx.try_recv().expect("Should have first output");
+    assert_eq!(first.get("category").unwrap().as_str().unwrap(), "A");
+    let second = rx.try_recv().expect("Should have second output");
+    assert_eq!(second.get("category").unwrap().as_str().unwrap(), "B");
+    assert!(rx.try_recv().is_err(), "Third event should be deduped");
+}
+
+#[tokio::test]
+async fn test_engine_distinct_whole_event() {
+    let source = r#"
+        stream Unique = Input
+            .distinct()
+            .emit(x: x)
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    engine
+        .process(Event::new("Input").with_field("x", 1i64))
+        .await
+        .unwrap();
+    engine
+        .process(Event::new("Input").with_field("x", 1i64))
+        .await
+        .unwrap();
+    engine
+        .process(Event::new("Input").with_field("x", 2i64))
+        .await
+        .unwrap();
+
+    assert!(rx.try_recv().is_ok(), "First event should pass");
+    assert!(rx.try_recv().is_ok(), "Third event (x=2) should pass");
+    // Note: the duplicate x=1 was filtered, so we only get 2 outputs total
+}
+
+// =============================================================================
+// .limit() tests
+// =============================================================================
+
+#[tokio::test]
+async fn test_engine_limit() {
+    let source = r#"
+        stream Limited = Input
+            .limit(2)
+            .emit(n: n)
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    for i in 0..5 {
+        engine
+            .process(Event::new("Input").with_field("n", i as i64))
+            .await
+            .unwrap();
+    }
+
+    // Should get exactly 2 outputs
+    let first = rx.try_recv().expect("First should pass");
+    assert_eq!(first.get("n").unwrap().as_int().unwrap(), 0);
+    let second = rx.try_recv().expect("Second should pass");
+    assert_eq!(second.get("n").unwrap().as_int().unwrap(), 1);
+    assert!(rx.try_recv().is_err(), "No more than 2 events");
+}
+
+// =============================================================================
+// .first() tests
+// =============================================================================
+
+#[tokio::test]
+async fn test_engine_first() {
+    let source = r#"
+        stream FirstOnly = Input
+            .first()
+            .emit(n: n)
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    engine
+        .process(Event::new("Input").with_field("n", 1i64))
+        .await
+        .unwrap();
+    engine
+        .process(Event::new("Input").with_field("n", 2i64))
+        .await
+        .unwrap();
+
+    let first = rx.try_recv().expect("First should pass");
+    assert_eq!(first.get("n").unwrap().as_int().unwrap(), 1);
+    assert!(rx.try_recv().is_err(), "Only first event should pass");
+}
+
+// =============================================================================
+// .filter() alias tests
+// =============================================================================
+
+#[tokio::test]
+async fn test_engine_filter_alias() {
+    let source = r#"
+        stream Filtered = Input
+            .filter(value > 10)
+            .emit(value: value)
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    engine
+        .process(Event::new("Input").with_field("value", 5i64))
+        .await
+        .unwrap();
+    engine
+        .process(Event::new("Input").with_field("value", 15i64))
+        .await
+        .unwrap();
+    engine
+        .process(Event::new("Input").with_field("value", 3i64))
+        .await
+        .unwrap();
+
+    let output = rx.try_recv().expect("value=15 should pass filter");
+    assert_eq!(output.get("value").unwrap().as_int().unwrap(), 15);
+    assert!(rx.try_recv().is_err(), "Only one event should pass");
+}

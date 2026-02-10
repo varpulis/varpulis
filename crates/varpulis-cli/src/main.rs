@@ -181,6 +181,14 @@ enum Commands {
         /// Quiet/benchmark mode - only count outputs, don't collect them (faster)
         #[arg(long, short = 'q')]
         quiet: bool,
+
+        /// Enable auto-checkpointing to this directory
+        #[arg(long, env = "VARPULIS_CHECKPOINT_DIR")]
+        checkpoint_dir: Option<PathBuf>,
+
+        /// Checkpoint interval in seconds (default: 60)
+        #[arg(long, default_value = "60")]
+        checkpoint_interval: u64,
     },
 
     /// Generate example configuration file
@@ -382,6 +390,8 @@ async fn main() -> Result<()> {
             workers,
             partition_by,
             quiet,
+            checkpoint_dir,
+            checkpoint_interval,
         } => {
             // Load config file if specified
             let config = if let Some(ref config_path) = cli.config {
@@ -405,6 +415,8 @@ async fn main() -> Result<()> {
                 workers,
                 partition_by.as_deref(),
                 quiet,
+                checkpoint_dir,
+                checkpoint_interval,
             )
             .await?;
         }
@@ -894,6 +906,8 @@ async fn run_simulation(
     workers: Option<usize>,
     partition_by: Option<&str>,
     quiet: bool,
+    checkpoint_dir: Option<PathBuf>,
+    checkpoint_interval: u64,
 ) -> Result<()> {
     // Determine number of workers
     let num_workers = workers.unwrap_or_else(|| {
@@ -959,6 +973,30 @@ async fn run_simulation(
     engine
         .load_with_source(&program_source, &program)
         .map_err(|e| anyhow::anyhow!("Load error:\n{}", e))?;
+
+    // Enable auto-checkpointing if requested (must be after load())
+    if let Some(ref cp_dir) = checkpoint_dir {
+        std::fs::create_dir_all(cp_dir)?;
+        let store: std::sync::Arc<dyn varpulis_runtime::persistence::StateStore> =
+            std::sync::Arc::new(
+                varpulis_runtime::persistence::FileStore::open(cp_dir)
+                    .map_err(|e| anyhow::anyhow!("Checkpoint store error: {}", e))?,
+            );
+        let config = varpulis_runtime::persistence::CheckpointConfig {
+            interval: std::time::Duration::from_secs(checkpoint_interval),
+            max_checkpoints: 3,
+            checkpoint_on_shutdown: true,
+            key_prefix: "varpulis-simulate".to_string(),
+        };
+        engine
+            .enable_checkpointing(store, config)
+            .map_err(|e| anyhow::anyhow!("Checkpoint init error: {}", e))?;
+        println!(
+            "Checkpointing: {} (every {}s)",
+            cp_dir.display(),
+            checkpoint_interval
+        );
+    }
 
     let metrics = engine.metrics();
     println!("Program loaded: {} streams", metrics.streams_count);
@@ -1143,6 +1181,9 @@ async fn run_simulation(
                 engine
                     .process_batch_sync(batch)
                     .map_err(|e| anyhow::anyhow!("Process error: {}", e))?;
+                engine
+                    .checkpoint_tick()
+                    .map_err(|e| anyhow::anyhow!("Checkpoint error: {}", e))?;
                 batch_idx += 1;
             }
         } else {
@@ -1165,6 +1206,9 @@ async fn run_simulation(
                     .process_batch(batch)
                     .await
                     .map_err(|e| anyhow::anyhow!("Process error: {}", e))?;
+                engine
+                    .checkpoint_tick()
+                    .map_err(|e| anyhow::anyhow!("Checkpoint error: {}", e))?;
                 batch_idx += 1;
             }
         }
@@ -1343,6 +1387,9 @@ async fn run_simulation(
                     .await
                     .map_err(|e| anyhow::anyhow!("Process error: {}", e))?;
             }
+            engine
+                .checkpoint_tick()
+                .map_err(|e| anyhow::anyhow!("Checkpoint error: {}", e))?;
         }
 
         info!("Streamed {} events from file", event_reader.events_read());
@@ -1388,6 +1435,13 @@ async fn run_simulation(
             .flush_expired_sessions()
             .await
             .map_err(|e| anyhow::anyhow!("Session flush error: {}", e))?;
+    }
+
+    // Final checkpoint on shutdown
+    if engine.has_checkpointing() {
+        engine
+            .force_checkpoint()
+            .map_err(|e| anyhow::anyhow!("Final checkpoint error: {}", e))?;
     }
 
     // Wait a bit for any pending output events

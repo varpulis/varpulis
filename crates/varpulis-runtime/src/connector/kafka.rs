@@ -37,6 +37,11 @@ impl KafkaConfig {
         self.group_id = Some(group_id.to_string());
         self
     }
+
+    pub fn with_properties(mut self, props: IndexMap<String, String>) -> Self {
+        self.properties = props;
+        self
+    }
 }
 
 // =============================================================================
@@ -155,13 +160,27 @@ mod kafka_impl {
     use super::*;
     use crate::connector::helpers::json_to_value;
     use rdkafka::config::ClientConfig;
-    use rdkafka::consumer::{Consumer, StreamConsumer};
+    use rdkafka::consumer::{CommitMode, Consumer, StreamConsumer};
     use rdkafka::producer::{FutureProducer, FutureRecord, Producer};
     use rdkafka::Message;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
     use tracing::{error, info, warn};
+
+    /// Apply user-provided properties to a ClientConfig, skipping keys
+    /// that are already explicitly set by our code.
+    fn apply_properties(client_config: &mut ClientConfig, props: &IndexMap<String, String>) {
+        for (k, v) in props {
+            // Skip keys managed internally — users set these via dedicated config fields
+            match k.as_str() {
+                "bootstrap.servers" | "group.id" => continue,
+                _ => {
+                    client_config.set(k, v);
+                }
+            }
+        }
+    }
 
     /// Kafka source connector with rdkafka
     pub struct KafkaSourceImpl {
@@ -187,20 +206,25 @@ mod kafka_impl {
         }
 
         async fn start(&mut self, tx: mpsc::Sender<Event>) -> Result<(), ConnectorError> {
-            let group_id = self.config.group_id.clone().unwrap_or_else(|| {
-                // Generate a unique group ID using process ID and timestamp
-                let ts = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_nanos())
-                    .unwrap_or(0);
-                format!("varpulis-{}-{}", std::process::id(), ts)
-            });
+            // Stable group ID: defaults to varpulis-{connector_name} so offsets
+            // survive process restarts (users can override via group_id config).
+            let group_id = self
+                .config
+                .group_id
+                .clone()
+                .unwrap_or_else(|| format!("varpulis-{}", self.name));
 
-            let consumer: StreamConsumer = ClientConfig::new()
+            let mut client_config = ClientConfig::new();
+            client_config
                 .set("bootstrap.servers", &self.config.brokers)
                 .set("group.id", &group_id)
-                .set("enable.auto.commit", "true")
-                .set("auto.offset.reset", "latest")
+                .set("enable.auto.commit", "false")
+                .set("auto.offset.reset", "latest");
+
+            // Apply user-provided properties (can override auto.offset.reset, etc.)
+            apply_properties(&mut client_config, &self.config.properties);
+
+            let consumer: StreamConsumer = client_config
                 .create()
                 .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
 
@@ -217,10 +241,13 @@ mod kafka_impl {
 
                 use futures::StreamExt;
                 let mut stream = consumer.stream();
+                let mut consecutive_errors: u32 = 0;
 
                 while running.load(Ordering::SeqCst) {
                     match tokio::time::timeout(Duration::from_millis(100), stream.next()).await {
                         Ok(Some(Ok(msg))) => {
+                            consecutive_errors = 0;
+
                             if let Some(payload) = msg.payload() {
                                 match serde_json::from_slice::<serde_json::Value>(payload) {
                                     Ok(json) => {
@@ -252,9 +279,18 @@ mod kafka_impl {
                                     }
                                 }
                             }
+
+                            // Commit offset after successful processing
+                            if let Err(e) = consumer.commit_message(&msg, CommitMode::Async) {
+                                warn!("Kafka source {}: offset commit failed: {}", name, e);
+                            }
                         }
                         Ok(Some(Err(e))) => {
-                            error!("Kafka source {} error: {}", name, e);
+                            consecutive_errors += 1;
+                            let backoff =
+                                Duration::from_millis(100 * 2u64.pow(consecutive_errors.min(7)));
+                            error!("Kafka source {} error (backoff {:?}): {}", name, backoff, e);
+                            tokio::time::sleep(backoff).await;
                         }
                         Ok(None) => break,
                         Err(_) => {} // Timeout, continue
@@ -286,9 +322,20 @@ mod kafka_impl {
 
     impl KafkaSinkImpl {
         pub fn new(name: &str, config: KafkaConfig) -> Result<Self, ConnectorError> {
-            let producer: FutureProducer = ClientConfig::new()
+            let mut client_config = ClientConfig::new();
+            client_config
                 .set("bootstrap.servers", &config.brokers)
-                .set("message.timeout.ms", "5000")
+                .set("message.timeout.ms", "30000")
+                // Production defaults for batching throughput
+                .set("linger.ms", "5")
+                .set("batch.size", "65536")
+                .set("compression.type", "lz4")
+                .set("acks", "all");
+
+            // Apply user-provided properties (can override any of the above)
+            apply_properties(&mut client_config, &config.properties);
+
+            let producer: FutureProducer = client_config
                 .create()
                 .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
 
@@ -313,8 +360,11 @@ mod kafka_impl {
                 .payload(&payload)
                 .key(&*event.event_type);
 
+            // Fire-and-forget: enqueue into librdkafka's internal batch buffer.
+            // The library handles batching via linger.ms / batch.size settings.
+            // We use Duration::ZERO so send() returns immediately once queued.
             self.producer
-                .send(record, Duration::from_secs(5))
+                .send(record, Duration::ZERO)
                 .await
                 .map_err(|(e, _)| ConnectorError::SendFailed(e.to_string()))?;
 
@@ -323,7 +373,7 @@ mod kafka_impl {
 
         async fn flush(&self) -> Result<(), ConnectorError> {
             self.producer
-                .flush(Duration::from_secs(5))
+                .flush(Duration::from_secs(10))
                 .map_err(|e| ConnectorError::SendFailed(format!("Flush failed: {}", e)))
         }
 

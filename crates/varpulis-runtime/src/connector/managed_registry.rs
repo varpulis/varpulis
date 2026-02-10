@@ -123,7 +123,8 @@ fn create_managed(
             } else {
                 config.url.clone()
             };
-            let mut kafka_config = KafkaConfig::new(&brokers, topic);
+            let mut kafka_config =
+                KafkaConfig::new(&brokers, topic).with_properties(config.properties.clone());
 
             if let Some(group_id) = config.properties.get("group_id") {
                 kafka_config = kafka_config.with_group_id(group_id);
