@@ -180,8 +180,8 @@ fn get_top_level_completions() -> Vec<CompletionItem> {
             "stream",
             CompletionItemKind::KEYWORD,
             "Declare a data stream",
-            "stream ${1:Name} from \"${2:source}\"\n    .where($3)\n    .emit()",
-            Some("stream Name from \"source\""),
+            "stream ${1:Name} = ${2:Source}\n    .where($3)\n    .emit()",
+            Some("stream Name = Source"),
         ),
         completion_item(
             "event",

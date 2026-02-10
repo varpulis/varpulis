@@ -42,7 +42,7 @@ event Alert:
     message: str
 
 # Input stream from UserLogin events
-stream Logins from UserLogin
+stream Logins = UserLogin
 
 # Filter for suspicious logins (multiple IPs)
 stream SuspiciousLogins = Logins
@@ -192,7 +192,7 @@ event MyEvent:
     field1: str
     field2: int
 
-stream Input from MyEvent
+stream Input = MyEvent
 
 stream Output = Input
     .where(field2 > 0)

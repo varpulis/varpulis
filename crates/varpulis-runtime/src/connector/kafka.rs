@@ -307,8 +307,7 @@ mod kafka_impl {
         }
 
         async fn send(&self, event: &Event) -> Result<(), ConnectorError> {
-            let payload = serde_json::to_string(event)
-                .map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
+            let payload = event.to_sink_payload();
 
             let record = FutureRecord::to(&self.config.topic)
                 .payload(&payload)

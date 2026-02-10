@@ -98,7 +98,7 @@ class MarketGenerator:
 def main():
     parser = argparse.ArgumentParser(description="E2E Market Event Generator")
     parser.add_argument("--broker", default="localhost", help="MQTT broker host")
-    parser.add_argument("--port", type=int, default=1883, help="MQTT broker port")
+    parser.add_argument("--port", type=int, default=11883, help="MQTT broker port")
     parser.add_argument("--rate", type=float, default=10.0, help="Cycles per second")
     parser.add_argument("--duration", type=int, default=0, help="Duration in seconds (0=infinite)")
     args = parser.parse_args()

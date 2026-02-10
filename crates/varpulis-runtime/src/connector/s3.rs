@@ -281,9 +281,8 @@ mod s3_impl {
             // Serialize event based on format
             match self.config.format {
                 S3OutputFormat::JsonLines => {
-                    let json = serde_json::to_string(event)
-                        .map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
-                    state.buffer.extend_from_slice(json.as_bytes());
+                    let buf = event.to_sink_payload();
+                    state.buffer.extend_from_slice(&buf);
                     state.buffer.push(b'\n');
                 }
                 S3OutputFormat::Csv => {

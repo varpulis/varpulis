@@ -1,6 +1,6 @@
 //! Cluster-level connector configuration and VPL injection.
 //!
-//! Named connectors (e.g., `mqtt-market`, `kafka-signals`) are stored at the
+//! Named connectors (e.g., `mqtt_market`, `kafka_signals`) are stored at the
 //! coordinator level and automatically injected into VPL source before parsing.
 
 use crate::ClusterError;
@@ -22,13 +22,20 @@ impl ClusterConnector {
     ///
     /// Example output:
     /// ```text
-    /// connector mqtt_market = mqtt(host: "localhost", port: "1883")
+    /// connector mqtt_market = mqtt(host: "localhost", port: 1883)
     /// ```
     pub fn to_vpl_declaration(&self) -> String {
         let params: Vec<String> = self
             .params
             .iter()
-            .map(|(k, v)| format!("{}: \"{}\"", k, v))
+            .map(|(k, v)| {
+                // Emit numeric values unquoted (VPL parser expects integer/float literals)
+                if v.parse::<i64>().is_ok() || v.parse::<f64>().is_ok() {
+                    format!("{}: {}", k, v)
+                } else {
+                    format!("{}: \"{}\"", k, v)
+                }
+            })
             .collect();
         format!(
             "connector {} = {}({})",
@@ -39,17 +46,18 @@ impl ClusterConnector {
     }
 }
 
-/// Valid connector identifier: starts with letter, then letters/digits/underscores/hyphens.
+/// Valid connector identifier: must match VPL identifier rules
+/// (starts with letter or underscore, then letters/digits/underscores).
 pub fn is_valid_connector_name(name: &str) -> bool {
     if name.is_empty() {
         return false;
     }
     let mut chars = name.chars();
     let first = chars.next().unwrap();
-    if !first.is_ascii_alphabetic() {
+    if !first.is_ascii_alphabetic() && first != '_' {
         return false;
     }
-    chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// Known connector types.
@@ -132,10 +140,10 @@ pub fn find_missing_connectors(source: &str) -> Vec<String> {
                 let after = search_pos + pos + pattern.len();
                 if after < trimmed.len() {
                     let rest = &trimmed[after..];
-                    // Extract the connector name (first token before comma, paren, or whitespace)
+                    // Extract the connector name (VPL identifier: letter/underscore then alphanumeric/underscore)
                     let name: String = rest
                         .chars()
-                        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+                        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
                         .collect();
                     if !name.is_empty()
                         && name.chars().next().unwrap().is_ascii_alphabetic()
@@ -191,13 +199,15 @@ mod tests {
     #[test]
     fn test_valid_connector_names() {
         assert!(is_valid_connector_name("mqtt1"));
-        assert!(is_valid_connector_name("kafka-signals"));
+        assert!(is_valid_connector_name("kafka_signals"));
         assert!(is_valid_connector_name("my_connector"));
         assert!(is_valid_connector_name("a"));
+        assert!(is_valid_connector_name("_private"));
         assert!(!is_valid_connector_name(""));
         assert!(!is_valid_connector_name("1bad"));
         assert!(!is_valid_connector_name("-bad"));
-        assert!(!is_valid_connector_name("_bad"));
+        // Hyphens are NOT allowed (not valid VPL identifiers)
+        assert!(!is_valid_connector_name("kafka-signals"));
     }
 
     #[test]
@@ -234,7 +244,7 @@ mod tests {
     #[test]
     fn test_to_vpl_declaration() {
         let conn = ClusterConnector {
-            name: "mqtt-market".to_string(),
+            name: "mqtt_market".to_string(),
             connector_type: "mqtt".to_string(),
             params: {
                 let mut m = HashMap::new();
@@ -245,9 +255,11 @@ mod tests {
             description: None,
         };
         let decl = conn.to_vpl_declaration();
-        assert!(decl.starts_with("connector mqtt-market = mqtt("));
+        assert!(decl.starts_with("connector mqtt_market = mqtt("));
         assert!(decl.contains("host: \"localhost\""));
-        assert!(decl.contains("port: \"1883\""));
+        // Numeric values should be unquoted
+        assert!(decl.contains("port: 1883"));
+        assert!(!decl.contains("port: \"1883\""));
     }
 
     #[test]
@@ -256,38 +268,38 @@ mod tests {
 event Tick:
     price: float
 
-stream Data = Tick.from(mqtt-input, topic: "data")
-stream Out = Data.to(kafka-out, topic: "results")
+stream Data = Tick.from(mqtt_input, topic: "data")
+stream Out = Data.to(kafka_out, topic: "results")
 "#;
         let missing = find_missing_connectors(source);
-        assert!(missing.contains(&"mqtt-input".to_string()));
-        assert!(missing.contains(&"kafka-out".to_string()));
+        assert!(missing.contains(&"mqtt_input".to_string()));
+        assert!(missing.contains(&"kafka_out".to_string()));
     }
 
     #[test]
     fn test_find_missing_connectors_with_inline_decl() {
         let source = r#"
-connector mqtt-input = mqtt(host: "localhost")
+connector mqtt_input = mqtt(host: "localhost")
 
 event Tick:
     price: float
 
-stream Data = Tick.from(mqtt-input, topic: "data")
-stream Out = Data.to(kafka-out, topic: "results")
+stream Data = Tick.from(mqtt_input, topic: "data")
+stream Out = Data.to(kafka_out, topic: "results")
 "#;
         let missing = find_missing_connectors(source);
-        assert!(!missing.contains(&"mqtt-input".to_string()));
-        assert!(missing.contains(&"kafka-out".to_string()));
+        assert!(!missing.contains(&"mqtt_input".to_string()));
+        assert!(missing.contains(&"kafka_out".to_string()));
     }
 
     #[test]
     fn test_inject_connectors() {
-        let source = "stream Data = Tick.from(mqtt-in, topic: \"data\")\n";
+        let source = "stream Data = Tick.from(mqtt_in, topic: \"data\")\n";
         let mut connectors = HashMap::new();
         connectors.insert(
-            "mqtt-in".to_string(),
+            "mqtt_in".to_string(),
             ClusterConnector {
-                name: "mqtt-in".to_string(),
+                name: "mqtt_in".to_string(),
                 connector_type: "mqtt".to_string(),
                 params: {
                     let mut m = HashMap::new();
@@ -299,7 +311,7 @@ stream Out = Data.to(kafka-out, topic: "results")
         );
 
         let (enriched, lines) = inject_connectors(source, &connectors);
-        assert!(enriched.starts_with("connector mqtt-in = mqtt("));
+        assert!(enriched.starts_with("connector mqtt_in = mqtt("));
         assert!(enriched.contains(source));
         assert!(lines > 0);
     }

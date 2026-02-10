@@ -247,6 +247,13 @@ mod mqtt_managed_impl {
         }
     }
 
+    impl Drop for ManagedMqttConnector {
+        fn drop(&mut self) {
+            // Signal the event loop to stop when the connector is dropped
+            self.running.store(false, Ordering::SeqCst);
+        }
+    }
+
     /// Lightweight sink handle that publishes via a shared `AsyncClient`.
     struct MqttSharedSink {
         sink_name: String,
@@ -262,8 +269,7 @@ mod mqtt_managed_impl {
         }
 
         async fn send(&self, event: &Event) -> anyhow::Result<()> {
-            let mut buf = Vec::with_capacity(256);
-            serde_json::to_writer(&mut buf, event).map_err(|e| anyhow!("serialize: {}", e))?;
+            let buf = event.to_sink_payload();
 
             self.client
                 .try_publish(&self.topic, self.qos, false, buf)
@@ -274,9 +280,7 @@ mod mqtt_managed_impl {
 
         async fn send_batch(&self, events: &[Arc<Event>]) -> anyhow::Result<()> {
             for event in events {
-                let mut buf = Vec::with_capacity(256);
-                serde_json::to_writer(&mut buf, event.as_ref())
-                    .map_err(|e| anyhow!("serialize: {}", e))?;
+                let buf = event.to_sink_payload();
                 self.client
                     .try_publish(&self.topic, self.qos, false, buf)
                     .map_err(|e| anyhow!("mqtt publish: {}", e))?;

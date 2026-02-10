@@ -108,8 +108,8 @@ def main():
     parser.add_argument("--coordinator", default="http://localhost:9100", help="Coordinator URL")
     parser.add_argument("--api-key", default="dev-key", help="Coordinator API key")
     parser.add_argument("--mqtt-host", default="localhost", help="MQTT broker host")
-    parser.add_argument("--mqtt-port", default="1883", help="MQTT broker port")
-    parser.add_argument("--kafka-brokers", default="localhost:9092", help="Kafka broker(s)")
+    parser.add_argument("--mqtt-port", default="11883", help="MQTT broker port")
+    parser.add_argument("--kafka-brokers", default="localhost:19092", help="Kafka broker(s)")
     args = parser.parse_args()
 
     print(f"\n{'='*60}")
@@ -128,13 +128,13 @@ def main():
     print("\nCreating connectors...")
     connectors = [
         {
-            "name": "mqtt-market",
+            "name": "mqtt_market",
             "connector_type": "mqtt",
             "params": {"host": args.mqtt_host, "port": args.mqtt_port},
             "description": "Market data MQTT broker",
         },
         {
-            "name": "kafka-signals",
+            "name": "kafka_signals",
             "connector_type": "kafka",
             "params": {"brokers": args.kafka_brokers},
             "description": "Trading signals Kafka cluster",

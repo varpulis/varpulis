@@ -33,7 +33,7 @@ const vplTemplates = [
     action: str
     timestamp: str
 
-stream Input from InputEvent
+stream Input = InputEvent
 
 stream Filtered = Input
     .where(action == "login")
@@ -52,7 +52,7 @@ stream Filtered = Input
     source: str
     timestamp: str
 
-stream Metrics from MetricEvent
+stream Metrics = MetricEvent
 
 stream Aggregated = Metrics
     .window(60, sliding: 10)
@@ -77,7 +77,7 @@ stream Aggregated = Metrics
     action: str
     timestamp: str
 
-stream Actions from UserAction
+stream Actions = UserAction
 
 stream LoginLogout = Actions
     .pattern(
