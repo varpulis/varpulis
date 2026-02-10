@@ -160,7 +160,7 @@ services:
     container_name: demo-mosquitto
     expose:
       - "1883"
-    command: mosquitto -c /dev/null -p 1883 -v
+    command: ["mosquitto", "-c", "/mosquitto-no-auth.conf"]
     restart: unless-stopped
     networks:
       - varpulis-demo
@@ -212,13 +212,7 @@ services:
   setup:
     image: python:3.12-slim
     container_name: demo-setup
-    command: >
-      bash -c "pip install --quiet requests &&
-      python /app/setup.py
-        --coordinator http://coordinator:9100
-        --api-key ${VARPULIS_API_KEY}
-        --mqtt-host mosquitto --mqtt-port 1883
-        --kafka-brokers kafka:9092"
+    command: ["bash", "-c", "pip install --quiet requests && python /app/setup.py --coordinator http://coordinator:9100 --api-key ${VARPULIS_API_KEY} --mqtt-host mosquitto --mqtt-port 1883 --kafka-brokers kafka:9092"]
     volumes:
       - ../../demos/e2e-showcase/setup.py:/app/setup.py:ro
       - ../../demos/e2e-showcase/pipeline.vpl:/app/pipeline.vpl:ro
