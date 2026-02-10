@@ -3,7 +3,7 @@ export default { name: 'EditorView' }
 </script>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onActivated } from 'vue'
+import { ref, computed, onMounted, onActivated, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import VplEditor from '@/components/editor/VplEditor.vue'
 import EventTester from '@/components/editor/EventTester.vue'
@@ -298,7 +298,9 @@ onMounted(async () => {
 })
 
 // Re-check route params when component is reactivated by keep-alive
-onActivated(() => {
+// Use nextTick to let Monaco editor finish re-layout before setting content
+onActivated(async () => {
+  await nextTick()
   loadFromRoute()
 })
 </script>

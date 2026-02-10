@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useMetricsStore } from '@/stores/metrics'
 import { useClusterStore } from '@/stores/cluster'
+import { fetchClusterMetrics } from '@/api/cluster'
 import ThroughputChart from '@/components/metrics/ThroughputChart.vue'
 import LatencyHistogram from '@/components/metrics/LatencyHistogram.vue'
 import MetricCard from '@/components/metrics/MetricCard.vue'
@@ -10,6 +11,10 @@ import type { TimeRangePreset } from '@/types/metrics'
 
 const metricsStore = useMetricsStore()
 const clusterStore = useClusterStore()
+
+// Track previous values for throughput calculation
+let prevEventsIn = 0
+let prevTimestamp = Date.now()
 
 const autoRefresh = ref(true)
 const refreshInterval = ref(5000)
@@ -35,19 +40,30 @@ function setTimeRange(preset: TimeRangePreset): void {
 async function fetchMetrics(): Promise<void> {
   try {
     fetchError.value = null
-    // Fetch real metrics from workers - metrics come from running pipelines
+    const clusterMetrics = await fetchClusterMetrics()
     const workers = clusterStore.workers
     const totalPipelines = workers.reduce((sum, w) => sum + w.pipelines_running, 0)
 
-    // Only update metrics based on real worker data
-    // When no pipelines are running, all metrics are zero
+    // Aggregate events_in and events_out across all pipelines
+    const totalEventsIn = clusterMetrics.pipelines.reduce((sum, p) => sum + p.events_in, 0)
+    const totalEventsOut = clusterMetrics.pipelines.reduce((sum, p) => sum + p.events_out, 0)
+
+    // Calculate throughput from delta between polls
+    const now = Date.now()
+    const dtSecs = (now - prevTimestamp) / 1000
+    const throughput = dtSecs > 0 && prevEventsIn > 0
+      ? (totalEventsIn - prevEventsIn) / dtSecs
+      : 0
+    prevEventsIn = totalEventsIn
+    prevTimestamp = now
+
     metricsStore.updateMetrics({
-      events_processed: 0, // Will be updated when real metrics endpoint is available
-      events_emitted: 0,
+      events_processed: totalEventsIn,
+      events_emitted: totalEventsOut,
       errors: 0,
-      active_streams: totalPipelines, // Real count from workers
-      uptime_secs: metricsStore.aggregated.uptime_secs,
-      throughput_eps: 0, // No fake data - will show 0 until real pipelines are running
+      active_streams: totalPipelines,
+      uptime_secs: metricsStore.aggregated.uptime_secs + (refreshInterval.value / 1000),
+      throughput_eps: Math.max(0, throughput),
       avg_latency_ms: 0,
     })
   } catch (e) {

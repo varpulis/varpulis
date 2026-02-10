@@ -610,10 +610,10 @@ impl TenantManager {
     pub async fn collect_pipeline_metrics(&self) -> Vec<(String, u64, u64)> {
         let mut metrics = Vec::new();
         for tenant in self.tenants.values() {
-            for (name, pipeline) in &tenant.pipelines {
+            for pipeline in tenant.pipelines.values() {
                 let engine = pipeline.engine.lock().await;
                 let (events_in, events_out) = engine.event_counters();
-                metrics.push((name.clone(), events_in, events_out));
+                metrics.push((pipeline.name.clone(), events_in, events_out));
             }
         }
         metrics
