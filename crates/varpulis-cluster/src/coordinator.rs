@@ -308,9 +308,8 @@ impl Coordinator {
             }
         }
 
-        if let Some(group) = self.pipeline_groups.get_mut(group_id) {
-            group.status = GroupStatus::TornDown;
-        }
+        // Remove the group entirely after teardown
+        self.pipeline_groups.remove(group_id);
 
         Ok(())
     }
