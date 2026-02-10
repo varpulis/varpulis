@@ -469,15 +469,14 @@ async fn handle_inject(
             let events_json: Vec<serde_json::Value> = output_events
                 .iter()
                 .map(|e| {
-                    let mut map = serde_json::Map::new();
-                    map.insert(
-                        "event_type".into(),
-                        serde_json::Value::String(e.event_type.to_string()),
-                    );
+                    let mut fields = serde_json::Map::new();
                     for (k, v) in &e.data {
-                        map.insert(k.to_string(), crate::websocket::value_to_json(v));
+                        fields.insert(k.to_string(), crate::websocket::value_to_json(v));
                     }
-                    serde_json::Value::Object(map)
+                    serde_json::json!({
+                        "event_type": e.event_type.to_string(),
+                        "fields": serde_json::Value::Object(fields),
+                    })
                 })
                 .collect();
             let response = serde_json::json!({
