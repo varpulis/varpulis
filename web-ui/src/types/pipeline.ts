@@ -92,12 +92,14 @@ export interface EventPayload {
   fields: Record<string, unknown>
 }
 
-// Event injection response
+// Event injection response (matches Rust InjectResponse from coordinator)
 export interface InjectResponse {
-  success: boolean
-  routed_to: string[]
-  worker_id?: string
-  errors?: string[]
+  routed_to: string
+  worker_id: string
+  worker_response: {
+    accepted: boolean
+    output_events: Array<Record<string, unknown>>
+  }
 }
 
 // Deploy dialog form state

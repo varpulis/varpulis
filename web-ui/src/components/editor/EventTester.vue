@@ -16,13 +16,13 @@ const eventDataJson = ref(`{
   "ip_address": "192.168.1.100"
 }`)
 const loading = ref(false)
-const response = ref<{ success: boolean; routed_to?: string[]; error?: string } | null>(null)
+const response = ref<{ success: boolean; routed_to?: string; worker_id?: string; output_events?: Array<Record<string, unknown>>; error?: string } | null>(null)
 const history = ref<Array<{
   id: string
   timestamp: Date
   eventType: string
   data: Record<string, unknown>
-  response: { success: boolean; routed_to?: string[]; error?: string }
+  response: { success: boolean; routed_to?: string; worker_id?: string; output_events?: Array<Record<string, unknown>>; error?: string }
 }>>([])
 
 const groups = computed(() => pipelinesStore.groups)
@@ -50,7 +50,14 @@ async function injectEvent(): Promise<void> {
       fields,
     })
 
-    response.value = result
+    const mapped = {
+      success: result.worker_response?.accepted ?? true,
+      routed_to: result.routed_to,
+      worker_id: result.worker_id,
+      output_events: result.worker_response?.output_events ?? [],
+    }
+
+    response.value = mapped
 
     // Add to history
     history.value.unshift({
@@ -58,7 +65,7 @@ async function injectEvent(): Promise<void> {
       timestamp: new Date(),
       eventType: eventType.value,
       data: fields,
-      response: result,
+      response: mapped,
     })
 
     // Keep last 50 entries
@@ -178,19 +185,35 @@ onMounted(() => {
             :type="response.success ? 'success' : 'error'"
             variant="tonal"
           >
-            {{ response.success ? 'Event injected successfully' : response.error }}
+            {{ response.success ? 'Event accepted' : response.error }}
           </v-alert>
 
-          <div v-if="response.routed_to && response.routed_to.length > 0" class="mt-3">
-            <div class="text-subtitle-2 mb-2">Routed To:</div>
-            <v-chip
-              v-for="target in response.routed_to"
-              :key="target"
-              size="small"
-              class="mr-1 mb-1"
-            >
-              {{ target }}
+          <div v-if="response.routed_to" class="mt-3 d-flex align-center ga-2">
+            <span class="text-subtitle-2">Routed to:</span>
+            <v-chip size="small" color="primary" variant="tonal">
+              {{ response.routed_to }}
             </v-chip>
+            <v-chip v-if="response.worker_id" size="small" variant="outlined">
+              {{ response.worker_id }}
+            </v-chip>
+          </div>
+
+          <div v-if="response.output_events && response.output_events.length > 0" class="mt-3">
+            <div class="text-subtitle-2 mb-2">Output Events ({{ response.output_events.length }}):</div>
+            <v-card
+              v-for="(evt, idx) in response.output_events"
+              :key="idx"
+              variant="outlined"
+              class="mb-2"
+            >
+              <v-card-text class="pa-2">
+                <pre class="font-monospace text-caption">{{ formatJson(evt) }}</pre>
+              </v-card-text>
+            </v-card>
+          </div>
+
+          <div v-else-if="response.success" class="mt-3 text-medium-emphasis text-body-2">
+            No output events emitted (event may be buffered in a window)
           </div>
         </v-card-text>
       </v-card>
