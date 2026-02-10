@@ -315,10 +315,7 @@ mod mqtt_impl {
         async fn send(&self, event: &Event) -> Result<(), ConnectorError> {
             let client = self.client.as_ref().ok_or(ConnectorError::NotConnected)?;
 
-            // Serialize directly into a pre-sized buffer to avoid reallocation
-            let mut buf = Vec::with_capacity(256);
-            serde_json::to_writer(&mut buf, event)
-                .map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
+            let buf = event.to_sink_payload();
 
             // With QoS 0, try_publish avoids the async overhead of .await
             // (just pushes to rumqttc's internal channel synchronously)

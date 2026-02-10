@@ -1570,7 +1570,7 @@ async fn test_to_file_connector_basic() {
     // Verify file content is valid JSON with expected fields
     for line in &lines {
         let json: serde_json::Value = serde_json::from_str(line).expect("Should be valid JSON");
-        assert_eq!(json["data"]["status"], "hot");
+        assert_eq!(json["status"], "hot");
     }
 }
 
@@ -1668,7 +1668,7 @@ async fn test_to_file_connector_with_sequence() {
 
     for line in &lines {
         let json: serde_json::Value = serde_json::from_str(line).expect("Should be valid JSON");
-        assert_eq!(json["data"]["status"], "matched");
+        assert_eq!(json["status"], "matched");
     }
 }
 
@@ -1805,7 +1805,7 @@ async fn test_to_with_filter_only_matching_events() {
 
     for line in &lines {
         let json: serde_json::Value = serde_json::from_str(line).expect("Should be valid JSON");
-        assert_eq!(json["data"]["severity"], "critical");
+        assert_eq!(json["severity"], "critical");
     }
 }
 

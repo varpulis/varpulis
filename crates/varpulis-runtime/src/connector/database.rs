@@ -181,7 +181,7 @@ mod database_impl {
         }
 
         async fn send(&self, event: &Event) -> Result<(), ConnectorError> {
-            let data = serde_json::to_string(event)
+            let data = String::from_utf8(event.to_sink_payload())
                 .map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
 
             let query = format!(

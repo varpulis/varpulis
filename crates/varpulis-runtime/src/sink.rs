@@ -129,9 +129,10 @@ impl Sink for FileSink {
     }
 
     async fn send(&self, event: &Event) -> Result<()> {
-        let json = serde_json::to_string(event)?;
+        let buf = event.to_sink_payload();
         let mut file = self.file.lock().await;
-        writeln!(file, "{}", json)?;
+        file.write_all(&buf)?;
+        file.write_all(b"\n")?;
         Ok(())
     }
 
@@ -211,11 +212,11 @@ impl Sink for AsyncFileSink {
     }
 
     async fn send(&self, event: &Event) -> Result<()> {
-        let json = serde_json::to_string(event)?;
+        let buf = event.to_sink_payload();
 
         let should_flush = {
             let mut buffer = self.buffer.lock().await;
-            buffer.extend_from_slice(json.as_bytes());
+            buffer.extend_from_slice(&buf);
             buffer.push(b'\n');
             buffer.len() >= self.buffer_size
         };
@@ -285,7 +286,7 @@ impl Sink for HttpSink {
             req = req.header(k.as_str(), v.as_str());
         }
         req = req.header("Content-Type", "application/json");
-        req = req.json(event);
+        req = req.body(event.to_sink_payload());
 
         match req.send().await {
             Ok(resp) => {
@@ -472,8 +473,7 @@ impl Sink for HttpSinkWithRetry {
     }
 
     async fn send(&self, event: &Event) -> Result<()> {
-        let body = serde_json::to_vec(event)?;
-        self.send_with_retry(body).await
+        self.send_with_retry(event.to_sink_payload()).await
     }
 
     async fn flush(&self) -> Result<()> {
@@ -589,7 +589,7 @@ mod tests {
 
         // Verify file contains the event
         let contents = std::fs::read_to_string(temp_file.path()).unwrap();
-        assert!(contents.contains("TestEvent"));
+        assert!(contents.contains("\"value\":42"));
     }
 
     #[tokio::test]
@@ -670,7 +670,7 @@ mod tests {
         assert!(multi.flush().await.is_ok());
 
         let contents = std::fs::read_to_string(temp_file.path()).unwrap();
-        assert!(contents.contains("MultiEvent"));
+        assert!(contents.contains("\"val\":100"));
     }
 
     // ==========================================================================
@@ -726,8 +726,8 @@ mod tests {
         // Verify both files got the event
         let contents1 = std::fs::read_to_string(temp1.path()).unwrap();
         let contents2 = std::fs::read_to_string(temp2.path()).unwrap();
-        assert!(contents1.contains("TripleEvent"));
-        assert!(contents2.contains("TripleEvent"));
+        assert!(contents1.contains("timestamp"));
+        assert!(contents2.contains("timestamp"));
     }
 
     // ==========================================================================
@@ -759,7 +759,7 @@ mod tests {
 
         // Verify file contains the event
         let contents = std::fs::read_to_string(temp_file.path()).unwrap();
-        assert!(contents.contains("AsyncTestEvent"));
+        assert!(contents.contains("\"value\":123"));
         assert!(contents.contains("123"));
     }
 
@@ -839,7 +839,7 @@ mod tests {
         multi.flush().await.unwrap();
 
         let contents = std::fs::read_to_string(temp.path()).unwrap();
-        assert!(contents.contains("MultiAsyncEvent"));
+        assert!(contents.contains("timestamp"));
     }
 
     // ==========================================================================

@@ -133,6 +133,26 @@ impl Event {
     pub fn get_str(&self, key: &str) -> Option<&str> {
         self.data.get(key).and_then(|v| v.as_str())
     }
+
+    /// Serialize for sink output: timestamp + data fields only (no event_type).
+    ///
+    /// The event type is conveyed by the sink topic/stream name, making the
+    /// `event_type` field redundant in the payload.
+    pub fn to_sink_payload(&self) -> Vec<u8> {
+        use serde::ser::SerializeMap;
+        use serde::Serializer;
+        let mut buf = Vec::with_capacity(256);
+        let mut ser = serde_json::Serializer::new(&mut buf);
+        let mut map = ser.serialize_map(Some(1 + self.data.len())).unwrap();
+        map.serialize_entry("timestamp", &self.timestamp).unwrap();
+        for (k, v) in &self.data {
+            if k.as_ref() != "timestamp" {
+                map.serialize_entry(k.as_ref(), v).unwrap();
+            }
+        }
+        map.end().unwrap();
+        buf
+    }
 }
 
 /// Temperature reading event for HVAC demo

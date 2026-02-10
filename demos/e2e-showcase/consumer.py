@@ -56,11 +56,11 @@ class SignalDashboard:
         conf = {
             "bootstrap.servers": self.kafka_brokers,
             "group.id": self.group_id,
-            "auto.offset.reset": "latest",
+            "auto.offset.reset": "earliest",
             "enable.auto.commit": True,
         }
         consumer = Consumer(conf)
-        consumer.subscribe(["trading/breakouts", "trading/averages", "trading/large-trades"])
+        consumer.subscribe(["trading.breakouts", "trading.averages", "trading.large-trades"])
 
         try:
             while self.running:
@@ -82,13 +82,13 @@ class SignalDashboard:
                 self.total_consumed += 1
                 self.rate_window.append(time.time())
 
-                if topic == "trading/breakouts":
+                if topic == "trading.breakouts":
                     self.breakout_count += 1
                     self.recent_breakouts.appendleft({"time": now, **data})
-                elif topic == "trading/averages":
+                elif topic == "trading.averages":
                     self.avg_price_count += 1
                     self.recent_averages.appendleft({"time": now, **data})
-                elif topic == "trading/large-trades":
+                elif topic == "trading.large-trades":
                     self.large_trade_count += 1
                     self.recent_large_trades.appendleft({"time": now, **data})
 
@@ -120,12 +120,14 @@ class SignalDashboard:
         breakout_table.add_column("Symbol", width=8)
         breakout_table.add_column("Details")
         for b in list(self.recent_breakouts)[:6]:
-            symbol = b.get("symbol", b.get("a_symbol", "?"))
-            price = b.get("price", b.get("c_price", "?"))
+            symbol = b.get("symbol", "?")
+            start = b.get("start_price", 0)
+            end = b.get("end_price", 0)
+            change = ((end - start) / start * 100) if start else 0
             breakout_table.add_row(
                 b["time"],
                 str(symbol),
-                f"${price}" if price != "?" else json.dumps(b, default=str)[:60],
+                f"${start:,.2f} -> ${end:,.2f} ({change:+.2f}%)",
             )
 
         # Large trades table
@@ -164,7 +166,7 @@ class SignalDashboard:
 
 def main():
     parser = argparse.ArgumentParser(description="E2E Consumer Dashboard")
-    parser.add_argument("--kafka-brokers", default="localhost:9092", help="Kafka brokers")
+    parser.add_argument("--kafka-brokers", default="localhost:19092", help="Kafka brokers")
     parser.add_argument("--group-id", default="e2e-consumer", help="Consumer group ID")
     args = parser.parse_args()
 
@@ -172,7 +174,7 @@ def main():
     print("  Varpulis E2E Consumer Dashboard")
     print(f"{'='*60}")
     print(f"  Kafka: {args.kafka_brokers}")
-    print(f"  Topics: trading/breakouts, trading/averages, trading/large-trades")
+    print(f"  Topics: trading.breakouts, trading.averages, trading.large-trades")
     print(f"{'='*60}\n")
 
     dashboard = SignalDashboard(args.kafka_brokers, args.group_id)
