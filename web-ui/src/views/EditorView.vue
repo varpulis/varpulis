@@ -9,10 +9,12 @@ import VplEditor from '@/components/editor/VplEditor.vue'
 import EventTester from '@/components/editor/EventTester.vue'
 import QuickDeployDialog from '@/components/pipelines/QuickDeployDialog.vue'
 import { useVplSourcesStore, type SavedVplSource } from '@/stores/vplSources'
-import { getPipelineGroup } from '@/api/cluster'
+import { usePipelinesStore } from '@/stores/pipelines'
+import { getPipelineGroup, deployPipelineGroup, teardownGroup } from '@/api/cluster'
 
 const route = useRoute()
 const vplSourcesStore = useVplSourcesStore()
+const pipelinesStore = usePipelinesStore()
 
 // Deploy dialog
 const deployDialogOpen = ref(false)
@@ -32,6 +34,11 @@ const selectedSourceId = ref<string | null>(null)
 
 // Current source tracking
 const currentSourceName = ref<string | null>(null)
+
+// Track origin when editing a deployed pipeline
+const editingGroupId = ref<string | null>(null)
+const editingGroupName = ref<string | null>(null)
+const editingPipelineName = ref<string | null>(null)
 
 
 const vplSource = ref(`# Varpulis Pipeline Language (VPL)
@@ -159,6 +166,36 @@ function openDeployDialog(): void {
   deployDialogOpen.value = true
 }
 
+const isUpdating = ref(false)
+
+async function updatePipeline(): Promise<void> {
+  if (!editingGroupId.value || !editingPipelineName.value || !editingGroupName.value) return
+
+  isUpdating.value = true
+  try {
+    // Teardown old group
+    await teardownGroup(editingGroupId.value)
+
+    // Redeploy with updated source
+    const group = await deployPipelineGroup({
+      name: editingGroupName.value,
+      pipelines: [{
+        name: editingPipelineName.value,
+        source: vplSource.value,
+      }],
+    })
+
+    // Update tracking to the new group
+    editingGroupId.value = group.id
+    await pipelinesStore.fetchGroups()
+    addOutput(`Pipeline "${editingPipelineName.value}" updated successfully`)
+  } catch (e) {
+    addOutput(`Update failed: ${e instanceof Error ? e.message : 'Unknown error'}`)
+  } finally {
+    isUpdating.value = false
+  }
+}
+
 // Load dialog functions
 function openLoadDialog(): void {
   selectedSourceId.value = null
@@ -198,6 +235,9 @@ function deleteSource(id: string): void {
 function newSource(): void {
   currentSourceName.value = null
   currentSourceId.value = null
+  editingGroupId.value = null
+  editingGroupName.value = null
+  editingPipelineName.value = null
   vplSource.value = `# New VPL Pipeline
 # Define your event processing pipeline here
 
@@ -232,7 +272,10 @@ onMounted(async () => {
       const source = group.sources?.[pipelineName]
       if (source) {
         vplSource.value = source
-        currentSourceName.value = `${group.name}/${pipelineName}`
+        currentSourceName.value = pipelineName
+        editingGroupId.value = groupId
+        editingGroupName.value = group.name
+        editingPipelineName.value = pipelineName
         addOutput(`Loaded pipeline "${pipelineName}" from group "${group.name}"`)
         localStorage.setItem('varpulis_vpl_source', source)
         return
@@ -254,7 +297,10 @@ onMounted(async () => {
   <div class="editor-view">
     <div class="d-flex align-center mb-4">
       <h1 class="text-h4">VPL Editor</h1>
-      <v-chip v-if="currentSourceName" size="small" class="ml-3" color="primary" variant="outlined">
+      <v-chip v-if="editingGroupName" size="small" class="ml-3" color="info" variant="outlined">
+        {{ editingGroupName }} / {{ editingPipelineName }}
+      </v-chip>
+      <v-chip v-else-if="currentSourceName" size="small" class="ml-3" color="primary" variant="outlined">
         {{ currentSourceName }}
       </v-chip>
       <v-chip v-else size="small" class="ml-3" color="grey" variant="outlined">
@@ -380,22 +426,28 @@ onMounted(async () => {
             <v-divider vertical class="mx-2" />
 
             <v-btn
+              v-if="editingGroupId"
+              color="primary"
+              variant="outlined"
+              prepend-icon="mdi-refresh"
+              :loading="isUpdating"
+              :disabled="validationStatus === 'invalid'"
+              @click="updatePipeline"
+            >
+              Update
+              <v-tooltip activator="parent" location="top">
+                Teardown and redeploy "{{ editingPipelineName }}" with updated source
+              </v-tooltip>
+            </v-btn>
+            <v-btn
               variant="outlined"
               prepend-icon="mdi-rocket-launch"
-              :disabled="(!currentSourceId && !currentSourceName) || validationStatus === 'invalid'"
+              :disabled="(!currentSourceId && !currentSourceName && !editingGroupId) || validationStatus === 'invalid'"
               @click="openDeployDialog"
             >
-              Deploy
+              Deploy New
               <v-tooltip activator="parent" location="top">
-                <div v-if="!currentSourceId && !currentSourceName">
-                  Save your VPL source first before deploying
-                </div>
-                <div v-else-if="validationStatus === 'invalid'">
-                  Fix validation errors before deploying
-                </div>
-                <div v-else>
-                  Deploy this pipeline to the cluster
-                </div>
+                Deploy as a new pipeline group
               </v-tooltip>
             </v-btn>
 
