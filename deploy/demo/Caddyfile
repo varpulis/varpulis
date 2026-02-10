@@ -1,0 +1,15 @@
+demo.varpulis-cep.com {
+    tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin-key.pem
+
+    # API requests → coordinator
+    reverse_proxy /api/* coordinator:9100
+
+    # WebSocket → coordinator
+    reverse_proxy /ws coordinator:9100
+
+    # Metrics → coordinator (for Grafana/internal use)
+    reverse_proxy /metrics coordinator:9100
+
+    # Everything else → web UI
+    reverse_proxy /* web-ui:8080
+}
