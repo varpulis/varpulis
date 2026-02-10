@@ -1766,7 +1766,10 @@ async fn run_server(
 
     // Pass Prometheus metrics to tenant manager for engine instrumentation
     if let Some(ref m) = prom_metrics {
-        tenant_manager.write().await.set_prometheus_metrics(m.clone());
+        tenant_manager
+            .write()
+            .await
+            .set_prometheus_metrics(m.clone());
     }
 
     // Auto-provision a default tenant if an API key is configured
@@ -1803,8 +1806,8 @@ async fn run_server(
     // Optionally register with a coordinator
     if let Some(coordinator_url) = coordinator_url {
         let worker_id = worker_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-        let worker_addr = advertise_address
-            .unwrap_or_else(|| format!("{}://{}:{}", http_protocol, bind, port));
+        let worker_addr =
+            advertise_address.unwrap_or_else(|| format!("{}://{}:{}", http_protocol, bind, port));
         let worker_api_key = auth_config.api_key().unwrap_or("no-key").to_string();
         info!(
             "Registering with coordinator at {} as worker '{}'",
