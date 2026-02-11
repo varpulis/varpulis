@@ -4,6 +4,7 @@ import type {
   WorkerDetail,
   TopologyInfo,
   ClusterSummary,
+  Migration,
 } from '@/types/cluster'
 import type {
   PipelineGroup,
@@ -48,8 +49,9 @@ export async function deleteWorker(id: string): Promise<void> {
 /**
  * Drain a worker (stop accepting new pipelines, migrate existing)
  */
-export async function drainWorker(id: string): Promise<void> {
-  await api.post(`${CLUSTER_BASE}/workers/${id}/drain`)
+export async function drainWorker(id: string, timeoutSecs?: number): Promise<{ worker_id: string; pipelines_migrated: number; status: string }> {
+  const response = await api.post(`${CLUSTER_BASE}/workers/${id}/drain`, { timeout_secs: timeoutSecs ?? null })
+  return response.data
 }
 
 // === Pipeline Groups ===
@@ -221,6 +223,40 @@ export interface ClusterMetricsResponse {
  */
 export async function fetchClusterMetrics(): Promise<ClusterMetricsResponse> {
   const response = await api.get<ClusterMetricsResponse>(`${CLUSTER_BASE}/metrics`)
+  return response.data
+}
+
+// === Migrations ===
+
+/**
+ * List all active/recent migrations
+ */
+export async function listMigrations(): Promise<Migration[]> {
+  const response = await api.get<{ migrations: Migration[]; total: number }>(`${CLUSTER_BASE}/migrations`)
+  return response.data.migrations
+}
+
+/**
+ * Get details for a specific migration
+ */
+export async function getMigration(id: string): Promise<Migration> {
+  const response = await api.get<Migration>(`${CLUSTER_BASE}/migrations/${id}`)
+  return response.data
+}
+
+/**
+ * Trigger cluster rebalancing
+ */
+export async function triggerRebalance(): Promise<{ migrations_started: number; migration_ids: string[] }> {
+  const response = await api.post<{ migrations_started: number; migration_ids: string[] }>(`${CLUSTER_BASE}/rebalance`)
+  return response.data
+}
+
+/**
+ * Manually migrate a pipeline to a target worker
+ */
+export async function migratePipeline(groupId: string, pipelineName: string, targetWorkerId: string): Promise<{ migration_id: string }> {
+  const response = await api.post<{ migration_id: string }>(`${CLUSTER_BASE}/pipelines/${groupId}/${pipelineName}/migrate`, { target_worker_id: targetWorkerId })
   return response.data
 }
 

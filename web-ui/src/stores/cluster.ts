@@ -6,6 +6,7 @@ import type {
   TopologyInfo,
   ClusterSummary,
   Alert,
+  Migration,
 } from '@/types/cluster'
 import type { PipelineGroup, PipelineGroupSpec, EventPayload, InjectResponse, InjectBatchResponse } from '@/types/pipeline'
 import * as clusterApi from '@/api/cluster'
@@ -18,6 +19,7 @@ export const useClusterStore = defineStore('cluster', () => {
   const selectedGroup = ref<PipelineGroup | null>(null)
   const topology = ref<TopologyInfo | null>(null)
   const summary = ref<ClusterSummary | null>(null)
+  const migrations = ref<Migration[]>([])
   const alerts = ref<Alert[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -37,6 +39,10 @@ export const useClusterStore = defineStore('cluster', () => {
 
   const activeGroups = computed(() =>
     pipelineGroups.value.filter((g) => g.status === 'running')
+  )
+
+  const activeMigrations = computed(() =>
+    migrations.value.filter((m) => m.status !== 'completed' && m.status !== 'failed')
   )
 
   const recentAlerts = computed(() =>
@@ -85,9 +91,9 @@ export const useClusterStore = defineStore('cluster', () => {
     }
   }
 
-  async function drainWorker(id: string): Promise<void> {
+  async function drainWorker(id: string, timeoutSecs?: number): Promise<void> {
     try {
-      await clusterApi.drainWorker(id)
+      await clusterApi.drainWorker(id, timeoutSecs)
       const worker = workers.value.find((w) => w.id === id)
       if (worker) {
         worker.status = 'draining'
@@ -203,6 +209,36 @@ export const useClusterStore = defineStore('cluster', () => {
     }
   }
 
+  async function fetchMigrations(): Promise<void> {
+    try {
+      migrations.value = await clusterApi.listMigrations()
+    } catch {
+      // Migrations endpoint may not exist on older coordinators
+    }
+  }
+
+  async function rebalance(): Promise<{ migrations_started: number; migration_ids: string[] }> {
+    try {
+      const result = await clusterApi.triggerRebalance()
+      await fetchMigrations()
+      return result
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Failed to trigger rebalance'
+      throw e
+    }
+  }
+
+  async function migratePipeline(groupId: string, pipelineName: string, targetWorkerId: string): Promise<{ migration_id: string }> {
+    try {
+      const result = await clusterApi.migratePipeline(groupId, pipelineName, targetWorkerId)
+      await fetchMigrations()
+      return result
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Failed to migrate pipeline'
+      throw e
+    }
+  }
+
   function addAlert(alert: Alert): void {
     alerts.value.push(alert)
   }
@@ -230,6 +266,7 @@ export const useClusterStore = defineStore('cluster', () => {
     selectedGroup,
     topology,
     summary,
+    migrations,
     alerts,
     loading,
     error,
@@ -239,6 +276,7 @@ export const useClusterStore = defineStore('cluster', () => {
     unhealthyWorkers,
     drainingWorkers,
     activeGroups,
+    activeMigrations,
     recentAlerts,
 
     // Actions
@@ -254,6 +292,9 @@ export const useClusterStore = defineStore('cluster', () => {
     injectBatch,
     fetchTopology,
     fetchSummary,
+    fetchMigrations,
+    rebalance,
+    migratePipeline,
     addAlert,
     acknowledgeAlert,
     clearAlerts,

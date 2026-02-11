@@ -5,7 +5,7 @@ import WorkerGrid from '@/components/cluster/WorkerGrid.vue'
 import TopologyGraph from '@/components/cluster/TopologyGraph.vue'
 import HealthIndicator from '@/components/cluster/HealthIndicator.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
-import type { Worker } from '@/types/cluster'
+import type { Worker, PipelinePlacement } from '@/types/cluster'
 
 const clusterStore = useClusterStore()
 
@@ -16,12 +16,32 @@ const confirmDialog = ref(false)
 const confirmAction = ref<'remove' | 'drain'>('remove')
 const actionLoading = ref(false)
 
+// Migration dialog state
+const migrateDialog = ref(false)
+const migratePipeline = ref<PipelinePlacement | null>(null)
+const migrateTargetWorker = ref('')
+const migrateLoading = ref(false)
+
+// Rebalance state
+const rebalanceLoading = ref(false)
+
+// Snackbar state
+const snackbar = ref(false)
+const snackbarText = ref('')
+const snackbarColor = ref('success')
+
 let pollInterval: ReturnType<typeof setInterval> | null = null
 
 const workers = computed(() => clusterStore.workers)
 const loading = computed(() => clusterStore.loading)
 const error = computed(() => clusterStore.error)
 const workerDetail = computed(() => clusterStore.selectedWorker)
+const migrations = computed(() => clusterStore.migrations)
+
+// Available target workers for migration (healthy, not the current worker)
+const migrateTargetWorkers = computed(() =>
+  clusterStore.healthyWorkers.filter((w) => w.id !== selectedWorker.value?.id)
+)
 
 // Filter workers
 const workerFilter = ref<'all' | 'healthy' | 'unhealthy' | 'draining'>('all')
@@ -37,6 +57,13 @@ const filteredWorkers = computed(() => {
       return workers.value
   }
 })
+
+// Format duration
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
+  return `${(ms / 60000).toFixed(1)}m`
+}
 
 // Handle worker selection
 async function handleWorkerSelect(worker: Worker): Promise<void> {
@@ -81,10 +108,62 @@ async function executeAction(): Promise<void> {
   }
 }
 
+// Rebalance
+async function handleRebalance(): Promise<void> {
+  rebalanceLoading.value = true
+  try {
+    const result = await clusterStore.rebalance()
+    snackbarText.value = `Rebalance triggered \u2014 ${result.migrations_started} migration${result.migrations_started !== 1 ? 's' : ''} started`
+    snackbarColor.value = 'success'
+    snackbar.value = true
+    if (result.migrations_started > 0) {
+      activeTab.value = 'migrations'
+    }
+  } catch {
+    snackbarText.value = 'Failed to trigger rebalance'
+    snackbarColor.value = 'error'
+    snackbar.value = true
+  } finally {
+    rebalanceLoading.value = false
+  }
+}
+
+// Migrate pipeline
+function openMigrateDialog(pipeline: PipelinePlacement): void {
+  migratePipeline.value = pipeline
+  migrateTargetWorker.value = ''
+  migrateDialog.value = true
+}
+
+async function executeMigrate(): Promise<void> {
+  if (!migratePipeline.value || !migrateTargetWorker.value) return
+
+  migrateLoading.value = true
+  try {
+    await clusterStore.migratePipeline(
+      migratePipeline.value.group_id,
+      migratePipeline.value.pipeline_name,
+      migrateTargetWorker.value,
+    )
+    migrateDialog.value = false
+    snackbarText.value = `Migration started for ${migratePipeline.value.pipeline_name}`
+    snackbarColor.value = 'success'
+    snackbar.value = true
+    activeTab.value = 'migrations'
+  } catch {
+    snackbarText.value = 'Failed to migrate pipeline'
+    snackbarColor.value = 'error'
+    snackbar.value = true
+  } finally {
+    migrateLoading.value = false
+  }
+}
+
 async function fetchData(): Promise<void> {
   await Promise.all([
     clusterStore.fetchWorkers(),
     clusterStore.fetchTopology(),
+    clusterStore.fetchMigrations(),
   ])
 }
 
@@ -105,6 +184,15 @@ onUnmounted(() => {
     <div class="d-flex align-center mb-4">
       <h1 class="text-h4">Cluster Management</h1>
       <v-spacer />
+      <v-btn
+        class="mr-2"
+        variant="outlined"
+        prepend-icon="mdi-scale-balance"
+        :loading="rebalanceLoading"
+        @click="handleRebalance"
+      >
+        Rebalance
+      </v-btn>
       <HealthIndicator />
     </div>
 
@@ -134,6 +222,17 @@ onUnmounted(() => {
       <v-tab value="topology">
         <v-icon start>mdi-graph</v-icon>
         Topology
+      </v-tab>
+      <v-tab value="migrations">
+        <v-icon start>mdi-swap-horizontal</v-icon>
+        Migrations
+        <v-badge
+          v-if="clusterStore.activeMigrations.length > 0"
+          :content="clusterStore.activeMigrations.length"
+          color="warning"
+          inline
+          class="ml-2"
+        />
       </v-tab>
     </v-tabs>
 
@@ -189,6 +288,42 @@ onUnmounted(() => {
               @select-worker="handleWorkerSelect"
             />
           </v-card-text>
+        </v-card>
+      </v-window-item>
+
+      <!-- Migrations Tab -->
+      <v-window-item value="migrations">
+        <v-card>
+          <v-card-text v-if="migrations.length === 0" class="text-center text-medium-emphasis py-8">
+            <v-icon size="48" class="mb-2">mdi-swap-horizontal</v-icon>
+            <div>No active migrations</div>
+          </v-card-text>
+          <v-table v-else density="compact">
+            <thead>
+              <tr>
+                <th>Pipeline</th>
+                <th>Group</th>
+                <th>Source Worker</th>
+                <th>Target Worker</th>
+                <th>Status</th>
+                <th>Reason</th>
+                <th class="text-right">Duration</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="m in migrations" :key="m.id">
+                <td><code>{{ m.pipeline_name }}</code></td>
+                <td>
+                  <v-chip size="x-small" variant="tonal">{{ m.group_id }}</v-chip>
+                </td>
+                <td class="font-monospace text-caption">{{ m.source_worker }}</td>
+                <td class="font-monospace text-caption">{{ m.target_worker }}</td>
+                <td><StatusChip :status="m.status" size="x-small" /></td>
+                <td><StatusChip :status="m.reason" size="x-small" /></td>
+                <td class="text-right">{{ formatDuration(m.elapsed_ms) }}</td>
+              </tr>
+            </tbody>
+          </v-table>
         </v-card>
       </v-window-item>
     </v-window>
@@ -269,6 +404,15 @@ onUnmounted(() => {
                   Group: {{ pipeline.group_id }}
                 </v-list-item-subtitle>
                 <template #append>
+                  <v-btn
+                    size="x-small"
+                    variant="text"
+                    icon="mdi-swap-horizontal"
+                    color="primary"
+                    title="Migrate Pipeline"
+                    class="mr-1"
+                    @click.stop="openMigrateDialog(pipeline)"
+                  />
                   <StatusChip :status="pipeline.status" size="x-small" />
                 </template>
               </v-list-item>
@@ -320,6 +464,54 @@ onUnmounted(() => {
       :loading="actionLoading"
       @confirm="executeAction"
     />
+
+    <!-- Migrate Pipeline Dialog -->
+    <v-dialog v-model="migrateDialog" max-width="480">
+      <v-card>
+        <v-card-title>Migrate Pipeline</v-card-title>
+        <v-card-text>
+          <p class="mb-4">
+            Migrate <strong>{{ migratePipeline?.pipeline_name }}</strong> to another worker.
+            State will be checkpointed and restored on the target.
+          </p>
+          <v-select
+            v-model="migrateTargetWorker"
+            :items="migrateTargetWorkers"
+            item-title="address"
+            item-value="id"
+            label="Target Worker"
+            variant="outlined"
+            :disabled="migrateLoading"
+          >
+            <template #item="{ item, props: itemProps }">
+              <v-list-item v-bind="itemProps">
+                <v-list-item-subtitle>
+                  {{ item.raw.pipelines_running }} / {{ item.raw.max_pipelines }} pipelines
+                </v-list-item-subtitle>
+              </v-list-item>
+            </template>
+          </v-select>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="migrateDialog = false">Cancel</v-btn>
+          <v-btn
+            color="primary"
+            variant="flat"
+            :loading="migrateLoading"
+            :disabled="!migrateTargetWorker"
+            @click="executeMigrate"
+          >
+            Migrate
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Snackbar -->
+    <v-snackbar v-model="snackbar" :color="snackbarColor" :timeout="4000">
+      {{ snackbarText }}
+    </v-snackbar>
   </div>
 </template>
 
