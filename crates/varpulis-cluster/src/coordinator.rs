@@ -393,9 +393,8 @@ impl Coordinator {
             .get(group_id)
             .ok_or_else(|| ClusterError::GroupNotFound(group_id.to_string()))?;
 
-        let timed_events = EventFileParser::parse(&request.events_text).map_err(|e| {
-            ClusterError::RoutingFailed(format!("Failed to parse events: {}", e))
-        })?;
+        let timed_events = EventFileParser::parse(&request.events_text)
+            .map_err(|e| ClusterError::RoutingFailed(format!("Failed to parse events: {}", e)))?;
 
         // Group events by target pipeline
         let mut pipeline_batches: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
