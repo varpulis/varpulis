@@ -1924,7 +1924,7 @@ async fn run_coordinator(port: u16, bind: &str, api_key: Option<String>) -> Resu
 
     let coordinator = varpulis_cluster::shared_coordinator();
 
-    // Spawn periodic health sweep
+    // Spawn periodic health sweep with automatic failover and rebalancing
     let health_coordinator = coordinator.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(varpulis_cluster::HEARTBEAT_INTERVAL);
@@ -1932,10 +1932,22 @@ async fn run_coordinator(port: u16, bind: &str, api_key: Option<String>) -> Resu
             interval.tick().await;
             let mut coord = health_coordinator.write().await;
             let result = coord.health_sweep();
+
+            // Trigger automatic failover for newly unhealthy workers
             if !result.workers_marked_unhealthy.is_empty() {
-                for wid in &result.workers_marked_unhealthy {
-                    tracing::warn!("Worker {} marked unhealthy", wid);
+                let failed_workers: Vec<varpulis_cluster::WorkerId> =
+                    result.workers_marked_unhealthy.clone();
+                for wid in &failed_workers {
+                    tracing::warn!("Worker {} marked unhealthy — triggering failover", wid);
                 }
+                for wid in failed_workers {
+                    coord.handle_worker_failure(&wid).await;
+                }
+            }
+
+            // Trigger rebalance if a new worker was recently registered
+            if coord.pending_rebalance {
+                let _ = coord.rebalance().await;
             }
         }
     });
