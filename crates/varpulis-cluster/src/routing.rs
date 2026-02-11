@@ -166,11 +166,15 @@ mod tests {
                     name: "row0".into(),
                     source: "".into(),
                     worker_affinity: None,
+                    replicas: 1,
+                    partition_key: None,
                 },
                 PipelinePlacement {
                     name: "row1".into(),
                     source: "".into(),
                     worker_affinity: None,
+                    replicas: 1,
+                    partition_key: None,
                 },
             ],
             routes: vec![
@@ -243,6 +247,8 @@ mod tests {
                 name: "default".into(),
                 source: "".into(),
                 worker_affinity: None,
+                replicas: 1,
+                partition_key: None,
             }],
             routes: vec![],
         };
@@ -277,11 +283,15 @@ mod tests {
                     name: "specific".into(),
                     source: "".into(),
                     worker_affinity: None,
+                    replicas: 1,
+                    partition_key: None,
                 },
                 PipelinePlacement {
                     name: "catchall".into(),
                     source: "".into(),
                     worker_affinity: None,
+                    replicas: 1,
+                    partition_key: None,
                 },
             ],
             routes: vec![
@@ -323,6 +333,8 @@ mod tests {
                 name: "sensors".into(),
                 source: "".into(),
                 worker_affinity: None,
+                replicas: 1,
+                partition_key: None,
             }],
             routes: vec![InterPipelineRoute {
                 from_pipeline: "_external".into(),

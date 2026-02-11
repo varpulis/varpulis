@@ -512,6 +512,36 @@ impl Tenant {
         Ok(output_events)
     }
 
+    /// Create a checkpoint of a pipeline's engine state.
+    pub async fn checkpoint_pipeline(
+        &self,
+        pipeline_id: &str,
+    ) -> Result<crate::persistence::EngineCheckpoint, TenantError> {
+        let pipeline = self
+            .pipelines
+            .get(pipeline_id)
+            .ok_or_else(|| TenantError::PipelineNotFound(pipeline_id.to_string()))?;
+
+        let engine = pipeline.engine.lock().await;
+        Ok(engine.create_checkpoint())
+    }
+
+    /// Restore a pipeline's engine state from a checkpoint.
+    pub async fn restore_pipeline(
+        &mut self,
+        pipeline_id: &str,
+        checkpoint: &crate::persistence::EngineCheckpoint,
+    ) -> Result<(), TenantError> {
+        let pipeline = self
+            .pipelines
+            .get_mut(pipeline_id)
+            .ok_or_else(|| TenantError::PipelineNotFound(pipeline_id.to_string()))?;
+
+        let mut engine = pipeline.engine.lock().await;
+        engine.restore_checkpoint(checkpoint);
+        Ok(())
+    }
+
     /// Reload a pipeline with new VPL source
     pub async fn reload_pipeline(
         &mut self,

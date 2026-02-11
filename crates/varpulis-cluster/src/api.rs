@@ -2,6 +2,7 @@
 
 use crate::connector_config::{self, ClusterConnector};
 use crate::coordinator::{Coordinator, InjectBatchRequest, InjectEventRequest};
+use crate::migration::MigrationReason;
 use crate::pipeline_group::{PipelineGroupInfo, PipelineGroupSpec};
 use crate::routing::{GroupTopology, PipelineTopologyEntry, RouteTopologyEntry, TopologyInfo};
 use crate::worker::{
@@ -154,6 +155,56 @@ pub fn cluster_routes(
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_validate);
 
+    // --- Migration / Drain / Rebalance endpoints ---
+
+    let drain_worker = api
+        .and(warp::path("workers"))
+        .and(warp::path::param::<String>())
+        .and(warp::path("drain"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(with_optional_auth(admin_key.clone()))
+        .and(warp::body::json())
+        .and(with_coordinator(coordinator.clone()))
+        .and_then(handle_drain_worker);
+
+    let rebalance = api
+        .and(warp::path("rebalance"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(with_optional_auth(admin_key.clone()))
+        .and(with_coordinator(coordinator.clone()))
+        .and_then(handle_rebalance);
+
+    let list_migrations = api
+        .and(warp::path("migrations"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(with_optional_auth(admin_key.clone()))
+        .and(with_coordinator(coordinator.clone()))
+        .and_then(handle_list_migrations);
+
+    let get_migration = api
+        .and(warp::path("migrations"))
+        .and(warp::path::param::<String>())
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(with_optional_auth(admin_key.clone()))
+        .and(with_coordinator(coordinator.clone()))
+        .and_then(handle_get_migration);
+
+    let manual_migrate = api
+        .and(warp::path("pipelines"))
+        .and(warp::path::param::<String>())
+        .and(warp::path::param::<String>())
+        .and(warp::path("migrate"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(with_optional_auth(admin_key.clone()))
+        .and(warp::body::json())
+        .and(with_coordinator(coordinator.clone()))
+        .and_then(handle_manual_migrate);
+
     // --- Connector CRUD endpoints ---
 
     let list_connectors = api
@@ -216,24 +267,42 @@ pub fn cluster_routes(
         .allow_methods(vec!["GET", "POST", "PUT", "DELETE", "OPTIONS"])
         .allow_headers(vec!["content-type", "x-api-key", "authorization"]);
 
-    register_worker
+    // Group routes to avoid warp recursive type overflow
+    let worker_routes = register_worker
         .or(heartbeat)
         .or(list_workers)
         .or(get_worker)
         .or(delete_worker)
-        .or(deploy_group)
+        .or(drain_worker)
+        .boxed();
+
+    let pipeline_routes = deploy_group
         .or(list_groups)
         .or(get_group)
         .or(delete_group)
         .or(inject_event)
         .or(inject_batch)
-        .or(topology)
-        .or(validate)
-        .or(list_connectors)
+        .boxed();
+
+    let migration_routes = rebalance
+        .or(list_migrations)
+        .or(get_migration)
+        .or(manual_migrate)
+        .boxed();
+
+    let connector_routes = list_connectors
         .or(get_connector)
         .or(create_connector)
         .or(update_connector)
         .or(delete_connector)
+        .boxed();
+
+    worker_routes
+        .or(pipeline_routes)
+        .or(topology)
+        .or(validate)
+        .or(migration_routes)
+        .or(connector_routes)
         .or(metrics)
         .with(cors)
 }
@@ -483,6 +552,51 @@ struct ValidateResponse {
     diagnostics: Vec<ValidateDiagnostic>,
 }
 
+// =============================================================================
+// Migration / Drain / Rebalance types
+// =============================================================================
+
+/// Request body for the drain endpoint.
+#[derive(Debug, Deserialize)]
+struct DrainRequest {
+    #[allow(dead_code)]
+    pub timeout_secs: Option<u64>,
+}
+
+/// Response from the drain endpoint.
+#[derive(Debug, Serialize)]
+struct DrainResponse {
+    pub worker_id: String,
+    pub pipelines_migrated: usize,
+    pub status: String,
+}
+
+/// Info about a single migration (for API responses).
+#[derive(Debug, Serialize)]
+struct MigrationInfo {
+    pub id: String,
+    pub pipeline_name: String,
+    pub group_id: String,
+    pub source_worker: String,
+    pub target_worker: String,
+    pub status: String,
+    pub reason: String,
+    pub elapsed_ms: u128,
+}
+
+/// Request body for manual migration.
+#[derive(Debug, Deserialize)]
+struct ManualMigrateRequest {
+    pub target_worker_id: String,
+}
+
+/// Response from the rebalance endpoint.
+#[derive(Debug, Serialize)]
+struct RebalanceResponse {
+    pub migrations_started: usize,
+    pub migration_ids: Vec<String>,
+}
+
 async fn handle_validate(
     _auth: (),
     body: ValidateRequest,
@@ -689,6 +803,130 @@ async fn handle_topology(
 }
 
 // =============================================================================
+// Migration / Drain / Rebalance handlers
+// =============================================================================
+
+async fn handle_drain_worker(
+    worker_id: String,
+    _auth: (),
+    _body: DrainRequest,
+    coordinator: SharedCoordinator,
+) -> Result<impl Reply, Infallible> {
+    let mut coord = coordinator.write().await;
+    match coord.drain_worker(&WorkerId(worker_id.clone())).await {
+        Ok(migration_ids) => {
+            let resp = DrainResponse {
+                worker_id,
+                pipelines_migrated: migration_ids.len(),
+                status: "drained".into(),
+            };
+            Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+        }
+        Err(e) => Ok(cluster_error_response(e)),
+    }
+}
+
+async fn handle_rebalance(
+    _auth: (),
+    coordinator: SharedCoordinator,
+) -> Result<impl Reply, Infallible> {
+    let mut coord = coordinator.write().await;
+    match coord.rebalance().await {
+        Ok(migration_ids) => {
+            let resp = RebalanceResponse {
+                migrations_started: migration_ids.len(),
+                migration_ids,
+            };
+            Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+        }
+        Err(e) => Ok(cluster_error_response(e)),
+    }
+}
+
+async fn handle_list_migrations(
+    _auth: (),
+    coordinator: SharedCoordinator,
+) -> Result<impl Reply, Infallible> {
+    let coord = coordinator.read().await;
+    let migrations: Vec<MigrationInfo> = coord
+        .active_migrations
+        .values()
+        .map(|m| MigrationInfo {
+            id: m.id.clone(),
+            pipeline_name: m.pipeline_name.clone(),
+            group_id: m.group_id.clone(),
+            source_worker: m.source_worker.0.clone(),
+            target_worker: m.target_worker.0.clone(),
+            status: m.status.to_string(),
+            reason: m.reason.to_string(),
+            elapsed_ms: m.started_at.elapsed().as_millis(),
+        })
+        .collect();
+    let resp = serde_json::json!({
+        "migrations": migrations,
+        "total": migrations.len(),
+    });
+    Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+}
+
+async fn handle_get_migration(
+    migration_id: String,
+    _auth: (),
+    coordinator: SharedCoordinator,
+) -> Result<impl Reply, Infallible> {
+    let coord = coordinator.read().await;
+    match coord.active_migrations.get(&migration_id) {
+        Some(m) => {
+            let info = MigrationInfo {
+                id: m.id.clone(),
+                pipeline_name: m.pipeline_name.clone(),
+                group_id: m.group_id.clone(),
+                source_worker: m.source_worker.0.clone(),
+                target_worker: m.target_worker.0.clone(),
+                status: m.status.to_string(),
+                reason: m.reason.to_string(),
+                elapsed_ms: m.started_at.elapsed().as_millis(),
+            };
+            Ok(warp::reply::with_status(warp::reply::json(&info), StatusCode::OK).into_response())
+        }
+        None => Ok(error_response(StatusCode::NOT_FOUND, "Migration not found")),
+    }
+}
+
+async fn handle_manual_migrate(
+    group_id: String,
+    pipeline_name: String,
+    _auth: (),
+    body: ManualMigrateRequest,
+    coordinator: SharedCoordinator,
+) -> Result<impl Reply, Infallible> {
+    let mut coord = coordinator.write().await;
+    match coord
+        .migrate_pipeline(
+            &pipeline_name,
+            &group_id,
+            &WorkerId(body.target_worker_id),
+            MigrationReason::Manual,
+        )
+        .await
+    {
+        Ok(migration_id) => {
+            let resp = serde_json::json!({
+                "migration_id": migration_id,
+                "pipeline": pipeline_name,
+                "group_id": group_id,
+                "status": "started",
+            });
+            Ok(
+                warp::reply::with_status(warp::reply::json(&resp), StatusCode::ACCEPTED)
+                    .into_response(),
+            )
+        }
+        Err(e) => Ok(cluster_error_response(e)),
+    }
+}
+
+// =============================================================================
 // Connector handlers
 // =============================================================================
 
@@ -808,6 +1046,8 @@ fn cluster_error_response(err: ClusterError) -> warp::reply::Response {
         ClusterError::RoutingFailed(_) => (StatusCode::BAD_GATEWAY, "routing_failed"),
         ClusterError::ConnectorNotFound(_) => (StatusCode::NOT_FOUND, "connector_not_found"),
         ClusterError::ConnectorValidation(_) => (StatusCode::BAD_REQUEST, "connector_validation"),
+        ClusterError::MigrationFailed(_) => (StatusCode::INTERNAL_SERVER_ERROR, "migration_failed"),
+        ClusterError::WorkerDraining(_) => (StatusCode::CONFLICT, "worker_draining"),
     };
     let body = ApiError {
         error: err.to_string(),
@@ -1267,6 +1507,8 @@ mod tests {
                     name: "p1".into(),
                     source: "stream A = X".into(),
                     worker_affinity: None,
+                    replicas: 1,
+                    partition_key: None,
                 }],
                 routes: vec![InterPipelineRoute {
                     from_pipeline: "_external".into(),
@@ -1320,6 +1562,8 @@ mod tests {
                     name: "p1".into(),
                     source: "stream A = X".into(),
                     worker_affinity: None,
+                    replicas: 1,
+                    partition_key: None,
                 }],
                 routes: vec![],
             };
