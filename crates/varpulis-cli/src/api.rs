@@ -75,6 +75,25 @@ pub struct ReloadPipelineRequest {
     pub source: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CheckpointResponse {
+    pub pipeline_id: String,
+    pub checkpoint: varpulis_runtime::persistence::EngineCheckpoint,
+    pub events_processed: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct RestoreRequest {
+    pub checkpoint: varpulis_runtime::persistence::EngineCheckpoint,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RestoreResponse {
+    pub pipeline_id: String,
+    pub restored: bool,
+    pub events_restored: u64,
+}
+
 #[derive(Debug, Serialize)]
 pub struct ApiError {
     pub error: String,
@@ -209,6 +228,27 @@ pub fn api_routes(
         .and(with_manager(manager.clone()))
         .and_then(handle_inject_batch);
 
+    let checkpoint = api
+        .and(warp::path("pipelines"))
+        .and(warp::path::param::<String>())
+        .and(warp::path("checkpoint"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(with_api_key())
+        .and(with_manager(manager.clone()))
+        .and_then(handle_checkpoint);
+
+    let restore = api
+        .and(warp::path("pipelines"))
+        .and(warp::path::param::<String>())
+        .and(warp::path("restore"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(with_api_key())
+        .and(warp::body::json())
+        .and(with_manager(manager.clone()))
+        .and_then(handle_restore);
+
     let metrics = api
         .and(warp::path("pipelines"))
         .and(warp::path::param::<String>())
@@ -250,6 +290,8 @@ pub fn api_routes(
         .or(delete)
         .or(inject)
         .or(inject_batch)
+        .or(checkpoint)
+        .or(restore)
         .or(metrics)
         .or(reload)
         .or(usage)
@@ -586,6 +628,94 @@ async fn handle_inject_batch(
         processing_time_us,
     };
     Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+}
+
+async fn handle_checkpoint(
+    pipeline_id: String,
+    api_key: String,
+    manager: SharedTenantManager,
+) -> Result<impl Reply, Infallible> {
+    let mgr = manager.read().await;
+
+    let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
+        Some(id) => id.clone(),
+        None => {
+            return Ok(error_response(
+                StatusCode::UNAUTHORIZED,
+                "invalid_api_key",
+                "Invalid API key",
+            ))
+        }
+    };
+
+    let tenant = match mgr.get_tenant(&tenant_id) {
+        Some(t) => t,
+        None => {
+            return Ok(error_response(
+                StatusCode::NOT_FOUND,
+                "tenant_not_found",
+                "Tenant not found",
+            ))
+        }
+    };
+
+    match tenant.checkpoint_pipeline(&pipeline_id).await {
+        Ok(checkpoint) => {
+            let resp = CheckpointResponse {
+                pipeline_id,
+                events_processed: checkpoint.events_processed,
+                checkpoint,
+            };
+            Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+        }
+        Err(e) => Ok(tenant_error_response(e)),
+    }
+}
+
+async fn handle_restore(
+    pipeline_id: String,
+    api_key: String,
+    body: RestoreRequest,
+    manager: SharedTenantManager,
+) -> Result<impl Reply, Infallible> {
+    let mut mgr = manager.write().await;
+
+    let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
+        Some(id) => id.clone(),
+        None => {
+            return Ok(error_response(
+                StatusCode::UNAUTHORIZED,
+                "invalid_api_key",
+                "Invalid API key",
+            ))
+        }
+    };
+
+    let tenant = match mgr.get_tenant_mut(&tenant_id) {
+        Some(t) => t,
+        None => {
+            return Ok(error_response(
+                StatusCode::NOT_FOUND,
+                "tenant_not_found",
+                "Tenant not found",
+            ))
+        }
+    };
+
+    match tenant
+        .restore_pipeline(&pipeline_id, &body.checkpoint)
+        .await
+    {
+        Ok(()) => {
+            let resp = RestoreResponse {
+                pipeline_id,
+                restored: true,
+                events_restored: body.checkpoint.events_processed,
+            };
+            Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+        }
+        Err(e) => Ok(tenant_error_response(e)),
+    }
 }
 
 async fn handle_metrics(

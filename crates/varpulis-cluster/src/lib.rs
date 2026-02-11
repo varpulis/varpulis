@@ -29,6 +29,7 @@ pub mod api;
 pub mod connector_config;
 pub mod coordinator;
 pub mod health;
+pub mod migration;
 pub mod pipeline_group;
 pub mod routing;
 pub mod worker;
@@ -38,9 +39,11 @@ pub use api::{cluster_routes, shared_coordinator, SharedCoordinator};
 pub use connector_config::ClusterConnector;
 pub use coordinator::{Coordinator, InjectEventRequest, InjectResponse};
 pub use health::{HEARTBEAT_INTERVAL, HEARTBEAT_TIMEOUT};
+pub use migration::{MigrationReason, MigrationStatus, MigrationTask};
 pub use pipeline_group::{
-    DeployedPipelineGroup, GroupStatus, InterPipelineRoute, PipelineDeployment,
+    DeployedPipelineGroup, GroupStatus, InterPipelineRoute, PartitionStrategy, PipelineDeployment,
     PipelineDeploymentStatus, PipelineGroupInfo, PipelineGroupSpec, PipelinePlacement,
+    ReplicaGroup,
 };
 pub use routing::{event_type_matches, find_target_pipeline, RoutingTable};
 pub use worker::{
@@ -71,6 +74,12 @@ pub enum ClusterError {
 
     #[error("Connector validation failed: {0}")]
     ConnectorValidation(String),
+
+    #[error("Migration failed: {0}")]
+    MigrationFailed(String),
+
+    #[error("Worker is draining: {0}")]
+    WorkerDraining(String),
 }
 
 /// Trait for pipeline placement strategies.
@@ -252,6 +261,8 @@ mod tests {
             name: "p1".into(),
             source: "".into(),
             worker_affinity: None,
+            replicas: 1,
+            partition_key: None,
         };
 
         let first = placement.place(&pipeline, &workers).unwrap();
@@ -283,6 +294,8 @@ mod tests {
             name: "p1".into(),
             source: "".into(),
             worker_affinity: None,
+            replicas: 1,
+            partition_key: None,
         };
 
         let selected = placement.place(&pipeline, &workers).unwrap();
@@ -297,6 +310,8 @@ mod tests {
             name: "p1".into(),
             source: "".into(),
             worker_affinity: None,
+            replicas: 1,
+            partition_key: None,
         };
         assert!(placement.place(&pipeline, &workers).is_none());
     }
@@ -314,6 +329,8 @@ mod tests {
             name: "p1".into(),
             source: "".into(),
             worker_affinity: None,
+            replicas: 1,
+            partition_key: None,
         };
 
         // All placements should go to the single worker
@@ -348,6 +365,8 @@ mod tests {
             name: "p1".into(),
             source: "".into(),
             worker_affinity: None,
+            replicas: 1,
+            partition_key: None,
         };
 
         let mut results = Vec::new();
@@ -373,6 +392,8 @@ mod tests {
             name: "p1".into(),
             source: "".into(),
             worker_affinity: None,
+            replicas: 1,
+            partition_key: None,
         };
         assert!(placement.place(&pipeline, &workers).is_none());
     }
@@ -397,6 +418,8 @@ mod tests {
             name: "p1".into(),
             source: "".into(),
             worker_affinity: None,
+            replicas: 1,
+            partition_key: None,
         };
 
         // Should pick one of them (min_by_key picks first in case of tie)
@@ -424,6 +447,8 @@ mod tests {
             name: "p1".into(),
             source: "".into(),
             worker_affinity: None,
+            replicas: 1,
+            partition_key: None,
         };
 
         assert_eq!(
@@ -466,6 +491,8 @@ mod tests {
             name: "p1".into(),
             source: "".into(),
             worker_affinity: None,
+            replicas: 1,
+            partition_key: None,
         };
         assert_eq!(
             placement.place(&pipeline, &workers),

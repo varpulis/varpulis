@@ -21,6 +21,16 @@ pub struct PipelinePlacement {
     pub source: String,
     #[serde(default)]
     pub worker_affinity: Option<String>,
+    /// Number of replicas to deploy (default 1).
+    #[serde(default = "default_replicas")]
+    pub replicas: usize,
+    /// Field name for hash-based event partitioning across replicas.
+    #[serde(default)]
+    pub partition_key: Option<String>,
+}
+
+fn default_replicas() -> usize {
+    1
 }
 
 /// Route specification for inter-pipeline event routing.
@@ -82,6 +92,8 @@ pub struct DeployedPipelineGroup {
     pub name: String,
     pub spec: PipelineGroupSpec,
     pub placements: HashMap<String, PipelineDeployment>,
+    /// Maps logical pipeline name → ReplicaGroup (only for replicas > 1).
+    pub replica_groups: HashMap<String, ReplicaGroup>,
     pub created_at: Instant,
     pub status: GroupStatus,
 }
@@ -93,6 +105,7 @@ impl DeployedPipelineGroup {
             name,
             spec,
             placements: HashMap::new(),
+            replica_groups: HashMap::new(),
             created_at: Instant::now(),
             status: GroupStatus::Deploying,
         }
@@ -126,6 +139,61 @@ impl DeployedPipelineGroup {
         } else {
             GroupStatus::Deploying
         };
+    }
+}
+
+/// Strategy for routing events to pipeline replicas.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PartitionStrategy {
+    /// Events are distributed round-robin across replicas.
+    RoundRobin,
+    /// Events are routed based on a hash of the specified field.
+    HashKey(String),
+}
+
+/// Tracks a group of replicas for a single logical pipeline.
+#[derive(Debug, Clone)]
+pub struct ReplicaGroup {
+    pub pipeline_name: String,
+    pub replica_names: Vec<String>,
+    pub strategy: PartitionStrategy,
+    pub counter: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl ReplicaGroup {
+    pub fn new(
+        pipeline_name: String,
+        replica_names: Vec<String>,
+        strategy: PartitionStrategy,
+    ) -> Self {
+        Self {
+            pipeline_name,
+            replica_names,
+            strategy,
+            counter: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        }
+    }
+
+    /// Select a replica name for the given event fields.
+    pub fn select_replica(&self, fields: &serde_json::Map<String, serde_json::Value>) -> &str {
+        if self.replica_names.is_empty() {
+            return &self.pipeline_name;
+        }
+        let idx = match &self.strategy {
+            PartitionStrategy::RoundRobin => {
+                self.counter
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                    % self.replica_names.len()
+            }
+            PartitionStrategy::HashKey(field) => {
+                let value = fields.get(field).map(|v| v.to_string()).unwrap_or_default();
+                // Simple hash: sum of bytes mod N
+                let hash: usize = value.bytes().map(|b| b as usize).sum();
+                hash % self.replica_names.len()
+            }
+        };
+        &self.replica_names[idx]
     }
 }
 
@@ -195,11 +263,15 @@ mod tests {
                     name: "p1".into(),
                     source: "stream A = X".into(),
                     worker_affinity: None,
+                    replicas: 1,
+                    partition_key: None,
                 },
                 PipelinePlacement {
                     name: "p2".into(),
                     source: "stream B = Y".into(),
                     worker_affinity: None,
+                    replicas: 1,
+                    partition_key: None,
                 },
             ],
             routes: vec![],
@@ -269,11 +341,15 @@ mod tests {
                     name: "p1".into(),
                     source: "".into(),
                     worker_affinity: None,
+                    replicas: 1,
+                    partition_key: None,
                 },
                 PipelinePlacement {
                     name: "p2".into(),
                     source: "".into(),
                     worker_affinity: None,
+                    replicas: 1,
+                    partition_key: None,
                 },
             ],
             routes: vec![],
@@ -328,11 +404,15 @@ mod tests {
                     name: "p1".into(),
                     source: "".into(),
                     worker_affinity: None,
+                    replicas: 1,
+                    partition_key: None,
                 },
                 PipelinePlacement {
                     name: "p2".into(),
                     source: "".into(),
                     worker_affinity: None,
+                    replicas: 1,
+                    partition_key: None,
                 },
             ],
             routes: vec![],
@@ -372,6 +452,8 @@ mod tests {
                 name: "p1".into(),
                 source: "".into(),
                 worker_affinity: None,
+                replicas: 1,
+                partition_key: None,
             }],
             routes: vec![],
         };
@@ -428,11 +510,15 @@ mod tests {
                     name: "p1".into(),
                     source: "stream A = X".into(),
                     worker_affinity: None,
+                    replicas: 1,
+                    partition_key: None,
                 },
                 PipelinePlacement {
                     name: "p2".into(),
                     source: "stream B = Y".into(),
                     worker_affinity: None,
+                    replicas: 1,
+                    partition_key: None,
                 },
             ],
             routes: vec![],
@@ -538,6 +624,8 @@ mod tests {
                 name: "only".into(),
                 source: "stream A = X".into(),
                 worker_affinity: None,
+                replicas: 1,
+                partition_key: None,
             }],
             routes: vec![],
         };
