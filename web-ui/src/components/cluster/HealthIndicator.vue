@@ -46,8 +46,8 @@ async function performHealthCheck(): Promise<void> {
 onMounted(() => {
   // Auto health check every 5 seconds
   checkInterval = setInterval(() => {
-    lastCheck.value = new Date() // Update time display
-  }, 1000)
+    performHealthCheck()
+  }, 5000)
 })
 
 onUnmounted(() => {

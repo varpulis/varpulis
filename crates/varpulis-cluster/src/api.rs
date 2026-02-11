@@ -258,9 +258,19 @@ pub fn cluster_routes(
         .and(warp::path("metrics"))
         .and(warp::path::end())
         .and(warp::get())
-        .and(with_optional_auth(admin_key))
+        .and(with_optional_auth(admin_key.clone()))
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_metrics);
+
+    // --- Summary endpoint ---
+
+    let summary = api
+        .and(warp::path("summary"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(with_optional_auth(admin_key))
+        .and(with_coordinator(coordinator.clone()))
+        .and_then(handle_cluster_summary);
 
     let cors = warp::cors()
         .allow_any_origin()
@@ -304,6 +314,7 @@ pub fn cluster_routes(
         .or(migration_routes)
         .or(connector_routes)
         .or(metrics)
+        .or(summary)
         .with(cors)
 }
 
@@ -559,7 +570,6 @@ struct ValidateResponse {
 /// Request body for the drain endpoint.
 #[derive(Debug, Deserialize)]
 struct DrainRequest {
-    #[allow(dead_code)]
     pub timeout_secs: Option<u64>,
 }
 
@@ -809,11 +819,14 @@ async fn handle_topology(
 async fn handle_drain_worker(
     worker_id: String,
     _auth: (),
-    _body: DrainRequest,
+    body: DrainRequest,
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
     let mut coord = coordinator.write().await;
-    match coord.drain_worker(&WorkerId(worker_id.clone())).await {
+    let timeout = body
+        .timeout_secs
+        .map(std::time::Duration::from_secs);
+    match coord.drain_worker(&WorkerId(worker_id.clone()), timeout).await {
         Ok(migration_ids) => {
             let resp = DrainResponse {
                 worker_id,
@@ -1015,6 +1028,57 @@ async fn handle_metrics(
     let coord = coordinator.read().await;
     let metrics = coord.get_cluster_metrics();
     Ok(warp::reply::with_status(warp::reply::json(&metrics), StatusCode::OK).into_response())
+}
+
+async fn handle_cluster_summary(
+    _auth: (),
+    coordinator: SharedCoordinator,
+) -> Result<impl Reply, Infallible> {
+    let coord = coordinator.read().await;
+
+    let total_workers = coord.workers.len();
+    let healthy_workers = coord
+        .workers
+        .values()
+        .filter(|w| w.status == crate::worker::WorkerStatus::Ready)
+        .count();
+    let unhealthy_workers = coord
+        .workers
+        .values()
+        .filter(|w| w.status == crate::worker::WorkerStatus::Unhealthy)
+        .count();
+    let draining_workers = coord
+        .workers
+        .values()
+        .filter(|w| w.status == crate::worker::WorkerStatus::Draining)
+        .count();
+
+    let total_pipeline_groups = coord.pipeline_groups.len();
+    let active_pipeline_groups = coord
+        .pipeline_groups
+        .values()
+        .filter(|g| {
+            g.status == crate::pipeline_group::GroupStatus::Running
+                || g.status == crate::pipeline_group::GroupStatus::PartiallyRunning
+        })
+        .count();
+
+    let metrics = coord.get_cluster_metrics();
+    let total_events_processed: u64 = metrics.pipelines.iter().map(|p| p.events_in).sum();
+    let events_per_second: f64 = 0.0; // instantaneous rate requires two samples; frontend computes delta
+
+    let resp = serde_json::json!({
+        "total_workers": total_workers,
+        "healthy_workers": healthy_workers,
+        "unhealthy_workers": unhealthy_workers,
+        "draining_workers": draining_workers,
+        "total_pipeline_groups": total_pipeline_groups,
+        "active_pipeline_groups": active_pipeline_groups,
+        "total_events_processed": total_events_processed,
+        "events_per_second": events_per_second,
+    });
+
+    Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
 }
 
 // =============================================================================

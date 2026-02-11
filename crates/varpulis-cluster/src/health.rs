@@ -29,9 +29,7 @@ pub fn health_sweep(
     for worker in workers.values_mut() {
         result.workers_checked += 1;
 
-        if worker.last_heartbeat.elapsed() > timeout
-            && (worker.status == WorkerStatus::Ready || worker.status == WorkerStatus::Busy)
-        {
+        if worker.last_heartbeat.elapsed() > timeout && worker.status == WorkerStatus::Ready {
             warn!(
                 "Worker {} marked unhealthy (no heartbeat for {:?})",
                 worker.id,
@@ -115,26 +113,6 @@ mod tests {
     }
 
     #[test]
-    fn test_health_sweep_busy_worker_goes_stale() {
-        let mut workers = HashMap::new();
-        let mut w = WorkerNode::new(
-            WorkerId("w1".into()),
-            "http://localhost:9000".into(),
-            "key".into(),
-        );
-        w.status = WorkerStatus::Busy;
-        w.last_heartbeat = Instant::now() - Duration::from_secs(20);
-        workers.insert(w.id.clone(), w);
-
-        let result = health_sweep(&mut workers, Duration::from_secs(15));
-        assert_eq!(result.workers_marked_unhealthy.len(), 1);
-        assert_eq!(
-            workers[&WorkerId("w1".into())].status,
-            WorkerStatus::Unhealthy
-        );
-    }
-
-    #[test]
     fn test_health_sweep_skips_draining() {
         let mut workers = HashMap::new();
         let mut w = WorkerNode::new(
@@ -194,13 +172,13 @@ mod tests {
         w2.last_heartbeat = Instant::now() - Duration::from_secs(20);
         workers.insert(w2.id.clone(), w2);
 
-        // Stale Busy worker
+        // Stale Ready worker (second)
         let mut w3 = WorkerNode::new(
             WorkerId("w3".into()),
             "http://localhost:9002".into(),
             "key".into(),
         );
-        w3.status = WorkerStatus::Busy;
+        w3.status = WorkerStatus::Ready;
         w3.last_heartbeat = Instant::now() - Duration::from_secs(20);
         workers.insert(w3.id.clone(), w3);
 

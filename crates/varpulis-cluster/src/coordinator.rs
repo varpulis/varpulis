@@ -702,12 +702,18 @@ impl Coordinator {
         self.active_migrations
             .insert(migration_id.clone(), task.clone());
 
-        // Find the pipeline's VPL source from the group spec
+        // Find the pipeline's VPL source from the group spec.
+        // For replicas like "p1#0", extract logical name "p1" for the lookup.
+        let logical_name = pipeline_name
+            .rsplit_once('#')
+            .map(|(base, _)| base)
+            .unwrap_or(pipeline_name);
+
         let vpl_source = group
             .spec
             .pipelines
             .iter()
-            .find(|p| p.name == pipeline_name)
+            .find(|p| p.name == logical_name)
             .map(|p| p.source.clone())
             .ok_or_else(|| {
                 ClusterError::MigrationFailed(format!(
@@ -961,10 +967,16 @@ impl Coordinator {
     }
 
     /// Drain a worker: migrate all its pipelines elsewhere, then deregister it.
+    ///
+    /// If `timeout` is provided, the drain will stop migrating after the
+    /// deadline and force-deregister with only partially migrated pipelines.
     pub async fn drain_worker(
         &mut self,
         worker_id: &WorkerId,
+        timeout: Option<Duration>,
     ) -> Result<Vec<String>, ClusterError> {
+        let deadline = timeout.map(|t| Instant::now() + t);
+
         // Mark as draining
         let worker = self
             .workers
@@ -993,8 +1005,22 @@ impl Coordinator {
             })
             .collect();
 
+        let total = affected.len();
         let mut migration_ids = Vec::new();
         for (group_id, pipeline_name) in affected {
+            // Check timeout
+            if let Some(dl) = deadline {
+                if Instant::now() >= dl {
+                    warn!(
+                        "Drain timeout reached for worker {}: {}/{} pipeline(s) migrated",
+                        worker_id,
+                        migration_ids.len(),
+                        total
+                    );
+                    break;
+                }
+            }
+
             let target = {
                 let available: Vec<&WorkerNode> = self
                     .workers
@@ -1109,12 +1135,16 @@ impl Coordinator {
                     if dep.worker_id != *wid {
                         continue;
                     }
-                    // Skip if affinity-pinned
+                    // Skip if affinity-pinned (strip replica suffix for lookup)
+                    let logical = pname
+                        .rsplit_once('#')
+                        .map(|(base, _)| base)
+                        .unwrap_or(pname);
                     let has_affinity = group
                         .spec
                         .pipelines
                         .iter()
-                        .any(|p| p.name == *pname && p.worker_affinity.is_some());
+                        .any(|p| p.name == logical && p.worker_affinity.is_some());
                     if !has_affinity {
                         movable.push((gid.clone(), pname.clone()));
                     }
@@ -1160,6 +1190,22 @@ impl Coordinator {
         }
 
         Ok(migration_ids)
+    }
+
+    /// Remove completed/failed migrations older than the given duration.
+    pub fn cleanup_completed_migrations(&mut self, max_age: Duration) {
+        let before = self.active_migrations.len();
+        self.active_migrations.retain(|_, task| {
+            let dominated = matches!(
+                task.status,
+                MigrationStatus::Completed | MigrationStatus::Failed(_)
+            );
+            !(dominated && task.started_at.elapsed() > max_age)
+        });
+        let removed = before - self.active_migrations.len();
+        if removed > 0 {
+            info!("Cleaned up {} completed migration(s)", removed);
+        }
     }
 
     // =========================================================================
@@ -1306,6 +1352,7 @@ pub struct InjectBatchResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pipeline_group::{DeployedPipelineGroup, PipelineGroupSpec, PipelinePlacement};
     use crate::worker::WorkerNode;
 
     #[test]
@@ -1537,5 +1584,223 @@ mod tests {
         let coord = Coordinator::default();
         assert!(coord.workers.is_empty());
         assert!(coord.pipeline_groups.is_empty());
+    }
+
+    // =========================================================================
+    // Tests for production readiness fixes
+    // =========================================================================
+
+    #[test]
+    fn test_cleanup_completed_migrations_removes_old() {
+        let mut coord = Coordinator::new();
+
+        // Insert a completed migration with old start time
+        let mut task = MigrationTask {
+            id: "m1".into(),
+            pipeline_name: "p1".into(),
+            group_id: "g1".into(),
+            source_worker: WorkerId("w1".into()),
+            target_worker: WorkerId("w2".into()),
+            status: MigrationStatus::Completed,
+            started_at: Instant::now() - Duration::from_secs(7200), // 2 hours ago
+            checkpoint: None,
+            reason: MigrationReason::Failover,
+        };
+        coord.active_migrations.insert("m1".into(), task.clone());
+
+        // Insert a recent completed migration
+        task.id = "m2".into();
+        task.started_at = Instant::now(); // just now
+        coord.active_migrations.insert("m2".into(), task.clone());
+
+        // Insert a failed migration that is old
+        task.id = "m3".into();
+        task.status = MigrationStatus::Failed("error".into());
+        task.started_at = Instant::now() - Duration::from_secs(7200);
+        coord.active_migrations.insert("m3".into(), task.clone());
+
+        // Insert an in-progress migration that is old (should NOT be cleaned)
+        task.id = "m4".into();
+        task.status = MigrationStatus::Deploying;
+        task.started_at = Instant::now() - Duration::from_secs(7200);
+        coord.active_migrations.insert("m4".into(), task);
+
+        assert_eq!(coord.active_migrations.len(), 4);
+
+        // Cleanup with 1 hour TTL
+        coord.cleanup_completed_migrations(Duration::from_secs(3600));
+
+        // m1 (completed, old) and m3 (failed, old) should be removed
+        // m2 (completed, recent) and m4 (in-progress, old) should remain
+        assert_eq!(coord.active_migrations.len(), 2);
+        assert!(coord.active_migrations.contains_key("m2"));
+        assert!(coord.active_migrations.contains_key("m4"));
+    }
+
+    #[test]
+    fn test_cleanup_completed_migrations_noop_when_empty() {
+        let mut coord = Coordinator::new();
+        coord.cleanup_completed_migrations(Duration::from_secs(3600));
+        assert!(coord.active_migrations.is_empty());
+    }
+
+    #[test]
+    fn test_cleanup_completed_migrations_keeps_recent() {
+        let mut coord = Coordinator::new();
+
+        let task = MigrationTask {
+            id: "m1".into(),
+            pipeline_name: "p1".into(),
+            group_id: "g1".into(),
+            source_worker: WorkerId("w1".into()),
+            target_worker: WorkerId("w2".into()),
+            status: MigrationStatus::Completed,
+            started_at: Instant::now(), // just now
+            checkpoint: None,
+            reason: MigrationReason::Rebalance,
+        };
+        coord.active_migrations.insert("m1".into(), task);
+
+        coord.cleanup_completed_migrations(Duration::from_secs(3600));
+        assert_eq!(coord.active_migrations.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_drain_worker_idempotent() {
+        let mut coord = Coordinator::new();
+        let mut node = WorkerNode::new(
+            WorkerId("w1".into()),
+            "http://localhost:9000".into(),
+            "key".into(),
+        );
+        node.status = WorkerStatus::Draining;
+        coord.workers.insert(node.id.clone(), node);
+
+        // Draining an already-draining worker is idempotent
+        let result = coord.drain_worker(&WorkerId("w1".into()), None).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_drain_worker_not_found() {
+        let mut coord = Coordinator::new();
+        let result = coord
+            .drain_worker(&WorkerId("nonexistent".into()), None)
+            .await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ClusterError::WorkerNotFound(id) => assert_eq!(id, "nonexistent"),
+            other => panic!("Expected WorkerNotFound, got: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_drain_worker_marks_draining() {
+        let mut coord = Coordinator::new();
+        let node = WorkerNode::new(
+            WorkerId("w1".into()),
+            "http://localhost:9000".into(),
+            "key".into(),
+        );
+        coord.register_worker(node);
+        assert_eq!(
+            coord.workers[&WorkerId("w1".into())].status,
+            WorkerStatus::Ready
+        );
+
+        // Drain with no pipelines — worker gets deregistered
+        let result = coord.drain_worker(&WorkerId("w1".into()), None).await;
+        assert!(result.is_ok());
+        // Worker should be removed after drain
+        assert!(!coord.workers.contains_key(&WorkerId("w1".into())));
+    }
+
+    #[test]
+    fn test_register_worker_triggers_pending_rebalance() {
+        let mut coord = Coordinator::new();
+        assert!(!coord.pending_rebalance);
+
+        // No pipeline groups → no pending rebalance
+        let node1 = WorkerNode::new(
+            WorkerId("w1".into()),
+            "http://localhost:9000".into(),
+            "key".into(),
+        );
+        coord.register_worker(node1);
+        assert!(!coord.pending_rebalance);
+
+        // Add a pipeline group to make rebalance relevant
+        let spec = PipelineGroupSpec {
+            name: "test".into(),
+            pipelines: vec![PipelinePlacement {
+                name: "p1".into(),
+                source: "stream A = X".into(),
+                worker_affinity: None,
+                replicas: 1,
+                partition_key: None,
+            }],
+            routes: vec![],
+        };
+        let group = DeployedPipelineGroup::new("g1".into(), "test".into(), spec);
+        coord.pipeline_groups.insert("g1".into(), group);
+
+        // Now registering a new worker should trigger pending rebalance
+        let node2 = WorkerNode::new(
+            WorkerId("w2".into()),
+            "http://localhost:9001".into(),
+            "key".into(),
+        );
+        coord.register_worker(node2);
+        assert!(coord.pending_rebalance);
+    }
+
+    #[tokio::test]
+    async fn test_rebalance_needs_two_workers() {
+        let mut coord = Coordinator::new();
+        let node = WorkerNode::new(
+            WorkerId("w1".into()),
+            "http://localhost:9000".into(),
+            "key".into(),
+        );
+        coord.register_worker(node);
+
+        let result = coord.rebalance().await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_rebalance_no_pipelines() {
+        let mut coord = Coordinator::new();
+        for i in 0..3 {
+            let node = WorkerNode::new(
+                WorkerId(format!("w{}", i)),
+                format!("http://localhost:900{}", i),
+                "key".into(),
+            );
+            coord.register_worker(node);
+        }
+
+        let result = coord.rebalance().await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_handle_worker_failure_no_pipelines() {
+        let mut coord = Coordinator::new();
+        let node = WorkerNode::new(
+            WorkerId("w1".into()),
+            "http://localhost:9000".into(),
+            "key".into(),
+        );
+        coord.register_worker(node);
+
+        // No pipelines assigned → no migrations
+        let results = coord
+            .handle_worker_failure(&WorkerId("w1".into()))
+            .await;
+        assert!(results.is_empty());
     }
 }

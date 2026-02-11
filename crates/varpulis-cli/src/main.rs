@@ -1945,9 +1945,20 @@ async fn run_coordinator(port: u16, bind: &str, api_key: Option<String>) -> Resu
                 }
             }
 
+            // Clean up stale completed migrations (older than 1 hour)
+            coord.cleanup_completed_migrations(std::time::Duration::from_secs(3600));
+
             // Trigger rebalance if a new worker was recently registered
             if coord.pending_rebalance {
-                let _ = coord.rebalance().await;
+                match coord.rebalance().await {
+                    Ok(ids) if !ids.is_empty() => {
+                        tracing::info!("Auto-rebalance: {} migration(s) started", ids.len());
+                    }
+                    Ok(_) => {} // nothing to rebalance
+                    Err(e) => {
+                        tracing::error!("Auto-rebalance failed: {}", e);
+                    }
+                }
             }
         }
     });
