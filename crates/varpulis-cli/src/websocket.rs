@@ -193,8 +193,19 @@ async fn handle_load_file(path: &str, state: &Arc<RwLock<ServerState>>) -> WsMes
     match engine.load(&program) {
         Ok(()) => {
             let streams_count = engine.metrics().streams_count;
+            let stream_infos: Vec<StreamInfo> = engine
+                .stream_names()
+                .into_iter()
+                .map(|name| StreamInfo {
+                    name: name.to_string(),
+                    source: String::new(),
+                    operations: Vec::new(),
+                    events_per_second: 0.0,
+                    status: "active".into(),
+                })
+                .collect();
             state.engine = Some(engine);
-            state.streams = vec![]; // TODO: populate from engine
+            state.streams = stream_infos;
 
             WsMessage::LoadResult {
                 success: true,
@@ -235,8 +246,8 @@ async fn handle_get_metrics(state: &Arc<RwLock<ServerState>>) -> WsMessage {
         output_events_emitted,
         active_streams,
         uptime: state.uptime_secs(),
-        memory_usage: 0, // TODO: implement
-        cpu_usage: 0.0,  // TODO: implement
+        memory_usage: process_rss_bytes(),
+        cpu_usage: 0.0, // CPU usage requires sampling over time; not meaningful in a snapshot
     }
 }
 
@@ -277,6 +288,27 @@ async fn handle_inject_event(
         Err(e) => WsMessage::Error {
             message: format!("Failed to process event: {}", e),
         },
+    }
+}
+
+/// Read process RSS (Resident Set Size) in bytes from /proc/self/statm.
+/// Returns 0 on non-Linux platforms or if the read fails.
+fn process_rss_bytes() -> u64 {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(statm) = std::fs::read_to_string("/proc/self/statm") {
+            // statm format: size resident shared text lib data dt (all in pages)
+            if let Some(rss_pages) = statm.split_whitespace().nth(1) {
+                if let Ok(pages) = rss_pages.parse::<u64>() {
+                    return pages * 4096; // page size is typically 4KB
+                }
+            }
+        }
+        0
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        0
     }
 }
 

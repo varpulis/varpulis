@@ -16,7 +16,7 @@ const metricsStore = useMetricsStore()
 const loading = ref(true)
 const pipelineActivity = ref<PipelineWorkerMetrics[]>([])
 let pollInterval: ReturnType<typeof setInterval> | null = null
-let prevEventsIn = 0
+let prevEventsIn = -1  // -1 signals first poll (no previous data)
 let prevTimestamp = Date.now()
 
 const totalEventsOut = computed(() =>
@@ -82,8 +82,13 @@ async function fetchData(): Promise<void> {
         const totalOut = m.pipelines.reduce((s, p) => s + p.events_out, 0)
         const now = Date.now()
         const dtSecs = (now - prevTimestamp) / 1000
-        const throughput = dtSecs > 0 && prevEventsIn > 0
-          ? (totalIn - prevEventsIn) / dtSecs : 0
+        // Only compute throughput when we have a valid previous sample
+        // (prevEventsIn === -1 on first poll). Clamp to 0 to handle counter
+        // resets after pipeline restarts.
+        let throughput = 0
+        if (prevEventsIn >= 0 && dtSecs > 0) {
+          throughput = Math.max(0, (totalIn - prevEventsIn) / dtSecs)
+        }
         prevEventsIn = totalIn
         prevTimestamp = now
         const workers = clusterStore.workers
@@ -94,11 +99,13 @@ async function fetchData(): Promise<void> {
           errors: 0,
           active_streams: totalPipelines,
           uptime_secs: metricsStore.aggregated.uptime_secs + 5,
-          throughput_eps: Math.max(0, throughput),
+          throughput_eps: throughput,
           avg_latency_ms: 0,
         })
       })
-      .catch(() => { /* metrics endpoint may not exist yet */ }),
+      .catch((err) => {
+        console.warn('Metrics fetch failed:', err.message ?? err)
+      }),
   ])
   loading.value = false
 }
