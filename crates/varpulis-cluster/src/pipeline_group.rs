@@ -3,7 +3,9 @@
 use crate::worker::WorkerId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::atomic::AtomicBool;
 use std::time::Instant;
+use tracing::warn;
 
 /// Specification for a group of related pipelines to be deployed together.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,12 +155,28 @@ pub enum PartitionStrategy {
 }
 
 /// Tracks a group of replicas for a single logical pipeline.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ReplicaGroup {
     pub pipeline_name: String,
     pub replica_names: Vec<String>,
     pub strategy: PartitionStrategy,
     pub counter: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    missing_field_warned: AtomicBool,
+}
+
+impl Clone for ReplicaGroup {
+    fn clone(&self) -> Self {
+        Self {
+            pipeline_name: self.pipeline_name.clone(),
+            replica_names: self.replica_names.clone(),
+            strategy: self.strategy.clone(),
+            counter: self.counter.clone(),
+            missing_field_warned: AtomicBool::new(
+                self.missing_field_warned
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            ),
+        }
+    }
 }
 
 impl ReplicaGroup {
@@ -172,6 +190,7 @@ impl ReplicaGroup {
             replica_names,
             strategy,
             counter: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            missing_field_warned: AtomicBool::new(false),
         }
     }
 
@@ -187,7 +206,22 @@ impl ReplicaGroup {
                     % self.replica_names.len()
             }
             PartitionStrategy::HashKey(field) => {
-                let value = fields.get(field).map(|v| v.to_string()).unwrap_or_default();
+                let value = match fields.get(field) {
+                    Some(v) => v.to_string(),
+                    None => {
+                        if !self
+                            .missing_field_warned
+                            .swap(true, std::sync::atomic::Ordering::Relaxed)
+                        {
+                            warn!(
+                                "Partition field '{}' missing from event for pipeline '{}'; \
+                                 all such events will route to the same replica",
+                                field, self.pipeline_name
+                            );
+                        }
+                        String::new()
+                    }
+                };
                 // Simple hash: sum of bytes mod N
                 let hash: usize = value.bytes().map(|b| b as usize).sum();
                 hash % self.replica_names.len()
@@ -643,5 +677,193 @@ mod tests {
         );
         group.update_status();
         assert_eq!(group.status, GroupStatus::Running);
+    }
+
+    // =========================================================================
+    // ReplicaGroup tests (fixes #5, #6)
+    // =========================================================================
+
+    #[test]
+    fn test_replica_group_round_robin() {
+        let group = ReplicaGroup::new(
+            "p1".into(),
+            vec!["p1#0".into(), "p1#1".into(), "p1#2".into()],
+            PartitionStrategy::RoundRobin,
+        );
+        let fields = serde_json::Map::new();
+
+        // Round-robin cycles through all replicas
+        assert_eq!(group.select_replica(&fields), "p1#0");
+        assert_eq!(group.select_replica(&fields), "p1#1");
+        assert_eq!(group.select_replica(&fields), "p1#2");
+        assert_eq!(group.select_replica(&fields), "p1#0"); // wraps around
+    }
+
+    #[test]
+    fn test_replica_group_hash_key_deterministic() {
+        let group = ReplicaGroup::new(
+            "p1".into(),
+            vec!["p1#0".into(), "p1#1".into()],
+            PartitionStrategy::HashKey("source".into()),
+        );
+
+        let mut fields1 = serde_json::Map::new();
+        fields1.insert("source".into(), serde_json::Value::String("server-A".into()));
+
+        let mut fields2 = serde_json::Map::new();
+        fields2.insert("source".into(), serde_json::Value::String("server-A".into()));
+
+        // Same key should always route to the same replica
+        let r1 = group.select_replica(&fields1);
+        let r2 = group.select_replica(&fields2);
+        assert_eq!(r1, r2);
+    }
+
+    #[test]
+    fn test_replica_group_hash_key_missing_field_routes_consistently() {
+        let group = ReplicaGroup::new(
+            "p1".into(),
+            vec!["p1#0".into(), "p1#1".into()],
+            PartitionStrategy::HashKey("missing_field".into()),
+        );
+        let fields = serde_json::Map::new(); // no "missing_field"
+
+        // Missing field → empty string hash → deterministic replica
+        let r1 = group.select_replica(&fields);
+        let r2 = group.select_replica(&fields);
+        assert_eq!(r1, r2);
+
+        // Verify the warning flag was set
+        assert!(group
+            .missing_field_warned
+            .load(std::sync::atomic::Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_replica_group_hash_key_missing_field_warns_once() {
+        let group = ReplicaGroup::new(
+            "p1".into(),
+            vec!["p1#0".into(), "p1#1".into()],
+            PartitionStrategy::HashKey("nonexistent".into()),
+        );
+        let fields = serde_json::Map::new();
+
+        // First call sets the flag
+        assert!(!group
+            .missing_field_warned
+            .load(std::sync::atomic::Ordering::Relaxed));
+        group.select_replica(&fields);
+        assert!(group
+            .missing_field_warned
+            .load(std::sync::atomic::Ordering::Relaxed));
+
+        // Subsequent calls don't change it (already true)
+        group.select_replica(&fields);
+        assert!(group
+            .missing_field_warned
+            .load(std::sync::atomic::Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_replica_group_empty_replicas_returns_pipeline_name() {
+        let group = ReplicaGroup::new(
+            "p1".into(),
+            vec![],
+            PartitionStrategy::RoundRobin,
+        );
+        let fields = serde_json::Map::new();
+        assert_eq!(group.select_replica(&fields), "p1");
+    }
+
+    #[test]
+    fn test_replica_group_clone() {
+        let group = ReplicaGroup::new(
+            "p1".into(),
+            vec!["p1#0".into(), "p1#1".into()],
+            PartitionStrategy::HashKey("source".into()),
+        );
+
+        // Advance counter and set warned flag
+        group
+            .counter
+            .fetch_add(5, std::sync::atomic::Ordering::Relaxed);
+        group
+            .missing_field_warned
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+
+        let cloned = group.clone();
+        assert_eq!(cloned.pipeline_name, "p1");
+        assert_eq!(cloned.replica_names.len(), 2);
+        assert!(cloned
+            .missing_field_warned
+            .load(std::sync::atomic::Ordering::Relaxed));
+        // Counter is shared via Arc
+        assert_eq!(
+            cloned
+                .counter
+                .load(std::sync::atomic::Ordering::Relaxed),
+            5
+        );
+    }
+
+    #[test]
+    fn test_replica_group_hash_different_keys_may_differ() {
+        let group = ReplicaGroup::new(
+            "p1".into(),
+            vec!["p1#0".into(), "p1#1".into(), "p1#2".into(), "p1#3".into()],
+            PartitionStrategy::HashKey("id".into()),
+        );
+
+        // Generate events with different keys and verify not all go to same replica
+        let mut replicas_seen = std::collections::HashSet::new();
+        for i in 0..100 {
+            let mut fields = serde_json::Map::new();
+            fields.insert("id".into(), serde_json::Value::String(format!("key-{}", i)));
+            replicas_seen.insert(group.select_replica(&fields).to_string());
+        }
+        // With 4 replicas and 100 different keys, we should hit at least 2
+        assert!(replicas_seen.len() >= 2, "Expected multiple replicas hit, got: {:?}", replicas_seen);
+    }
+
+    #[test]
+    fn test_pipeline_placement_replicas_default() {
+        let json = r#"{
+            "name": "p1",
+            "source": "stream A = X"
+        }"#;
+        let spec: PipelinePlacement = serde_json::from_str(json).unwrap();
+        assert_eq!(spec.replicas, 1);
+        assert!(spec.partition_key.is_none());
+    }
+
+    #[test]
+    fn test_pipeline_placement_replicas_explicit() {
+        let json = r#"{
+            "name": "p1",
+            "source": "stream A = X",
+            "replicas": 3,
+            "partition_key": "source_ip"
+        }"#;
+        let spec: PipelinePlacement = serde_json::from_str(json).unwrap();
+        assert_eq!(spec.replicas, 3);
+        assert_eq!(spec.partition_key, Some("source_ip".into()));
+    }
+
+    #[test]
+    fn test_partition_strategy_serde() {
+        for strategy in [
+            PartitionStrategy::RoundRobin,
+            PartitionStrategy::HashKey("source".into()),
+        ] {
+            let json = serde_json::to_string(&strategy).unwrap();
+            let parsed: PartitionStrategy = serde_json::from_str(&json).unwrap();
+            match (&strategy, &parsed) {
+                (PartitionStrategy::RoundRobin, PartitionStrategy::RoundRobin) => {}
+                (PartitionStrategy::HashKey(a), PartitionStrategy::HashKey(b)) => {
+                    assert_eq!(a, b);
+                }
+                _ => panic!("Serde round-trip mismatch"),
+            }
+        }
     }
 }
