@@ -375,6 +375,154 @@ impl Coordinator {
         })
     }
 
+    /// Inject a batch of events (parsed from .evt text) into a pipeline group.
+    ///
+    /// Groups events by target pipeline and sends one batch HTTP request per
+    /// pipeline, reducing O(N) HTTP calls to O(P) where P = distinct pipelines.
+    pub async fn inject_batch(
+        &self,
+        group_id: &str,
+        request: InjectBatchRequest,
+    ) -> Result<InjectBatchResponse, ClusterError> {
+        use crate::routing::find_target_pipeline;
+        use std::time::Instant;
+        use varpulis_runtime::event_file::EventFileParser;
+
+        let group = self
+            .pipeline_groups
+            .get(group_id)
+            .ok_or_else(|| ClusterError::GroupNotFound(group_id.to_string()))?;
+
+        let timed_events = EventFileParser::parse(&request.events_text).map_err(|e| {
+            ClusterError::RoutingFailed(format!("Failed to parse events: {}", e))
+        })?;
+
+        // Group events by target pipeline
+        let mut pipeline_batches: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
+        let mut total_events = 0usize;
+
+        for timed_event in timed_events {
+            let event = timed_event.event;
+            let event_type = event.event_type.to_string();
+
+            let target = find_target_pipeline(group, &event_type)
+                .unwrap_or_else(|| {
+                    group
+                        .spec
+                        .pipelines
+                        .first()
+                        .map(|p| p.name.as_str())
+                        .unwrap_or("default")
+                })
+                .to_string();
+
+            let mut fields = serde_json::Map::new();
+            for (key, value) in &event.data {
+                if let Ok(json_val) = serde_json::to_value(value) {
+                    fields.insert(key.to_string(), json_val);
+                }
+            }
+
+            let evt_json = serde_json::json!({
+                "event_type": event_type,
+                "fields": fields,
+            });
+
+            pipeline_batches.entry(target).or_default().push(evt_json);
+            total_events += 1;
+        }
+
+        let start = Instant::now();
+        let mut events_sent = 0usize;
+        let mut events_failed = 0usize;
+        let mut output_events = Vec::new();
+        let mut errors = Vec::new();
+
+        // Send one batch request per target pipeline
+        for (pipeline_name, batch) in &pipeline_batches {
+            let deployment = match group.placements.get(pipeline_name.as_str()) {
+                Some(d) => d,
+                None => {
+                    events_failed += batch.len();
+                    errors.push(format!("Pipeline '{}' not deployed", pipeline_name));
+                    continue;
+                }
+            };
+
+            let batch_url = format!(
+                "{}/api/v1/pipelines/{}/events-batch",
+                deployment.worker_address, deployment.pipeline_id
+            );
+
+            let batch_body = serde_json::json!({
+                "events": batch,
+            });
+
+            match self
+                .http_client
+                .post(&batch_url)
+                .header("x-api-key", &deployment.worker_api_key)
+                .json(&batch_body)
+                .send()
+                .await
+            {
+                Ok(response) => {
+                    if response.status().is_success() {
+                        if let Ok(resp_json) = response.json::<serde_json::Value>().await {
+                            let accepted = resp_json
+                                .get("accepted")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0) as usize;
+                            events_sent += accepted;
+                            events_failed += batch.len() - accepted;
+
+                            if let Some(outputs) = resp_json.get("output_events") {
+                                if let Some(arr) = outputs.as_array() {
+                                    output_events.extend(arr.iter().cloned());
+                                }
+                            }
+                        } else {
+                            events_failed += batch.len();
+                            errors.push(format!(
+                                "Pipeline '{}': failed to parse response",
+                                pipeline_name
+                            ));
+                        }
+                    } else {
+                        let body = response.text().await.unwrap_or_default();
+                        events_failed += batch.len();
+                        errors.push(format!(
+                            "Pipeline '{}': worker error: {}",
+                            pipeline_name, body
+                        ));
+                    }
+                }
+                Err(e) => {
+                    events_failed += batch.len();
+                    errors.push(format!("Pipeline '{}': {}", pipeline_name, e));
+                }
+            }
+        }
+
+        // Include pre-routing time in the total
+        let processing_time_us = start.elapsed().as_micros() as u64;
+
+        if events_sent == 0 && total_events > 0 && !errors.is_empty() {
+            warn!(
+                "Batch injection: all {} events failed for group '{}'",
+                total_events, group_id
+            );
+        }
+
+        Ok(InjectBatchResponse {
+            events_sent,
+            events_failed,
+            output_events,
+            errors,
+            processing_time_us,
+        })
+    }
+
     /// Run a health sweep and return results.
     pub fn health_sweep(&mut self) -> HealthSweepResult {
         health::health_sweep(&mut self.workers, HEARTBEAT_TIMEOUT)
@@ -494,6 +642,22 @@ pub struct InjectResponse {
     pub routed_to: String,
     pub worker_id: String,
     pub worker_response: serde_json::Value,
+}
+
+/// Request to inject a batch of events in .evt text format.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct InjectBatchRequest {
+    pub events_text: String,
+}
+
+/// Response from batch event injection.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct InjectBatchResponse {
+    pub events_sent: usize,
+    pub events_failed: usize,
+    pub output_events: Vec<serde_json::Value>,
+    pub errors: Vec<String>,
+    pub processing_time_us: u64,
 }
 
 #[cfg(test)]

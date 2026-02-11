@@ -59,6 +59,18 @@ pub struct InjectEventRequest {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+pub struct InjectBatchRequest {
+    pub events: Vec<InjectEventRequest>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct InjectBatchResponse {
+    pub accepted: usize,
+    pub output_events: Vec<serde_json::Value>,
+    pub processing_time_us: u64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ReloadPipelineRequest {
     pub source: String,
 }
@@ -186,6 +198,17 @@ pub fn api_routes(
         .and(with_manager(manager.clone()))
         .and_then(handle_inject);
 
+    let inject_batch = api
+        .and(warp::path("pipelines"))
+        .and(warp::path::param::<String>())
+        .and(warp::path("events-batch"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(with_api_key())
+        .and(warp::body::json())
+        .and(with_manager(manager.clone()))
+        .and_then(handle_inject_batch);
+
     let metrics = api
         .and(warp::path("pipelines"))
         .and(warp::path::param::<String>())
@@ -226,6 +249,7 @@ pub fn api_routes(
         .or(get_pipeline)
         .or(delete)
         .or(inject)
+        .or(inject_batch)
         .or(metrics)
         .or(reload)
         .or(usage)
@@ -490,6 +514,78 @@ async fn handle_inject(
         }
         Err(e) => Ok(tenant_error_response(e)),
     }
+}
+
+async fn handle_inject_batch(
+    pipeline_id: String,
+    api_key: String,
+    body: InjectBatchRequest,
+    manager: SharedTenantManager,
+) -> Result<impl Reply, Infallible> {
+    let mut mgr = manager.write().await;
+
+    let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
+        Some(id) => id.clone(),
+        None => {
+            return Ok(error_response(
+                StatusCode::UNAUTHORIZED,
+                "invalid_api_key",
+                "Invalid API key",
+            ))
+        }
+    };
+
+    let tenant = match mgr.get_tenant_mut(&tenant_id) {
+        Some(t) => t,
+        None => {
+            return Ok(error_response(
+                StatusCode::NOT_FOUND,
+                "tenant_not_found",
+                "Tenant not found",
+            ))
+        }
+    };
+
+    let start = std::time::Instant::now();
+    let mut accepted = 0usize;
+    let mut output_events = Vec::new();
+
+    for req in body.events {
+        let mut event = Event::new(req.event_type.clone());
+        for (key, value) in &req.fields {
+            let v = json_to_runtime_value(value);
+            event = event.with_field(key.as_str(), v);
+        }
+
+        match tenant.process_event(&pipeline_id, event).await {
+            Ok(outputs) => {
+                accepted += 1;
+                for e in &outputs {
+                    let mut flat = serde_json::Map::new();
+                    flat.insert(
+                        "event_type".to_string(),
+                        serde_json::Value::String(e.event_type.to_string()),
+                    );
+                    for (k, v) in &e.data {
+                        flat.insert(k.to_string(), crate::websocket::value_to_json(v));
+                    }
+                    output_events.push(serde_json::Value::Object(flat));
+                }
+            }
+            Err(_) => {
+                // Skip failed events silently in batch mode
+            }
+        }
+    }
+
+    let processing_time_us = start.elapsed().as_micros() as u64;
+
+    let resp = InjectBatchResponse {
+        accepted,
+        output_events,
+        processing_time_us,
+    };
+    Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
 }
 
 async fn handle_metrics(

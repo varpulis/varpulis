@@ -1,0 +1,33 @@
+# CxO Scenario: Insider Trading Surveillance
+# Demonstrates: Hamlet trend_aggregate for multi-symbol monitoring, Kleene+ accumulation
+# Industry: Capital Markets / Regulatory Compliance
+
+# =============================================================================
+# Pattern 1: Trade Before News
+# Trader buys stock, then material news breaks within 48 hours
+# =============================================================================
+
+stream TradeBeforeNews = TradeOrder as trade
+    -> NewsRelease where symbol == trade.symbol as news
+    .within(48h)
+    .emit(
+        alert_type: "trade_before_news",
+        trader_id: trade.trader_id,
+        symbol: trade.symbol,
+        trade_amount: trade.amount,
+        headline: news.headline
+    )
+
+# =============================================================================
+# Pattern 2: Abnormal Position Building
+# Multiple buy orders for same symbol from same trader (Kleene captures all)
+# =============================================================================
+
+stream AbnormalPositionBuilding = TradeOrder as first
+    -> all TradeOrder where trader_id == first.trader_id as orders
+    .within(48h)
+    .emit(
+        alert_type: "abnormal_position_building",
+        trader_id: first.trader_id,
+        symbol: first.symbol
+    )

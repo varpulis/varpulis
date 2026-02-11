@@ -1,0 +1,49 @@
+# CxO Cyber Threat Detection Scenario Events
+
+# =============================================================================
+# BRUTE FORCE + LATERAL: Attacker brute-forces server, then moves laterally
+# Expected: 1 brute_force_lateral alert
+# =============================================================================
+
+BATCH 0
+FailedLogin { target_host: "web-server-01", source_ip: "185.220.100.42", username: "admin" }
+
+BATCH 2000
+FailedLogin { target_host: "web-server-01", source_ip: "185.220.100.42", username: "root" }
+
+BATCH 4000
+FailedLogin { target_host: "web-server-01", source_ip: "185.220.100.42", username: "administrator" }
+
+BATCH 6000
+SuccessfulLogin { target_host: "web-server-01", source_ip: "185.220.100.42", username: "admin" }
+
+BATCH 10000
+NetworkConnection { source_host: "web-server-01", dest_host: "file-server-02", port: 445, protocol: "SMB" }
+
+# =============================================================================
+# DNS EXFILTRATION: Compromised host makes many DNS queries to same domain
+# Expected: 1 dns_exfiltration alert
+# =============================================================================
+
+BATCH 60000
+DnsQuery { source_host: "workstation-15", domain: "x7k9.evil-c2.com", query_type: "TXT" }
+
+BATCH 62000
+DnsQuery { source_host: "workstation-15", domain: "a3m2.evil-c2.com", query_type: "TXT" }
+
+BATCH 64000
+DnsQuery { source_host: "workstation-15", domain: "p9w1.evil-c2.com", query_type: "TXT" }
+
+# =============================================================================
+# PRIVILEGE ESCALATION: User runs sudo, then root process appears
+# Expected: 1 privilege_escalation alert
+# =============================================================================
+
+BATCH 120000
+UserProcess { host: "dev-box-03", username: "jdoe", pid: 1234, command: "bash" }
+
+BATCH 125000
+ElevationEvent { host: "dev-box-03", username: "jdoe", method: "sudo" }
+
+BATCH 128000
+RootProcess { host: "dev-box-03", pid: 1235, command: "/bin/sh -c cat /etc/shadow" }

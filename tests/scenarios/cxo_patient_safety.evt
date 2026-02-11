@@ -1,0 +1,41 @@
+# CxO Patient Safety Monitoring Scenario Events
+
+# =============================================================================
+# DRUG INTERACTION: Patient P-101 gets warfarin + aspirin from different doctors
+# Expected: 1 drug_interaction alert
+# =============================================================================
+
+BATCH 0
+Prescription { patient_id: "P-101", drug_name: "warfarin", drug_class: "anticoagulant", interacts_with: "antiplatelet", dosage_mg: 5.0, max_safe_mg: 10.0, doctor_id: "DR-A" }
+
+BATCH 21600000
+Prescription { patient_id: "P-101", drug_name: "aspirin", drug_class: "antiplatelet", interacts_with: "anticoagulant", dosage_mg: 325.0, max_safe_mg: 1000.0, doctor_id: "DR-B" }
+
+# =============================================================================
+# VITAL DETERIORATION: Patient P-202 — heart rate rising
+# Expected: 1 vital_deterioration alert
+# =============================================================================
+
+BATCH 60000
+VitalSign { patient_id: "P-202", heart_rate: 90.0, spo2: 96.0, bp_systolic: 120 }
+
+BATCH 3660000
+VitalSign { patient_id: "P-202", heart_rate: 135.0, spo2: 88.0, bp_systolic: 145 }
+
+# =============================================================================
+# DOSAGE ANOMALY: Patient P-303 — prescription exceeds safe limit
+# Expected: 1 dosage_anomaly alert
+# =============================================================================
+
+BATCH 7200000
+Prescription { patient_id: "P-303", drug_name: "acetaminophen", drug_class: "analgesic", interacts_with: "none", dosage_mg: 1500.0, max_safe_mg: 1000.0, doctor_id: "DR-C" }
+
+# =============================================================================
+# HEALTHY PATIENT: Normal readings, no alerts expected
+# =============================================================================
+
+BATCH 10800000
+VitalSign { patient_id: "P-404", heart_rate: 72.0, spo2: 98.0, bp_systolic: 118 }
+
+BATCH 14400000
+VitalSign { patient_id: "P-404", heart_rate: 74.0, spo2: 97.0, bp_systolic: 120 }

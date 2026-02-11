@@ -1,7 +1,7 @@
 //! Coordinator REST API routes (warp-based).
 
 use crate::connector_config::{self, ClusterConnector};
-use crate::coordinator::{Coordinator, InjectEventRequest};
+use crate::coordinator::{Coordinator, InjectBatchRequest, InjectEventRequest};
 use crate::pipeline_group::{PipelineGroupInfo, PipelineGroupSpec};
 use crate::routing::{GroupTopology, PipelineTopologyEntry, RouteTopologyEntry, TopologyInfo};
 use crate::worker::{
@@ -126,6 +126,17 @@ pub fn cluster_routes(
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_inject_event);
 
+    let inject_batch = api
+        .and(warp::path("pipeline-groups"))
+        .and(warp::path::param::<String>())
+        .and(warp::path("inject-batch"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(with_optional_auth(admin_key.clone()))
+        .and(warp::body::json())
+        .and(with_coordinator(coordinator.clone()))
+        .and_then(handle_inject_batch);
+
     let topology = api
         .and(warp::path("topology"))
         .and(warp::path::end())
@@ -215,6 +226,7 @@ pub fn cluster_routes(
         .or(get_group)
         .or(delete_group)
         .or(inject_event)
+        .or(inject_batch)
         .or(topology)
         .or(validate)
         .or(list_connectors)
@@ -425,6 +437,21 @@ async fn handle_inject_event(
 ) -> Result<impl Reply, Infallible> {
     let coord = coordinator.read().await;
     match coord.inject_event(&group_id, body).await {
+        Ok(resp) => {
+            Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+        }
+        Err(e) => Ok(cluster_error_response(e)),
+    }
+}
+
+async fn handle_inject_batch(
+    group_id: String,
+    _auth: (),
+    body: InjectBatchRequest,
+    coordinator: SharedCoordinator,
+) -> Result<impl Reply, Infallible> {
+    let coord = coordinator.read().await;
+    match coord.inject_batch(&group_id, body).await {
         Ok(resp) => {
             Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
         }

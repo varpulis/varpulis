@@ -1,0 +1,50 @@
+# CxO Scenario: Cyber Kill Chain Detection
+# Demonstrates: Kleene closure for lateral movement, multi-stage sequence detection
+# Industry: SOC / SIEM / Cybersecurity
+
+# =============================================================================
+# Pattern 1: Brute Force + Lateral Movement
+# Failed logins (Kleene) → Successful login → Network connection to internal host
+# =============================================================================
+
+stream BruteForceLateral = FailedLogin as first_fail
+    -> all FailedLogin where target_host == first_fail.target_host as fails
+    -> SuccessfulLogin where target_host == first_fail.target_host as success
+    -> NetworkConnection where source_host == first_fail.target_host as lateral
+    .within(30m)
+    .emit(
+        alert_type: "brute_force_lateral",
+        target_host: first_fail.target_host,
+        attacker_ip: first_fail.source_ip,
+        lateral_target: lateral.dest_host
+    )
+
+# =============================================================================
+# Pattern 2: DNS Exfiltration
+# Many DNS queries to same unusual domain from same host within 5 minutes
+# =============================================================================
+
+stream DnsExfiltration = DnsQuery as first
+    -> all DnsQuery where source_host == first.source_host as queries
+    .within(5m)
+    .emit(
+        alert_type: "dns_exfiltration",
+        source_host: first.source_host,
+        domain: first.domain
+    )
+
+# =============================================================================
+# Pattern 3: Privilege Escalation
+# Normal user process → sudo/elevation → Root process spawned
+# =============================================================================
+
+stream PrivilegeEscalation = UserProcess as user_proc
+    -> ElevationEvent where host == user_proc.host as elevation
+    -> RootProcess where host == user_proc.host as root_proc
+    .within(10m)
+    .emit(
+        alert_type: "privilege_escalation",
+        host: user_proc.host,
+        user: user_proc.username,
+        root_command: root_proc.command
+    )

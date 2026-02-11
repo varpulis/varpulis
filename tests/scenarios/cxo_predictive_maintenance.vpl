@@ -1,0 +1,35 @@
+# CxO Scenario: Predictive Equipment Failure (IoT/Manufacturing)
+# Demonstrates: Kleene closure for trend detection, multi-sensor correlation
+# Industry: Manufacturing / Smart Buildings
+
+# =============================================================================
+# Pattern 1: Bearing Degradation (Rising vibration trend)
+# Vibration readings progressively increasing on same machine
+# =============================================================================
+
+stream BearingDegradation = VibrationReading as first
+    -> VibrationReading where machine_id == first.machine_id as second
+    .within(2h)
+    .where(second.amplitude > first.amplitude * 1.3)
+    .emit(
+        alert_type: "bearing_degradation",
+        machine_id: first.machine_id,
+        initial_amplitude: first.amplitude,
+        current_amplitude: second.amplitude
+    )
+
+# =============================================================================
+# Pattern 2: Overheating Cascade
+# Temperature jump > 15°C on same zone within 30 minutes
+# =============================================================================
+
+stream OverheatingCascade = TemperatureReading as baseline
+    -> TemperatureReading where zone_id == baseline.zone_id as spike
+    .within(30m)
+    .where(spike.temp_c - baseline.temp_c > 15.0)
+    .emit(
+        alert_type: "overheating",
+        zone_id: baseline.zone_id,
+        baseline_temp: baseline.temp_c,
+        spike_temp: spike.temp_c
+    )

@@ -7,7 +7,7 @@ import type {
   ClusterSummary,
   Alert,
 } from '@/types/cluster'
-import type { PipelineGroup, PipelineGroupSpec, EventPayload, InjectResponse } from '@/types/pipeline'
+import type { PipelineGroup, PipelineGroupSpec, EventPayload, InjectResponse, InjectBatchResponse } from '@/types/pipeline'
 import * as clusterApi from '@/api/cluster'
 
 export const useClusterStore = defineStore('cluster', () => {
@@ -161,6 +161,15 @@ export const useClusterStore = defineStore('cluster', () => {
     }
   }
 
+  async function injectBatch(groupId: string, eventsText: string): Promise<InjectBatchResponse> {
+    try {
+      return await clusterApi.injectBatch(groupId, eventsText)
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Failed to inject batch'
+      throw e
+    }
+  }
+
   async function fetchTopology(): Promise<void> {
     loading.value = true
     error.value = null
@@ -242,6 +251,7 @@ export const useClusterStore = defineStore('cluster', () => {
     deployGroup,
     teardownGroup,
     injectEvent,
+    injectBatch,
     fetchTopology,
     fetchSummary,
     addAlert,

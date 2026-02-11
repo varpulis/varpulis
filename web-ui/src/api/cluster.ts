@@ -10,6 +10,7 @@ import type {
   PipelineGroupSpec,
   EventPayload,
   InjectResponse,
+  InjectBatchResponse,
 } from '@/types/pipeline'
 
 const CLUSTER_BASE = '/cluster'
@@ -104,6 +105,17 @@ export async function injectEvent(groupId: string, event: EventPayload): Promise
   const response = await api.post<InjectResponse>(
     `${CLUSTER_BASE}/pipeline-groups/${groupId}/inject`,
     event
+  )
+  return response.data
+}
+
+/**
+ * Inject a batch of events (in .evt text format) into a pipeline group
+ */
+export async function injectBatch(groupId: string, eventsText: string): Promise<InjectBatchResponse> {
+  const response = await api.post<InjectBatchResponse>(
+    `${CLUSTER_BASE}/pipeline-groups/${groupId}/inject-batch`,
+    { events_text: eventsText }
   )
   return response.data
 }

@@ -1,0 +1,51 @@
+# CxO Scenario: Multi-Stage Credit Card Fraud Detection
+# Demonstrates: Kleene closure, sequence patterns, negation, .within()
+# Industry: Financial Services
+
+# =============================================================================
+# Pattern 1: Account Takeover
+# Login from new device → Password change → Large purchase (within 30 min)
+# =============================================================================
+
+stream AccountTakeover = Login as login
+    -> PasswordChange where user_id == login.user_id as pwd_change
+    -> Purchase where user_id == login.user_id as purchase
+    .within(30m)
+    .not(Logout where user_id == login.user_id)
+    .emit(
+        alert_type: "account_takeover",
+        user_id: login.user_id,
+        device: login.device_id,
+        purchase_amount: purchase.amount
+    )
+
+# =============================================================================
+# Pattern 2: Card Testing (Kleene closure captures ALL test transactions)
+# Small purchases ($1-$5) repeated, then a large purchase
+# =============================================================================
+
+stream CardTesting = SmallPurchase as first
+    -> all SmallPurchase where card_id == first.card_id as tests
+    -> LargePurchase where card_id == first.card_id as large
+    .within(60m)
+    .emit(
+        alert_type: "card_testing",
+        card_id: first.card_id,
+        large_amount: large.amount
+    )
+
+# =============================================================================
+# Pattern 3: Impossible Travel
+# Same user logs in from two distant locations within 1 hour
+# =============================================================================
+
+stream ImpossibleTravel = Login as login1
+    -> Login where user_id == login1.user_id as login2
+    .within(1h)
+    .where(login2.country != login1.country)
+    .emit(
+        alert_type: "impossible_travel",
+        user_id: login1.user_id,
+        location1: login1.country,
+        location2: login2.country
+    )
