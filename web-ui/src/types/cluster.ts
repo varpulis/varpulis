@@ -76,6 +76,21 @@ export interface Alert {
   acknowledged: boolean
 }
 
+// Migration types
+export type MigrationStatus = 'checkpointing' | 'deploying' | 'restoring' | 'switching' | 'cleaning_up' | 'completed' | 'failed'
+export type MigrationReason = 'failover' | 'rebalance' | 'drain' | 'manual'
+
+export interface Migration {
+  id: string
+  pipeline_name: string
+  group_id: string
+  source_worker: string
+  target_worker: string
+  status: string
+  reason: string
+  elapsed_ms: number
+}
+
 // Cluster summary for dashboard
 export interface ClusterSummary {
   total_workers: number

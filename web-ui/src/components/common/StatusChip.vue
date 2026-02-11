@@ -38,6 +38,19 @@ const statusConfig = computed(() => {
 
     // Pipeline deployment statuses
     stopped: { color: 'grey', icon: 'mdi-stop-circle' },
+
+    // Migration statuses
+    checkpointing: { color: 'info', icon: 'mdi-content-save' },
+    restoring: { color: 'info', icon: 'mdi-restore' },
+    switching: { color: 'warning', icon: 'mdi-swap-horizontal' },
+    cleaning_up: { color: 'grey', icon: 'mdi-broom' },
+    completed: { color: 'success', icon: 'mdi-check-circle' },
+
+    // Migration reasons
+    failover: { color: 'error', icon: 'mdi-alert-circle' },
+    rebalance: { color: 'info', icon: 'mdi-scale-balance' },
+    drain: { color: 'warning', icon: 'mdi-progress-clock' },
+    manual: { color: 'primary', icon: 'mdi-account' },
   }
 
   return configs[status] || { color: 'grey', icon: 'mdi-help-circle' }

@@ -76,6 +76,8 @@ export interface PipelineSpec {
   name: string
   source: string
   worker_affinity?: string
+  replicas?: number
+  partition_key?: string
 }
 
 // Route specification (matches Rust InterPipelineRoute)

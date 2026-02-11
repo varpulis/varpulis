@@ -65,9 +65,14 @@ function formatTime(timestamp: string): string {
 }
 
 // Fetch data
+function navigateToMigrations(): void {
+  router.push('/cluster')
+}
+
 async function fetchData(): Promise<void> {
   await Promise.all([
     clusterStore.fetchWorkers(),
+    clusterStore.fetchMigrations(),
     pipelinesStore.fetchGroups(),
     fetchClusterMetrics()
       .then((m) => {
@@ -211,6 +216,24 @@ onUnmounted(() => {
             </div>
             <div class="text-caption text-medium-emphasis mt-2">
               {{ metrics.active_streams }} active streams
+            </div>
+          </v-card-text>
+        </v-card>
+      </v-col>
+
+      <!-- Active Migrations Card -->
+      <v-col cols="12" md="6" lg="3">
+        <v-card class="h-100" @click="navigateToMigrations" style="cursor: pointer">
+          <v-card-text>
+            <div class="d-flex align-center mb-2">
+              <v-icon color="purple" size="32">mdi-swap-horizontal</v-icon>
+              <span class="text-h6 ml-2">Migrations</span>
+            </div>
+            <div class="text-h3 font-weight-bold">
+              {{ clusterStore.activeMigrations.length }}
+            </div>
+            <div class="text-caption text-medium-emphasis mt-2">
+              {{ clusterStore.migrations.length }} total (including completed)
             </div>
           </v-card-text>
         </v-card>
