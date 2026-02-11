@@ -19,7 +19,6 @@ impl std::fmt::Display for WorkerId {
 pub enum WorkerStatus {
     Registering,
     Ready,
-    Busy,
     Unhealthy,
     Draining,
 }
@@ -29,7 +28,6 @@ impl std::fmt::Display for WorkerStatus {
         match self {
             Self::Registering => write!(f, "registering"),
             Self::Ready => write!(f, "ready"),
-            Self::Busy => write!(f, "busy"),
             Self::Unhealthy => write!(f, "unhealthy"),
             Self::Draining => write!(f, "draining"),
         }
@@ -189,7 +187,6 @@ mod tests {
         assert_eq!(WorkerStatus::Unhealthy.to_string(), "unhealthy");
         assert_eq!(WorkerStatus::Draining.to_string(), "draining");
         assert_eq!(WorkerStatus::Registering.to_string(), "registering");
-        assert_eq!(WorkerStatus::Busy.to_string(), "busy");
     }
 
     #[test]
@@ -197,17 +194,6 @@ mod tests {
         let id = WorkerId("my-worker-42".into());
         assert_eq!(id.to_string(), "my-worker-42");
         assert_eq!(format!("Worker: {}", id), "Worker: my-worker-42");
-    }
-
-    #[test]
-    fn test_worker_not_available_when_busy() {
-        let mut node = WorkerNode::new(
-            WorkerId("w1".into()),
-            "http://localhost:9000".into(),
-            "key".into(),
-        );
-        node.status = WorkerStatus::Busy;
-        assert!(!node.is_available());
     }
 
     #[test]
@@ -334,7 +320,6 @@ mod tests {
         for s in [
             WorkerStatus::Registering,
             WorkerStatus::Ready,
-            WorkerStatus::Busy,
             WorkerStatus::Unhealthy,
             WorkerStatus::Draining,
         ] {

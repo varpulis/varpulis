@@ -142,16 +142,6 @@ export async function getClusterSummary(): Promise<ClusterSummary> {
   return response.data
 }
 
-// === Health ===
-
-/**
- * Check coordinator health
- */
-export async function checkHealth(): Promise<{ status: string; version: string }> {
-  const response = await api.get<{ status: string; version: string }>('/health')
-  return response.data
-}
-
 // === Connectors ===
 
 export interface ClusterConnector {
