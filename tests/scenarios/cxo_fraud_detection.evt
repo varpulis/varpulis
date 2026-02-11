@@ -1,0 +1,54 @@
+# CxO Fraud Detection Scenario Events
+# Each scenario is designed to trigger exactly one specific alert type
+
+# =============================================================================
+# ACCOUNT TAKEOVER: user "attacker1" — Login → PasswordChange → Purchase
+# Expected: 1 account_takeover alert
+# =============================================================================
+
+BATCH 0
+Login { user_id: "attacker1", device_id: "new_device_99", country: "US", ip: "1.2.3.4" }
+
+BATCH 5000
+PasswordChange { user_id: "attacker1" }
+
+BATCH 15000
+Purchase { user_id: "attacker1", amount: 4999.0, merchant: "electronics_store" }
+
+# =============================================================================
+# CARD TESTING: card "stolen_card_42" — small purchases then large
+# Expected: 1 card_testing alert
+# =============================================================================
+
+BATCH 60000
+SmallPurchase { card_id: "stolen_card_42", amount: 1.0, merchant: "gas_station_1" }
+
+BATCH 65000
+SmallPurchase { card_id: "stolen_card_42", amount: 2.0, merchant: "gas_station_2" }
+
+BATCH 70000
+SmallPurchase { card_id: "stolen_card_42", amount: 1.50, merchant: "vending_machine" }
+
+BATCH 80000
+LargePurchase { card_id: "stolen_card_42", amount: 2500.0, merchant: "jewelry_store" }
+
+# =============================================================================
+# IMPOSSIBLE TRAVEL: user "traveler1" — US then Nigeria in 45 minutes
+# Expected: 1 impossible_travel alert
+# =============================================================================
+
+BATCH 120000
+Login { user_id: "traveler1", device_id: "phone_1", country: "US", ip: "10.0.0.1" }
+
+BATCH 122700
+Login { user_id: "traveler1", device_id: "laptop_2", country: "NG", ip: "41.58.100.1" }
+
+# =============================================================================
+# LEGITIMATE USER: should NOT trigger any alert
+# =============================================================================
+
+BATCH 200000
+Login { user_id: "legit_user", device_id: "known_device", country: "FR", ip: "80.1.2.3" }
+
+BATCH 210000
+Purchase { user_id: "legit_user", amount: 50.0, merchant: "grocery_store" }
