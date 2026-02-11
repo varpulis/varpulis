@@ -1,0 +1,52 @@
+# CxO Scenario: Patient Safety Monitoring
+# Demonstrates: Cross-prescriber interaction detection, vital sign trends, threshold checks
+# Industry: Healthcare / Hospital Systems
+
+# =============================================================================
+# Pattern 1: Drug Interaction Detection
+# Two prescriptions for same patient with interacting drug classes
+# =============================================================================
+
+stream DrugInteraction = Prescription as rx1
+    -> Prescription where patient_id == rx1.patient_id as rx2
+    .within(24h)
+    .where(rx2.drug_class == rx1.interacts_with)
+    .emit(
+        alert_type: "drug_interaction",
+        patient_id: rx1.patient_id,
+        drug1: rx1.drug_name,
+        drug2: rx2.drug_name,
+        prescriber1: rx1.doctor_id,
+        prescriber2: rx2.doctor_id
+    )
+
+# =============================================================================
+# Pattern 2: Vital Sign Deterioration
+# Two consecutive worsening readings for same patient
+# =============================================================================
+
+stream VitalDeterioration = VitalSign as reading1
+    -> VitalSign where patient_id == reading1.patient_id as reading2
+    .within(4h)
+    .where(reading2.heart_rate > reading1.heart_rate * 1.2)
+    .emit(
+        alert_type: "vital_deterioration",
+        patient_id: reading1.patient_id,
+        heart_rate_initial: reading1.heart_rate,
+        heart_rate_current: reading2.heart_rate
+    )
+
+# =============================================================================
+# Pattern 3: Dosage Anomaly
+# Prescription exceeds maximum safe dose
+# =============================================================================
+
+stream DosageAnomaly = Prescription as rx
+    .where(dosage_mg > max_safe_mg)
+    .emit(
+        alert_type: "dosage_anomaly",
+        patient_id: rx.patient_id,
+        drug_name: rx.drug_name,
+        prescribed_mg: rx.dosage_mg,
+        max_safe_mg: rx.max_safe_mg
+    )

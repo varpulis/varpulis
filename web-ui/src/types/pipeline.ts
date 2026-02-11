@@ -102,6 +102,15 @@ export interface InjectResponse {
   }
 }
 
+// Batch injection response (matches Rust InjectBatchResponse)
+export interface InjectBatchResponse {
+  events_sent: number
+  events_failed: number
+  output_events: Array<Record<string, unknown>>
+  errors: string[]
+  processing_time_us: number
+}
+
 // Deploy dialog form state
 export interface DeployFormState {
   name: string

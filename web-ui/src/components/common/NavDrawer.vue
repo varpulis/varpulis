@@ -55,7 +55,7 @@ function isActive(path: string): boolean {
         />
       </v-list>
       <div v-if="!rail" class="pa-3 text-caption text-medium-emphasis">
-        Varpulis v0.1.0
+        Varpulis v0.2.0
       </div>
     </template>
   </v-navigation-drawer>

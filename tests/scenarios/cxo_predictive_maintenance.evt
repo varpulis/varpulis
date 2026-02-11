@@ -1,0 +1,33 @@
+# CxO Predictive Maintenance Scenario Events
+
+# =============================================================================
+# BEARING DEGRADATION: Machine CNC-01 — rising vibration
+# Expected: 1 bearing_degradation alert
+# =============================================================================
+
+BATCH 0
+VibrationReading { machine_id: "CNC-01", amplitude: 0.5, unit: "mm" }
+
+BATCH 30000
+VibrationReading { machine_id: "CNC-01", amplitude: 0.8, unit: "mm" }
+
+# =============================================================================
+# OVERHEATING CASCADE: Zone A — temperature spike
+# Expected: 1 overheating alert
+# =============================================================================
+
+BATCH 60000
+TemperatureReading { zone_id: "ZoneA", temp_c: 45.0, sensor: "T-001" }
+
+BATCH 75000
+TemperatureReading { zone_id: "ZoneA", temp_c: 62.0, sensor: "T-001" }
+
+# =============================================================================
+# HEALTHY MACHINE: No alerts expected
+# =============================================================================
+
+BATCH 120000
+VibrationReading { machine_id: "CNC-02", amplitude: 0.3, unit: "mm" }
+
+BATCH 150000
+VibrationReading { machine_id: "CNC-02", amplitude: 0.31, unit: "mm" }

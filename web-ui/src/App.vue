@@ -73,6 +73,7 @@ const navItems = [
   { title: 'Connectors', icon: 'mdi-connection', to: '/connectors' },
   { title: 'Pipelines', icon: 'mdi-pipe', to: '/pipelines' },
   { title: 'Editor', icon: 'mdi-code-braces', to: '/editor' },
+  { title: 'Demos', icon: 'mdi-presentation-play', to: '/scenarios' },
   { title: 'Metrics', icon: 'mdi-chart-line', to: '/metrics' },
   { title: 'Settings', icon: 'mdi-cog', to: '/settings' },
 ]

@@ -1,0 +1,36 @@
+# CxO Insider Trading Surveillance Scenario Events
+
+# =============================================================================
+# TRADE BEFORE NEWS: Trader "trader_sus" buys ACME, then merger announced
+# Expected: 1 trade_before_news alert
+# =============================================================================
+
+BATCH 0
+TradeOrder { trader_id: "trader_sus", symbol: "ACME", side: "buy", amount: 10000, price: 45.50 }
+
+BATCH 172800000
+NewsRelease { symbol: "ACME", headline: "ACME Corp announces merger", impact: "material" }
+
+# =============================================================================
+# ABNORMAL POSITION BUILDING: Trader "accumulator" places multiple orders
+# Expected: 1+ abnormal_position_building alerts (Kleene accumulates)
+# =============================================================================
+
+BATCH 200000
+TradeOrder { trader_id: "accumulator", symbol: "WIDG", side: "buy", amount: 500, price: 12.00 }
+
+BATCH 210000
+TradeOrder { trader_id: "accumulator", symbol: "WIDG", side: "buy", amount: 600, price: 12.10 }
+
+BATCH 220000
+TradeOrder { trader_id: "accumulator", symbol: "WIDG", side: "buy", amount: 700, price: 12.20 }
+
+BATCH 230000
+TradeOrder { trader_id: "accumulator", symbol: "WIDG", side: "buy", amount: 800, price: 12.30 }
+
+# =============================================================================
+# LEGITIMATE TRADER: Normal trading activity, no alert expected
+# =============================================================================
+
+BATCH 300000
+TradeOrder { trader_id: "legit_trader", symbol: "SAFE", side: "buy", amount: 100, price: 50.00 }

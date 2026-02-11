@@ -5,6 +5,7 @@ import {
   BarChart,
   GaugeChart,
   PieChart,
+  CandlestickChart,
 } from 'echarts/charts'
 import {
   TitleComponent,
@@ -24,6 +25,7 @@ use([
   BarChart,
   GaugeChart,
   PieChart,
+  CandlestickChart,
   TitleComponent,
   TooltipComponent,
   LegendComponent,
