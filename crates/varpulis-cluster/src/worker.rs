@@ -67,6 +67,8 @@ pub struct WorkerNode {
     pub capacity: WorkerCapacity,
     pub last_heartbeat: Instant,
     pub assigned_pipelines: Vec<String>,
+    /// Total events processed by this worker (from heartbeats).
+    pub events_processed: u64,
 }
 
 impl WorkerNode {
@@ -79,6 +81,7 @@ impl WorkerNode {
             capacity: WorkerCapacity::default(),
             last_heartbeat: Instant::now(),
             assigned_pipelines: Vec::new(),
+            events_processed: 0,
         }
     }
 
@@ -135,7 +138,9 @@ pub struct WorkerInfo {
     pub status: String,
     pub pipelines_running: usize,
     pub max_pipelines: usize,
+    pub cpu_cores: usize,
     pub assigned_pipelines: Vec<String>,
+    pub events_processed: u64,
 }
 
 impl From<&WorkerNode> for WorkerInfo {
@@ -146,7 +151,9 @@ impl From<&WorkerNode> for WorkerInfo {
             status: node.status.to_string(),
             pipelines_running: node.capacity.pipelines_running,
             max_pipelines: node.capacity.max_pipelines,
+            cpu_cores: node.capacity.cpu_cores,
             assigned_pipelines: node.assigned_pipelines.clone(),
+            events_processed: node.events_processed,
         }
     }
 }
@@ -243,7 +250,9 @@ mod tests {
         node.status = WorkerStatus::Ready;
         node.capacity.pipelines_running = 3;
         node.capacity.max_pipelines = 10;
+        node.capacity.cpu_cores = 8;
         node.assigned_pipelines = vec!["p1".into(), "p2".into(), "p3".into()];
+        node.events_processed = 42000;
 
         let info = WorkerInfo::from(&node);
         assert_eq!(info.id, "w1");
@@ -251,7 +260,9 @@ mod tests {
         assert_eq!(info.status, "ready");
         assert_eq!(info.pipelines_running, 3);
         assert_eq!(info.max_pipelines, 10);
+        assert_eq!(info.cpu_cores, 8);
         assert_eq!(info.assigned_pipelines, vec!["p1", "p2", "p3"]);
+        assert_eq!(info.events_processed, 42000);
     }
 
     #[test]

@@ -438,8 +438,13 @@ impl Engine {
                     self.patterns.insert(name.clone(), named_pattern);
                 }
                 Stmt::Import { path, alias } => {
-                    info!("Import statement: {} (alias: {:?})", path, alias);
-                    // TODO: Load and merge imported file
+                    // Imports should be resolved before reaching the engine
+                    // (e.g., by resolve_imports() in the CLI). If one reaches here,
+                    // it means the caller didn't pre-process imports.
+                    warn!(
+                        "Unresolved import '{}' (alias: {:?}) — imports must be resolved before engine.load()",
+                        path, alias
+                    );
                 }
                 Stmt::VarDecl {
                     mutable,
@@ -3009,6 +3014,11 @@ impl Engine {
             output_events_emitted: self.output_events_emitted,
             streams_count: self.streams.len(),
         }
+    }
+
+    /// Get the names of all loaded streams.
+    pub fn stream_names(&self) -> Vec<&str> {
+        self.streams.keys().map(|s| s.as_str()).collect()
     }
 
     /// Get a user-defined function by name

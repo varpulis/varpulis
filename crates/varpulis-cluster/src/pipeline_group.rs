@@ -708,10 +708,16 @@ mod tests {
         );
 
         let mut fields1 = serde_json::Map::new();
-        fields1.insert("source".into(), serde_json::Value::String("server-A".into()));
+        fields1.insert(
+            "source".into(),
+            serde_json::Value::String("server-A".into()),
+        );
 
         let mut fields2 = serde_json::Map::new();
-        fields2.insert("source".into(), serde_json::Value::String("server-A".into()));
+        fields2.insert(
+            "source".into(),
+            serde_json::Value::String("server-A".into()),
+        );
 
         // Same key should always route to the same replica
         let r1 = group.select_replica(&fields1);
@@ -766,11 +772,7 @@ mod tests {
 
     #[test]
     fn test_replica_group_empty_replicas_returns_pipeline_name() {
-        let group = ReplicaGroup::new(
-            "p1".into(),
-            vec![],
-            PartitionStrategy::RoundRobin,
-        );
+        let group = ReplicaGroup::new("p1".into(), vec![], PartitionStrategy::RoundRobin);
         let fields = serde_json::Map::new();
         assert_eq!(group.select_replica(&fields), "p1");
     }
@@ -798,12 +800,7 @@ mod tests {
             .missing_field_warned
             .load(std::sync::atomic::Ordering::Relaxed));
         // Counter is shared via Arc
-        assert_eq!(
-            cloned
-                .counter
-                .load(std::sync::atomic::Ordering::Relaxed),
-            5
-        );
+        assert_eq!(cloned.counter.load(std::sync::atomic::Ordering::Relaxed), 5);
     }
 
     #[test]
@@ -822,7 +819,11 @@ mod tests {
             replicas_seen.insert(group.select_replica(&fields).to_string());
         }
         // With 4 replicas and 100 different keys, we should hit at least 2
-        assert!(replicas_seen.len() >= 2, "Expected multiple replicas hit, got: {:?}", replicas_seen);
+        assert!(
+            replicas_seen.len() >= 2,
+            "Expected multiple replicas hit, got: {:?}",
+            replicas_seen
+        );
     }
 
     #[test]

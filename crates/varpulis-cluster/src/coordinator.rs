@@ -43,6 +43,8 @@ pub struct Coordinator {
     pub active_migrations: HashMap<String, MigrationTask>,
     /// Whether a rebalance should be triggered on next health sweep.
     pub pending_rebalance: bool,
+    /// Result of the last health sweep (for API exposure).
+    pub last_health_sweep: Option<HealthSweepResult>,
     placement: Box<dyn PlacementStrategy>,
     http_client: reqwest::Client,
 }
@@ -56,6 +58,7 @@ impl Coordinator {
             worker_metrics: HashMap::new(),
             active_migrations: HashMap::new(),
             pending_rebalance: false,
+            last_health_sweep: None,
             placement: Box::new(RoundRobinPlacement::new()),
             http_client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(10))
@@ -90,6 +93,7 @@ impl Coordinator {
 
         worker.last_heartbeat = std::time::Instant::now();
         worker.capacity.pipelines_running = hb.pipelines_running;
+        worker.events_processed = hb.events_processed;
 
         // If worker was unhealthy and heartbeat arrives, mark it ready again
         if worker.status == WorkerStatus::Unhealthy {
@@ -219,6 +223,11 @@ impl Coordinator {
                             .json()
                             .await
                             .map_err(|e| ClusterError::DeployFailed(e.to_string()))?;
+
+                        info!(
+                            "Pipeline '{}' deployed on worker {} (id={}, status={})",
+                            resp_body.name, worker_id, resp_body.id, resp_body.status
+                        );
 
                         let deployment = PipelineDeployment {
                             worker_id: worker_id.clone(),
@@ -577,9 +586,14 @@ impl Coordinator {
         })
     }
 
-    /// Run a health sweep and return results.
+    /// Run a health sweep, store the result, and return it.
     pub fn health_sweep(&mut self) -> HealthSweepResult {
-        health::health_sweep(&mut self.workers, HEARTBEAT_TIMEOUT)
+        let result = health::health_sweep(&mut self.workers, HEARTBEAT_TIMEOUT);
+        self.last_health_sweep = Some(HealthSweepResult {
+            workers_checked: result.workers_checked,
+            workers_marked_unhealthy: result.workers_marked_unhealthy.clone(),
+        });
+        result
     }
 
     // =========================================================================
@@ -660,8 +674,8 @@ impl Coordinator {
                     match resp.json::<CheckpointResponsePayload>().await {
                         Ok(cp_resp) => {
                             info!(
-                                "Checkpoint captured for pipeline '{}' ({} events)",
-                                pipeline_name, cp_resp.events_processed
+                                "Checkpoint captured for pipeline '{}' (id={}, {} events)",
+                                pipeline_name, cp_resp.pipeline_id, cp_resp.events_processed
                             );
                             Some(cp_resp.checkpoint)
                         }
@@ -744,6 +758,10 @@ impl Coordinator {
                     .json()
                     .await
                     .map_err(|e| ClusterError::MigrationFailed(e.to_string()))?;
+                info!(
+                    "Migration deploy: '{}' on target {} (id={}, status={})",
+                    resp_body.name, target_worker_id, resp_body.id, resp_body.status
+                );
                 resp_body.id
             }
             Ok(resp) => {
@@ -1151,6 +1169,23 @@ impl Coordinator {
                 }
             }
 
+            // Sort by throughput (highest first) using worker_metrics so hot
+            // pipelines are moved first for maximum load relief.
+            let worker_pipeline_metrics = self.worker_metrics.get(wid);
+            movable.sort_by(|a, b| {
+                let throughput = |pname: &str| -> u64 {
+                    worker_pipeline_metrics
+                        .and_then(|metrics| {
+                            metrics
+                                .iter()
+                                .find(|m| m.pipeline_name == pname)
+                                .map(|m| m.events_in)
+                        })
+                        .unwrap_or(0)
+                };
+                throughput(&b.1).cmp(&throughput(&a.1))
+            });
+
             for (gid, pname) in movable.into_iter().take(excess) {
                 // Find least-loaded target
                 let target = available_workers
@@ -1302,16 +1337,13 @@ impl Default for Coordinator {
 #[derive(Debug, Deserialize)]
 struct DeployResponse {
     id: String,
-    #[allow(dead_code)]
     name: String,
-    #[allow(dead_code)]
     status: String,
 }
 
 /// Response from worker checkpoint API.
 #[derive(Debug, Deserialize)]
 struct CheckpointResponsePayload {
-    #[allow(dead_code)]
     pipeline_id: String,
     checkpoint: varpulis_runtime::persistence::EngineCheckpoint,
     events_processed: u64,
@@ -1798,9 +1830,72 @@ mod tests {
         coord.register_worker(node);
 
         // No pipelines assigned → no migrations
-        let results = coord
-            .handle_worker_failure(&WorkerId("w1".into()))
-            .await;
+        let results = coord.handle_worker_failure(&WorkerId("w1".into())).await;
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_heartbeat_stores_events_processed() {
+        let mut coord = Coordinator::new();
+        let node = WorkerNode::new(
+            WorkerId("w1".into()),
+            "http://localhost:9000".into(),
+            "key".into(),
+        );
+        coord.register_worker(node);
+        assert_eq!(coord.workers[&WorkerId("w1".into())].events_processed, 0);
+
+        let hb = HeartbeatRequest {
+            events_processed: 42000,
+            pipelines_running: 3,
+            pipeline_metrics: vec![],
+        };
+        coord.heartbeat(&WorkerId("w1".into()), &hb).unwrap();
+        assert_eq!(
+            coord.workers[&WorkerId("w1".into())].events_processed,
+            42000
+        );
+    }
+
+    #[test]
+    fn test_health_sweep_stores_last_result() {
+        let mut coord = Coordinator::new();
+        assert!(coord.last_health_sweep.is_none());
+
+        // Register a healthy worker
+        let node = WorkerNode::new(
+            WorkerId("w1".into()),
+            "http://localhost:9000".into(),
+            "key".into(),
+        );
+        coord.register_worker(node);
+
+        let result = coord.health_sweep();
+        assert_eq!(result.workers_checked, 1);
+        assert!(result.workers_marked_unhealthy.is_empty());
+
+        // Last sweep should be stored
+        let stored = coord.last_health_sweep.as_ref().unwrap();
+        assert_eq!(stored.workers_checked, 1);
+        assert!(stored.workers_marked_unhealthy.is_empty());
+    }
+
+    #[test]
+    fn test_health_sweep_stores_unhealthy_workers() {
+        let mut coord = Coordinator::new();
+        let mut node = WorkerNode::new(
+            WorkerId("w1".into()),
+            "http://localhost:9000".into(),
+            "key".into(),
+        );
+        node.status = WorkerStatus::Ready;
+        node.last_heartbeat = std::time::Instant::now() - std::time::Duration::from_secs(20);
+        coord.workers.insert(node.id.clone(), node);
+
+        let result = coord.health_sweep();
+        assert_eq!(result.workers_marked_unhealthy.len(), 1);
+
+        let stored = coord.last_health_sweep.as_ref().unwrap();
+        assert_eq!(stored.workers_marked_unhealthy.len(), 1);
     }
 }

@@ -119,14 +119,28 @@ impl PlacementStrategy for RoundRobinPlacement {
     }
 }
 
-/// Least-loaded placement strategy: picks the worker with fewest pipelines.
+/// Least-loaded placement strategy: picks the worker with the lowest
+/// load ratio (pipelines_running / cpu_cores), breaking ties by pipeline count.
 pub struct LeastLoadedPlacement;
 
 impl PlacementStrategy for LeastLoadedPlacement {
     fn place(&self, _pipeline: &PipelinePlacement, workers: &[&WorkerNode]) -> Option<WorkerId> {
         workers
             .iter()
-            .min_by_key(|w| w.capacity.pipelines_running)
+            .min_by(|a, b| {
+                let cores_a = a.capacity.cpu_cores.max(1) as f64;
+                let cores_b = b.capacity.cpu_cores.max(1) as f64;
+                let ratio_a = a.capacity.pipelines_running as f64 / cores_a;
+                let ratio_b = b.capacity.pipelines_running as f64 / cores_b;
+                ratio_a
+                    .partial_cmp(&ratio_b)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| {
+                        a.capacity
+                            .pipelines_running
+                            .cmp(&b.capacity.pipelines_running)
+                    })
+            })
             .map(|w| w.id.clone())
     }
 }
@@ -497,6 +511,76 @@ mod tests {
         assert_eq!(
             placement.place(&pipeline, &workers),
             Some(WorkerId("w1".into()))
+        );
+    }
+
+    #[test]
+    fn test_least_loaded_prefers_more_cores() {
+        // Worker w1: 2 pipelines on 8 cores (ratio 0.25)
+        // Worker w2: 2 pipelines on 2 cores (ratio 1.0)
+        // LeastLoaded should pick w1 (lower ratio)
+        let placement = LeastLoadedPlacement;
+        let mut w1 = WorkerNode::new(
+            WorkerId("w1".into()),
+            "http://localhost:9000".into(),
+            "key".into(),
+        );
+        w1.capacity.pipelines_running = 2;
+        w1.capacity.cpu_cores = 8;
+        let mut w2 = WorkerNode::new(
+            WorkerId("w2".into()),
+            "http://localhost:9001".into(),
+            "key".into(),
+        );
+        w2.capacity.pipelines_running = 2;
+        w2.capacity.cpu_cores = 2;
+        let workers = vec![&w1, &w2];
+        let pipeline = PipelinePlacement {
+            name: "p1".into(),
+            source: "".into(),
+            worker_affinity: None,
+            replicas: 1,
+            partition_key: None,
+        };
+
+        assert_eq!(
+            placement.place(&pipeline, &workers),
+            Some(WorkerId("w1".into()))
+        );
+    }
+
+    #[test]
+    fn test_least_loaded_same_ratio_picks_fewer_pipelines() {
+        // Worker w1: 4 pipelines on 4 cores (ratio 1.0)
+        // Worker w2: 2 pipelines on 2 cores (ratio 1.0)
+        // Same ratio, so tiebreaker is fewer pipelines → w2
+        let placement = LeastLoadedPlacement;
+        let mut w1 = WorkerNode::new(
+            WorkerId("w1".into()),
+            "http://localhost:9000".into(),
+            "key".into(),
+        );
+        w1.capacity.pipelines_running = 4;
+        w1.capacity.cpu_cores = 4;
+        let mut w2 = WorkerNode::new(
+            WorkerId("w2".into()),
+            "http://localhost:9001".into(),
+            "key".into(),
+        );
+        w2.capacity.pipelines_running = 2;
+        w2.capacity.cpu_cores = 2;
+        let workers = vec![&w1, &w2];
+        let pipeline = PipelinePlacement {
+            name: "p1".into(),
+            source: "".into(),
+            worker_affinity: None,
+            replicas: 1,
+            partition_key: None,
+        };
+
+        assert_eq!(
+            placement.place(&pipeline, &workers),
+            Some(WorkerId("w2".into()))
         );
     }
 }

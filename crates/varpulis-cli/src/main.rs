@@ -1963,14 +1963,74 @@ async fn run_coordinator(port: u16, bind: &str, api_key: Option<String>) -> Resu
         }
     });
 
-    // Health endpoint (no auth)
-    let health_route = warp::path("health").and(warp::get()).and_then(|| async {
-        let response = serde_json::json!({
-            "status": "healthy",
-            "role": "coordinator",
-            "version": env!("CARGO_PKG_VERSION"),
-        });
-        Ok::<_, warp::Rejection>(warp::reply::json(&response))
+    // Health endpoint (no auth) — includes operational data
+    let health_coordinator = coordinator.clone();
+    let health_route = warp::path("health").and(warp::get()).and_then(move || {
+        let coord = health_coordinator.clone();
+        async move {
+            let coord = coord.read().await;
+            let total_workers = coord.workers.len();
+            let healthy_workers = coord
+                .workers
+                .values()
+                .filter(|w| w.status == varpulis_cluster::WorkerStatus::Ready)
+                .count();
+            let unhealthy_workers = coord
+                .workers
+                .values()
+                .filter(|w| w.status == varpulis_cluster::WorkerStatus::Unhealthy)
+                .count();
+            let draining_workers = coord
+                .workers
+                .values()
+                .filter(|w| w.status == varpulis_cluster::WorkerStatus::Draining)
+                .count();
+            let active_migrations = coord
+                .active_migrations
+                .values()
+                .filter(|m| {
+                    !matches!(
+                        m.status,
+                        varpulis_cluster::MigrationStatus::Completed
+                            | varpulis_cluster::MigrationStatus::Failed(_)
+                    )
+                })
+                .count();
+            let total_events: u64 = coord.workers.values().map(|w| w.events_processed).sum();
+            let last_sweep = coord.last_health_sweep.as_ref().map(|s| {
+                serde_json::json!({
+                    "workers_checked": s.workers_checked,
+                    "workers_marked_unhealthy": s.workers_marked_unhealthy.len(),
+                })
+            });
+
+            let status = if unhealthy_workers == 0 && total_workers > 0 {
+                "healthy"
+            } else if unhealthy_workers > 0 && healthy_workers > 0 {
+                "degraded"
+            } else if total_workers == 0 {
+                "no_workers"
+            } else {
+                "critical"
+            };
+
+            let response = serde_json::json!({
+                "status": status,
+                "role": "coordinator",
+                "version": env!("CARGO_PKG_VERSION"),
+                "workers": {
+                    "total": total_workers,
+                    "healthy": healthy_workers,
+                    "unhealthy": unhealthy_workers,
+                    "draining": draining_workers,
+                },
+                "pipeline_groups": coord.pipeline_groups.len(),
+                "active_migrations": active_migrations,
+                "total_events_processed": total_events,
+                "last_health_sweep": last_sweep,
+            });
+            Ok::<_, warp::Rejection>(warp::reply::json(&response))
+        }
     });
 
     let api_routes = varpulis_cluster::cluster_routes(coordinator, api_key);
@@ -2010,9 +2070,6 @@ fn resolve_imports_inner(
     depth: usize,
     visited: &mut std::collections::HashSet<PathBuf>,
 ) -> Result<()> {
-    #[allow(unused_imports)]
-    use varpulis_core::span::{Span, Spanned};
-
     // Check recursion depth limit
     if depth > MAX_IMPORT_DEPTH {
         anyhow::bail!(
