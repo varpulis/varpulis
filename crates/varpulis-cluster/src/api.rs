@@ -370,6 +370,7 @@ async fn handle_register_worker(
         capacity: body.capacity,
         last_heartbeat: std::time::Instant::now(),
         assigned_pipelines: Vec::new(),
+        events_processed: 0,
     };
     let id = coord.register_worker(node);
     let resp = RegisterWorkerResponse {
@@ -823,10 +824,11 @@ async fn handle_drain_worker(
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
     let mut coord = coordinator.write().await;
-    let timeout = body
-        .timeout_secs
-        .map(std::time::Duration::from_secs);
-    match coord.drain_worker(&WorkerId(worker_id.clone()), timeout).await {
+    let timeout = body.timeout_secs.map(std::time::Duration::from_secs);
+    match coord
+        .drain_worker(&WorkerId(worker_id.clone()), timeout)
+        .await
+    {
         Ok(migration_ids) => {
             let resp = DrainResponse {
                 worker_id,
