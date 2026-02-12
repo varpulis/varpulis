@@ -167,6 +167,7 @@ pub async fn handle_worker_ws(
                 // Validate API key if configured
                 if let Some(ref expected) = admin_key {
                     if &api_key != expected {
+                        warn!(worker_id = %worker_id, "WebSocket authentication rejected");
                         let _ = msg_tx.send(CoordinatorMessage::Error {
                             message: "Invalid API key".to_string(),
                         });

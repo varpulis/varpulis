@@ -408,6 +408,11 @@ impl Coordinator {
         };
     }
 
+    /// Get a reference to the shared HTTP client (for lock-free deploy phases).
+    pub fn http_client(&self) -> &reqwest::Client {
+        &self.http_client
+    }
+
     /// Check if this coordinator is allowed to perform write operations.
     pub fn require_writer(&self) -> Result<(), crate::ClusterError> {
         if self.ha_role.is_writer() {
@@ -425,7 +430,7 @@ impl Coordinator {
     pub fn register_worker(&mut self, mut node: WorkerNode) -> WorkerId {
         let id = node.id.clone();
         node.status = WorkerStatus::Ready;
-        info!("Worker registered: {} at {}", id, node.address);
+        info!(worker_id = %id, address = %node.address, "Worker registered");
         self.workers.insert(id.clone(), node);
         self.update_metrics_counts();
         // New worker may improve load distribution
@@ -470,7 +475,7 @@ impl Coordinator {
         self.workers
             .remove(worker_id)
             .ok_or_else(|| ClusterError::WorkerNotFound(worker_id.0.clone()))?;
-        info!("Worker deregistered: {}", worker_id);
+        info!(worker_id = %worker_id, "Worker deregistered");
         Ok(())
     }
 
@@ -478,6 +483,7 @@ impl Coordinator {
     ///
     /// Selects workers, enriches pipeline sources, and returns a plan with
     /// all information needed to execute HTTP deploys without coordinator state.
+    #[tracing::instrument(skip(self, spec), fields(group = %spec.name, pipelines = spec.pipelines.len()))]
     pub fn plan_deploy_group(
         &self,
         spec: &PipelineGroupSpec,
@@ -492,10 +498,10 @@ impl Coordinator {
         }
 
         info!(
-            "Planning deployment for group '{}' ({} pipelines, {} workers available)",
-            spec.name,
-            spec.pipelines.len(),
-            available_workers.len()
+            group = %spec.name,
+            pipelines = spec.pipelines.len(),
+            workers_available = available_workers.len(),
+            "Deploy planned"
         );
 
         let enriched_pipelines: Vec<_> = spec
@@ -575,6 +581,7 @@ impl Coordinator {
     ///
     /// This method does NOT require `&self` — it uses a shared HTTP client
     /// and the pre-built plan, allowing the coordinator lock to be released.
+    #[tracing::instrument(skip(http_client, plan), fields(group_id = %plan.group_id, tasks = plan.tasks.len()))]
     pub async fn execute_deploy_plan(
         http_client: &reqwest::Client,
         plan: &DeployGroupPlan,
@@ -645,6 +652,7 @@ impl Coordinator {
     }
 
     /// Phase 3: Commit deployment results to coordinator state.
+    #[tracing::instrument(skip(self, plan, results), fields(group_id = %plan.group_id, group = %plan.spec.name))]
     pub fn commit_deploy_group(
         &mut self,
         plan: DeployGroupPlan,
@@ -1365,8 +1373,10 @@ impl Coordinator {
             self.update_metrics_counts();
 
             info!(
-                "Migration complete: pipeline '{}' moved from {} to {}",
-                plan.pipeline_name, plan.source_worker_id, plan.target_worker_id
+                pipeline = %plan.pipeline_name,
+                from = %plan.source_worker_id,
+                to = %plan.target_worker_id,
+                "Migration complete"
             );
         } else {
             let reason = failure_reason.unwrap_or_else(|| "unknown".to_string());
@@ -1561,6 +1571,7 @@ impl Coordinator {
     /// Migrate a pipeline from its current worker to a target worker.
     ///
     /// Steps: checkpoint (if source alive) → deploy → restore → switch → cleanup.
+    #[tracing::instrument(skip(self), fields(pipeline = %pipeline_name, group = %group_id, target = %target_worker_id))]
     pub async fn migrate_pipeline(
         &mut self,
         pipeline_name: &str,
@@ -1875,6 +1886,7 @@ impl Coordinator {
     }
 
     /// Handle a worker failure: migrate all its pipelines to healthy workers.
+    #[tracing::instrument(skip(self), fields(worker_id = %worker_id))]
     pub async fn handle_worker_failure(
         &mut self,
         worker_id: &WorkerId,
@@ -1899,10 +1911,10 @@ impl Coordinator {
             return results;
         }
 
-        info!(
-            "Worker {} failed, migrating {} pipeline(s)",
-            worker_id,
-            affected.len()
+        warn!(
+            worker_id = %worker_id,
+            pipelines_affected = affected.len(),
+            "Worker failure detected"
         );
 
         for (group_id, pipeline_name) in affected {
