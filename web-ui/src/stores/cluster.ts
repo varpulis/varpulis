@@ -5,6 +5,7 @@ import type {
   WorkerDetail,
   TopologyInfo,
   ClusterSummary,
+  ClusterHealthMetrics,
   Alert,
   Migration,
 } from '@/types/cluster'
@@ -20,6 +21,7 @@ export const useClusterStore = defineStore('cluster', () => {
   const topology = ref<TopologyInfo | null>(null)
   const summary = ref<ClusterSummary | null>(null)
   const migrations = ref<Migration[]>([])
+  const clusterHealth = ref<ClusterHealthMetrics | null>(null)
   const alerts = ref<Alert[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -209,6 +211,14 @@ export const useClusterStore = defineStore('cluster', () => {
     }
   }
 
+  async function fetchClusterHealth(): Promise<void> {
+    try {
+      clusterHealth.value = await clusterApi.fetchClusterHealth()
+    } catch {
+      // Prometheus endpoint may not exist on older coordinators
+    }
+  }
+
   async function fetchMigrations(): Promise<void> {
     try {
       migrations.value = await clusterApi.listMigrations()
@@ -266,6 +276,7 @@ export const useClusterStore = defineStore('cluster', () => {
     selectedGroup,
     topology,
     summary,
+    clusterHealth,
     migrations,
     alerts,
     loading,
@@ -292,6 +303,7 @@ export const useClusterStore = defineStore('cluster', () => {
     injectBatch,
     fetchTopology,
     fetchSummary,
+    fetchClusterHealth,
     fetchMigrations,
     rebalance,
     migratePipeline,

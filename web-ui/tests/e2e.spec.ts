@@ -410,6 +410,160 @@ test.describe('Varpulis Control Plane E2E', () => {
   })
 
   // =====================
+  // Cluster Health Tab Tests
+  // =====================
+
+  test('Cluster Health tab is the default tab', async ({ page }) => {
+    await page.goto('/cluster')
+    await page.waitForLoadState('networkidle')
+    await page.waitForTimeout(2000)
+
+    // Verify the Health tab exists and is selected by default
+    const healthTab = page.getByRole('tab', { name: /health/i })
+    await expect(healthTab).toBeVisible()
+    await expect(healthTab).toHaveAttribute('aria-selected', 'true')
+
+    // Verify the Raft Consensus section is visible (part of ClusterHealthPanel)
+    const raftSection = page.locator('text=Raft Consensus')
+    await expect(raftSection).toBeVisible({ timeout: 10000 })
+
+    // Take screenshot
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, 'cluster-health.png'),
+      fullPage: true,
+    })
+  })
+
+  test('Cluster Health tab shows Raft status cards', async ({ page }) => {
+    await page.goto('/cluster')
+    await page.waitForLoadState('networkidle')
+
+    // Wait for health data to load (Raft Consensus section)
+    await page.waitForSelector('text=Raft Consensus', { timeout: 15000 })
+
+    // Verify Raft Role card — should show Follower, Leader, Candidate, or Unknown
+    const raftRoleCard = page.locator('text=Raft Role')
+    await expect(raftRoleCard).toBeVisible()
+
+    // Verify Current Term card
+    const termCard = page.locator('text=Current Term')
+    await expect(termCard).toBeVisible()
+
+    // Verify Commit Index card
+    const commitCard = page.locator('text=Commit Index')
+    await expect(commitCard).toBeVisible()
+
+    // Verify Total Workers card
+    const workersCard = page.locator('text=Total Workers')
+    await expect(workersCard).toBeVisible()
+  })
+
+  test('Cluster Health tab shows worker distribution', async ({ page }) => {
+    await page.goto('/cluster')
+    await page.waitForLoadState('networkidle')
+
+    // Wait for health data
+    await page.waitForSelector('text=Worker Distribution', { timeout: 15000 })
+
+    // Verify Worker Distribution section
+    const workerDist = page.locator('text=Worker Distribution')
+    await expect(workerDist).toBeVisible()
+
+    // Verify Ready, Unhealthy, Draining cards
+    await expect(page.locator('.text-caption').filter({ hasText: 'Ready' })).toBeVisible()
+    await expect(page.locator('.text-caption').filter({ hasText: 'Unhealthy' })).toBeVisible()
+    await expect(page.locator('.text-caption').filter({ hasText: 'Draining' })).toBeVisible()
+  })
+
+  test('Cluster Health tab shows operations section', async ({ page }) => {
+    await page.goto('/cluster')
+    await page.waitForLoadState('networkidle')
+
+    // Wait for health data
+    await page.waitForSelector('text=Operations', { timeout: 15000 })
+
+    // Verify Operations section
+    const operations = page.locator('.text-subtitle-1').filter({ hasText: 'Operations' })
+    await expect(operations).toBeVisible()
+
+    // Verify Deployments card
+    const deploymentsCard = page.locator('.v-card-title').filter({ hasText: 'Deployments' })
+    await expect(deploymentsCard).toBeVisible()
+
+    // Verify Pipeline Groups, Total Deployments, Deploys items
+    await expect(page.locator('text=Pipeline Groups').first()).toBeVisible()
+    await expect(page.locator('text=Total Deployments')).toBeVisible()
+
+    // Verify Migrations card
+    const migrationsCard = page.locator('.v-card-title').filter({ hasText: 'Migrations' })
+    await expect(migrationsCard).toBeVisible()
+  })
+
+  test('Cluster tab navigation works between all tabs', async ({ page }) => {
+    await page.goto('/cluster')
+    await page.waitForLoadState('networkidle')
+
+    // Start on Health tab (default)
+    await page.waitForSelector('text=Raft Consensus', { timeout: 15000 })
+
+    // Switch to Workers tab
+    const workersTab = page.getByRole('tab', { name: /workers/i })
+    await workersTab.click()
+    await page.waitForTimeout(1000)
+    await page.waitForSelector('text=worker-0', { timeout: 15000 })
+
+    // Switch to Migrations tab
+    const migrationsTab = page.getByRole('tab', { name: /migrations/i })
+    await migrationsTab.click()
+    await page.waitForTimeout(1000)
+    // Should show either migration table or "No active migrations"
+    const migrationsContent = page.locator('text=No active migrations').or(page.locator('th:has-text("Pipeline")'))
+    await expect(migrationsContent).toBeVisible({ timeout: 5000 })
+
+    // Switch back to Health tab
+    const healthTab = page.getByRole('tab', { name: /health/i })
+    await healthTab.click()
+    await page.waitForTimeout(1000)
+    await expect(page.locator('text=Raft Consensus')).toBeVisible()
+
+    // Take screenshot of migrations tab
+    await migrationsTab.click()
+    await page.waitForTimeout(500)
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, 'cluster-migrations.png'),
+      fullPage: true,
+    })
+  })
+
+  // =====================
+  // Prometheus Metrics API Tests
+  // =====================
+
+  test('Prometheus metrics endpoint returns valid metrics', async ({ page }) => {
+    const response = await page.request.get(
+      `http://localhost:${COORDINATOR_PORT}/api/v1/cluster/prometheus`,
+      {
+        headers: { Accept: 'text/plain' },
+      }
+    )
+    expect(response.ok()).toBeTruthy()
+
+    const body = await response.text()
+
+    // Verify Prometheus text format — must contain Raft metrics
+    expect(body).toContain('varpulis_cluster_raft_role')
+    expect(body).toContain('varpulis_cluster_raft_term')
+    expect(body).toContain('varpulis_cluster_raft_commit_index')
+
+    // Verify worker metrics
+    expect(body).toContain('varpulis_cluster_workers_total')
+
+    // Verify deployment/migration metrics
+    expect(body).toContain('varpulis_cluster_pipeline_groups_total')
+    expect(body).toContain('varpulis_cluster_deployments_total')
+  })
+
+  // =====================
   // Pipelines View Tests
   // =====================
 

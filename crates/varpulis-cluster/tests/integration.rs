@@ -1146,3 +1146,334 @@ async fn test_api_deploy_inject_teardown_e2e() {
         .await;
     assert_eq!(resp.status(), 404);
 }
+
+// =============================================================================
+// Integration Tests: Three-Phase Deploy (plan → execute → commit)
+// =============================================================================
+
+#[tokio::test]
+async fn test_three_phase_deploy_success() {
+    let (port, worker_state) = start_mock_worker("worker-key").await;
+    let worker_addr = format!("http://127.0.0.1:{}", port);
+
+    let mut coord = Coordinator::new();
+    coord.register_worker(WorkerNode::new(
+        WorkerId("w1".into()),
+        worker_addr.clone(),
+        "worker-key".into(),
+    ));
+
+    let spec = PipelineGroupSpec {
+        name: "three-phase-test".into(),
+        pipelines: vec![
+            PipelinePlacement {
+                name: "p1".into(),
+                source: "stream A = X".into(),
+                worker_affinity: None,
+                replicas: 1,
+                partition_key: None,
+            },
+            PipelinePlacement {
+                name: "p2".into(),
+                source: "stream B = Y".into(),
+                worker_affinity: None,
+                replicas: 1,
+                partition_key: None,
+            },
+        ],
+        routes: vec![],
+    };
+
+    // Phase 1: Plan
+    let plan = coord.plan_deploy_group(&spec).unwrap();
+    assert_eq!(plan.tasks.len(), 2);
+    assert_eq!(plan.spec.name, "three-phase-test");
+
+    // Coordinator state should be unchanged after planning
+    assert!(coord.pipeline_groups.is_empty());
+
+    // Phase 2: Execute (HTTP deploys to mock workers)
+    let http_client = coord.http_client().clone();
+    let results = Coordinator::execute_deploy_plan(&http_client, &plan).await;
+    assert_eq!(results.len(), 2);
+    for result in &results {
+        assert!(
+            result.outcome.is_ok(),
+            "Deploy should succeed: {:?}",
+            result.outcome
+        );
+    }
+
+    // Coordinator state should still be unchanged after execute
+    assert!(coord.pipeline_groups.is_empty());
+
+    // Phase 3: Commit
+    let group_id = coord.commit_deploy_group(plan, results).unwrap();
+    let group = &coord.pipeline_groups[&group_id];
+    assert_eq!(group.name, "three-phase-test");
+    assert_eq!(group.status, GroupStatus::Running);
+    assert_eq!(group.placements.len(), 2);
+
+    // Verify mock worker received both deploy requests
+    let state = worker_state.lock().await;
+    assert_eq!(state.deploys.len(), 2);
+}
+
+#[tokio::test]
+async fn test_three_phase_deploy_worker_unreachable() {
+    let mut coord = Coordinator::new();
+    // Register a worker at a port that's not listening
+    coord.register_worker(WorkerNode::new(
+        WorkerId("w1".into()),
+        "http://127.0.0.1:1".into(),
+        "key".into(),
+    ));
+
+    let spec = PipelineGroupSpec {
+        name: "unreachable-test".into(),
+        pipelines: vec![PipelinePlacement {
+            name: "p1".into(),
+            source: "stream A = X".into(),
+            worker_affinity: None,
+            replicas: 1,
+            partition_key: None,
+        }],
+        routes: vec![],
+    };
+
+    let plan = coord.plan_deploy_group(&spec).unwrap();
+    let http_client = coord.http_client().clone();
+    let results = Coordinator::execute_deploy_plan(&http_client, &plan).await;
+
+    // Execute should return error outcomes (not panic)
+    assert_eq!(results.len(), 1);
+    assert!(results[0].outcome.is_err());
+
+    // Commit should still succeed but with Failed status
+    let group_id = coord.commit_deploy_group(plan, results).unwrap();
+    let group = &coord.pipeline_groups[&group_id];
+    assert_eq!(group.status, GroupStatus::Failed);
+    assert_eq!(
+        group.placements["p1"].status,
+        PipelineDeploymentStatus::Failed
+    );
+}
+
+// =============================================================================
+// Integration Tests: migrate_pipeline
+// =============================================================================
+
+#[tokio::test]
+async fn test_migrate_pipeline_between_workers() {
+    let (port1, state1) = start_mock_worker("key").await;
+    let (port2, state2) = start_mock_worker("key").await;
+    let addr1 = format!("http://127.0.0.1:{}", port1);
+    let addr2 = format!("http://127.0.0.1:{}", port2);
+
+    let mut coord = Coordinator::new();
+    coord.register_worker(WorkerNode::new(
+        WorkerId("w1".into()),
+        addr1.clone(),
+        "key".into(),
+    ));
+    coord.register_worker(WorkerNode::new(
+        WorkerId("w2".into()),
+        addr2.clone(),
+        "key".into(),
+    ));
+
+    // Deploy to w1
+    let spec = PipelineGroupSpec {
+        name: "migrate-test".into(),
+        pipelines: vec![PipelinePlacement {
+            name: "p1".into(),
+            source: "stream A = X".into(),
+            worker_affinity: Some("w1".into()),
+            replicas: 1,
+            partition_key: None,
+        }],
+        routes: vec![],
+    };
+    let group_id = coord.deploy_group(spec).await.unwrap();
+
+    // Verify initially on w1
+    assert_eq!(
+        coord.pipeline_groups[&group_id].placements["p1"].worker_id,
+        WorkerId("w1".into())
+    );
+    assert!(coord.workers[&WorkerId("w1".into())]
+        .assigned_pipelines
+        .contains(&"p1".to_string()));
+
+    // Migrate from w1 to w2
+    let migration_id = coord
+        .migrate_pipeline(
+            "p1",
+            &group_id,
+            &WorkerId("w2".into()),
+            MigrationReason::Manual,
+        )
+        .await
+        .unwrap();
+
+    // Verify pipeline is now on w2
+    assert_eq!(
+        coord.pipeline_groups[&group_id].placements["p1"].worker_id,
+        WorkerId("w2".into())
+    );
+    assert!(!coord.workers[&WorkerId("w1".into())]
+        .assigned_pipelines
+        .contains(&"p1".to_string()));
+    assert!(coord.workers[&WorkerId("w2".into())]
+        .assigned_pipelines
+        .contains(&"p1".to_string()));
+
+    // Migration should be tracked
+    assert!(coord.active_migrations.contains_key(&migration_id));
+    assert_eq!(
+        coord.active_migrations[&migration_id].status,
+        MigrationStatus::Completed
+    );
+
+    // w1 should have received: 1 deploy + 1 delete
+    let s1 = state1.lock().await;
+    assert_eq!(s1.deploys.len(), 1);
+    assert_eq!(s1.deletes.len(), 1);
+
+    // w2 should have received: 1 deploy (migration target)
+    let s2 = state2.lock().await;
+    assert_eq!(s2.deploys.len(), 1);
+}
+
+// =============================================================================
+// Integration Tests: handle_worker_failure with pipelines
+// =============================================================================
+
+#[tokio::test]
+async fn test_handle_worker_failure_redistributes_pipelines() {
+    let (port1, _state1) = start_mock_worker("key").await;
+    let (port2, state2) = start_mock_worker("key").await;
+    let addr1 = format!("http://127.0.0.1:{}", port1);
+    let addr2 = format!("http://127.0.0.1:{}", port2);
+
+    let mut coord = Coordinator::new();
+    coord.register_worker(WorkerNode::new(
+        WorkerId("w1".into()),
+        addr1.clone(),
+        "key".into(),
+    ));
+    coord.register_worker(WorkerNode::new(
+        WorkerId("w2".into()),
+        addr2.clone(),
+        "key".into(),
+    ));
+
+    // Deploy pipeline to w1
+    let spec = PipelineGroupSpec {
+        name: "failover-test".into(),
+        pipelines: vec![PipelinePlacement {
+            name: "p1".into(),
+            source: "stream A = X".into(),
+            worker_affinity: Some("w1".into()),
+            replicas: 1,
+            partition_key: None,
+        }],
+        routes: vec![],
+    };
+    let group_id = coord.deploy_group(spec).await.unwrap();
+    assert_eq!(
+        coord.pipeline_groups[&group_id].placements["p1"].worker_id,
+        WorkerId("w1".into())
+    );
+
+    // Mark w1 as unhealthy
+    coord
+        .workers
+        .get_mut(&WorkerId("w1".into()))
+        .unwrap()
+        .status = WorkerStatus::Unhealthy;
+
+    // Handle the failure
+    let results = coord.handle_worker_failure(&WorkerId("w1".into())).await;
+    assert_eq!(results.len(), 1);
+    assert!(results[0].is_ok(), "Migration should succeed");
+
+    // Pipeline should now be on w2
+    assert_eq!(
+        coord.pipeline_groups[&group_id].placements["p1"].worker_id,
+        WorkerId("w2".into())
+    );
+
+    // w2 should have received a deploy (for the migrated pipeline)
+    let s2 = state2.lock().await;
+    assert!(
+        !s2.deploys.is_empty(),
+        "w2 should have at least 1 deploy for the migrated pipeline"
+    );
+}
+
+// =============================================================================
+// Integration Tests: Rebalance with actual moves
+// =============================================================================
+
+#[tokio::test]
+async fn test_rebalance_moves_pipelines() {
+    let (port1, _state1) = start_mock_worker("key").await;
+    let (port2, state2) = start_mock_worker("key").await;
+    let addr1 = format!("http://127.0.0.1:{}", port1);
+    let addr2 = format!("http://127.0.0.1:{}", port2);
+
+    let mut coord = Coordinator::new();
+    coord.register_worker(WorkerNode::new(
+        WorkerId("w1".into()),
+        addr1.clone(),
+        "key".into(),
+    ));
+
+    // Deploy 4 pipelines all to w1 (only worker available)
+    let spec = PipelineGroupSpec {
+        name: "rebalance-test".into(),
+        pipelines: (0..4)
+            .map(|i| PipelinePlacement {
+                name: format!("p{}", i),
+                source: format!("stream S{} = X", i),
+                worker_affinity: None,
+                replicas: 1,
+                partition_key: None,
+            })
+            .collect(),
+        routes: vec![],
+    };
+    let group_id = coord.deploy_group(spec).await.unwrap();
+
+    // Verify all 4 pipelines on w1
+    for i in 0..4 {
+        assert_eq!(
+            coord.pipeline_groups[&group_id].placements[&format!("p{}", i)].worker_id,
+            WorkerId("w1".into())
+        );
+    }
+
+    // Now add w2 (creating imbalance: w1 has 4, w2 has 0)
+    coord.register_worker(WorkerNode::new(
+        WorkerId("w2".into()),
+        addr2.clone(),
+        "key".into(),
+    ));
+
+    // Trigger rebalance
+    let migration_ids = coord.rebalance().await.unwrap();
+
+    // Should have moved some pipelines to w2
+    assert!(
+        !migration_ids.is_empty(),
+        "Rebalance should have triggered migrations"
+    );
+
+    // w2 should have received deploys for the moved pipelines
+    let s2 = state2.lock().await;
+    assert!(
+        !s2.deploys.is_empty(),
+        "w2 should have received deploys from rebalance"
+    );
+}
