@@ -39,7 +39,7 @@ pub fn cluster_routes_with_raft(
     ws_manager: SharedWsManager,
     raft: crate::raft::routes::SharedRaft,
 ) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
-    let raft_routes = crate::raft::routes::raft_routes(raft);
+    let raft_routes = crate::raft::routes::raft_routes(raft, admin_key.clone());
     let cluster = cluster_routes(coordinator, admin_key, ws_manager);
     raft_routes.or(cluster)
 }
@@ -457,6 +457,7 @@ async fn handle_register_worker(
                                 last_heartbeat: std::time::Instant::now(),
                                 assigned_pipelines: Vec::new(),
                                 events_processed: 0,
+                                ws_disconnected_at: None,
                             };
                             let id = coord.register_worker(node);
                             let reg_resp = RegisterWorkerResponse {
@@ -522,6 +523,7 @@ async fn handle_register_worker(
         last_heartbeat: std::time::Instant::now(),
         assigned_pipelines: Vec::new(),
         events_processed: 0,
+        ws_disconnected_at: None,
     };
     let id = coord.register_worker(node);
     let resp = RegisterWorkerResponse {
@@ -611,28 +613,48 @@ async fn handle_deploy_group(
     body: PipelineGroupSpec,
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    // Phase 1: Plan (read lock — released before HTTP I/O)
+    let (plan, http_client) = {
+        let coord = coordinator.read().await;
+
+        if let Err(e) = coord.require_writer() {
+            return Ok(cluster_error_response(e));
+        }
+
+        match coord.plan_deploy_group(&body) {
+            Ok(plan) => (plan, coord.http_client.clone()),
+            Err(e) => return Ok(cluster_error_response(e)),
+        }
+    };
+    // Read lock released here
+
+    // Phase 2: Execute HTTP deploys (no lock held)
+    let results = crate::coordinator::Coordinator::execute_deploy_plan(&http_client, &plan).await;
+
+    // Phase 3: Commit results (write lock)
     let mut coord = coordinator.write().await;
-
-    // Must be leader (or standalone) for deploy operations
-    if let Err(e) = coord.require_writer() {
-        return Ok(cluster_error_response(e));
-    }
-
-    match coord.deploy_group(body).await {
+    match coord.commit_deploy_group(plan, results) {
         Ok(group_id) => {
             // Replicate the deployment result through Raft
             #[cfg(feature = "raft")]
             if let Some(ref handle) = coord.raft_handle {
-                let group = coord.pipeline_groups.get(&group_id).unwrap();
-                let group_json = serde_json::to_value(group).unwrap_or_default();
-                let cmd = crate::raft::ClusterCommand::GroupDeployed {
-                    name: group_id.clone(),
-                    group: group_json,
-                };
-                let _ = handle.raft.client_write(cmd).await;
+                if let Some(group) = coord.pipeline_groups.get(&group_id) {
+                    let group_json = serde_json::to_value(group).unwrap_or_default();
+                    let cmd = crate::raft::ClusterCommand::GroupDeployed {
+                        name: group_id.clone(),
+                        group: group_json,
+                    };
+                    if let Err(e) = handle.raft.client_write(cmd).await {
+                        tracing::error!("Raft replication failed for deploy_group: {e}");
+                    }
+                }
             }
 
-            let group = coord.pipeline_groups.get(&group_id).unwrap();
+            let Some(group) = coord.pipeline_groups.get(&group_id) else {
+                return Ok(cluster_error_response(ClusterError::GroupNotFound(
+                    group_id,
+                )));
+            };
             let info = PipelineGroupInfo::from(group);
             Ok(
                 warp::reply::with_status(warp::reply::json(&info), StatusCode::CREATED)
@@ -697,7 +719,9 @@ async fn handle_delete_group(
                 let cmd = crate::raft::ClusterCommand::GroupRemoved {
                     name: group_id.clone(),
                 };
-                let _ = handle.raft.client_write(cmd).await;
+                if let Err(e) = handle.raft.client_write(cmd).await {
+                    tracing::error!("Raft replication failed for teardown_group: {e}");
+                }
             }
 
             Ok(warp::reply::with_status(
@@ -1058,6 +1082,23 @@ async fn handle_rebalance(
 
     match coord.rebalance().await {
         Ok(migration_ids) => {
+            // Replicate updated group states through Raft
+            #[cfg(feature = "raft")]
+            if !migration_ids.is_empty() {
+                if let Some(ref handle) = coord.raft_handle {
+                    for (name, group) in &coord.pipeline_groups {
+                        let group_json = serde_json::to_value(group).unwrap_or_default();
+                        let cmd = crate::raft::ClusterCommand::GroupUpdated {
+                            name: name.clone(),
+                            group: group_json,
+                        };
+                        if let Err(e) = handle.raft.client_write(cmd).await {
+                            tracing::error!("Raft replication failed for rebalance: {e}");
+                        }
+                    }
+                }
+            }
+
             let resp = RebalanceResponse {
                 migrations_started: migration_ids.len(),
                 migration_ids,
@@ -1125,22 +1166,64 @@ async fn handle_manual_migrate(
     body: ManualMigrateRequest,
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
-    let mut coord = coordinator.write().await;
+    // Phase 1: Plan (read lock — released before HTTP I/O)
+    let (plan, http_client, source_alive, connectors) = {
+        let coord = coordinator.read().await;
 
-    if let Err(e) = coord.require_writer() {
-        return Ok(cluster_error_response(e));
-    }
+        if let Err(e) = coord.require_writer() {
+            return Ok(cluster_error_response(e));
+        }
 
-    match coord
-        .migrate_pipeline(
+        match coord.plan_migrate_pipeline(
             &pipeline_name,
             &group_id,
             &WorkerId(body.target_worker_id),
             MigrationReason::Manual,
-        )
-        .await
-    {
-        Ok(migration_id) => {
+        ) {
+            Ok(plan) => {
+                let source_alive = coord
+                    .workers
+                    .get(&plan.source_worker_id)
+                    .map(|w| w.status != crate::worker::WorkerStatus::Unhealthy)
+                    .unwrap_or(false);
+                let connectors = coord.connectors.clone();
+                (plan, coord.http_client.clone(), source_alive, connectors)
+            }
+            Err(e) => return Ok(cluster_error_response(e)),
+        }
+    };
+    // Read lock released here
+
+    // Phase 2: Execute HTTP steps (no lock held)
+    let result = crate::coordinator::Coordinator::execute_migrate_plan(
+        &http_client,
+        &plan,
+        source_alive,
+        &connectors,
+    )
+    .await;
+
+    // Phase 3: Commit results (write lock)
+    let mut coord = coordinator.write().await;
+    match result {
+        Ok(new_pipeline_id) => {
+            let migration_id = coord.commit_migrate_pipeline(&plan, &new_pipeline_id, true, None);
+
+            // Replicate updated group state through Raft
+            #[cfg(feature = "raft")]
+            if let Some(ref handle) = coord.raft_handle {
+                if let Some(group) = coord.pipeline_groups.get(&group_id) {
+                    let group_json = serde_json::to_value(group).unwrap_or_default();
+                    let cmd = crate::raft::ClusterCommand::GroupUpdated {
+                        name: group_id.clone(),
+                        group: group_json,
+                    };
+                    if let Err(e) = handle.raft.client_write(cmd).await {
+                        tracing::error!("Raft replication failed for migrate_pipeline: {e}");
+                    }
+                }
+            }
+
             let resp = serde_json::json!({
                 "migration_id": migration_id,
                 "pipeline": pipeline_name,
@@ -1152,7 +1235,12 @@ async fn handle_manual_migrate(
                     .into_response(),
             )
         }
-        Err(e) => Ok(cluster_error_response(e)),
+        Err(reason) => {
+            coord.commit_migrate_pipeline(&plan, "", false, Some(reason.clone()));
+            Ok(cluster_error_response(ClusterError::MigrationFailed(
+                reason,
+            )))
+        }
     }
 }
 
@@ -1875,6 +1963,7 @@ mod tests {
                     worker_api_key: "key".into(),
                     pipeline_id: "pid1".into(),
                     status: PipelineDeploymentStatus::Running,
+                    epoch: 0,
                 },
             );
             c.pipeline_groups.insert("g1".into(), group);

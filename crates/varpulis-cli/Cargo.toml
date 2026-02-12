@@ -41,6 +41,7 @@ default = []
 kafka = ["varpulis-runtime/kafka"]
 k8s = ["varpulis-cluster/k8s"]
 raft = ["varpulis-cluster/raft"]
+persistent = ["raft", "varpulis-cluster/persistent"]
 
 [dev-dependencies]
 tempfile = "3.10"

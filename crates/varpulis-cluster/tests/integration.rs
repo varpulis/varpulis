@@ -551,6 +551,7 @@ async fn test_teardown_skips_undeployed_pipelines() {
             worker_api_key: "key".into(),
             pipeline_id: "pid-deployed".into(),
             status: PipelineDeploymentStatus::Running,
+            epoch: 0,
         },
     );
     group.placements.insert(
@@ -561,6 +562,7 @@ async fn test_teardown_skips_undeployed_pipelines() {
             worker_api_key: "key".into(),
             pipeline_id: "".into(), // empty = never deployed
             status: PipelineDeploymentStatus::Failed,
+            epoch: 0,
         },
     );
     coord.pipeline_groups.insert("g1".into(), group);

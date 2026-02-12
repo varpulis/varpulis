@@ -19,11 +19,13 @@ tokio-tungstenite = { workspace = true }
 futures-util = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
 chrono = { workspace = true }
+prometheus = { workspace = true }
 
 [features]
 default = []
 k8s = ["kube", "k8s-openapi"]
 raft = ["openraft"]
+persistent = ["raft", "rocksdb"]
 
 [dependencies.kube]
 version = "0.98"
@@ -38,6 +40,10 @@ optional = true
 [dependencies.openraft]
 version = "0.9"
 features = ["serde"]
+optional = true
+
+[dependencies.rocksdb]
+version = "0.22"
 optional = true
 
 [dev-dependencies]

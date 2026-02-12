@@ -332,6 +332,11 @@ enum Commands {
         /// (e.g., "http://coord-1:9100,http://coord-2:9100,http://coord-3:9100")
         #[arg(long, env = "VARPULIS_RAFT_PEERS")]
         raft_peers: Option<String>,
+
+        /// Directory for persistent Raft storage (RocksDB).
+        /// When set with --raft, state survives coordinator restarts.
+        #[arg(long, env = "VARPULIS_RAFT_DATA_DIR")]
+        raft_data_dir: Option<String>,
     },
 }
 
@@ -595,6 +600,7 @@ async fn main() -> Result<()> {
             raft,
             raft_node_id,
             raft_peers,
+            raft_data_dir,
         } => {
             let scaling_policy = if scaling_min_workers > 0 {
                 Some(varpulis_cluster::ScalingPolicy {
@@ -622,6 +628,7 @@ async fn main() -> Result<()> {
                 raft,
                 raft_node_id,
                 raft_peers,
+                raft_data_dir,
             )
             .await?;
         }
@@ -2021,6 +2028,7 @@ async fn run_coordinator(
     _raft_enabled: bool,
     _raft_node_id: Option<u64>,
     _raft_peers: Option<String>,
+    _raft_data_dir: Option<String>,
 ) -> Result<()> {
     let http_protocol = "http";
     println!("Varpulis Coordinator");
@@ -2080,9 +2088,30 @@ async fn run_coordinator(
 
             println!("Raft:      node_id={}, peers={}", node_id, peers_str);
 
-            let result = varpulis_cluster::raft::bootstrap(node_id, &peer_addrs)
-                .await
-                .map_err(|e| anyhow::anyhow!("Raft bootstrap failed: {e}"))?;
+            let result = if let Some(ref data_dir) = _raft_data_dir {
+                println!("Raft:      persistent storage at {}", data_dir);
+                #[cfg(feature = "persistent")]
+                {
+                    varpulis_cluster::raft::bootstrap_persistent(
+                        node_id,
+                        &peer_addrs,
+                        api_key.clone(),
+                        data_dir,
+                    )
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Raft bootstrap failed: {e}"))?
+                }
+                #[cfg(not(feature = "persistent"))]
+                {
+                    anyhow::bail!(
+                        "--raft-data-dir requires the 'persistent' feature (build with --features persistent)"
+                    );
+                }
+            } else {
+                varpulis_cluster::raft::bootstrap(node_id, &peer_addrs, api_key.clone())
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Raft bootstrap failed: {e}"))?
+            };
 
             println!("Raft:      initialized (node {})", node_id);
             handle = Some(result);
@@ -2094,7 +2123,7 @@ async fn run_coordinator(
     };
 
     #[cfg(not(feature = "raft"))]
-    let _ = (_raft_enabled, _raft_node_id, _raft_peers);
+    let _ = (_raft_enabled, _raft_node_id, _raft_peers, _raft_data_dir);
 
     println!();
 

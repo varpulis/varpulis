@@ -33,6 +33,7 @@ pub mod ha;
 pub mod health;
 #[cfg(feature = "k8s")]
 pub mod k8s_watcher;
+pub mod metrics;
 pub mod migration;
 pub mod pipeline_group;
 #[cfg(feature = "raft")]
@@ -49,8 +50,10 @@ pub use coordinator::{
     ScalingRecommendation,
 };
 pub use health::{
-    DEFAULT_HEARTBEAT_INTERVAL, DEFAULT_HEARTBEAT_TIMEOUT, HEARTBEAT_INTERVAL, HEARTBEAT_TIMEOUT,
+    DEFAULT_HEARTBEAT_INTERVAL, DEFAULT_HEARTBEAT_TIMEOUT, DEFAULT_WS_GRACE_PERIOD,
+    HEARTBEAT_INTERVAL, HEARTBEAT_TIMEOUT,
 };
+pub use metrics::ClusterPrometheusMetrics;
 pub use migration::{MigrationReason, MigrationStatus, MigrationTask};
 pub use pipeline_group::{
     DeployedPipelineGroup, GroupStatus, InterPipelineRoute, PartitionStrategy, PipelineDeployment,

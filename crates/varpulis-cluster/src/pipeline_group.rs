@@ -3,6 +3,7 @@
 use crate::worker::WorkerId;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 use tracing::warn;
@@ -86,6 +87,10 @@ pub struct PipelineDeployment {
     pub worker_api_key: String,
     pub pipeline_id: String,
     pub status: PipelineDeploymentStatus,
+    /// Deployment epoch: incremented on each migration/redeployment.
+    /// Used as a fencing token to ignore events from stale deployments.
+    #[serde(default)]
+    pub epoch: u64,
 }
 
 /// A deployed pipeline group with placement and status tracking.
@@ -230,9 +235,9 @@ impl ReplicaGroup {
                         String::new()
                     }
                 };
-                // Simple hash: sum of bytes mod N
-                let hash: usize = value.bytes().map(|b| b as usize).sum();
-                hash % self.replica_names.len()
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                value.hash(&mut hasher);
+                (hasher.finish() as usize) % self.replica_names.len()
             }
         };
         &self.replica_names[idx]
@@ -330,6 +335,7 @@ mod tests {
                 worker_api_key: "key".into(),
                 pipeline_id: "pid1".into(),
                 status: PipelineDeploymentStatus::Running,
+                epoch: 0,
             },
         );
         group.placements.insert(
@@ -340,6 +346,7 @@ mod tests {
                 worker_api_key: "key".into(),
                 pipeline_id: "pid2".into(),
                 status: PipelineDeploymentStatus::Running,
+                epoch: 0,
             },
         );
         group.update_status();
@@ -406,6 +413,7 @@ mod tests {
                 worker_api_key: "key".into(),
                 pipeline_id: "".into(),
                 status: PipelineDeploymentStatus::Failed,
+                epoch: 0,
             },
         );
         group.placements.insert(
@@ -416,6 +424,7 @@ mod tests {
                 worker_api_key: "key".into(),
                 pipeline_id: "".into(),
                 status: PipelineDeploymentStatus::Failed,
+                epoch: 0,
             },
         );
         group.update_status();
@@ -469,6 +478,7 @@ mod tests {
                 worker_api_key: "key".into(),
                 pipeline_id: "pid1".into(),
                 status: PipelineDeploymentStatus::Running,
+                epoch: 0,
             },
         );
         group.placements.insert(
@@ -479,6 +489,7 @@ mod tests {
                 worker_api_key: "key".into(),
                 pipeline_id: "pid2".into(),
                 status: PipelineDeploymentStatus::Deploying,
+                epoch: 0,
             },
         );
         group.update_status();
@@ -509,6 +520,7 @@ mod tests {
                 worker_api_key: "key".into(),
                 pipeline_id: "pid1".into(),
                 status: PipelineDeploymentStatus::Stopped,
+                epoch: 0,
             },
         );
         group.update_status();
@@ -576,6 +588,7 @@ mod tests {
                 worker_api_key: "key".into(),
                 pipeline_id: "pid-abc".into(),
                 status: PipelineDeploymentStatus::Running,
+                epoch: 0,
             },
         );
 
@@ -681,6 +694,7 @@ mod tests {
                 worker_api_key: "key".into(),
                 pipeline_id: "pid1".into(),
                 status: PipelineDeploymentStatus::Running,
+                epoch: 0,
             },
         );
         group.update_status();
