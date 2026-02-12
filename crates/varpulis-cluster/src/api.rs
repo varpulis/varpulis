@@ -9,6 +9,7 @@ use crate::worker::{
     HeartbeatRequest, HeartbeatResponse, RegisterWorkerRequest, RegisterWorkerResponse, WorkerId,
     WorkerInfo, WorkerNode,
 };
+use crate::ws::SharedWsManager;
 use crate::ClusterError;
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
@@ -30,10 +31,30 @@ pub fn shared_coordinator() -> SharedCoordinator {
 pub fn cluster_routes(
     coordinator: SharedCoordinator,
     admin_key: Option<String>,
+    ws_manager: SharedWsManager,
 ) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
     let api = warp::path("api")
         .and(warp::path("v1"))
         .and(warp::path("cluster"));
+
+    // WebSocket route for persistent worker connections
+    let ws_route = api
+        .and(warp::path("ws"))
+        .and(warp::path::end())
+        .and(warp::ws())
+        .and(with_coordinator(coordinator.clone()))
+        .and(with_ws_manager(ws_manager))
+        .and(with_admin_key(admin_key.clone()))
+        .map(
+            |ws: warp::ws::Ws,
+             coordinator: SharedCoordinator,
+             ws_mgr: SharedWsManager,
+             key: Option<String>| {
+                ws.on_upgrade(move |socket| {
+                    crate::ws::handle_worker_ws(socket, coordinator, ws_mgr, key)
+                })
+            },
+        );
 
     let register_worker = api
         .and(warp::path("workers"))
@@ -262,6 +283,16 @@ pub fn cluster_routes(
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_metrics);
 
+    // --- Scaling endpoint ---
+
+    let scaling = api
+        .and(warp::path("scaling"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(with_optional_auth(admin_key.clone()))
+        .and(with_coordinator(coordinator.clone()))
+        .and_then(handle_scaling);
+
     // --- Summary endpoint ---
 
     let summary = api
@@ -307,13 +338,15 @@ pub fn cluster_routes(
         .or(delete_connector)
         .boxed();
 
-    worker_routes
+    ws_route
+        .or(worker_routes)
         .or(pipeline_routes)
         .or(topology)
         .or(validate)
         .or(migration_routes)
         .or(connector_routes)
         .or(metrics)
+        .or(scaling)
         .or(summary)
         .with(cors)
 }
@@ -326,6 +359,18 @@ fn with_coordinator(
     coordinator: SharedCoordinator,
 ) -> impl Filter<Extract = (SharedCoordinator,), Error = Infallible> + Clone {
     warp::any().map(move || coordinator.clone())
+}
+
+fn with_ws_manager(
+    ws_manager: SharedWsManager,
+) -> impl Filter<Extract = (SharedWsManager,), Error = Infallible> + Clone {
+    warp::any().map(move || ws_manager.clone())
+}
+
+fn with_admin_key(
+    admin_key: Option<String>,
+) -> impl Filter<Extract = (Option<String>,), Error = Infallible> + Clone {
+    warp::any().map(move || admin_key.clone())
 }
 
 fn with_optional_auth(
@@ -376,6 +421,7 @@ async fn handle_register_worker(
     let resp = RegisterWorkerResponse {
         worker_id: id.0,
         status: "registered".into(),
+        heartbeat_interval_secs: None,
     };
     Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::CREATED).into_response())
 }
@@ -1032,6 +1078,30 @@ async fn handle_metrics(
     Ok(warp::reply::with_status(warp::reply::json(&metrics), StatusCode::OK).into_response())
 }
 
+async fn handle_scaling(
+    _auth: (),
+    coordinator: SharedCoordinator,
+) -> Result<impl Reply, Infallible> {
+    let coord = coordinator.read().await;
+    match &coord.last_scaling_recommendation {
+        Some(rec) => {
+            Ok(warp::reply::with_status(warp::reply::json(rec), StatusCode::OK).into_response())
+        }
+        None => {
+            let resp = serde_json::json!({
+                "action": "stable",
+                "current_workers": coord.workers.values().filter(|w| w.status == crate::worker::WorkerStatus::Ready).count(),
+                "target_workers": coord.workers.values().filter(|w| w.status == crate::worker::WorkerStatus::Ready).count(),
+                "reason": "No scaling policy configured",
+                "avg_pipelines_per_worker": 0.0,
+                "total_pipelines": 0,
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+            });
+            Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+        }
+    }
+}
+
 async fn handle_cluster_summary(
     _auth: (),
     coordinator: SharedCoordinator,
@@ -1114,6 +1184,7 @@ fn cluster_error_response(err: ClusterError) -> warp::reply::Response {
         ClusterError::ConnectorValidation(_) => (StatusCode::BAD_REQUEST, "connector_validation"),
         ClusterError::MigrationFailed(_) => (StatusCode::INTERNAL_SERVER_ERROR, "migration_failed"),
         ClusterError::WorkerDraining(_) => (StatusCode::CONFLICT, "worker_draining"),
+        ClusterError::NotLeader(_) => (StatusCode::MISDIRECTED_REQUEST, "not_leader"),
     };
     let body = ApiError {
         error: err.to_string(),
@@ -1180,7 +1251,8 @@ mod tests {
         impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone,
     ) {
         let coord = shared_coordinator();
-        let routes = cluster_routes(coord.clone(), Some("admin-key".to_string()));
+        let ws_mgr = crate::ws::shared_ws_manager();
+        let routes = cluster_routes(coord.clone(), Some("admin-key".to_string()), ws_mgr);
         (coord, routes)
     }
 
@@ -1427,7 +1499,8 @@ mod tests {
     async fn test_no_auth_mode() {
         // When admin_key is None, no auth required
         let coord = shared_coordinator();
-        let routes = cluster_routes(coord.clone(), None);
+        let ws_mgr = crate::ws::shared_ws_manager();
+        let routes = cluster_routes(coord.clone(), None, ws_mgr);
 
         // Register without API key
         let resp = warp::test::request()

@@ -74,6 +74,14 @@ impl ManagedConnectorRegistry {
         connector.create_sink(topic, params)
     }
 
+    /// Collect health reports from all managed connectors.
+    pub fn health_reports(&self) -> Vec<(&str, &str, super::managed::ConnectorHealthReport)> {
+        self.connectors
+            .iter()
+            .map(|(name, conn)| (name.as_str(), conn.connector_type(), conn.health()))
+            .collect()
+    }
+
     /// Shut down all managed connectors.
     pub async fn shutdown(&mut self) {
         for (name, connector) in &mut self.connectors {

@@ -39,6 +39,7 @@ varpulis-cluster = { path = "../varpulis-cluster" }
 [features]
 default = []
 kafka = ["varpulis-runtime/kafka"]
+k8s = ["varpulis-cluster/k8s"]
 
 [dev-dependencies]
 tempfile = "3.10"

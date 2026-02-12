@@ -1,7 +1,7 @@
 //! Coordinator state machine: worker registry, pipeline group management, event routing.
 
 use crate::connector_config::{self, ClusterConnector};
-use crate::health::{self, HealthSweepResult, HEARTBEAT_TIMEOUT};
+use crate::health::{self, HealthSweepResult};
 use crate::migration::{MigrationReason, MigrationStatus, MigrationTask};
 use crate::pipeline_group::{
     DeployedPipelineGroup, GroupStatus, PipelineDeployment, PipelineDeploymentStatus,
@@ -30,6 +30,45 @@ pub struct PipelineWorkerMetrics {
     pub worker_id: String,
     pub events_in: u64,
     pub events_out: u64,
+    #[serde(default)]
+    pub connector_health: Vec<crate::worker::ConnectorHealth>,
+}
+
+/// Scaling policy configuration for automatic scale recommendations.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScalingPolicy {
+    pub min_workers: usize,
+    pub max_workers: usize,
+    /// Average pipelines-per-worker above which to recommend scale-up.
+    pub scale_up_threshold: f64,
+    /// Average pipelines-per-worker below which to recommend scale-down.
+    pub scale_down_threshold: f64,
+    /// Minimum seconds between webhook fires.
+    pub cooldown_secs: u64,
+    /// Optional URL to POST scaling recommendations to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub webhook_url: Option<String>,
+}
+
+/// A scaling recommendation produced by the coordinator.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScalingRecommendation {
+    pub action: ScalingAction,
+    pub current_workers: usize,
+    pub target_workers: usize,
+    pub reason: String,
+    pub avg_pipelines_per_worker: f64,
+    pub total_pipelines: usize,
+    pub timestamp: String,
+}
+
+/// The scaling action recommended by the coordinator.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScalingAction {
+    ScaleUp,
+    ScaleDown,
+    Stable,
 }
 
 /// Central coordinator managing the cluster.
@@ -45,8 +84,38 @@ pub struct Coordinator {
     pub pending_rebalance: bool,
     /// Result of the last health sweep (for API exposure).
     pub last_health_sweep: Option<HealthSweepResult>,
+    /// Scaling policy (None = auto-scaling disabled).
+    pub scaling_policy: Option<ScalingPolicy>,
+    /// Most recent scaling recommendation.
+    pub last_scaling_recommendation: Option<ScalingRecommendation>,
+    /// When the last webhook was fired (for cooldown).
+    last_scaling_webhook: Option<Instant>,
+    /// Configurable heartbeat interval (used by health sweep loop).
+    pub heartbeat_interval: Duration,
+    /// Configurable heartbeat timeout (used by health sweep).
+    pub heartbeat_timeout: Duration,
     placement: Box<dyn PlacementStrategy>,
     http_client: reqwest::Client,
+    /// HA role of this coordinator instance.
+    pub ha_role: HaRole,
+}
+
+/// The HA role of this coordinator (re-exported from ha module for non-k8s builds).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HaRole {
+    #[default]
+    Standalone,
+    Leader,
+    Follower {
+        leader_id: String,
+    },
+}
+
+impl HaRole {
+    pub fn is_writer(&self) -> bool {
+        matches!(self, HaRole::Standalone | HaRole::Leader)
+    }
 }
 
 impl Coordinator {
@@ -59,11 +128,30 @@ impl Coordinator {
             active_migrations: HashMap::new(),
             pending_rebalance: false,
             last_health_sweep: None,
+            scaling_policy: None,
+            last_scaling_recommendation: None,
+            last_scaling_webhook: None,
+            heartbeat_interval: health::DEFAULT_HEARTBEAT_INTERVAL,
+            heartbeat_timeout: health::DEFAULT_HEARTBEAT_TIMEOUT,
             placement: Box::new(RoundRobinPlacement::new()),
             http_client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(10))
                 .build()
                 .expect("Failed to build HTTP client"),
+            ha_role: HaRole::default(),
+        }
+    }
+
+    /// Check if this coordinator is allowed to perform write operations.
+    pub fn require_writer(&self) -> Result<(), crate::ClusterError> {
+        if self.ha_role.is_writer() {
+            Ok(())
+        } else {
+            let leader = match &self.ha_role {
+                HaRole::Follower { leader_id } => leader_id.clone(),
+                _ => "unknown".to_string(),
+            };
+            Err(crate::ClusterError::NotLeader(leader))
         }
     }
 
@@ -588,7 +676,8 @@ impl Coordinator {
 
     /// Run a health sweep, store the result, and return it.
     pub fn health_sweep(&mut self) -> HealthSweepResult {
-        let result = health::health_sweep(&mut self.workers, HEARTBEAT_TIMEOUT);
+        let timeout = self.heartbeat_timeout;
+        let result = health::health_sweep(&mut self.workers, timeout);
         self.last_health_sweep = Some(HealthSweepResult {
             workers_checked: result.workers_checked,
             workers_marked_unhealthy: result.workers_marked_unhealthy.clone(),
@@ -1320,10 +1409,166 @@ impl Coordinator {
                     worker_id: worker_id.0.clone(),
                     events_in: m.events_in,
                     events_out: m.events_out,
+                    connector_health: m.connector_health.clone(),
                 });
             }
         }
         ClusterMetrics { pipelines }
+    }
+
+    /// Check connector health across all workers.
+    ///
+    /// Returns list of `(pipeline_name, worker_id, connector_name)` for connectors
+    /// that are disconnected and haven't received a message in over 60 seconds.
+    pub fn check_connector_health(&self) -> Vec<(String, WorkerId, String)> {
+        let mut unhealthy = Vec::new();
+        for (worker_id, metrics) in &self.worker_metrics {
+            for m in metrics {
+                for ch in &m.connector_health {
+                    if !ch.connected && ch.seconds_since_last_message > 60 {
+                        unhealthy.push((
+                            m.pipeline_name.clone(),
+                            worker_id.clone(),
+                            ch.connector_name.clone(),
+                        ));
+                    }
+                }
+            }
+        }
+        unhealthy
+    }
+
+    // =========================================================================
+    // Auto-Scaling
+    // =========================================================================
+
+    /// Evaluate current cluster load and produce a scaling recommendation.
+    ///
+    /// Returns `None` if no scaling policy is configured.
+    pub fn evaluate_scaling(&mut self) -> Option<ScalingRecommendation> {
+        let policy = self.scaling_policy.as_ref()?;
+
+        let healthy_workers = self
+            .workers
+            .values()
+            .filter(|w| w.status == WorkerStatus::Ready)
+            .count();
+
+        let total_pipelines: usize = self
+            .pipeline_groups
+            .values()
+            .map(|g| g.placements.len())
+            .sum();
+
+        let avg_load = if healthy_workers > 0 {
+            total_pipelines as f64 / healthy_workers as f64
+        } else {
+            0.0
+        };
+
+        let (action, target, reason) = if healthy_workers < policy.min_workers {
+            (
+                ScalingAction::ScaleUp,
+                policy.min_workers,
+                format!(
+                    "Below minimum workers: {} < {}",
+                    healthy_workers, policy.min_workers
+                ),
+            )
+        } else if avg_load > policy.scale_up_threshold && healthy_workers < policy.max_workers {
+            let needed = (total_pipelines as f64 / policy.scale_up_threshold).ceil() as usize;
+            let target = needed.min(policy.max_workers);
+            (
+                ScalingAction::ScaleUp,
+                target,
+                format!(
+                    "Load {:.1} exceeds threshold {:.1}",
+                    avg_load, policy.scale_up_threshold
+                ),
+            )
+        } else if avg_load < policy.scale_down_threshold && healthy_workers > policy.min_workers {
+            let needed = if total_pipelines > 0 {
+                (total_pipelines as f64 / policy.scale_up_threshold).ceil() as usize
+            } else {
+                policy.min_workers
+            };
+            let target = needed.max(policy.min_workers);
+            (
+                ScalingAction::ScaleDown,
+                target,
+                format!(
+                    "Load {:.1} below threshold {:.1}",
+                    avg_load, policy.scale_down_threshold
+                ),
+            )
+        } else {
+            (
+                ScalingAction::Stable,
+                healthy_workers,
+                "Load within thresholds".to_string(),
+            )
+        };
+
+        let recommendation = ScalingRecommendation {
+            action,
+            current_workers: healthy_workers,
+            target_workers: target,
+            reason,
+            avg_pipelines_per_worker: avg_load,
+            total_pipelines,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        };
+
+        self.last_scaling_recommendation = Some(recommendation.clone());
+        Some(recommendation)
+    }
+
+    /// POST the scaling recommendation to the configured webhook URL.
+    ///
+    /// Respects the cooldown period to avoid flooding the orchestrator.
+    pub async fn fire_scaling_webhook(&mut self) {
+        let (policy, recommendation) =
+            match (&self.scaling_policy, &self.last_scaling_recommendation) {
+                (Some(p), Some(r)) => (p.clone(), r.clone()),
+                _ => return,
+            };
+
+        let webhook_url = match &policy.webhook_url {
+            Some(url) => url.clone(),
+            None => return,
+        };
+
+        // Only fire for non-stable actions
+        if recommendation.action == ScalingAction::Stable {
+            return;
+        }
+
+        // Respect cooldown
+        if let Some(last_fire) = self.last_scaling_webhook {
+            if last_fire.elapsed() < Duration::from_secs(policy.cooldown_secs) {
+                return;
+            }
+        }
+
+        match self
+            .http_client
+            .post(&webhook_url)
+            .json(&recommendation)
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                info!(
+                    "Scaling webhook fired ({:?}): HTTP {}",
+                    recommendation.action,
+                    resp.status()
+                );
+                self.last_scaling_webhook = Some(Instant::now());
+            }
+            Err(e) => {
+                warn!("Scaling webhook failed: {}", e);
+            }
+        }
     }
 }
 
@@ -1897,5 +2142,328 @@ mod tests {
 
         let stored = coord.last_health_sweep.as_ref().unwrap();
         assert_eq!(stored.workers_marked_unhealthy.len(), 1);
+    }
+
+    // =========================================================================
+    // Tests for auto-scaling
+    // =========================================================================
+
+    fn make_scaling_policy() -> ScalingPolicy {
+        ScalingPolicy {
+            min_workers: 1,
+            max_workers: 10,
+            scale_up_threshold: 5.0,
+            scale_down_threshold: 1.0,
+            cooldown_secs: 60,
+            webhook_url: None,
+        }
+    }
+
+    #[test]
+    fn test_evaluate_scaling_no_policy() {
+        let mut coord = Coordinator::new();
+        assert!(coord.evaluate_scaling().is_none());
+    }
+
+    #[test]
+    fn test_evaluate_scaling_stable() {
+        let mut coord = Coordinator::new();
+        coord.scaling_policy = Some(make_scaling_policy());
+
+        // 2 workers, 4 pipelines = avg 2.0 (between 1.0 and 5.0 = stable)
+        for i in 0..2 {
+            let node = WorkerNode::new(
+                WorkerId(format!("w{}", i)),
+                format!("http://localhost:900{}", i),
+                "key".into(),
+            );
+            coord.register_worker(node);
+        }
+        let spec = PipelineGroupSpec {
+            name: "test".into(),
+            pipelines: vec![
+                PipelinePlacement {
+                    name: "p1".into(),
+                    source: "x".into(),
+                    worker_affinity: None,
+                    replicas: 1,
+                    partition_key: None,
+                },
+                PipelinePlacement {
+                    name: "p2".into(),
+                    source: "x".into(),
+                    worker_affinity: None,
+                    replicas: 1,
+                    partition_key: None,
+                },
+            ],
+            routes: vec![],
+        };
+        let mut group = DeployedPipelineGroup::new("g1".into(), "test".into(), spec);
+        group.placements.insert(
+            "p1".into(),
+            crate::pipeline_group::PipelineDeployment {
+                worker_id: WorkerId("w0".into()),
+                worker_address: String::new(),
+                worker_api_key: String::new(),
+                pipeline_id: String::new(),
+                status: crate::pipeline_group::PipelineDeploymentStatus::Running,
+            },
+        );
+        group.placements.insert(
+            "p2".into(),
+            crate::pipeline_group::PipelineDeployment {
+                worker_id: WorkerId("w1".into()),
+                worker_address: String::new(),
+                worker_api_key: String::new(),
+                pipeline_id: String::new(),
+                status: crate::pipeline_group::PipelineDeploymentStatus::Running,
+            },
+        );
+        coord.pipeline_groups.insert("g1".into(), group);
+
+        let rec = coord.evaluate_scaling().unwrap();
+        assert_eq!(rec.action, ScalingAction::Stable);
+        assert_eq!(rec.current_workers, 2);
+    }
+
+    #[test]
+    fn test_evaluate_scaling_scale_up() {
+        let mut coord = Coordinator::new();
+        coord.scaling_policy = Some(make_scaling_policy());
+
+        // 1 worker, 6 pipelines = avg 6.0 > threshold 5.0
+        let node = WorkerNode::new(
+            WorkerId("w0".into()),
+            "http://localhost:9000".into(),
+            "key".into(),
+        );
+        coord.register_worker(node);
+
+        let spec = PipelineGroupSpec {
+            name: "test".into(),
+            pipelines: vec![],
+            routes: vec![],
+        };
+        let mut group = DeployedPipelineGroup::new("g1".into(), "test".into(), spec);
+        for i in 0..6 {
+            group.placements.insert(
+                format!("p{}", i),
+                crate::pipeline_group::PipelineDeployment {
+                    worker_id: WorkerId("w0".into()),
+                    worker_address: String::new(),
+                    worker_api_key: String::new(),
+                    pipeline_id: String::new(),
+                    status: crate::pipeline_group::PipelineDeploymentStatus::Running,
+                },
+            );
+        }
+        coord.pipeline_groups.insert("g1".into(), group);
+
+        let rec = coord.evaluate_scaling().unwrap();
+        assert_eq!(rec.action, ScalingAction::ScaleUp);
+        assert!(rec.target_workers > 1);
+    }
+
+    #[test]
+    fn test_evaluate_scaling_scale_down() {
+        let mut coord = Coordinator::new();
+        coord.scaling_policy = Some(ScalingPolicy {
+            min_workers: 1,
+            max_workers: 10,
+            scale_up_threshold: 5.0,
+            scale_down_threshold: 1.0,
+            cooldown_secs: 60,
+            webhook_url: None,
+        });
+
+        // 5 workers, 2 pipelines = avg 0.4 < threshold 1.0
+        for i in 0..5 {
+            let node = WorkerNode::new(
+                WorkerId(format!("w{}", i)),
+                format!("http://localhost:900{}", i),
+                "key".into(),
+            );
+            coord.register_worker(node);
+        }
+        let spec = PipelineGroupSpec {
+            name: "test".into(),
+            pipelines: vec![],
+            routes: vec![],
+        };
+        let mut group = DeployedPipelineGroup::new("g1".into(), "test".into(), spec);
+        for i in 0..2 {
+            group.placements.insert(
+                format!("p{}", i),
+                crate::pipeline_group::PipelineDeployment {
+                    worker_id: WorkerId("w0".into()),
+                    worker_address: String::new(),
+                    worker_api_key: String::new(),
+                    pipeline_id: String::new(),
+                    status: crate::pipeline_group::PipelineDeploymentStatus::Running,
+                },
+            );
+        }
+        coord.pipeline_groups.insert("g1".into(), group);
+
+        let rec = coord.evaluate_scaling().unwrap();
+        assert_eq!(rec.action, ScalingAction::ScaleDown);
+        assert!(rec.target_workers < 5);
+        assert!(rec.target_workers >= 1); // must respect min
+    }
+
+    #[test]
+    fn test_evaluate_scaling_below_min_workers() {
+        let mut coord = Coordinator::new();
+        coord.scaling_policy = Some(ScalingPolicy {
+            min_workers: 3,
+            max_workers: 10,
+            scale_up_threshold: 5.0,
+            scale_down_threshold: 1.0,
+            cooldown_secs: 60,
+            webhook_url: None,
+        });
+
+        // 1 worker, below min of 3
+        let node = WorkerNode::new(
+            WorkerId("w0".into()),
+            "http://localhost:9000".into(),
+            "key".into(),
+        );
+        coord.register_worker(node);
+
+        let rec = coord.evaluate_scaling().unwrap();
+        assert_eq!(rec.action, ScalingAction::ScaleUp);
+        assert_eq!(rec.target_workers, 3);
+    }
+
+    #[test]
+    fn test_evaluate_scaling_respects_max_workers() {
+        let mut coord = Coordinator::new();
+        coord.scaling_policy = Some(ScalingPolicy {
+            min_workers: 1,
+            max_workers: 3,
+            scale_up_threshold: 2.0,
+            scale_down_threshold: 0.5,
+            cooldown_secs: 60,
+            webhook_url: None,
+        });
+
+        // 2 workers, 20 pipelines = avg 10.0 > threshold 2.0
+        for i in 0..2 {
+            let node = WorkerNode::new(
+                WorkerId(format!("w{}", i)),
+                format!("http://localhost:900{}", i),
+                "key".into(),
+            );
+            coord.register_worker(node);
+        }
+        let spec = PipelineGroupSpec {
+            name: "test".into(),
+            pipelines: vec![],
+            routes: vec![],
+        };
+        let mut group = DeployedPipelineGroup::new("g1".into(), "test".into(), spec);
+        for i in 0..20 {
+            group.placements.insert(
+                format!("p{}", i),
+                crate::pipeline_group::PipelineDeployment {
+                    worker_id: WorkerId("w0".into()),
+                    worker_address: String::new(),
+                    worker_api_key: String::new(),
+                    pipeline_id: String::new(),
+                    status: crate::pipeline_group::PipelineDeploymentStatus::Running,
+                },
+            );
+        }
+        coord.pipeline_groups.insert("g1".into(), group);
+
+        let rec = coord.evaluate_scaling().unwrap();
+        assert_eq!(rec.action, ScalingAction::ScaleUp);
+        assert!(rec.target_workers <= 3); // must respect max
+    }
+
+    #[test]
+    fn test_scaling_recommendation_serde() {
+        let rec = ScalingRecommendation {
+            action: ScalingAction::ScaleUp,
+            current_workers: 2,
+            target_workers: 4,
+            reason: "Load exceeded".into(),
+            avg_pipelines_per_worker: 6.0,
+            total_pipelines: 12,
+            timestamp: "2026-02-12T00:00:00Z".into(),
+        };
+        let json = serde_json::to_string(&rec).unwrap();
+        let parsed: ScalingRecommendation = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.action, ScalingAction::ScaleUp);
+        assert_eq!(parsed.current_workers, 2);
+        assert_eq!(parsed.target_workers, 4);
+    }
+
+    #[test]
+    fn test_check_connector_health() {
+        let mut coord = Coordinator::new();
+        let node = WorkerNode::new(
+            WorkerId("w1".into()),
+            "http://localhost:9000".into(),
+            "key".into(),
+        );
+        coord.register_worker(node);
+
+        // Add metrics with unhealthy connector
+        coord.worker_metrics.insert(
+            WorkerId("w1".into()),
+            vec![PipelineMetrics {
+                pipeline_name: "p1".into(),
+                events_in: 100,
+                events_out: 50,
+                connector_health: vec![crate::worker::ConnectorHealth {
+                    connector_name: "mqtt_in".into(),
+                    connector_type: "mqtt".into(),
+                    connected: false,
+                    last_error: Some("connection refused".into()),
+                    messages_received: 0,
+                    seconds_since_last_message: 120,
+                }],
+            }],
+        );
+
+        let unhealthy = coord.check_connector_health();
+        assert_eq!(unhealthy.len(), 1);
+        assert_eq!(unhealthy[0].0, "p1");
+        assert_eq!(unhealthy[0].2, "mqtt_in");
+    }
+
+    #[test]
+    fn test_check_connector_health_healthy() {
+        let mut coord = Coordinator::new();
+        let node = WorkerNode::new(
+            WorkerId("w1".into()),
+            "http://localhost:9000".into(),
+            "key".into(),
+        );
+        coord.register_worker(node);
+
+        // Add metrics with healthy connector
+        coord.worker_metrics.insert(
+            WorkerId("w1".into()),
+            vec![PipelineMetrics {
+                pipeline_name: "p1".into(),
+                events_in: 100,
+                events_out: 50,
+                connector_health: vec![crate::worker::ConnectorHealth {
+                    connector_name: "mqtt_in".into(),
+                    connector_type: "mqtt".into(),
+                    connected: true,
+                    last_error: None,
+                    messages_received: 42,
+                    seconds_since_last_message: 2,
+                }],
+            }],
+        );
+
+        let unhealthy = coord.check_connector_health();
+        assert!(unhealthy.is_empty());
     }
 }

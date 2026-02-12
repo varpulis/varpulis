@@ -10,6 +10,7 @@ resources:
 patches:
   - path: deployment-patch.yaml
   - path: service-patch.yaml
+  - path: coordinator-patch.yaml
 
 images:
   - name: varpulis/varpulis

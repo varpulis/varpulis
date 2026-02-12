@@ -1,6 +1,6 @@
 //! Managed MQTT connector — single connection shared across all sources and sinks
 
-use super::managed::ManagedConnector;
+use super::managed::{ConnectorHealthReport, ManagedConnector};
 use super::mqtt::MqttConfig;
 use super::types::ConnectorError;
 use crate::event::Event;
@@ -16,8 +16,9 @@ mod mqtt_managed_impl {
     use anyhow::anyhow;
     use rumqttc::{AsyncClient, MqttOptions, QoS};
     use rustc_hash::{FxBuildHasher, FxHashSet};
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::time::Duration;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::time::{Duration, Instant};
+    use tokio::sync::Mutex;
     use tracing::{error, info, warn};
 
     fn qos_from_u8(qos: u8) -> QoS {
@@ -44,6 +45,12 @@ mod mqtt_managed_impl {
         subscribed_topics: FxHashSet<String>,
         /// Dedicated clients created via `client_id` param (kept alive for cleanup)
         dedicated_clients: Vec<AsyncClient>,
+        /// Health tracking: total messages received across all source loops
+        messages_received: Arc<AtomicU64>,
+        /// Health tracking: last error string
+        last_error: Arc<Mutex<Option<String>>>,
+        /// Health tracking: time of last received message
+        last_message_time: Arc<Mutex<Option<Instant>>>,
     }
 
     impl ManagedMqttConnector {
@@ -56,6 +63,9 @@ mod mqtt_managed_impl {
                 running: Arc::new(AtomicBool::new(false)),
                 subscribed_topics: FxHashSet::default(),
                 dedicated_clients: Vec::new(),
+                messages_received: Arc::new(AtomicU64::new(0)),
+                last_error: Arc::new(Mutex::new(None)),
+                last_message_time: Arc::new(Mutex::new(None)),
             }
         }
 
@@ -89,6 +99,9 @@ mod mqtt_managed_impl {
 
             let running = self.running.clone();
             let name = self.connector_name.clone();
+            let msg_counter = self.messages_received.clone();
+            let last_err = self.last_error.clone();
+            let last_msg_time = self.last_message_time.clone();
 
             // Spawn the source event loop task
             tokio::spawn(async move {
@@ -100,6 +113,8 @@ mod mqtt_managed_impl {
                     match eventloop.poll().await {
                         Ok(rumqttc::Event::Incoming(rumqttc::Packet::Publish(publish))) => {
                             consecutive_errors = 0;
+                            msg_counter.fetch_add(1, Ordering::Relaxed);
+                            *last_msg_time.lock().await = Some(Instant::now());
                             if let Ok(payload) = std::str::from_utf8(&publish.payload) {
                                 if let Some(event) = parse_mqtt_payload(payload, &publish.topic) {
                                     if tx.send(event).await.is_err() {
@@ -114,6 +129,7 @@ mod mqtt_managed_impl {
                         }
                         Err(e) => {
                             consecutive_errors += 1;
+                            *last_err.lock().await = Some(format!("{:?}", e));
                             if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
                                 error!(
                                     "Managed MQTT {} exceeded max errors ({}), stopping",
@@ -293,6 +309,30 @@ mod mqtt_managed_impl {
 
         fn connector_type(&self) -> &str {
             "mqtt"
+        }
+
+        fn health(&self) -> ConnectorHealthReport {
+            let connected = self.running.load(Ordering::SeqCst);
+            let messages_received = self.messages_received.load(Ordering::Relaxed);
+            // Use try_lock to avoid blocking — if lock is held, use defaults
+            let last_error = self
+                .last_error
+                .try_lock()
+                .ok()
+                .and_then(|guard| guard.clone());
+            let seconds_since_last_message = self
+                .last_message_time
+                .try_lock()
+                .ok()
+                .and_then(|guard| *guard)
+                .map(|t| t.elapsed().as_secs())
+                .unwrap_or(0);
+            ConnectorHealthReport {
+                connected,
+                last_error,
+                messages_received,
+                seconds_since_last_message,
+            }
         }
 
         async fn start_source(

@@ -15,8 +15,24 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 warp = { workspace = true }
 reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
 chrono = { workspace = true }
+
+[features]
+default = []
+k8s = ["kube", "k8s-openapi"]
+
+[dependencies.kube]
+version = "0.98"
+features = ["runtime", "client"]
+optional = true
+
+[dependencies.k8s-openapi]
+version = "0.22"
+features = ["v1_30"]
+optional = true
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

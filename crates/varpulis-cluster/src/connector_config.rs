@@ -167,6 +167,11 @@ pub fn find_missing_connectors(source: &str) -> Vec<String> {
 /// Inject cluster connector declarations into VPL source for any connectors
 /// that are referenced but not declared inline. Returns the enriched source
 /// and the number of lines prepended.
+///
+/// When a connector has `client_id_mode = "append_pipeline"`, each `.from()`
+/// or `.to()` reference gets a `client_id` parameter with the pipeline name
+/// appended to the base client ID. The default mode is `"static"` (use the
+/// configured client_id as-is).
 pub fn inject_connectors(
     source: &str,
     connectors: &HashMap<String, ClusterConnector>,
@@ -180,16 +185,93 @@ pub fn inject_connectors(
         }
     }
 
+    // Apply client_id_mode = "append_pipeline" rewriting
+    let mut enriched_source = source.to_string();
+    for connector in connectors.values() {
+        if connector.params.get("client_id_mode").map(|s| s.as_str()) == Some("append_pipeline") {
+            let base_id = connector
+                .params
+                .get("client_id")
+                .cloned()
+                .unwrap_or_else(|| connector.name.clone());
+            enriched_source =
+                append_pipeline_client_ids(&enriched_source, &connector.name, &base_id);
+        }
+    }
+
     if preamble_lines.is_empty() {
-        return (source.to_string(), 0);
+        return (enriched_source, 0);
     }
 
     let line_count = preamble_lines.len();
     // Add a blank line separator
     preamble_lines.push(String::new());
     let preamble = preamble_lines.join("\n");
-    let enriched = format!("{}{}", preamble, source);
-    (enriched, line_count + 1) // +1 for the blank line
+    let result = format!("{}{}", preamble, enriched_source);
+    (result, line_count + 1) // +1 for the blank line
+}
+
+/// For a given connector name, find `.from(name, ...)` references and inject
+/// `client_id: "{base_id}-{pipeline_name}"` into the parameter list.
+fn append_pipeline_client_ids(source: &str, connector_name: &str, base_id: &str) -> String {
+    let mut result = String::with_capacity(source.len());
+
+    for line in source.lines() {
+        let trimmed = line.trim();
+        // Extract pipeline name from "stream <name> = ..." lines
+        let pipeline_name = if trimmed.starts_with("stream ") {
+            trimmed
+                .strip_prefix("stream ")
+                .and_then(|rest| rest.split_whitespace().next())
+        } else {
+            None
+        };
+
+        if let Some(pname) = pipeline_name {
+            // Check if this line has .from(connector_name, ...) or .to(connector_name, ...)
+            let patterns = [
+                format!(".from({},", connector_name),
+                format!(".from({},", connector_name),
+                format!(".to({},", connector_name),
+            ];
+            let mut modified = line.to_string();
+            for pattern in &patterns {
+                if modified.contains(pattern.as_str()) {
+                    // Add client_id parameter after the connector name
+                    let replacement = format!(
+                        "{} client_id: \"{}-{}\"",
+                        pattern.trim_end_matches(','),
+                        base_id,
+                        pname
+                    );
+                    // Insert client_id after connector_name in the param list
+                    modified = modified.replacen(
+                        pattern.as_str(),
+                        &format!(
+                            "{}, client_id: \"{}-{}\",",
+                            pattern.trim_end_matches(','),
+                            base_id,
+                            pname
+                        ),
+                        1,
+                    );
+                    let _ = replacement; // suppress unused warning
+                    break;
+                }
+            }
+            result.push_str(&modified);
+        } else {
+            result.push_str(line);
+        }
+        result.push('\n');
+    }
+
+    // Remove trailing newline if source didn't have one
+    if !source.ends_with('\n') {
+        result.pop();
+    }
+
+    result
 }
 
 #[cfg(test)]
@@ -323,5 +405,63 @@ stream Out = Data.to(kafka_out, topic: "results")
         let (enriched, lines) = inject_connectors(source, &connectors);
         assert_eq!(enriched, source);
         assert_eq!(lines, 0);
+    }
+
+    #[test]
+    fn test_client_id_mode_append_pipeline() {
+        let source = "stream MarketData = Tick.from(mqtt_in, topic: \"ticks\")\n";
+        let mut connectors = HashMap::new();
+        connectors.insert(
+            "mqtt_in".to_string(),
+            ClusterConnector {
+                name: "mqtt_in".to_string(),
+                connector_type: "mqtt".to_string(),
+                params: {
+                    let mut m = HashMap::new();
+                    m.insert("host".to_string(), "localhost".to_string());
+                    m.insert("client_id".to_string(), "device-001".to_string());
+                    m.insert("client_id_mode".to_string(), "append_pipeline".to_string());
+                    m
+                },
+                description: None,
+            },
+        );
+
+        let (enriched, _) = inject_connectors(source, &connectors);
+        // Should inject client_id with pipeline name appended
+        assert!(
+            enriched.contains("client_id: \"device-001-MarketData\""),
+            "Expected client_id with pipeline name, got: {}",
+            enriched
+        );
+    }
+
+    #[test]
+    fn test_client_id_mode_static_no_change() {
+        let source = "stream Data = Tick.from(mqtt_in, topic: \"ticks\")\n";
+        let mut connectors = HashMap::new();
+        connectors.insert(
+            "mqtt_in".to_string(),
+            ClusterConnector {
+                name: "mqtt_in".to_string(),
+                connector_type: "mqtt".to_string(),
+                params: {
+                    let mut m = HashMap::new();
+                    m.insert("host".to_string(), "localhost".to_string());
+                    m.insert("client_id".to_string(), "device-001".to_string());
+                    // static mode (default) — no client_id_mode param
+                    m
+                },
+                description: None,
+            },
+        );
+
+        let (enriched, _) = inject_connectors(source, &connectors);
+        // Should NOT inject client_id into the from() call
+        assert!(
+            !enriched.contains("client_id: \"device-001-Data\""),
+            "Static mode should not append pipeline name, got: {}",
+            enriched
+        );
     }
 }

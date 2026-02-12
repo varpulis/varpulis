@@ -5,17 +5,18 @@ metadata:
   namespace: varpulis
   labels:
     app.kubernetes.io/name: varpulis
-    app.kubernetes.io/component: cep-engine
+    app.kubernetes.io/component: worker
 spec:
   replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: varpulis
+      app.kubernetes.io/component: worker
   template:
     metadata:
       labels:
         app.kubernetes.io/name: varpulis
-        app.kubernetes.io/component: cep-engine
+        app.kubernetes.io/component: worker
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "9090"
@@ -31,10 +32,13 @@ spec:
           image: varpulis/varpulis:latest
           imagePullPolicy: IfNotPresent
           args:
-            - "run"
-            - "/app/queries/queries.vql"
-            - "--workers"
-            - "4"
+            - "server"
+            - "--bind"
+            - "0.0.0.0"
+            - "--port"
+            - "9000"
+            - "--coordinator"
+            - "http://varpulis-coordinator:9100"
           ports:
             - name: http
               containerPort: 8080
@@ -43,6 +47,10 @@ spec:
               containerPort: 9090
               protocol: TCP
           env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
             - name: RUST_LOG
               value: "info,varpulis=debug"
             - name: RUST_BACKTRACE

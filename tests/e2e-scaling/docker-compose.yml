@@ -1,0 +1,161 @@
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-t", "$$SYS/#", "-C", "1", "-W", "3"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - varpulis-e2e
+
+  coordinator-1:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    command: ["coordinator", "--port", "9100", "--bind", "0.0.0.0", "--heartbeat-interval", "3", "--heartbeat-timeout", "10"]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9100/health"]
+      interval: 5s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    networks:
+      - varpulis-e2e
+
+  coordinator-2:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    command: ["coordinator", "--port", "9100", "--bind", "0.0.0.0", "--heartbeat-interval", "3", "--heartbeat-timeout", "10"]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9100/health"]
+      interval: 5s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    networks:
+      - varpulis-e2e
+
+  worker-1:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    command:
+      - "server"
+      - "--port"
+      - "9000"
+      - "--bind"
+      - "0.0.0.0"
+      - "--coordinator"
+      - "http://coordinator-1:9100"
+      - "--worker-id"
+      - "worker-1"
+      - "--advertise-address"
+      - "http://worker-1:9000"
+      - "--api-key"
+      - "e2e-test-key"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9000/health"]
+      interval: 5s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+    depends_on:
+      coordinator-1:
+        condition: service_healthy
+    networks:
+      - varpulis-e2e
+
+  worker-2:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    command:
+      - "server"
+      - "--port"
+      - "9000"
+      - "--bind"
+      - "0.0.0.0"
+      - "--coordinator"
+      - "http://coordinator-1:9100"
+      - "--worker-id"
+      - "worker-2"
+      - "--advertise-address"
+      - "http://worker-2:9000"
+      - "--api-key"
+      - "e2e-test-key"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9000/health"]
+      interval: 5s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+    depends_on:
+      coordinator-1:
+        condition: service_healthy
+    networks:
+      - varpulis-e2e
+
+  worker-3:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    command:
+      - "server"
+      - "--port"
+      - "9000"
+      - "--bind"
+      - "0.0.0.0"
+      - "--coordinator"
+      - "http://coordinator-2:9100"
+      - "--worker-id"
+      - "worker-3"
+      - "--advertise-address"
+      - "http://worker-3:9000"
+      - "--api-key"
+      - "e2e-test-key"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9000/health"]
+      interval: 5s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+    depends_on:
+      coordinator-2:
+        condition: service_healthy
+    networks:
+      - varpulis-e2e
+
+  test-driver:
+    build:
+      context: .
+      dockerfile: Dockerfile.test-driver
+    environment:
+      COORDINATOR_URL: http://coordinator-1:9100
+      COORDINATOR_2_URL: http://coordinator-2:9100
+      MQTT_HOST: mosquitto
+      MQTT_PORT: "1883"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      worker-1:
+        condition: service_healthy
+      worker-2:
+        condition: service_healthy
+      worker-3:
+        condition: service_healthy
+    networks:
+      - varpulis-e2e
+
+networks:
+  varpulis-e2e:
+    driver: bridge

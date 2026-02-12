@@ -1035,7 +1035,8 @@ async fn test_api_deploy_inject_teardown_e2e() {
     let worker_addr = format!("http://127.0.0.1:{}", port);
 
     let coord = shared_coordinator();
-    let routes = cluster_routes(coord.clone(), Some("admin".into()))
+    let ws_mgr = varpulis_cluster::shared_ws_manager();
+    let routes = cluster_routes(coord.clone(), Some("admin".into()), ws_mgr)
         .recover(varpulis_cluster::api::handle_rejection);
 
     // Register worker via API

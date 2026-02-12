@@ -18,6 +18,15 @@ spec:
             - "--state-dir"
             - "/app/state"
             - "--metrics"
+            - "--coordinator"
+            - "http://k3d-varpulis-coordinator:9100"
+            - "--worker-id"
+            - "$(POD_NAME)"
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
           ports:
             - name: http
               containerPort: 9000

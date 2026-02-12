@@ -695,6 +695,35 @@ impl TenantManager {
         metrics
     }
 
+    /// Collect connector health across all tenants.
+    ///
+    /// Returns `(pipeline_name, connector_name, connector_type, health_report)` tuples.
+    pub fn collect_connector_health(
+        &self,
+    ) -> Vec<(
+        String,
+        String,
+        String,
+        crate::connector::ConnectorHealthReport,
+    )> {
+        let mut results = Vec::new();
+        for tenant in self.tenants.values() {
+            for pipeline in tenant.pipelines.values() {
+                if let Some(ref registry) = pipeline.connector_registry {
+                    for (conn_name, conn_type, report) in registry.health_reports() {
+                        results.push((
+                            pipeline.name.clone(),
+                            conn_name.to_string(),
+                            conn_type.to_string(),
+                            report,
+                        ));
+                    }
+                }
+            }
+        }
+        results
+    }
+
     /// Persist a tenant's current state to the store (if configured)
     pub fn persist_if_needed(&self, tenant_id: &TenantId) {
         if let Some(ref store) = self.store {

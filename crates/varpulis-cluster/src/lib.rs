@@ -28,17 +28,27 @@
 pub mod api;
 pub mod connector_config;
 pub mod coordinator;
+#[cfg(feature = "k8s")]
+pub mod ha;
 pub mod health;
+#[cfg(feature = "k8s")]
+pub mod k8s_watcher;
 pub mod migration;
 pub mod pipeline_group;
 pub mod routing;
 pub mod worker;
+pub mod ws;
 
 // Re-exports
 pub use api::{cluster_routes, shared_coordinator, SharedCoordinator};
 pub use connector_config::ClusterConnector;
-pub use coordinator::{Coordinator, InjectEventRequest, InjectResponse};
-pub use health::{HEARTBEAT_INTERVAL, HEARTBEAT_TIMEOUT};
+pub use coordinator::{
+    Coordinator, HaRole, InjectEventRequest, InjectResponse, ScalingAction, ScalingPolicy,
+    ScalingRecommendation,
+};
+pub use health::{
+    DEFAULT_HEARTBEAT_INTERVAL, DEFAULT_HEARTBEAT_TIMEOUT, HEARTBEAT_INTERVAL, HEARTBEAT_TIMEOUT,
+};
 pub use migration::{MigrationReason, MigrationStatus, MigrationTask};
 pub use pipeline_group::{
     DeployedPipelineGroup, GroupStatus, InterPipelineRoute, PartitionStrategy, PipelineDeployment,
@@ -47,9 +57,10 @@ pub use pipeline_group::{
 };
 pub use routing::{event_type_matches, find_target_pipeline, RoutingTable};
 pub use worker::{
-    HeartbeatRequest, HeartbeatResponse, PipelineMetrics, RegisterWorkerRequest,
+    ConnectorHealth, HeartbeatRequest, HeartbeatResponse, PipelineMetrics, RegisterWorkerRequest,
     RegisterWorkerResponse, WorkerCapacity, WorkerId, WorkerInfo, WorkerNode, WorkerStatus,
 };
+pub use ws::{shared_ws_manager, SharedWsManager};
 
 /// Errors that can occur in the cluster.
 #[derive(Debug, thiserror::Error)]
@@ -80,6 +91,9 @@ pub enum ClusterError {
 
     #[error("Worker is draining: {0}")]
     WorkerDraining(String),
+
+    #[error("Not the leader coordinator; forward to: {0}")]
+    NotLeader(String),
 }
 
 /// Trait for pipeline placement strategies.
@@ -156,7 +170,7 @@ pub async fn worker_registration_loop(
     api_key: String,
     tenant_manager: Option<varpulis_runtime::SharedTenantManager>,
 ) {
-    use tracing::{error, info, warn};
+    use tracing::{info, warn};
 
     let client = reqwest::Client::new();
     let register_url = format!("{}/api/v1/cluster/workers/register", coordinator_url);
@@ -168,6 +182,7 @@ pub async fn worker_registration_loop(
     // Registration with exponential backoff
     let mut backoff = std::time::Duration::from_secs(1);
     let max_backoff = std::time::Duration::from_secs(30);
+    let mut coordinator_heartbeat_interval: Option<u64> = None;
 
     loop {
         let body = RegisterWorkerRequest {
@@ -185,6 +200,9 @@ pub async fn worker_registration_loop(
             .await
         {
             Ok(resp) if resp.status().is_success() => {
+                if let Ok(reg_resp) = resp.json::<RegisterWorkerResponse>().await {
+                    coordinator_heartbeat_interval = reg_resp.heartbeat_interval_secs;
+                }
                 info!(
                     "Registered with coordinator as '{}' at {}",
                     worker_id, coordinator_url
@@ -210,36 +228,217 @@ pub async fn worker_registration_loop(
         backoff = (backoff * 2).min(max_backoff);
     }
 
-    // Heartbeat loop
-    let interval = HEARTBEAT_INTERVAL;
-    loop {
-        tokio::time::sleep(interval).await;
+    // Heartbeat loop — use coordinator-provided interval if available
+    let interval = coordinator_heartbeat_interval
+        .map(std::time::Duration::from_secs)
+        .unwrap_or(HEARTBEAT_INTERVAL);
 
-        let (pipelines_running, pipeline_metrics) = if let Some(ref tm) = tenant_manager {
-            let mgr = tm.read().await;
-            let metrics = mgr.collect_pipeline_metrics().await;
-            let count = metrics.len();
-            let pm: Vec<PipelineMetrics> = metrics
-                .into_iter()
-                .map(|(name, events_in, events_out)| PipelineMetrics {
+    // Try WebSocket connection for fast failure detection
+    let ws_url = coordinator_url
+        .replace("http://", "ws://")
+        .replace("https://", "wss://");
+    let ws_endpoint = format!("{}/api/v1/cluster/ws", ws_url);
+
+    loop {
+        // Attempt WebSocket connection
+        match try_ws_heartbeat_loop(
+            &ws_endpoint,
+            &worker_id,
+            &api_key,
+            interval,
+            &tenant_manager,
+        )
+        .await
+        {
+            Ok(()) => {
+                // WS loop ended cleanly (shouldn't happen normally)
+                warn!("WebSocket heartbeat loop ended, falling back to REST");
+            }
+            Err(e) => {
+                warn!("WebSocket connection failed: {}, using REST heartbeats", e);
+            }
+        }
+
+        // Fall back to REST heartbeat loop
+        rest_heartbeat_loop(
+            &client,
+            &heartbeat_url,
+            interval,
+            &tenant_manager,
+            &ws_endpoint,
+            &worker_id,
+            &api_key,
+        )
+        .await;
+    }
+}
+
+/// Collect pipeline metrics from the tenant manager (async).
+async fn collect_worker_metrics(
+    tenant_manager: &Option<varpulis_runtime::SharedTenantManager>,
+) -> (usize, Vec<PipelineMetrics>) {
+    if let Some(ref tm) = tenant_manager {
+        let mgr = tm.read().await;
+        let metrics = mgr.collect_pipeline_metrics().await;
+        let count = metrics.len();
+
+        let health_data = mgr.collect_connector_health();
+
+        let pm: Vec<PipelineMetrics> = metrics
+            .into_iter()
+            .map(|(name, events_in, events_out)| {
+                let connector_health: Vec<ConnectorHealth> = health_data
+                    .iter()
+                    .filter(|(pname, _, _, _)| pname == &name)
+                    .map(|(_, cname, ctype, report)| ConnectorHealth {
+                        connector_name: cname.clone(),
+                        connector_type: ctype.clone(),
+                        connected: report.connected,
+                        last_error: report.last_error.clone(),
+                        messages_received: report.messages_received,
+                        seconds_since_last_message: report.seconds_since_last_message,
+                    })
+                    .collect();
+                PipelineMetrics {
                     pipeline_name: name,
                     events_in,
                     events_out,
-                })
-                .collect();
-            (count, pm)
-        } else {
-            (0, Vec::new())
-        };
+                    connector_health,
+                }
+            })
+            .collect();
+        (count, pm)
+    } else {
+        (0, Vec::new())
+    }
+}
 
-        let total_events: u64 = pipeline_metrics.iter().map(|m| m.events_in).sum();
-        let hb = HeartbeatRequest {
-            events_processed: total_events,
-            pipelines_running,
-            pipeline_metrics,
-        };
+/// Build a HeartbeatRequest from collected metrics.
+fn build_heartbeat(
+    pipelines_running: usize,
+    pipeline_metrics: Vec<PipelineMetrics>,
+) -> HeartbeatRequest {
+    let total_events: u64 = pipeline_metrics.iter().map(|m| m.events_in).sum();
+    HeartbeatRequest {
+        events_processed: total_events,
+        pipelines_running,
+        pipeline_metrics,
+    }
+}
 
-        match client.post(&heartbeat_url).json(&hb).send().await {
+/// Try to run heartbeats over WebSocket. Returns Err if WS connection fails.
+async fn try_ws_heartbeat_loop(
+    ws_endpoint: &str,
+    worker_id: &str,
+    api_key: &str,
+    interval: std::time::Duration,
+    tenant_manager: &Option<varpulis_runtime::SharedTenantManager>,
+) -> Result<(), String> {
+    use futures_util::{SinkExt, StreamExt};
+    use tracing::{info, warn};
+
+    let (ws_stream, _) = tokio_tungstenite::connect_async(ws_endpoint)
+        .await
+        .map_err(|e| format!("WS connect failed: {}", e))?;
+
+    info!("WebSocket connected to coordinator at {}", ws_endpoint);
+
+    let (mut ws_tx, mut ws_rx) = ws_stream.split();
+
+    // Send Identify message
+    let identify = ws::WorkerMessage::Identify {
+        worker_id: worker_id.to_string(),
+        api_key: api_key.to_string(),
+    };
+    let identify_json = serde_json::to_string(&identify).map_err(|e| e.to_string())?;
+    ws_tx
+        .send(tokio_tungstenite::tungstenite::Message::Text(identify_json))
+        .await
+        .map_err(|e| format!("WS send failed: {}", e))?;
+
+    // Wait for IdentifyAck
+    let ack_msg = tokio::time::timeout(std::time::Duration::from_secs(5), ws_rx.next())
+        .await
+        .map_err(|_| "Timeout waiting for IdentifyAck".to_string())?
+        .ok_or("WS stream ended before IdentifyAck")?
+        .map_err(|e| format!("WS read error: {}", e))?;
+
+    if let tokio_tungstenite::tungstenite::Message::Text(text) = ack_msg {
+        let coord_msg: ws::CoordinatorMessage =
+            serde_json::from_str(&text).map_err(|e| e.to_string())?;
+        match coord_msg {
+            ws::CoordinatorMessage::IdentifyAck { .. } => {
+                info!("Worker {} identified via WebSocket", worker_id);
+            }
+            ws::CoordinatorMessage::Error { message } => {
+                return Err(format!("Coordinator rejected: {}", message));
+            }
+            _ => {
+                return Err("Unexpected response to Identify".to_string());
+            }
+        }
+    } else {
+        return Err("Non-text response to Identify".to_string());
+    }
+
+    // Heartbeat loop over WebSocket
+    let mut heartbeat_interval = tokio::time::interval(interval);
+    loop {
+        tokio::select! {
+            _ = heartbeat_interval.tick() => {
+                let (pipelines_running, pipeline_metrics) =
+                    collect_worker_metrics(tenant_manager).await;
+                let hb = build_heartbeat(pipelines_running, pipeline_metrics);
+                let ws_msg = ws::WorkerMessage::Heartbeat(hb);
+                let json = serde_json::to_string(&ws_msg).map_err(|e| e.to_string())?;
+                if ws_tx
+                    .send(tokio_tungstenite::tungstenite::Message::Text(json))
+                    .await
+                    .is_err()
+                {
+                    warn!("WebSocket send failed, reconnecting...");
+                    return Ok(());
+                }
+            }
+            msg = ws_rx.next() => {
+                match msg {
+                    Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_))) | None => {
+                        warn!("WebSocket closed by coordinator");
+                        return Ok(());
+                    }
+                    Some(Err(e)) => {
+                        warn!("WebSocket error: {}", e);
+                        return Ok(());
+                    }
+                    _ => {
+                        // HeartbeatAck or other — continue
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// REST heartbeat fallback loop. Runs until a WS reconnection succeeds.
+async fn rest_heartbeat_loop(
+    client: &reqwest::Client,
+    heartbeat_url: &str,
+    interval: std::time::Duration,
+    tenant_manager: &Option<varpulis_runtime::SharedTenantManager>,
+    ws_endpoint: &str,
+    _worker_id: &str,
+    _api_key: &str,
+) {
+    use tracing::{error, info, warn};
+
+    let mut rest_cycles = 0u32;
+    loop {
+        tokio::time::sleep(interval).await;
+
+        let (pipelines_running, pipeline_metrics) = collect_worker_metrics(tenant_manager).await;
+        let hb = build_heartbeat(pipelines_running, pipeline_metrics);
+
+        match client.post(heartbeat_url).json(&hb).send().await {
             Ok(resp) if resp.status().is_success() => {
                 // heartbeat acknowledged
             }
@@ -248,6 +447,16 @@ pub async fn worker_registration_loop(
             }
             Err(e) => {
                 error!("Heartbeat failed: {}", e);
+            }
+        }
+
+        // Periodically try to reconnect via WebSocket (every 6 REST cycles)
+        rest_cycles += 1;
+        if rest_cycles.is_multiple_of(6) {
+            if let Ok((ws_stream, _)) = tokio_tungstenite::connect_async(ws_endpoint).await {
+                info!("WebSocket reconnected, switching back to WS heartbeats");
+                drop(ws_stream);
+                return; // Exit REST loop to retry WS in outer loop
             }
         }
     }
