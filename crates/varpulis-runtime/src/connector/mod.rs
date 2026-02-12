@@ -120,7 +120,7 @@ pub use redis::{RedisConfig, RedisSink, RedisSource};
 pub use registry::ConnectorRegistry;
 
 // Managed connector abstractions (Phase 2)
-pub use managed::ManagedConnector;
+pub use managed::{ConnectorHealthReport, ManagedConnector};
 #[cfg(feature = "kafka")]
 pub use managed_kafka::ManagedKafkaConnector;
 pub use managed_mqtt::ManagedMqttConnector;

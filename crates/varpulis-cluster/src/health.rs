@@ -5,10 +5,16 @@ use std::time::Duration;
 use tracing::warn;
 
 /// Default heartbeat interval (workers send heartbeats this often).
-pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+pub const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Default timeout before marking a worker as unhealthy.
-pub const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(15);
+pub const DEFAULT_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Legacy alias for backward compatibility.
+pub const HEARTBEAT_INTERVAL: Duration = DEFAULT_HEARTBEAT_INTERVAL;
+
+/// Legacy alias for backward compatibility.
+pub const HEARTBEAT_TIMEOUT: Duration = DEFAULT_HEARTBEAT_TIMEOUT;
 
 /// Result of a health sweep across all workers.
 #[derive(Debug, Default)]

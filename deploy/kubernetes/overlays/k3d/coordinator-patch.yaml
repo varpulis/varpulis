@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: varpulis-coordinator
+spec:
+  replicas: 3
+  template:
+    spec:
+      containers:
+        - name: coordinator
+          args:
+            - "coordinator"
+            - "--port"
+            - "9100"
+            - "--bind"
+            - "0.0.0.0"
+            - "--ha"
+            - "--api-key"
+            - "k3d-test-admin-key"
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"

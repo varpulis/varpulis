@@ -271,6 +271,54 @@ enum Commands {
         /// API key for coordinator authentication
         #[arg(long, env = "VARPULIS_API_KEY")]
         api_key: Option<String>,
+
+        /// Heartbeat interval in seconds (workers send heartbeats this often)
+        #[arg(long, default_value = "5", env = "VARPULIS_HEARTBEAT_INTERVAL")]
+        heartbeat_interval: u64,
+
+        /// Heartbeat timeout in seconds (mark worker unhealthy after this)
+        #[arg(long, default_value = "15", env = "VARPULIS_HEARTBEAT_TIMEOUT")]
+        heartbeat_timeout: u64,
+
+        /// Minimum number of workers for auto-scaling (0 = disabled)
+        #[arg(long, default_value = "0", env = "VARPULIS_SCALING_MIN_WORKERS")]
+        scaling_min_workers: usize,
+
+        /// Maximum number of workers for auto-scaling
+        #[arg(long, default_value = "100", env = "VARPULIS_SCALING_MAX_WORKERS")]
+        scaling_max_workers: usize,
+
+        /// Scale-up threshold: avg pipelines per worker
+        #[arg(long, default_value = "5.0", env = "VARPULIS_SCALING_UP_THRESHOLD")]
+        scaling_up_threshold: f64,
+
+        /// Scale-down threshold: avg pipelines per worker
+        #[arg(long, default_value = "1.0", env = "VARPULIS_SCALING_DOWN_THRESHOLD")]
+        scaling_down_threshold: f64,
+
+        /// Webhook URL for scaling notifications
+        #[arg(long, env = "VARPULIS_SCALING_WEBHOOK_URL")]
+        scaling_webhook_url: Option<String>,
+
+        /// Enable coordinator HA with K8s Lease-based leader election
+        #[arg(long, env = "VARPULIS_HA_ENABLED")]
+        ha: bool,
+
+        /// Coordinator identity (defaults to POD_NAME env or hostname)
+        #[arg(long, env = "POD_NAME")]
+        coordinator_id: Option<String>,
+
+        /// K8s namespace for pod watching (auto-detected in cluster)
+        #[arg(long, env = "POD_NAMESPACE")]
+        pod_namespace: Option<String>,
+
+        /// K8s label selector for worker pods
+        #[arg(
+            long,
+            default_value = "app.kubernetes.io/component=worker",
+            env = "VARPULIS_WORKER_LABEL_SELECTOR"
+        )]
+        worker_label_selector: String,
     },
 }
 
@@ -520,8 +568,43 @@ async fn main() -> Result<()> {
             port,
             bind,
             api_key,
+            heartbeat_interval,
+            heartbeat_timeout,
+            scaling_min_workers,
+            scaling_max_workers,
+            scaling_up_threshold,
+            scaling_down_threshold,
+            scaling_webhook_url,
+            ha,
+            coordinator_id,
+            pod_namespace,
+            worker_label_selector,
         } => {
-            run_coordinator(port, &bind, api_key).await?;
+            let scaling_policy = if scaling_min_workers > 0 {
+                Some(varpulis_cluster::ScalingPolicy {
+                    min_workers: scaling_min_workers,
+                    max_workers: scaling_max_workers,
+                    scale_up_threshold: scaling_up_threshold,
+                    scale_down_threshold: scaling_down_threshold,
+                    cooldown_secs: 60,
+                    webhook_url: scaling_webhook_url,
+                })
+            } else {
+                None
+            };
+            run_coordinator(
+                port,
+                &bind,
+                api_key,
+                heartbeat_interval,
+                heartbeat_timeout,
+                scaling_policy,
+                ha,
+                coordinator_id,
+                pod_namespace,
+                worker_label_selector,
+            )
+            .await?;
         }
     }
 
@@ -1904,7 +1987,19 @@ async fn run_server(
 // Coordinator Mode
 // =============================================================================
 
-async fn run_coordinator(port: u16, bind: &str, api_key: Option<String>) -> Result<()> {
+#[allow(clippy::too_many_arguments)]
+async fn run_coordinator(
+    port: u16,
+    bind: &str,
+    api_key: Option<String>,
+    heartbeat_interval_secs: u64,
+    heartbeat_timeout_secs: u64,
+    scaling_policy: Option<varpulis_cluster::ScalingPolicy>,
+    _ha: bool,
+    _coordinator_id: Option<String>,
+    _pod_namespace: Option<String>,
+    _worker_label_selector: String,
+) -> Result<()> {
     let http_protocol = "http";
     println!("Varpulis Coordinator");
     println!("=======================");
@@ -1912,6 +2007,7 @@ async fn run_coordinator(port: u16, bind: &str, api_key: Option<String>) -> Resu
         "API:       {}://{}:{}/api/v1/cluster/",
         http_protocol, bind, port
     );
+    println!("WebSocket: ws://{}:{}/api/v1/cluster/ws", bind, port);
     println!(
         "Auth:      {}",
         if api_key.is_some() {
@@ -1920,14 +2016,36 @@ async fn run_coordinator(port: u16, bind: &str, api_key: Option<String>) -> Resu
             "disabled"
         }
     );
+    println!(
+        "Heartbeat: {}s interval, {}s timeout",
+        heartbeat_interval_secs, heartbeat_timeout_secs
+    );
+    if let Some(ref sp) = scaling_policy {
+        println!(
+            "Scaling:   min={}, max={}, up={:.1}, down={:.1}",
+            sp.min_workers, sp.max_workers, sp.scale_up_threshold, sp.scale_down_threshold
+        );
+    }
+    if _ha {
+        let id = _coordinator_id.as_deref().unwrap_or("unknown");
+        println!("HA:        enabled (id={})", id);
+    }
     println!();
 
     let coordinator = varpulis_cluster::shared_coordinator();
+    let ws_manager = varpulis_cluster::shared_ws_manager();
+    {
+        let mut coord = coordinator.write().await;
+        coord.heartbeat_interval = std::time::Duration::from_secs(heartbeat_interval_secs);
+        coord.heartbeat_timeout = std::time::Duration::from_secs(heartbeat_timeout_secs);
+        coord.scaling_policy = scaling_policy;
+    }
 
     // Spawn periodic health sweep with automatic failover and rebalancing
     let health_coordinator = coordinator.clone();
+    let sweep_interval = std::time::Duration::from_secs(heartbeat_interval_secs);
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(varpulis_cluster::HEARTBEAT_INTERVAL);
+        let mut interval = tokio::time::interval(sweep_interval);
         loop {
             interval.tick().await;
             let mut coord = health_coordinator.write().await;
@@ -1945,6 +2063,17 @@ async fn run_coordinator(port: u16, bind: &str, api_key: Option<String>) -> Resu
                 }
             }
 
+            // Check connector health — log warnings for dead connectors
+            let unhealthy_connectors = coord.check_connector_health();
+            for (pipeline_name, worker_id, connector_name) in &unhealthy_connectors {
+                tracing::warn!(
+                    "Connector '{}' on pipeline '{}' (worker {}) is disconnected",
+                    connector_name,
+                    pipeline_name,
+                    worker_id
+                );
+            }
+
             // Clean up stale completed migrations (older than 1 hour)
             coord.cleanup_completed_migrations(std::time::Duration::from_secs(3600));
 
@@ -1960,15 +2089,32 @@ async fn run_coordinator(port: u16, bind: &str, api_key: Option<String>) -> Resu
                     }
                 }
             }
+
+            // Evaluate auto-scaling and fire webhook if needed
+            if let Some(rec) = coord.evaluate_scaling() {
+                if rec.action != varpulis_cluster::ScalingAction::Stable {
+                    tracing::info!(
+                        "Scaling recommendation: {:?} (current={}, target={}, reason={})",
+                        rec.action,
+                        rec.current_workers,
+                        rec.target_workers,
+                        rec.reason
+                    );
+                }
+            }
+            coord.fire_scaling_webhook().await;
         }
     });
 
     // Health endpoint (no auth) — includes operational data
     let health_coordinator = coordinator.clone();
+    let health_ws_manager = ws_manager.clone();
     let health_route = warp::path("health").and(warp::get()).and_then(move || {
         let coord = health_coordinator.clone();
+        let ws_mgr = health_ws_manager.clone();
         async move {
             let coord = coord.read().await;
+            let ws_mgr = ws_mgr.read().await;
             let total_workers = coord.workers.len();
             let healthy_workers = coord
                 .workers
@@ -1997,6 +2143,7 @@ async fn run_coordinator(port: u16, bind: &str, api_key: Option<String>) -> Resu
                 })
                 .count();
             let total_events: u64 = coord.workers.values().map(|w| w.events_processed).sum();
+            let ws_connections = ws_mgr.connected_count();
             let last_sweep = coord.last_health_sweep.as_ref().map(|s| {
                 serde_json::json!({
                     "workers_checked": s.workers_checked,
@@ -2024,6 +2171,7 @@ async fn run_coordinator(port: u16, bind: &str, api_key: Option<String>) -> Resu
                     "unhealthy": unhealthy_workers,
                     "draining": draining_workers,
                 },
+                "ws_connections": ws_connections,
                 "pipeline_groups": coord.pipeline_groups.len(),
                 "active_migrations": active_migrations,
                 "total_events_processed": total_events,
@@ -2033,9 +2181,19 @@ async fn run_coordinator(port: u16, bind: &str, api_key: Option<String>) -> Resu
         }
     });
 
-    let api_routes = varpulis_cluster::cluster_routes(coordinator, api_key);
+    // Readiness probe — returns 200 only for standalone/leader coordinators
+    let ready_route = warp::path("ready").and(warp::get()).and_then(|| async {
+        let response = serde_json::json!({
+            "status": "ready",
+            "role": "coordinator",
+        });
+        Ok::<_, warp::Rejection>(warp::reply::json(&response))
+    });
+
+    let api_routes = varpulis_cluster::cluster_routes(coordinator, api_key, ws_manager);
 
     let routes = health_route
+        .or(ready_route)
         .or(api_routes)
         .recover(varpulis_cluster::api::handle_rejection);
 

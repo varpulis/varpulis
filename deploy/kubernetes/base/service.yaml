@@ -5,7 +5,7 @@ metadata:
   namespace: varpulis
   labels:
     app.kubernetes.io/name: varpulis
-    app.kubernetes.io/component: cep-engine
+    app.kubernetes.io/component: worker
 spec:
   type: ClusterIP
   ports:
@@ -28,7 +28,7 @@ metadata:
   namespace: varpulis
   labels:
     app.kubernetes.io/name: varpulis
-    app.kubernetes.io/component: cep-engine
+    app.kubernetes.io/component: worker
 spec:
   type: ClusterIP
   clusterIP: None

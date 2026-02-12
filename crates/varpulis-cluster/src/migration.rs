@@ -51,6 +51,8 @@ pub enum MigrationReason {
     Drain,
     /// Operator-initiated
     Manual,
+    /// Connector lost connectivity
+    ConnectorFailure,
 }
 
 impl std::fmt::Display for MigrationReason {
@@ -60,6 +62,7 @@ impl std::fmt::Display for MigrationReason {
             Self::Rebalance => write!(f, "rebalance"),
             Self::Drain => write!(f, "drain"),
             Self::Manual => write!(f, "manual"),
+            Self::ConnectorFailure => write!(f, "connector_failure"),
         }
     }
 }
@@ -102,6 +105,10 @@ mod tests {
         assert_eq!(MigrationReason::Rebalance.to_string(), "rebalance");
         assert_eq!(MigrationReason::Drain.to_string(), "drain");
         assert_eq!(MigrationReason::Manual.to_string(), "manual");
+        assert_eq!(
+            MigrationReason::ConnectorFailure.to_string(),
+            "connector_failure"
+        );
     }
 
     #[test]
@@ -128,6 +135,7 @@ mod tests {
             MigrationReason::Rebalance,
             MigrationReason::Drain,
             MigrationReason::Manual,
+            MigrationReason::ConnectorFailure,
         ] {
             let json = serde_json::to_string(&reason).unwrap();
             let _parsed: MigrationReason = serde_json::from_str(&json).unwrap();

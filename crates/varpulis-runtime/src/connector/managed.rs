@@ -11,6 +11,26 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
+/// Health report from a managed connector.
+#[derive(Debug, Clone)]
+pub struct ConnectorHealthReport {
+    pub connected: bool,
+    pub last_error: Option<String>,
+    pub messages_received: u64,
+    pub seconds_since_last_message: u64,
+}
+
+impl Default for ConnectorHealthReport {
+    fn default() -> Self {
+        Self {
+            connected: true,
+            last_error: None,
+            messages_received: 0,
+            seconds_since_last_message: 0,
+        }
+    }
+}
+
 /// A connector that manages a single shared connection.
 ///
 /// First call to [`start_source`](Self::start_source) or
@@ -49,6 +69,11 @@ pub trait ManagedConnector: Send + Sync {
         topic: &str,
         params: &HashMap<String, String>,
     ) -> Result<Arc<dyn Sink>, ConnectorError>;
+
+    /// Report the health of this connector.
+    fn health(&self) -> ConnectorHealthReport {
+        ConnectorHealthReport::default()
+    }
 
     /// Disconnect everything and release resources.
     async fn shutdown(&mut self) -> Result<(), ConnectorError>;
