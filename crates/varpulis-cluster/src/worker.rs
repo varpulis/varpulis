@@ -105,6 +105,21 @@ pub struct RegisterWorkerRequest {
 pub struct RegisterWorkerResponse {
     pub worker_id: String,
     pub status: String,
+    /// Optional heartbeat interval override from coordinator (seconds).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub heartbeat_interval_secs: Option<u64>,
+}
+
+/// Health status of a single connector within a pipeline.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectorHealth {
+    pub connector_name: String,
+    pub connector_type: String,
+    pub connected: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    pub messages_received: u64,
+    pub seconds_since_last_message: u64,
 }
 
 /// Per-pipeline metrics reported in heartbeats.
@@ -113,10 +128,12 @@ pub struct PipelineMetrics {
     pub pipeline_name: String,
     pub events_in: u64,
     pub events_out: u64,
+    #[serde(default)]
+    pub connector_health: Vec<ConnectorHealth>,
 }
 
 /// Request body for worker heartbeat.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HeartbeatRequest {
     pub events_processed: u64,
     pub pipelines_running: usize,
@@ -317,6 +334,62 @@ mod tests {
         let parsed: HeartbeatRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.events_processed, 42);
         assert_eq!(parsed.pipelines_running, 3);
+    }
+
+    #[test]
+    fn test_connector_health_serde() {
+        let ch = ConnectorHealth {
+            connector_name: "mqtt_in".into(),
+            connector_type: "mqtt".into(),
+            connected: true,
+            last_error: None,
+            messages_received: 42,
+            seconds_since_last_message: 5,
+        };
+        let json = serde_json::to_string(&ch).unwrap();
+        let parsed: ConnectorHealth = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.connector_name, "mqtt_in");
+        assert!(parsed.connected);
+        assert!(parsed.last_error.is_none());
+        assert_eq!(parsed.messages_received, 42);
+        // last_error should be skipped when None
+        assert!(!json.contains("last_error"));
+    }
+
+    #[test]
+    fn test_pipeline_metrics_backward_compat() {
+        // Old heartbeats without connector_health should deserialize with empty vec
+        let json = r#"{"pipeline_name":"p1","events_in":100,"events_out":50}"#;
+        let parsed: PipelineMetrics = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.pipeline_name, "p1");
+        assert_eq!(parsed.events_in, 100);
+        assert_eq!(parsed.events_out, 50);
+        assert!(parsed.connector_health.is_empty());
+    }
+
+    #[test]
+    fn test_pipeline_metrics_with_connector_health() {
+        let pm = PipelineMetrics {
+            pipeline_name: "p1".into(),
+            events_in: 100,
+            events_out: 50,
+            connector_health: vec![ConnectorHealth {
+                connector_name: "mqtt_in".into(),
+                connector_type: "mqtt".into(),
+                connected: false,
+                last_error: Some("connection refused".into()),
+                messages_received: 0,
+                seconds_since_last_message: 120,
+            }],
+        };
+        let json = serde_json::to_string(&pm).unwrap();
+        let parsed: PipelineMetrics = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.connector_health.len(), 1);
+        assert!(!parsed.connector_health[0].connected);
+        assert_eq!(
+            parsed.connector_health[0].last_error.as_deref(),
+            Some("connection refused")
+        );
     }
 
     #[test]

@@ -34,6 +34,7 @@ create_cluster() {
     echo "==> Creating k3d cluster '$CLUSTER_NAME'..."
     k3d cluster create "$CLUSTER_NAME" \
         --port "9000:9000@loadbalancer" \
+        --port "9100:9100@loadbalancer" \
         --port "3000:3000@loadbalancer" \
         --wait
     echo "==> Cluster created."
@@ -55,7 +56,23 @@ deploy() {
     echo "==> Deploying infrastructure (Kafka, Mosquitto, Prometheus, Grafana)..."
     kubectl apply -f "$REPO_ROOT/deploy/kubernetes/overlays/k3d/infra/" --namespace "$NAMESPACE"
 
-    echo "==> Waiting for Varpulis deployment rollout..."
+    echo "==> Waiting for coordinator StatefulSet rollout..."
+    kubectl rollout status statefulset/k3d-varpulis-coordinator \
+        --namespace "$NAMESPACE" \
+        --timeout=120s
+
+    echo "==> Waiting for coordinator leader election..."
+    for i in $(seq 1 30); do
+        if kubectl logs statefulset/k3d-varpulis-coordinator \
+            --namespace "$NAMESPACE" 2>/dev/null | grep -q "Leader"; then
+            echo "    Leader elected."
+            break
+        fi
+        echo "    Waiting for leader election... ($i/30)"
+        sleep 2
+    done
+
+    echo "==> Waiting for Varpulis worker deployment rollout..."
     kubectl rollout status deployment/k3d-varpulis \
         --namespace "$NAMESPACE" \
         --timeout=120s
@@ -127,9 +144,10 @@ deploy
 
 echo ""
 echo "==> k3d cluster '$CLUSTER_NAME' is ready."
-echo "    Varpulis API: http://localhost:9000"
-echo "    Grafana:      http://localhost:3000 (anonymous admin, no login required)"
-echo "    Admin key:    k3d-test-admin-key"
+echo "    Coordinator API: http://localhost:9100"
+echo "    Worker API:      http://localhost:9000"
+echo "    Grafana:         http://localhost:3000 (anonymous admin, no login required)"
+echo "    Admin key:       k3d-test-admin-key"
 echo ""
 echo "    Internal endpoints (within cluster):"
 echo "      Kafka:      kafka.${NAMESPACE}.svc.cluster.local:9092"

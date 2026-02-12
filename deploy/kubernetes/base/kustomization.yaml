@@ -11,6 +11,9 @@ resources:
   - service.yaml
   - hpa.yaml
   - pdb.yaml
+  - coordinator-rbac.yaml
+  - coordinator-statefulset.yaml
+  - coordinator-service.yaml
   # Uncomment if using Prometheus Operator
   # - servicemonitor.yaml
 
