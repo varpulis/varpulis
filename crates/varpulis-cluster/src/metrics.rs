@@ -21,6 +21,12 @@ pub struct ClusterPrometheusMetrics {
     pub health_sweep_duration_seconds: HistogramVec,
     /// Deploy duration in seconds.
     pub deploy_duration_seconds: HistogramVec,
+    /// Raft role (0=follower, 1=candidate, 2=leader).
+    pub raft_role: Gauge,
+    /// Current Raft term.
+    pub raft_term: Gauge,
+    /// Current Raft commit index.
+    pub raft_commit_index: Gauge,
 }
 
 impl ClusterPrometheusMetrics {
@@ -87,6 +93,21 @@ impl ClusterPrometheusMetrics {
         )
         .expect("failed to create deploy_duration_seconds histogram");
 
+        let raft_role = Gauge::new(
+            "varpulis_cluster_raft_role",
+            "Raft role (0=follower, 1=candidate, 2=leader)",
+        )
+        .expect("failed to create raft_role gauge");
+
+        let raft_term = Gauge::new("varpulis_cluster_raft_term", "Current Raft term")
+            .expect("failed to create raft_term gauge");
+
+        let raft_commit_index = Gauge::new(
+            "varpulis_cluster_raft_commit_index",
+            "Current Raft commit index",
+        )
+        .expect("failed to create raft_commit_index gauge");
+
         registry
             .register(Box::new(workers_total.clone()))
             .expect("failed to register workers_total");
@@ -108,6 +129,15 @@ impl ClusterPrometheusMetrics {
         registry
             .register(Box::new(deploy_duration_seconds.clone()))
             .expect("failed to register deploy_duration_seconds");
+        registry
+            .register(Box::new(raft_role.clone()))
+            .expect("failed to register raft_role");
+        registry
+            .register(Box::new(raft_term.clone()))
+            .expect("failed to register raft_term");
+        registry
+            .register(Box::new(raft_commit_index.clone()))
+            .expect("failed to register raft_commit_index");
 
         Self {
             registry: Arc::new(registry),
@@ -118,6 +148,9 @@ impl ClusterPrometheusMetrics {
             migration_duration_seconds,
             health_sweep_duration_seconds,
             deploy_duration_seconds,
+            raft_role,
+            raft_term,
+            raft_commit_index,
         }
     }
 
@@ -154,6 +187,15 @@ impl ClusterPrometheusMetrics {
         self.health_sweep_duration_seconds
             .with_label_values(&[&workers_checked.to_string()])
             .observe(duration_secs);
+    }
+
+    /// Update Raft consensus metrics.
+    ///
+    /// `role`: 0=follower, 1=candidate, 2=leader
+    pub fn update_raft_metrics(&self, role: f64, term: f64, commit_index: f64) {
+        self.raft_role.set(role);
+        self.raft_term.set(term);
+        self.raft_commit_index.set(commit_index);
     }
 
     /// Record a deploy operation.

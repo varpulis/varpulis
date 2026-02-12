@@ -250,6 +250,56 @@ export async function migratePipeline(groupId: string, pipelineName: string, tar
   return response.data
 }
 
+// === Prometheus Metrics ===
+
+import type { ClusterHealthMetrics } from '@/types/cluster'
+
+/**
+ * Parse Prometheus text format into key-value pairs
+ */
+function parsePrometheusText(text: string): Map<string, number> {
+  const metrics = new Map<string, number>()
+  for (const line of text.split('\n')) {
+    if (line.startsWith('#') || line.trim() === '') continue
+    // Match: metric_name{labels} value or metric_name value
+    const match = line.match(/^([a-zA-Z_:][a-zA-Z0-9_:]*)(\{[^}]*\})?\s+([\d.eE+-]+|NaN|Inf|-Inf)/)
+    if (match) {
+      const key = match[1] + (match[2] || '')
+      const value = parseFloat(match[3])
+      if (!isNaN(value)) {
+        metrics.set(key, value)
+      }
+    }
+  }
+  return metrics
+}
+
+/**
+ * Fetch cluster Prometheus metrics and parse into structured format
+ */
+export async function fetchClusterHealth(): Promise<ClusterHealthMetrics> {
+  const response = await api.get(`${CLUSTER_BASE}/prometheus`, {
+    headers: { Accept: 'text/plain' },
+    transformResponse: [(data: string) => data], // prevent JSON parse
+  })
+  const metrics = parsePrometheusText(response.data)
+
+  return {
+    raft_role: metrics.get('varpulis_cluster_raft_role') ?? -1,
+    raft_term: metrics.get('varpulis_cluster_raft_term') ?? 0,
+    raft_commit_index: metrics.get('varpulis_cluster_raft_commit_index') ?? 0,
+    workers_ready: metrics.get('varpulis_cluster_workers_total{status="ready"}') ?? 0,
+    workers_unhealthy: metrics.get('varpulis_cluster_workers_total{status="unhealthy"}') ?? 0,
+    workers_draining: metrics.get('varpulis_cluster_workers_total{status="draining"}') ?? 0,
+    pipeline_groups_total: metrics.get('varpulis_cluster_pipeline_groups_total') ?? 0,
+    deployments_total: metrics.get('varpulis_cluster_deployments_total') ?? 0,
+    migrations_success: metrics.get('varpulis_cluster_migrations_total{result="success"}') ?? 0,
+    migrations_failure: metrics.get('varpulis_cluster_migrations_total{result="failure"}') ?? 0,
+    deploys_success: metrics.get('varpulis_cluster_deploy_duration_seconds_count{result="success"}') ?? 0,
+    deploys_failure: metrics.get('varpulis_cluster_deploy_duration_seconds_count{result="failure"}') ?? 0,
+  }
+}
+
 // === Validation ===
 
 export interface ValidateDiagnostic {

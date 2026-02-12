@@ -91,6 +91,22 @@ export interface Migration {
   elapsed_ms: number
 }
 
+// Cluster health metrics from Prometheus endpoint
+export interface ClusterHealthMetrics {
+  raft_role: number // 0=follower, 1=candidate, 2=leader
+  raft_term: number
+  raft_commit_index: number
+  workers_ready: number
+  workers_unhealthy: number
+  workers_draining: number
+  pipeline_groups_total: number
+  deployments_total: number
+  migrations_success: number
+  migrations_failure: number
+  deploys_success: number
+  deploys_failure: number
+}
+
 // Cluster summary for dashboard
 export interface ClusterSummary {
   total_workers: number

@@ -89,6 +89,7 @@ pub fn cluster_routes(
         .and(warp::path("heartbeat"))
         .and(warp::path::end())
         .and(warp::post())
+        .and(with_optional_auth(admin_key.clone()))
         .and(warp::body::json())
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_heartbeat);
@@ -300,6 +301,15 @@ pub fn cluster_routes(
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_metrics);
 
+    // --- Prometheus metrics endpoint (unauthenticated, like /health) ---
+
+    let prometheus_metrics = api
+        .and(warp::path("prometheus"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(with_coordinator(coordinator.clone()))
+        .and_then(handle_prometheus_metrics);
+
     // --- Scaling endpoint ---
 
     let scaling = api
@@ -363,6 +373,7 @@ pub fn cluster_routes(
         .or(migration_routes)
         .or(connector_routes)
         .or(metrics)
+        .or(prometheus_metrics)
         .or(scaling)
         .or(summary)
         .with(cors)
@@ -536,6 +547,7 @@ async fn handle_register_worker(
 
 async fn handle_heartbeat(
     worker_id: String,
+    _auth: (),
     body: HeartbeatRequest,
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
@@ -1375,6 +1387,18 @@ async fn handle_metrics(
     Ok(warp::reply::with_status(warp::reply::json(&metrics), StatusCode::OK).into_response())
 }
 
+async fn handle_prometheus_metrics(
+    coordinator: SharedCoordinator,
+) -> Result<impl Reply, Infallible> {
+    let coord = coordinator.read().await;
+    let text = coord.cluster_metrics.gather();
+    Ok(warp::reply::with_header(
+        warp::reply::with_status(text, StatusCode::OK),
+        "content-type",
+        "text/plain; version=0.0.4; charset=utf-8",
+    ))
+}
+
 async fn handle_scaling(
     _auth: (),
     coordinator: SharedCoordinator,
@@ -1493,11 +1517,13 @@ fn cluster_error_response(err: ClusterError) -> warp::reply::Response {
 /// Handle warp rejections with specific HTTP status codes and messages.
 pub async fn handle_rejection(err: Rejection) -> Result<impl Reply, Infallible> {
     if err.find::<Unauthorized>().is_some() {
+        tracing::warn!("Authentication failed: invalid or missing API key");
         Ok(error_response(
             StatusCode::UNAUTHORIZED,
             "Invalid or missing API key",
         ))
     } else if err.find::<warp::reject::MissingHeader>().is_some() {
+        tracing::warn!("Authentication failed: missing API key header");
         Ok(error_response(
             StatusCode::UNAUTHORIZED,
             "Missing API key header",
@@ -1618,6 +1644,7 @@ mod tests {
         let resp = warp::test::request()
             .method("POST")
             .path("/api/v1/cluster/workers/w1/heartbeat")
+            .header("x-api-key", "admin-key")
             .json(&HeartbeatRequest {
                 events_processed: 42,
                 pipelines_running: 1,
@@ -1767,6 +1794,7 @@ mod tests {
         let resp = warp::test::request()
             .method("POST")
             .path("/api/v1/cluster/workers/nonexistent/heartbeat")
+            .header("x-api-key", "admin-key")
             .json(&HeartbeatRequest {
                 events_processed: 0,
                 pipelines_running: 0,
@@ -2173,6 +2201,7 @@ mod tests {
         let resp = warp::test::request()
             .method("POST")
             .path("/api/v1/cluster/workers/w1/heartbeat")
+            .header("x-api-key", "admin-key")
             .json(&HeartbeatRequest {
                 events_processed: 500,
                 pipelines_running: 3,

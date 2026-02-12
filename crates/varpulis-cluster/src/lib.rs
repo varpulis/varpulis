@@ -432,7 +432,7 @@ async fn rest_heartbeat_loop(
     tenant_manager: &Option<varpulis_runtime::SharedTenantManager>,
     ws_endpoint: &str,
     _worker_id: &str,
-    _api_key: &str,
+    api_key: &str,
 ) {
     use tracing::{error, info, warn};
 
@@ -443,7 +443,13 @@ async fn rest_heartbeat_loop(
         let (pipelines_running, pipeline_metrics) = collect_worker_metrics(tenant_manager).await;
         let hb = build_heartbeat(pipelines_running, pipeline_metrics);
 
-        match client.post(heartbeat_url).json(&hb).send().await {
+        match client
+            .post(heartbeat_url)
+            .header("x-api-key", api_key)
+            .json(&hb)
+            .send()
+            .await
+        {
             Ok(resp) if resp.status().is_success() => {
                 // heartbeat acknowledged
             }

@@ -2160,6 +2160,22 @@ async fn run_coordinator(
             #[cfg(feature = "raft")]
             coord.update_raft_role();
 
+            // Update Raft Prometheus metrics
+            #[cfg(feature = "raft")]
+            if let Some(ref handle) = coord.raft_handle {
+                let metrics = handle.raft.metrics().borrow().clone();
+                let role = if metrics.current_leader == Some(metrics.id) {
+                    2.0 // leader
+                } else {
+                    0.0 // follower
+                };
+                coord.cluster_metrics.update_raft_metrics(
+                    role,
+                    metrics.current_term as f64,
+                    metrics.last_applied.map(|l| l.index as f64).unwrap_or(0.0),
+                );
+            }
+
             // Sync from Raft on ALL nodes: followers get updated state,
             // leader refreshes heartbeat timestamps for remote workers
             // (heartbeat proxy — prevents false unhealthy for workers
@@ -2328,6 +2344,24 @@ async fn run_coordinator(
         Ok::<_, warp::Rejection>(warp::reply::json(&response))
     });
 
+    // Prometheus /metrics endpoint (unauthenticated, standard scrape path)
+    let metrics_coordinator = coordinator.clone();
+    let metrics_route = warp::path("metrics")
+        .and(warp::path::end())
+        .and(warp::get())
+        .and_then(move || {
+            let coord = metrics_coordinator.clone();
+            async move {
+                let coord = coord.read().await;
+                let text = coord.cluster_metrics.gather();
+                Ok::<_, warp::Rejection>(warp::reply::with_header(
+                    text,
+                    "content-type",
+                    "text/plain; version=0.0.4; charset=utf-8",
+                ))
+            }
+        });
+
     let bind_addr: std::net::IpAddr = bind
         .parse()
         .map_err(|e| anyhow::anyhow!("Invalid bind address '{}': {}", bind, e))?;
@@ -2345,6 +2379,7 @@ async fn run_coordinator(
             );
             let routes = health_route
                 .or(ready_route)
+                .or(metrics_route)
                 .or(api_routes)
                 .recover(varpulis_cluster::api::handle_rejection);
             warp::serve(routes).run((bind_addr, port)).await;
@@ -2352,6 +2387,7 @@ async fn run_coordinator(
             let api_routes = varpulis_cluster::cluster_routes(coordinator, api_key, ws_manager);
             let routes = health_route
                 .or(ready_route)
+                .or(metrics_route)
                 .or(api_routes)
                 .recover(varpulis_cluster::api::handle_rejection);
             warp::serve(routes).run((bind_addr, port)).await;
@@ -2363,6 +2399,7 @@ async fn run_coordinator(
         let api_routes = varpulis_cluster::cluster_routes(coordinator, api_key, ws_manager);
         let routes = health_route
             .or(ready_route)
+            .or(metrics_route)
             .or(api_routes)
             .recover(varpulis_cluster::api::handle_rejection);
         warp::serve(routes).run((bind_addr, port)).await;

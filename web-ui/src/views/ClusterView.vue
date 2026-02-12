@@ -4,12 +4,13 @@ import { useClusterStore } from '@/stores/cluster'
 import WorkerGrid from '@/components/cluster/WorkerGrid.vue'
 import TopologyGraph from '@/components/cluster/TopologyGraph.vue'
 import HealthIndicator from '@/components/cluster/HealthIndicator.vue'
+import ClusterHealthPanel from '@/components/cluster/ClusterHealthPanel.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import type { Worker, PipelinePlacement } from '@/types/cluster'
 
 const clusterStore = useClusterStore()
 
-const activeTab = ref('workers')
+const activeTab = ref('health')
 const selectedWorker = ref<Worker | null>(null)
 const detailDrawer = ref(false)
 const confirmDialog = ref(false)
@@ -37,6 +38,7 @@ const loading = computed(() => clusterStore.loading)
 const error = computed(() => clusterStore.error)
 const workerDetail = computed(() => clusterStore.selectedWorker)
 const migrations = computed(() => clusterStore.migrations)
+const clusterHealth = computed(() => clusterStore.clusterHealth)
 
 // Available target workers for migration (healthy, not the current worker)
 const migrateTargetWorkers = computed(() =>
@@ -164,6 +166,7 @@ async function fetchData(): Promise<void> {
     clusterStore.fetchWorkers(),
     clusterStore.fetchTopology(),
     clusterStore.fetchMigrations(),
+    clusterStore.fetchClusterHealth(),
   ])
 }
 
@@ -209,6 +212,10 @@ onUnmounted(() => {
 
     <!-- Tabs -->
     <v-tabs v-model="activeTab" class="mb-4">
+      <v-tab value="health">
+        <v-icon start>mdi-heart-pulse</v-icon>
+        Health
+      </v-tab>
       <v-tab value="workers">
         <v-icon start>mdi-server</v-icon>
         Workers
@@ -237,6 +244,11 @@ onUnmounted(() => {
     </v-tabs>
 
     <v-window v-model="activeTab">
+      <!-- Health Tab -->
+      <v-window-item value="health">
+        <ClusterHealthPanel :health="clusterHealth" />
+      </v-window-item>
+
       <!-- Workers Tab -->
       <v-window-item value="workers">
         <!-- Filter Chips -->
