@@ -35,6 +35,8 @@ pub mod health;
 pub mod k8s_watcher;
 pub mod migration;
 pub mod pipeline_group;
+#[cfg(feature = "raft")]
+pub mod raft;
 pub mod routing;
 pub mod worker;
 pub mod ws;

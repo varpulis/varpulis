@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+#[allow(unused_imports)]
 use varpulis_parser::ParseError;
 use warp::http::StatusCode;
 use warp::{Filter, Rejection, Reply};
@@ -25,6 +26,22 @@ pub type SharedCoordinator = Arc<RwLock<Coordinator>>;
 /// Create a new shared coordinator.
 pub fn shared_coordinator() -> SharedCoordinator {
     Arc::new(RwLock::new(Coordinator::new()))
+}
+
+/// Build all Raft + cluster API routes.
+///
+/// When the `raft` feature is enabled and a Raft handle is provided,
+/// the `/raft/*` routes are included for inter-coordinator RPCs.
+#[cfg(feature = "raft")]
+pub fn cluster_routes_with_raft(
+    coordinator: SharedCoordinator,
+    admin_key: Option<String>,
+    ws_manager: SharedWsManager,
+    raft: crate::raft::routes::SharedRaft,
+) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
+    let raft_routes = crate::raft::routes::raft_routes(raft);
+    let cluster = cluster_routes(coordinator, admin_key, ws_manager);
+    raft_routes.or(cluster)
 }
 
 /// Build all coordinator API routes under `/api/v1/cluster/`.
@@ -406,7 +423,96 @@ async fn handle_register_worker(
     body: RegisterWorkerRequest,
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    // In Raft mode, forward to leader if we're a follower.
+    // Workers always connect to their home coordinator, so we must transparently
+    // forward the registration to the Raft leader.
+    #[cfg(feature = "raft")]
+    {
+        let coord = coordinator.read().await;
+        if let Some(ref handle) = coord.raft_handle {
+            if !coord.is_raft_leader() {
+                if let Some(leader_addr) = coord.raft_leader_addr() {
+                    let client = coord.http_client.clone();
+                    let admin_key = handle.admin_key.clone();
+                    drop(coord); // Release lock before HTTP call
+
+                    let url = format!("{}/api/v1/cluster/workers/register", leader_addr);
+                    let mut forward_req = client.post(&url).json(&body);
+                    if let Some(key) = &admin_key {
+                        forward_req = forward_req.header("x-api-key", key);
+                    }
+                    let forward_result: Result<reqwest::Response, reqwest::Error> =
+                        forward_req.send().await;
+                    match forward_result {
+                        Ok(forward_resp) if forward_resp.status().is_success() => {
+                            // Leader accepted the registration. Also register locally
+                            // so heartbeats work immediately (before next Raft sync).
+                            let mut coord = coordinator.write().await;
+                            let node = WorkerNode {
+                                id: WorkerId(body.worker_id.clone()),
+                                address: body.address,
+                                api_key: body.api_key,
+                                status: crate::worker::WorkerStatus::Registering,
+                                capacity: body.capacity,
+                                last_heartbeat: std::time::Instant::now(),
+                                assigned_pipelines: Vec::new(),
+                                events_processed: 0,
+                            };
+                            let id = coord.register_worker(node);
+                            let reg_resp = RegisterWorkerResponse {
+                                worker_id: id.0,
+                                status: "registered".into(),
+                                heartbeat_interval_secs: None,
+                            };
+                            return Ok(warp::reply::with_status(
+                                warp::reply::json(&reg_resp),
+                                StatusCode::CREATED,
+                            )
+                            .into_response());
+                        }
+                        Ok(forward_resp) => {
+                            let status = forward_resp.status();
+                            let text = forward_resp.text().await.unwrap_or_default();
+                            tracing::warn!("Leader forwarding failed (HTTP {status}): {text}");
+                            return Ok(cluster_error_response(ClusterError::NotLeader(format!(
+                                "leader returned HTTP {status}"
+                            ))));
+                        }
+                        Err(e) => {
+                            tracing::warn!("Cannot reach Raft leader at {leader_addr}: {e}");
+                            return Ok(cluster_error_response(ClusterError::NotLeader(format!(
+                                "cannot reach leader: {e}"
+                            ))));
+                        }
+                    }
+                } else {
+                    drop(coord);
+                    return Ok(cluster_error_response(ClusterError::NotLeader(
+                        "no leader elected yet".into(),
+                    )));
+                }
+            }
+        }
+    }
+
     let mut coord = coordinator.write().await;
+
+    // Replicate through Raft if enabled (we're the leader here)
+    #[cfg(feature = "raft")]
+    if let Some(ref handle) = coord.raft_handle {
+        let cmd = crate::raft::ClusterCommand::RegisterWorker {
+            id: body.worker_id.clone(),
+            address: body.address.clone(),
+            api_key: body.api_key.clone(),
+            capacity: body.capacity.clone(),
+        };
+        if let Err(e) = handle.raft.client_write(cmd).await {
+            return Ok(cluster_error_response(ClusterError::NotLeader(
+                e.to_string(),
+            )));
+        }
+    }
+
     let node = WorkerNode {
         id: WorkerId(body.worker_id.clone()),
         address: body.address,
@@ -476,6 +582,20 @@ async fn handle_delete_worker(
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
     let mut coord = coordinator.write().await;
+
+    // Replicate through Raft if enabled
+    #[cfg(feature = "raft")]
+    if let Some(ref handle) = coord.raft_handle {
+        let cmd = crate::raft::ClusterCommand::DeregisterWorker {
+            id: worker_id.clone(),
+        };
+        if let Err(e) = handle.raft.client_write(cmd).await {
+            return Ok(cluster_error_response(ClusterError::NotLeader(
+                e.to_string(),
+            )));
+        }
+    }
+
     match coord.deregister_worker(&WorkerId(worker_id)) {
         Ok(()) => Ok(warp::reply::with_status(
             warp::reply::json(&serde_json::json!({"deleted": true})),
@@ -492,8 +612,26 @@ async fn handle_deploy_group(
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
     let mut coord = coordinator.write().await;
+
+    // Must be leader (or standalone) for deploy operations
+    if let Err(e) = coord.require_writer() {
+        return Ok(cluster_error_response(e));
+    }
+
     match coord.deploy_group(body).await {
         Ok(group_id) => {
+            // Replicate the deployment result through Raft
+            #[cfg(feature = "raft")]
+            if let Some(ref handle) = coord.raft_handle {
+                let group = coord.pipeline_groups.get(&group_id).unwrap();
+                let group_json = serde_json::to_value(group).unwrap_or_default();
+                let cmd = crate::raft::ClusterCommand::GroupDeployed {
+                    name: group_id.clone(),
+                    group: group_json,
+                };
+                let _ = handle.raft.client_write(cmd).await;
+            }
+
             let group = coord.pipeline_groups.get(&group_id).unwrap();
             let info = PipelineGroupInfo::from(group);
             Ok(
@@ -546,12 +684,28 @@ async fn handle_delete_group(
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
     let mut coord = coordinator.write().await;
+
+    if let Err(e) = coord.require_writer() {
+        return Ok(cluster_error_response(e));
+    }
+
     match coord.teardown_group(&group_id).await {
-        Ok(()) => Ok(warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({"torn_down": true})),
-            StatusCode::OK,
-        )
-        .into_response()),
+        Ok(()) => {
+            // Replicate the group removal through Raft
+            #[cfg(feature = "raft")]
+            if let Some(ref handle) = coord.raft_handle {
+                let cmd = crate::raft::ClusterCommand::GroupRemoved {
+                    name: group_id.clone(),
+                };
+                let _ = handle.raft.client_write(cmd).await;
+            }
+
+            Ok(warp::reply::with_status(
+                warp::reply::json(&serde_json::json!({"torn_down": true})),
+                StatusCode::OK,
+            )
+            .into_response())
+        }
         Err(e) => Ok(cluster_error_response(e)),
     }
 }
@@ -870,6 +1024,11 @@ async fn handle_drain_worker(
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
     let mut coord = coordinator.write().await;
+
+    if let Err(e) = coord.require_writer() {
+        return Ok(cluster_error_response(e));
+    }
+
     let timeout = body.timeout_secs.map(std::time::Duration::from_secs);
     match coord
         .drain_worker(&WorkerId(worker_id.clone()), timeout)
@@ -892,6 +1051,11 @@ async fn handle_rebalance(
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
     let mut coord = coordinator.write().await;
+
+    if let Err(e) = coord.require_writer() {
+        return Ok(cluster_error_response(e));
+    }
+
     match coord.rebalance().await {
         Ok(migration_ids) => {
             let resp = RebalanceResponse {
@@ -962,6 +1126,11 @@ async fn handle_manual_migrate(
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
     let mut coord = coordinator.write().await;
+
+    if let Err(e) = coord.require_writer() {
+        return Ok(cluster_error_response(e));
+    }
+
     match coord
         .migrate_pipeline(
             &pipeline_name,
@@ -1024,6 +1193,21 @@ async fn handle_create_connector(
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
     let mut coord = coordinator.write().await;
+
+    // Replicate through Raft if enabled
+    #[cfg(feature = "raft")]
+    if let Some(ref handle) = coord.raft_handle {
+        let cmd = crate::raft::ClusterCommand::ConnectorCreated {
+            name: body.name.clone(),
+            connector: body.clone(),
+        };
+        if let Err(e) = handle.raft.client_write(cmd).await {
+            return Ok(cluster_error_response(ClusterError::NotLeader(
+                e.to_string(),
+            )));
+        }
+    }
+
     match coord.create_connector(body) {
         Ok(connector) => Ok(warp::reply::with_status(
             warp::reply::json(connector),
@@ -1041,6 +1225,20 @@ async fn handle_update_connector(
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
     let mut coord = coordinator.write().await;
+
+    #[cfg(feature = "raft")]
+    if let Some(ref handle) = coord.raft_handle {
+        let cmd = crate::raft::ClusterCommand::ConnectorUpdated {
+            name: name.clone(),
+            connector: body.clone(),
+        };
+        if let Err(e) = handle.raft.client_write(cmd).await {
+            return Ok(cluster_error_response(ClusterError::NotLeader(
+                e.to_string(),
+            )));
+        }
+    }
+
     match coord.update_connector(&name, body) {
         Ok(connector) => Ok(
             warp::reply::with_status(warp::reply::json(connector), StatusCode::OK).into_response(),
@@ -1055,6 +1253,17 @@ async fn handle_delete_connector(
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
     let mut coord = coordinator.write().await;
+
+    #[cfg(feature = "raft")]
+    if let Some(ref handle) = coord.raft_handle {
+        let cmd = crate::raft::ClusterCommand::ConnectorRemoved { name: name.clone() };
+        if let Err(e) = handle.raft.client_write(cmd).await {
+            return Ok(cluster_error_response(ClusterError::NotLeader(
+                e.to_string(),
+            )));
+        }
+    }
+
     match coord.delete_connector(&name) {
         Ok(()) => Ok(warp::reply::with_status(
             warp::reply::json(&serde_json::json!({"deleted": true})),

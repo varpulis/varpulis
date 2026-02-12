@@ -17,6 +17,9 @@ use tracing::{error, info, warn};
 
 use crate::worker::PipelineMetrics;
 
+#[cfg(feature = "raft")]
+use std::sync::Arc;
+
 /// Aggregated cluster metrics.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ClusterMetrics {
@@ -71,6 +74,19 @@ pub enum ScalingAction {
     Stable,
 }
 
+/// Handle for Raft consensus integration.
+#[cfg(feature = "raft")]
+pub struct RaftHandle {
+    /// The Raft instance for client_write and leadership queries.
+    pub raft: Arc<crate::raft::VarpulisRaft>,
+    /// Shared read-only view of the replicated state (updated after Raft applies).
+    pub store_state: crate::raft::store::SharedCoordinatorState,
+    /// Mapping of Raft NodeId → HTTP address for leader forwarding.
+    pub peer_addrs: std::collections::BTreeMap<u64, String>,
+    /// Admin API key for forwarding requests to the leader.
+    pub admin_key: Option<String>,
+}
+
 /// Central coordinator managing the cluster.
 pub struct Coordinator {
     pub workers: HashMap<WorkerId, WorkerNode>,
@@ -95,9 +111,12 @@ pub struct Coordinator {
     /// Configurable heartbeat timeout (used by health sweep).
     pub heartbeat_timeout: Duration,
     placement: Box<dyn PlacementStrategy>,
-    http_client: reqwest::Client,
+    pub(crate) http_client: reqwest::Client,
     /// HA role of this coordinator instance.
     pub ha_role: HaRole,
+    /// Optional Raft consensus handle (enabled with `raft` feature).
+    #[cfg(feature = "raft")]
+    pub raft_handle: Option<RaftHandle>,
 }
 
 /// The HA role of this coordinator (re-exported from ha module for non-k8s builds).
@@ -139,7 +158,196 @@ impl Coordinator {
                 .build()
                 .expect("Failed to build HTTP client"),
             ha_role: HaRole::default(),
+            #[cfg(feature = "raft")]
+            raft_handle: None,
         }
+    }
+
+    /// Create a coordinator with a Raft consensus handle for cluster mode.
+    #[cfg(feature = "raft")]
+    pub fn with_raft(
+        raft: Arc<crate::raft::VarpulisRaft>,
+        store_state: crate::raft::store::SharedCoordinatorState,
+        peer_addrs: std::collections::BTreeMap<u64, String>,
+        admin_key: Option<String>,
+    ) -> Self {
+        let mut coord = Self::new();
+        coord.raft_handle = Some(RaftHandle {
+            raft,
+            store_state,
+            peer_addrs,
+            admin_key,
+        });
+        coord
+    }
+
+    /// Replicate a command through Raft consensus.
+    ///
+    /// In standalone mode (no Raft), this is a no-op.
+    /// In Raft mode, forwards to the leader. Returns `NotLeader` if this node
+    /// is not the leader.
+    #[cfg(feature = "raft")]
+    pub async fn raft_replicate(
+        &self,
+        cmd: crate::raft::ClusterCommand,
+    ) -> Result<(), ClusterError> {
+        if let Some(ref handle) = self.raft_handle {
+            handle.raft.client_write(cmd).await.map_err(|e| {
+                // Extract leader address for ForwardToLeader errors
+                let leader_info = format!("{}", e);
+                ClusterError::NotLeader(leader_info)
+            })?;
+        }
+        Ok(())
+    }
+
+    /// Check if this coordinator is the Raft leader (or standalone).
+    #[cfg(feature = "raft")]
+    pub fn is_raft_leader(&self) -> bool {
+        match &self.raft_handle {
+            None => true, // standalone = always leader
+            Some(handle) => {
+                let metrics = handle.raft.metrics().borrow().clone();
+                metrics.current_leader == Some(metrics.id)
+            }
+        }
+    }
+
+    /// Get the Raft leader's HTTP address, if known.
+    #[cfg(feature = "raft")]
+    pub fn raft_leader_addr(&self) -> Option<String> {
+        let handle = self.raft_handle.as_ref()?;
+        let metrics = handle.raft.metrics().borrow().clone();
+        let leader_id = metrics.current_leader?;
+        if leader_id == metrics.id {
+            return None; // We ARE the leader
+        }
+        handle.peer_addrs.get(&leader_id).cloned()
+    }
+
+    /// Synchronize local coordinator state from the Raft state machine.
+    ///
+    /// Called when a node becomes the new leader after an election,
+    /// or periodically on followers for read-only API responses.
+    #[cfg(feature = "raft")]
+    pub fn sync_from_raft(&mut self) {
+        let Some(ref handle) = self.raft_handle else {
+            return;
+        };
+
+        let raft_state = handle.store_state.read().unwrap();
+
+        // Sync workers: merge Raft state with local workers.
+        // Preserve last_heartbeat for workers that already exist locally
+        // (they may be receiving heartbeats from directly-connected workers).
+        // Trust Raft for status (unhealthy from another coordinator's detection).
+        let raft_worker_ids: std::collections::HashSet<WorkerId> = raft_state
+            .workers
+            .keys()
+            .map(|k| WorkerId(k.clone()))
+            .collect();
+
+        for (id, entry) in &raft_state.workers {
+            let wid = WorkerId(id.clone());
+            let raft_status = match entry.status.as_str() {
+                "ready" => WorkerStatus::Ready,
+                "unhealthy" => WorkerStatus::Unhealthy,
+                "draining" => WorkerStatus::Draining,
+                "registering" => WorkerStatus::Registering,
+                _ => WorkerStatus::Ready,
+            };
+
+            if let Some(local) = self.workers.get_mut(&wid) {
+                // Existing worker: update from Raft but preserve local heartbeat
+                local.assigned_pipelines = entry.assigned_pipelines.clone();
+                local.events_processed = entry.events_processed;
+                local.capacity = crate::worker::WorkerCapacity {
+                    cpu_cores: entry.cpu_cores,
+                    pipelines_running: entry.pipelines_running,
+                    max_pipelines: entry.max_pipelines,
+                };
+                // Trust Raft status for cross-coordinator transitions (e.g., unhealthy).
+                // If Raft says a worker is ready, refresh last_heartbeat — this acts
+                // as a heartbeat proxy for workers connected to other coordinators.
+                match raft_status {
+                    WorkerStatus::Unhealthy | WorkerStatus::Draining => {
+                        local.status = raft_status;
+                    }
+                    WorkerStatus::Ready => {
+                        local.last_heartbeat = Instant::now();
+                    }
+                    _ => {}
+                }
+            } else {
+                // New worker from Raft (registered on another coordinator)
+                let worker = WorkerNode {
+                    id: wid.clone(),
+                    address: entry.address.clone(),
+                    api_key: entry.api_key.clone(),
+                    status: raft_status,
+                    capacity: crate::worker::WorkerCapacity {
+                        cpu_cores: entry.cpu_cores,
+                        pipelines_running: entry.pipelines_running,
+                        max_pipelines: entry.max_pipelines,
+                    },
+                    last_heartbeat: Instant::now(),
+                    assigned_pipelines: entry.assigned_pipelines.clone(),
+                    events_processed: entry.events_processed,
+                };
+                self.workers.insert(wid, worker);
+            }
+        }
+
+        // Remove workers that were deregistered in Raft
+        self.workers.retain(|id, _| raft_worker_ids.contains(id));
+
+        // Sync pipeline groups: deserialize from serde_json::Value
+        self.pipeline_groups = raft_state
+            .pipeline_groups
+            .iter()
+            .filter_map(|(name, val)| {
+                serde_json::from_value(val.clone())
+                    .ok()
+                    .map(|group| (name.clone(), group))
+            })
+            .collect();
+
+        // Sync connectors: same type, direct clone
+        self.connectors = raft_state.connectors.clone();
+
+        // Sync scaling policy: deserialize from serde_json::Value
+        self.scaling_policy = raft_state
+            .scaling_policy
+            .as_ref()
+            .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+        tracing::debug!(
+            "Synced from Raft state: {} workers, {} groups, {} connectors",
+            self.workers.len(),
+            self.pipeline_groups.len(),
+            self.connectors.len()
+        );
+    }
+
+    /// Update the HA role based on current Raft metrics.
+    #[cfg(feature = "raft")]
+    pub fn update_raft_role(&mut self) {
+        let Some(ref handle) = self.raft_handle else {
+            return;
+        };
+
+        let metrics = handle.raft.metrics().borrow().clone();
+        let is_leader = metrics.current_leader == Some(metrics.id);
+
+        self.ha_role = if is_leader {
+            HaRole::Leader
+        } else {
+            let leader_id = metrics
+                .current_leader
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            HaRole::Follower { leader_id }
+        };
     }
 
     /// Check if this coordinator is allowed to perform write operations.
