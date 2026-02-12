@@ -5,6 +5,8 @@
 //! migration and automatic leader election without external dependencies.
 
 pub mod network;
+#[cfg(feature = "persistent")]
+pub mod persistent_store;
 pub mod routes;
 pub mod state_machine;
 pub mod store;
@@ -145,11 +147,10 @@ pub struct RaftBootstrapResult {
     pub shared_state: store::SharedCoordinatorState,
 }
 
-/// Bootstrap a Raft consensus node.
+/// Bootstrap a Raft consensus node with in-memory storage.
 ///
 /// Creates the in-memory log store, state machine, and network transport,
-/// then starts the Raft instance. Every node calls `initialize()` with the
-/// same membership so all nodes can participate in the first leader election.
+/// then starts the Raft instance.
 ///
 /// # Arguments
 /// * `node_id` — unique numeric ID for this coordinator (1-based)
@@ -158,7 +159,58 @@ pub struct RaftBootstrapResult {
 pub async fn bootstrap(
     node_id: NodeId,
     peer_addrs: &[String],
+    admin_key: Option<String>,
 ) -> Result<RaftBootstrapResult, Box<dyn std::error::Error + Send + Sync>> {
+    let (mem_store, shared_state) = store::MemStore::with_shared_state();
+    let (log_store, state_machine) = openraft::storage::Adaptor::new(mem_store);
+    bootstrap_with_storage(
+        node_id,
+        peer_addrs,
+        admin_key,
+        log_store,
+        state_machine,
+        shared_state,
+    )
+    .await
+}
+
+/// Bootstrap a Raft consensus node with persistent RocksDB storage.
+///
+/// On restart, the Raft node automatically recovers from persisted state.
+#[cfg(feature = "persistent")]
+pub async fn bootstrap_persistent(
+    node_id: NodeId,
+    peer_addrs: &[String],
+    admin_key: Option<String>,
+    data_dir: &str,
+) -> Result<RaftBootstrapResult, Box<dyn std::error::Error + Send + Sync>> {
+    let node_path = format!("{}/node-{}", data_dir, node_id);
+    let (rocks_store, shared_state) =
+        persistent_store::RocksStore::open_with_shared_state(&node_path)?;
+    let (log_store, state_machine) = openraft::storage::Adaptor::new(rocks_store);
+    bootstrap_with_storage(
+        node_id,
+        peer_addrs,
+        admin_key,
+        log_store,
+        state_machine,
+        shared_state,
+    )
+    .await
+}
+
+/// Shared bootstrap logic for both in-memory and persistent storage backends.
+async fn bootstrap_with_storage<S>(
+    node_id: NodeId,
+    peer_addrs: &[String],
+    admin_key: Option<String>,
+    log_store: openraft::storage::Adaptor<TypeConfig, S>,
+    state_machine: openraft::storage::Adaptor<TypeConfig, S>,
+    shared_state: store::SharedCoordinatorState,
+) -> Result<RaftBootstrapResult, Box<dyn std::error::Error + Send + Sync>>
+where
+    S: openraft::RaftStorage<TypeConfig>,
+{
     let config = openraft::Config {
         heartbeat_interval: 500,
         election_timeout_min: 1500,
@@ -167,10 +219,7 @@ pub async fn bootstrap(
     };
     let config = Arc::new(config);
 
-    let (mem_store, shared_state) = store::MemStore::with_shared_state();
-    let (log_store, state_machine) = openraft::storage::Adaptor::new(mem_store);
-
-    let network = network::NetworkFactory::new();
+    let network = network::NetworkFactory::new(admin_key);
 
     let raft = openraft::Raft::new(node_id, config, network, log_store, state_machine)
         .await

@@ -17,21 +17,22 @@ use super::{NodeId, RaftNode, TypeConfig};
 #[derive(Debug, Clone)]
 pub struct NetworkFactory {
     client: reqwest::Client,
+    admin_key: Option<String>,
 }
 
 impl Default for NetworkFactory {
     fn default() -> Self {
-        Self::new()
+        Self::new(None)
     }
 }
 
 impl NetworkFactory {
-    pub fn new() -> Self {
+    pub fn new(admin_key: Option<String>) -> Self {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
             .build()
             .expect("Failed to build Raft HTTP client");
-        Self { client }
+        Self { client, admin_key }
     }
 }
 
@@ -42,6 +43,7 @@ impl RaftNetworkFactory<TypeConfig> for NetworkFactory {
         NetworkClient {
             addr: node.addr.clone(),
             client: self.client.clone(),
+            admin_key: self.admin_key.clone(),
         }
     }
 }
@@ -55,6 +57,17 @@ impl RaftNetworkFactory<TypeConfig> for NetworkFactory {
 pub struct NetworkClient {
     addr: String,
     client: reqwest::Client,
+    admin_key: Option<String>,
+}
+
+impl NetworkClient {
+    /// Apply the admin API key header to a request builder, if configured.
+    fn apply_auth(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match &self.admin_key {
+            Some(key) => req.header("x-api-key", key),
+            None => req,
+        }
+    }
 }
 
 impl RaftNetwork<TypeConfig> for NetworkClient {
@@ -64,10 +77,8 @@ impl RaftNetwork<TypeConfig> for NetworkClient {
         _option: RPCOption,
     ) -> Result<VoteResponse<NodeId>, RPCError<NodeId, RaftNode, RaftError<NodeId>>> {
         let url = format!("{}/raft/vote", self.addr);
-        let resp = self
-            .client
-            .post(&url)
-            .json(&rpc)
+        let req = self.apply_auth(self.client.post(&url).json(&rpc));
+        let resp = req
             .send()
             .await
             .map_err(|e| RPCError::Unreachable(openraft::error::Unreachable::new(&e)))?;
@@ -93,10 +104,8 @@ impl RaftNetwork<TypeConfig> for NetworkClient {
         _option: RPCOption,
     ) -> Result<AppendEntriesResponse<NodeId>, RPCError<NodeId, RaftNode, RaftError<NodeId>>> {
         let url = format!("{}/raft/append", self.addr);
-        let resp = self
-            .client
-            .post(&url)
-            .json(&rpc)
+        let req = self.apply_auth(self.client.post(&url).json(&rpc));
+        let resp = req
             .send()
             .await
             .map_err(|e| RPCError::Unreachable(openraft::error::Unreachable::new(&e)))?;
@@ -125,10 +134,8 @@ impl RaftNetwork<TypeConfig> for NetworkClient {
         RPCError<NodeId, RaftNode, RaftError<NodeId, InstallSnapshotError>>,
     > {
         let url = format!("{}/raft/snapshot", self.addr);
-        let resp = self
-            .client
-            .post(&url)
-            .json(&rpc)
+        let req = self.apply_auth(self.client.post(&url).json(&rpc));
+        let resp = req
             .send()
             .await
             .map_err(|e| RPCError::Unreachable(openraft::error::Unreachable::new(&e)))?;
