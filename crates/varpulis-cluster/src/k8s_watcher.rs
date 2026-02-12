@@ -139,6 +139,16 @@ async fn handle_pod_event(pod: &k8s_openapi::api::core::v1::Pod, coordinator: &S
 
         let wid = WorkerId(worker_id);
         let mut coord = coordinator.write().await;
+
+        // Only the leader/writer should trigger failover
+        if !coord.ha_role.is_writer() {
+            warn!(
+                "K8s pod watcher: skipping failover for {} — not leader",
+                wid
+            );
+            return;
+        }
+
         if let Some(worker) = coord.workers.get_mut(&wid) {
             if worker.status == WorkerStatus::Ready {
                 worker.status = WorkerStatus::Unhealthy;
@@ -173,6 +183,16 @@ async fn handle_pod_deleted(
 
     let wid = WorkerId(worker_id);
     let mut coord = coordinator.write().await;
+
+    // Only the leader/writer should trigger failover
+    if !coord.ha_role.is_writer() {
+        warn!(
+            "K8s pod watcher: skipping failover for {} — not leader",
+            wid
+        );
+        return;
+    }
+
     if let Some(worker) = coord.workers.get_mut(&wid) {
         if worker.status == WorkerStatus::Ready {
             worker.status = WorkerStatus::Unhealthy;

@@ -2,6 +2,7 @@
 
 use crate::connector_config::{self, ClusterConnector};
 use crate::health::{self, HealthSweepResult};
+use crate::metrics::ClusterPrometheusMetrics;
 use crate::migration::{MigrationReason, MigrationStatus, MigrationTask};
 use crate::pipeline_group::{
     DeployedPipelineGroup, GroupStatus, PipelineDeployment, PipelineDeploymentStatus,
@@ -87,6 +88,59 @@ pub struct RaftHandle {
     pub admin_key: Option<String>,
 }
 
+// =========================================================================
+// Deployment plan/result types for lock-free HTTP I/O
+// =========================================================================
+
+/// A single pipeline deploy task (produced during planning phase).
+#[derive(Debug, Clone)]
+pub struct DeployTask {
+    pub replica_name: String,
+    pub pipeline_name: String,
+    pub worker_id: WorkerId,
+    pub worker_address: String,
+    pub worker_api_key: String,
+    pub source: String,
+    pub replica_count: usize,
+}
+
+/// Result of executing a single deploy task.
+#[derive(Debug)]
+pub struct DeployTaskResult {
+    pub replica_name: String,
+    pub pipeline_name: String,
+    pub worker_id: WorkerId,
+    pub worker_address: String,
+    pub worker_api_key: String,
+    pub replica_count: usize,
+    pub outcome: Result<DeployResponse, String>,
+}
+
+/// Deployment plan built during the planning phase.
+#[derive(Debug)]
+pub struct DeployGroupPlan {
+    pub group_id: String,
+    pub spec: PipelineGroupSpec,
+    pub tasks: Vec<DeployTask>,
+    pub deploy_start: Instant,
+}
+
+/// Migration plan built during the planning phase.
+#[derive(Debug, Clone)]
+pub struct MigratePipelinePlan {
+    pub migration_id: String,
+    pub pipeline_name: String,
+    pub group_id: String,
+    pub source_worker_id: WorkerId,
+    pub target_worker_id: WorkerId,
+    pub target_address: String,
+    pub target_api_key: String,
+    pub deployment: PipelineDeployment,
+    pub vpl_source: String,
+    pub reason: MigrationReason,
+    pub migrate_start: Instant,
+}
+
 /// Central coordinator managing the cluster.
 pub struct Coordinator {
     pub workers: HashMap<WorkerId, WorkerNode>,
@@ -117,6 +171,8 @@ pub struct Coordinator {
     /// Optional Raft consensus handle (enabled with `raft` feature).
     #[cfg(feature = "raft")]
     pub raft_handle: Option<RaftHandle>,
+    /// Prometheus metrics for cluster operations.
+    pub cluster_metrics: ClusterPrometheusMetrics,
 }
 
 /// The HA role of this coordinator (re-exported from ha module for non-k8s builds).
@@ -160,6 +216,7 @@ impl Coordinator {
             ha_role: HaRole::default(),
             #[cfg(feature = "raft")]
             raft_handle: None,
+            cluster_metrics: ClusterPrometheusMetrics::new(),
         }
     }
 
@@ -235,7 +292,7 @@ impl Coordinator {
             return;
         };
 
-        let raft_state = handle.store_state.read().unwrap();
+        let raft_state = handle.store_state.read().unwrap_or_else(|e| e.into_inner());
 
         // Sync workers: merge Raft state with local workers.
         // Preserve last_heartbeat for workers that already exist locally
@@ -293,6 +350,7 @@ impl Coordinator {
                     last_heartbeat: Instant::now(),
                     assigned_pipelines: entry.assigned_pipelines.clone(),
                     events_processed: entry.events_processed,
+                    ws_disconnected_at: None,
                 };
                 self.workers.insert(wid, worker);
             }
@@ -369,6 +427,7 @@ impl Coordinator {
         node.status = WorkerStatus::Ready;
         info!("Worker registered: {} at {}", id, node.address);
         self.workers.insert(id.clone(), node);
+        self.update_metrics_counts();
         // New worker may improve load distribution
         if !self.pipeline_groups.is_empty() {
             self.pending_rebalance = true;
@@ -388,6 +447,7 @@ impl Coordinator {
             .ok_or_else(|| ClusterError::WorkerNotFound(worker_id.0.clone()))?;
 
         worker.last_heartbeat = std::time::Instant::now();
+        worker.ws_disconnected_at = None; // Clear WS grace period on heartbeat
         worker.capacity.pipelines_running = hb.pipelines_running;
         worker.events_processed = hb.events_processed;
 
@@ -414,8 +474,274 @@ impl Coordinator {
         Ok(())
     }
 
+    /// Phase 1: Build a deployment plan without holding the lock during HTTP I/O.
+    ///
+    /// Selects workers, enriches pipeline sources, and returns a plan with
+    /// all information needed to execute HTTP deploys without coordinator state.
+    pub fn plan_deploy_group(
+        &self,
+        spec: &PipelineGroupSpec,
+    ) -> Result<DeployGroupPlan, ClusterError> {
+        let group_id = uuid::Uuid::new_v4().to_string();
+
+        let available_workers: Vec<&WorkerNode> =
+            self.workers.values().filter(|w| w.is_available()).collect();
+
+        if available_workers.is_empty() {
+            return Err(ClusterError::NoWorkersAvailable);
+        }
+
+        info!(
+            "Planning deployment for group '{}' ({} pipelines, {} workers available)",
+            spec.name,
+            spec.pipelines.len(),
+            available_workers.len()
+        );
+
+        let enriched_pipelines: Vec<_> = spec
+            .pipelines
+            .iter()
+            .map(|p| {
+                let (enriched_source, _) =
+                    connector_config::inject_connectors(&p.source, &self.connectors);
+                (p, enriched_source)
+            })
+            .collect();
+
+        let mut tasks = Vec::new();
+
+        for (pipeline, effective_source) in &enriched_pipelines {
+            let replica_count = pipeline.replicas.max(1);
+
+            for replica_idx in 0..replica_count {
+                let replica_name = if replica_count > 1 {
+                    format!("{}#{}", pipeline.name, replica_idx)
+                } else {
+                    pipeline.name.clone()
+                };
+
+                let selected_worker_id = if let Some(ref affinity) = pipeline.worker_affinity {
+                    let wid = WorkerId(affinity.clone());
+                    if self.workers.contains_key(&wid) && self.workers[&wid].is_available() {
+                        Some(wid)
+                    } else {
+                        warn!(
+                            "Worker affinity '{}' not available, falling back to placement strategy",
+                            affinity
+                        );
+                        let available: Vec<&WorkerNode> =
+                            self.workers.values().filter(|w| w.is_available()).collect();
+                        self.placement.place(pipeline, &available)
+                    }
+                } else {
+                    let available: Vec<&WorkerNode> =
+                        self.workers.values().filter(|w| w.is_available()).collect();
+                    self.placement.place(pipeline, &available)
+                };
+
+                let worker_id = match selected_worker_id {
+                    Some(id) => id,
+                    None => {
+                        return Err(ClusterError::NoWorkersAvailable);
+                    }
+                };
+
+                let worker = self
+                    .workers
+                    .get(&worker_id)
+                    .ok_or_else(|| ClusterError::WorkerNotFound(worker_id.0.clone()))?;
+
+                tasks.push(DeployTask {
+                    replica_name,
+                    pipeline_name: pipeline.name.clone(),
+                    worker_id,
+                    worker_address: worker.address.clone(),
+                    worker_api_key: worker.api_key.clone(),
+                    source: effective_source.clone(),
+                    replica_count,
+                });
+            }
+        }
+
+        Ok(DeployGroupPlan {
+            group_id,
+            spec: spec.clone(),
+            tasks,
+            deploy_start: Instant::now(),
+        })
+    }
+
+    /// Execute deployment plan: send HTTP requests to workers.
+    ///
+    /// This method does NOT require `&self` — it uses a shared HTTP client
+    /// and the pre-built plan, allowing the coordinator lock to be released.
+    pub async fn execute_deploy_plan(
+        http_client: &reqwest::Client,
+        plan: &DeployGroupPlan,
+    ) -> Vec<DeployTaskResult> {
+        let mut results = Vec::with_capacity(plan.tasks.len());
+
+        for task in &plan.tasks {
+            let deploy_url = format!("{}/api/v1/pipelines", task.worker_address);
+            let deploy_body = serde_json::json!({
+                "name": task.replica_name,
+                "source": task.source,
+            });
+
+            info!(
+                "Deploying pipeline '{}' to worker {} at {}",
+                task.replica_name, task.worker_id, task.worker_address
+            );
+
+            let outcome = match http_client
+                .post(&deploy_url)
+                .header("x-api-key", &task.worker_api_key)
+                .json(&deploy_body)
+                .send()
+                .await
+            {
+                Ok(response) if response.status().is_success() => {
+                    match response.json::<DeployResponse>().await {
+                        Ok(resp_body) => {
+                            info!(
+                                "Pipeline '{}' deployed on worker {} (id={}, status={})",
+                                resp_body.name, task.worker_id, resp_body.id, resp_body.status
+                            );
+                            Ok(resp_body)
+                        }
+                        Err(e) => Err(format!("Failed to parse deploy response: {}", e)),
+                    }
+                }
+                Ok(response) => {
+                    let status = response.status();
+                    let body = response.text().await.unwrap_or_default();
+                    error!(
+                        "Failed to deploy pipeline '{}': HTTP {} - {}",
+                        task.replica_name, status, body
+                    );
+                    Err(format!("HTTP {} - {}", status, body))
+                }
+                Err(e) => {
+                    error!(
+                        "Failed to reach worker {} for pipeline '{}': {}",
+                        task.worker_id, task.replica_name, e
+                    );
+                    Err(e.to_string())
+                }
+            };
+
+            results.push(DeployTaskResult {
+                replica_name: task.replica_name.clone(),
+                pipeline_name: task.pipeline_name.clone(),
+                worker_id: task.worker_id.clone(),
+                worker_address: task.worker_address.clone(),
+                worker_api_key: task.worker_api_key.clone(),
+                replica_count: task.replica_count,
+                outcome,
+            });
+        }
+
+        results
+    }
+
+    /// Phase 3: Commit deployment results to coordinator state.
+    pub fn commit_deploy_group(
+        &mut self,
+        plan: DeployGroupPlan,
+        results: Vec<DeployTaskResult>,
+    ) -> Result<String, ClusterError> {
+        let mut group = DeployedPipelineGroup::new(
+            plan.group_id.clone(),
+            plan.spec.name.clone(),
+            plan.spec.clone(),
+        );
+
+        // Track replica names per pipeline for ReplicaGroup registration
+        let mut replica_names_map: HashMap<String, Vec<String>> = HashMap::new();
+
+        for result in results {
+            match result.outcome {
+                Ok(resp_body) => {
+                    let deployment = PipelineDeployment {
+                        worker_id: result.worker_id.clone(),
+                        worker_address: result.worker_address,
+                        worker_api_key: result.worker_api_key,
+                        pipeline_id: resp_body.id,
+                        status: PipelineDeploymentStatus::Running,
+                        epoch: 0,
+                    };
+                    group
+                        .placements
+                        .insert(result.replica_name.clone(), deployment);
+
+                    if let Some(w) = self.workers.get_mut(&result.worker_id) {
+                        w.assigned_pipelines.push(result.replica_name.clone());
+                        w.capacity.pipelines_running += 1;
+                    }
+
+                    if result.replica_count > 1 {
+                        replica_names_map
+                            .entry(result.pipeline_name.clone())
+                            .or_default()
+                            .push(result.replica_name);
+                    }
+                }
+                Err(_) => {
+                    group.placements.insert(
+                        result.replica_name.clone(),
+                        PipelineDeployment {
+                            worker_id: result.worker_id,
+                            worker_address: result.worker_address,
+                            worker_api_key: result.worker_api_key,
+                            pipeline_id: String::new(),
+                            status: PipelineDeploymentStatus::Failed,
+                            epoch: 0,
+                        },
+                    );
+                }
+            }
+        }
+
+        // Register replica groups
+        for (pipeline_name, replica_names) in replica_names_map {
+            if !replica_names.is_empty() {
+                use crate::pipeline_group::{PartitionStrategy, ReplicaGroup};
+                let strategy = plan
+                    .spec
+                    .pipelines
+                    .iter()
+                    .find(|p| p.name == pipeline_name)
+                    .and_then(|p| p.partition_key.clone())
+                    .map(PartitionStrategy::HashKey)
+                    .unwrap_or(PartitionStrategy::RoundRobin);
+
+                group.replica_groups.insert(
+                    pipeline_name.clone(),
+                    ReplicaGroup::new(pipeline_name, replica_names, strategy),
+                );
+            }
+        }
+
+        group.update_status();
+        let final_status = group.status.clone();
+        self.pipeline_groups.insert(plan.group_id.clone(), group);
+
+        let deploy_success = final_status == GroupStatus::Running;
+        self.cluster_metrics
+            .record_deploy(deploy_success, plan.deploy_start.elapsed().as_secs_f64());
+        self.update_metrics_counts();
+
+        info!(
+            "Pipeline group '{}' deployment complete: {}",
+            plan.spec.name, final_status
+        );
+
+        Ok(plan.group_id)
+    }
+
     /// Deploy a pipeline group across workers.
     pub async fn deploy_group(&mut self, spec: PipelineGroupSpec) -> Result<String, ClusterError> {
+        let deploy_start = Instant::now();
         let group_id = uuid::Uuid::new_v4().to_string();
         let mut group =
             DeployedPipelineGroup::new(group_id.clone(), spec.name.clone(), spec.clone());
@@ -490,7 +816,10 @@ impl Coordinator {
                     }
                 };
 
-                let worker = &self.workers[&worker_id];
+                let worker = self
+                    .workers
+                    .get(&worker_id)
+                    .ok_or_else(|| ClusterError::WorkerNotFound(worker_id.0.clone()))?;
                 let worker_address = worker.address.clone();
                 let worker_api_key = worker.api_key.clone();
 
@@ -531,6 +860,7 @@ impl Coordinator {
                             worker_api_key: worker_api_key.clone(),
                             pipeline_id: resp_body.id,
                             status: PipelineDeploymentStatus::Running,
+                            epoch: 0,
                         };
 
                         group.placements.insert(replica_name.clone(), deployment);
@@ -560,6 +890,7 @@ impl Coordinator {
                                 worker_api_key,
                                 pipeline_id: String::new(),
                                 status: PipelineDeploymentStatus::Failed,
+                                epoch: 0,
                             },
                         );
                     }
@@ -576,6 +907,7 @@ impl Coordinator {
                                 worker_api_key,
                                 pipeline_id: String::new(),
                                 status: PipelineDeploymentStatus::Failed,
+                                epoch: 0,
                             },
                         );
                     }
@@ -599,6 +931,11 @@ impl Coordinator {
         group.update_status();
         let final_status = group.status.clone();
         self.pipeline_groups.insert(group_id.clone(), group);
+
+        let deploy_success = final_status == GroupStatus::Running;
+        self.cluster_metrics
+            .record_deploy(deploy_success, deploy_start.elapsed().as_secs_f64());
+        self.update_metrics_counts();
 
         info!(
             "Pipeline group '{}' deployment complete: {}",
@@ -884,18 +1221,342 @@ impl Coordinator {
 
     /// Run a health sweep, store the result, and return it.
     pub fn health_sweep(&mut self) -> HealthSweepResult {
+        let start = Instant::now();
         let timeout = self.heartbeat_timeout;
         let result = health::health_sweep(&mut self.workers, timeout);
         self.last_health_sweep = Some(HealthSweepResult {
             workers_checked: result.workers_checked,
             workers_marked_unhealthy: result.workers_marked_unhealthy.clone(),
         });
+        self.cluster_metrics
+            .record_health_sweep(result.workers_checked, start.elapsed().as_secs_f64());
+        if !result.workers_marked_unhealthy.is_empty() {
+            self.update_metrics_counts();
+        }
         result
     }
 
     // =========================================================================
     // Migration & Failover
     // =========================================================================
+
+    /// Phase 1: Build a migration plan without performing any HTTP I/O.
+    pub fn plan_migrate_pipeline(
+        &self,
+        pipeline_name: &str,
+        group_id: &str,
+        target_worker_id: &WorkerId,
+        reason: MigrationReason,
+    ) -> Result<MigratePipelinePlan, ClusterError> {
+        let group = self
+            .pipeline_groups
+            .get(group_id)
+            .ok_or_else(|| ClusterError::GroupNotFound(group_id.to_string()))?;
+
+        let deployment = group
+            .placements
+            .get(pipeline_name)
+            .ok_or_else(|| {
+                ClusterError::MigrationFailed(format!(
+                    "Pipeline '{}' not found in group '{}'",
+                    pipeline_name, group_id
+                ))
+            })?
+            .clone();
+
+        let source_worker_id = deployment.worker_id.clone();
+
+        let target_worker = self
+            .workers
+            .get(target_worker_id)
+            .ok_or_else(|| ClusterError::WorkerNotFound(target_worker_id.0.clone()))?;
+        let target_address = target_worker.address.clone();
+        let target_api_key = target_worker.api_key.clone();
+
+        let logical_name = pipeline_name
+            .rsplit_once('#')
+            .map(|(base, _)| base)
+            .unwrap_or(pipeline_name);
+
+        let vpl_source = group
+            .spec
+            .pipelines
+            .iter()
+            .find(|p| p.name == logical_name)
+            .map(|p| p.source.clone())
+            .ok_or_else(|| {
+                ClusterError::MigrationFailed(format!(
+                    "VPL source not found for '{}'",
+                    pipeline_name
+                ))
+            })?;
+
+        Ok(MigratePipelinePlan {
+            migration_id: uuid::Uuid::new_v4().to_string(),
+            pipeline_name: pipeline_name.to_string(),
+            group_id: group_id.to_string(),
+            source_worker_id,
+            target_worker_id: target_worker_id.clone(),
+            target_address,
+            target_api_key,
+            deployment,
+            vpl_source,
+            reason,
+            migrate_start: Instant::now(),
+        })
+    }
+
+    /// Phase 3: Commit migration results to coordinator state.
+    pub fn commit_migrate_pipeline(
+        &mut self,
+        plan: &MigratePipelinePlan,
+        new_pipeline_id: &str,
+        success: bool,
+        failure_reason: Option<String>,
+    ) -> String {
+        if success {
+            // Update placements
+            if let Some(group) = self.pipeline_groups.get_mut(&plan.group_id) {
+                let new_epoch = group
+                    .placements
+                    .get(&plan.pipeline_name)
+                    .map(|d| d.epoch + 1)
+                    .unwrap_or(1);
+                group.placements.insert(
+                    plan.pipeline_name.clone(),
+                    PipelineDeployment {
+                        worker_id: plan.target_worker_id.clone(),
+                        worker_address: plan.target_address.clone(),
+                        worker_api_key: plan.target_api_key.clone(),
+                        pipeline_id: new_pipeline_id.to_string(),
+                        status: PipelineDeploymentStatus::Running,
+                        epoch: new_epoch,
+                    },
+                );
+                group.update_status();
+            }
+
+            // Update worker bookkeeping
+            if let Some(w) = self.workers.get_mut(&plan.target_worker_id) {
+                w.assigned_pipelines.push(plan.pipeline_name.clone());
+                w.capacity.pipelines_running += 1;
+            }
+            if let Some(w) = self.workers.get_mut(&plan.source_worker_id) {
+                w.assigned_pipelines.retain(|p| p != &plan.pipeline_name);
+                w.capacity.pipelines_running = w.capacity.pipelines_running.saturating_sub(1);
+            }
+
+            let task = MigrationTask {
+                id: plan.migration_id.clone(),
+                pipeline_name: plan.pipeline_name.clone(),
+                group_id: plan.group_id.clone(),
+                source_worker: plan.source_worker_id.clone(),
+                target_worker: plan.target_worker_id.clone(),
+                status: MigrationStatus::Completed,
+                started_at: plan.migrate_start,
+                checkpoint: None,
+                reason: plan.reason.clone(),
+            };
+            self.active_migrations
+                .insert(plan.migration_id.clone(), task);
+
+            self.cluster_metrics
+                .record_migration(true, plan.migrate_start.elapsed().as_secs_f64());
+            self.update_metrics_counts();
+
+            info!(
+                "Migration complete: pipeline '{}' moved from {} to {}",
+                plan.pipeline_name, plan.source_worker_id, plan.target_worker_id
+            );
+        } else {
+            let reason = failure_reason.unwrap_or_else(|| "unknown".to_string());
+            let task = MigrationTask {
+                id: plan.migration_id.clone(),
+                pipeline_name: plan.pipeline_name.clone(),
+                group_id: plan.group_id.clone(),
+                source_worker: plan.source_worker_id.clone(),
+                target_worker: plan.target_worker_id.clone(),
+                status: MigrationStatus::Failed(reason),
+                started_at: plan.migrate_start,
+                checkpoint: None,
+                reason: plan.reason.clone(),
+            };
+            self.active_migrations
+                .insert(plan.migration_id.clone(), task);
+
+            self.cluster_metrics
+                .record_migration(false, plan.migrate_start.elapsed().as_secs_f64());
+        }
+
+        plan.migration_id.clone()
+    }
+
+    /// Execute migration HTTP steps (no coordinator lock needed).
+    ///
+    /// Returns `Ok(new_pipeline_id)` on success, or `Err(reason)` on failure.
+    pub async fn execute_migrate_plan(
+        http_client: &reqwest::Client,
+        plan: &MigratePipelinePlan,
+        source_alive: bool,
+        connectors: &HashMap<String, ClusterConnector>,
+    ) -> Result<String, String> {
+        // Step 1: Checkpoint (best-effort — skip if source is dead)
+        let checkpoint = if source_alive {
+            let checkpoint_url = format!(
+                "{}/api/v1/pipelines/{}/checkpoint",
+                plan.deployment.worker_address, plan.deployment.pipeline_id
+            );
+            match http_client
+                .post(&checkpoint_url)
+                .header("x-api-key", &plan.deployment.worker_api_key)
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    match resp.json::<CheckpointResponsePayload>().await {
+                        Ok(cp_resp) => {
+                            info!(
+                                "Checkpoint captured for pipeline '{}' (id={}, {} events)",
+                                plan.pipeline_name, cp_resp.pipeline_id, cp_resp.events_processed
+                            );
+                            Some(cp_resp.checkpoint)
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Failed to deserialize checkpoint for '{}': {}",
+                                plan.pipeline_name, e
+                            );
+                            None
+                        }
+                    }
+                }
+                Ok(resp) => {
+                    warn!(
+                        "Checkpoint HTTP error for '{}': {}",
+                        plan.pipeline_name,
+                        resp.status()
+                    );
+                    None
+                }
+                Err(e) => {
+                    warn!(
+                        "Checkpoint request failed for '{}': {}",
+                        plan.pipeline_name, e
+                    );
+                    None
+                }
+            }
+        } else {
+            info!(
+                "Source worker {} is dead, proceeding without checkpoint for '{}'",
+                plan.source_worker_id, plan.pipeline_name
+            );
+            None
+        };
+
+        // Step 2: Deploy to target worker
+        let (enriched_source, _) =
+            crate::connector_config::inject_connectors(&plan.vpl_source, connectors);
+
+        let deploy_url = format!("{}/api/v1/pipelines", plan.target_address);
+        let deploy_body = serde_json::json!({
+            "name": plan.pipeline_name,
+            "source": enriched_source,
+        });
+
+        let new_pipeline_id = match http_client
+            .post(&deploy_url)
+            .header("x-api-key", &plan.target_api_key)
+            .json(&deploy_body)
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => {
+                let resp_body: DeployResponse = resp
+                    .json()
+                    .await
+                    .map_err(|e| format!("Failed to parse deploy response: {}", e))?;
+                info!(
+                    "Migration deploy: '{}' on target {} (id={}, status={})",
+                    resp_body.name, plan.target_worker_id, resp_body.id, resp_body.status
+                );
+                resp_body.id
+            }
+            Ok(resp) => {
+                let body = resp.text().await.unwrap_or_default();
+                return Err(format!("Deploy to target failed: {}", body));
+            }
+            Err(e) => {
+                return Err(format!("Deploy request failed: {}", e));
+            }
+        };
+
+        // Step 3: Restore checkpoint on target (best-effort)
+        if let Some(ref cp) = checkpoint {
+            let restore_url = format!(
+                "{}/api/v1/pipelines/{}/restore",
+                plan.target_address, new_pipeline_id
+            );
+            let restore_body = serde_json::json!({ "checkpoint": cp });
+
+            match http_client
+                .post(&restore_url)
+                .header("x-api-key", &plan.target_api_key)
+                .json(&restore_body)
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    info!(
+                        "Checkpoint restored for pipeline '{}' on worker {}",
+                        plan.pipeline_name, plan.target_worker_id
+                    );
+                }
+                Ok(resp) => {
+                    let body = resp.text().await.unwrap_or_default();
+                    warn!(
+                        "Restore failed for '{}' (continuing without state): {}",
+                        plan.pipeline_name, body
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "Restore request failed for '{}' (continuing without state): {}",
+                        plan.pipeline_name, e
+                    );
+                }
+            }
+        }
+
+        // Step 4: Cleanup — remove pipeline from source (skip if dead)
+        if source_alive && !plan.deployment.pipeline_id.is_empty() {
+            let delete_url = format!(
+                "{}/api/v1/pipelines/{}",
+                plan.deployment.worker_address, plan.deployment.pipeline_id
+            );
+            match http_client
+                .delete(&delete_url)
+                .header("x-api-key", &plan.deployment.worker_api_key)
+                .send()
+                .await
+            {
+                Ok(_) => {
+                    info!(
+                        "Removed old pipeline '{}' from worker {}",
+                        plan.pipeline_name, plan.source_worker_id
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to remove old pipeline '{}' from {}: {}",
+                        plan.pipeline_name, plan.source_worker_id, e
+                    );
+                }
+            }
+        }
+
+        Ok(new_pipeline_id)
+    }
 
     /// Migrate a pipeline from its current worker to a target worker.
     ///
@@ -907,6 +1568,7 @@ impl Coordinator {
         target_worker_id: &WorkerId,
         reason: MigrationReason,
     ) -> Result<String, ClusterError> {
+        let migrate_start = Instant::now();
         let group = self
             .pipeline_groups
             .get(group_id)
@@ -1065,6 +1727,8 @@ impl Coordinator {
                 let body = resp.text().await.unwrap_or_default();
                 task.status = MigrationStatus::Failed(format!("Deploy failed: {}", body));
                 self.active_migrations.insert(migration_id.clone(), task);
+                self.cluster_metrics
+                    .record_migration(false, migrate_start.elapsed().as_secs_f64());
                 return Err(ClusterError::MigrationFailed(format!(
                     "Deploy to target failed: {}",
                     body
@@ -1073,6 +1737,8 @@ impl Coordinator {
             Err(e) => {
                 task.status = MigrationStatus::Failed(format!("Deploy request failed: {}", e));
                 self.active_migrations.insert(migration_id.clone(), task);
+                self.cluster_metrics
+                    .record_migration(false, migrate_start.elapsed().as_secs_f64());
                 return Err(ClusterError::MigrationFailed(e.to_string()));
             }
         };
@@ -1125,6 +1791,11 @@ impl Coordinator {
             .insert(migration_id.clone(), task.clone());
 
         if let Some(group) = self.pipeline_groups.get_mut(group_id) {
+            let new_epoch = group
+                .placements
+                .get(pipeline_name)
+                .map(|d| d.epoch + 1)
+                .unwrap_or(1);
             group.placements.insert(
                 pipeline_name.to_string(),
                 PipelineDeployment {
@@ -1133,6 +1804,7 @@ impl Coordinator {
                     worker_api_key: target_api_key,
                     pipeline_id: new_pipeline_id,
                     status: PipelineDeploymentStatus::Running,
+                    epoch: new_epoch,
                 },
             );
             group.update_status();
@@ -1189,6 +1861,10 @@ impl Coordinator {
 
         task.status = MigrationStatus::Completed;
         self.active_migrations.insert(migration_id.clone(), task);
+
+        self.cluster_metrics
+            .record_migration(true, migrate_start.elapsed().as_secs_f64());
+        self.update_metrics_counts();
 
         info!(
             "Migration complete: pipeline '{}' moved from {} to {}",
@@ -1493,7 +2169,9 @@ impl Coordinator {
                 if let Some(target_id) = target {
                     migrations_to_do.push((gid, pname, target_id.clone()));
                     // Adjust virtual load for next iteration
-                    *worker_load.get_mut(wid).unwrap() -= 1;
+                    if let Some(v) = worker_load.get_mut(wid) {
+                        *v -= 1;
+                    }
                     *worker_load.entry(target_id.clone()).or_insert(0) += 1;
                 }
             }
@@ -1778,6 +2456,29 @@ impl Coordinator {
             }
         }
     }
+
+    /// Update Prometheus gauge metrics from current coordinator state.
+    fn update_metrics_counts(&self) {
+        let (mut ready, mut unhealthy, mut draining) = (0usize, 0usize, 0usize);
+        for w in self.workers.values() {
+            match w.status {
+                WorkerStatus::Ready => ready += 1,
+                WorkerStatus::Unhealthy => unhealthy += 1,
+                WorkerStatus::Draining => draining += 1,
+                _ => {}
+            }
+        }
+        self.cluster_metrics
+            .set_worker_counts(ready, unhealthy, draining);
+
+        let total_deployments: usize = self
+            .pipeline_groups
+            .values()
+            .map(|g| g.placements.len())
+            .sum();
+        self.cluster_metrics
+            .set_deployment_counts(self.pipeline_groups.len(), total_deployments);
+    }
 }
 
 impl Default for Coordinator {
@@ -1788,10 +2489,10 @@ impl Default for Coordinator {
 
 /// Response from worker deploy API.
 #[derive(Debug, Deserialize)]
-struct DeployResponse {
-    id: String,
-    name: String,
-    status: String,
+pub struct DeployResponse {
+    pub id: String,
+    pub name: String,
+    pub status: String,
 }
 
 /// Response from worker checkpoint API.
@@ -2416,6 +3117,7 @@ mod tests {
                 worker_api_key: String::new(),
                 pipeline_id: String::new(),
                 status: crate::pipeline_group::PipelineDeploymentStatus::Running,
+                epoch: 0,
             },
         );
         group.placements.insert(
@@ -2426,6 +3128,7 @@ mod tests {
                 worker_api_key: String::new(),
                 pipeline_id: String::new(),
                 status: crate::pipeline_group::PipelineDeploymentStatus::Running,
+                epoch: 0,
             },
         );
         coord.pipeline_groups.insert("g1".into(), group);
@@ -2463,6 +3166,7 @@ mod tests {
                     worker_api_key: String::new(),
                     pipeline_id: String::new(),
                     status: crate::pipeline_group::PipelineDeploymentStatus::Running,
+                    epoch: 0,
                 },
             );
         }
@@ -2509,6 +3213,7 @@ mod tests {
                     worker_api_key: String::new(),
                     pipeline_id: String::new(),
                     status: crate::pipeline_group::PipelineDeploymentStatus::Running,
+                    epoch: 0,
                 },
             );
         }
@@ -2581,6 +3286,7 @@ mod tests {
                     worker_api_key: String::new(),
                     pipeline_id: String::new(),
                     status: crate::pipeline_group::PipelineDeploymentStatus::Running,
+                    epoch: 0,
                 },
             );
         }

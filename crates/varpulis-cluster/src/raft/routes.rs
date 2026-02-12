@@ -12,8 +12,13 @@ use super::{NodeId, RaftNode, TypeConfig, VarpulisRaft};
 pub type SharedRaft = Arc<VarpulisRaft>;
 
 /// Build all `/raft/*` warp routes.
+///
+/// When `admin_key` is Some, all mutating Raft endpoints require the
+/// `x-api-key` header. The `/raft/metrics` endpoint stays unauthenticated
+/// (read-only, useful for monitoring).
 pub fn raft_routes(
     raft: SharedRaft,
+    admin_key: Option<String>,
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
     let raft_prefix = warp::path("raft");
 
@@ -21,6 +26,7 @@ pub fn raft_routes(
         .and(warp::path("vote"))
         .and(warp::path::end())
         .and(warp::post())
+        .and(with_optional_raft_auth(admin_key.clone()))
         .and(warp::body::json())
         .and(with_raft(raft.clone()))
         .and_then(handle_vote);
@@ -29,6 +35,7 @@ pub fn raft_routes(
         .and(warp::path("append"))
         .and(warp::path::end())
         .and(warp::post())
+        .and(with_optional_raft_auth(admin_key.clone()))
         .and(warp::body::json())
         .and(with_raft(raft.clone()))
         .and_then(handle_append_entries);
@@ -37,6 +44,7 @@ pub fn raft_routes(
         .and(warp::path("snapshot"))
         .and(warp::path::end())
         .and(warp::post())
+        .and(with_optional_raft_auth(admin_key.clone()))
         .and(warp::body::json())
         .and(with_raft(raft.clone()))
         .and_then(handle_snapshot);
@@ -45,6 +53,7 @@ pub fn raft_routes(
         .and(warp::path("init"))
         .and(warp::path::end())
         .and(warp::post())
+        .and(with_optional_raft_auth(admin_key.clone()))
         .and(warp::body::json())
         .and(with_raft(raft.clone()))
         .and_then(handle_init);
@@ -53,6 +62,7 @@ pub fn raft_routes(
         .and(warp::path("add-learner"))
         .and(warp::path::end())
         .and(warp::post())
+        .and(with_optional_raft_auth(admin_key.clone()))
         .and(warp::body::json())
         .and(with_raft(raft.clone()))
         .and_then(handle_add_learner);
@@ -61,10 +71,12 @@ pub fn raft_routes(
         .and(warp::path("change-membership"))
         .and(warp::path::end())
         .and(warp::post())
+        .and(with_optional_raft_auth(admin_key))
         .and(warp::body::json())
         .and(with_raft(raft.clone()))
         .and_then(handle_change_membership);
 
+    // Metrics stays unauthenticated (read-only, useful for monitoring)
     let metrics = raft_prefix
         .and(warp::path("metrics"))
         .and(warp::path::end())
@@ -90,11 +102,39 @@ fn with_raft(
     warp::any().map(move || raft.clone())
 }
 
+/// Optional authentication filter for Raft RPC endpoints.
+/// Reuses the same `x-api-key` header and `Unauthorized` rejection as the
+/// cluster API routes.
+fn with_optional_raft_auth(
+    admin_key: Option<String>,
+) -> impl Filter<Extract = ((),), Error = warp::Rejection> + Clone {
+    let key = admin_key.clone();
+    warp::any()
+        .and(warp::header::optional::<String>("x-api-key"))
+        .and_then(move |provided: Option<String>| {
+            let key = key.clone();
+            async move {
+                match &key {
+                    None => Ok::<(), warp::Rejection>(()),
+                    Some(expected) => match provided {
+                        Some(ref p) if p == expected => Ok(()),
+                        _ => Err(warp::reject::custom(RaftUnauthorized)),
+                    },
+                }
+            }
+        })
+}
+
+#[derive(Debug)]
+struct RaftUnauthorized;
+impl warp::reject::Reject for RaftUnauthorized {}
+
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
 
 async fn handle_vote(
+    _auth: (),
     req: VoteRequest<NodeId>,
     raft: SharedRaft,
 ) -> Result<impl warp::Reply, warp::Rejection> {
@@ -111,6 +151,7 @@ async fn handle_vote(
 }
 
 async fn handle_append_entries(
+    _auth: (),
     req: AppendEntriesRequest<TypeConfig>,
     raft: SharedRaft,
 ) -> Result<impl warp::Reply, warp::Rejection> {
@@ -127,6 +168,7 @@ async fn handle_append_entries(
 }
 
 async fn handle_snapshot(
+    _auth: (),
     req: InstallSnapshotRequest<TypeConfig>,
     raft: SharedRaft,
 ) -> Result<impl warp::Reply, warp::Rejection> {
@@ -149,6 +191,7 @@ struct InitRequest {
 }
 
 async fn handle_init(
+    _auth: (),
     req: InitRequest,
     raft: SharedRaft,
 ) -> Result<impl warp::Reply, warp::Rejection> {
@@ -175,6 +218,7 @@ struct AddLearnerRequest {
 }
 
 async fn handle_add_learner(
+    _auth: (),
     req: AddLearnerRequest,
     raft: SharedRaft,
 ) -> Result<impl warp::Reply, warp::Rejection> {
@@ -197,6 +241,7 @@ struct ChangeMembershipRequest {
 }
 
 async fn handle_change_membership(
+    _auth: (),
     req: ChangeMembershipRequest,
     raft: SharedRaft,
 ) -> Result<impl warp::Reply, warp::Rejection> {

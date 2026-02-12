@@ -177,9 +177,12 @@ pub async fn handle_worker_ws(
                 let wid = WorkerId(worker_id.clone());
                 info!("Worker {} identified via WebSocket", worker_id);
 
-                // Get heartbeat interval from coordinator
+                // Get heartbeat interval from coordinator and clear WS disconnect grace
                 let interval = {
-                    let coord = coordinator.read().await;
+                    let mut coord = coordinator.write().await;
+                    if let Some(worker) = coord.workers.get_mut(&wid) {
+                        worker.ws_disconnected_at = None;
+                    }
                     coord.heartbeat_interval.as_secs()
                 };
 
@@ -212,10 +215,12 @@ pub async fn handle_worker_ws(
         }
     }
 
-    // Worker disconnected — immediate failure detection!
+    // Worker disconnected — start grace period instead of immediate failover.
+    // The health_sweep will trigger failover if the WS doesn't reconnect within
+    // the grace period.
     if let Some(ref wid) = identified_worker {
         warn!(
-            "Worker {} WebSocket disconnected — triggering immediate failure detection",
+            "Worker {} WebSocket disconnected — starting grace period before failover",
             wid
         );
 
@@ -225,36 +230,16 @@ pub async fn handle_worker_ws(
             mgr.remove(wid);
         }
 
-        // Mark unhealthy and trigger failover
+        // Set disconnected_at for grace period (health_sweep will check it)
         {
             let mut coord = coordinator.write().await;
             if let Some(worker) = coord.workers.get_mut(wid) {
                 if worker.status == crate::worker::WorkerStatus::Ready {
-                    worker.status = crate::worker::WorkerStatus::Unhealthy;
+                    worker.ws_disconnected_at = Some(std::time::Instant::now());
                     info!(
-                        "Worker {} marked unhealthy (WS disconnect) — triggering failover",
+                        "Worker {} WS disconnected — grace period started, failover deferred to health sweep",
                         wid
                     );
-
-                    // Propagate unhealthy status to Raft for cross-coordinator visibility
-                    #[cfg(feature = "raft")]
-                    if let Some(ref handle) = coord.raft_handle {
-                        let cmd = crate::raft::ClusterCommand::WorkerStatusChanged {
-                            id: wid.0.clone(),
-                            status: "unhealthy".to_string(),
-                        };
-                        if let Err(e) = handle.raft.client_write(cmd).await {
-                            warn!(
-                                "Worker {} status change not replicated (not leader?): {e}",
-                                wid
-                            );
-                        }
-                    }
-
-                    // Only run failover if we're the leader/writer
-                    if coord.ha_role.is_writer() {
-                        coord.handle_worker_failure(wid).await;
-                    }
                 }
             }
         }
