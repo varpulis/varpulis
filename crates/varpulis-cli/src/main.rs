@@ -319,6 +319,19 @@ enum Commands {
             env = "VARPULIS_WORKER_LABEL_SELECTOR"
         )]
         worker_label_selector: String,
+
+        /// Enable Raft consensus cluster mode
+        #[arg(long, env = "VARPULIS_RAFT")]
+        raft: bool,
+
+        /// This node's Raft ID (1, 2, 3, ...)
+        #[arg(long, env = "VARPULIS_RAFT_NODE_ID")]
+        raft_node_id: Option<u64>,
+
+        /// Comma-separated peer addresses including self
+        /// (e.g., "http://coord-1:9100,http://coord-2:9100,http://coord-3:9100")
+        #[arg(long, env = "VARPULIS_RAFT_PEERS")]
+        raft_peers: Option<String>,
     },
 }
 
@@ -579,6 +592,9 @@ async fn main() -> Result<()> {
             coordinator_id,
             pod_namespace,
             worker_label_selector,
+            raft,
+            raft_node_id,
+            raft_peers,
         } => {
             let scaling_policy = if scaling_min_workers > 0 {
                 Some(varpulis_cluster::ScalingPolicy {
@@ -603,6 +619,9 @@ async fn main() -> Result<()> {
                 coordinator_id,
                 pod_namespace,
                 worker_label_selector,
+                raft,
+                raft_node_id,
+                raft_peers,
             )
             .await?;
         }
@@ -1999,6 +2018,9 @@ async fn run_coordinator(
     _coordinator_id: Option<String>,
     _pod_namespace: Option<String>,
     _worker_label_selector: String,
+    _raft_enabled: bool,
+    _raft_node_id: Option<u64>,
+    _raft_peers: Option<String>,
 ) -> Result<()> {
     let http_protocol = "http";
     println!("Varpulis Coordinator");
@@ -2030,6 +2052,50 @@ async fn run_coordinator(
         let id = _coordinator_id.as_deref().unwrap_or("unknown");
         println!("HA:        enabled (id={})", id);
     }
+
+    // -----------------------------------------------------------------------
+    // Raft consensus bootstrap (when feature enabled + --raft flag set)
+    // -----------------------------------------------------------------------
+    #[cfg(feature = "raft")]
+    let (raft_handle, raft_peer_addrs_map) = {
+        let handle: Option<varpulis_cluster::raft::RaftBootstrapResult>;
+        let peer_map: std::collections::BTreeMap<u64, String>;
+
+        if _raft_enabled {
+            let node_id = _raft_node_id
+                .ok_or_else(|| anyhow::anyhow!("--raft-node-id is required when --raft is set"))?;
+
+            let peers_str = _raft_peers
+                .ok_or_else(|| anyhow::anyhow!("--raft-peers is required when --raft is set"))?;
+
+            let peer_addrs: Vec<String> =
+                peers_str.split(',').map(|s| s.trim().to_string()).collect();
+
+            // Build NodeId → address map for leader forwarding
+            peer_map = peer_addrs
+                .iter()
+                .enumerate()
+                .map(|(i, addr)| ((i + 1) as u64, addr.clone()))
+                .collect();
+
+            println!("Raft:      node_id={}, peers={}", node_id, peers_str);
+
+            let result = varpulis_cluster::raft::bootstrap(node_id, &peer_addrs)
+                .await
+                .map_err(|e| anyhow::anyhow!("Raft bootstrap failed: {e}"))?;
+
+            println!("Raft:      initialized (node {})", node_id);
+            handle = Some(result);
+        } else {
+            handle = None;
+            peer_map = std::collections::BTreeMap::new();
+        }
+        (handle, peer_map)
+    };
+
+    #[cfg(not(feature = "raft"))]
+    let _ = (_raft_enabled, _raft_node_id, _raft_peers);
+
     println!();
 
     let coordinator = varpulis_cluster::shared_coordinator();
@@ -2039,6 +2105,17 @@ async fn run_coordinator(
         coord.heartbeat_interval = std::time::Duration::from_secs(heartbeat_interval_secs);
         coord.heartbeat_timeout = std::time::Duration::from_secs(heartbeat_timeout_secs);
         coord.scaling_policy = scaling_policy;
+
+        // Attach Raft handle to coordinator
+        #[cfg(feature = "raft")]
+        if let Some(ref rh) = raft_handle {
+            coord.raft_handle = Some(varpulis_cluster::coordinator::RaftHandle {
+                raft: rh.raft.clone(),
+                store_state: rh.shared_state.clone(),
+                peer_addrs: raft_peer_addrs_map.clone(),
+                admin_key: api_key.clone(),
+            });
+        }
     }
 
     // Spawn periodic health sweep with automatic failover and rebalancing
@@ -2049,6 +2126,23 @@ async fn run_coordinator(
         loop {
             interval.tick().await;
             let mut coord = health_coordinator.write().await;
+
+            // Update Raft role if enabled
+            #[cfg(feature = "raft")]
+            coord.update_raft_role();
+
+            // Sync from Raft on ALL nodes: followers get updated state,
+            // leader refreshes heartbeat timestamps for remote workers
+            // (heartbeat proxy — prevents false unhealthy for workers
+            // connected to other coordinators via WS).
+            #[cfg(feature = "raft")]
+            coord.sync_from_raft();
+
+            // Only the leader (or standalone) runs health sweeps and failover
+            if !coord.ha_role.is_writer() {
+                continue;
+            }
+
             let result = coord.health_sweep();
 
             // Trigger automatic failover for newly unhealthy workers
@@ -2058,6 +2152,21 @@ async fn run_coordinator(
                 for wid in &failed_workers {
                     tracing::warn!("Worker {} marked unhealthy — triggering failover", wid);
                 }
+
+                // Propagate unhealthy status to Raft for cross-coordinator visibility
+                #[cfg(feature = "raft")]
+                if let Some(ref handle) = coord.raft_handle {
+                    for wid in &failed_workers {
+                        let cmd = varpulis_cluster::raft::ClusterCommand::WorkerStatusChanged {
+                            id: wid.0.clone(),
+                            status: "unhealthy".to_string(),
+                        };
+                        if let Err(e) = handle.raft.client_write(cmd).await {
+                            tracing::warn!("Failed to propagate {} unhealthy to Raft: {e}", wid);
+                        }
+                    }
+                }
+
                 for wid in failed_workers {
                     coord.handle_worker_failure(&wid).await;
                 }
@@ -2190,19 +2299,45 @@ async fn run_coordinator(
         Ok::<_, warp::Rejection>(warp::reply::json(&response))
     });
 
-    let api_routes = varpulis_cluster::cluster_routes(coordinator, api_key, ws_manager);
-
-    let routes = health_route
-        .or(ready_route)
-        .or(api_routes)
-        .recover(varpulis_cluster::api::handle_rejection);
-
     let bind_addr: std::net::IpAddr = bind
         .parse()
         .map_err(|e| anyhow::anyhow!("Invalid bind address '{}': {}", bind, e))?;
-
     info!("Coordinator listening on {}:{}", bind, port);
-    warp::serve(routes).run((bind_addr, port)).await;
+
+    // Build and serve routes (split by cfg to avoid Reply type mismatch in if/else)
+    #[cfg(feature = "raft")]
+    {
+        if let Some(ref rh) = raft_handle {
+            let api_routes = varpulis_cluster::api::cluster_routes_with_raft(
+                coordinator,
+                api_key,
+                ws_manager,
+                rh.raft.clone(),
+            );
+            let routes = health_route
+                .or(ready_route)
+                .or(api_routes)
+                .recover(varpulis_cluster::api::handle_rejection);
+            warp::serve(routes).run((bind_addr, port)).await;
+        } else {
+            let api_routes = varpulis_cluster::cluster_routes(coordinator, api_key, ws_manager);
+            let routes = health_route
+                .or(ready_route)
+                .or(api_routes)
+                .recover(varpulis_cluster::api::handle_rejection);
+            warp::serve(routes).run((bind_addr, port)).await;
+        }
+    }
+
+    #[cfg(not(feature = "raft"))]
+    {
+        let api_routes = varpulis_cluster::cluster_routes(coordinator, api_key, ws_manager);
+        let routes = health_route
+            .or(ready_route)
+            .or(api_routes)
+            .recover(varpulis_cluster::api::handle_rejection);
+        warp::serve(routes).run((bind_addr, port)).await;
+    }
 
     Ok(())
 }

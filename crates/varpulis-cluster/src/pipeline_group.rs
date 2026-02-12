@@ -79,7 +79,7 @@ pub enum PipelineDeploymentStatus {
 }
 
 /// Tracks the deployment of a single pipeline within a group.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineDeployment {
     pub worker_id: WorkerId,
     pub worker_address: String,
@@ -89,6 +89,7 @@ pub struct PipelineDeployment {
 }
 
 /// A deployed pipeline group with placement and status tracking.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeployedPipelineGroup {
     pub id: String,
     pub name: String,
@@ -96,6 +97,7 @@ pub struct DeployedPipelineGroup {
     pub placements: HashMap<String, PipelineDeployment>,
     /// Maps logical pipeline name → ReplicaGroup (only for replicas > 1).
     pub replica_groups: HashMap<String, ReplicaGroup>,
+    #[serde(skip, default = "Instant::now")]
     pub created_at: Instant,
     pub status: GroupStatus,
 }
@@ -155,13 +157,19 @@ pub enum PartitionStrategy {
 }
 
 /// Tracks a group of replicas for a single logical pipeline.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ReplicaGroup {
     pub pipeline_name: String,
     pub replica_names: Vec<String>,
     pub strategy: PartitionStrategy,
+    #[serde(skip, default = "default_counter")]
     pub counter: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    #[serde(skip)]
     missing_field_warned: AtomicBool,
+}
+
+fn default_counter() -> std::sync::Arc<std::sync::atomic::AtomicUsize> {
+    std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0))
 }
 
 impl Clone for ReplicaGroup {

@@ -86,7 +86,7 @@ Varpulis implements a layered failure detection model. The fastest layer to dete
 ```
   Worker                                  Coordinator
     │                                          │
-    │──── WS Connect ─────────────────────────▶│
+    │──── WS Connect ────────────────────────▶│
     │◀─── IdentifyAck ────────────────────────│
     │                                          │
     │──── WS Heartbeat ──────────────────────▶│  (periodic, replaces REST)
@@ -97,7 +97,7 @@ Varpulis implements a layered failure detection model. The fastest layer to dete
     │                                          │
     ╳ worker process killed                    │
     │                                          │
-    │  TCP FIN/RST detected instantly ────────▶│ mark unhealthy
+    │  TCP FIN/RST detected instantly ───────▶│ mark unhealthy
     │                                          │ trigger failover
     │                                          │ migrate pipelines
 ```
@@ -305,3 +305,175 @@ The E2E test suite validates that Varpulis CEP correctly handles:
 - **Coordinator failover** with zero impact on unrelated coordinators and workers
 - **Full cluster recovery** with automatic WS reconnection and re-registration
 - **Traffic resilience** — 100% event delivery during coordinator kills (workers are autonomous)
+
+---
+
+# E2E Raft Consensus Cluster Tests
+
+## Overview
+
+A separate test suite validates Varpulis CEP's embedded Raft consensus for coordinator state sharing. This enables:
+
+- **Shared coordinator state** — all coordinators see the same workers, pipelines, and connectors
+- **Automatic leader election** — no external dependencies (no etcd, no K8s Lease)
+- **Leader failover** — if the Raft leader dies, a new leader is elected within seconds
+- **Cross-coordinator visibility** — deploy on any coordinator, state replicates to all
+
+## Architecture
+
+```
+┌─────────────────── varpulis-raft (Docker network) ───────────────────┐
+│                                                                      │
+│  ┌────────────┐                                                      │
+│  │ mosquitto  │◄───────────────────────────────────────┐             │
+│  │ :1883      │◄──────────────────┐                    │             │
+│  └────────────┘                   │                    │             │
+│                                   │                    │             │
+│  ┌─────────────────────── Raft Cluster ──────────────────────────┐   │
+│  │                                                               │   │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐         │   │
+│  │  │coordinator-1 │  │coordinator-2 │  │coordinator-3 │         │   │
+│  │  │  node_id=1   │◄─┤  node_id=2   │◄─┤  node_id=3   │         │   │
+│  │  │  (Leader)    │─►│  (Follower)  │─►│  (Follower)  │         │   │
+│  │  │  :9100       │  │  :9100       │  │  :9100       │         │   │
+│  │  └──┬───────┬───┘  └──────┬───────┘  └──────┬───────┘         │   │
+│  │     │ WS    │ WS          │ WS              │ WS              │   │
+│  └─────┼───────┼─────────────┼─────────────────┼─────────────────┘   │
+│        │       │             │                 │                     │
+│  ┌─────▼──┐ ┌──▼─────┐ ┌─────▼──┐ ┌────────┐   │                     │
+│  │worker  │ │worker  │ │worker  │ │worker  │   │                     │
+│  │  -1    │ │  -2    │ │  -3    │ │  -4    │◄──┘                     │
+│  │ :9000  │ │ :9000  │ │ :9000  │ │ :9000  │                         │
+│  └────────┘ └────────┘ └────────┘ └────────┘                         │
+│   (coord-1)  (coord-1)  (coord-2)  (coord-3)                         │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+### What Gets Replicated via Raft
+
+| State | Replicated | Local Only |
+|-------|:----------:|:----------:|
+| Worker registry + status | Yes | |
+| Pipeline group deployments | Yes | |
+| Connectors (CRUD) | Yes | |
+| Active migrations | Yes | |
+| Scaling policy | Yes | |
+| Worker heartbeat metrics | | Yes |
+| Pending rebalance flag | | Yes |
+| Last health sweep | | Yes |
+
+### Raft Configuration
+
+| Parameter | Value |
+|-----------|-------|
+| Heartbeat interval | 500ms |
+| Election timeout (min) | 1500ms |
+| Election timeout (max) | 3000ms |
+| Quorum size | 2 of 3 (tolerates 1 failure) |
+| Log storage | In-memory |
+| Transport | HTTP (reqwest) |
+
+### Pipeline Design (4 pipelines, 4 workers)
+
+| Pipeline | Coordinator | Worker | Connector | Input Topic | Output Topic |
+|----------|-------------|--------|-----------|-------------|--------------|
+| sensor_filter_1 | coordinator-1 | worker-1 | mqtt_1 | e2e/input/1 | e2e/output |
+| sensor_filter_2 | coordinator-1 | worker-2 | mqtt_2 | e2e/input/2 | e2e/output |
+| sensor_filter_3 | coordinator-2 | worker-3 | mqtt_3 | e2e/input/3 | e2e/output |
+| sensor_filter_4 | coordinator-3 | worker-4 | mqtt_4 | e2e/input/4 | e2e/output |
+
+## Test Phases
+
+### Phase 0: Raft Cluster Formation
+- Verify all 3 coordinators are healthy
+- Wait for Raft leader election (exactly 1 leader + 2 followers)
+- Wait for 4 workers across the 3 coordinators
+
+### Phase 1: State Replication
+- Register MQTT connectors on each coordinator
+- Deploy pipeline groups on each coordinator
+- Verify warm-up events flow through all 4 pipelines
+
+### Phase 2: Baseline
+- Publish 500 events round-robin across 4 input topics
+- Verify all 250 matching events arrive through the shared output topic
+
+### Phase 3: Worker Failover
+- Kill worker-1
+- Verify coordinator-1 detects failure and marks worker-1 unhealthy
+- Wait for pipeline migration to a surviving worker
+- Verify 250 events arrive after migration
+
+### Phase 4: Cross-Coordinator Migration
+- Kill worker-2 (coordinator-1 now has zero workers)
+- Verify coordinator-2 and coordinator-3 remain operational
+- Send events to pipelines 3+4 (surviving coordinators)
+- Verify events arrive through surviving pipelines
+
+### Phase 5: Leader Failover
+- Kill the current Raft leader
+- Wait for new leader election among surviving coordinators
+- Verify API is available on the new leader
+- Send events through surviving pipelines and verify delivery
+
+### Phase 6: Recovery
+- Restart the killed coordinator
+- Restart worker-1 and worker-2
+- Verify Raft cluster re-forms (1 leader + 2 followers)
+- Re-register connectors and re-deploy pipelines
+- Verify all 250 events arrive through restored cluster
+
+### Phase 7: Traffic During Leader Kill
+- Start continuous background traffic (~100 events/sec)
+- Kill the Raft leader after 5 seconds
+- Continue traffic for 20 more seconds
+- Verify new leader is elected
+- Verify event delivery rate >= 30% (surviving pipelines continue)
+
+## Running the Raft E2E Test
+
+### Prerequisites
+
+- Docker and Docker Compose v2+
+- Docker socket accessible at `/var/run/docker.sock`
+- ~5 GB RAM (3 coordinators + 4 workers + mosquitto + test driver)
+- ~10 minutes for the complete test (includes building with `--features raft`)
+
+### Command
+
+```bash
+cd tests/e2e-raft
+bash run.sh
+```
+
+### Expected Output
+
+```
+============================================================
+=== E2E Raft Consensus Test Results ===
+  Phase 0: Raft Formation .................. PASS
+  Phase 1: State Replication ............... PASS
+  Phase 2: Baseline ........................ PASS
+  Phase 3: Worker Failover ................. PASS
+  Phase 4: Cross-Coordinator Migration ..... PASS
+  Phase 5: Leader Failover ................. PASS
+  Phase 6: Recovery ........................ PASS
+  Phase 7: Traffic During Leader Kill ...... PASS
+============================================================
+RESULT: 8/8 phases passed
+```
+
+Logs are captured to `tests/e2e-raft/results/docker-logs.txt`.
+
+## Raft vs Independent Coordinators
+
+| Capability | Independent (tests/e2e-scaling) | Raft (tests/e2e-raft) |
+|------------|-------------------------------|----------------------|
+| Coordinators | 2 (independent) | 3 (Raft cluster) |
+| Workers | 3 | 4 |
+| Shared state | None | Full (via Raft log) |
+| Leader election | None (all independent) | Automatic (~3s) |
+| Cross-coordinator migration | Not possible | Possible (shared worker registry) |
+| State persistence | Lost on restart | Replicated via Raft snapshots |
+| External dependencies | None | None (embedded Raft) |
+| Fault tolerance | Each coordinator isolated | Tolerates 1 coordinator failure |
