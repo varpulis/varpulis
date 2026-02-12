@@ -235,7 +235,26 @@ pub async fn handle_worker_ws(
                         "Worker {} marked unhealthy (WS disconnect) — triggering failover",
                         wid
                     );
-                    coord.handle_worker_failure(wid).await;
+
+                    // Propagate unhealthy status to Raft for cross-coordinator visibility
+                    #[cfg(feature = "raft")]
+                    if let Some(ref handle) = coord.raft_handle {
+                        let cmd = crate::raft::ClusterCommand::WorkerStatusChanged {
+                            id: wid.0.clone(),
+                            status: "unhealthy".to_string(),
+                        };
+                        if let Err(e) = handle.raft.client_write(cmd).await {
+                            warn!(
+                                "Worker {} status change not replicated (not leader?): {e}",
+                                wid
+                            );
+                        }
+                    }
+
+                    // Only run failover if we're the leader/writer
+                    if coord.ha_role.is_writer() {
+                        coord.handle_worker_failure(wid).await;
+                    }
                 }
             }
         }

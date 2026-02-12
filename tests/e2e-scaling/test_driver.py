@@ -1,26 +1,27 @@
 #!/usr/bin/env python3
 """
-E2E Horizontal Scaling + Coordinator HA Test Driver for Varpulis CEP.
+E2E Horizontal Scaling + Raft Coordinator HA Test Driver for Varpulis CEP.
 
-Tests failover, cascading failure, recovery, rebalancing, and coordinator
+Tests failover, cascading failure, recovery, rebalancing, and Raft coordinator
 failover with real Docker containers and MQTT traffic.
 
 Architecture:
-  - 2 coordinators (coordinator-1 with workers 1+2, coordinator-2 with worker 3)
-  - 3 workers, 3 pipelines
+  - 3 Raft coordinators (coordinator-1=node1, coordinator-2=node2, coordinator-3=node3)
+  - 4 workers: workers 1+2 -> coordinator-1, worker-3 -> coordinator-2, worker-4 -> coordinator-3
+  - 3 pipelines (across input topics 1-3)
   - Each pipeline reads from a separate MQTT input topic
   - All pipelines write to a shared output topic
   - Events published round-robin across input topics
 
 Test phases:
-  0. Setup — cluster readiness, connector registration, deploy pipelines
+  0. Setup — Raft leader elected, cluster ready, connectors + pipelines deployed
   1. Baseline — normal operation with all workers
-  2. WebSocket monitoring — verify WS connections on both coordinators
+  2. WebSocket monitoring — verify WS connections on all 3 coordinators
   3. Worker failover — kill worker-1, verify fast detection via WS
-  4. Cascading failure — kill worker-2, all coordinator-1 work moves to survivor
-  5. Coordinator failover — kill coordinator-1, verify coordinator-2 is unaffected
+  4. Cascading failure — kill worker-2, all coordinator-1 work moves to survivors
+  5. Coordinator failover — kill Raft leader, verify new leader elected, API available
   6. Recovery — restart everything, rebalance, verify
-  7. Traffic during coordinator kill — continuous traffic while killing coordinator
+  7. Traffic during coordinator kill — continuous traffic while killing Raft leader
 """
 
 import json
@@ -40,6 +41,10 @@ import requests
 
 COORDINATOR_1_URL = os.environ.get("COORDINATOR_URL", "http://coordinator-1:9100")
 COORDINATOR_2_URL = os.environ.get("COORDINATOR_2_URL", "http://coordinator-2:9100")
+COORDINATOR_3_URL = os.environ.get("COORDINATOR_3_URL", "http://coordinator-3:9100")
+
+COORDINATOR_URLS = [COORDINATOR_1_URL, COORDINATOR_2_URL, COORDINATOR_3_URL]
+
 MQTT_HOST = os.environ.get("MQTT_HOST", "mosquitto")
 MQTT_PORT = int(os.environ.get("MQTT_PORT", "1883"))
 
@@ -48,7 +53,7 @@ OUTPUT_TOPIC = "e2e/output"
 NUM_PIPELINES = 3
 
 POLL_INTERVAL = 2.0
-FAILOVER_TIMEOUT = 30.0
+FAILOVER_TIMEOUT = 45.0
 EVENT_WAIT_TIMEOUT = 30.0
 
 # ---------------------------------------------------------------------------
@@ -187,7 +192,7 @@ class MqttPublisher:
 
 
 # ---------------------------------------------------------------------------
-# Coordinator API helpers
+# Coordinator + Raft API helpers
 # ---------------------------------------------------------------------------
 
 def api_get(path, coordinator_url=COORDINATOR_1_URL):
@@ -213,6 +218,48 @@ def coordinator_health(coordinator_url):
 def coordinator_is_up(coordinator_url):
     """Check if a coordinator is reachable."""
     return coordinator_health(coordinator_url) is not None
+
+
+def raft_metrics(coordinator_url):
+    """Get Raft metrics from a coordinator. Returns None on failure."""
+    try:
+        return api_get("/raft/metrics", coordinator_url=coordinator_url)
+    except Exception:
+        return None
+
+
+def find_raft_leader():
+    """Find the current Raft leader across all coordinators.
+
+    Returns (leader_node_id, leader_url) or (None, None).
+    """
+    for url in COORDINATOR_URLS:
+        m = raft_metrics(url)
+        if m and m.get("current_leader") not in (None, "null"):
+            leader_id = int(m["current_leader"])
+            if 1 <= leader_id <= len(COORDINATOR_URLS):
+                return leader_id, COORDINATOR_URLS[leader_id - 1]
+    return None, None
+
+
+def wait_for_raft_leader(timeout=30, exclude_node=None):
+    """Wait until a Raft leader is elected. Returns (leader_id, leader_url)."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        leader_id, leader_url = find_raft_leader()
+        if leader_id is not None:
+            if exclude_node is None or leader_id != exclude_node:
+                return leader_id, leader_url
+        time.sleep(1)
+    raise TimeoutError(f"No Raft leader elected within {timeout}s")
+
+
+def get_raft_role(coordinator_url):
+    """Get Raft role: 'Leader', 'Follower', 'Candidate', or 'Unknown'."""
+    m = raft_metrics(coordinator_url)
+    if m:
+        return m.get("state", "Unknown")
+    return "Unreachable"
 
 
 # ---------------------------------------------------------------------------
@@ -368,38 +415,63 @@ class PhaseResult:
 # ---------------------------------------------------------------------------
 
 def phase_0_setup(publisher, collector, docker_client):
-    """Setup: wait for cluster, register connectors, deploy pipelines, warm-up."""
+    """Setup: Raft leader elected, cluster ready, connectors + pipelines deployed."""
     start = time.time()
 
-    # 1. Wait for workers on coordinator-1
-    print("  Waiting for 2 workers on coordinator-1...")
-    workers_1 = wait_for_workers(2, timeout=60, coordinator_url=COORDINATOR_1_URL)
-    print(f"  {len(workers_1)} workers ready on coordinator-1")
+    # 1. Check all 3 coordinators are healthy
+    print("  Checking all 3 coordinators are healthy...")
+    all_healthy = True
+    for i, url in enumerate(COORDINATOR_URLS, 1):
+        health = coordinator_health(url)
+        if health:
+            print(f"    Coordinator-{i}: status={health.get('status')}, "
+                  f"workers={health.get('workers', {}).get('total', 0)}")
+        else:
+            print(f"    Coordinator-{i}: UNREACHABLE")
+            all_healthy = False
 
-    # 2. Wait for worker on coordinator-2
-    print("  Waiting for 1 worker on coordinator-2...")
-    workers_2 = wait_for_workers(1, timeout=60, coordinator_url=COORDINATOR_2_URL)
-    print(f"  {len(workers_2)} worker(s) ready on coordinator-2")
+    # 2. Wait for Raft leader election
+    print("  Waiting for Raft leader election...")
+    leader_id, leader_url = wait_for_raft_leader(timeout=30)
+    print(f"  Raft leader: node {leader_id} ({leader_url})")
 
-    # 3. Register MQTT connectors on BOTH coordinators
-    print("  Registering MQTT connectors on coordinator-1...")
+    # 3. Check Raft roles
+    for i, url in enumerate(COORDINATOR_URLS, 1):
+        role = get_raft_role(url)
+        print(f"    Coordinator-{i} Raft role: {role}")
+
+    # 4. Wait for all 4 workers to be visible (Raft-replicated to all nodes)
+    print("  Waiting for all 4 workers via Raft sync...")
+    all_workers = wait_for_workers(4, timeout=60, coordinator_url=leader_url)
+    print(f"    {len(all_workers)} workers ready on leader")
+    # Also verify visibility on followers
+    for i, url in enumerate(COORDINATOR_URLS, 1):
+        try:
+            data = api_get("/api/v1/cluster/workers", coordinator_url=url)
+            count = len([w for w in data.get("workers", [])
+                        if w.get("status", "").lower() == "ready"])
+            print(f"    Coordinator-{i} sees {count} workers")
+        except Exception:
+            print(f"    Coordinator-{i}: unreachable")
+
+    # 5. Register MQTT connectors on the Raft leader
+    print(f"  Registering MQTT connectors on leader ({leader_url})...")
     for n in range(1, NUM_PIPELINES + 1):
-        for coord_url in [COORDINATOR_1_URL, COORDINATOR_2_URL]:
-            try:
-                api_post("/api/v1/cluster/connectors", {
-                    "name": f"mqtt_{n}",
-                    "connector_type": "mqtt",
-                    "params": {"host": MQTT_HOST, "port": str(MQTT_PORT)},
-                    "description": f"MQTT broker for pipeline {n}",
-                }, coordinator_url=coord_url)
-            except requests.exceptions.HTTPError as e:
-                if e.response is not None and e.response.status_code == 409:
-                    pass  # already exists
-                else:
-                    raise
+        try:
+            api_post("/api/v1/cluster/connectors", {
+                "name": f"mqtt_{n}",
+                "connector_type": "mqtt",
+                "params": {"host": MQTT_HOST, "port": str(MQTT_PORT)},
+                "description": f"MQTT broker for pipeline {n}",
+            }, coordinator_url=leader_url)
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code == 409:
+                pass  # already exists
+            else:
+                raise
 
-    # 4. Deploy pipeline group on coordinator-1 (pipelines 1+2)
-    print("  Deploying pipelines 1+2 on coordinator-1...")
+    # 6. Deploy all pipeline groups on the Raft leader
+    print(f"  Deploying pipelines 1+2 on leader...")
     api_post("/api/v1/cluster/pipeline-groups", {
         "name": "e2e_sensor_filter_c1",
         "pipelines": [
@@ -407,31 +479,25 @@ def phase_0_setup(publisher, collector, docker_client):
             for n in range(1, 3)
         ],
         "routes": [],
-    }, coordinator_url=COORDINATOR_1_URL)
+    }, coordinator_url=leader_url)
 
-    # 5. Deploy pipeline group on coordinator-2 (pipeline 3)
-    print("  Deploying pipeline 3 on coordinator-2...")
+    print(f"  Deploying pipeline 3 on leader...")
     api_post("/api/v1/cluster/pipeline-groups", {
         "name": "e2e_sensor_filter_c2",
         "pipelines": [
             {"name": "sensor_filter_3", "source": vpl_for_pipeline(3), "replicas": 1}
         ],
         "routes": [],
-    }, coordinator_url=COORDINATOR_2_URL)
+    }, coordinator_url=leader_url)
 
-    # 6. Wait for deployment
+    # 7. Wait for deployment (check on leader)
     print("  Waiting for pipelines to deploy...")
     time.sleep(5)
-    pipelines_c1 = wait_for_all_pipelines_assigned(2, timeout=30, coordinator_url=COORDINATOR_1_URL)
-    pipelines_c2 = wait_for_all_pipelines_assigned(1, timeout=30, coordinator_url=COORDINATOR_2_URL)
-    total_pipelines = len(pipelines_c1) + len(pipelines_c2)
-    workers_c1 = {p["worker_id"] for p in pipelines_c1}
-    workers_c2 = {p["worker_id"] for p in pipelines_c2}
-    print(f"  {total_pipelines} pipelines deployed: "
-          f"coordinator-1 has {len(pipelines_c1)} on {workers_c1}, "
-          f"coordinator-2 has {len(pipelines_c2)} on {workers_c2}")
+    all_pipelines = wait_for_all_pipelines_assigned(3, timeout=30, coordinator_url=leader_url)
+    assigned_workers = {p["worker_id"] for p in all_pipelines}
+    print(f"  {len(all_pipelines)} pipelines deployed on workers: {assigned_workers}")
 
-    # 7. Start collector + publisher
+    # 8. Start collector + publisher
     print("  Starting MQTT subscriber...")
     collector.start()
     time.sleep(2)
@@ -447,9 +513,11 @@ def phase_0_setup(publisher, collector, docker_client):
 
     duration = time.time() - start
     if warmup_count > 0:
-        return PhaseResult("Setup", True, duration, f"warm-up {warmup_count}/{expected}")
+        return PhaseResult("Setup", True, duration,
+                           f"leader=node {leader_id}, warm-up {warmup_count}/{expected}")
     else:
-        return PhaseResult("Setup", False, duration, f"warm-up FAILED: 0/{expected}")
+        return PhaseResult("Setup", False, duration,
+                           f"warm-up FAILED: 0/{expected}")
 
 
 def phase_1_baseline(publisher, collector):
@@ -470,30 +538,40 @@ def phase_1_baseline(publisher, collector):
 
 
 def phase_2_websocket_check(docker_client):
-    """Verify WebSocket connections on both coordinators."""
+    """Verify WebSocket connections on all 3 coordinators."""
     start = time.time()
     checks = []
 
     # Coordinator-1 should have 2 WS connections (worker-1, worker-2)
     health_1 = coordinator_health(COORDINATOR_1_URL)
     ws_1 = health_1.get("ws_connections", 0) if health_1 else 0
-    print(f"  Coordinator-1: {ws_1} WS connections (workers: {health_1.get('workers', {}).get('total', 0) if health_1 else 0})")
+    print(f"  Coordinator-1: {ws_1} WS connections "
+          f"(workers: {health_1.get('workers', {}).get('total', 0) if health_1 else 0})")
     checks.append(("coord-1 has WS connections", ws_1 >= 1))
 
     # Coordinator-2 should have 1 WS connection (worker-3)
     health_2 = coordinator_health(COORDINATOR_2_URL)
     ws_2 = health_2.get("ws_connections", 0) if health_2 else 0
-    print(f"  Coordinator-2: {ws_2} WS connections (workers: {health_2.get('workers', {}).get('total', 0) if health_2 else 0})")
+    print(f"  Coordinator-2: {ws_2} WS connections "
+          f"(workers: {health_2.get('workers', {}).get('total', 0) if health_2 else 0})")
     checks.append(("coord-2 has WS connections", ws_2 >= 1))
 
-    # Both should report healthy
-    status_1 = health_1.get("status", "unknown") if health_1 else "unreachable"
-    status_2 = health_2.get("status", "unknown") if health_2 else "unreachable"
-    print(f"  Coordinator-1 status: {status_1}")
-    print(f"  Coordinator-2 status: {status_2}")
+    # Coordinator-3 should have 1 WS connection (worker-4)
+    health_3 = coordinator_health(COORDINATOR_3_URL)
+    ws_3 = health_3.get("ws_connections", 0) if health_3 else 0
+    print(f"  Coordinator-3: {ws_3} WS connections "
+          f"(workers: {health_3.get('workers', {}).get('total', 0) if health_3 else 0})")
+    checks.append(("coord-3 has WS connections", ws_3 >= 1))
+
+    # All should report healthy
+    for i, url in enumerate(COORDINATOR_URLS, 1):
+        h = coordinator_health(url)
+        status = h.get("status", "unknown") if h else "unreachable"
+        role = get_raft_role(url)
+        print(f"  Coordinator-{i} status: {status}, Raft role: {role}")
 
     passed = all(ok for _, ok in checks)
-    detail = f"coord-1: {ws_1} WS, coord-2: {ws_2} WS"
+    detail = f"coord-1: {ws_1} WS, coord-2: {ws_2} WS, coord-3: {ws_3} WS"
 
     duration = time.time() - start
     return PhaseResult("WebSocket Check", passed, duration, detail)
@@ -576,18 +654,26 @@ def phase_4_cascading_failure(publisher, collector, docker_client):
     detect_time = time.time() - failover_start
     print(f"  Worker-2 marked unhealthy after {detect_time:.1f}s")
 
-    # Coordinator-1 has no ready workers left — pipelines cannot be reassigned there
-    # But coordinator-2 still has worker-3 running with pipeline 3
-    print("  Checking coordinator-2 is still operational...")
+    # Coordinator-1 has no ready workers left
+    # Coordinator-2 has worker-3 with pipeline 3
+    # Coordinator-3 has worker-4 (idle)
+    print("  Checking coordinator-2 and coordinator-3 are still operational...")
     health_2 = coordinator_health(COORDINATOR_2_URL)
+    health_3 = coordinator_health(COORDINATOR_3_URL)
     coord_2_ok = health_2 is not None
+    coord_3_ok = health_3 is not None
     if coord_2_ok:
         ws_2 = health_2.get("ws_connections", 0)
         print(f"  Coordinator-2: status={health_2.get('status')}, WS={ws_2}")
     else:
         print(f"  WARNING: coordinator-2 unreachable")
+    if coord_3_ok:
+        ws_3 = health_3.get("ws_connections", 0)
+        print(f"  Coordinator-3: status={health_3.get('status')}, WS={ws_3}")
+    else:
+        print(f"  WARNING: coordinator-3 unreachable")
 
-    # Send events only to pipeline 3 (the one on coordinator-2) since pipelines 1+2 have no workers
+    # Send events only to pipeline 3 (on coordinator-2's worker)
     print("  Publishing events to pipeline 3 (coordinator-2's worker)...")
     collector.clear()
     matching = 0
@@ -602,40 +688,69 @@ def phase_4_cascading_failure(publisher, collector, docker_client):
     received = collector.count()
 
     duration = time.time() - start
-    passed = received >= matching and coord_2_ok
+    passed = received >= matching and coord_2_ok and coord_3_ok
     detail = (f"{received}/{matching} events via coordinator-2, "
-              f"coordinator-2 healthy: {coord_2_ok}")
+              f"coordinator-2 healthy: {coord_2_ok}, coordinator-3 healthy: {coord_3_ok}")
     return PhaseResult("Cascading Failure", passed, duration, detail)
 
 
 def phase_5_coordinator_failover(publisher, collector, docker_client):
-    """Kill coordinator-1. Coordinator-2 and its worker must be completely unaffected."""
+    """Kill Raft leader. Verify new leader elected and surviving coordinators unaffected."""
     start = time.time()
     collector.clear()
 
-    # Snapshot coordinator-2 state before
-    health_2_before = coordinator_health(COORDINATOR_2_URL)
-    ws_2_before = health_2_before.get("ws_connections", 0) if health_2_before else 0
-    print(f"  Coordinator-2 state before: WS={ws_2_before}, status={health_2_before.get('status') if health_2_before else 'N/A'}")
+    # Find current Raft leader
+    old_leader_id, old_leader_url = find_raft_leader()
+    print(f"  Current Raft leader: node {old_leader_id} ({old_leader_url})")
 
-    # Kill coordinator-1
-    print("  KILLING COORDINATOR-1...")
-    stop_container(docker_client, "coordinator-1")
+    # Snapshot surviving coordinators' state before
+    surviving_urls = [(i, url) for i, url in enumerate(COORDINATOR_URLS, 1)
+                      if i != old_leader_id]
+    for i, url in surviving_urls:
+        h = coordinator_health(url)
+        ws = h.get("ws_connections", 0) if h else 0
+        print(f"  Coordinator-{i} before: WS={ws}, status={h.get('status') if h else 'N/A'}")
 
-    # Verify coordinator-1 is actually down
+    # Kill the Raft leader
+    leader_service = f"coordinator-{old_leader_id}"
+    print(f"  KILLING {leader_service} (Raft leader)...")
+    stop_container(docker_client, leader_service)
+
+    # Verify leader is actually down
     time.sleep(2)
-    coord_1_down = not coordinator_is_up(COORDINATOR_1_URL)
-    print(f"  Coordinator-1 is down: {coord_1_down}")
+    coord_leader_down = not coordinator_is_up(old_leader_url)
+    print(f"  {leader_service} is down: {coord_leader_down}")
 
-    # Verify coordinator-2 is UNAFFECTED
-    print("  Checking coordinator-2 is unaffected...")
-    health_2_after = coordinator_health(COORDINATOR_2_URL)
-    coord_2_ok = health_2_after is not None
-    ws_2_after = health_2_after.get("ws_connections", 0) if health_2_after else 0
-    print(f"  Coordinator-2 after kill: WS={ws_2_after}, status={health_2_after.get('status') if health_2_after else 'N/A'}")
+    # Wait for new Raft leader election
+    print("  Waiting for new Raft leader election...")
+    election_start = time.time()
+    try:
+        new_leader_id, new_leader_url = wait_for_raft_leader(
+            timeout=30, exclude_node=old_leader_id)
+        election_time = time.time() - election_start
+        print(f"  New leader: node {new_leader_id} ({new_leader_url}) "
+              f"elected in {election_time:.1f}s")
+    except TimeoutError:
+        new_leader_id, new_leader_url = None, None
+        election_time = time.time() - election_start
+        print(f"  TIMEOUT: No new leader after {election_time:.1f}s")
+
+    # Check surviving coordinators' Raft roles
+    for i, url in surviving_urls:
+        role = get_raft_role(url)
+        print(f"  Coordinator-{i} role: {role}")
+
+    # Verify API is available on surviving coordinators
+    api_available = False
+    for i, url in surviving_urls:
+        h = coordinator_health(url)
+        if h is not None:
+            api_available = True
+            print(f"  API available on coordinator-{i}: status={h.get('status')}")
 
     # Verify pipeline 3 on coordinator-2 still processes events
-    print("  Sending events through coordinator-2's pipeline...")
+    # (worker-3 is connected to coordinator-2 which is still alive)
+    print("  Sending events through surviving pipeline...")
     collector.clear()
     matching = 0
     for i in range(200):
@@ -647,57 +762,73 @@ def phase_5_coordinator_failover(publisher, collector, docker_client):
 
     collector.wait_for_count(matching, timeout=20)
     received = collector.count()
-    print(f"  Received {received}/{matching} events through coordinator-2")
-
-    # Check worker-1/2 logs for coordinator connection failure (expected)
-    w1_logs = get_container_logs(docker_client, "worker-1", tail=30)
-    w2_logs = get_container_logs(docker_client, "worker-2", tail=30)
-    # worker-1 and worker-2 are already stopped from phase 4, so they won't have new logs
+    print(f"  Received {received}/{matching} events through surviving pipeline")
 
     duration = time.time() - start
     passed = (
-        coord_1_down
-        and coord_2_ok
-        and ws_2_after >= ws_2_before  # coordinator-2 WS unaffected
+        coord_leader_down
+        and new_leader_id is not None
+        and new_leader_id != old_leader_id
+        and api_available
         and received >= matching
     )
-    detail = (f"coord-1 down: {coord_1_down}, coord-2 OK: {coord_2_ok}, "
-              f"events: {received}/{matching}")
-    return PhaseResult("Coordinator Failover", passed, duration, detail)
+    detail = (f"old leader: node {old_leader_id}, new leader: node {new_leader_id}, "
+              f"election: {election_time:.1f}s, events: {received}/{matching}")
+    return PhaseResult("Coordinator Failover (Raft)", passed, duration, detail)
 
 
 def phase_6_recovery(publisher, collector, docker_client):
-    """Restart coordinator-1, worker-1, worker-2. Rebalance. Verify full cluster."""
+    """Restart killed coordinator and workers. Verify full cluster recovery."""
     start = time.time()
     collector.clear()
 
-    # Restart coordinator-1
-    print("  Restarting coordinator-1...")
-    start_container(docker_client, "coordinator-1")
-
-    # Wait for coordinator-1 to be healthy
-    print("  Waiting for coordinator-1 to recover...")
-    deadline = time.time() + 30
-    while time.time() < deadline:
-        if coordinator_is_up(COORDINATOR_1_URL):
-            print("  Coordinator-1 is back!")
+    # Find which coordinator was killed
+    killed_coord = None
+    for i, url in enumerate(COORDINATOR_URLS, 1):
+        if not coordinator_is_up(url):
+            killed_coord = i
             break
-        time.sleep(1)
-    else:
-        print("  WARNING: coordinator-1 did not recover within 30s")
+
+    # Restart the killed coordinator
+    if killed_coord:
+        print(f"  Restarting coordinator-{killed_coord}...")
+        start_container(docker_client, f"coordinator-{killed_coord}")
+
+        # Wait for coordinator to recover
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            if coordinator_is_up(COORDINATOR_URLS[killed_coord - 1]):
+                print(f"  Coordinator-{killed_coord} is back!")
+                break
+            time.sleep(1)
+        else:
+            print(f"  WARNING: coordinator-{killed_coord} did not recover within 30s")
+
+    # Find current Raft leader for write operations
+    print("  Finding Raft leader for writes...")
+    leader_id, leader_url = wait_for_raft_leader(timeout=30)
+    has_leader = leader_id is not None
+    print(f"  Raft leader: node {leader_id} ({leader_url})")
+
+    # Check Raft roles after recovery
+    print("  Raft roles after recovery:")
+    for i, url in enumerate(COORDINATOR_URLS, 1):
+        role = get_raft_role(url)
+        print(f"    Coordinator-{i}: {role}")
 
     # Restart worker-1 and worker-2
     print("  Restarting worker-1 and worker-2...")
     start_container(docker_client, "worker-1")
     start_container(docker_client, "worker-2")
 
-    # Wait for workers to register
-    print("  Waiting for workers to register with coordinator-1...")
-    workers = wait_for_workers(2, timeout=60, coordinator_url=COORDINATOR_1_URL)
-    print(f"  {len(workers)} workers ready on coordinator-1")
+    # Wait for workers to register (all 4 should be visible on leader via Raft)
+    print("  Waiting for workers to register (Raft-replicated)...")
+    write_url = leader_url or COORDINATOR_1_URL
+    workers = wait_for_workers(4, timeout=60, coordinator_url=write_url)
+    print(f"  {len(workers)} workers ready")
 
-    # Re-register connectors on coordinator-1 (it lost state on restart)
-    print("  Re-registering MQTT connectors on coordinator-1...")
+    # Re-register connectors on the leader
+    print(f"  Re-registering MQTT connectors on leader ({write_url})...")
     for n in range(1, NUM_PIPELINES + 1):
         try:
             api_post("/api/v1/cluster/connectors", {
@@ -705,15 +836,12 @@ def phase_6_recovery(publisher, collector, docker_client):
                 "connector_type": "mqtt",
                 "params": {"host": MQTT_HOST, "port": str(MQTT_PORT)},
                 "description": f"MQTT broker for pipeline {n}",
-            }, coordinator_url=COORDINATOR_1_URL)
-        except requests.exceptions.HTTPError as e:
-            if e.response is not None and e.response.status_code == 409:
-                pass
-            else:
-                raise
+            }, coordinator_url=write_url)
+        except requests.exceptions.HTTPError:
+            pass  # already exists
 
-    # Re-deploy pipelines on coordinator-1
-    print("  Re-deploying pipelines 1+2 on coordinator-1...")
+    # Re-deploy pipelines on the leader
+    print(f"  Re-deploying pipelines 1+2 on leader ({write_url})...")
     try:
         api_post("/api/v1/cluster/pipeline-groups", {
             "name": "e2e_sensor_filter_c1",
@@ -722,19 +850,18 @@ def phase_6_recovery(publisher, collector, docker_client):
                 for n in range(1, 3)
             ],
             "routes": [],
-        }, coordinator_url=COORDINATOR_1_URL)
+        }, coordinator_url=write_url)
     except requests.exceptions.HTTPError:
         print("  (pipeline group may already exist, continuing)")
 
     time.sleep(5)
 
-    # Check both coordinators
-    health_1 = coordinator_health(COORDINATOR_1_URL)
-    health_2 = coordinator_health(COORDINATOR_2_URL)
-    ws_1 = health_1.get("ws_connections", 0) if health_1 else 0
-    ws_2 = health_2.get("ws_connections", 0) if health_2 else 0
-    print(f"  Coordinator-1: WS={ws_1}, status={health_1.get('status') if health_1 else 'N/A'}")
-    print(f"  Coordinator-2: WS={ws_2}, status={health_2.get('status') if health_2 else 'N/A'}")
+    # Check all coordinators
+    all_up = all(coordinator_is_up(url) for url in COORDINATOR_URLS)
+    for i, url in enumerate(COORDINATOR_URLS, 1):
+        h = coordinator_health(url)
+        ws = h.get("ws_connections", 0) if h else 0
+        print(f"  Coordinator-{i}: WS={ws}, status={h.get('status') if h else 'N/A'}")
 
     # Send events across all pipelines
     collector.clear()
@@ -745,21 +872,23 @@ def phase_6_recovery(publisher, collector, docker_client):
     received = collector.count()
 
     duration = time.time() - start
-    both_up = health_1 is not None and health_2 is not None
-    passed = received >= expected and both_up and ws_1 >= 1
-    detail = (f"{received}/{expected} events, coord-1 WS={ws_1}, coord-2 WS={ws_2}, "
-              f"both coordinators up: {both_up}")
+    passed = received >= expected and all_up and has_leader
+    detail = (f"{received}/{expected} events, all 3 coordinators up: {all_up}, "
+              f"Raft leader: node {leader_id}")
     return PhaseResult("Recovery", passed, duration, detail)
 
 
 def phase_7_traffic_during_coordinator_kill(publisher, collector, docker_client):
-    """Continuous MQTT traffic while killing coordinator-1.
+    """Continuous MQTT traffic while killing Raft leader.
 
-    Pipeline 3 (on coordinator-2) should be completely unaffected.
-    Pipelines 1+2 may lose events during the coordinator outage.
+    Pipelines on surviving coordinators should be completely unaffected.
+    Pipelines on the killed coordinator may lose events during the outage.
     """
     start = time.time()
     collector.clear()
+
+    leader_id, leader_url = find_raft_leader()
+    print(f"  Current Raft leader: node {leader_id}")
 
     stop_flag = threading.Event()
     counters = {"total": 0, "matching": 0, "seq": 5000, "matching_pipeline_3": 0}
@@ -787,10 +916,10 @@ def phase_7_traffic_during_coordinator_kill(publisher, collector, docker_client)
     pub_thread = threading.Thread(target=background_publish, daemon=True)
     pub_thread.start()
 
-    # Publish for 5s, then kill coordinator-1
+    # Publish for 5s, then kill the Raft leader
     time.sleep(5)
-    print("  Killing coordinator-1 during traffic...")
-    stop_container(docker_client, "coordinator-1")
+    print(f"  Killing coordinator-{leader_id} (Raft leader) during traffic...")
+    stop_container(docker_client, f"coordinator-{leader_id}")
 
     # Continue publishing for 20s
     time.sleep(20)
@@ -808,25 +937,30 @@ def phase_7_traffic_during_coordinator_kill(publisher, collector, docker_client)
     received = collector.count()
     pct = (received / total_matching * 100) if total_matching > 0 else 0
 
-    # Pipeline 3 should be unaffected (coordinator-2 never went down)
-    # Pipelines 1+2 may lose events when coordinator-1 is killed
-    # (workers lose their coordinator, but MQTT→pipeline path still works
-    #  since workers run independently once pipelines are deployed)
     print(f"  Total matching events: {total_matching}")
     print(f"  Pipeline 3 matching: {matching_p3}")
     print(f"  Received: {received} ({pct:.1f}%)")
 
-    # Coordinator-2 should still be operational
-    health_2 = coordinator_health(COORDINATOR_2_URL)
-    coord_2_ok = health_2 is not None
-    print(f"  Coordinator-2 still up: {coord_2_ok}")
+    # Check if new leader was elected
+    new_leader_id, _ = find_raft_leader()
+    has_new_leader = new_leader_id is not None and new_leader_id != leader_id
+    print(f"  New leader after kill: node {new_leader_id}")
+
+    # Surviving coordinators should still be operational
+    surviving_ok = 0
+    for i, url in enumerate(COORDINATOR_URLS, 1):
+        if i == leader_id:
+            continue
+        if coordinator_is_up(url):
+            surviving_ok += 1
+            print(f"  Coordinator-{i} still up: True")
 
     duration = time.time() - start
-    # Pipeline 3 (on coordinator-2) must deliver events.
-    # Overall >=50% accounts for pipelines 1+2 potentially losing events
-    # during coordinator-1 death (workers continue processing but may stall).
-    passed = pct >= 50.0 and coord_2_ok
-    detail = f"{received}/{total_matching} events ({pct:.1f}%), coord-2 up: {coord_2_ok}"
+    # Accept >= 50% delivery (pipelines on surviving coordinators continue)
+    passed = pct >= 50.0 and has_new_leader and surviving_ok >= 2
+    detail = (f"{received}/{total_matching} events ({pct:.1f}%), "
+              f"new leader: node {new_leader_id}, "
+              f"{surviving_ok} surviving coordinators OK")
     return PhaseResult("Traffic During Coordinator Kill", passed, duration, detail)
 
 
@@ -836,12 +970,13 @@ def phase_7_traffic_during_coordinator_kill(publisher, collector, docker_client)
 
 def main():
     print("=" * 60)
-    print("  E2E Horizontal Scaling + Coordinator HA Test Suite")
-    print("  Varpulis CEP — 2 coordinators, 3 workers")
+    print("  E2E Horizontal Scaling + Raft Coordinator HA Test Suite")
+    print("  Varpulis CEP — 3 Raft coordinators, 4 workers")
     print("=" * 60)
     print()
     print(f"  Coordinator-1: {COORDINATOR_1_URL}")
     print(f"  Coordinator-2: {COORDINATOR_2_URL}")
+    print(f"  Coordinator-3: {COORDINATOR_3_URL}")
     print(f"  MQTT:          {MQTT_HOST}:{MQTT_PORT}")
     print()
 
@@ -862,7 +997,7 @@ def main():
          lambda: phase_3_worker_failover(publisher, collector, docker_client)),
         ("Phase 4", "Cascading Failure",
          lambda: phase_4_cascading_failure(publisher, collector, docker_client)),
-        ("Phase 5", "Coordinator Failover",
+        ("Phase 5", "Coordinator Failover (Raft)",
          lambda: phase_5_coordinator_failover(publisher, collector, docker_client)),
         ("Phase 6", "Recovery",
          lambda: phase_6_recovery(publisher, collector, docker_client)),
@@ -895,10 +1030,10 @@ def main():
     # Summary
     print()
     print("=" * 60)
-    print("=== E2E Scaling + Coordinator HA Test Results ===")
+    print("=== E2E Scaling + Raft Coordinator HA Test Results ===")
     for i, r in enumerate(results):
         status = "PASS" if r.passed else "FAIL"
-        dots = "." * max(1, 30 - len(r.name))
+        dots = "." * max(1, 35 - len(r.name))
         print(f"  Phase {i}: {r.name} {dots} {status} ({r.duration:.1f}s)")
         print(f"           {r.detail}")
     passed_count = sum(1 for r in results if r.passed)

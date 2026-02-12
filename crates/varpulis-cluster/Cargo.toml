@@ -23,6 +23,7 @@ chrono = { workspace = true }
 [features]
 default = []
 k8s = ["kube", "k8s-openapi"]
+raft = ["openraft"]
 
 [dependencies.kube]
 version = "0.98"
@@ -32,6 +33,11 @@ optional = true
 [dependencies.k8s-openapi]
 version = "0.22"
 features = ["v1_30"]
+optional = true
+
+[dependencies.openraft]
+version = "0.9"
+features = ["serde"]
 optional = true
 
 [dev-dependencies]

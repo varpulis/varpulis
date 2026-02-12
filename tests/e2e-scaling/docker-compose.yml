@@ -15,12 +15,28 @@ services:
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
-    command: ["coordinator", "--port", "9100", "--bind", "0.0.0.0", "--heartbeat-interval", "3", "--heartbeat-timeout", "10"]
+      args:
+        FEATURES: raft
+    command:
+      - "coordinator"
+      - "--port"
+      - "9100"
+      - "--bind"
+      - "0.0.0.0"
+      - "--heartbeat-interval"
+      - "3"
+      - "--heartbeat-timeout"
+      - "10"
+      - "--raft"
+      - "--raft-node-id"
+      - "1"
+      - "--raft-peers"
+      - "http://coordinator-1:9100,http://coordinator-2:9100,http://coordinator-3:9100"
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9100/health"]
       interval: 5s
       timeout: 5s
-      start_period: 10s
+      start_period: 15s
       retries: 5
     depends_on:
       mosquitto:
@@ -32,12 +48,61 @@ services:
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
-    command: ["coordinator", "--port", "9100", "--bind", "0.0.0.0", "--heartbeat-interval", "3", "--heartbeat-timeout", "10"]
+      args:
+        FEATURES: raft
+    command:
+      - "coordinator"
+      - "--port"
+      - "9100"
+      - "--bind"
+      - "0.0.0.0"
+      - "--heartbeat-interval"
+      - "3"
+      - "--heartbeat-timeout"
+      - "10"
+      - "--raft"
+      - "--raft-node-id"
+      - "2"
+      - "--raft-peers"
+      - "http://coordinator-1:9100,http://coordinator-2:9100,http://coordinator-3:9100"
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9100/health"]
       interval: 5s
       timeout: 5s
-      start_period: 10s
+      start_period: 15s
+      retries: 5
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    networks:
+      - varpulis-e2e
+
+  coordinator-3:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      args:
+        FEATURES: raft
+    command:
+      - "coordinator"
+      - "--port"
+      - "9100"
+      - "--bind"
+      - "0.0.0.0"
+      - "--heartbeat-interval"
+      - "3"
+      - "--heartbeat-timeout"
+      - "10"
+      - "--raft"
+      - "--raft-node-id"
+      - "3"
+      - "--raft-peers"
+      - "http://coordinator-1:9100,http://coordinator-2:9100,http://coordinator-3:9100"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9100/health"]
+      interval: 5s
+      timeout: 5s
+      start_period: 15s
       retries: 5
     depends_on:
       mosquitto:
@@ -49,6 +114,8 @@ services:
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
+      args:
+        FEATURES: raft
     command:
       - "server"
       - "--port"
@@ -79,6 +146,8 @@ services:
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
+      args:
+        FEATURES: raft
     command:
       - "server"
       - "--port"
@@ -109,6 +178,8 @@ services:
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
+      args:
+        FEATURES: raft
     command:
       - "server"
       - "--port"
@@ -135,6 +206,38 @@ services:
     networks:
       - varpulis-e2e
 
+  worker-4:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      args:
+        FEATURES: raft
+    command:
+      - "server"
+      - "--port"
+      - "9000"
+      - "--bind"
+      - "0.0.0.0"
+      - "--coordinator"
+      - "http://coordinator-3:9100"
+      - "--worker-id"
+      - "worker-4"
+      - "--advertise-address"
+      - "http://worker-4:9000"
+      - "--api-key"
+      - "e2e-test-key"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9000/health"]
+      interval: 5s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+    depends_on:
+      coordinator-3:
+        condition: service_healthy
+    networks:
+      - varpulis-e2e
+
   test-driver:
     build:
       context: .
@@ -142,6 +245,7 @@ services:
     environment:
       COORDINATOR_URL: http://coordinator-1:9100
       COORDINATOR_2_URL: http://coordinator-2:9100
+      COORDINATOR_3_URL: http://coordinator-3:9100
       MQTT_HOST: mosquitto
       MQTT_PORT: "1883"
     volumes:
@@ -152,6 +256,8 @@ services:
       worker-2:
         condition: service_healthy
       worker-3:
+        condition: service_healthy
+      worker-4:
         condition: service_healthy
     networks:
       - varpulis-e2e
