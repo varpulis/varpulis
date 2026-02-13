@@ -119,6 +119,7 @@ pub mod join;
 pub mod metrics;
 pub mod persistence;
 pub mod sase;
+pub mod scoring;
 pub mod sequence;
 pub mod simd;
 pub mod simulator;

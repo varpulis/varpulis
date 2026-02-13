@@ -196,6 +196,9 @@ pub(crate) enum RuntimeOp {
     To(ToConfig),
     /// Trend aggregation via Hamlet engine (replaces Sequence for this stream)
     TrendAggregate(TrendAggregateConfig),
+    /// ONNX model scoring: extract input fields, run inference, add output fields
+    #[allow(dead_code)]
+    Score(ScoreConfig),
     /// Deduplicate events by expression value (or entire event if None)
     Distinct(DistinctState),
     /// Pass at most N events, then stop the stream
@@ -208,6 +211,15 @@ pub(crate) struct TrendAggregateConfig {
     pub fields: Vec<(String, crate::greta::GretaAggregate)>,
     /// Query ID in the Hamlet aggregator
     pub query_id: crate::greta::QueryId,
+}
+
+/// Configuration for ONNX model scoring
+#[allow(dead_code)]
+pub(crate) struct ScoreConfig {
+    #[cfg(feature = "onnx")]
+    pub model: std::sync::Arc<crate::scoring::OnnxModel>,
+    pub input_fields: Vec<String>,
+    pub output_fields: Vec<String>,
 }
 
 /// Configuration for .to() connector routing

@@ -1217,6 +1217,29 @@ impl Engine {
                     trend_agg_items = Some(items.clone());
                     continue;
                 }
+                StreamOp::Score(spec) => {
+                    #[cfg(feature = "onnx")]
+                    {
+                        let model = crate::scoring::OnnxModel::load(
+                            &spec.model_path,
+                            spec.inputs.clone(),
+                            spec.outputs.clone(),
+                        )
+                        .map_err(|e| format!("Failed to load ONNX model: {}", e))?;
+                        runtime_ops.push(RuntimeOp::Score(types::ScoreConfig {
+                            model: std::sync::Arc::new(model),
+                            input_fields: spec.inputs.clone(),
+                            output_fields: spec.outputs.clone(),
+                        }));
+                        continue;
+                    }
+                    #[cfg(not(feature = "onnx"))]
+                    return Err(format!(
+                        ".score() operator requires the 'onnx' feature. \
+                         Rebuild with: cargo build --features onnx (model: {})",
+                        spec.model_path
+                    ));
+                }
                 StreamOp::Context(_) => {
                     // Context assignment is metadata, not a runtime operation.
                     // Handled by the engine's load() method via context_map.
@@ -3624,6 +3647,7 @@ fn stream_op_name(op: &StreamOp) -> &'static str {
         StreamOp::Watermark(_) => ".watermark()",
         StreamOp::AllowedLateness(_) => ".allowed_lateness()",
         StreamOp::TrendAggregate(_) => ".trend_aggregate()",
+        StreamOp::Score(_) => ".score()",
     }
 }
 
