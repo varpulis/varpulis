@@ -173,6 +173,10 @@ pub struct Coordinator {
     pub raft_handle: Option<RaftHandle>,
     /// Prometheus metrics for cluster operations.
     pub cluster_metrics: ClusterPrometheusMetrics,
+    /// Model registry (name -> metadata).
+    pub model_registry: HashMap<String, crate::model_registry::ModelRegistryEntry>,
+    /// LLM configuration for AI chat assistant.
+    pub llm_config: Option<crate::chat::LlmConfig>,
 }
 
 /// The HA role of this coordinator (re-exported from ha module for non-k8s builds).
@@ -217,6 +221,8 @@ impl Coordinator {
             #[cfg(feature = "raft")]
             raft_handle: None,
             cluster_metrics: ClusterPrometheusMetrics::new(),
+            model_registry: HashMap::new(),
+            llm_config: None,
         }
     }
 
