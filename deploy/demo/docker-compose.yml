@@ -382,7 +382,7 @@ services:
     volumes:
       - ollama-data:/root/.ollama
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      test: ["CMD", "ollama", "list"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -395,7 +395,7 @@ services:
   ollama-setup:
     image: curlimages/curl:latest
     container_name: demo-ollama-setup
-    entrypoint: ["sh", "-c", "curl -s http://ollama:11434/api/pull -d '{\"name\": \"qwen2.5:7b\"}' || true"]
+    entrypoint: ["sh", "-c", "curl -sf http://ollama:11434/api/pull -d '{\"name\": \"qwen2.5:7b\"}' || true"]
     depends_on:
       ollama:
         condition: service_healthy
