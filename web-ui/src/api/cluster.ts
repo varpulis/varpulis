@@ -5,6 +5,7 @@ import type {
   TopologyInfo,
   ClusterSummary,
   Migration,
+  RaftClusterStatus,
 } from '@/types/cluster'
 import type {
   PipelineGroup,
@@ -298,6 +299,13 @@ export async function fetchClusterHealth(): Promise<ClusterHealthMetrics> {
     deploys_success: metrics.get('varpulis_cluster_deploy_duration_seconds_count{result="success"}') ?? 0,
     deploys_failure: metrics.get('varpulis_cluster_deploy_duration_seconds_count{result="failure"}') ?? 0,
   }
+}
+
+// === Raft Cluster Status ===
+
+export async function getRaftStatus(): Promise<RaftClusterStatus> {
+  const response = await api.get<RaftClusterStatus>(`${CLUSTER_BASE}/raft`)
+  return response.data
 }
 
 // === Validation ===

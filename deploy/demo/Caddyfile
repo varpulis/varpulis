@@ -1,21 +1,21 @@
 demo.varpulis-cep.com {
     tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin-key.pem
 
-    # API requests → load-balanced across 3 coordinators
+    # API requests → cookie-sticky across 3 coordinators
     reverse_proxy /api/* coordinator-1:9100 coordinator-2:9100 coordinator-3:9100 {
-        lb_policy round_robin
+        lb_policy cookie
         health_uri /health
         health_interval 10s
     }
 
-    # WebSocket → load-balanced across 3 coordinators
+    # WebSocket → cookie-sticky across 3 coordinators
     reverse_proxy /ws coordinator-1:9100 coordinator-2:9100 coordinator-3:9100 {
-        lb_policy round_robin
+        lb_policy cookie
         health_uri /health
         health_interval 10s
     }
 
-    # Metrics → load-balanced across 3 coordinators
+    # Metrics → round-robin (stateless, no session needed)
     reverse_proxy /metrics coordinator-1:9100 coordinator-2:9100 coordinator-3:9100 {
         lb_policy round_robin
         health_uri /health

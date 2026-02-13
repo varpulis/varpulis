@@ -6,6 +6,7 @@ import type {
   TopologyInfo,
   ClusterSummary,
   ClusterHealthMetrics,
+  RaftClusterStatus,
   Alert,
   Migration,
 } from '@/types/cluster'
@@ -22,6 +23,7 @@ export const useClusterStore = defineStore('cluster', () => {
   const summary = ref<ClusterSummary | null>(null)
   const migrations = ref<Migration[]>([])
   const clusterHealth = ref<ClusterHealthMetrics | null>(null)
+  const raftStatus = ref<RaftClusterStatus | null>(null)
   const alerts = ref<Alert[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -219,6 +221,14 @@ export const useClusterStore = defineStore('cluster', () => {
     }
   }
 
+  async function fetchRaftStatus(): Promise<void> {
+    try {
+      raftStatus.value = await clusterApi.getRaftStatus()
+    } catch {
+      // Raft endpoint may not exist on standalone coordinators
+    }
+  }
+
   async function fetchMigrations(): Promise<void> {
     try {
       migrations.value = await clusterApi.listMigrations()
@@ -277,6 +287,7 @@ export const useClusterStore = defineStore('cluster', () => {
     topology,
     summary,
     clusterHealth,
+    raftStatus,
     migrations,
     alerts,
     loading,
@@ -304,6 +315,7 @@ export const useClusterStore = defineStore('cluster', () => {
     fetchTopology,
     fetchSummary,
     fetchClusterHealth,
+    fetchRaftStatus,
     fetchMigrations,
     rebalance,
     migratePipeline,
