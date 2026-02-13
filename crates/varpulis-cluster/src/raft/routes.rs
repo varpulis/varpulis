@@ -8,6 +8,11 @@ use warp::Filter;
 
 use super::{NodeId, RaftNode, TypeConfig, VarpulisRaft};
 
+/// Maximum body size for normal JSON endpoints (1 MB).
+const JSON_BODY_LIMIT: u64 = 1024 * 1024;
+/// Maximum body size for large payloads: append entries, snapshots (16 MB).
+const LARGE_BODY_LIMIT: u64 = 16 * 1024 * 1024;
+
 /// Shared Raft handle type.
 pub type SharedRaft = Arc<VarpulisRaft>;
 
@@ -27,6 +32,7 @@ pub fn raft_routes(
         .and(warp::path::end())
         .and(warp::post())
         .and(with_optional_raft_auth(admin_key.clone()))
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_raft(raft.clone()))
         .and_then(handle_vote);
@@ -36,6 +42,7 @@ pub fn raft_routes(
         .and(warp::path::end())
         .and(warp::post())
         .and(with_optional_raft_auth(admin_key.clone()))
+        .and(warp::body::content_length_limit(LARGE_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_raft(raft.clone()))
         .and_then(handle_append_entries);
@@ -45,6 +52,7 @@ pub fn raft_routes(
         .and(warp::path::end())
         .and(warp::post())
         .and(with_optional_raft_auth(admin_key.clone()))
+        .and(warp::body::content_length_limit(LARGE_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_raft(raft.clone()))
         .and_then(handle_snapshot);
@@ -54,6 +62,7 @@ pub fn raft_routes(
         .and(warp::path::end())
         .and(warp::post())
         .and(with_optional_raft_auth(admin_key.clone()))
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_raft(raft.clone()))
         .and_then(handle_init);
@@ -63,6 +72,7 @@ pub fn raft_routes(
         .and(warp::path::end())
         .and(warp::post())
         .and(with_optional_raft_auth(admin_key.clone()))
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_raft(raft.clone()))
         .and_then(handle_add_learner);
@@ -72,6 +82,7 @@ pub fn raft_routes(
         .and(warp::path::end())
         .and(warp::post())
         .and(with_optional_raft_auth(admin_key))
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_raft(raft.clone()))
         .and_then(handle_change_membership);

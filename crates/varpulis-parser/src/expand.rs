@@ -1,22 +1,34 @@
+/// Maximum number of iterations per for loop to prevent resource exhaustion.
+const MAX_LOOP_ITERATIONS: i64 = 10_000;
+/// Maximum number of expansion passes to prevent infinite expansion.
+const MAX_EXPANSION_PASSES: usize = 10;
+
 /// Compile-time expansion of top-level for loops.
 ///
 /// Expands `for VAR in START..END:` at indent level 0 into repeated copies
 /// of the body with `{VAR}` replaced by each integer value.
 ///
 /// Runs iteratively until no top-level for loops remain (handles nesting).
-pub fn expand_declaration_loops(source: &str) -> String {
+/// Returns an error if expansion limits are exceeded.
+pub fn expand_declaration_loops(source: &str) -> Result<String, String> {
     let mut result = source.to_string();
-    loop {
-        let expanded = expand_one_pass(&result);
+    for pass in 0..MAX_EXPANSION_PASSES {
+        let expanded = expand_one_pass(&result)?;
         if expanded == result {
-            break;
+            return Ok(result);
         }
         result = expanded;
+        if pass == MAX_EXPANSION_PASSES - 1 {
+            return Err(format!(
+                "Expansion limit exceeded: more than {} passes required",
+                MAX_EXPANSION_PASSES
+            ));
+        }
     }
-    result
+    Ok(result)
 }
 
-fn expand_one_pass(source: &str) -> String {
+fn expand_one_pass(source: &str) -> Result<String, String> {
     let lines: Vec<&str> = source.lines().collect();
     let mut result = String::new();
     let mut i = 0;
@@ -28,6 +40,15 @@ fn expand_one_pass(source: &str) -> String {
 
         if indent == 0 && is_declaration_for(trimmed) {
             if let Some((var, start, end)) = parse_for_range(trimmed) {
+                if end - start > MAX_LOOP_ITERATIONS {
+                    return Err(format!(
+                        "For loop range too large: {}..{} ({} iterations, max {})",
+                        start,
+                        end,
+                        end - start,
+                        MAX_LOOP_ITERATIONS
+                    ));
+                }
                 // Collect body: lines with indent > 0 until we hit indent 0
                 let body_start = i + 1;
                 let mut body_end = body_start;
@@ -77,7 +98,7 @@ fn expand_one_pass(source: &str) -> String {
         result.push('\n');
         i += 1;
     }
-    result
+    Ok(result)
 }
 
 /// Check if a trimmed line looks like a compile-time for loop.
@@ -113,14 +134,14 @@ mod tests {
     #[test]
     fn test_simple_expansion() {
         let input = "for i in 0..3:\n    context c{i}\n";
-        let output = expand_declaration_loops(input);
+        let output = expand_declaration_loops(input).unwrap();
         assert_eq!(output.trim(), "context c0\ncontext c1\ncontext c2");
     }
 
     #[test]
     fn test_nested_expansion() {
         let input = "for r in 0..2:\n    for c in 0..2:\n        context t{r}{c}\n";
-        let output = expand_declaration_loops(input);
+        let output = expand_declaration_loops(input).unwrap();
         assert!(output.contains("context t00"));
         assert!(output.contains("context t01"));
         assert!(output.contains("context t10"));
@@ -131,14 +152,14 @@ mod tests {
     #[test]
     fn test_inclusive_range() {
         let input = "for i in 0..=2:\n    context c{i}\n";
-        let output = expand_declaration_loops(input);
+        let output = expand_declaration_loops(input).unwrap();
         assert_eq!(output.matches("context").count(), 3);
     }
 
     #[test]
     fn test_no_expansion_inside_function() {
         let input = "fn foo():\n    for i in 0..3:\n        let x = {i}\n";
-        let output = expand_declaration_loops(input);
+        let output = expand_declaration_loops(input).unwrap();
         // Should be unchanged — for loop is inside a function (indent > 0)
         assert!(output.contains("for i in 0..3:"));
     }
@@ -146,7 +167,7 @@ mod tests {
     #[test]
     fn test_expression_substitution() {
         let input = "for i in 0..2:\n    stream S{i} = E{i}\n        .process(f({i} * 10))\n";
-        let output = expand_declaration_loops(input);
+        let output = expand_declaration_loops(input).unwrap();
         assert!(output.contains(".process(f(0 * 10))"));
         assert!(output.contains(".process(f(1 * 10))"));
     }
@@ -154,14 +175,14 @@ mod tests {
     #[test]
     fn test_empty_range() {
         let input = "for i in 0..0:\n    context c{i}\n";
-        let output = expand_declaration_loops(input);
+        let output = expand_declaration_loops(input).unwrap();
         assert!(!output.contains("context"));
     }
 
     #[test]
     fn test_preserves_non_loop_lines() {
         let input = "connector X = mqtt (host: \"localhost\")\n\nfor i in 0..2:\n    context c{i}\n\nfn foo():\n    return 1\n";
-        let output = expand_declaration_loops(input);
+        let output = expand_declaration_loops(input).unwrap();
         assert!(output.contains("connector X"));
         assert!(output.contains("fn foo():"));
         assert!(output.contains("context c0"));
@@ -171,7 +192,7 @@ mod tests {
     #[test]
     fn test_comments_in_loop_body() {
         let input = "for i in 0..2:\n    # tile {i}\n    context c{i}\n";
-        let output = expand_declaration_loops(input);
+        let output = expand_declaration_loops(input).unwrap();
         assert!(output.contains("# tile 0"));
         assert!(output.contains("# tile 1"));
         assert!(output.contains("context c0"));
@@ -181,7 +202,7 @@ mod tests {
     #[test]
     fn test_multiple_sequential_loops() {
         let input = "for i in 0..2:\n    context c{i}\n\nfor j in 0..3:\n    stream S{j} = E{j}\n";
-        let output = expand_declaration_loops(input);
+        let output = expand_declaration_loops(input).unwrap();
         assert_eq!(output.matches("context").count(), 2);
         assert_eq!(output.matches("stream").count(), 3);
         assert!(output.contains("context c0"));
@@ -193,7 +214,7 @@ mod tests {
     #[test]
     fn test_negative_range() {
         let input = "for i in -1..2:\n    context c{i}\n";
-        let output = expand_declaration_loops(input);
+        let output = expand_declaration_loops(input).unwrap();
         assert!(output.contains("context c-1"));
         assert!(output.contains("context c0"));
         assert!(output.contains("context c1"));
@@ -203,14 +224,14 @@ mod tests {
     #[test]
     fn test_single_iteration() {
         let input = "for i in 5..6:\n    context only{i}\n";
-        let output = expand_declaration_loops(input);
+        let output = expand_declaration_loops(input).unwrap();
         assert_eq!(output.trim(), "context only5");
     }
 
     #[test]
     fn test_blank_lines_in_body() {
         let input = "for i in 0..2:\n    context c{i}\n\n    stream S{i} = E{i}\n";
-        let output = expand_declaration_loops(input);
+        let output = expand_declaration_loops(input).unwrap();
         assert!(output.contains("context c0"));
         assert!(output.contains("stream S0"));
         assert!(output.contains("context c1"));
@@ -220,7 +241,7 @@ mod tests {
     #[test]
     fn test_multi_line_stream_body() {
         let input = "for i in 0..2:\n    stream S{i} = E{i}\n        .context(c{i})\n        .where(x > {i})\n        .emit(val: x)\n";
-        let output = expand_declaration_loops(input);
+        let output = expand_declaration_loops(input).unwrap();
         assert!(output.contains("stream S0 = E0"));
         assert!(output.contains("    .context(c0)"));
         assert!(output.contains("    .where(x > 0)"));
@@ -232,7 +253,7 @@ mod tests {
     #[test]
     fn test_triple_nested_expansion() {
         let input = "for a in 0..2:\n    for b in 0..2:\n        for c in 0..2:\n            context t{a}{b}{c}\n";
-        let output = expand_declaration_loops(input);
+        let output = expand_declaration_loops(input).unwrap();
         assert_eq!(output.matches("context").count(), 8);
         assert!(output.contains("context t000"));
         assert!(output.contains("context t111"));
@@ -243,7 +264,7 @@ mod tests {
     #[test]
     fn test_no_substitution_when_no_braces() {
         let input = "for i in 0..2:\n    context plain\n";
-        let output = expand_declaration_loops(input);
+        let output = expand_declaration_loops(input).unwrap();
         // Body has no {i} — should repeat body twice unchanged
         assert_eq!(output.matches("context plain").count(), 2);
     }
@@ -252,14 +273,14 @@ mod tests {
     fn test_non_range_for_not_expanded() {
         // A for loop without literal range (uses variable) should not be expanded
         let input = "for i in items:\n    process(i)\n";
-        let output = expand_declaration_loops(input);
+        let output = expand_declaration_loops(input).unwrap();
         assert!(output.contains("for i in items:"));
     }
 
     #[test]
     fn test_inclusive_range_boundary() {
         let input = "for i in 0..=0:\n    context c{i}\n";
-        let output = expand_declaration_loops(input);
+        let output = expand_declaration_loops(input).unwrap();
         assert_eq!(output.trim(), "context c0");
     }
 

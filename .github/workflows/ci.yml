@@ -60,6 +60,39 @@ jobs:
         run: cargo install cargo-audit --locked
       - run: cargo audit
 
+  feature-flags:
+    name: Feature Flags (${{ matrix.features }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features: [kafka, raft, persistent, k8s]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: features-${{ matrix.features }}
+      - run: cargo check --workspace --features ${{ matrix.features }}
+      - run: cargo clippy --workspace --all-targets --features ${{ matrix.features }} -- -D warnings
+
+  web-ui:
+    name: Web UI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web-ui/package-lock.json
+      - run: cd web-ui && npm ci
+      - run: cd web-ui && npm audit --audit-level=high
+      - run: cd web-ui && npm run type-check
+      - run: cd web-ui && npm run test:unit
+
   coverage:
     name: Coverage
     runs-on: ubuntu-latest

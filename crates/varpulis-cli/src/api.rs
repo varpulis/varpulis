@@ -13,6 +13,11 @@ use varpulis_runtime::Event;
 use warp::http::StatusCode;
 use warp::{Filter, Rejection, Reply};
 
+/// Maximum body size for normal JSON endpoints (1 MB).
+const JSON_BODY_LIMIT: u64 = 1024 * 1024;
+/// Maximum body size for large payloads: inject-batch, checkpoints (16 MB).
+const LARGE_BODY_LIMIT: u64 = 16 * 1024 * 1024;
+
 // =============================================================================
 // Request/Response types
 // =============================================================================
@@ -176,6 +181,7 @@ pub fn api_routes(
         .and(warp::path::end())
         .and(warp::post())
         .and(with_api_key())
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_manager(manager.clone()))
         .and_then(handle_deploy);
@@ -213,6 +219,7 @@ pub fn api_routes(
         .and(warp::path::end())
         .and(warp::post())
         .and(with_api_key())
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_manager(manager.clone()))
         .and_then(handle_inject);
@@ -224,6 +231,7 @@ pub fn api_routes(
         .and(warp::path::end())
         .and(warp::post())
         .and(with_api_key())
+        .and(warp::body::content_length_limit(LARGE_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_manager(manager.clone()))
         .and_then(handle_inject_batch);
@@ -245,6 +253,7 @@ pub fn api_routes(
         .and(warp::path::end())
         .and(warp::post())
         .and(with_api_key())
+        .and(warp::body::content_length_limit(LARGE_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_manager(manager.clone()))
         .and_then(handle_restore);
@@ -266,6 +275,7 @@ pub fn api_routes(
         .and(warp::path::end())
         .and(warp::post())
         .and(with_api_key())
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_manager(manager.clone()))
         .and_then(handle_reload);
@@ -878,6 +888,7 @@ pub fn tenant_admin_routes(
         .and(warp::path::end())
         .and(warp::post())
         .and(with_admin_key())
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_manager(manager.clone()))
         .and(with_admin_key_config(admin_key.clone()))

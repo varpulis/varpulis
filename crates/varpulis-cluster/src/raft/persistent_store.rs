@@ -76,7 +76,7 @@ impl RocksStore {
         };
 
         // Recover persisted metadata
-        store.recover_metadata();
+        store.recover_metadata()?;
 
         info!("RocksDB Raft store opened at {}", path);
         Ok(store)
@@ -96,8 +96,11 @@ impl RocksStore {
     }
 
     /// Recover metadata (vote, last_purged, last_applied, membership) from RocksDB.
-    fn recover_metadata(&mut self) {
-        let cf = self.db.cf_handle(CF_META).expect("meta CF missing");
+    fn recover_metadata(&mut self) -> Result<(), String> {
+        let cf = self
+            .db
+            .cf_handle(CF_META)
+            .ok_or("meta column family missing")?;
 
         if let Ok(Some(data)) = self.db.get_cf(&cf, KEY_LAST_APPLIED) {
             if let Ok(log_id) = serde_json::from_slice::<Option<LogId<NodeId>>>(&data) {
@@ -110,6 +113,8 @@ impl RocksStore {
                 self.last_membership = mem;
             }
         }
+
+        Ok(())
     }
 
     /// Replay committed log entries to rebuild the state machine.
@@ -165,9 +170,17 @@ impl RocksStore {
     }
 
     /// Save metadata to the meta column family.
-    fn save_meta(&self, key: &[u8], value: &[u8]) {
-        let cf = self.db.cf_handle(CF_META).expect("meta CF missing");
-        self.db.put_cf(&cf, key, value).ok();
+    fn save_meta(&self, key: &[u8], value: &[u8]) -> Result<(), StorageError<NodeId>> {
+        let cf = self.db.cf_handle(CF_META).ok_or_else(|| StorageError::IO {
+            source: openraft::StorageIOError::write(&openraft::AnyError::error(
+                "meta column family missing",
+            )),
+        })?;
+        self.db
+            .put_cf(&cf, key, value)
+            .map_err(|e| StorageError::IO {
+                source: openraft::StorageIOError::write(&e),
+            })
     }
 
     /// Get the last log entry.
@@ -187,23 +200,41 @@ impl RocksStore {
     }
 
     /// Get the persisted vote.
-    fn read_vote_from_db(&self) -> Option<Vote<NodeId>> {
-        let cf = self.db.cf_handle(CF_META).expect("meta CF missing");
-        self.db
+    fn read_vote_from_db(&self) -> Result<Option<Vote<NodeId>>, StorageError<NodeId>> {
+        let cf = self.db.cf_handle(CF_META).ok_or_else(|| StorageError::IO {
+            source: openraft::StorageIOError::read_vote(&openraft::AnyError::error(
+                "meta column family missing",
+            )),
+        })?;
+        let data = self
+            .db
             .get_cf(&cf, KEY_VOTE)
-            .ok()
-            .flatten()
-            .and_then(|data| serde_json::from_slice(&data).ok())
+            .map_err(|e| StorageError::IO {
+                source: openraft::StorageIOError::read_vote(&e),
+            })?;
+        match data {
+            Some(bytes) => Ok(serde_json::from_slice(&bytes).ok()),
+            None => Ok(None),
+        }
     }
 
     /// Get the persisted last_purged log ID.
-    fn read_last_purged(&self) -> Option<LogId<NodeId>> {
-        let cf = self.db.cf_handle(CF_META).expect("meta CF missing");
-        self.db
+    fn read_last_purged(&self) -> Result<Option<LogId<NodeId>>, StorageError<NodeId>> {
+        let cf = self.db.cf_handle(CF_META).ok_or_else(|| StorageError::IO {
+            source: openraft::StorageIOError::read_logs(&openraft::AnyError::error(
+                "meta column family missing",
+            )),
+        })?;
+        let data = self
+            .db
             .get_cf(&cf, KEY_LAST_PURGED)
-            .ok()
-            .flatten()
-            .and_then(|data| serde_json::from_slice(&data).ok())
+            .map_err(|e| StorageError::IO {
+                source: openraft::StorageIOError::read_logs(&e),
+            })?;
+        match data {
+            Some(bytes) => Ok(serde_json::from_slice(&bytes).ok()),
+            None => Ok(None),
+        }
     }
 }
 
@@ -367,12 +398,11 @@ impl RaftStorage<TypeConfig> for RocksStore {
         let data = serde_json::to_vec(vote).map_err(|e| StorageError::IO {
             source: openraft::StorageIOError::write_vote(&e),
         })?;
-        self.save_meta(KEY_VOTE, &data);
-        Ok(())
+        self.save_meta(KEY_VOTE, &data)
     }
 
     async fn read_vote(&mut self) -> Result<Option<Vote<NodeId>>, StorageError<NodeId>> {
-        Ok(self.read_vote_from_db())
+        self.read_vote_from_db()
     }
 
     // --- Log ---
@@ -380,7 +410,7 @@ impl RaftStorage<TypeConfig> for RocksStore {
     async fn get_log_state(&mut self) -> Result<LogState<TypeConfig>, StorageError<NodeId>> {
         use openraft::RaftLogId;
 
-        let last_purged = self.read_last_purged();
+        let last_purged = self.read_last_purged()?;
         let last = self.last_log_entry().map(|e| *e.get_log_id());
         Ok(LogState {
             last_purged_log_id: last_purged,
@@ -456,9 +486,10 @@ impl RaftStorage<TypeConfig> for RocksStore {
             source: openraft::StorageIOError::write_logs(&e),
         })?;
 
-        let data = serde_json::to_vec(&log_id).unwrap_or_default();
-        self.save_meta(KEY_LAST_PURGED, &data);
-        Ok(())
+        let data = serde_json::to_vec(&log_id).map_err(|e| StorageError::IO {
+            source: openraft::StorageIOError::write_logs(&e),
+        })?;
+        self.save_meta(KEY_LAST_PURGED, &data)
     }
 
     // --- State machine ---
@@ -497,11 +528,15 @@ impl RaftStorage<TypeConfig> for RocksStore {
         }
 
         // Persist last_applied and membership
-        let cf = self.db.cf_handle(CF_META).expect("meta CF missing");
-        let applied_data = serde_json::to_vec(&self.last_applied_log).unwrap_or_default();
-        self.db.put_cf(&cf, KEY_LAST_APPLIED, &applied_data).ok();
-        let mem_data = serde_json::to_vec(&self.last_membership).unwrap_or_default();
-        self.db.put_cf(&cf, KEY_LAST_MEMBERSHIP, &mem_data).ok();
+        let applied_data =
+            serde_json::to_vec(&self.last_applied_log).map_err(|e| StorageError::IO {
+                source: openraft::StorageIOError::write(&e),
+            })?;
+        self.save_meta(KEY_LAST_APPLIED, &applied_data)?;
+        let mem_data = serde_json::to_vec(&self.last_membership).map_err(|e| StorageError::IO {
+            source: openraft::StorageIOError::write(&e),
+        })?;
+        self.save_meta(KEY_LAST_MEMBERSHIP, &mem_data)?;
 
         // Publish updated state for external consumers.
         self.publish_state();
@@ -543,20 +578,38 @@ impl RaftStorage<TypeConfig> for RocksStore {
         self.state = snap.state;
 
         // Persist metadata
-        let cf = self.db.cf_handle(CF_META).expect("meta CF missing");
-        let applied_data = serde_json::to_vec(&self.last_applied_log).unwrap_or_default();
-        self.db.put_cf(&cf, KEY_LAST_APPLIED, &applied_data).ok();
-        let mem_data = serde_json::to_vec(&self.last_membership).unwrap_or_default();
-        self.db.put_cf(&cf, KEY_LAST_MEMBERSHIP, &mem_data).ok();
+        let applied_data =
+            serde_json::to_vec(&self.last_applied_log).map_err(|e| StorageError::IO {
+                source: openraft::StorageIOError::write(&e),
+            })?;
+        self.save_meta(KEY_LAST_APPLIED, &applied_data)?;
+        let mem_data = serde_json::to_vec(&self.last_membership).map_err(|e| StorageError::IO {
+            source: openraft::StorageIOError::write(&e),
+        })?;
+        self.save_meta(KEY_LAST_MEMBERSHIP, &mem_data)?;
 
         // Persist snapshot data for future recovery
         let cf_snap = self
             .db
             .cf_handle(CF_SNAPSHOTS)
-            .expect("snapshots CF missing");
-        self.db.put_cf(&cf_snap, KEY_SNAPSHOT, &data).ok();
-        let meta_data = serde_json::to_vec(meta).unwrap_or_default();
-        self.db.put_cf(&cf_snap, KEY_SNAPSHOT_META, &meta_data).ok();
+            .ok_or_else(|| StorageError::IO {
+                source: openraft::StorageIOError::write(&openraft::AnyError::error(
+                    "snapshots column family missing",
+                )),
+            })?;
+        self.db
+            .put_cf(&cf_snap, KEY_SNAPSHOT, &data)
+            .map_err(|e| StorageError::IO {
+                source: openraft::StorageIOError::write(&e),
+            })?;
+        let meta_data = serde_json::to_vec(meta).map_err(|e| StorageError::IO {
+            source: openraft::StorageIOError::write(&e),
+        })?;
+        self.db
+            .put_cf(&cf_snap, KEY_SNAPSHOT_META, &meta_data)
+            .map_err(|e| StorageError::IO {
+                source: openraft::StorageIOError::write(&e),
+            })?;
 
         self.publish_state();
         info!("Installed Raft snapshot at {:?}", meta.last_log_id);

@@ -23,6 +23,11 @@ use varpulis_parser::ParseError;
 use warp::http::StatusCode;
 use warp::{Filter, Rejection, Reply};
 
+/// Maximum body size for normal JSON endpoints (1 MB).
+const JSON_BODY_LIMIT: u64 = 1024 * 1024;
+/// Maximum body size for large payloads: inject-batch, models, snapshots (16 MB).
+const LARGE_BODY_LIMIT: u64 = 16 * 1024 * 1024;
+
 /// Shared coordinator state.
 pub type SharedCoordinator = Arc<RwLock<Coordinator>>;
 
@@ -82,6 +87,7 @@ pub fn cluster_routes(
         .and(warp::path::end())
         .and(warp::post())
         .and(with_optional_auth(admin_key.clone()))
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_register_worker);
@@ -93,6 +99,7 @@ pub fn cluster_routes(
         .and(warp::path::end())
         .and(warp::post())
         .and(with_optional_auth(admin_key.clone()))
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_heartbeat);
@@ -128,6 +135,7 @@ pub fn cluster_routes(
         .and(warp::path::end())
         .and(warp::post())
         .and(with_optional_auth(admin_key.clone()))
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_deploy_group);
@@ -165,6 +173,7 @@ pub fn cluster_routes(
         .and(warp::path::end())
         .and(warp::post())
         .and(with_optional_auth(admin_key.clone()))
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_inject_event);
@@ -176,6 +185,7 @@ pub fn cluster_routes(
         .and(warp::path::end())
         .and(warp::post())
         .and(with_optional_auth(admin_key.clone()))
+        .and(warp::body::content_length_limit(LARGE_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_inject_batch);
@@ -193,6 +203,7 @@ pub fn cluster_routes(
         .and(warp::path::end())
         .and(warp::post())
         .and(with_optional_auth(admin_key.clone()))
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_validate);
@@ -206,6 +217,7 @@ pub fn cluster_routes(
         .and(warp::path::end())
         .and(warp::post())
         .and(with_optional_auth(admin_key.clone()))
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_drain_worker);
@@ -243,6 +255,7 @@ pub fn cluster_routes(
         .and(warp::path::end())
         .and(warp::post())
         .and(with_optional_auth(admin_key.clone()))
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_manual_migrate);
@@ -271,6 +284,7 @@ pub fn cluster_routes(
         .and(warp::path::end())
         .and(warp::post())
         .and(with_optional_auth(admin_key.clone()))
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_create_connector);
@@ -281,6 +295,7 @@ pub fn cluster_routes(
         .and(warp::path::end())
         .and(warp::put())
         .and(with_optional_auth(admin_key.clone()))
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_update_connector);
@@ -357,6 +372,7 @@ pub fn cluster_routes(
         .and(warp::path::end())
         .and(warp::post())
         .and(with_optional_auth(admin_key.clone()))
+        .and(warp::body::content_length_limit(LARGE_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_upload_model);
@@ -387,6 +403,7 @@ pub fn cluster_routes(
         .and(warp::path::end())
         .and(warp::post())
         .and(with_optional_auth(admin_key.clone()))
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_chat);
@@ -406,6 +423,7 @@ pub fn cluster_routes(
         .and(warp::path::end())
         .and(warp::put())
         .and(with_optional_auth(admin_key))
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_update_chat_config);
@@ -688,6 +706,10 @@ async fn handle_delete_worker(
 ) -> Result<impl Reply, Infallible> {
     let mut coord = coordinator.write().await;
 
+    if let Err(e) = coord.require_writer() {
+        return Ok(cluster_error_response(e));
+    }
+
     // Replicate through Raft if enabled
     #[cfg(feature = "raft")]
     if let Some(ref handle) = coord.raft_handle {
@@ -749,6 +771,13 @@ async fn handle_deploy_group(
                     };
                     if let Err(e) = handle.raft.client_write(cmd).await {
                         tracing::error!("Raft replication failed for deploy_group: {e}");
+                        return Ok(warp::reply::with_status(
+                            warp::reply::json(&serde_json::json!({
+                                "error": format!("Operation applied locally but Raft replication failed: {e}")
+                            })),
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                        )
+                        .into_response());
                     }
                 }
             }
@@ -808,33 +837,51 @@ async fn handle_delete_group(
     _auth: (),
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
-    let mut coord = coordinator.write().await;
+    // Phase 1: Plan teardown under read lock
+    let (plan, http_client) = {
+        let coord = coordinator.read().await;
 
-    if let Err(e) = coord.require_writer() {
-        return Ok(cluster_error_response(e));
-    }
-
-    match coord.teardown_group(&group_id).await {
-        Ok(()) => {
-            // Replicate the group removal through Raft
-            #[cfg(feature = "raft")]
-            if let Some(ref handle) = coord.raft_handle {
-                let cmd = crate::raft::ClusterCommand::GroupRemoved {
-                    name: group_id.clone(),
-                };
-                if let Err(e) = handle.raft.client_write(cmd).await {
-                    tracing::error!("Raft replication failed for teardown_group: {e}");
-                }
-            }
-
-            Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({"torn_down": true})),
-                StatusCode::OK,
-            )
-            .into_response())
+        if let Err(e) = coord.require_writer() {
+            return Ok(cluster_error_response(e));
         }
-        Err(e) => Ok(cluster_error_response(e)),
+
+        match coord.plan_teardown_group(&group_id) {
+            Ok(plan) => (plan, coord.http_client.clone()),
+            Err(e) => return Ok(cluster_error_response(e)),
+        }
+    };
+    // Read lock released here
+
+    // Phase 2: Execute HTTP teardown without lock
+    crate::coordinator::Coordinator::execute_teardown_plan(&http_client, &plan).await;
+
+    // Phase 3: Commit state changes under write lock
+    let mut coord = coordinator.write().await;
+    coord.commit_teardown_group(&plan);
+
+    // Replicate the group removal through Raft
+    #[cfg(feature = "raft")]
+    if let Some(ref handle) = coord.raft_handle {
+        let cmd = crate::raft::ClusterCommand::GroupRemoved {
+            name: group_id.clone(),
+        };
+        if let Err(e) = handle.raft.client_write(cmd).await {
+            tracing::error!("Raft replication failed for teardown_group: {e}");
+            return Ok(warp::reply::with_status(
+                warp::reply::json(&serde_json::json!({
+                    "error": format!("Operation applied locally but Raft replication failed: {e}")
+                })),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            )
+            .into_response());
+        }
     }
+
+    Ok(warp::reply::with_status(
+        warp::reply::json(&serde_json::json!({"torn_down": true})),
+        StatusCode::OK,
+    )
+    .into_response())
 }
 
 async fn handle_inject_event(
@@ -843,8 +890,19 @@ async fn handle_inject_event(
     body: InjectEventRequest,
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
-    let coord = coordinator.read().await;
-    match coord.inject_event(&group_id, body).await {
+    // Phase 1: Resolve target under read lock
+    let (target, http_client) = {
+        let coord = coordinator.read().await;
+        match coord.resolve_inject_target(&group_id, &body) {
+            Ok(target) => (target, coord.http_client.clone()),
+            Err(e) => return Ok(cluster_error_response(e)),
+        }
+    };
+    // Read lock released here
+
+    // Phase 2: Execute HTTP without lock
+    match crate::coordinator::Coordinator::execute_inject_event(&http_client, &target, &body).await
+    {
         Ok(resp) => {
             Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
         }
@@ -1231,6 +1289,12 @@ async fn handle_upload_model(
     body: UploadModelRequest,
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    {
+        let coord = coordinator.read().await;
+        if let Err(e) = coord.require_writer() {
+            return Ok(cluster_error_response(e));
+        }
+    }
     let name = body.name.clone();
     let s3_key = format!("models/{}.onnx", &name);
     let size_bytes = body.data_base64.len() as u64 * 3 / 4; // approximate
@@ -1275,6 +1339,10 @@ async fn handle_delete_model(
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
     let mut coord = coordinator.write().await;
+
+    if let Err(e) = coord.require_writer() {
+        return Ok(cluster_error_response(e));
+    }
 
     if !coord.model_registry.contains_key(&name) {
         let resp = serde_json::json!({ "error": format!("Model '{}' not found", name) });
@@ -1397,6 +1465,11 @@ async fn handle_update_chat_config(
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
     let mut coord = coordinator.write().await;
+
+    if let Err(e) = coord.require_writer() {
+        return Ok(cluster_error_response(e));
+    }
+
     coord.llm_config = Some(body);
     let resp = serde_json::json!({ "status": "ok" });
     Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
@@ -1459,6 +1532,13 @@ async fn handle_rebalance(
                         };
                         if let Err(e) = handle.raft.client_write(cmd).await {
                             tracing::error!("Raft replication failed for rebalance: {e}");
+                            return Ok(warp::reply::with_status(
+                                warp::reply::json(&serde_json::json!({
+                                    "error": format!("Operation applied locally but Raft replication failed: {e}")
+                                })),
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                            )
+                            .into_response());
                         }
                     }
                 }
@@ -1585,6 +1665,13 @@ async fn handle_manual_migrate(
                     };
                     if let Err(e) = handle.raft.client_write(cmd).await {
                         tracing::error!("Raft replication failed for migrate_pipeline: {e}");
+                        return Ok(warp::reply::with_status(
+                            warp::reply::json(&serde_json::json!({
+                                "error": format!("Operation applied locally but Raft replication failed: {e}")
+                            })),
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                        )
+                        .into_response());
                     }
                 }
             }
@@ -1647,6 +1734,10 @@ async fn handle_create_connector(
 ) -> Result<impl Reply, Infallible> {
     let mut coord = coordinator.write().await;
 
+    if let Err(e) = coord.require_writer() {
+        return Ok(cluster_error_response(e));
+    }
+
     // Replicate through Raft if enabled
     #[cfg(feature = "raft")]
     if let Some(ref handle) = coord.raft_handle {
@@ -1679,6 +1770,10 @@ async fn handle_update_connector(
 ) -> Result<impl Reply, Infallible> {
     let mut coord = coordinator.write().await;
 
+    if let Err(e) = coord.require_writer() {
+        return Ok(cluster_error_response(e));
+    }
+
     #[cfg(feature = "raft")]
     if let Some(ref handle) = coord.raft_handle {
         let cmd = crate::raft::ClusterCommand::ConnectorUpdated {
@@ -1706,6 +1801,10 @@ async fn handle_delete_connector(
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
     let mut coord = coordinator.write().await;
+
+    if let Err(e) = coord.require_writer() {
+        return Ok(cluster_error_response(e));
+    }
 
     #[cfg(feature = "raft")]
     if let Some(ref handle) = coord.raft_handle {
@@ -1831,14 +1930,12 @@ async fn handle_cluster_summary(
 // Raft cluster status handler
 // =============================================================================
 
-async fn handle_raft_status(
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
-    let coord = coordinator.read().await;
+async fn handle_raft_status(coordinator: SharedCoordinator) -> Result<impl Reply, Infallible> {
+    let _coord = coordinator.read().await;
 
     #[cfg(feature = "raft")]
     {
-        if let Some(ref handle) = coord.raft_handle {
+        if let Some(ref handle) = _coord.raft_handle {
             let metrics = handle.raft.metrics().borrow().clone();
             let current_leader = metrics.current_leader;
             let this_node_id = metrics.id;
@@ -1866,7 +1963,9 @@ async fn handle_raft_status(
                 "commit_index": metrics.last_applied.as_ref().map(|l| l.index).unwrap_or(0),
                 "nodes": nodes,
             });
-            return Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response());
+            return Ok(
+                warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response(),
+            );
         }
     }
 

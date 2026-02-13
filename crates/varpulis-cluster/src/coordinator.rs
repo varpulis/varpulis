@@ -960,28 +960,34 @@ impl Coordinator {
     }
 
     /// Tear down a pipeline group: delete all deployed pipelines from workers.
-    pub async fn teardown_group(&mut self, group_id: &str) -> Result<(), ClusterError> {
+    /// Phase 1: Plan teardown — collect deployment info under read lock.
+    pub fn plan_teardown_group(&self, group_id: &str) -> Result<TeardownPlan, ClusterError> {
         let group = self
             .pipeline_groups
             .get(group_id)
             .ok_or_else(|| ClusterError::GroupNotFound(group_id.to_string()))?;
 
-        let placements: Vec<(String, PipelineDeployment)> = group
+        let tasks: Vec<(String, PipelineDeployment)> = group
             .placements
             .iter()
+            .filter(|(_, d)| !d.pipeline_id.is_empty())
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
 
-        for (name, deployment) in placements {
-            if deployment.pipeline_id.is_empty() {
-                continue; // never deployed
-            }
+        Ok(TeardownPlan {
+            group_id: group_id.to_string(),
+            tasks,
+        })
+    }
+
+    /// Phase 2: Execute teardown HTTP calls — no lock held.
+    pub async fn execute_teardown_plan(http_client: &reqwest::Client, plan: &TeardownPlan) {
+        for (name, deployment) in &plan.tasks {
             let delete_url = format!(
                 "{}/api/v1/pipelines/{}",
                 deployment.worker_address, deployment.pipeline_id
             );
-            match self
-                .http_client
+            match http_client
                 .delete(&delete_url)
                 .header("x-api-key", &deployment.worker_api_key)
                 .send()
@@ -996,27 +1002,29 @@ impl Coordinator {
                     name, deployment.worker_id, e
                 ),
             }
+        }
+    }
 
-            // Update worker's assigned pipelines
+    /// Phase 3: Commit teardown — update state under write lock.
+    pub fn commit_teardown_group(&mut self, plan: &TeardownPlan) {
+        for (name, deployment) in &plan.tasks {
             if let Some(w) = self.workers.get_mut(&deployment.worker_id) {
-                w.assigned_pipelines.retain(|p| p != &name);
+                w.assigned_pipelines.retain(|p| p != name);
                 w.capacity.pipelines_running = w.capacity.pipelines_running.saturating_sub(1);
             }
         }
-
-        // Remove the group entirely after teardown
-        self.pipeline_groups.remove(group_id);
-
-        Ok(())
+        self.pipeline_groups.remove(&plan.group_id);
     }
 
     /// Inject an event into a pipeline group, routing it to the correct worker.
     /// Supports replica-aware routing when replicas > 1.
-    pub async fn inject_event(
+    /// Resolve the target for an inject event (Phase 1 — read lock).
+    /// Returns (url, api_key, inject_body, target_name, worker_id).
+    pub fn resolve_inject_target(
         &self,
         group_id: &str,
-        event: InjectEventRequest,
-    ) -> Result<InjectResponse, ClusterError> {
+        event: &InjectEventRequest,
+    ) -> Result<InjectTarget, ClusterError> {
         let group = self
             .pipeline_groups
             .get(group_id)
@@ -1040,20 +1048,31 @@ impl Coordinator {
             ClusterError::RoutingFailed(format!("Pipeline '{}' not deployed", target_name))
         })?;
 
-        let inject_url = format!(
-            "{}/api/v1/pipelines/{}/events",
-            deployment.worker_address, deployment.pipeline_id
-        );
+        Ok(InjectTarget {
+            url: format!(
+                "{}/api/v1/pipelines/{}/events",
+                deployment.worker_address, deployment.pipeline_id
+            ),
+            api_key: deployment.worker_api_key.clone(),
+            target_name,
+            worker_id: deployment.worker_id.0.clone(),
+        })
+    }
 
+    /// Execute inject event HTTP call (Phase 2 — no lock).
+    pub async fn execute_inject_event(
+        http_client: &reqwest::Client,
+        target: &InjectTarget,
+        event: &InjectEventRequest,
+    ) -> Result<InjectResponse, ClusterError> {
         let inject_body = serde_json::json!({
             "event_type": event.event_type,
             "fields": event.fields,
         });
 
-        let response = self
-            .http_client
-            .post(&inject_url)
-            .header("x-api-key", &deployment.worker_api_key)
+        let response = http_client
+            .post(&target.url)
+            .header("x-api-key", &target.api_key)
             .json(&inject_body)
             .send()
             .await
@@ -1073,10 +1092,30 @@ impl Coordinator {
             .map_err(|e| ClusterError::RoutingFailed(e.to_string()))?;
 
         Ok(InjectResponse {
-            routed_to: target_name,
-            worker_id: deployment.worker_id.0.clone(),
+            routed_to: target.target_name.clone(),
+            worker_id: target.worker_id.clone(),
             worker_response,
         })
+    }
+
+    /// Convenience wrapper: resolve + execute inject event in one call.
+    /// Used by tests and internal code that has direct coordinator access.
+    pub async fn inject_event(
+        &self,
+        group_id: &str,
+        event: InjectEventRequest,
+    ) -> Result<InjectResponse, ClusterError> {
+        let target = self.resolve_inject_target(group_id, &event)?;
+        Self::execute_inject_event(&self.http_client, &target, &event).await
+    }
+
+    /// Convenience wrapper: plan + commit teardown in one call (skips HTTP phase).
+    /// Used by tests and internal code that has direct coordinator access.
+    pub async fn teardown_group(&mut self, group_id: &str) -> Result<(), ClusterError> {
+        let plan = self.plan_teardown_group(group_id)?;
+        Self::execute_teardown_plan(&self.http_client, &plan).await;
+        self.commit_teardown_group(&plan);
+        Ok(())
     }
 
     /// Inject a batch of events (parsed from .evt text) into a pipeline group.
@@ -2527,6 +2566,22 @@ pub struct InjectEventRequest {
     pub event_type: String,
     #[serde(default)]
     pub fields: serde_json::Map<String, serde_json::Value>,
+}
+
+/// Plan for tearing down a pipeline group (extracted under read lock).
+#[derive(Debug, Clone)]
+pub struct TeardownPlan {
+    pub group_id: String,
+    pub tasks: Vec<(String, PipelineDeployment)>,
+}
+
+/// Resolved inject target (extracted under read lock, used without lock).
+#[derive(Debug, Clone)]
+pub struct InjectTarget {
+    pub url: String,
+    pub api_key: String,
+    pub target_name: String,
+    pub worker_id: String,
 }
 
 /// Response from event injection.

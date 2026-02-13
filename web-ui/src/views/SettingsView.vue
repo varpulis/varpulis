@@ -39,7 +39,7 @@ async function testConnection(): Promise<void> {
 
   // Save current values to restore if test fails
   const oldUrl = localStorage.getItem('varpulis_coordinator_url')
-  const oldKey = localStorage.getItem('varpulis_api_key')
+  const oldKey = sessionStorage.getItem('varpulis_api_key')
 
   try {
     // Temporarily apply test values

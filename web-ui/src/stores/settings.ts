@@ -45,7 +45,9 @@ function loadSettings(): Settings {
 
 function saveSettings(settings: Settings): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
+    // Exclude apiKey from localStorage — it's stored in sessionStorage for security
+    const { apiKey: _excluded, ...persistable } = settings
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(persistable))
   } catch {
     console.warn('Failed to save settings to localStorage')
   }
@@ -157,14 +159,16 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   function exportSettings(): string {
-    return JSON.stringify(settings.value, null, 2)
+    // Exclude apiKey from export for security
+    const { apiKey: _excluded, ...exportable } = settings.value
+    return JSON.stringify(exportable, null, 2)
   }
 
   function importSettings(json: string): boolean {
     try {
       const imported = JSON.parse(json) as Partial<Settings>
       if (imported.theme) theme.value = imported.theme
-      if (imported.refreshInterval) refreshInterval.value = imported.refreshInterval
+      if (imported.refreshInterval) refreshInterval.value = Math.max(1, imported.refreshInterval)
       if (imported.metricsTimeRange) metricsTimeRange.value = imported.metricsTimeRange
       if (imported.showNotifications !== undefined) showNotifications.value = imported.showNotifications
       if (imported.soundEnabled !== undefined) soundEnabled.value = imported.soundEnabled

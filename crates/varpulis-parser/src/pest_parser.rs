@@ -37,7 +37,11 @@ pub struct VarpulisParser;
 /// Parse a VPL source string into a Program AST
 pub fn parse(source: &str) -> ParseResult<Program> {
     // Expand compile-time declaration loops (top-level for with {var} interpolation)
-    let expanded = crate::expand::expand_declaration_loops(source);
+    let expanded =
+        crate::expand::expand_declaration_loops(source).map_err(|e| ParseError::InvalidToken {
+            position: 0,
+            message: e,
+        })?;
     // Preprocess to add INDENT/DEDENT markers
     let preprocessed = preprocess_indentation(&expanded);
 
@@ -1175,6 +1179,27 @@ fn parse_type(pair: pest::iterators::Pair<Rule>) -> ParseResult<Type> {
             let inner_type = parse_type(inner.into_inner().expect_next("array element type")?)?;
             Ok(Type::Array(Box::new(inner_type)))
         }
+        Rule::map_type => {
+            let mut inner_pairs = inner.into_inner();
+            let key_type = parse_type(inner_pairs.expect_next("map key type")?)?;
+            let val_type = parse_type(inner_pairs.expect_next("map value type")?)?;
+            Ok(Type::Map(Box::new(key_type), Box::new(val_type)))
+        }
+        Rule::tuple_type => {
+            let types: Vec<Type> = inner
+                .into_inner()
+                .map(parse_type)
+                .collect::<ParseResult<Vec<_>>>()?;
+            Ok(Type::Tuple(types))
+        }
+        Rule::stream_type => {
+            let inner_type = parse_type(inner.into_inner().expect_next("stream element type")?)?;
+            Ok(Type::Stream(Box::new(inner_type)))
+        }
+        Rule::optional_type => {
+            let inner_type = parse_type(inner.into_inner().expect_next("optional inner type")?)?;
+            Ok(Type::Optional(Box::new(inner_type)))
+        }
         Rule::named_type | Rule::identifier => Ok(Type::Named(inner.as_str().to_string())),
         _ => Ok(Type::Named(inner.as_str().to_string())),
     }
@@ -1704,6 +1729,7 @@ fn parse_filter_comparison_expr(pair: pest::iterators::Pair<Rule>) -> ParseResul
             ">=" => BinOp::Ge,
             "in" => BinOp::In,
             "is" => BinOp::Is,
+            s if s.contains("not") && s.contains("in") => BinOp::NotIn,
             _ => BinOp::Eq,
         };
         let right = parse_filter_additive_expr(inner.expect_next("comparison right operand")?)?;
@@ -2220,8 +2246,16 @@ fn parse_literal(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
     let inner = pair.into_inner().expect_next("literal value")?;
 
     match inner.as_rule() {
-        Rule::integer => Ok(Expr::Int(inner.as_str().parse().unwrap_or(0))),
-        Rule::float => Ok(Expr::Float(inner.as_str().parse().unwrap_or(0.0))),
+        Rule::integer => inner
+            .as_str()
+            .parse::<i64>()
+            .map(Expr::Int)
+            .map_err(|e| ParseError::InvalidNumber(format!("'{}': {}", inner.as_str(), e))),
+        Rule::float => inner
+            .as_str()
+            .parse::<f64>()
+            .map(Expr::Float)
+            .map_err(|e| ParseError::InvalidNumber(format!("'{}': {}", inner.as_str(), e))),
         Rule::string => {
             let s = inner.as_str();
             Ok(Expr::Str(s[1..s.len() - 1].to_string()))
