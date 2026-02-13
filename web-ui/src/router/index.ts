@@ -40,6 +40,12 @@ const router = createRouter({
       meta: { title: 'Metrics' },
     },
     {
+      path: '/models',
+      name: 'models',
+      component: () => import('@/views/ModelsView.vue'),
+      meta: { title: 'Models' },
+    },
+    {
       path: '/settings',
       name: 'settings',
       component: () => import('@/views/SettingsView.vue'),

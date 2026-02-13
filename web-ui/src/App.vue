@@ -4,9 +4,11 @@ import { useRouter, useRoute } from 'vue-router'
 import { useTheme } from 'vuetify'
 import AppBar from '@/components/common/AppBar.vue'
 import NavDrawer from '@/components/common/NavDrawer.vue'
+import ChatPanel from '@/components/chat/ChatPanel.vue'
 import { useWebSocketStore } from '@/stores/websocket'
 import { useSettingsStore } from '@/stores/settings'
 import { getApiKey, setApiKey } from '@/api'
+import { getChatConfig } from '@/api/cluster'
 
 const theme = useTheme()
 const router = useRouter()
@@ -74,9 +76,26 @@ const navItems = [
   { title: 'Pipelines', icon: 'mdi-pipe', to: '/pipelines' },
   { title: 'Editor', icon: 'mdi-code-braces', to: '/editor' },
   { title: 'Demos', icon: 'mdi-presentation-play', to: '/scenarios' },
+  { title: 'Models', icon: 'mdi-brain', to: '/models' },
   { title: 'Metrics', icon: 'mdi-chart-line', to: '/metrics' },
   { title: 'Settings', icon: 'mdi-cog', to: '/settings' },
 ]
+
+const chatDrawer = ref(false)
+const chatConfigured = ref(false)
+
+async function checkChatConfig() {
+  try {
+    const config = await getChatConfig()
+    chatConfigured.value = config.configured
+  } catch {
+    chatConfigured.value = false
+  }
+}
+
+onMounted(() => {
+  checkChatConfig()
+})
 
 // WebSocket connection is optional for cluster management
 // Only connect if we have an API key and want real-time updates
@@ -146,6 +165,31 @@ const navItems = [
       </v-container>
     </v-main>
 
+    <!-- Chat FAB -->
+    <v-btn
+      icon
+      color="primary"
+      size="large"
+      class="chat-fab"
+      :disabled="!chatConfigured"
+      @click="chatDrawer = !chatDrawer"
+    >
+      <v-icon>{{ chatDrawer ? 'mdi-close' : 'mdi-robot' }}</v-icon>
+      <v-tooltip v-if="!chatConfigured" activator="parent" location="start">
+        Configure an LLM provider in Settings
+      </v-tooltip>
+    </v-btn>
+
+    <!-- Chat Drawer -->
+    <v-navigation-drawer
+      v-model="chatDrawer"
+      location="right"
+      width="420"
+      temporary
+    >
+      <ChatPanel />
+    </v-navigation-drawer>
+
     <v-snackbar
       v-model="wsStore.showConnectionSnackbar"
       :color="wsStore.connected ? 'success' : 'error'"
@@ -157,6 +201,13 @@ const navItems = [
 </template>
 
 <style>
+.chat-fab {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 1000;
+}
+
 .fade-enter-active,
 .fade-leave-active {
   transition: opacity 0.2s ease;
