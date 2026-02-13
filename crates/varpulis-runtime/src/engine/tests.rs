@@ -3329,3 +3329,25 @@ async fn test_engine_filter_alias() {
     assert_eq!(output.get("value").unwrap().as_int().unwrap(), 15);
     assert!(rx.try_recv().is_err(), "Only one event should pass");
 }
+
+#[cfg(not(feature = "onnx"))]
+#[tokio::test]
+async fn test_score_without_onnx_returns_error() {
+    let source = r#"
+        stream Scored = Input
+            .score(model: "model.onnx", inputs: [value], outputs: [pred])
+            .emit(prediction: pred)
+    "#;
+
+    let program = parse_program(source);
+    let (tx, _rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    let result = engine.load(&program);
+    assert!(result.is_err(), "Should fail without onnx feature");
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("onnx"),
+        "Error should mention onnx feature: {}",
+        err
+    );
+}

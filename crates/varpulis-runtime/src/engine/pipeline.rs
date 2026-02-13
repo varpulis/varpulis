@@ -500,6 +500,34 @@ async fn execute_op(
             }
         }
 
+        RuntimeOp::Score(config) => {
+            #[cfg(feature = "onnx")]
+            {
+                let mut enriched = Vec::with_capacity(current_events.len());
+                for event in current_events.drain(..) {
+                    match config.model.infer(event.as_ref()) {
+                        Ok(predictions) => {
+                            let mut new_event = (*event).clone();
+                            for (field, value) in predictions {
+                                new_event.data.insert(field.into(), Value::Float(value));
+                            }
+                            enriched.push(Arc::new(new_event));
+                        }
+                        Err(e) => {
+                            warn!(".score() inference error: {}", e);
+                            enriched.push(event);
+                        }
+                    }
+                }
+                *current_events = enriched;
+            }
+            #[cfg(not(feature = "onnx"))]
+            {
+                let _ = config;
+                warn!(".score() requires 'onnx' feature");
+            }
+        }
+
         RuntimeOp::AttentionWindow(_config) => {
             // AttentionWindow is handled at stream level before operations
         }
@@ -1005,6 +1033,34 @@ fn execute_op_sync(
                 current_events.clear();
             } else {
                 *current_events = trend_results;
+            }
+        }
+
+        RuntimeOp::Score(config) => {
+            #[cfg(feature = "onnx")]
+            {
+                let mut enriched = Vec::with_capacity(current_events.len());
+                for event in current_events.drain(..) {
+                    match config.model.infer(event.as_ref()) {
+                        Ok(predictions) => {
+                            let mut new_event = (*event).clone();
+                            for (field, value) in predictions {
+                                new_event.data.insert(field.into(), Value::Float(value));
+                            }
+                            enriched.push(Arc::new(new_event));
+                        }
+                        Err(e) => {
+                            warn!(".score() inference error: {}", e);
+                            enriched.push(event);
+                        }
+                    }
+                }
+                *current_events = enriched;
+            }
+            #[cfg(not(feature = "onnx"))]
+            {
+                let _ = config;
+                warn!(".score() requires 'onnx' feature");
             }
         }
 

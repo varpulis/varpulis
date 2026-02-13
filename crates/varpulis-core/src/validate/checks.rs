@@ -629,7 +629,8 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
             | StreamOp::Pattern(_)
             | StreamOp::Process(_)
             | StreamOp::On(_)
-            | StreamOp::TrendAggregate(_) => {}
+            | StreamOp::TrendAggregate(_)
+            | StreamOp::Score(_) => {}
         }
     }
 }

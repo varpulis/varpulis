@@ -39,6 +39,7 @@ varpulis-cluster = { path = "../varpulis-cluster" }
 [features]
 default = []
 kafka = ["varpulis-runtime/kafka"]
+onnx = ["varpulis-runtime/onnx"]
 k8s = ["varpulis-cluster/k8s"]
 raft = ["varpulis-cluster/raft"]
 persistent = ["raft", "varpulis-cluster/persistent"]
