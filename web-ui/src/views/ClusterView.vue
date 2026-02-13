@@ -39,6 +39,7 @@ const error = computed(() => clusterStore.error)
 const workerDetail = computed(() => clusterStore.selectedWorker)
 const migrations = computed(() => clusterStore.migrations)
 const clusterHealth = computed(() => clusterStore.clusterHealth)
+const raftStatus = computed(() => clusterStore.raftStatus)
 
 // Available target workers for migration (healthy, not the current worker)
 const migrateTargetWorkers = computed(() =>
@@ -167,6 +168,7 @@ async function fetchData(): Promise<void> {
     clusterStore.fetchTopology(),
     clusterStore.fetchMigrations(),
     clusterStore.fetchClusterHealth(),
+    clusterStore.fetchRaftStatus(),
   ])
 }
 
@@ -246,7 +248,7 @@ onUnmounted(() => {
     <v-window v-model="activeTab">
       <!-- Health Tab -->
       <v-window-item value="health">
-        <ClusterHealthPanel :health="clusterHealth" />
+        <ClusterHealthPanel :health="clusterHealth" :raft-status="raftStatus" />
       </v-window-item>
 
       <!-- Workers Tab -->

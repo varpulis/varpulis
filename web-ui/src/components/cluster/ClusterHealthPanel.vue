@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { ClusterHealthMetrics } from '@/types/cluster'
+import type { ClusterHealthMetrics, RaftClusterStatus } from '@/types/cluster'
 
 const props = defineProps<{
   health: ClusterHealthMetrics | null
+  raftStatus: RaftClusterStatus | null
 }>()
 
 const raftRoleLabel = computed(() => {
@@ -48,6 +49,22 @@ const totalDeploys = computed(() => {
   if (!props.health) return 0
   return props.health.deploys_success + props.health.deploys_failure
 })
+
+function nodeRoleColor(role: string): string {
+  switch (role) {
+    case 'leader': return 'success'
+    case 'follower': return 'info'
+    default: return 'grey'
+  }
+}
+
+function nodeRoleIcon(role: string): string {
+  switch (role) {
+    case 'leader': return 'mdi-crown'
+    case 'follower': return 'mdi-account'
+    default: return 'mdi-help-circle'
+  }
+}
 </script>
 
 <template>
@@ -62,7 +79,42 @@ const totalDeploys = computed(() => {
       </v-col>
     </v-row>
 
-    <v-row>
+    <!-- Coordinator Nodes (when Raft cluster info available) -->
+    <v-row v-if="raftStatus && raftStatus.enabled && raftStatus.nodes.length > 0">
+      <v-col
+        v-for="node in raftStatus.nodes"
+        :key="node.id"
+        cols="12"
+        sm="6"
+        :md="raftStatus.nodes.length <= 3 ? 4 : 3"
+      >
+        <v-card
+          variant="tonal"
+          :color="nodeRoleColor(node.role)"
+          :class="{ 'border-opacity-100': node.is_current }"
+          :style="node.is_current ? 'border: 2px solid currentColor' : ''"
+        >
+          <v-card-text class="text-center">
+            <v-icon size="28" class="mb-1">{{ nodeRoleIcon(node.role) }}</v-icon>
+            <div class="text-h6 font-weight-bold text-capitalize">{{ node.role }}</div>
+            <div class="text-caption">Coordinator {{ node.id }}</div>
+            <div class="text-caption text-medium-emphasis">{{ node.address }}</div>
+            <v-chip
+              v-if="node.is_current"
+              size="x-small"
+              color="primary"
+              variant="flat"
+              class="mt-1"
+            >
+              connected
+            </v-chip>
+          </v-card-text>
+        </v-card>
+      </v-col>
+    </v-row>
+
+    <!-- Fallback: single-node view (no Raft status available) -->
+    <v-row v-else>
       <v-col cols="12" sm="6" md="3">
         <v-card variant="tonal" :color="raftRoleColor">
           <v-card-text class="text-center">
@@ -72,33 +124,42 @@ const totalDeploys = computed(() => {
           </v-card-text>
         </v-card>
       </v-col>
+    </v-row>
 
-      <v-col cols="12" sm="6" md="3">
-        <v-card variant="tonal">
-          <v-card-text class="text-center">
-            <v-icon size="32" class="mb-1">mdi-counter</v-icon>
-            <div class="text-h5 font-weight-bold">{{ health.raft_term }}</div>
-            <div class="text-caption">Current Term</div>
+    <!-- Raft Metadata -->
+    <v-row class="mt-1">
+      <v-col cols="12" sm="4">
+        <v-card variant="outlined">
+          <v-card-text class="d-flex align-center">
+            <v-icon color="primary" size="24" class="mr-3">mdi-counter</v-icon>
+            <div>
+              <div class="text-h6 font-weight-bold">{{ raftStatus?.term ?? health.raft_term }}</div>
+              <div class="text-caption text-medium-emphasis">Current Term</div>
+            </div>
           </v-card-text>
         </v-card>
       </v-col>
 
-      <v-col cols="12" sm="6" md="3">
-        <v-card variant="tonal">
-          <v-card-text class="text-center">
-            <v-icon size="32" class="mb-1">mdi-source-commit</v-icon>
-            <div class="text-h5 font-weight-bold">{{ health.raft_commit_index }}</div>
-            <div class="text-caption">Commit Index</div>
+      <v-col cols="12" sm="4">
+        <v-card variant="outlined">
+          <v-card-text class="d-flex align-center">
+            <v-icon color="primary" size="24" class="mr-3">mdi-source-commit</v-icon>
+            <div>
+              <div class="text-h6 font-weight-bold">{{ raftStatus?.commit_index ?? health.raft_commit_index }}</div>
+              <div class="text-caption text-medium-emphasis">Commit Index</div>
+            </div>
           </v-card-text>
         </v-card>
       </v-col>
 
-      <v-col cols="12" sm="6" md="3">
-        <v-card variant="tonal" :color="health.workers_unhealthy > 0 ? 'warning' : 'success'">
-          <v-card-text class="text-center">
-            <v-icon size="32" class="mb-1">mdi-server-network</v-icon>
-            <div class="text-h5 font-weight-bold">{{ totalWorkers }}</div>
-            <div class="text-caption">Total Workers</div>
+      <v-col cols="12" sm="4">
+        <v-card variant="outlined" :color="health.workers_unhealthy > 0 ? 'warning' : 'success'">
+          <v-card-text class="d-flex align-center">
+            <v-icon size="24" class="mr-3">mdi-server-network</v-icon>
+            <div>
+              <div class="text-h6 font-weight-bold">{{ totalWorkers }}</div>
+              <div class="text-caption text-medium-emphasis">Total Workers</div>
+            </div>
           </v-card-text>
         </v-card>
       </v-col>

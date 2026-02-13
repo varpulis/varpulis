@@ -144,6 +144,23 @@ export interface LlmConfigResponse {
   configured: boolean
 }
 
+// Raft cluster status (all coordinator nodes)
+export interface RaftClusterNode {
+  id: number
+  address: string
+  role: 'leader' | 'follower' | 'unknown'
+  is_current: boolean
+}
+
+export interface RaftClusterStatus {
+  enabled: boolean
+  this_node_id: number
+  leader_id: number | null
+  term: number
+  commit_index: number
+  nodes: RaftClusterNode[]
+}
+
 // Cluster summary for dashboard
 export interface ClusterSummary {
   total_workers: number
