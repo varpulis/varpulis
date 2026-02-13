@@ -2021,19 +2021,34 @@ async fn run_server(
 
     info!("Server listening on {}:{}", bind, port);
 
+    // Graceful shutdown: listen for SIGTERM/Ctrl+C
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.ok();
+        info!("Received shutdown signal, draining connections...");
+        shutdown_tx.send(()).ok();
+    });
+
     // Start server with or without TLS
     if let Some((cert_path, key_path)) = tls_config {
         info!("TLS enabled with cert: {}", cert_path.display());
-        warp::serve(routes)
+        let (_, server) = warp::serve(routes)
             .tls()
             .cert_path(&cert_path)
             .key_path(&key_path)
-            .run((bind_addr, port))
-            .await;
+            .bind_with_graceful_shutdown((bind_addr, port), async {
+                shutdown_rx.await.ok();
+            });
+        server.await;
     } else {
-        warp::serve(routes).run((bind_addr, port)).await;
+        let (_, server) =
+            warp::serve(routes).bind_with_graceful_shutdown((bind_addr, port), async {
+                shutdown_rx.await.ok();
+            });
+        server.await;
     }
 
+    info!("Server shutdown complete");
     Ok(())
 }
 
@@ -2414,6 +2429,14 @@ async fn run_coordinator(
         .map_err(|e| anyhow::anyhow!("Invalid bind address '{}': {}", bind, e))?;
     info!("Coordinator listening on {}:{}", bind, port);
 
+    // Graceful shutdown: listen for SIGTERM/Ctrl+C
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.ok();
+        info!("Received shutdown signal, draining coordinator connections...");
+        shutdown_tx.send(()).ok();
+    });
+
     // Build and serve routes (split by cfg to avoid Reply type mismatch in if/else)
     #[cfg(feature = "raft")]
     {
@@ -2429,7 +2452,11 @@ async fn run_coordinator(
                 .or(metrics_route)
                 .or(api_routes)
                 .recover(varpulis_cluster::api::handle_rejection);
-            warp::serve(routes).run((bind_addr, port)).await;
+            let (_, server) =
+                warp::serve(routes).bind_with_graceful_shutdown((bind_addr, port), async {
+                    shutdown_rx.await.ok();
+                });
+            server.await;
         } else {
             let api_routes = varpulis_cluster::cluster_routes(coordinator, api_key, ws_manager);
             let routes = health_route
@@ -2437,7 +2464,11 @@ async fn run_coordinator(
                 .or(metrics_route)
                 .or(api_routes)
                 .recover(varpulis_cluster::api::handle_rejection);
-            warp::serve(routes).run((bind_addr, port)).await;
+            let (_, server) =
+                warp::serve(routes).bind_with_graceful_shutdown((bind_addr, port), async {
+                    shutdown_rx.await.ok();
+                });
+            server.await;
         }
     }
 
@@ -2449,9 +2480,14 @@ async fn run_coordinator(
             .or(metrics_route)
             .or(api_routes)
             .recover(varpulis_cluster::api::handle_rejection);
-        warp::serve(routes).run((bind_addr, port)).await;
+        let (_, server) =
+            warp::serve(routes).bind_with_graceful_shutdown((bind_addr, port), async {
+                shutdown_rx.await.ok();
+            });
+        server.await;
     }
 
+    info!("Coordinator shutdown complete");
     Ok(())
 }
 

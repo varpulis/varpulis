@@ -712,6 +712,12 @@ pub struct EngineCheckpoint {
     /// Watermark tracker state
     #[serde(default)]
     pub watermark_state: Option<WatermarkCheckpoint>,
+    /// Distinct operator states by stream name (LRU keys snapshot)
+    #[serde(default)]
+    pub distinct_states: HashMap<String, DistinctCheckpoint>,
+    /// Limit operator states by stream name (counter snapshot)
+    #[serde(default)]
+    pub limit_states: HashMap<String, LimitCheckpoint>,
 }
 
 /// Checkpoint for SASE+ pattern matching engine state.
@@ -796,6 +802,22 @@ pub struct SourceWatermarkCheckpoint {
     pub max_timestamp_ms: Option<i64>,
     /// Maximum out-of-orderness tolerance in milliseconds
     pub max_out_of_orderness_ms: i64,
+}
+
+/// Checkpoint for a `.distinct()` operator (LRU key snapshot).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DistinctCheckpoint {
+    /// Most-recently-used keys (ordered from most-recent to least-recent)
+    pub keys: Vec<String>,
+}
+
+/// Checkpoint for a `.limit(n)` operator (counter snapshot).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LimitCheckpoint {
+    /// Maximum number of events
+    pub max: usize,
+    /// Number of events already passed
+    pub count: usize,
 }
 
 /// Convert Value to SerializableValue (pub(crate) re-export)

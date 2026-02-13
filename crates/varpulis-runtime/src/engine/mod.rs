@@ -46,7 +46,7 @@ use crate::window::{
 use chrono::Duration;
 use chrono::{DateTime, Utc};
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
@@ -715,6 +715,7 @@ impl Engine {
                 if let Some(stream) = self.streams.get_mut(stream_name) {
                     // Remove per-stream aggregator - shared one is used instead
                     stream.hamlet_aggregator = None;
+                    stream.shared_hamlet_ref = Some(shared_ref.clone());
 
                     // Update the TrendAggregate op's query_id
                     for op in &mut stream.operations {
@@ -1081,6 +1082,7 @@ impl Engine {
                 join_buffer,
                 event_type_to_source,
                 hamlet_aggregator,
+                shared_hamlet_ref: None,
             },
         );
 
@@ -1591,7 +1593,9 @@ impl Engine {
                 StreamOp::Distinct(expr) => {
                     runtime_ops.push(RuntimeOp::Distinct(DistinctState {
                         expr: expr.clone(),
-                        seen: std::collections::HashSet::new(),
+                        seen: lru::LruCache::new(
+                            std::num::NonZeroUsize::new(types::DISTINCT_LRU_CAPACITY).unwrap(),
+                        ),
                     }));
                 }
                 StreamOp::Limit(expr) => {
@@ -2164,7 +2168,8 @@ impl Engine {
 
         // Process events with depth limit to prevent infinite loops
         // Each event carries its depth level - use SharedEvent to avoid cloning
-        let mut pending_events: Vec<(SharedEvent, usize)> = vec![(event.clone(), 0)];
+        let mut pending_events: VecDeque<(SharedEvent, usize)> =
+            VecDeque::from([(event.clone(), 0)]);
         const MAX_CHAIN_DEPTH: usize = 10;
 
         // Observe event in watermark tracker (after processing to not block)
@@ -2181,7 +2186,7 @@ impl Engine {
         }
 
         // Process events iteratively, feeding output to dependent streams
-        while let Some((current_event, depth)) = pending_events.pop() {
+        while let Some((current_event, depth)) = pending_events.pop_front() {
             // Prevent infinite loops by limiting chain depth
             if depth >= MAX_CHAIN_DEPTH {
                 debug!(
@@ -2251,7 +2256,7 @@ impl Engine {
 
                     // Queue output events for processing by dependent streams
                     for output_event in result.output_events {
-                        pending_events.push((output_event, depth + 1));
+                        pending_events.push_back((output_event, depth + 1));
                     }
                 }
             }
@@ -2848,6 +2853,7 @@ impl Engine {
             s.sase_engine.is_none()
                 && s.join_buffer.is_none()
                 && s.hamlet_aggregator.is_none()
+                && s.shared_hamlet_ref.is_none()
                 && s.operations.iter().all(|op| {
                     matches!(
                         op,
@@ -3233,6 +3239,8 @@ impl Engine {
         let mut window_states = std::collections::HashMap::new();
         let mut sase_states = std::collections::HashMap::new();
         let mut join_states = std::collections::HashMap::new();
+        let mut distinct_states = std::collections::HashMap::new();
+        let mut limit_states = std::collections::HashMap::new();
 
         for (name, stream) in &self.streams {
             // Checkpoint windows
@@ -3274,6 +3282,24 @@ impl Engine {
                             },
                         );
                     }
+                    RuntimeOp::Distinct(state) => {
+                        // Snapshot LRU keys (most-recent first)
+                        let keys: Vec<String> =
+                            state.seen.iter().rev().map(|(k, _)| k.clone()).collect();
+                        distinct_states.insert(
+                            name.clone(),
+                            crate::persistence::DistinctCheckpoint { keys },
+                        );
+                    }
+                    RuntimeOp::Limit(state) => {
+                        limit_states.insert(
+                            name.clone(),
+                            crate::persistence::LimitCheckpoint {
+                                max: state.max,
+                                count: state.count,
+                            },
+                        );
+                    }
                     _ => {}
                 }
             }
@@ -3306,6 +3332,8 @@ impl Engine {
             events_processed: self.events_processed,
             output_events_emitted: self.output_events_emitted,
             watermark_state,
+            distinct_states,
+            limit_states,
         }
     }
 
@@ -3371,6 +3399,29 @@ impl Engine {
             if let Some(jcp) = cp.join_states.get(name) {
                 if let Some(ref mut jb) = stream.join_buffer {
                     jb.restore(jcp);
+                }
+            }
+
+            // Restore distinct state
+            if let Some(dcp) = cp.distinct_states.get(name) {
+                for op in &mut stream.operations {
+                    if let RuntimeOp::Distinct(state) = op {
+                        state.seen.clear();
+                        // Re-insert in reverse so most-recent ends up at the front
+                        for key in dcp.keys.iter().rev() {
+                            state.seen.put(key.clone(), ());
+                        }
+                    }
+                }
+            }
+
+            // Restore limit state
+            if let Some(lcp) = cp.limit_states.get(name) {
+                for op in &mut stream.operations {
+                    if let RuntimeOp::Limit(state) = op {
+                        state.max = lcp.max;
+                        state.count = lcp.count;
+                    }
                 }
             }
         }
