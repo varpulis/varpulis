@@ -8,6 +8,7 @@ members = [
     "crates/varpulis-zdd",
     "crates/varpulis-lsp",
     "crates/varpulis-cluster",
+    "crates/varpulis-mcp",
 ]
 
 [workspace.package]
