@@ -100,6 +100,7 @@ pub(crate) async fn execute_pipeline(
             &stream.name,
             &mut stream.sase_engine,
             &mut stream.hamlet_aggregator,
+            &stream.shared_hamlet_ref,
             stream.attention_window.as_ref(),
             &mut current_events,
             &mut emitted_events,
@@ -166,6 +167,7 @@ async fn execute_op(
     stream_name: &str,
     sase_engine: &mut Option<crate::sase::SaseEngine>,
     hamlet_aggregator: &mut Option<crate::hamlet::HamletAggregator>,
+    shared_hamlet_ref: &Option<Arc<std::sync::Mutex<crate::hamlet::HamletAggregator>>>,
     attention_window: Option<&crate::attention::AttentionWindow>,
     current_events: &mut Vec<SharedEvent>,
     emitted_events: &mut Vec<SharedEvent>,
@@ -198,42 +200,42 @@ async fn execute_op(
                 match window {
                     WindowType::Tumbling(w) => {
                         if let Some(completed) = w.add_shared(event) {
-                            window_results = completed;
+                            window_results.extend(completed);
                         }
                     }
                     WindowType::Sliding(w) => {
                         if let Some(window_events) = w.add_shared(event) {
-                            window_results = window_events;
+                            window_results.extend(window_events);
                         }
                     }
                     WindowType::Count(w) => {
                         if let Some(completed) = w.add_shared(event) {
-                            window_results = completed;
+                            window_results.extend(completed);
                         }
                     }
                     WindowType::SlidingCount(w) => {
                         if let Some(window_events) = w.add_shared(event) {
-                            window_results = window_events;
+                            window_results.extend(window_events);
                         }
                     }
                     WindowType::PartitionedTumbling(w) => {
                         if let Some(completed) = w.add_shared(event) {
-                            window_results = completed;
+                            window_results.extend(completed);
                         }
                     }
                     WindowType::PartitionedSliding(w) => {
                         if let Some(window_events) = w.add_shared(event) {
-                            window_results = window_events;
+                            window_results.extend(window_events);
                         }
                     }
                     WindowType::Session(w) => {
                         if let Some(completed) = w.add_shared(event) {
-                            window_results = completed;
+                            window_results.extend(completed);
                         }
                     }
                     WindowType::PartitionedSession(w) => {
                         if let Some(completed) = w.add_shared(event) {
-                            window_results = completed;
+                            window_results.extend(completed);
                         }
                     }
                 }
@@ -469,7 +471,19 @@ async fn execute_op(
             // Process events through Hamlet aggregator (async path)
             let mut trend_results = Vec::new();
 
-            if let Some(ref mut hamlet) = hamlet_aggregator {
+            // Use per-stream aggregator, or fall back to shared reference
+            let mut shared_guard;
+            let effective_hamlet: Option<&mut crate::hamlet::HamletAggregator> =
+                if let Some(ref mut h) = hamlet_aggregator {
+                    Some(h)
+                } else if let Some(ref shared) = shared_hamlet_ref {
+                    shared_guard = shared.lock().unwrap();
+                    Some(&mut *shared_guard)
+                } else {
+                    None
+                };
+
+            if let Some(hamlet) = effective_hamlet {
                 for event in current_events.iter() {
                     let results = hamlet.process(Arc::clone(event));
                     for agg_result in results {
@@ -480,10 +494,13 @@ async fn execute_op(
                         trend_event
                             .data
                             .insert("query_id".into(), Value::Int(agg_result.query_id as i64));
-                        for (alias, _) in &config.fields {
-                            trend_event
-                                .data
-                                .insert(alias.clone().into(), Value::Int(agg_result.value as i64));
+                        for (alias, agg_type) in &config.fields {
+                            if agg_result.aggregate == *agg_type {
+                                trend_event.data.insert(
+                                    alias.clone().into(),
+                                    Value::Int(agg_result.value as i64),
+                                );
+                            }
                         }
                         trend_event
                             .data
@@ -626,7 +643,7 @@ async fn execute_op(
                     // Hash all fields for whole-event dedup
                     format!("{:?}", event.data)
                 };
-                state.seen.insert(key)
+                state.seen.put(key, ()).is_none()
             });
         }
 
@@ -672,6 +689,7 @@ pub(crate) fn execute_pipeline_sync(
             &stream.name,
             &mut stream.sase_engine,
             &mut stream.hamlet_aggregator,
+            &stream.shared_hamlet_ref,
             stream.attention_window.as_ref(),
             &mut current_events,
             &mut emitted_events,
@@ -713,6 +731,7 @@ fn execute_op_sync(
     stream_name: &str,
     sase_engine: &mut Option<crate::sase::SaseEngine>,
     hamlet_aggregator: &mut Option<crate::hamlet::HamletAggregator>,
+    shared_hamlet_ref: &Option<Arc<std::sync::Mutex<crate::hamlet::HamletAggregator>>>,
     attention_window: Option<&crate::attention::AttentionWindow>,
     current_events: &mut Vec<SharedEvent>,
     emitted_events: &mut Vec<SharedEvent>,
@@ -744,42 +763,42 @@ fn execute_op_sync(
                 match window {
                     WindowType::Tumbling(w) => {
                         if let Some(completed) = w.add_shared(event) {
-                            window_results = completed;
+                            window_results.extend(completed);
                         }
                     }
                     WindowType::Sliding(w) => {
                         if let Some(window_events) = w.add_shared(event) {
-                            window_results = window_events;
+                            window_results.extend(window_events);
                         }
                     }
                     WindowType::Count(w) => {
                         if let Some(completed) = w.add_shared(event) {
-                            window_results = completed;
+                            window_results.extend(completed);
                         }
                     }
                     WindowType::SlidingCount(w) => {
                         if let Some(window_events) = w.add_shared(event) {
-                            window_results = window_events;
+                            window_results.extend(window_events);
                         }
                     }
                     WindowType::PartitionedTumbling(w) => {
                         if let Some(completed) = w.add_shared(event) {
-                            window_results = completed;
+                            window_results.extend(completed);
                         }
                     }
                     WindowType::PartitionedSliding(w) => {
                         if let Some(window_events) = w.add_shared(event) {
-                            window_results = window_events;
+                            window_results.extend(window_events);
                         }
                     }
                     WindowType::Session(w) => {
                         if let Some(completed) = w.add_shared(event) {
-                            window_results = completed;
+                            window_results.extend(completed);
                         }
                     }
                     WindowType::PartitionedSession(w) => {
                         if let Some(completed) = w.add_shared(event) {
-                            window_results = completed;
+                            window_results.extend(completed);
                         }
                     }
                 }
@@ -1005,7 +1024,19 @@ fn execute_op_sync(
             // Process events through Hamlet aggregator (sync path)
             let mut trend_results = Vec::new();
 
-            if let Some(ref mut hamlet) = hamlet_aggregator {
+            // Use per-stream aggregator, or fall back to shared reference
+            let mut shared_guard;
+            let effective_hamlet: Option<&mut crate::hamlet::HamletAggregator> =
+                if let Some(ref mut h) = hamlet_aggregator {
+                    Some(h)
+                } else if let Some(ref shared) = shared_hamlet_ref {
+                    shared_guard = shared.lock().unwrap();
+                    Some(&mut *shared_guard)
+                } else {
+                    None
+                };
+
+            if let Some(hamlet) = effective_hamlet {
                 for event in current_events.iter() {
                     let results = hamlet.process(Arc::clone(event));
                     for agg_result in results {
@@ -1016,10 +1047,13 @@ fn execute_op_sync(
                         trend_event
                             .data
                             .insert("query_id".into(), Value::Int(agg_result.query_id as i64));
-                        for (alias, _) in &config.fields {
-                            trend_event
-                                .data
-                                .insert(alias.clone().into(), Value::Int(agg_result.value as i64));
+                        for (alias, agg_type) in &config.fields {
+                            if agg_result.aggregate == *agg_type {
+                                trend_event.data.insert(
+                                    alias.clone().into(),
+                                    Value::Int(agg_result.value as i64),
+                                );
+                            }
                         }
                         trend_event
                             .data
@@ -1144,7 +1178,7 @@ fn execute_op_sync(
                 } else {
                     format!("{:?}", event.data)
                 };
-                state.seen.insert(key)
+                state.seen.put(key, ()).is_none()
             });
         }
 

@@ -9,7 +9,7 @@ fn test_expand_mandelbrot_contexts() {
     for col in 0..4:
         context t{row}{col}
 "#;
-    let expanded = expand_declaration_loops(input);
+    let expanded = expand_declaration_loops(input).unwrap();
     // Should produce 16 context declarations
     assert_eq!(expanded.matches("context t").count(), 16);
     // Spot-check specific ones
@@ -27,7 +27,7 @@ fn test_expand_mandelbrot_streams() {
             .process(compute_tile({col} * 250, {row} * 250, 250, 256))
             .to(MqttOut, topic: "mandelbrot/pixels")
 "#;
-    let expanded = expand_declaration_loops(input);
+    let expanded = expand_declaration_loops(input).unwrap();
     // Should produce 16 stream declarations
     assert_eq!(expanded.matches("stream Tile").count(), 16);
     // Spot-check substitutions
@@ -44,7 +44,7 @@ fn test_parse_expanded_contexts() {
     let input = r#"for i in 0..3:
     context c{i}
 "#;
-    let expanded = expand_declaration_loops(input);
+    let expanded = expand_declaration_loops(input).unwrap();
     let result = parse(&expanded);
     assert!(
         result.is_ok(),
@@ -135,7 +135,7 @@ fn test_expanded_mandelbrot_text_matches_original_structure() {
     for col in 0..4:
         context t{row}{col}
 "#;
-    let expanded = expand_declaration_loops(compact);
+    let expanded = expand_declaration_loops(compact).unwrap();
     let lines: Vec<&str> = expanded.lines().filter(|l| !l.trim().is_empty()).collect();
 
     // Should produce exactly 16 lines, one per context
@@ -182,7 +182,7 @@ fn test_expanded_stream_args_match_original() {
         stream Tile{row}{col} = ComputeTile{row}{col}
             .process(compute_tile({col} * 250, {row} * 250, 250, 256))
 "#;
-    let expanded = expand_declaration_loops(input);
+    let expanded = expand_declaration_loops(input).unwrap();
 
     // Spot-check corner and edge tiles
     assert!(

@@ -260,7 +260,7 @@ impl Config {
 
     /// Parse configuration from YAML string
     pub fn from_yaml(content: &str) -> Result<Self, ConfigError> {
-        serde_yaml::from_str(content).map_err(|e| ConfigError::ParseError(e.to_string()))
+        serde_yml::from_str(content).map_err(|e| ConfigError::ParseError(e.to_string()))
     }
 
     /// Parse configuration from TOML string
@@ -359,7 +359,7 @@ impl Config {
 
     /// Generate example YAML configuration
     pub fn example_yaml() -> String {
-        serde_yaml::to_string(&Self::example()).unwrap_or_default()
+        serde_yml::to_string(&Self::example()).unwrap_or_default()
     }
 
     /// Generate example TOML configuration

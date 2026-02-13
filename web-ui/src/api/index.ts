@@ -26,8 +26,8 @@ api.interceptors.request.use(
     // Update baseURL in case it changed
     config.baseURL = getBaseUrl()
 
-    // Get API key from localStorage
-    const apiKey = localStorage.getItem('varpulis_api_key')
+    // Get API key from sessionStorage (not persisted across sessions for security)
+    const apiKey = sessionStorage.getItem('varpulis_api_key')
     if (apiKey) {
       config.headers['X-API-Key'] = apiKey
     }
@@ -73,17 +73,17 @@ api.interceptors.response.use(
 
 // Set API key helper
 export function setApiKey(key: string): void {
-  localStorage.setItem('varpulis_api_key', key)
+  sessionStorage.setItem('varpulis_api_key', key)
 }
 
 // Clear API key helper
 export function clearApiKey(): void {
-  localStorage.removeItem('varpulis_api_key')
+  sessionStorage.removeItem('varpulis_api_key')
 }
 
 // Get current API key
 export function getApiKey(): string | null {
-  return localStorage.getItem('varpulis_api_key')
+  return sessionStorage.getItem('varpulis_api_key')
 }
 
 export default api

@@ -41,7 +41,7 @@ spec:
             - "http://varpulis-coordinator:9100"
           ports:
             - name: http
-              containerPort: 8080
+              containerPort: 9000
               protocol: TCP
             - name: metrics
               containerPort: 9090

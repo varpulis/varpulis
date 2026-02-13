@@ -113,6 +113,8 @@ pub(crate) struct StreamDefinition {
     pub event_type_to_source: FxHashMap<String, String>,
     /// Hamlet aggregator for trend aggregation mode
     pub hamlet_aggregator: Option<crate::hamlet::HamletAggregator>,
+    /// Shared Hamlet aggregator reference (when multi-query sharing is active)
+    pub shared_hamlet_ref: Option<Arc<std::sync::Mutex<crate::hamlet::HamletAggregator>>>,
 }
 
 /// Source of events for a stream
@@ -234,12 +236,15 @@ pub(crate) struct ToConfig {
     pub extra_params: HashMap<String, String>,
 }
 
+/// Default capacity for distinct state LRU cache
+pub(crate) const DISTINCT_LRU_CAPACITY: usize = 100_000;
+
 /// State for .distinct() — tracks seen values to deduplicate events
 pub(crate) struct DistinctState {
     /// Optional expression to evaluate for distinct key; None = entire event
     pub expr: Option<varpulis_core::ast::Expr>,
-    /// Set of seen value representations
-    pub seen: std::collections::HashSet<String>,
+    /// LRU cache of seen value representations (bounded to prevent unbounded growth)
+    pub seen: lru::LruCache<String, ()>,
 }
 
 /// State for .limit(n) — passes at most `max` events
