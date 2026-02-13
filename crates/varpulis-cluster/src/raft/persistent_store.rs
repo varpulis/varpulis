@@ -170,9 +170,10 @@ impl RocksStore {
     }
 
     /// Save metadata to the meta column family.
+    #[allow(clippy::result_large_err)]
     fn save_meta(&self, key: &[u8], value: &[u8]) -> Result<(), StorageError<NodeId>> {
         let cf = self.db.cf_handle(CF_META).ok_or_else(|| StorageError::IO {
-            source: openraft::StorageIOError::write(&openraft::AnyError::error(
+            source: openraft::StorageIOError::write(openraft::AnyError::error(
                 "meta column family missing",
             )),
         })?;
@@ -200,9 +201,10 @@ impl RocksStore {
     }
 
     /// Get the persisted vote.
+    #[allow(clippy::result_large_err)]
     fn read_vote_from_db(&self) -> Result<Option<Vote<NodeId>>, StorageError<NodeId>> {
         let cf = self.db.cf_handle(CF_META).ok_or_else(|| StorageError::IO {
-            source: openraft::StorageIOError::read_vote(&openraft::AnyError::error(
+            source: openraft::StorageIOError::read_vote(openraft::AnyError::error(
                 "meta column family missing",
             )),
         })?;
@@ -219,9 +221,10 @@ impl RocksStore {
     }
 
     /// Get the persisted last_purged log ID.
+    #[allow(clippy::result_large_err)]
     fn read_last_purged(&self) -> Result<Option<LogId<NodeId>>, StorageError<NodeId>> {
         let cf = self.db.cf_handle(CF_META).ok_or_else(|| StorageError::IO {
-            source: openraft::StorageIOError::read_logs(&openraft::AnyError::error(
+            source: openraft::StorageIOError::read_logs(openraft::AnyError::error(
                 "meta column family missing",
             )),
         })?;
@@ -593,7 +596,7 @@ impl RaftStorage<TypeConfig> for RocksStore {
             .db
             .cf_handle(CF_SNAPSHOTS)
             .ok_or_else(|| StorageError::IO {
-                source: openraft::StorageIOError::write(&openraft::AnyError::error(
+                source: openraft::StorageIOError::write(openraft::AnyError::error(
                     "snapshots column family missing",
                 )),
             })?;

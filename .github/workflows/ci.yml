@@ -67,6 +67,9 @@ jobs:
       fail-fast: false
       matrix:
         features: [kafka, raft, persistent, k8s]
+        include:
+          - features: kafka
+            apt-packages: libcurl4-openssl-dev
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -75,6 +78,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: features-${{ matrix.features }}
+      - name: Install system dependencies
+        if: matrix.apt-packages
+        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.apt-packages }}
       - run: cargo check --workspace --features ${{ matrix.features }}
       - run: cargo clippy --workspace --all-targets --features ${{ matrix.features }} -- -D warnings
 
