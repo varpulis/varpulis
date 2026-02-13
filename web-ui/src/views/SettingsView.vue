@@ -198,6 +198,69 @@ function resetAllSettings(): void {
   settingsStore.resetSettings()
   handleThemeChange(settingsStore.theme)
 }
+
+// AI Assistant settings
+import { getChatConfig, updateChatConfig } from '@/api/cluster'
+
+const llmForm = ref({
+  provider: 'openai-compatible',
+  endpoint: '',
+  model: '',
+  api_key: '',
+})
+const llmSaving = ref(false)
+const llmSaved = ref(false)
+const llmError = ref<string | null>(null)
+const showLlmKey = ref(false)
+
+const llmProviders = [
+  { title: 'Ollama (local)', value: 'openai-compatible', endpoint: 'http://ollama:11434/v1', model: 'qwen2.5:7b' },
+  { title: 'OpenAI', value: 'openai-compatible', endpoint: 'https://api.openai.com/v1', model: 'gpt-4o' },
+  { title: 'Anthropic', value: 'anthropic', endpoint: 'https://api.anthropic.com/v1', model: 'claude-sonnet-4-5-20250929' },
+]
+
+async function loadLlmConfig() {
+  try {
+    const config = await getChatConfig()
+    if (config.configured) {
+      llmForm.value.provider = config.provider
+      llmForm.value.endpoint = config.endpoint
+      llmForm.value.model = config.model
+    }
+  } catch {
+    // Not configured
+  }
+}
+
+function onProviderSelect(preset: typeof llmProviders[0]) {
+  llmForm.value.provider = preset.value
+  llmForm.value.endpoint = preset.endpoint
+  llmForm.value.model = preset.model
+}
+
+async function saveLlmConfig() {
+  llmSaving.value = true
+  llmError.value = null
+  llmSaved.value = false
+  try {
+    await updateChatConfig({
+      endpoint: llmForm.value.endpoint,
+      model: llmForm.value.model,
+      api_key: llmForm.value.api_key || undefined,
+      provider: llmForm.value.provider,
+    })
+    llmSaved.value = true
+    setTimeout(() => { llmSaved.value = false }, 3000)
+  } catch (e) {
+    llmError.value = e instanceof Error ? e.message : 'Failed to save'
+  } finally {
+    llmSaving.value = false
+  }
+}
+
+onMounted(() => {
+  loadLlmConfig()
+})
 </script>
 
 <template>
@@ -417,6 +480,72 @@ function resetAllSettings(): void {
               </template>
             </v-slider>
           </v-card-text>
+        </v-card>
+
+        <!-- AI Assistant -->
+        <v-card class="mb-4">
+          <v-card-title>
+            <v-icon class="mr-2">mdi-robot</v-icon>
+            AI Assistant
+          </v-card-title>
+          <v-card-subtitle>Configure the LLM provider for the chat assistant</v-card-subtitle>
+          <v-card-text>
+            <v-alert v-if="llmSaved" type="success" variant="tonal" density="compact" class="mb-3">
+              Configuration saved successfully
+            </v-alert>
+            <v-alert v-if="llmError" type="error" variant="tonal" density="compact" class="mb-3">
+              {{ llmError }}
+            </v-alert>
+
+            <div class="text-subtitle-2 mb-2">Quick Select Provider</div>
+            <div class="d-flex gap-2 mb-4">
+              <v-chip
+                v-for="preset in llmProviders"
+                :key="preset.title"
+                @click="onProviderSelect(preset)"
+                :color="llmForm.endpoint === preset.endpoint ? 'primary' : undefined"
+                variant="outlined"
+              >
+                {{ preset.title }}
+              </v-chip>
+            </div>
+
+            <v-text-field
+              v-model="llmForm.endpoint"
+              label="Endpoint URL"
+              hint="e.g., http://ollama:11434/v1 or https://api.openai.com/v1"
+              persistent-hint
+              class="mb-3"
+            />
+            <v-text-field
+              v-model="llmForm.model"
+              label="Model Name"
+              hint="e.g., qwen2.5:7b, gpt-4o, claude-sonnet-4-5-20250929"
+              persistent-hint
+              class="mb-3"
+            />
+            <v-text-field
+              v-model="llmForm.api_key"
+              label="API Key"
+              :type="showLlmKey ? 'text' : 'password'"
+              :append-inner-icon="showLlmKey ? 'mdi-eye-off' : 'mdi-eye'"
+              @click:append-inner="showLlmKey = !showLlmKey"
+              hint="Not needed for Ollama. Required for OpenAI/Anthropic."
+              persistent-hint
+              class="mb-3"
+            />
+          </v-card-text>
+          <v-card-actions>
+            <v-spacer />
+            <v-btn
+              color="primary"
+              :loading="llmSaving"
+              :disabled="!llmForm.endpoint || !llmForm.model"
+              @click="saveLlmConfig"
+            >
+              Save
+            </v-btn>
+          </v-card-actions>
         </v-card>
 
         <!-- Import/Export -->

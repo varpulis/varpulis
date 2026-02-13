@@ -1,14 +1,26 @@
 demo.varpulis-cep.com {
     tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin-key.pem
 
-    # API requests → coordinator
-    reverse_proxy /api/* coordinator:9100
+    # API requests → load-balanced across 3 coordinators
+    reverse_proxy /api/* coordinator-1:9100 coordinator-2:9100 coordinator-3:9100 {
+        lb_policy round_robin
+        health_uri /health
+        health_interval 10s
+    }
 
-    # WebSocket → coordinator
-    reverse_proxy /ws coordinator:9100
+    # WebSocket → load-balanced across 3 coordinators
+    reverse_proxy /ws coordinator-1:9100 coordinator-2:9100 coordinator-3:9100 {
+        lb_policy round_robin
+        health_uri /health
+        health_interval 10s
+    }
 
-    # Metrics → coordinator (for Grafana/internal use)
-    reverse_proxy /metrics coordinator:9100
+    # Metrics → load-balanced across 3 coordinators
+    reverse_proxy /metrics coordinator-1:9100 coordinator-2:9100 coordinator-3:9100 {
+        lb_policy round_robin
+        health_uri /health
+        health_interval 10s
+    }
 
     # Grafana dashboard (matches /grafana and /grafana/*)
     @grafana path /grafana /grafana/*

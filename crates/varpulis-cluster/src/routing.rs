@@ -80,7 +80,28 @@ pub fn build_routing_table(group_id: &str, routes: &[InterPipelineRoute]) -> Rou
 /// Topology view of the entire cluster routing.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TopologyInfo {
+    pub workers: Vec<TopologyWorkerEntry>,
+    pub routes: Vec<TopologyRouteEntry>,
     pub groups: Vec<GroupTopology>,
+}
+
+/// A worker entry in the topology view.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TopologyWorkerEntry {
+    pub id: String,
+    pub address: String,
+    pub status: String,
+    pub pipeline_groups: Vec<String>,
+}
+
+/// A route entry in the topology view (inter-pipeline routing mapped to workers).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TopologyRouteEntry {
+    pub source_worker: String,
+    pub source_pipeline: String,
+    pub target_worker: String,
+    pub target_pipeline: String,
+    pub route_type: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -437,6 +458,8 @@ mod tests {
     #[test]
     fn test_topology_info_serde() {
         let topology = TopologyInfo {
+            workers: vec![],
+            routes: vec![],
             groups: vec![GroupTopology {
                 group_id: "g1".into(),
                 group_name: "test".into(),

@@ -143,6 +143,10 @@ impl CoordinatorClient {
         self.get("scaling").await
     }
 
+    pub async fn list_models(&self) -> Result<Value, CoordinatorError> {
+        self.get("models").await
+    }
+
     pub async fn get_prometheus(&self) -> Result<Value, CoordinatorError> {
         // Prometheus endpoint returns text, not JSON
         let url = self.api_url("prometheus");

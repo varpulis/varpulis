@@ -1,14 +1,19 @@
-# Varpulis Demo - Full Stack
+# Varpulis Demo - Full Stack (HA Cluster)
 #
 # Public demo at https://demo.varpulis-cep.com
 # Only Caddy exposes ports 80/443 to the host.
+#
+# Architecture:
+#   3 coordinators (Raft consensus + RocksDB persistence)
+#   4 workers (split across coordinators)
+#   Caddy load-balances API across all coordinators
 #
 # Usage:
 #   docker compose build
 #   docker compose up -d
 
 services:
-  # ─── Reverse Proxy (TLS termination) ───────────────────────
+  # ─── Reverse Proxy (TLS termination + load balancing) ────
   caddy:
     image: caddy:2-alpine
     container_name: demo-caddy
@@ -23,7 +28,7 @@ services:
     depends_on:
       web-ui:
         condition: service_healthy
-      coordinator:
+      coordinator-1:
         condition: service_healthy
     restart: unless-stopped
     networks:
@@ -38,7 +43,7 @@ services:
     expose:
       - "8080"
     depends_on:
-      coordinator:
+      coordinator-1:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
@@ -50,14 +55,14 @@ services:
     networks:
       - varpulis-demo
 
-  # ─── Coordinator (control plane) ───────────────────────────
-  coordinator:
+  # ─── Coordinator 1 (Raft node 1) ──────────────────────────
+  coordinator-1:
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
       args:
-        FEATURES: kafka
-    container_name: demo-coordinator
+        FEATURES: "kafka,raft,persistent"
+    container_name: demo-coordinator-1
     command:
       - "coordinator"
       - "--bind"
@@ -66,21 +71,126 @@ services:
       - "9100"
       - "--api-key"
       - "${VARPULIS_API_KEY}"
+      - "--raft"
+      - "--raft-node-id"
+      - "1"
+      - "--raft-peers"
+      - "http://coordinator-1:9100,http://coordinator-2:9100,http://coordinator-3:9100"
+      - "--raft-data-dir"
+      - "/app/state"
     expose:
       - "9100"
     environment:
       - RUST_LOG=${RUST_LOG:-info}
+      - VARPULIS_LLM_ENDPOINT=${VARPULIS_LLM_ENDPOINT:-http://ollama:11434/v1}
+      - VARPULIS_LLM_MODEL=${VARPULIS_LLM_MODEL:-qwen2.5:7b}
+      - VARPULIS_LLM_API_KEY=${VARPULIS_LLM_API_KEY:-}
+      - VARPULIS_LLM_PROVIDER=${VARPULIS_LLM_PROVIDER:-openai-compatible}
+      - VARPULIS_S3_ENDPOINT=http://minio:9000
+      - VARPULIS_S3_BUCKET=varpulis-models
+    volumes:
+      - coord1-data:/app/state
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9100/health"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 15s
     restart: unless-stopped
     networks:
       - varpulis-demo
 
-  # ─── Worker 0 ─────────────────────────────────────────────
+  # ─── Coordinator 2 (Raft node 2) ──────────────────────────
+  coordinator-2:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      args:
+        FEATURES: "kafka,raft,persistent"
+    container_name: demo-coordinator-2
+    command:
+      - "coordinator"
+      - "--bind"
+      - "0.0.0.0"
+      - "--port"
+      - "9100"
+      - "--api-key"
+      - "${VARPULIS_API_KEY}"
+      - "--raft"
+      - "--raft-node-id"
+      - "2"
+      - "--raft-peers"
+      - "http://coordinator-1:9100,http://coordinator-2:9100,http://coordinator-3:9100"
+      - "--raft-data-dir"
+      - "/app/state"
+    expose:
+      - "9100"
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+      - VARPULIS_LLM_ENDPOINT=${VARPULIS_LLM_ENDPOINT:-http://ollama:11434/v1}
+      - VARPULIS_LLM_MODEL=${VARPULIS_LLM_MODEL:-qwen2.5:7b}
+      - VARPULIS_LLM_API_KEY=${VARPULIS_LLM_API_KEY:-}
+      - VARPULIS_LLM_PROVIDER=${VARPULIS_LLM_PROVIDER:-openai-compatible}
+      - VARPULIS_S3_ENDPOINT=http://minio:9000
+      - VARPULIS_S3_BUCKET=varpulis-models
+    volumes:
+      - coord2-data:/app/state
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9100/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - varpulis-demo
+
+  # ─── Coordinator 3 (Raft node 3) ──────────────────────────
+  coordinator-3:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      args:
+        FEATURES: "kafka,raft,persistent"
+    container_name: demo-coordinator-3
+    command:
+      - "coordinator"
+      - "--bind"
+      - "0.0.0.0"
+      - "--port"
+      - "9100"
+      - "--api-key"
+      - "${VARPULIS_API_KEY}"
+      - "--raft"
+      - "--raft-node-id"
+      - "3"
+      - "--raft-peers"
+      - "http://coordinator-1:9100,http://coordinator-2:9100,http://coordinator-3:9100"
+      - "--raft-data-dir"
+      - "/app/state"
+    expose:
+      - "9100"
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+      - VARPULIS_LLM_ENDPOINT=${VARPULIS_LLM_ENDPOINT:-http://ollama:11434/v1}
+      - VARPULIS_LLM_MODEL=${VARPULIS_LLM_MODEL:-qwen2.5:7b}
+      - VARPULIS_LLM_API_KEY=${VARPULIS_LLM_API_KEY:-}
+      - VARPULIS_LLM_PROVIDER=${VARPULIS_LLM_PROVIDER:-openai-compatible}
+      - VARPULIS_S3_ENDPOINT=http://minio:9000
+      - VARPULIS_S3_BUCKET=varpulis-models
+    volumes:
+      - coord3-data:/app/state
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9100/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - varpulis-demo
+
+  # ─── Worker 0 (coordinator-1) ───────────────────────────────
   worker-0:
     build:
       context: ../..
@@ -98,7 +208,7 @@ services:
       - "${VARPULIS_WORKER_KEY}"
       - "--metrics"
       - "--coordinator"
-      - "http://coordinator:9100"
+      - "http://coordinator-1:9100"
       - "--worker-id"
       - "worker-0"
       - "--advertise-address"
@@ -110,7 +220,7 @@ services:
       - RUST_LOG=${RUST_LOG:-info}
       - VARPULIS_WORKER_ID=worker-0
     depends_on:
-      coordinator:
+      coordinator-1:
         condition: service_healthy
       mosquitto:
         condition: service_started
@@ -120,7 +230,7 @@ services:
     networks:
       - varpulis-demo
 
-  # ─── Worker 1 ─────────────────────────────────────────────
+  # ─── Worker 1 (coordinator-1) ───────────────────────────────
   worker-1:
     build:
       context: ../..
@@ -138,7 +248,7 @@ services:
       - "${VARPULIS_WORKER_KEY}"
       - "--metrics"
       - "--coordinator"
-      - "http://coordinator:9100"
+      - "http://coordinator-1:9100"
       - "--worker-id"
       - "worker-1"
       - "--advertise-address"
@@ -150,13 +260,146 @@ services:
       - RUST_LOG=${RUST_LOG:-info}
       - VARPULIS_WORKER_ID=worker-1
     depends_on:
-      coordinator:
+      coordinator-1:
         condition: service_healthy
       mosquitto:
         condition: service_started
       kafka:
         condition: service_healthy
     restart: unless-stopped
+    networks:
+      - varpulis-demo
+
+  # ─── Worker 2 (coordinator-2) ───────────────────────────────
+  worker-2:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      args:
+        FEATURES: kafka
+    container_name: demo-worker-2
+    command:
+      - "server"
+      - "--bind"
+      - "0.0.0.0"
+      - "--port"
+      - "9000"
+      - "--api-key"
+      - "${VARPULIS_WORKER_KEY}"
+      - "--metrics"
+      - "--coordinator"
+      - "http://coordinator-2:9100"
+      - "--worker-id"
+      - "worker-2"
+      - "--advertise-address"
+      - "http://worker-2:9000"
+    expose:
+      - "9000"
+      - "9090"
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+      - VARPULIS_WORKER_ID=worker-2
+    depends_on:
+      coordinator-2:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - varpulis-demo
+
+  # ─── Worker 3 (coordinator-3) ───────────────────────────────
+  worker-3:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+      args:
+        FEATURES: kafka
+    container_name: demo-worker-3
+    command:
+      - "server"
+      - "--bind"
+      - "0.0.0.0"
+      - "--port"
+      - "9000"
+      - "--api-key"
+      - "${VARPULIS_WORKER_KEY}"
+      - "--metrics"
+      - "--coordinator"
+      - "http://coordinator-3:9100"
+      - "--worker-id"
+      - "worker-3"
+      - "--advertise-address"
+      - "http://worker-3:9000"
+    expose:
+      - "9000"
+      - "9090"
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+      - VARPULIS_WORKER_ID=worker-3
+    depends_on:
+      coordinator-3:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - varpulis-demo
+
+  # ─── MinIO (S3-compatible model storage) ────────────────────
+  minio:
+    image: minio/minio:latest
+    container_name: demo-minio
+    command: server /data --console-address ":9001"
+    expose:
+      - "9000"
+      - "9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_USER:-varpulis}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:-change-me}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - varpulis-demo
+
+  # ─── Ollama (local LLM for AI chat) ───────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: demo-ollama
+    expose:
+      - "11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - varpulis-demo
+
+  # ─── Ollama Setup (one-shot: pull model) ───────────────────
+  ollama-setup:
+    image: curlimages/curl:latest
+    container_name: demo-ollama-setup
+    entrypoint: ["sh", "-c", "curl -s http://ollama:11434/api/pull -d '{\"name\": \"qwen2.5:7b\"}' || true"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
     networks:
       - varpulis-demo
 
@@ -218,12 +461,12 @@ services:
   setup:
     image: python:3.12-slim
     container_name: demo-setup
-    command: ["bash", "-c", "pip install --quiet requests && python /app/setup.py --coordinator http://coordinator:9100 --api-key ${VARPULIS_API_KEY} --mqtt-host mosquitto --mqtt-port 1883 --kafka-brokers kafka:9092"]
+    command: ["bash", "-c", "pip install --quiet requests && python /app/setup.py --coordinator http://coordinator-1:9100 --api-key ${VARPULIS_API_KEY} --mqtt-host mosquitto --mqtt-port 1883 --kafka-brokers kafka:9092"]
     volumes:
       - ../../demos/e2e-showcase/setup.py:/app/setup.py:ro
       - ../../demos/e2e-showcase/pipeline.vpl:/app/pipeline.vpl:ro
     depends_on:
-      coordinator:
+      coordinator-1:
         condition: service_healthy
       kafka:
         condition: service_healthy
@@ -287,6 +530,11 @@ services:
 volumes:
   caddy-data:
   caddy-config:
+  coord1-data:
+  coord2-data:
+  coord3-data:
+  minio-data:
+  ollama-data:
   prometheus-data:
   grafana-data:
 

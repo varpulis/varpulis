@@ -3,26 +3,25 @@ global:
   evaluation_interval: 15s
 
 scrape_configs:
-  - job_name: "varpulis-coordinator"
+  - job_name: "varpulis-coordinators"
     static_configs:
-      - targets: ["coordinator:9100"]
+      - targets:
+          - "coordinator-1:9100"
+          - "coordinator-2:9100"
+          - "coordinator-3:9100"
         labels:
           role: "coordinator"
     metrics_path: /metrics
     scrape_interval: 5s
 
-  - job_name: "varpulis-worker-0"
+  - job_name: "varpulis-workers"
     static_configs:
-      - targets: ["worker-0:9090"]
+      - targets:
+          - "worker-0:9090"
+          - "worker-1:9090"
+          - "worker-2:9090"
+          - "worker-3:9090"
         labels:
-          worker: "worker-0"
-    metrics_path: /metrics
-    scrape_interval: 5s
-
-  - job_name: "varpulis-worker-1"
-    static_configs:
-      - targets: ["worker-1:9090"]
-        labels:
-          worker: "worker-1"
+          role: "worker"
     metrics_path: /metrics
     scrape_interval: 5s

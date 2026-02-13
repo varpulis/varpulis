@@ -57,6 +57,9 @@ pub struct SearchEventsParams {
     pub fields: serde_json::Map<String, serde_json::Value>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListModelsParams {}
+
 // ─── Tool implementations ────────────────────────────────────────────
 
 #[tool_router]
@@ -125,6 +128,17 @@ impl VarpulisMcpServer {
         params: Parameters<SearchEventsParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         Ok(search_events_impl(&self.client, params.0).await)
+    }
+
+    /// List registered ONNX models.
+    #[tool(
+        description = "List all ONNX models in the model registry with their inputs, outputs, and metadata."
+    )]
+    async fn list_models(
+        &self,
+        #[allow(unused)] params: Parameters<ListModelsParams>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        Ok(list_models_impl(&self.client).await)
     }
 }
 
@@ -484,6 +498,15 @@ async fn search_events_impl(
     });
 
     match client.inject_event(&params.pipeline_group, &event).await {
+        Ok(resp) => {
+            success_text(serde_json::to_string_pretty(&resp).unwrap_or_else(|_| resp.to_string()))
+        }
+        Err(e) => e.into_tool_result(),
+    }
+}
+
+async fn list_models_impl(client: &crate::client::CoordinatorClient) -> CallToolResult {
+    match client.list_models().await {
         Ok(resp) => {
             success_text(serde_json::to_string_pretty(&resp).unwrap_or_else(|_| resp.to_string()))
         }

@@ -122,6 +122,15 @@ pub enum ClusterCommand {
     ScalingPolicySet {
         policy: Option<serde_json::Value>,
     },
+
+    // -- Model Registry --
+    ModelRegistered {
+        name: String,
+        entry: crate::model_registry::ModelRegistryEntry,
+    },
+    ModelRemoved {
+        name: String,
+    },
 }
 
 // ---------------------------------------------------------------------------

@@ -322,3 +322,66 @@ export async function validateVpl(source: string): Promise<ValidateResponse> {
   const response = await api.post<ValidateResponse>(`${CLUSTER_BASE}/validate`, { source })
   return response.data
 }
+
+// === Model Registry ===
+
+import type { ModelRegistryEntry, ChatMessage, ChatResponse, LlmConfigResponse } from '@/types/cluster'
+
+/**
+ * List all registered models
+ */
+export async function listModels(): Promise<ModelRegistryEntry[]> {
+  const response = await api.get<{ models: ModelRegistryEntry[]; total: number }>(`${CLUSTER_BASE}/models`)
+  return response.data.models
+}
+
+/**
+ * Upload a new model to the registry
+ */
+export async function uploadModel(data: {
+  name: string
+  inputs: string[]
+  outputs: string[]
+  description?: string
+  data_base64?: string
+}): Promise<ModelRegistryEntry> {
+  const response = await api.post<ModelRegistryEntry>(`${CLUSTER_BASE}/models`, data)
+  return response.data
+}
+
+/**
+ * Delete a model from the registry
+ */
+export async function deleteModel(name: string): Promise<void> {
+  await api.delete(`${CLUSTER_BASE}/models/${name}`)
+}
+
+// === AI Chat ===
+
+/**
+ * Send a chat message to the AI assistant
+ */
+export async function sendChatMessage(messages: ChatMessage[]): Promise<ChatResponse> {
+  const response = await api.post<ChatResponse>(`${CLUSTER_BASE}/chat`, { messages })
+  return response.data
+}
+
+/**
+ * Get current LLM configuration
+ */
+export async function getChatConfig(): Promise<LlmConfigResponse> {
+  const response = await api.get<LlmConfigResponse>(`${CLUSTER_BASE}/chat/config`)
+  return response.data
+}
+
+/**
+ * Update LLM configuration
+ */
+export async function updateChatConfig(config: {
+  endpoint: string
+  model: string
+  api_key?: string
+  provider: string
+}): Promise<void> {
+  await api.put(`${CLUSTER_BASE}/chat/config`, config)
+}

@@ -107,6 +107,43 @@ export interface ClusterHealthMetrics {
   deploys_failure: number
 }
 
+// Model Registry
+export interface ModelRegistryEntry {
+  name: string
+  s3_key: string
+  format: string
+  inputs: string[]
+  outputs: string[]
+  size_bytes: number
+  uploaded_at: string
+  description: string
+}
+
+// Chat types
+export interface ChatMessage {
+  role: string
+  content: string
+}
+
+export interface ToolCallInfo {
+  tool_name: string
+  input: Record<string, unknown>
+  output: Record<string, unknown>
+}
+
+export interface ChatResponse {
+  message: ChatMessage
+  tool_calls_executed: ToolCallInfo[]
+}
+
+export interface LlmConfigResponse {
+  provider: string
+  model: string
+  endpoint: string
+  has_api_key: boolean
+  configured: boolean
+}
+
 // Cluster summary for dashboard
 export interface ClusterSummary {
   total_workers: number

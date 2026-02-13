@@ -79,12 +79,12 @@ onMounted(() => {
 
 // Status color helper
 function getStatusColor(status: string): string {
-  switch (status) {
-    case 'Ready':
+  switch (status.toLowerCase()) {
+    case 'ready':
       return '#4CAF50'
-    case 'Unhealthy':
+    case 'unhealthy':
       return '#FF5252'
-    case 'Draining':
+    case 'draining':
       return '#FFC107'
     default:
       return '#9E9E9E'

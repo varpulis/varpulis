@@ -26,6 +26,7 @@
 //! ```
 
 pub mod api;
+pub mod chat;
 pub mod connector_config;
 pub mod coordinator;
 #[cfg(feature = "k8s")]
@@ -35,6 +36,7 @@ pub mod health;
 pub mod k8s_watcher;
 pub mod metrics;
 pub mod migration;
+pub mod model_registry;
 pub mod pipeline_group;
 #[cfg(feature = "raft")]
 pub mod raft;

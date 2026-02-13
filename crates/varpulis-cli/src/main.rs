@@ -337,6 +337,26 @@ enum Commands {
         /// When set with --raft, state survives coordinator restarts.
         #[arg(long, env = "VARPULIS_RAFT_DATA_DIR")]
         raft_data_dir: Option<String>,
+
+        /// LLM endpoint URL for AI chat assistant (e.g., http://ollama:11434/v1)
+        #[arg(long, env = "VARPULIS_LLM_ENDPOINT")]
+        llm_endpoint: Option<String>,
+
+        /// LLM model name (e.g., qwen2.5:7b, claude-sonnet-4-5-20250929)
+        #[arg(long, default_value = "qwen2.5:7b", env = "VARPULIS_LLM_MODEL")]
+        llm_model: String,
+
+        /// LLM API key (not needed for Ollama)
+        #[arg(long, env = "VARPULIS_LLM_API_KEY")]
+        llm_api_key: Option<String>,
+
+        /// LLM provider: openai-compatible (default) or anthropic
+        #[arg(
+            long,
+            default_value = "openai-compatible",
+            env = "VARPULIS_LLM_PROVIDER"
+        )]
+        llm_provider: String,
     },
 }
 
@@ -601,6 +621,10 @@ async fn main() -> Result<()> {
             raft_node_id,
             raft_peers,
             raft_data_dir,
+            llm_endpoint,
+            llm_model,
+            llm_api_key,
+            llm_provider,
         } => {
             let scaling_policy = if scaling_min_workers > 0 {
                 Some(varpulis_cluster::ScalingPolicy {
@@ -629,6 +653,10 @@ async fn main() -> Result<()> {
                 raft_node_id,
                 raft_peers,
                 raft_data_dir,
+                llm_endpoint,
+                llm_model,
+                llm_api_key,
+                llm_provider,
             )
             .await?;
         }
@@ -2029,6 +2057,10 @@ async fn run_coordinator(
     _raft_node_id: Option<u64>,
     _raft_peers: Option<String>,
     _raft_data_dir: Option<String>,
+    llm_endpoint: Option<String>,
+    llm_model: String,
+    llm_api_key: Option<String>,
+    llm_provider: String,
 ) -> Result<()> {
     let http_protocol = "http";
     println!("Varpulis Coordinator");
@@ -2134,6 +2166,21 @@ async fn run_coordinator(
         coord.heartbeat_interval = std::time::Duration::from_secs(heartbeat_interval_secs);
         coord.heartbeat_timeout = std::time::Duration::from_secs(heartbeat_timeout_secs);
         coord.scaling_policy = scaling_policy;
+
+        // Configure LLM for AI chat assistant
+        if let Some(ref endpoint) = llm_endpoint {
+            let provider = match llm_provider.as_str() {
+                "anthropic" => varpulis_cluster::chat::LlmProvider::Anthropic,
+                _ => varpulis_cluster::chat::LlmProvider::OpenAiCompatible,
+            };
+            coord.llm_config = Some(varpulis_cluster::chat::LlmConfig {
+                endpoint: endpoint.clone(),
+                model: llm_model.clone(),
+                api_key: llm_api_key.clone(),
+                provider,
+            });
+            println!("AI Chat:   {} ({})", llm_model, llm_provider);
+        }
 
         // Attach Raft handle to coordinator
         #[cfg(feature = "raft")]

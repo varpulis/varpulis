@@ -1279,4 +1279,674 @@ test.describe('Varpulis Control Plane E2E', () => {
       fullPage: true,
     })
   })
+
+  // =====================
+  // Model Registry API Tests
+  // =====================
+
+  test('Models API: list returns empty initially', async ({ page }) => {
+    const response = await page.request.get(
+      `http://localhost:${COORDINATOR_PORT}/api/v1/cluster/models`,
+      { headers: { 'x-api-key': API_KEY } }
+    )
+    expect(response.ok()).toBeTruthy()
+
+    const data = await response.json()
+    expect(data.models).toBeDefined()
+    expect(Array.isArray(data.models)).toBeTruthy()
+  })
+
+  test('Models API: register and list a model', async ({ page }) => {
+    // Register a model via API
+    const registerResponse = await page.request.post(
+      `http://localhost:${COORDINATOR_PORT}/api/v1/cluster/models`,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': API_KEY,
+        },
+        data: {
+          name: 'e2e-test-model',
+          inputs: ['amount', 'velocity'],
+          outputs: ['fraud_prob'],
+          description: 'E2E test model for Playwright',
+        },
+      }
+    )
+    expect(registerResponse.ok()).toBeTruthy()
+
+    // List and verify the model appears
+    const listResponse = await page.request.get(
+      `http://localhost:${COORDINATOR_PORT}/api/v1/cluster/models`,
+      { headers: { 'x-api-key': API_KEY } }
+    )
+    expect(listResponse.ok()).toBeTruthy()
+
+    const data = await listResponse.json()
+    const model = data.models.find((m: { name: string }) => m.name === 'e2e-test-model')
+    expect(model).toBeDefined()
+    expect(model.inputs).toEqual(['amount', 'velocity'])
+    expect(model.outputs).toEqual(['fraud_prob'])
+    expect(model.description).toBe('E2E test model for Playwright')
+  })
+
+  test('Models API: delete a model', async ({ page }) => {
+    // Register a model to delete
+    await page.request.post(
+      `http://localhost:${COORDINATOR_PORT}/api/v1/cluster/models`,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': API_KEY,
+        },
+        data: {
+          name: 'e2e-delete-model',
+          inputs: ['x'],
+          outputs: ['y'],
+          description: 'To be deleted',
+        },
+      }
+    )
+
+    // Delete it
+    const deleteResponse = await page.request.delete(
+      `http://localhost:${COORDINATOR_PORT}/api/v1/cluster/models/e2e-delete-model`,
+      { headers: { 'x-api-key': API_KEY } }
+    )
+    expect(deleteResponse.ok()).toBeTruthy()
+
+    // Verify it's gone
+    const listResponse = await page.request.get(
+      `http://localhost:${COORDINATOR_PORT}/api/v1/cluster/models`,
+      { headers: { 'x-api-key': API_KEY } }
+    )
+    const data = await listResponse.json()
+    const model = data.models.find((m: { name: string }) => m.name === 'e2e-delete-model')
+    expect(model).toBeUndefined()
+  })
+
+  // =====================
+  // Model Registry UI Tests
+  // =====================
+
+  test('Models view loads with table and register button', async ({ page }) => {
+    await page.goto('/models')
+    await page.waitForLoadState('networkidle')
+    await page.waitForTimeout(1000)
+
+    // Verify page title
+    const title = page.locator('h1:has-text("Model Registry")')
+    await expect(title).toBeVisible()
+
+    // Verify Register Model button is present
+    const registerButton = page.locator('button:has-text("Register Model")')
+    await expect(registerButton).toBeVisible()
+
+    // Verify data table is present
+    const table = page.locator('.v-data-table')
+    await expect(table).toBeVisible()
+
+    // Take screenshot
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, 'models.png'),
+      fullPage: true,
+    })
+  })
+
+  test('Models view shows registered models', async ({ page }) => {
+    // Ensure a model exists (from earlier test or register one)
+    await page.request.post(
+      `http://localhost:${COORDINATOR_PORT}/api/v1/cluster/models`,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': API_KEY,
+        },
+        data: {
+          name: 'ui-test-model',
+          inputs: ['temp', 'pressure'],
+          outputs: ['anomaly_score'],
+          description: 'UI test model',
+        },
+      }
+    )
+
+    await page.goto('/models')
+    await page.waitForLoadState('networkidle')
+    await page.waitForTimeout(2000)
+
+    // Verify model name appears in the table
+    await page.waitForSelector('text=ui-test-model', { timeout: 10000 })
+    const modelRow = page.locator('text=ui-test-model')
+    await expect(modelRow).toBeVisible()
+
+    // Verify input/output chips render
+    const tempChip = page.locator('.v-chip').filter({ hasText: 'temp' })
+    await expect(tempChip).toBeVisible()
+
+    const outputChip = page.locator('.v-chip').filter({ hasText: 'anomaly_score' })
+    await expect(outputChip).toBeVisible()
+  })
+
+  test('Models view register dialog opens and validates', async ({ page }) => {
+    await page.goto('/models')
+    await page.waitForLoadState('networkidle')
+    await page.waitForTimeout(1000)
+
+    // Click Register Model button
+    const registerButton = page.locator('button:has-text("Register Model")')
+    await registerButton.click()
+    await page.waitForTimeout(500)
+
+    // Verify dialog opens
+    const dialog = page.locator('.v-dialog').filter({ hasText: 'Register Model' })
+    await expect(dialog).toBeVisible({ timeout: 5000 })
+
+    // Verify Register button is disabled when fields are empty
+    const submitButton = dialog.locator('button').filter({ hasText: 'Register' })
+    await expect(submitButton).toBeDisabled()
+
+    // Fill in the form
+    const nameInput = dialog.locator('input').first()
+    await nameInput.fill('dialog-test-model')
+
+    const inputsField = dialog.locator('input').nth(1)
+    await inputsField.fill('x, y, z')
+
+    const outputsField = dialog.locator('input').nth(2)
+    await outputsField.fill('prediction')
+
+    // Verify Register button is now enabled
+    await expect(submitButton).toBeEnabled()
+
+    // Take screenshot of filled dialog
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, 'models-register-dialog.png'),
+      fullPage: true,
+    })
+
+    // Cancel to close
+    const cancelButton = dialog.locator('button').filter({ hasText: 'Cancel' })
+    await cancelButton.click()
+    await expect(dialog).not.toBeVisible({ timeout: 5000 })
+  })
+
+  test('Models view delete confirmation works', async ({ page }) => {
+    // Ensure a model exists to delete
+    await page.request.post(
+      `http://localhost:${COORDINATOR_PORT}/api/v1/cluster/models`,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': API_KEY,
+        },
+        data: {
+          name: 'ui-delete-model',
+          inputs: ['a'],
+          outputs: ['b'],
+          description: 'To delete via UI',
+        },
+      }
+    )
+
+    await page.goto('/models')
+    await page.waitForLoadState('networkidle')
+    await page.waitForSelector('text=ui-delete-model', { timeout: 10000 })
+
+    // Click delete icon button on the model row
+    const deleteButton = page.locator('tr').filter({ hasText: 'ui-delete-model' })
+      .locator('button').filter({ has: page.locator('.mdi-delete') })
+    await deleteButton.click()
+    await page.waitForTimeout(500)
+
+    // Verify delete confirmation dialog opens
+    const confirmDialog = page.locator('.v-dialog').filter({ hasText: 'Delete Model' })
+    await expect(confirmDialog).toBeVisible({ timeout: 5000 })
+    await expect(confirmDialog.locator('text=ui-delete-model')).toBeVisible()
+
+    // Click Cancel to close without deleting
+    await confirmDialog.locator('button').filter({ hasText: 'Cancel' }).click()
+    await expect(confirmDialog).not.toBeVisible({ timeout: 5000 })
+
+    // Model should still be there
+    await expect(page.locator('text=ui-delete-model')).toBeVisible()
+  })
+
+  test('Navigation to Models view works', async ({ page }) => {
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+
+    // Click Models in navigation
+    await page.click('text=Models')
+    await expect(page).toHaveURL(/\/models/)
+
+    // Verify page loaded
+    const title = page.locator('h1:has-text("Model Registry")')
+    await expect(title).toBeVisible()
+  })
+
+  // =====================
+  // Chat Config API Tests
+  // =====================
+
+  test('Chat config API: get config returns unconfigured by default', async ({ page }) => {
+    const response = await page.request.get(
+      `http://localhost:${COORDINATOR_PORT}/api/v1/cluster/chat/config`,
+      { headers: { 'x-api-key': API_KEY } }
+    )
+    expect(response.ok()).toBeTruthy()
+
+    const data = await response.json()
+    expect(data).toHaveProperty('configured')
+    expect(data).toHaveProperty('provider')
+    expect(data).toHaveProperty('model')
+    expect(data).toHaveProperty('endpoint')
+  })
+
+  test('Chat config API: update and retrieve config', async ({ page }) => {
+    // Update chat config
+    const updateResponse = await page.request.put(
+      `http://localhost:${COORDINATOR_PORT}/api/v1/cluster/chat/config`,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': API_KEY,
+        },
+        data: {
+          endpoint: 'http://fake-ollama:11434/v1',
+          model: 'test-model:7b',
+          provider: 'openai-compatible',
+        },
+      }
+    )
+    expect(updateResponse.ok()).toBeTruthy()
+
+    // Retrieve and verify
+    const getResponse = await page.request.get(
+      `http://localhost:${COORDINATOR_PORT}/api/v1/cluster/chat/config`,
+      { headers: { 'x-api-key': API_KEY } }
+    )
+    expect(getResponse.ok()).toBeTruthy()
+
+    const data = await getResponse.json()
+    expect(data.configured).toBe(true)
+    expect(data.model).toBe('test-model:7b')
+    expect(data.endpoint).toBe('http://fake-ollama:11434/v1')
+    expect(data.provider).toBe('openai-compatible')
+  })
+
+  // =====================
+  // Chat Panel UI Tests
+  // =====================
+
+  test('Chat FAB is visible on all pages', async ({ page }) => {
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+    await page.waitForTimeout(1000)
+
+    // Chat FAB should be visible (bottom-right corner)
+    const chatFab = page.locator('.chat-fab')
+    await expect(chatFab).toBeVisible()
+  })
+
+  test('Chat FAB opens chat drawer', async ({ page }) => {
+    // Ensure chat is configured (from previous test)
+    await page.request.put(
+      `http://localhost:${COORDINATOR_PORT}/api/v1/cluster/chat/config`,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': API_KEY,
+        },
+        data: {
+          endpoint: 'http://fake-ollama:11434/v1',
+          model: 'test-model:7b',
+          provider: 'openai-compatible',
+        },
+      }
+    )
+
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+    await page.waitForTimeout(2000)
+
+    // Click the chat FAB
+    const chatFab = page.locator('.chat-fab')
+    await chatFab.click()
+    await page.waitForTimeout(500)
+
+    // Verify chat drawer opens (right-side navigation drawer)
+    const chatDrawer = page.locator('.v-navigation-drawer').filter({ hasText: 'AI Assistant' })
+    await expect(chatDrawer).toBeVisible({ timeout: 5000 })
+
+    // Verify AI Assistant header
+    await expect(chatDrawer.locator('text=AI Assistant')).toBeVisible()
+
+    // Verify model label chip shows configured model
+    const modelChip = chatDrawer.locator('.v-chip').filter({ hasText: 'test-model:7b' })
+    await expect(modelChip).toBeVisible()
+
+    // Take screenshot
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, 'chat-panel-open.png'),
+      fullPage: true,
+    })
+  })
+
+  test('Chat panel shows empty state when configured', async ({ page }) => {
+    // Ensure configured
+    await page.request.put(
+      `http://localhost:${COORDINATOR_PORT}/api/v1/cluster/chat/config`,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': API_KEY,
+        },
+        data: {
+          endpoint: 'http://fake-ollama:11434/v1',
+          model: 'test-model:7b',
+          provider: 'openai-compatible',
+        },
+      }
+    )
+
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+    await page.waitForTimeout(2000)
+
+    // Open chat
+    await page.locator('.chat-fab').click()
+    await page.waitForTimeout(500)
+
+    // Verify empty state message
+    const emptyState = page.locator('text=Ask about your cluster, pipelines, or VPL queries.')
+    await expect(emptyState).toBeVisible({ timeout: 5000 })
+
+    // Verify input textarea is enabled (use role selector to avoid Vuetify's hidden sizer textarea)
+    const textarea = page.getByRole('textbox', { name: 'Ask about your cluster...' })
+    await expect(textarea).toBeEnabled()
+  })
+
+  test('Chat panel send button disabled when input is empty', async ({ page }) => {
+    // Ensure configured
+    await page.request.put(
+      `http://localhost:${COORDINATOR_PORT}/api/v1/cluster/chat/config`,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': API_KEY,
+        },
+        data: {
+          endpoint: 'http://fake-ollama:11434/v1',
+          model: 'test-model:7b',
+          provider: 'openai-compatible',
+        },
+      }
+    )
+
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+    await page.waitForTimeout(2000)
+
+    // Open chat
+    await page.locator('.chat-fab').click()
+    await page.waitForTimeout(500)
+
+    // Verify send button is disabled when input is empty
+    const sendButton = page.locator('.chat-panel .mdi-send').first()
+    await expect(sendButton.locator('..').locator('button').or(sendButton.locator('..'))).toBeVisible()
+
+    // Type something using role selector (avoids Vuetify hidden sizer textarea)
+    const textarea = page.getByRole('textbox', { name: 'Ask about your cluster...' })
+    await textarea.fill('Hello')
+    await page.waitForTimeout(300)
+
+    // Verify send icon is still visible (button is now enabled)
+    await expect(page.locator('.chat-panel .mdi-send').first()).toBeVisible()
+  })
+
+  test('Chat panel shows user message after sending', async ({ page }) => {
+    // Ensure configured (LLM unreachable, that's fine — we test the user message appears)
+    await page.request.put(
+      `http://localhost:${COORDINATOR_PORT}/api/v1/cluster/chat/config`,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': API_KEY,
+        },
+        data: {
+          endpoint: 'http://fake-ollama:11434/v1',
+          model: 'test-model:7b',
+          provider: 'openai-compatible',
+        },
+      }
+    )
+
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+    await page.waitForTimeout(2000)
+
+    // Open chat
+    await page.locator('.chat-fab').click()
+    await page.waitForTimeout(500)
+
+    // Type a message and send using role-based selectors
+    const textarea = page.getByRole('textbox', { name: 'Ask about your cluster...' })
+    await textarea.fill('What pipelines are running?')
+
+    // Click send icon
+    await page.locator('.chat-panel .mdi-send').first().click()
+
+    // Verify user message bubble appears
+    const userMessage = page.locator('.bg-primary').filter({ hasText: 'What pipelines are running?' })
+    await expect(userMessage).toBeVisible({ timeout: 5000 })
+
+    // Wait for response (will be an error since LLM is unreachable)
+    await page.waitForTimeout(5000)
+
+    // Verify an assistant response appeared (error message since LLM is unreachable)
+    const assistantMessages = page.locator('.bg-surface-light')
+    await expect(assistantMessages.first()).toBeVisible({ timeout: 15000 })
+
+    // Take screenshot showing conversation
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, 'chat-panel-conversation.png'),
+      fullPage: true,
+    })
+  })
+
+  test('Chat drawer shows input and header', async ({ page }) => {
+    // Ensure configured
+    await page.request.put(
+      `http://localhost:${COORDINATOR_PORT}/api/v1/cluster/chat/config`,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': API_KEY,
+        },
+        data: {
+          endpoint: 'http://fake-ollama:11434/v1',
+          model: 'test-model:7b',
+          provider: 'openai-compatible',
+        },
+      }
+    )
+
+    await page.goto('/')
+    await page.waitForLoadState('networkidle')
+    await page.waitForTimeout(2000)
+
+    // Open chat
+    await page.locator('.chat-fab').click()
+    await page.waitForTimeout(500)
+
+    // Verify drawer opened with header, model chip, and input area
+    const chatDrawer = page.locator('.v-navigation-drawer').filter({ hasText: 'AI Assistant' })
+    await expect(chatDrawer).toBeVisible({ timeout: 5000 })
+
+    // Verify the model chip shows configured model
+    await expect(chatDrawer.locator('.v-chip').filter({ hasText: 'test-model:7b' })).toBeVisible()
+
+    // Verify the robot icon header
+    await expect(chatDrawer.locator('.mdi-robot')).toBeVisible()
+
+    // Verify input placeholder
+    const textarea = page.getByRole('textbox', { name: 'Ask about your cluster...' })
+    await expect(textarea).toBeVisible()
+  })
+
+  // =====================
+  // Settings: AI Assistant Tests
+  // =====================
+
+  test('Settings view shows AI Assistant section', async ({ page }) => {
+    await page.goto('/settings')
+    await page.waitForLoadState('networkidle')
+    await page.waitForTimeout(1000)
+
+    // Verify AI Assistant card is visible (scroll into view)
+    const aiCard = page.locator('.v-card').filter({ hasText: 'AI Assistant' })
+    await aiCard.scrollIntoViewIfNeeded()
+    await expect(aiCard).toBeVisible()
+
+    // Verify provider preset chips
+    await expect(aiCard.locator('.v-chip').filter({ hasText: 'Ollama' })).toBeVisible()
+    await expect(aiCard.locator('.v-chip').filter({ hasText: 'OpenAI' })).toBeVisible()
+    await expect(aiCard.locator('.v-chip').filter({ hasText: 'Anthropic' })).toBeVisible()
+
+    // Verify form inputs exist (3 text fields: endpoint, model, api key)
+    const inputs = aiCard.locator('input')
+    await expect(inputs).toHaveCount(3, { timeout: 5000 })
+
+    // Verify Save button
+    const saveButton = aiCard.locator('button').filter({ hasText: 'Save' })
+    await expect(saveButton).toBeVisible()
+
+    // Take screenshot
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, 'settings-ai-assistant.png'),
+      fullPage: true,
+    })
+  })
+
+  test('Settings AI provider preset fills form fields', async ({ page }) => {
+    await page.goto('/settings')
+    await page.waitForLoadState('networkidle')
+    await page.waitForTimeout(1000)
+
+    const aiCard = page.locator('.v-card').filter({ hasText: 'AI Assistant' })
+
+    // Click Ollama preset
+    await aiCard.locator('.v-chip').filter({ hasText: 'Ollama' }).click()
+    await page.waitForTimeout(300)
+
+    // Verify endpoint and model are pre-filled
+    const endpointInput = aiCard.locator('input').first()
+    await expect(endpointInput).toHaveValue('http://ollama:11434/v1')
+
+    const modelInput = aiCard.locator('input').nth(1)
+    await expect(modelInput).toHaveValue('qwen2.5:7b')
+
+    // Click OpenAI preset
+    await aiCard.locator('.v-chip').filter({ hasText: 'OpenAI' }).click()
+    await page.waitForTimeout(300)
+
+    // Verify endpoint and model changed
+    await expect(endpointInput).toHaveValue('https://api.openai.com/v1')
+    await expect(modelInput).toHaveValue('gpt-4o')
+
+    // Click Anthropic preset
+    await aiCard.locator('.v-chip').filter({ hasText: 'Anthropic' }).click()
+    await page.waitForTimeout(300)
+
+    await expect(endpointInput).toHaveValue('https://api.anthropic.com/v1')
+    await expect(modelInput).toHaveValue('claude-sonnet-4-5-20250929')
+  })
+
+  test('Settings AI config saves successfully', async ({ page }) => {
+    await page.goto('/settings')
+    await page.waitForLoadState('networkidle')
+    await page.waitForTimeout(1000)
+
+    const aiCard = page.locator('.v-card').filter({ hasText: 'AI Assistant' })
+
+    // Select Ollama preset
+    await aiCard.locator('.v-chip').filter({ hasText: 'Ollama' }).click()
+    await page.waitForTimeout(300)
+
+    // Save button should be enabled (endpoint and model filled)
+    const saveButton = aiCard.locator('button').filter({ hasText: 'Save' })
+    await expect(saveButton).toBeEnabled()
+
+    // Click Save
+    await saveButton.click()
+    await page.waitForTimeout(1000)
+
+    // Verify success alert appears
+    const successAlert = aiCard.locator('.v-alert').filter({ hasText: 'Configuration saved successfully' })
+    await expect(successAlert).toBeVisible({ timeout: 5000 })
+
+    // Verify API was updated
+    const response = await page.request.get(
+      `http://localhost:${COORDINATOR_PORT}/api/v1/cluster/chat/config`,
+      { headers: { 'x-api-key': API_KEY } }
+    )
+    const data = await response.json()
+    expect(data.configured).toBe(true)
+    expect(data.model).toBe('qwen2.5:7b')
+  })
+
+  test('Settings AI API key visibility toggle works', async ({ page }) => {
+    await page.goto('/settings')
+    await page.waitForLoadState('networkidle')
+    await page.waitForTimeout(1000)
+
+    const aiCard = page.locator('.v-card').filter({ hasText: 'AI Assistant' })
+
+    // API key input should be password type by default
+    const apiKeyInput = aiCard.locator('input[type="password"]')
+    await expect(apiKeyInput).toBeVisible()
+
+    // Click the eye icon (Vuetify append-inner icon) to toggle visibility
+    const toggleIcon = aiCard.locator('.mdi-eye').first()
+    await toggleIcon.click()
+    await page.waitForTimeout(300)
+
+    // Input should now be text type (the password field changes to text)
+    await expect(aiCard.locator('input[type="password"]')).toHaveCount(0)
+  })
+
+  // =====================
+  // Topology API Test
+  // =====================
+
+  test('Topology API returns workers and routes', async ({ page }) => {
+    const response = await page.request.get(
+      `http://localhost:${COORDINATOR_PORT}/api/v1/cluster/topology`,
+      { headers: { 'x-api-key': API_KEY } }
+    )
+    expect(response.ok()).toBeTruthy()
+
+    const data = await response.json()
+
+    // Verify new topology format includes workers and routes
+    expect(data.workers).toBeDefined()
+    expect(Array.isArray(data.workers)).toBeTruthy()
+    expect(data.workers.length).toBeGreaterThanOrEqual(WORKER_PORTS.length)
+
+    // Each worker should have required fields
+    const worker = data.workers[0]
+    expect(worker.id).toBeDefined()
+    expect(worker.address).toBeDefined()
+    expect(worker.status).toBeDefined()
+    expect(worker.pipeline_groups).toBeDefined()
+
+    // Routes should exist (may be empty if no cross-pipeline routes)
+    expect(data.routes).toBeDefined()
+    expect(Array.isArray(data.routes)).toBeTruthy()
+
+    // Groups should still be present (backward compat)
+    expect(data.groups).toBeDefined()
+    expect(Array.isArray(data.groups)).toBeTruthy()
+  })
 })

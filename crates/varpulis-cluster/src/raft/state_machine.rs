@@ -20,6 +20,8 @@ pub struct CoordinatorState {
     pub connectors: HashMap<String, ClusterConnector>,
     pub active_migrations: HashMap<String, serde_json::Value>,
     pub scaling_policy: Option<serde_json::Value>,
+    #[serde(default)]
+    pub models: HashMap<String, crate::model_registry::ModelRegistryEntry>,
 }
 
 /// Serializable worker entry (no `Instant` fields).
@@ -129,6 +131,16 @@ pub fn apply_command(state: &mut CoordinatorState, cmd: ClusterCommand) -> Clust
 
         ClusterCommand::ScalingPolicySet { policy } => {
             state.scaling_policy = policy;
+            ClusterResponse::Ok
+        }
+
+        ClusterCommand::ModelRegistered { name, entry } => {
+            state.models.insert(name, entry);
+            ClusterResponse::Ok
+        }
+
+        ClusterCommand::ModelRemoved { name } => {
+            state.models.remove(&name);
             ClusterResponse::Ok
         }
     }

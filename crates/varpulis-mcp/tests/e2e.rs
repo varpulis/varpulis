@@ -80,8 +80,8 @@ async fn mcp_server_e2e() -> anyhow::Result<()> {
     let tools = client.list_all_tools().await?;
     assert_eq!(
         tools.len(),
-        6,
-        "Expected 6 tools, got {}: {:?}",
+        7,
+        "Expected 7 tools, got {}: {:?}",
         tools.len(),
         tools.iter().map(|t| &t.name).collect::<Vec<_>>()
     );
@@ -94,6 +94,7 @@ async fn mcp_server_e2e() -> anyhow::Result<()> {
         "query_metrics",
         "explain_alert",
         "search_events",
+        "list_models",
     ] {
         assert!(tool_names.contains(expected), "Missing tool: {}", expected);
     }

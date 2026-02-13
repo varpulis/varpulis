@@ -4,7 +4,10 @@ use crate::connector_config::{self, ClusterConnector};
 use crate::coordinator::{Coordinator, InjectBatchRequest, InjectEventRequest};
 use crate::migration::MigrationReason;
 use crate::pipeline_group::{PipelineGroupInfo, PipelineGroupSpec};
-use crate::routing::{GroupTopology, PipelineTopologyEntry, RouteTopologyEntry, TopologyInfo};
+use crate::routing::{
+    GroupTopology, PipelineTopologyEntry, RouteTopologyEntry, TopologyInfo, TopologyRouteEntry,
+    TopologyWorkerEntry,
+};
 use crate::worker::{
     HeartbeatRequest, HeartbeatResponse, RegisterWorkerRequest, RegisterWorkerResponse, WorkerId,
     WorkerInfo, WorkerNode,
@@ -326,9 +329,77 @@ pub fn cluster_routes(
         .and(warp::path("summary"))
         .and(warp::path::end())
         .and(warp::get())
-        .and(with_optional_auth(admin_key))
+        .and(with_optional_auth(admin_key.clone()))
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_cluster_summary);
+
+    // --- Model Registry endpoints ---
+
+    let list_models = api
+        .and(warp::path("models"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(with_optional_auth(admin_key.clone()))
+        .and(with_coordinator(coordinator.clone()))
+        .and_then(handle_list_models);
+
+    let upload_model = api
+        .and(warp::path("models"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(with_optional_auth(admin_key.clone()))
+        .and(warp::body::json())
+        .and(with_coordinator(coordinator.clone()))
+        .and_then(handle_upload_model);
+
+    let delete_model = api
+        .and(warp::path("models"))
+        .and(warp::path::param::<String>())
+        .and(warp::path::end())
+        .and(warp::delete())
+        .and(with_optional_auth(admin_key.clone()))
+        .and(with_coordinator(coordinator.clone()))
+        .and_then(handle_delete_model);
+
+    let download_model = api
+        .and(warp::path("models"))
+        .and(warp::path::param::<String>())
+        .and(warp::path("download"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(with_optional_auth(admin_key.clone()))
+        .and(with_coordinator(coordinator.clone()))
+        .and_then(handle_download_model);
+
+    // --- Chat endpoints ---
+
+    let chat = api
+        .and(warp::path("chat"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(with_optional_auth(admin_key.clone()))
+        .and(warp::body::json())
+        .and(with_coordinator(coordinator.clone()))
+        .and_then(handle_chat);
+
+    let get_chat_config = api
+        .and(warp::path("chat"))
+        .and(warp::path("config"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(with_optional_auth(admin_key.clone()))
+        .and(with_coordinator(coordinator.clone()))
+        .and_then(handle_get_chat_config);
+
+    let update_chat_config = api
+        .and(warp::path("chat"))
+        .and(warp::path("config"))
+        .and(warp::path::end())
+        .and(warp::put())
+        .and(with_optional_auth(admin_key))
+        .and(warp::body::json())
+        .and(with_coordinator(coordinator.clone()))
+        .and_then(handle_update_chat_config);
 
     let cors = warp::cors()
         .allow_any_origin()
@@ -365,6 +436,14 @@ pub fn cluster_routes(
         .or(delete_connector)
         .boxed();
 
+    let model_routes = list_models
+        .or(upload_model)
+        .or(delete_model)
+        .or(download_model)
+        .boxed();
+
+    let chat_routes = chat.or(get_chat_config).or(update_chat_config).boxed();
+
     ws_route
         .or(worker_routes)
         .or(pipeline_routes)
@@ -372,6 +451,8 @@ pub fn cluster_routes(
         .or(validate)
         .or(migration_routes)
         .or(connector_routes)
+        .or(model_routes)
+        .or(chat_routes)
         .or(metrics)
         .or(prometheus_metrics)
         .or(scaling)
@@ -1013,6 +1094,60 @@ async fn handle_topology(
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
     let coord = coordinator.read().await;
+
+    // Build worker→pipeline_groups mapping
+    let mut worker_groups: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for g in coord.pipeline_groups.values() {
+        for dep in g.placements.values() {
+            worker_groups
+                .entry(dep.worker_id.0.clone())
+                .or_default()
+                .push(g.name.clone());
+        }
+    }
+
+    // Build flat workers list
+    let workers: Vec<TopologyWorkerEntry> = coord
+        .workers
+        .values()
+        .map(|w| TopologyWorkerEntry {
+            id: w.id.0.clone(),
+            address: w.address.clone(),
+            status: w.status.to_string(),
+            pipeline_groups: worker_groups.get(&w.id.0).cloned().unwrap_or_default(),
+        })
+        .collect();
+
+    // Build flat routes by cross-referencing spec routes with placements
+    let mut routes: Vec<TopologyRouteEntry> = Vec::new();
+    for g in coord.pipeline_groups.values() {
+        for r in &g.spec.routes {
+            let source_worker = g
+                .placements
+                .get(&r.from_pipeline)
+                .map(|d| d.worker_id.0.clone())
+                .unwrap_or_default();
+            let target_worker = g
+                .placements
+                .get(&r.to_pipeline)
+                .map(|d| d.worker_id.0.clone())
+                .unwrap_or_default();
+            // Skip routes where either end is unplaced (e.g. _external)
+            if source_worker.is_empty() || target_worker.is_empty() {
+                continue;
+            }
+            routes.push(TopologyRouteEntry {
+                source_worker,
+                source_pipeline: r.from_pipeline.clone(),
+                target_worker,
+                target_pipeline: r.to_pipeline.clone(),
+                route_type: "inter-pipeline".to_string(),
+            });
+        }
+    }
+
+    // Build groups (kept for MCP explain_alert and backwards compat)
     let groups: Vec<GroupTopology> = coord
         .pipeline_groups
         .values()
@@ -1026,7 +1161,7 @@ async fn handle_topology(
                     worker_address: dep.worker_address.clone(),
                 })
                 .collect();
-            let routes = g
+            let grp_routes = g
                 .spec
                 .routes
                 .iter()
@@ -1040,13 +1175,221 @@ async fn handle_topology(
                 group_id: g.id.clone(),
                 group_name: g.name.clone(),
                 pipelines,
-                routes,
+                routes: grp_routes,
             }
         })
         .collect();
 
-    let topology = TopologyInfo { groups };
+    let topology = TopologyInfo {
+        workers,
+        routes,
+        groups,
+    };
     Ok(warp::reply::with_status(warp::reply::json(&topology), StatusCode::OK).into_response())
+}
+
+// =============================================================================
+// Model Registry handlers
+// =============================================================================
+
+async fn handle_list_models(
+    _auth: (),
+    coordinator: SharedCoordinator,
+) -> Result<impl Reply, Infallible> {
+    let coord = coordinator.read().await;
+    let models: Vec<&crate::model_registry::ModelRegistryEntry> =
+        coord.model_registry.values().collect();
+    let resp = serde_json::json!({ "models": models, "total": models.len() });
+    Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+}
+
+#[derive(Debug, Deserialize)]
+struct UploadModelRequest {
+    name: String,
+    format: Option<String>,
+    inputs: Vec<String>,
+    outputs: Vec<String>,
+    #[serde(default)]
+    description: String,
+    /// Base64-encoded model data (for JSON upload without multipart)
+    #[serde(default)]
+    data_base64: String,
+}
+
+async fn handle_upload_model(
+    _auth: (),
+    body: UploadModelRequest,
+    coordinator: SharedCoordinator,
+) -> Result<impl Reply, Infallible> {
+    let name = body.name.clone();
+    let s3_key = format!("models/{}.onnx", &name);
+    let size_bytes = body.data_base64.len() as u64 * 3 / 4; // approximate
+
+    let entry = crate::model_registry::ModelRegistryEntry {
+        name: name.clone(),
+        s3_key,
+        format: body.format.unwrap_or_else(|| "onnx".to_string()),
+        inputs: body.inputs,
+        outputs: body.outputs,
+        size_bytes,
+        uploaded_at: chrono::Utc::now().to_rfc3339(),
+        description: body.description,
+    };
+
+    let mut coord = coordinator.write().await;
+
+    // Replicate via Raft if available
+    #[cfg(feature = "raft")]
+    if let Some(ref handle) = coord.raft_handle {
+        let cmd = crate::raft::ClusterCommand::ModelRegistered {
+            name: name.clone(),
+            entry: entry.clone(),
+        };
+        if let Err(e) = handle.raft.client_write(cmd).await {
+            let resp = serde_json::json!({ "error": format!("Raft replication failed: {}", e) });
+            return Ok(warp::reply::with_status(
+                warp::reply::json(&resp),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            )
+            .into_response());
+        }
+    }
+
+    coord.model_registry.insert(name, entry.clone());
+    Ok(warp::reply::with_status(warp::reply::json(&entry), StatusCode::CREATED).into_response())
+}
+
+async fn handle_delete_model(
+    name: String,
+    _auth: (),
+    coordinator: SharedCoordinator,
+) -> Result<impl Reply, Infallible> {
+    let mut coord = coordinator.write().await;
+
+    if !coord.model_registry.contains_key(&name) {
+        let resp = serde_json::json!({ "error": format!("Model '{}' not found", name) });
+        return Ok(
+            warp::reply::with_status(warp::reply::json(&resp), StatusCode::NOT_FOUND)
+                .into_response(),
+        );
+    }
+
+    #[cfg(feature = "raft")]
+    if let Some(ref handle) = coord.raft_handle {
+        let cmd = crate::raft::ClusterCommand::ModelRemoved { name: name.clone() };
+        if let Err(e) = handle.raft.client_write(cmd).await {
+            let resp = serde_json::json!({ "error": format!("Raft replication failed: {}", e) });
+            return Ok(warp::reply::with_status(
+                warp::reply::json(&resp),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            )
+            .into_response());
+        }
+    }
+
+    coord.model_registry.remove(&name);
+    let resp = serde_json::json!({ "deleted": name });
+    Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+}
+
+async fn handle_download_model(
+    name: String,
+    _auth: (),
+    coordinator: SharedCoordinator,
+) -> Result<impl Reply, Infallible> {
+    let coord = coordinator.read().await;
+    match coord.model_registry.get(&name) {
+        Some(entry) => {
+            let resp = serde_json::json!(entry);
+            Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+        }
+        None => {
+            let resp = serde_json::json!({ "error": format!("Model '{}' not found", name) });
+            Ok(
+                warp::reply::with_status(warp::reply::json(&resp), StatusCode::NOT_FOUND)
+                    .into_response(),
+            )
+        }
+    }
+}
+
+// =============================================================================
+// Chat handlers
+// =============================================================================
+
+async fn handle_chat(
+    _auth: (),
+    body: crate::chat::ChatRequest,
+    coordinator: SharedCoordinator,
+) -> Result<impl Reply, Infallible> {
+    let config = {
+        let coord = coordinator.read().await;
+        coord.llm_config.clone()
+    };
+
+    let config = match config {
+        Some(c) => c,
+        None => {
+            let resp = serde_json::json!({
+                "error": "No LLM provider configured. Set VARPULIS_LLM_ENDPOINT or configure in Settings."
+            });
+            return Ok(warp::reply::with_status(
+                warp::reply::json(&resp),
+                StatusCode::SERVICE_UNAVAILABLE,
+            )
+            .into_response());
+        }
+    };
+
+    match crate::chat::chat_completion(&config, &body.messages, &coordinator).await {
+        Ok(response) => Ok(
+            warp::reply::with_status(warp::reply::json(&response), StatusCode::OK).into_response(),
+        ),
+        Err(e) => {
+            let resp = serde_json::json!({ "error": e });
+            Ok(
+                warp::reply::with_status(warp::reply::json(&resp), StatusCode::BAD_GATEWAY)
+                    .into_response(),
+            )
+        }
+    }
+}
+
+async fn handle_get_chat_config(
+    _auth: (),
+    coordinator: SharedCoordinator,
+) -> Result<impl Reply, Infallible> {
+    let coord = coordinator.read().await;
+    let resp = match &coord.llm_config {
+        Some(config) => crate::chat::LlmConfigResponse {
+            provider: format!("{:?}", config.provider)
+                .to_lowercase()
+                .replace("openaicompatible", "openai-compatible"),
+            model: config.model.clone(),
+            endpoint: config.endpoint.clone(),
+            has_api_key: config.api_key.is_some(),
+            configured: true,
+        },
+        None => crate::chat::LlmConfigResponse {
+            provider: String::new(),
+            model: String::new(),
+            endpoint: String::new(),
+            has_api_key: false,
+            configured: false,
+        },
+    };
+    Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+}
+
+async fn handle_update_chat_config(
+    _auth: (),
+    body: crate::chat::LlmConfig,
+    coordinator: SharedCoordinator,
+) -> Result<impl Reply, Infallible> {
+    let mut coord = coordinator.write().await;
+    coord.llm_config = Some(body);
+    let resp = serde_json::json!({ "status": "ok" });
+    Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
 }
 
 // =============================================================================
