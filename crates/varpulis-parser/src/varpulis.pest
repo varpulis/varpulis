@@ -131,6 +131,7 @@ dot_op = { "." ~ (
     | collect_op | on_op | within_op | not_op | fork_op | any_op
     | all_op | first_op | watermark_op | allowed_lateness_op
     | trend_aggregate_op
+    | score_op
 )}
 
 // followed_by: use filter_expr for filter (stops before stream ops), 'as identifier' handled at end
@@ -208,6 +209,12 @@ allowed_lateness_op = { "allowed_lateness" ~ "(" ~ expr ~ ")" }
 
 // .trend_aggregate(count: count_trends(), events: count_events(rising))
 trend_aggregate_op = { "trend_aggregate" ~ "(" ~ trend_agg_list ~ ")" }
+
+// .score(model: "fraud.onnx", inputs: [amount, risk_score], outputs: [fraud_prob])
+score_op = { "score" ~ "(" ~ score_params ~ ")" }
+score_params = { score_param ~ ("," ~ score_param)* }
+score_param = { identifier ~ ":" ~ (score_field_list | string) }
+score_field_list = { "[" ~ identifier ~ ("," ~ identifier)* ~ "]" }
 trend_agg_list = { trend_agg_item ~ ("," ~ trend_agg_item)* }
 trend_agg_item = { identifier ~ ":" ~ trend_agg_func }
 trend_agg_func = { identifier ~ "(" ~ expr? ~ ")" }

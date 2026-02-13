@@ -323,6 +323,8 @@ pub enum StreamOp {
     /// Trend aggregation over Kleene patterns (Hamlet engine):
     /// `.trend_aggregate(count: count_trends(), events: count_events(rising))`
     TrendAggregate(Vec<TrendAggItem>),
+    /// ONNX model scoring: `.score(model: "path.onnx", inputs: [...], outputs: [...])`
+    Score(ScoreSpec),
 }
 
 /// A path in a fork construct
@@ -343,6 +345,14 @@ pub struct TrendAggItem {
     pub func: String,
     /// Optional argument (field reference for sum/avg/min/max, alias for count_events)
     pub arg: Option<Expr>,
+}
+
+/// Specification for ONNX model scoring
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScoreSpec {
+    pub model_path: String,
+    pub inputs: Vec<String>,
+    pub outputs: Vec<String>,
 }
 
 /// Followed-by clause for temporal sequences

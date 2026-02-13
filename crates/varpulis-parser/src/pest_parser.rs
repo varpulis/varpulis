@@ -943,6 +943,52 @@ fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
             }
             Ok(StreamOp::TrendAggregate(items))
         }
+        Rule::score_op => {
+            let mut model_path = String::new();
+            let mut inputs = Vec::new();
+            let mut outputs = Vec::new();
+            for p in pair.into_inner() {
+                if p.as_rule() == Rule::score_params {
+                    for param_pair in p.into_inner() {
+                        if param_pair.as_rule() == Rule::score_param {
+                            let mut inner = param_pair.into_inner();
+                            let name = inner.expect_next("score param name")?.as_str();
+                            let value_pair = inner.expect_next("score param value")?;
+                            match name {
+                                "model" => {
+                                    let raw = value_pair.as_str();
+                                    model_path = raw.trim_matches('"').to_string();
+                                }
+                                "inputs" => {
+                                    if value_pair.as_rule() == Rule::score_field_list {
+                                        for field in value_pair.into_inner() {
+                                            if field.as_rule() == Rule::identifier {
+                                                inputs.push(field.as_str().to_string());
+                                            }
+                                        }
+                                    }
+                                }
+                                "outputs" => {
+                                    if value_pair.as_rule() == Rule::score_field_list {
+                                        for field in value_pair.into_inner() {
+                                            if field.as_rule() == Rule::identifier {
+                                                outputs.push(field.as_str().to_string());
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(StreamOp::Score(ScoreSpec {
+                model_path,
+                inputs,
+                outputs,
+            }))
+        }
         _ => Err(ParseError::UnexpectedToken {
             position: 0,
             expected: "stream operation".to_string(),
@@ -2758,5 +2804,51 @@ stream S = timer(1s).process(do_work())"#,
             }
         }
         panic!("No TrendAggregate found");
+    }
+
+    #[test]
+    fn test_parse_score_basic() {
+        let result = parse(
+            r#"stream S = TradeEvent
+    .score(model: "models/fraud.onnx", inputs: [amount, risk_score], outputs: [fraud_prob, category])"#,
+        );
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+        let program = result.unwrap();
+        for stmt in &program.statements {
+            if let Stmt::StreamDecl { ops, .. } = &stmt.node {
+                for op in ops {
+                    if let StreamOp::Score(spec) = op {
+                        assert_eq!(spec.model_path, "models/fraud.onnx");
+                        assert_eq!(spec.inputs, vec!["amount", "risk_score"]);
+                        assert_eq!(spec.outputs, vec!["fraud_prob", "category"]);
+                        return;
+                    }
+                }
+            }
+        }
+        panic!("No Score op found");
+    }
+
+    #[test]
+    fn test_parse_score_single_field() {
+        let result = parse(
+            r#"stream S = Event
+    .score(model: "model.onnx", inputs: [value], outputs: [prediction])"#,
+        );
+        assert!(result.is_ok(), "Failed: {:?}", result.err());
+        let program = result.unwrap();
+        for stmt in &program.statements {
+            if let Stmt::StreamDecl { ops, .. } = &stmt.node {
+                for op in ops {
+                    if let StreamOp::Score(spec) = op {
+                        assert_eq!(spec.model_path, "model.onnx");
+                        assert_eq!(spec.inputs, vec!["value"]);
+                        assert_eq!(spec.outputs, vec!["prediction"]);
+                        return;
+                    }
+                }
+            }
+        }
+        panic!("No Score op found");
     }
 }
