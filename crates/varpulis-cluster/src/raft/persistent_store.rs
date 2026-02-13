@@ -36,7 +36,7 @@ const KEY_SNAPSHOT_META: &[u8] = b"snapshot_meta";
 
 /// RocksDB-backed Raft storage.
 pub struct RocksStore {
-    db: DB,
+    db: Arc<DB>,
     // In-memory state machine (rebuilt from log on startup)
     last_applied_log: Option<LogId<NodeId>>,
     last_membership: StoredMembership<NodeId, RaftNode>,
@@ -62,8 +62,10 @@ impl RocksStore {
         let cf_meta = ColumnFamilyDescriptor::new(CF_META, Options::default());
         let cf_snapshots = ColumnFamilyDescriptor::new(CF_SNAPSHOTS, Options::default());
 
-        let db = DB::open_cf_descriptors(&opts, path, vec![cf_meta, cf_snapshots])
-            .map_err(|e| format!("Failed to open RocksDB at {}: {}", path, e))?;
+        let db = Arc::new(
+            DB::open_cf_descriptors(&opts, path, vec![cf_meta, cf_snapshots])
+                .map_err(|e| format!("Failed to open RocksDB at {}: {}", path, e))?,
+        );
 
         let mut store = Self {
             db,
@@ -387,23 +389,9 @@ impl RaftStorage<TypeConfig> for RocksStore {
     }
 
     async fn get_log_reader(&mut self) -> Self::LogReader {
-        // RocksDB doesn't support sharing DB across LogReader easily
-        // since DB doesn't implement Clone. We need Arc<DB> for the reader.
-        // For now, we'll re-open a read-only handle. But since openraft
-        // expects mutable access anyway, let's use the DB path.
-        //
-        // Actually, openraft's Adaptor wraps RaftStorage and uses the
-        // store itself for log reading. The LogReader is only used by
-        // background replication tasks. We need to share the DB.
-        //
-        // The simplest approach: store Arc<DB> in RocksStore.
-        // But that requires changing the struct. For now, since the
-        // unified RaftStorage approach means get_log_reader is called
-        // on &mut self, we can create a reader from the DB path.
-        //
-        // However, RocksDB doesn't support multiple writers. The clean
-        // solution is to refactor DB to Arc<DB>. Let's do that.
-        panic!("RocksStore uses Adaptor which calls try_get_log_entries on &mut self directly; LogReader should not be needed in practice")
+        RocksLogReader {
+            db: self.db.clone(),
+        }
     }
 
     async fn append_to_log<I>(&mut self, entries: I) -> Result<(), StorageError<NodeId>>
