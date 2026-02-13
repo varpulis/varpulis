@@ -333,6 +333,15 @@ pub fn cluster_routes(
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_cluster_summary);
 
+    // --- Raft cluster status endpoint ---
+
+    let raft_status = api
+        .and(warp::path("raft"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(with_coordinator(coordinator.clone()))
+        .and_then(handle_raft_status);
+
     // --- Model Registry endpoints ---
 
     let list_models = api
@@ -457,6 +466,7 @@ pub fn cluster_routes(
         .or(prometheus_metrics)
         .or(scaling)
         .or(summary)
+        .or(raft_status)
         .with(cors)
 }
 
@@ -1814,6 +1824,61 @@ async fn handle_cluster_summary(
         "events_per_second": events_per_second,
     });
 
+    Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+}
+
+// =============================================================================
+// Raft cluster status handler
+// =============================================================================
+
+async fn handle_raft_status(
+    coordinator: SharedCoordinator,
+) -> Result<impl Reply, Infallible> {
+    let coord = coordinator.read().await;
+
+    #[cfg(feature = "raft")]
+    {
+        if let Some(ref handle) = coord.raft_handle {
+            let metrics = handle.raft.metrics().borrow().clone();
+            let current_leader = metrics.current_leader;
+            let this_node_id = metrics.id;
+
+            let mut nodes = Vec::new();
+            for (nid, addr) in &handle.peer_addrs {
+                let role = match current_leader {
+                    Some(leader_id) if *nid == leader_id => "leader",
+                    Some(_) => "follower",
+                    None => "unknown",
+                };
+                nodes.push(serde_json::json!({
+                    "id": nid,
+                    "address": addr,
+                    "role": role,
+                    "is_current": *nid == this_node_id,
+                }));
+            }
+
+            let resp = serde_json::json!({
+                "enabled": true,
+                "this_node_id": this_node_id,
+                "leader_id": current_leader,
+                "term": metrics.current_term,
+                "commit_index": metrics.last_applied.as_ref().map(|l| l.index).unwrap_or(0),
+                "nodes": nodes,
+            });
+            return Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response());
+        }
+    }
+
+    // Raft not enabled or no handle — standalone mode
+    let resp = serde_json::json!({
+        "enabled": false,
+        "this_node_id": 0,
+        "leader_id": null,
+        "term": 0,
+        "commit_index": 0,
+        "nodes": [],
+    });
     Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
 }
 
