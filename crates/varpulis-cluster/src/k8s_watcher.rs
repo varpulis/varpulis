@@ -67,14 +67,17 @@ pub async fn watch_worker_pods(config: PodWatcherConfig, coordinator: SharedCoor
                 let coordinator = coordinator.clone();
                 async move {
                     match event {
-                        watcher::Event::Applied(pod) => {
+                        watcher::Event::Apply(pod) | watcher::Event::InitApply(pod) => {
                             handle_pod_event(&pod, &coordinator).await;
                         }
-                        watcher::Event::Deleted(pod) => {
+                        watcher::Event::Delete(pod) => {
                             handle_pod_deleted(&pod, &coordinator).await;
                         }
-                        watcher::Event::Restarted(pods) => {
-                            info!("K8s watcher restarted, {} pods in cache", pods.len());
+                        watcher::Event::Init => {
+                            info!("K8s watcher (re)initializing");
+                        }
+                        watcher::Event::InitDone => {
+                            info!("K8s watcher initialization complete");
                         }
                     }
                     Ok(())

@@ -15,7 +15,6 @@ use std::collections::HashMap;
 use tracing::{error, info, warn};
 
 use crate::connector_config::ClusterConnector;
-use crate::worker::WorkerId;
 
 // ============================================================================
 // HA Role
