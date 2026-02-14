@@ -83,11 +83,6 @@ pub enum Token {
 
     #[token("pattern")]
     Pattern,
-    #[token("attention_window")]
-    AttentionWindow,
-    #[token("attention_score")]
-    AttentionScore,
-
     // Note: Stream operation names (map, filter, etc.) are NOT keywords
     // They are parsed contextually after '.' and can be used as identifiers
     #[token("true")]
@@ -296,8 +291,6 @@ impl fmt::Display for Token {
             Token::All => write!(f, "all"),
             Token::Within => write!(f, "within"),
             Token::Pattern => write!(f, "pattern"),
-            Token::AttentionWindow => write!(f, "attention_window"),
-            Token::AttentionScore => write!(f, "attention_score"),
             Token::True => write!(f, "true"),
             Token::False => write!(f, "false"),
             Token::Null => write!(f, "null"),
@@ -731,8 +724,6 @@ mod tests {
         assert_eq!(format!("{}", Token::All), "all");
         assert_eq!(format!("{}", Token::Within), "within");
         assert_eq!(format!("{}", Token::Pattern), "pattern");
-        assert_eq!(format!("{}", Token::AttentionWindow), "attention_window");
-        assert_eq!(format!("{}", Token::AttentionScore), "attention_score");
         assert_eq!(format!("{}", Token::False), "false");
         assert_eq!(format!("{}", Token::Extends), "extends");
         assert_eq!(format!("{}", Token::Import), "import");

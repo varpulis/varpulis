@@ -5,12 +5,6 @@
 ### Aggregation
 Reduction operation on a collection of events (sum, avg, count, etc.).
 
-### Attention (mechanism)
-Weighted correlation mechanism between events, inspired by transformer architectures, used deterministically in Varpulis.
-
-### ANN (Approximate Nearest Neighbors)
-Indexing algorithm to quickly find the most similar vectors.
-
 ## B
 
 ### Backpressure
@@ -37,9 +31,6 @@ Queue for messages that could not be processed.
 
 ## E
 
-### Embedding
-Vector representation of an event in a fixed-dimension space.
-
 ### EPL (Event Processing Language)
 Event processing language, generic term (used notably by Apama/Cumulocity).
 
@@ -52,9 +43,6 @@ Immutable record representing a timestamped fact.
 Apache Flink - distributed stream processing framework. See [comparison](overview.md#vs-apache-flink).
 
 ## H
-
-### HNSW (Hierarchical Navigable Small World)
-Indexing algorithm for nearest neighbor search.
 
 ### Hypertree
 Data structure optimized for pattern matching on events.

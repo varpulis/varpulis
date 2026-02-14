@@ -3,7 +3,7 @@
  * Shows real data from Varpulis CEP engine
  */
 
-import { Activity, AlertTriangle, Brain, TrendingUp, Wifi, WifiOff } from 'lucide-react'
+import { Activity, AlertTriangle, TrendingUp, Wifi, WifiOff } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import PipelineGraph, { FINANCIAL_PIPELINE } from '../components/PipelineGraph'
 import { useVarpulis } from '../hooks/useVarpulis'
@@ -16,8 +16,6 @@ export default function FinancialDemo() {
     const [indicatorsBySymbol, setIndicatorsBySymbol] = useState<Record<string, { sma20: number, sma50: number, rsi: number, macd: number, bbUpper: number, bbLower: number }>>({})
     const [selectedSymbol, setSelectedSymbol] = useState<string>('BTC')
     const [tradingSignals, setTradingSignals] = useState<Array<{ type: string, symbol: string, direction: string, time: string }>>([])
-    const [attentionAlerts, setAttentionAlerts] = useState<Array<{ symbol: string, score: number, time: string }>>([])
-    const [attentionMetrics, setAttentionMetrics] = useState<{ score: number, matches: number, total: number }>({ score: 0, matches: 0, total: 0 })
     const [recentEvents, setRecentEvents] = useState<Array<{ type: string, symbol: string, price?: number }>>([])
 
     const lastEventRef = useRef<string>('')
@@ -73,31 +71,16 @@ export default function FinancialDemo() {
             })
         }
 
-        // Separate PUMP_DETECTED (attention-based) from other trading signals
-        if (alertType === 'PUMP_DETECTED') {
-            const attentionScore = Number(data.attention_score || 0)
-            setAttentionAlerts(prev => [{
+        // Trading signals
+        const signalTypes = ['GOLDEN_CROSS', 'DEATH_CROSS', 'RSI_OVERBOUGHT', 'RSI_OVERSOLD', 'MACD_BULLISH', 'MACD_BEARISH', 'BB_BREAKOUT_UP', 'BB_BREAKOUT_DOWN', 'STRONG_BUY', 'STRONG_SELL']
+        if (signalTypes.includes(alertType)) {
+            const direction = String(data.direction || (alertType.includes('BULLISH') || alertType.includes('OVERSOLD') || alertType.includes('GOLDEN') || alertType.includes('BUY') ? 'BUY' : 'SELL'))
+            setTradingSignals(prev => [{
+                type: alertType,
                 symbol: symbol || '?',
-                score: attentionScore,
+                direction,
                 time: new Date().toLocaleTimeString()
-            }, ...prev].slice(0, 5))
-            setAttentionMetrics(prev => ({
-                score: attentionScore || prev.score,
-                matches: Number(data.attention_matches || prev.matches),
-                total: prev.total + 1
-            }))
-        } else {
-            // Other trading signals
-            const signalTypes = ['GOLDEN_CROSS', 'DEATH_CROSS', 'RSI_OVERBOUGHT', 'RSI_OVERSOLD', 'MACD_BULLISH', 'MACD_BEARISH', 'BB_BREAKOUT_UP', 'BB_BREAKOUT_DOWN', 'STRONG_BUY', 'STRONG_SELL']
-            if (signalTypes.includes(alertType)) {
-                const direction = String(data.direction || (alertType.includes('BULLISH') || alertType.includes('OVERSOLD') || alertType.includes('GOLDEN') || alertType.includes('BUY') ? 'BUY' : 'SELL'))
-                setTradingSignals(prev => [{
-                    type: alertType,
-                    symbol: symbol || '?',
-                    direction,
-                    time: new Date().toLocaleTimeString()
-                }, ...prev].slice(0, 8))
-            }
+            }, ...prev].slice(0, 8))
         }
     }, [alerts])
 
@@ -124,19 +107,19 @@ export default function FinancialDemo() {
             {/* Pipeline Graph */}
             <div className="bg-slate-800/50 rounded-lg p-2 border border-slate-700">
                 <div className="text-xs text-slate-400 mb-1 px-1">
-                    <strong>Pipeline:</strong> MarketTick/OHLCV → sliding windows → SMA/RSI/MACD/Bollinger → join → trading signals | Attention window detects pump patterns
+                    <strong>Pipeline:</strong> MarketTick/OHLCV → sliding windows → SMA/RSI/MACD/Bollinger → join → trading signals
                 </div>
                 <PipelineGraph
                     nodes={FINANCIAL_PIPELINE.nodes}
                     edges={FINANCIAL_PIPELINE.edges}
                     eventCounts={eventCounts}
-                    streamCounts={{ Indicators: alerts.length, Attention: attentionMetrics.total }}
+                    streamCounts={{ Indicators: alerts.length }}
                     patternCounts={{ Signals: tradingSignals.length }}
                 />
             </div>
 
-            {/* Main Grid - 2 rows */}
-            <div className="grid grid-cols-4 gap-3">
+            {/* Main Grid */}
+            <div className="grid grid-cols-3 gap-3">
                 {/* Row 1, Col 1: Events + Feed */}
                 <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-700">
                     <h2 className="text-sm font-semibold text-white mb-2 flex items-center gap-1.5">
@@ -213,42 +196,7 @@ export default function FinancialDemo() {
                     </div>
                 </div>
 
-                {/* Row 1, Col 3: Attention Engine */}
-                <div className="bg-slate-800/50 rounded-lg p-3 border border-purple-500/30">
-                    <h2 className="text-sm font-semibold text-white mb-1 flex items-center gap-1.5">
-                        <Brain className="w-4 h-4 text-purple-400" />
-                        Attention Engine
-                    </h2>
-                    <div className="text-[10px] text-slate-400 mb-2">
-                        Multi-head attention correlates events in a 5-minute sliding window. Detects coordinated price/volume movements (pump patterns).
-                    </div>
-                    <div className="grid grid-cols-3 gap-1.5 mb-2">
-                        <div className="bg-slate-900/50 rounded p-1.5 border border-purple-500/20">
-                            <div className="text-[10px] text-slate-400">Score</div>
-                            <div className="text-sm font-mono text-purple-400">{attentionMetrics.score.toFixed(2)}</div>
-                        </div>
-                        <div className="bg-slate-900/50 rounded p-1.5 border border-purple-500/20">
-                            <div className="text-[10px] text-slate-400">Matches</div>
-                            <div className="text-sm font-mono text-cyan-400">{attentionMetrics.matches}</div>
-                        </div>
-                        <div className="bg-slate-900/50 rounded p-1.5 border border-purple-500/20">
-                            <div className="text-[10px] text-slate-400">Pumps</div>
-                            <div className="text-sm font-mono text-pink-400">{attentionMetrics.total}</div>
-                        </div>
-                    </div>
-                    <div className="text-[10px] text-slate-500">Recent detections:</div>
-                    <div className="space-y-0.5 max-h-[40px] overflow-y-auto">
-                        {attentionAlerts.length === 0 ? (
-                            <div className="text-[10px] text-slate-600 italic">None yet</div>
-                        ) : attentionAlerts.slice(0, 3).map((a, i) => (
-                            <div key={i} className="text-[10px] text-purple-300 font-mono">
-                                {a.symbol} score={a.score.toFixed(2)} {a.time}
-                            </div>
-                        ))}
-                    </div>
-                </div>
-
-                {/* Row 1, Col 4: Trading Signals */}
+                {/* Row 1, Col 3: Trading Signals */}
                 <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-700">
                     <h2 className="text-sm font-semibold text-white mb-2 flex items-center gap-1.5">
                         <AlertTriangle className="w-4 h-4 text-yellow-400" />

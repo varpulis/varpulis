@@ -644,10 +644,6 @@ function getInlineEditorHtml(webview: vscode.Webview, nonce: string): string {
                         <svg class="svg-icon" style="color:#f472b6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="12" r="3"/><circle cx="18" cy="12" r="3"/><path d="M9 12h6"/><path d="M15 9l3 3-3 3"/></svg>
                         Sequence (A -> B)
                     </div>
-                    <div class="drag-item" draggable="true" data-type="pattern" data-pattern="attention">
-                        <svg class="svg-icon" style="color:#a78bfa" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-                        Attention Window
-                    </div>
                 </div>
             </div>
             <div class="category">
@@ -935,23 +931,13 @@ function getInlineEditorHtml(webview: vscode.Webview, nonce: string): string {
                 html += '<div class="form-group"><label class="form-label">Sequence Pattern (ex: A -> B where b.id == a.id)</label><input class="form-input" id="cfg-sequence" value="'+(node.config.sequence||'')+'"></div>';
                 html += '<div class="form-group"><label class="form-label">Aggregate (JSON: {"avg_val": "avg(value)"})</label><textarea class="form-input" id="cfg-aggregate" rows="3">'+(node.config.aggregate?JSON.stringify(node.config.aggregate,null,2):'')+'</textarea></div>';
                 html += '<div class="form-group"><label class="form-label">Emit (JSON: {"alert": "value"})</label><textarea class="form-input" id="cfg-emit" rows="3">'+(node.config.emit?JSON.stringify(node.config.emit,null,2):'')+'</textarea></div>';
-                html += '<hr style="border-color:#333;margin:16px 0">';
-                html += '<div class="form-group"><label class="form-label" style="color:#a78bfa">Attention Window (optional)</label></div>';
-                html += '<div class="form-group"><label class="form-label">Attention Size</label><input class="form-input" id="cfg-attentionSize" value="'+(node.config.attentionSize||'')+'"></div>';
-                html += '<div class="form-group"><label class="form-label">Attention Pattern (ex: degradation)</label><input class="form-input" id="cfg-attentionPattern" value="'+(node.config.attentionPattern||'')+'"></div>';
-                html += '<div class="form-group"><label class="form-label">Attention Threshold</label><input class="form-input" id="cfg-attentionThreshold" value="'+(node.config.attentionThreshold||'')+'"></div>';
             }
             
             if (node.type === 'pattern') {
-                html += '<div class="form-group"><label class="form-label">Pattern Type</label><select class="form-input" id="cfg-patternType"><option value="sequence" '+(node.config.patternType==='sequence'?'selected':'')+'>Sequence (->)</option><option value="attention" '+(node.config.patternType==='attention'?'selected':'')+'>Attention Window</option></select></div>';
+                html += '<div class="form-group"><label class="form-label">Pattern Type</label><select class="form-input" id="cfg-patternType"><option value="sequence" '+(node.config.patternType==='sequence'?'selected':'')+'>Sequence (->)</option></select></div>';
                 html += '<div class="form-group"><label class="form-label">Source Stream</label><input class="form-input" id="cfg-source" value="'+(node.config.source||'')+'"></div>';
                 html += '<div class="form-group"><label class="form-label">Sequence (ex: Login as l -> AccessDenied where user == l.user -> AccessDenied)</label><textarea class="form-input" id="cfg-sequence" rows="3">'+(node.config.sequence||'')+'</textarea></div>';
                 html += '<div class="form-group"><label class="form-label">Within (time constraint, ex: 5m)</label><input class="form-input" id="cfg-within" value="'+(node.config.within||'')+'"></div>';
-                html += '<hr style="border-color:#333;margin:16px 0">';
-                html += '<div class="form-group"><label class="form-label" style="color:#a78bfa">Attention Window Config</label></div>';
-                html += '<div class="form-group"><label class="form-label">Size</label><input class="form-input" id="cfg-attentionSize" value="'+(node.config.attentionSize||'')+'"></div>';
-                html += '<div class="form-group"><label class="form-label">Pattern (ex: degradation, anomaly)</label><input class="form-input" id="cfg-attentionPattern" value="'+(node.config.attentionPattern||'')+'"></div>';
-                html += '<div class="form-group"><label class="form-label">Threshold (0.0 - 1.0)</label><input class="form-input" id="cfg-attentionThreshold" value="'+(node.config.attentionThreshold||'')+'"></div>';
                 html += '<div class="form-group"><label class="form-label">Emit (JSON)</label><textarea class="form-input" id="cfg-emit" rows="3">'+(node.config.emit?JSON.stringify(node.config.emit,null,2):'')+'</textarea></div>';
             }
             
@@ -1020,9 +1006,6 @@ function getInlineEditorHtml(webview: vscode.Webview, nonce: string): string {
                 selectedNode.config.window = document.getElementById('cfg-window')?.value;
                 selectedNode.config.where = document.getElementById('cfg-where')?.value;
                 selectedNode.config.sequence = document.getElementById('cfg-sequence')?.value;
-                selectedNode.config.attentionSize = document.getElementById('cfg-attentionSize')?.value;
-                selectedNode.config.attentionPattern = document.getElementById('cfg-attentionPattern')?.value;
-                selectedNode.config.attentionThreshold = document.getElementById('cfg-attentionThreshold')?.value;
                 try {
                     const aggVal = document.getElementById('cfg-aggregate')?.value;
                     selectedNode.config.aggregate = aggVal ? JSON.parse(aggVal) : null;
@@ -1040,9 +1023,6 @@ function getInlineEditorHtml(webview: vscode.Webview, nonce: string): string {
                 selectedNode.config.source = document.getElementById('cfg-source')?.value;
                 selectedNode.config.sequence = document.getElementById('cfg-sequence')?.value;
                 selectedNode.config.within = document.getElementById('cfg-within')?.value;
-                selectedNode.config.attentionSize = document.getElementById('cfg-attentionSize')?.value;
-                selectedNode.config.attentionPattern = document.getElementById('cfg-attentionPattern')?.value;
-                selectedNode.config.attentionThreshold = document.getElementById('cfg-attentionThreshold')?.value;
                 try {
                     const emitVal = document.getElementById('cfg-emit')?.value;
                     selectedNode.config.emit = emitVal ? JSON.parse(emitVal) : null;
@@ -1147,14 +1127,6 @@ function getInlineEditorHtml(webview: vscode.Webview, nonce: string): string {
                         });
                         vpl += '    )\\n';
                     }
-                    if (s.config.attentionSize || s.config.attentionPattern) {
-                        vpl += '    .attention_window(';
-                        const attParts = [];
-                        if (s.config.attentionSize) attParts.push('size: ' + s.config.attentionSize);
-                        if (s.config.attentionPattern) attParts.push('pattern: ' + s.config.attentionPattern);
-                        if (s.config.attentionThreshold) attParts.push('threshold: ' + s.config.attentionThreshold);
-                        vpl += attParts.join(', ') + ')\\n';
-                    }
                     if (s.config.print) {
                         vpl += '    .print(' + s.config.print + ')\\n';
                     }
@@ -1204,14 +1176,6 @@ function getInlineEditorHtml(webview: vscode.Webview, nonce: string): string {
                     }
                     if (p.config.within) {
                         vpl += '    .within(' + p.config.within + ')\\n';
-                    }
-                    if (p.config.attentionSize || p.config.attentionPattern) {
-                        vpl += '    .attention_window(';
-                        const attParts = [];
-                        if (p.config.attentionSize) attParts.push('size: ' + p.config.attentionSize);
-                        if (p.config.attentionPattern) attParts.push('pattern: ' + p.config.attentionPattern);
-                        if (p.config.attentionThreshold) attParts.push('threshold: ' + p.config.attentionThreshold);
-                        vpl += attParts.join(', ') + ')\\n';
                     }
                     if (p.config.emit) {
                         vpl += '    .emit(\\n';
@@ -1308,18 +1272,6 @@ function getInlineEditorHtml(webview: vscode.Webview, nonce: string): string {
                 // Parse sequence patterns (->)
                 const seqMatch = ops.match(/->\\s*\\w+/g);
                 if (seqMatch) config.sequence = seqMatch.join(' ');
-                
-                // Parse attention_window
-                const attMatch = ops.match(/\\.attention_window\\(([^)]+)\\)/);
-                if (attMatch) {
-                    const attArgs = attMatch[1];
-                    const sizeM = attArgs.match(/size:\\s*(\\d+)/);
-                    const patternM = attArgs.match(/pattern:\\s*(\\w+)/);
-                    const threshM = attArgs.match(/threshold:\\s*([\\d.]+)/);
-                    if (sizeM) config.attentionSize = sizeM[1];
-                    if (patternM) config.attentionPattern = patternM[1];
-                    if (threshM) config.attentionThreshold = threshM[1];
-                }
                 
                 // Parse emit
                 const emitMatch = ops.match(/\\.emit\\(([\\s\\S]*?)\\)/);

@@ -5,7 +5,6 @@
 Varpulis is a next-generation streaming analytics engine combining:
 - Apama's intuitive syntax (EPL)
 - Hypertree efficiency for pattern detection
-- Transformer architecture capabilities (attention mechanisms) in a **deterministic** way
 - A unified approach that radically simplifies development compared to Apama
 
 ## Project Name
@@ -34,7 +33,7 @@ Varpulis is a next-generation streaming analytics engine combining:
 | **Deployment** | JVM cluster, complex | Single binary, simple |
 | **Latency** | ~10-100ms typical | < 1ms possible |
 | **Learning curve** | Steep (DataStream API) | Gentle (Python-like syntax) |
-| **Pattern detection** | FlinkCEP library | Native + Attention mechanism |
+| **Pattern detection** | FlinkCEP library | Native SASE+ |
 | **Memory model** | JVM GC pauses | No GC (Rust) |
 
 ### vs Kafka Streams
@@ -64,7 +63,7 @@ Varpulis is a next-generation streaming analytics engine combining:
 | **Parallelization** | Complex and risky `spawn` | Declarative and supervised |
 | **Listeners vs Streams** | Separate and complex | Unified in a single concept |
 | **Debugging** | Difficult | Built-in observability |
-| **Pattern detection** | Hypertrees only | Hypertrees + Attention |
+| **Pattern detection** | Hypertrees only | SASE+ NFA |
 | **License** | Commercial | Open Source |
 
 ### vs Esper
@@ -73,7 +72,7 @@ Varpulis is a next-generation streaming analytics engine combining:
 |---------|-------|----------|
 | **Language** | EPL (SQL-like) | VPL (Python-like) |
 | **Runtime** | JVM | Native (Rust) |
-| **Attention/ML** | Not built-in | Deterministic attention |
+| **Hamlet** | Not built-in | Multi-query trend aggregation |
 | **Observability** | Manual | Automatic metrics/traces |
 
 ### Summary: When to use Varpulis
@@ -84,7 +83,7 @@ Varpulis is a next-generation streaming analytics engine combining:
 | Large-scale batch + stream | Flink or Spark |
 | Kafka-centric architecture | Kafka Streams |
 | Python-like DSL for CEP | **Varpulis** |
-| Pattern detection with attention | **Varpulis** |
+| Native SASE+ pattern detection | **Varpulis** |
 | Minimal operational overhead | **Varpulis** |
 
 ## Main Components
@@ -92,7 +91,7 @@ Varpulis is a next-generation streaming analytics engine combining:
 1. **Compiler** - VPL → Optimized IR compilation
 2. **Runtime Engine** - Processing graph execution
 3. **Pattern Matcher** - Pattern detection via hypertrees
-4. **Attention Engine** - Deterministic correlation between events
+4. **Hamlet Engine** - Multi-query trend aggregation
 5. **State Manager** - State management (in-memory / RocksDB)
 6. **Observability Layer** - Metrics, traces, logs
 
@@ -106,7 +105,7 @@ Varpulis is a next-generation streaming analytics engine combining:
 | Partitioned windows | ✅ Implemented | partition_by() with any window type |
 | Join operations | ✅ Implemented | Multi-stream correlation with .on() |
 | Sequence patterns | ✅ Implemented | followed-by, within timeout |
-| Attention mechanism | ✅ Implemented | Deterministic correlation scoring |
+| Hamlet trend aggregation | ✅ Implemented | Multi-query trend aggregation |
 | User-defined functions | ✅ Implemented | fn keyword (parsed, basic eval) |
 | MQTT connector | ✅ Implemented | Input and output |
 | HTTP connector | 🚧 Partial | Output only (webhooks) |

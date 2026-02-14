@@ -1,10 +1,9 @@
-# Varpulis - Scénario 5: Détection d'Anomalies avec Attention
-# Utilise le mécanisme d'attention unique à Varpulis pour détecter
-# des corrélations progressives dans les données de capteurs.
+# Varpulis - Scenario 5: Anomaly Detection with Statistical Analysis
+# Uses windowed aggregation and SASE+ temporal patterns to detect
+# progressive degradation in sensor data.
 #
-# LIGNES DE CODE: ~50
-# ÉQUIVALENT FLINK: Non disponible nativement - nécessiterait ~500+ lignes
-#                   avec intégration ML custom (TensorFlow/PyTorch)
+# LINES OF CODE: ~50
+# EQUIVALENT FLINK: Would require ~200+ lines with custom ProcessFunction
 
 event SensorReading:
     sensor_id: str
@@ -15,44 +14,45 @@ event SensorReading:
 
 stream Sensors = SensorReading
 
-# Détection d'anomalies avec mécanisme d'attention
-# L'attention calcule automatiquement les corrélations entre événements
-stream ProgressiveDegradation = Sensors
+# Statistical anomaly detection using windowed aggregation
+# Detect when recent values deviate significantly from baseline
+stream SensorStats = Sensors
     .partition_by(sensor_id)
-    .attention_window(
-        duration: 1h,
-        heads: 4,
-        embedding: "rule_based"
+    .window(1h, sliding: 5m)
+    .aggregate(
+        sensor_id: last(sensor_id),
+        location: last(location),
+        avg_value: avg(value),
+        std_value: stddev(value),
+        min_value: min(value),
+        max_value: max(value),
+        count: count()
     )
-    .where(attention_score > 0.75 and attention_matches > 5)
+
+stream ProgressiveDegradation = SensorStats
+    .where(std_value > avg_value * 0.3 and count > 10)
     .emit(
         alert_type: "PROGRESSIVE_DEGRADATION",
         severity: "warning",
         sensor_id: sensor_id,
         location: location,
-        attention_score: attention_score,
-        attention_matches: attention_matches,
-        correlation_strength: attention_context_norm,
+        avg_value: avg_value,
+        std_value: std_value,
         confidence: 0.85,
         recommendation: "Schedule preventive maintenance"
     )
 
-# Détection de pics anormaux via attention
-stream AnomalousPeak = Sensors
-    .partition_by(sensor_id)
-    .attention_window(
-        duration: 30m,
-        heads: 4,
-        embedding: "rule_based"
-    )
-    .where(attention_score > 0.8 and attention_matches > 5)
+# Detect anomalous peaks using SASE+ temporal patterns
+# A normal reading followed by an abnormally high reading
+stream AnomalousPeak = SensorReading as baseline
+    -> SensorReading where sensor_id == baseline.sensor_id and value > baseline.value * 1.5 as spike
+    .within(30m)
     .emit(
         alert_type: "ANOMALOUS_PEAK",
-        severity: if attention_score > 0.9 then "critical" else "warning",
-        sensor_id: sensor_id,
-        location: location,
-        value: value,
-        attention_score: attention_score,
-        correlated_events: attention_matches,
-        reason: "High correlation detected in recent readings"
+        severity: "warning",
+        sensor_id: baseline.sensor_id,
+        location: baseline.location,
+        baseline_value: baseline.value,
+        spike_value: spike.value,
+        reason: "Significant value increase detected in recent readings"
     )

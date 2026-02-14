@@ -792,15 +792,6 @@ fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
             };
             Ok(StreamOp::Pattern(PatternDef { name, matcher }))
         }
-        Rule::attention_window_op => {
-            let args = pair
-                .into_inner()
-                .filter(|p| p.as_rule() == Rule::named_arg_list)
-                .flat_map(|p| p.into_inner())
-                .map(parse_named_arg)
-                .collect::<ParseResult<Vec<_>>>()?;
-            Ok(StreamOp::AttentionWindow(args))
-        }
         Rule::partition_by_op => {
             let expr = parse_expr(pair.into_inner().expect_next("partition expression")?)?;
             Ok(StreamOp::PartitionBy(expr))
@@ -946,6 +937,37 @@ fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
                 }
             }
             Ok(StreamOp::TrendAggregate(items))
+        }
+        Rule::forecast_op => {
+            let mut confidence = None;
+            let mut horizon = None;
+            let mut warmup = None;
+            let mut max_depth = None;
+            for p in pair.into_inner() {
+                if p.as_rule() == Rule::forecast_params {
+                    for param_pair in p.into_inner() {
+                        if param_pair.as_rule() == Rule::forecast_param {
+                            let mut inner = param_pair.into_inner();
+                            let name = inner.expect_next("forecast param name")?.as_str();
+                            let value_pair = inner.expect_next("forecast param value")?;
+                            let expr = parse_expr(value_pair)?;
+                            match name {
+                                "confidence" => confidence = Some(expr),
+                                "horizon" => horizon = Some(expr),
+                                "warmup" => warmup = Some(expr),
+                                "max_depth" => max_depth = Some(expr),
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(StreamOp::Forecast(ForecastSpec {
+                confidence,
+                horizon,
+                warmup,
+                max_depth,
+            }))
         }
         Rule::score_op => {
             let mut model_path = String::new();

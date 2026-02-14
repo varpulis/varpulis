@@ -1,0 +1,344 @@
+# IoT Sensor Pattern Forecasting
+# Varpulis CEP Engine Example
+#
+# This example demonstrates predictive maintenance and anomaly forecasting
+# for industrial IoT environments using:
+# - Sensor degradation sequence detection with forecasting
+# - Multi-sensor correlation patterns
+# - Environmental cascade prediction
+# - Equipment lifecycle forecasting
+
+# =============================================================================
+# Connector Definitions
+# =============================================================================
+
+connector SensorMQTT = mqtt (
+    host: "iot-gateway.local",
+    port: 1883,
+    client_id: "iot-forecaster"
+)
+
+connector AlertKafka = kafka (
+    brokers: ["kafka:9092"],
+    group_id: "iot-forecast-alerts"
+)
+
+# =============================================================================
+# Event Definitions
+# =============================================================================
+
+event VibrationReading:
+    machine_id: str
+    sensor_id: str
+    amplitude_mm: float
+    frequency_hz: float
+    zone: str
+    ts: timestamp
+
+event TemperatureReading:
+    sensor_id: str
+    machine_id: str
+    value_celsius: float
+    zone: str
+    ts: timestamp
+
+event PressureReading:
+    sensor_id: str
+    machine_id: str
+    value_bar: float
+    zone: str
+    ts: timestamp
+
+event PowerConsumption:
+    machine_id: str
+    power_kw: float
+    current_amps: float
+    voltage: float
+    zone: str
+    ts: timestamp
+
+event OilAnalysis:
+    machine_id: str
+    viscosity: float
+    particle_count: int
+    water_content_ppm: float
+    ts: timestamp
+
+event MaintenanceLog:
+    machine_id: str
+    action: str  # "inspection", "repair", "replacement", "calibration"
+    component: str
+    ts: timestamp
+
+event MachineFailure:
+    machine_id: str
+    failure_type: str
+    severity: str
+    downtime_minutes: int
+    ts: timestamp
+
+# =============================================================================
+# Base Streams
+# =============================================================================
+
+stream Vibrations = VibrationReading
+    .from(SensorMQTT, topic: "sensors/vibration/#")
+
+stream Temperatures = TemperatureReading
+    .from(SensorMQTT, topic: "sensors/temperature/#")
+
+stream Pressures = PressureReading
+    .from(SensorMQTT, topic: "sensors/pressure/#")
+
+stream Power = PowerConsumption
+    .from(SensorMQTT, topic: "sensors/power/#")
+
+stream OilSamples = OilAnalysis
+    .from(SensorMQTT, topic: "sensors/oil/#")
+
+stream Maintenance = MaintenanceLog
+    .from(AlertKafka, topic: "maintenance.log")
+
+stream Failures = MachineFailure
+    .from(AlertKafka, topic: "machine.failures")
+
+# =============================================================================
+# Pre-filtered Streams
+# =============================================================================
+
+stream HighVibration = Vibrations
+    .where(amplitude_mm > 4.5)
+
+stream HighTemperature = Temperatures
+    .where(value_celsius > 85)
+
+stream LowPressure = Pressures
+    .where(value_bar < 2.0)
+
+stream PowerAnomaly = Power
+    .where(power_kw > 15.0 or current_amps > 30.0)
+
+stream DegradedOil = OilSamples
+    .where(particle_count > 500 or water_content_ppm > 200)
+
+# =============================================================================
+# PATTERN 1: Bearing Failure Forecasting
+# Vibration anomaly -> Temperature rise -> Failure
+# =============================================================================
+
+stream BearingFailureForecast = VibrationReading as vib
+    -> TemperatureReading where machine_id == vib.machine_id and value_celsius > 75 as temp
+    -> MachineFailure where machine_id == vib.machine_id as failure
+    .within(4h)
+    .forecast(confidence: 0.5, horizon: 2h, warmup: 500)
+    .where(forecast_probability > 0.6)
+    .emit(
+        alert_type: "BEARING_FAILURE_FORECAST",
+        severity: if forecast_probability > 0.85 then "critical" else "warning",
+        machine_id: vib.machine_id,
+        zone: vib.zone,
+        probability: forecast_probability,
+        expected_time: forecast_expected_time,
+        vibration_amplitude: vib.amplitude_mm,
+        vibration_frequency: vib.frequency_hz,
+        current_temperature: temp.value_celsius,
+        recommendation: if forecast_probability > 0.8
+            then "Schedule emergency bearing replacement within 1 hour"
+            else "Monitor closely and prepare replacement parts"
+    )
+
+# =============================================================================
+# PATTERN 2: Hydraulic System Degradation
+# Oil degradation -> Pressure drop -> Power increase -> Failure
+# =============================================================================
+
+stream HydraulicDegradationForecast = OilAnalysis as oil
+    -> PressureReading where machine_id == oil.machine_id and value_bar < 3.0 as pressure
+    -> PowerConsumption where machine_id == oil.machine_id and power_kw > 12.0 as power
+    -> MachineFailure where machine_id == oil.machine_id as failure
+    .within(24h)
+    .forecast(confidence: 0.5, horizon: 12h, warmup: 1000)
+    .where(forecast_probability > 0.55)
+    .emit(
+        alert_type: "HYDRAULIC_DEGRADATION_FORECAST",
+        severity: "high",
+        machine_id: oil.machine_id,
+        probability: forecast_probability,
+        expected_time: forecast_expected_time,
+        oil_viscosity: oil.viscosity,
+        particle_count: oil.particle_count,
+        water_ppm: oil.water_content_ppm,
+        pressure_bar: pressure.value_bar,
+        power_kw: power.power_kw,
+        recommendation: "Schedule hydraulic system flush and oil replacement"
+    )
+
+# =============================================================================
+# PATTERN 3: Compressor Surge Prediction
+# Pressure oscillation -> Temperature spike -> Surge event
+# =============================================================================
+
+stream CompressorSurgeForecast = PressureReading as p1
+    -> PressureReading where machine_id == p1.machine_id and value_bar > p1.value_bar * 1.3 as p2
+    -> TemperatureReading where machine_id == p1.machine_id and value_celsius > 90 as temp
+    .within(30m)
+    .forecast(confidence: 0.6, horizon: 15m, warmup: 500)
+    .where(forecast_probability > 0.7)
+    .emit(
+        alert_type: "COMPRESSOR_SURGE_FORECAST",
+        severity: "critical",
+        machine_id: p1.machine_id,
+        zone: p1.zone,
+        probability: forecast_probability,
+        expected_time: forecast_expected_time,
+        initial_pressure: p1.value_bar,
+        peak_pressure: p2.value_bar,
+        pressure_ratio: p2.value_bar / p1.value_bar,
+        temperature: temp.value_celsius,
+        recommendation: "Reduce load immediately and check anti-surge valve"
+    )
+
+# =============================================================================
+# PATTERN 4: Motor Insulation Breakdown
+# Power anomaly -> Temperature rise -> Vibration increase -> Failure
+# =============================================================================
+
+stream MotorInsulationForecast = PowerConsumption as power
+    -> TemperatureReading where machine_id == power.machine_id and value_celsius > 80 as temp
+    -> VibrationReading where machine_id == power.machine_id and amplitude_mm > 5.0 as vib
+    -> MachineFailure where machine_id == power.machine_id as failure
+    .within(6h)
+    .forecast(confidence: 0.5, horizon: 3h, warmup: 500)
+    .where(forecast_probability > 0.6)
+    .emit(
+        alert_type: "MOTOR_INSULATION_FORECAST",
+        severity: if forecast_probability > 0.8 then "critical" else "high",
+        machine_id: power.machine_id,
+        zone: power.zone,
+        probability: forecast_probability,
+        expected_time: forecast_expected_time,
+        power_kw: power.power_kw,
+        current_amps: power.current_amps,
+        temperature: temp.value_celsius,
+        vibration: vib.amplitude_mm,
+        recommendation: "Test insulation resistance and schedule motor replacement if below threshold"
+    )
+
+# =============================================================================
+# PATTERN 5: Cascade Failure Prediction
+# Failure in one machine -> Overload on neighbor -> Second failure
+# =============================================================================
+
+stream CascadeFailureForecast = MachineFailure as first_failure
+    -> PowerConsumption where zone == first_failure.zone and machine_id != first_failure.machine_id and power_kw > 18.0 as overload
+    -> MachineFailure where machine_id == overload.machine_id as second_failure
+    .within(2h)
+    .forecast(confidence: 0.5, horizon: 1h, warmup: 500)
+    .where(forecast_probability > 0.6)
+    .emit(
+        alert_type: "CASCADE_FAILURE_FORECAST",
+        severity: "critical",
+        zone: first_failure.zone,
+        failed_machine: first_failure.machine_id,
+        at_risk_machine: overload.machine_id,
+        probability: forecast_probability,
+        expected_time: forecast_expected_time,
+        overload_power_kw: overload.power_kw,
+        recommendation: "Redistribute load from at-risk machine and bring standby online"
+    )
+
+# =============================================================================
+# PATTERN 6: Coolant System Failure
+# Temperature rise -> Pressure drop -> More temperature rise
+# =============================================================================
+
+stream CoolantFailureForecast = TemperatureReading as temp1
+    -> PressureReading where machine_id == temp1.machine_id and value_bar < 1.5 as pressure_drop
+    -> TemperatureReading where machine_id == temp1.machine_id and value_celsius > temp1.value_celsius + 15 as temp2
+    .within(1h)
+    .forecast(confidence: 0.5, horizon: 30m, warmup: 500)
+    .where(forecast_probability > 0.65)
+    .emit(
+        alert_type: "COOLANT_FAILURE_FORECAST",
+        severity: "high",
+        machine_id: temp1.machine_id,
+        zone: temp1.zone,
+        probability: forecast_probability,
+        expected_time: forecast_expected_time,
+        initial_temp: temp1.value_celsius,
+        current_temp: temp2.value_celsius,
+        temp_delta: temp2.value_celsius - temp1.value_celsius,
+        pressure_bar: pressure_drop.value_bar,
+        recommendation: "Check coolant levels and pump operation"
+    )
+
+# =============================================================================
+# PATTERN 7: Maintenance Effectiveness Tracking
+# Maintenance action -> Continued anomaly -> Failure (maintenance did not help)
+# =============================================================================
+
+stream IneffectiveMaintenanceForecast = MaintenanceLog as maint
+    -> VibrationReading where machine_id == maint.machine_id and amplitude_mm > 4.0 as continued_vib
+    -> MachineFailure where machine_id == maint.machine_id as failure
+    .within(48h)
+    .forecast(confidence: 0.5, horizon: 24h, warmup: 1000)
+    .where(forecast_probability > 0.55)
+    .emit(
+        alert_type: "INEFFECTIVE_MAINTENANCE_FORECAST",
+        severity: "high",
+        machine_id: maint.machine_id,
+        probability: forecast_probability,
+        expected_time: forecast_expected_time,
+        maintenance_action: maint.action,
+        maintenance_component: maint.component,
+        post_maintenance_vibration: continued_vib.amplitude_mm,
+        recommendation: "Previous maintenance may be insufficient - escalate to senior technician"
+    )
+
+# =============================================================================
+# ZONE-LEVEL AGGREGATIONS
+# =============================================================================
+
+# Active forecast count by zone
+stream ZoneForecastSummary = merge(
+    BearingFailureForecast,
+    HydraulicDegradationForecast,
+    CompressorSurgeForecast,
+    MotorInsulationForecast,
+    CoolantFailureForecast
+)
+.partition_by(zone)
+.window(15m)
+.aggregate(
+    zone: last(zone),
+    forecast_count: count(),
+    avg_probability: avg(probability),
+    max_probability: max(probability)
+)
+.where(forecast_count > 2)
+.emit(
+    alert_type: "ZONE_FORECAST_CLUSTER",
+    severity: "critical",
+    zone: zone,
+    active_forecasts: forecast_count,
+    avg_probability: avg_probability,
+    max_probability: max_probability,
+    recommendation: "Multiple failure forecasts in same zone - check shared infrastructure"
+)
+
+# =============================================================================
+# AGGREGATE ALL FORECAST ALERTS
+# =============================================================================
+
+stream AllIoTForecasts = merge(
+    BearingFailureForecast,
+    HydraulicDegradationForecast,
+    CompressorSurgeForecast,
+    MotorInsulationForecast,
+    CascadeFailureForecast,
+    CoolantFailureForecast,
+    IneffectiveMaintenanceForecast,
+    ZoneForecastSummary
+)
+.tap(counter: "iot_forecasts_total", labels: [alert_type, severity])
+.emit()

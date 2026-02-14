@@ -1,0 +1,238 @@
+# Fraud Detection with Pattern Forecasting
+# Varpulis CEP Engine Example
+#
+# This example demonstrates real-time fraud forecasting using:
+# - SASE+ temporal sequence patterns for fraud chain detection
+# - PST-based forecasting to predict fraud before completion
+# - Tiered alerting based on forecast confidence
+# - Multi-step fraud chains with proactive intervention
+
+# =============================================================================
+# Connector Definitions
+# =============================================================================
+
+connector SecurityKafka = kafka (
+    brokers: ["kafka:9092"],
+    group_id: "fraud-forecaster"
+)
+
+connector AlertWebhook = http (
+    base_url: "https://fraud-ops.internal/api/v1"
+)
+
+# =============================================================================
+# Event Definitions
+# =============================================================================
+
+event Login:
+    user_id: str
+    ip_address: str
+    country: str
+    device_fingerprint: str
+    ts: timestamp
+
+event PasswordChange:
+    user_id: str
+    old_method: str  # "password", "2fa", "recovery_email"
+    ts: timestamp
+
+event AccountInfoUpdate:
+    user_id: str
+    field_changed: str  # "email", "phone", "address"
+    ts: timestamp
+
+event Transaction:
+    user_id: str
+    amount: float
+    currency: str
+    destination: str
+    category: str
+    ts: timestamp
+
+event CardAdded:
+    user_id: str
+    card_type: str
+    issuer_country: str
+    ts: timestamp
+
+event LoginFailed:
+    user_id: str
+    ip_address: str
+    reason: str
+    ts: timestamp
+
+# =============================================================================
+# Base Streams
+# =============================================================================
+
+stream Logins = Login
+    .from(SecurityKafka, topic: "auth.logins")
+
+stream PasswordChanges = PasswordChange
+    .from(SecurityKafka, topic: "auth.password-changes")
+
+stream AccountUpdates = AccountInfoUpdate
+    .from(SecurityKafka, topic: "auth.account-updates")
+
+stream Transactions = Transaction
+    .from(SecurityKafka, topic: "finance.transactions")
+
+stream CardEvents = CardAdded
+    .from(SecurityKafka, topic: "finance.cards")
+
+stream FailedLogins = LoginFailed
+    .from(SecurityKafka, topic: "auth.login-failures")
+
+# =============================================================================
+# PATTERN 1: Account Takeover Forecasting
+# Login from new location -> Password change -> Large transaction
+# =============================================================================
+
+stream AccountTakeoverForecast = Login as login
+    -> PasswordChange where user_id == login.user_id as pwd
+    -> Transaction where user_id == login.user_id and amount > 5000 as tx
+    .within(30m)
+    .forecast(confidence: 0.5, horizon: 15m, warmup: 500)
+    .where(forecast_probability > 0.7)
+    .emit(
+        alert_type: "ACCOUNT_TAKEOVER_FORECAST",
+        severity: if forecast_probability > 0.9 then "critical" else "high",
+        user_id: login.user_id,
+        probability: forecast_probability,
+        expected_time: forecast_expected_time,
+        login_ip: login.ip_address,
+        login_country: login.country,
+        device: login.device_fingerprint,
+        recommendation: if forecast_probability > 0.85
+            then "Block account immediately - high probability of takeover"
+            else "Flag for manual review - possible takeover in progress"
+    )
+
+# =============================================================================
+# PATTERN 2: Credential Stuffing -> Fraud Chain
+# Multiple failed logins -> Successful login -> Rapid transactions
+# =============================================================================
+
+stream CredentialStuffingForecast = LoginFailed as fail1
+    -> LoginFailed where ip_address == fail1.ip_address as fail2
+    -> Login where ip_address == fail1.ip_address as success
+    -> Transaction where user_id == success.user_id and amount > 1000 as tx
+    .within(1h)
+    .forecast(confidence: 0.6, horizon: 30m, warmup: 1000)
+    .where(forecast_probability > 0.65)
+    .emit(
+        alert_type: "CREDENTIAL_STUFFING_FORECAST",
+        severity: "high",
+        ip_address: fail1.ip_address,
+        user_id: success.user_id,
+        probability: forecast_probability,
+        expected_time: forecast_expected_time,
+        failed_attempts: 2,
+        recommendation: "Rate-limit IP and require additional authentication"
+    )
+
+# =============================================================================
+# PATTERN 3: Card Testing -> Large Purchase
+# Small test transaction -> Medium transaction -> Large transaction
+# =============================================================================
+
+stream CardTestingForecast = Transaction as test_tx
+    -> Transaction where user_id == test_tx.user_id and amount > test_tx.amount * 5 and amount < 500 as medium_tx
+    -> Transaction where user_id == test_tx.user_id and amount > 2000 as large_tx
+    .within(2h)
+    .forecast(confidence: 0.5, horizon: 1h, warmup: 500)
+    .where(forecast_probability > 0.6)
+    .emit(
+        alert_type: "CARD_TESTING_FORECAST",
+        severity: "high",
+        user_id: test_tx.user_id,
+        probability: forecast_probability,
+        expected_time: forecast_expected_time,
+        test_amount: test_tx.amount,
+        medium_amount: medium_tx.amount,
+        escalation_ratio: medium_tx.amount / test_tx.amount,
+        recommendation: "Freeze card and verify with cardholder"
+    )
+
+# =============================================================================
+# PATTERN 4: Money Mule Recruitment Chain
+# New card -> Contact info change -> Multiple outbound transfers
+# =============================================================================
+
+stream MoneyMuleForecast = CardAdded as card
+    -> AccountInfoUpdate where user_id == card.user_id and field_changed == "email" as info_change
+    -> Transaction where user_id == card.user_id and category == "wire_transfer" and amount > 3000 as transfer
+    .within(24h)
+    .forecast(confidence: 0.5, horizon: 12h, warmup: 500)
+    .where(forecast_probability > 0.6)
+    .emit(
+        alert_type: "MONEY_MULE_FORECAST",
+        severity: "critical",
+        user_id: card.user_id,
+        probability: forecast_probability,
+        expected_time: forecast_expected_time,
+        card_type: card.card_type,
+        card_country: card.issuer_country,
+        field_changed: info_change.field_changed,
+        recommendation: "Escalate to AML team - possible money laundering preparation"
+    )
+
+# =============================================================================
+# PATTERN 5: SIM Swap Fraud Forecasting
+# Password reset via recovery -> Phone number change -> High-value transfer
+# =============================================================================
+
+stream SimSwapForecast = PasswordChange as pwd
+    -> AccountInfoUpdate where user_id == pwd.user_id and field_changed == "phone" as phone_change
+    -> Transaction where user_id == pwd.user_id and amount > 10000 as tx
+    .within(4h)
+    .forecast(confidence: 0.6, horizon: 2h, warmup: 500)
+    .where(forecast_probability > 0.7)
+    .emit(
+        alert_type: "SIM_SWAP_FORECAST",
+        severity: "critical",
+        user_id: pwd.user_id,
+        probability: forecast_probability,
+        expected_time: forecast_expected_time,
+        reset_method: pwd.old_method,
+        recommendation: if forecast_probability > 0.85
+            then "Lock account and require in-person verification"
+            else "Send push notification to registered device for confirmation"
+    )
+
+# =============================================================================
+# PATTERN 6: Cross-Border Laundering Sequence
+# Domestic deposit -> Foreign card add -> International wire
+# =============================================================================
+
+stream CrossBorderForecast = Transaction as deposit
+    -> CardAdded where user_id == deposit.user_id and issuer_country != "US" as foreign_card
+    -> Transaction where user_id == deposit.user_id and category == "wire_transfer" and destination != "domestic" as wire
+    .within(48h)
+    .forecast(confidence: 0.5, horizon: 24h, warmup: 1000)
+    .where(forecast_probability > 0.6)
+    .emit(
+        alert_type: "CROSS_BORDER_LAUNDERING_FORECAST",
+        severity: "high",
+        user_id: deposit.user_id,
+        probability: forecast_probability,
+        expected_time: forecast_expected_time,
+        deposit_amount: deposit.amount,
+        card_country: foreign_card.issuer_country,
+        recommendation: "Flag for SAR filing consideration"
+    )
+
+# =============================================================================
+# AGGREGATE FORECAST ALERTS
+# =============================================================================
+
+stream AllFraudForecasts = merge(
+    AccountTakeoverForecast,
+    CredentialStuffingForecast,
+    CardTestingForecast,
+    MoneyMuleForecast,
+    SimSwapForecast,
+    CrossBorderForecast
+)
+.tap(counter: "fraud_forecasts_total", labels: [alert_type, severity])
+.emit()

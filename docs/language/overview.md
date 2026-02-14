@@ -24,10 +24,9 @@ stream HighValueTrades = Trades
         count: count()
     )
 
-# Pattern detection with attention
+# SASE+ pattern detection
 stream FraudAlert = Trades
-    .attention_window(duration: 30s, heads: 4, embedding: "rule_based")
-    .where(attention_score > 0.85 and attention_matches > 3)
+    .where(amount > 10000)
     .emit(
         alert_type: "fraud",
         severity: "high"

@@ -2032,6 +2032,39 @@ impl SaseEngine {
             .any(|n| n.event_type == event_type)
     }
 
+    /// Expose the compiled NFA for PMC construction (pattern forecasting).
+    pub fn nfa(&self) -> &Nfa {
+        &self.nfa
+    }
+
+    /// Get lightweight snapshots of active partial match runs.
+    /// Used by PST forecasting to assess current pattern progress.
+    pub fn active_run_snapshots(&self) -> Vec<crate::pst::RunSnapshot> {
+        let mut snapshots = Vec::new();
+        for run in &self.runs {
+            snapshots.push(crate::pst::RunSnapshot {
+                current_state: run.current_state,
+                started_at_ns: run
+                    .event_time_started_at
+                    .map(|t| t.timestamp_nanos_opt().unwrap_or(0))
+                    .unwrap_or(0),
+            });
+        }
+        // Also include partitioned runs
+        for runs in self.partitioned_runs.values() {
+            for run in runs {
+                snapshots.push(crate::pst::RunSnapshot {
+                    current_state: run.current_state,
+                    started_at_ns: run
+                        .event_time_started_at
+                        .map(|t| t.timestamp_nanos_opt().unwrap_or(0))
+                        .unwrap_or(0),
+                });
+            }
+        }
+        snapshots
+    }
+
     /// Enable SASEXT partition optimization
     pub fn with_partition_by(mut self, field: String) -> Self {
         self.partition_by = Some(field);

@@ -1,7 +1,7 @@
 //! Direct unit-level tests for evaluator functions in
 //! `crates/varpulis-runtime/src/engine/evaluator.rs`.
 //!
-//! Covers: eval_binary_op, eval_pattern_expr, map_to_event, with_emit_collector,
+//! Covers: eval_binary_op, eval_pattern_expr, with_emit_collector,
 //! eval_filter_expr, eval_expr_with_functions, eval_stmts, eval_stmt,
 //! call_user_function, eval_expr_ctx.
 
@@ -352,7 +352,7 @@ mod pattern_expr_tests {
         let events: Vec<Event> = vec![];
         let ctx = empty_seq_ctx();
         let functions = empty_functions();
-        eval_pattern_expr(expr, &events, &ctx, &functions, pattern_vars, None)
+        eval_pattern_expr(expr, &events, &ctx, &functions, pattern_vars)
     }
 
     // ---- Ident lookup ----
@@ -967,71 +967,7 @@ mod pattern_expr_tests {
 }
 
 // =============================================================================
-// 3. map_to_event
-// =============================================================================
-
-mod map_to_event_tests {
-    use super::*;
-
-    #[test]
-    fn map_with_event_type() {
-        let map = make_map(&[
-            ("event_type", Value::Str("StockTrade".into())),
-            ("price", Value::Float(150.0)),
-            ("volume", Value::Int(1000)),
-        ]);
-        let event = map_to_event(&map);
-        assert_eq!(&*event.event_type, "StockTrade");
-        assert_eq!(event.data.get("price"), Some(&Value::Float(150.0)));
-        assert_eq!(event.data.get("volume"), Some(&Value::Int(1000)));
-        // event_type should not be in data
-        assert_eq!(event.data.get("event_type"), None);
-    }
-
-    #[test]
-    fn map_without_event_type() {
-        let map = make_map(&[("sensor", Value::Str("S1".into()))]);
-        let event = map_to_event(&map);
-        assert_eq!(&*event.event_type, "unknown");
-        assert_eq!(event.data.get("sensor"), Some(&Value::Str("S1".into())));
-    }
-
-    #[test]
-    fn map_with_various_data_fields() {
-        let map = make_map(&[
-            ("event_type", Value::Str("Reading".into())),
-            ("temp", Value::Float(23.5)),
-            ("active", Value::Bool(true)),
-            ("count", Value::Int(42)),
-            ("label", Value::Str("zone-A".into())),
-        ]);
-        let event = map_to_event(&map);
-        assert_eq!(&*event.event_type, "Reading");
-        assert_eq!(event.data.get("temp"), Some(&Value::Float(23.5)));
-        assert_eq!(event.data.get("active"), Some(&Value::Bool(true)));
-        assert_eq!(event.data.get("count"), Some(&Value::Int(42)));
-        assert_eq!(event.data.get("label"), Some(&Value::Str("zone-A".into())));
-    }
-
-    #[test]
-    fn map_empty() {
-        let map = make_map(&[]);
-        let event = map_to_event(&map);
-        assert_eq!(&*event.event_type, "unknown");
-        assert!(event.data.is_empty());
-    }
-
-    #[test]
-    fn map_event_type_non_string_falls_to_unknown() {
-        let map = make_map(&[("event_type", Value::Int(42))]);
-        let event = map_to_event(&map);
-        // as_str on Int returns None => "unknown"
-        assert_eq!(&*event.event_type, "unknown");
-    }
-}
-
-// =============================================================================
-// 4. with_emit_collector
+// 3. with_emit_collector
 // =============================================================================
 
 mod emit_collector_tests {

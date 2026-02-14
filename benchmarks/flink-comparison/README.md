@@ -28,14 +28,6 @@ Comparer objectivement Apache Flink et Varpulis sur des cas d'usage CEP (Complex
 | Séquence longue (10 events) | 10K | 377ms | 26K evt/s |
 | Pattern complexe (négation) | 10K | 45ms | **220K evt/s** |
 
-### Attention Engine
-
-| Configuration | Latence | Throughput |
-|---------------|---------|------------|
-| History 500 events | <2ms | **>500 evt/s** |
-| History 1K events | 5ms | **200 evt/s** |
-| History 2K events | 13ms | **77 evt/s** |
-
 ### Temps de Démarrage
 
 | Métrique | Varpulis | Apache Flink |
@@ -81,13 +73,13 @@ Corréler les prix de deux marchés pour détecter des opportunités d'arbitrage
 | Ratio | 1x | 2.0x |
 
 ### Scénario 5: Détection d'Anomalies
-Patterns anormaux dans des séries temporelles avec attention mechanism.
+Patterns anormaux dans des séries temporelles avec analyse statistique et SASE+.
 
 | Métrique | Varpulis | Flink |
 |----------|----------|-------|
 | **Lignes de code** | **77** | N/A* |
 
-*Flink n'a pas d'équivalent natif au mécanisme d'attention. Nécessiterait une implémentation custom complexe (~500+ lignes).
+*Flink would require a custom ProcessFunction implementation (~200+ lines).
 
 ---
 
@@ -107,7 +99,7 @@ Patterns anormaux dans des séries temporelles avec attention mechanism.
 |---------|----------|-------|---------|
 | Concision du code | 3x plus concis | Verbeux | **Varpulis** |
 | Patterns temporels | Natif (SASE+) | CEP Library | **Varpulis** |
-| Détection anomalies | Attention natif | Manuel | **Varpulis** |
+| Détection anomalies | SASE+ natif | Manuel | **Varpulis** |
 | Temps démarrage | <100ms | 5-30s | **Varpulis** |
 | Scalabilité horizontale | Single node | Cluster | **Flink** |
 | Exactly-once | At-least-once | Exactly-once | **Flink** |
@@ -139,7 +131,7 @@ Patterns anormaux dans des séries temporelles avec attention mechanism.
 - Voir `scenario4-join/`
 
 ### Scénario 5: Détection d'Anomalies
-**Use case**: Identifier des patterns anormaux dans des séries temporelles avec le mécanisme d'attention.
+**Use case**: Identifier des patterns anormaux dans des séries temporelles avec analyse statistique et patterns SASE+.
 
 - Voir `scenario5-anomaly/`
 
@@ -150,7 +142,7 @@ Patterns anormaux dans des séries temporelles avec attention mechanism.
 ### Varpulis - Points Forts
 1. **DSL déclaratif concis** - 3-5x moins de code
 2. **Patterns temporels natifs** - Opérateur `->` intuitif
-3. **Attention mechanism** - Détection d'anomalies unique
+3. **SASE+ patterns** - Détection d'anomalies native
 4. **Démarrage instantané** - Pas de cluster à configurer
 5. **Faible empreinte mémoire** - Single process optimisé
 6. **Performance** - 200K-320K evt/s pour patterns simples
@@ -169,7 +161,7 @@ Patterns anormaux dans des séries temporelles avec attention mechanism.
 - Prototypage rapide de règles CEP
 - Applications mono-nœud haute performance
 - Patterns temporels complexes (SASE+)
-- Détection d'anomalies avec corrélation
+- Détection d'anomalies avec SASE+ patterns
 - Environnements edge/embarqués
 - Équipes non-Java
 
