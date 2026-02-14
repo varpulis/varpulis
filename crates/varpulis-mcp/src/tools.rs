@@ -151,7 +151,7 @@ impl VarpulisMcpServer {
 // ─── Implementation functions ────────────────────────────────────────
 
 /// Validate VPL source locally. Falls back to coordinator for connector validation.
-async fn validate_vpl_impl(
+pub async fn validate_vpl_impl(
     source: &str,
     client: &crate::client::CoordinatorClient,
 ) -> CallToolResult {
@@ -206,7 +206,7 @@ async fn validate_vpl_impl(
     }
 }
 
-async fn deploy_pipeline_impl(
+pub async fn deploy_pipeline_impl(
     client: &crate::client::CoordinatorClient,
     params: DeployPipelineParams,
 ) -> CallToolResult {
@@ -237,7 +237,7 @@ async fn deploy_pipeline_impl(
     }
 }
 
-async fn list_pipelines_impl(
+pub async fn list_pipelines_impl(
     client: &crate::client::CoordinatorClient,
     params: ListPipelinesParams,
 ) -> CallToolResult {
@@ -272,7 +272,7 @@ async fn list_pipelines_impl(
     success_text(serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string()))
 }
 
-async fn query_metrics_impl(
+pub async fn query_metrics_impl(
     client: &crate::client::CoordinatorClient,
     params: QueryMetricsParams,
 ) -> CallToolResult {
@@ -316,7 +316,7 @@ async fn query_metrics_impl(
     success_text(serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string()))
 }
 
-async fn explain_alert_impl(
+pub async fn explain_alert_impl(
     client: &crate::client::CoordinatorClient,
     params: ExplainAlertParams,
 ) -> CallToolResult {
@@ -488,7 +488,7 @@ async fn explain_alert_impl(
     success_text(report)
 }
 
-async fn search_events_impl(
+pub async fn search_events_impl(
     client: &crate::client::CoordinatorClient,
     params: SearchEventsParams,
 ) -> CallToolResult {
@@ -505,7 +505,7 @@ async fn search_events_impl(
     }
 }
 
-async fn list_models_impl(client: &crate::client::CoordinatorClient) -> CallToolResult {
+pub async fn list_models_impl(client: &crate::client::CoordinatorClient) -> CallToolResult {
     match client.list_models().await {
         Ok(resp) => {
             success_text(serde_json::to_string_pretty(&resp).unwrap_or_else(|_| resp.to_string()))
@@ -516,15 +516,15 @@ async fn list_models_impl(client: &crate::client::CoordinatorClient) -> CallTool
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
-fn success_text(text: String) -> CallToolResult {
+pub fn success_text(text: String) -> CallToolResult {
     CallToolResult::success(vec![Content::text(text)])
 }
 
-fn error_text(text: String) -> CallToolResult {
+pub fn error_text(text: String) -> CallToolResult {
     CallToolResult::error(vec![Content::text(text)])
 }
 
-fn position_to_line_col(source: &str, position: usize) -> (usize, usize) {
+pub fn position_to_line_col(source: &str, position: usize) -> (usize, usize) {
     let mut line = 1;
     let mut col = 1;
     for (i, ch) in source.chars().enumerate() {
