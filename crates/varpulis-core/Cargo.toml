@@ -11,3 +11,6 @@ thiserror = { workspace = true }
 indexmap = { workspace = true }
 smallvec = { workspace = true }
 rustc-hash = { workspace = true }
+
+[dev-dependencies]
+varpulis-parser = { path = "../varpulis-parser" }

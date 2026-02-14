@@ -7,14 +7,10 @@
 //! - Go-to-definition
 //! - Semantic tokens
 
-mod completion;
-mod diagnostics;
-mod hover;
-mod semantic;
-mod server;
-
 use tower_lsp::{LspService, Server};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+use varpulis_lsp::server;
 
 #[tokio::main]
 async fn main() {

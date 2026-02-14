@@ -81,9 +81,25 @@ export function clearApiKey(): void {
   sessionStorage.removeItem('varpulis_api_key')
 }
 
-// Get current API key
+// Get current API key — checks sessionStorage first, then falls back to localStorage if "remember" was enabled
 export function getApiKey(): string | null {
-  return sessionStorage.getItem('varpulis_api_key')
+  const sessionKey = sessionStorage.getItem('varpulis_api_key')
+  if (sessionKey) return sessionKey
+  // Fall back: restore from localStorage if rememberApiKey was enabled
+  try {
+    const stored = localStorage.getItem('varpulis_settings')
+    if (stored) {
+      const settings = JSON.parse(stored)
+      if (settings.rememberApiKey && settings.apiKey) {
+        // Re-hydrate into sessionStorage for the current session
+        sessionStorage.setItem('varpulis_api_key', settings.apiKey)
+        return settings.apiKey
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return null
 }
 
 export default api
