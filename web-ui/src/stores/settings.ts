@@ -8,6 +8,7 @@ interface Settings {
   showNotifications: boolean
   soundEnabled: boolean
   apiKey: string
+  rememberApiKey: boolean
   coordinatorUrl: string
   workerPollInterval: number // seconds
   maxEventLogSize: number
@@ -22,6 +23,7 @@ const DEFAULT_SETTINGS: Settings = {
   showNotifications: true,
   soundEnabled: false,
   apiKey: '',
+  rememberApiKey: false,
   coordinatorUrl: '',
   workerPollInterval: 5,
   maxEventLogSize: 1000,
@@ -45,9 +47,12 @@ function loadSettings(): Settings {
 
 function saveSettings(settings: Settings): void {
   try {
-    // Exclude apiKey from localStorage — it's stored in sessionStorage for security
     const { apiKey: _excluded, ...persistable } = settings
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(persistable))
+    // Only persist apiKey to localStorage when rememberApiKey is enabled
+    const toStore = settings.rememberApiKey && settings.apiKey
+      ? { ...persistable, apiKey: settings.apiKey }
+      : persistable
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore))
   } catch {
     console.warn('Failed to save settings to localStorage')
   }
@@ -64,6 +69,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const showNotifications = ref(settings.value.showNotifications)
   const soundEnabled = ref(settings.value.soundEnabled)
   const apiKey = ref(settings.value.apiKey)
+  const rememberApiKey = ref(settings.value.rememberApiKey)
   const coordinatorUrl = ref(settings.value.coordinatorUrl)
   const workerPollInterval = ref(settings.value.workerPollInterval)
   const maxEventLogSize = ref(settings.value.maxEventLogSize)
@@ -79,6 +85,7 @@ export const useSettingsStore = defineStore('settings', () => {
       showNotifications,
       soundEnabled,
       apiKey,
+      rememberApiKey,
       coordinatorUrl,
       workerPollInterval,
       maxEventLogSize,
@@ -93,6 +100,7 @@ export const useSettingsStore = defineStore('settings', () => {
         showNotifications: showNotifications.value,
         soundEnabled: soundEnabled.value,
         apiKey: apiKey.value,
+        rememberApiKey: rememberApiKey.value,
         coordinatorUrl: coordinatorUrl.value,
         workerPollInterval: workerPollInterval.value,
         maxEventLogSize: maxEventLogSize.value,
@@ -126,6 +134,9 @@ export const useSettingsStore = defineStore('settings', () => {
       case 'apiKey':
         apiKey.value = value as string
         break
+      case 'rememberApiKey':
+        rememberApiKey.value = value as boolean
+        break
       case 'coordinatorUrl':
         coordinatorUrl.value = value as string
         break
@@ -151,6 +162,7 @@ export const useSettingsStore = defineStore('settings', () => {
     showNotifications.value = DEFAULT_SETTINGS.showNotifications
     soundEnabled.value = DEFAULT_SETTINGS.soundEnabled
     apiKey.value = DEFAULT_SETTINGS.apiKey
+    rememberApiKey.value = DEFAULT_SETTINGS.rememberApiKey
     coordinatorUrl.value = DEFAULT_SETTINGS.coordinatorUrl
     workerPollInterval.value = DEFAULT_SETTINGS.workerPollInterval
     maxEventLogSize.value = DEFAULT_SETTINGS.maxEventLogSize
@@ -193,6 +205,7 @@ export const useSettingsStore = defineStore('settings', () => {
     showNotifications,
     soundEnabled,
     apiKey,
+    rememberApiKey,
     coordinatorUrl,
     workerPollInterval,
     maxEventLogSize,

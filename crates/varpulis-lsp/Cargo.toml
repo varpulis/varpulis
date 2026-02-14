@@ -6,6 +6,10 @@ authors.workspace = true
 license.workspace = true
 description = "Language Server Protocol implementation for VPL"
 
+[lib]
+name = "varpulis_lsp"
+path = "src/lib.rs"
+
 [[bin]]
 name = "varpulis-lsp"
 path = "src/main.rs"

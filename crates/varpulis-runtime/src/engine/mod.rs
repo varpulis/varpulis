@@ -3,8 +3,8 @@
 //! This module provides the core engine that processes events and executes
 //! stream definitions written in VPL.
 
-mod compiler;
-mod evaluator;
+pub mod compiler;
+pub mod evaluator;
 mod pattern_analyzer;
 mod pipeline;
 mod router;

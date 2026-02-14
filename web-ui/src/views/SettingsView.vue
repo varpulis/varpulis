@@ -380,6 +380,15 @@ onMounted(() => {
               @click:append-inner="showApiKey = !showApiKey"
             />
 
+            <v-checkbox
+              v-model="settingsStore.rememberApiKey"
+              label="Remember API key across sessions"
+              hint="When enabled, the API key is stored in localStorage. Uncheck for shared machines."
+              persistent-hint
+              density="compact"
+              class="mt-2"
+            />
+
             <div class="d-flex gap-2 mt-4">
               <v-btn
                 variant="outlined"

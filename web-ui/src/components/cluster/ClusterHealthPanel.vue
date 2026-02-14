@@ -91,8 +91,8 @@ function nodeRoleIcon(role: string): string {
         <v-card
           variant="tonal"
           :color="nodeRoleColor(node.role)"
-          :class="{ 'border-opacity-100': node.is_current }"
-          :style="node.is_current ? 'border: 2px solid currentColor' : ''"
+          :class="{ 'border-opacity-100': node.is_current || node.role === 'leader' }"
+          :style="node.role === 'leader' ? 'border: 2px solid #FFD700' : node.is_current ? 'border: 2px solid currentColor' : ''"
         >
           <v-card-text class="text-center">
             <v-icon size="28" class="mb-1">{{ nodeRoleIcon(node.role) }}</v-icon>
