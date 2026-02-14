@@ -38,7 +38,7 @@ Comparing Apama EPL (Event Processing Language) with Varpulis VPL for Complex Ev
 | Feature | Description |
 |---------|-------------|
 | **SASE+ Engine** | Native NFA-based pattern matching with Kleene+ |
-| **Attention Mechanism** | ML-based degradation detection |
+| **Hamlet Engine** | Multi-query trend aggregation |
 | **VPL Syntax** | Declarative, YAML-inspired syntax |
 | **Rust Performance** | Native compiled, no JVM |
 

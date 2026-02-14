@@ -34,7 +34,7 @@ pub(crate) struct SkipFlags {
     pub window: bool,
     /// Skip Print/Log ops
     pub print_log: bool,
-    /// Skip Sequence/AttentionWindow/Pattern ops
+    /// Skip Sequence/Pattern ops
     pub sequence_pattern: bool,
     /// Skip WhereClosure ops (used by post-window processing)
     pub where_closure: bool,
@@ -101,7 +101,7 @@ pub(crate) async fn execute_pipeline(
             &mut stream.sase_engine,
             &mut stream.hamlet_aggregator,
             &stream.shared_hamlet_ref,
-            stream.attention_window.as_ref(),
+            &mut stream.pst_forecaster,
             &mut current_events,
             &mut emitted_events,
             functions,
@@ -145,11 +145,11 @@ fn should_skip_op(op: &RuntimeOp, flags: SkipFlags) -> bool {
         // Print/Log skipping
         RuntimeOp::Print(_) | RuntimeOp::Log(_) => flags.print_log,
 
-        // Sequence/Pattern/TrendAggregate skipping
+        // Sequence/Pattern/TrendAggregate/Forecast skipping
         RuntimeOp::Sequence
-        | RuntimeOp::AttentionWindow(_)
         | RuntimeOp::Pattern(_)
-        | RuntimeOp::TrendAggregate(_) => flags.sequence_pattern,
+        | RuntimeOp::TrendAggregate(_)
+        | RuntimeOp::Forecast(_) => flags.sequence_pattern,
 
         // WhereClosure skipping
         RuntimeOp::WhereClosure(_) => flags.where_closure,
@@ -168,7 +168,7 @@ async fn execute_op(
     sase_engine: &mut Option<crate::sase::SaseEngine>,
     hamlet_aggregator: &mut Option<crate::hamlet::HamletAggregator>,
     shared_hamlet_ref: &Option<Arc<std::sync::Mutex<crate::hamlet::HamletAggregator>>>,
-    attention_window: Option<&crate::attention::AttentionWindow>,
+    pst_forecaster: &mut Option<crate::pst::PatternMarkovChain>,
     current_events: &mut Vec<SharedEvent>,
     emitted_events: &mut Vec<SharedEvent>,
     functions: &FxHashMap<String, UserFunction>,
@@ -545,8 +545,67 @@ async fn execute_op(
             }
         }
 
-        RuntimeOp::AttentionWindow(_config) => {
-            // AttentionWindow is handled at stream level before operations
+        RuntimeOp::Forecast(config) => {
+            // Process events through PST forecaster (async path)
+            let mut forecast_results = Vec::new();
+
+            if let Some(ref mut pmc) = pst_forecaster {
+                // Get active run snapshots from SASE engine
+                let run_snapshots = if let Some(ref sase) = sase_engine {
+                    sase.active_run_snapshots()
+                } else {
+                    Vec::new()
+                };
+
+                for event in current_events.iter() {
+                    let event_type = event.event_type.to_string();
+                    let event_ts = event.timestamp.timestamp_nanos_opt().unwrap_or(0);
+
+                    if let Some(forecast) = pmc.process(&event_type, event_ts, &run_snapshots) {
+                        if forecast.probability >= config.confidence_threshold {
+                            let mut forecast_event = Event::new("ForecastResult");
+                            forecast_event.data.insert(
+                                "stream".into(),
+                                Value::Str(stream_name.to_string().into()),
+                            );
+                            forecast_event.data.insert(
+                                "forecast_probability".into(),
+                                Value::Float(forecast.probability),
+                            );
+                            forecast_event.data.insert(
+                                "forecast_time".into(),
+                                Value::Int(forecast.expected_time_ns as i64),
+                            );
+                            forecast_event.data.insert(
+                                "forecast_state".into(),
+                                Value::Str(forecast.state_label.into()),
+                            );
+                            forecast_event.data.insert(
+                                "forecast_context_depth".into(),
+                                Value::Int(forecast.context_depth as i64),
+                            );
+                            forecast_event.data.insert(
+                                "active_runs".into(),
+                                Value::Int(forecast.active_runs as i64),
+                            );
+                            // Copy source event fields
+                            for (k, v) in &event.data {
+                                if !forecast_event.data.contains_key(k) {
+                                    forecast_event.data.insert(k.clone(), v.clone());
+                                }
+                            }
+                            forecast_event.timestamp = event.timestamp;
+                            forecast_results.push(Arc::new(forecast_event));
+                        }
+                    }
+                }
+            }
+
+            if forecast_results.is_empty() {
+                current_events.clear();
+            } else {
+                *current_events = forecast_results;
+            }
         }
 
         RuntimeOp::Pattern(config) => {
@@ -585,7 +644,6 @@ async fn execute_op(
                 SequenceContext::empty(),
                 functions,
                 &pattern_vars,
-                attention_window,
             ) {
                 if !result.as_bool().unwrap_or(false) {
                     // Pattern didn't match, filter out all events
@@ -690,7 +748,7 @@ pub(crate) fn execute_pipeline_sync(
             &mut stream.sase_engine,
             &mut stream.hamlet_aggregator,
             &stream.shared_hamlet_ref,
-            stream.attention_window.as_ref(),
+            &mut stream.pst_forecaster,
             &mut current_events,
             &mut emitted_events,
             functions,
@@ -732,7 +790,7 @@ fn execute_op_sync(
     sase_engine: &mut Option<crate::sase::SaseEngine>,
     hamlet_aggregator: &mut Option<crate::hamlet::HamletAggregator>,
     shared_hamlet_ref: &Option<Arc<std::sync::Mutex<crate::hamlet::HamletAggregator>>>,
-    attention_window: Option<&crate::attention::AttentionWindow>,
+    pst_forecaster: &mut Option<crate::pst::PatternMarkovChain>,
     current_events: &mut Vec<SharedEvent>,
     emitted_events: &mut Vec<SharedEvent>,
     functions: &FxHashMap<String, UserFunction>,
@@ -1098,8 +1156,65 @@ fn execute_op_sync(
             }
         }
 
-        RuntimeOp::AttentionWindow(_config) => {
-            // AttentionWindow is handled at stream level before operations
+        RuntimeOp::Forecast(config) => {
+            // Process events through PST forecaster (sync path)
+            let mut forecast_results = Vec::new();
+
+            if let Some(ref mut pmc) = pst_forecaster {
+                let run_snapshots = if let Some(ref sase) = sase_engine {
+                    sase.active_run_snapshots()
+                } else {
+                    Vec::new()
+                };
+
+                for event in current_events.iter() {
+                    let event_type = event.event_type.to_string();
+                    let event_ts = event.timestamp.timestamp_nanos_opt().unwrap_or(0);
+
+                    if let Some(forecast) = pmc.process(&event_type, event_ts, &run_snapshots) {
+                        if forecast.probability >= config.confidence_threshold {
+                            let mut forecast_event = Event::new("ForecastResult");
+                            forecast_event.data.insert(
+                                "stream".into(),
+                                Value::Str(stream_name.to_string().into()),
+                            );
+                            forecast_event.data.insert(
+                                "forecast_probability".into(),
+                                Value::Float(forecast.probability),
+                            );
+                            forecast_event.data.insert(
+                                "forecast_time".into(),
+                                Value::Int(forecast.expected_time_ns as i64),
+                            );
+                            forecast_event.data.insert(
+                                "forecast_state".into(),
+                                Value::Str(forecast.state_label.into()),
+                            );
+                            forecast_event.data.insert(
+                                "forecast_context_depth".into(),
+                                Value::Int(forecast.context_depth as i64),
+                            );
+                            forecast_event.data.insert(
+                                "active_runs".into(),
+                                Value::Int(forecast.active_runs as i64),
+                            );
+                            for (k, v) in &event.data {
+                                if !forecast_event.data.contains_key(k) {
+                                    forecast_event.data.insert(k.clone(), v.clone());
+                                }
+                            }
+                            forecast_event.timestamp = event.timestamp;
+                            forecast_results.push(Arc::new(forecast_event));
+                        }
+                    }
+                }
+            }
+
+            if forecast_results.is_empty() {
+                current_events.clear();
+            } else {
+                *current_events = forecast_results;
+            }
         }
 
         RuntimeOp::Pattern(config) => {
@@ -1133,7 +1248,6 @@ fn execute_op_sync(
                 SequenceContext::empty(),
                 functions,
                 &pattern_vars,
-                attention_window,
             ) {
                 if !result.as_bool().unwrap_or(false) {
                     current_events.clear();

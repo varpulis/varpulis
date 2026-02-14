@@ -13,7 +13,6 @@
 | Scenario | Target |
 |----------|----------|
 | Simple events | > 1M events/sec (single node) |
-| With attention | > 100K events/sec |
 | With complex aggregations | > 500K events/sec |
 
 ## Comparison vs Apama (measured)
@@ -53,4 +52,4 @@ See [`benchmarks-apama-comparison.md`](../benchmarks-apama-comparison.md) for fu
 2. **Throughput benchmark**: Maximum sustained events/sec
 3. **Memory benchmark**: Memory consumption under load
 4. **Pattern matching benchmark**: Pattern complexity vs performance
-5. **Attention benchmark**: Impact of head count on latency
+5. **Multi-query benchmark**: Hamlet vs ZDD multi-query performance

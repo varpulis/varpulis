@@ -1193,6 +1193,67 @@ fn test_trend_aggregate_with_arg() {
 }
 
 // ============================================================================
+// 14b. Forecast
+// ============================================================================
+
+#[test]
+fn test_forecast_op() {
+    let result = parse(
+        "stream S = A as a -> B as b .within(60s) .forecast(confidence: 0.7, horizon: 2m) .emit(prob: forecast_probability)",
+    );
+    assert!(result.is_ok(), "Failed: {:?}", result.err());
+    let program = result.unwrap();
+    if let Stmt::StreamDecl { ops, .. } = &program.statements[0].node {
+        let fc = ops.iter().find(|op| matches!(op, StreamOp::Forecast(_)));
+        assert!(fc.is_some(), "Expected Forecast op in stream ops");
+        if let StreamOp::Forecast(spec) = fc.unwrap() {
+            assert!(spec.confidence.is_some());
+            assert!(spec.horizon.is_some());
+            assert!(spec.warmup.is_none());
+            assert!(spec.max_depth.is_none());
+        }
+    }
+}
+
+#[test]
+fn test_forecast_op_no_params() {
+    let result = parse(
+        "stream S = A as a -> B as b .within(30s) .forecast() .emit(prob: forecast_probability)",
+    );
+    assert!(result.is_ok(), "Failed: {:?}", result.err());
+    let program = result.unwrap();
+    if let Stmt::StreamDecl { ops, .. } = &program.statements[0].node {
+        let fc = ops.iter().find(|op| matches!(op, StreamOp::Forecast(_)));
+        assert!(fc.is_some(), "Expected Forecast op in stream ops");
+        if let StreamOp::Forecast(spec) = fc.unwrap() {
+            assert!(spec.confidence.is_none());
+            assert!(spec.horizon.is_none());
+            assert!(spec.warmup.is_none());
+            assert!(spec.max_depth.is_none());
+        }
+    }
+}
+
+#[test]
+fn test_forecast_op_all_params() {
+    let result = parse(
+        "stream S = A as a -> B as b .within(60s) .forecast(confidence: 0.7, horizon: 2m, warmup: 500, max_depth: 5)",
+    );
+    assert!(result.is_ok(), "Failed: {:?}", result.err());
+    let program = result.unwrap();
+    if let Stmt::StreamDecl { ops, .. } = &program.statements[0].node {
+        let fc = ops.iter().find(|op| matches!(op, StreamOp::Forecast(_)));
+        assert!(fc.is_some(), "Expected Forecast op in stream ops");
+        if let StreamOp::Forecast(spec) = fc.unwrap() {
+            assert!(spec.confidence.is_some());
+            assert!(spec.horizon.is_some());
+            assert!(spec.warmup.is_some());
+            assert!(spec.max_depth.is_some());
+        }
+    }
+}
+
+// ============================================================================
 // 15. Edge Cases
 // ============================================================================
 
@@ -1997,24 +2058,6 @@ fn test_from_connector_source() {
             other => panic!("Expected FromConnector, got {:?}", other),
         },
         other => panic!("Expected StreamDecl, got {:?}", other),
-    }
-}
-
-// ============================================================================
-// 32. Attention Window
-// ============================================================================
-
-#[test]
-fn test_attention_window_op() {
-    let result = parse(r#"stream S = E.attention_window(heads: 4, window_size: 100)"#);
-    assert!(result.is_ok(), "Failed: {:?}", result.err());
-    let program = result.unwrap();
-    if let Stmt::StreamDecl { ops, .. } = &program.statements[0].node {
-        if let StreamOp::AttentionWindow(args) = &ops[0] {
-            assert_eq!(args.len(), 2);
-        } else {
-            panic!("Expected AttentionWindow op");
-        }
     }
 }
 
@@ -2827,20 +2870,6 @@ fn test_lexer_stream_specific_keywords() {
     assert_eq!(tokens[7], Token::All);
     assert_eq!(tokens[8], Token::Within);
     assert_eq!(tokens[9], Token::Pattern);
-}
-
-// ---------------------------------------------------------------------------
-// 77. Attention keywords
-// ---------------------------------------------------------------------------
-
-#[test]
-fn test_lexer_attention_keywords() {
-    let tokens: Vec<_> = tokenize("attention_window attention_score")
-        .into_iter()
-        .map(|t| t.token)
-        .collect();
-    assert_eq!(tokens[0], Token::AttentionWindow);
-    assert_eq!(tokens[1], Token::AttentionScore);
 }
 
 // ---------------------------------------------------------------------------

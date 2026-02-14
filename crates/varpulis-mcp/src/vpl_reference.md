@@ -88,15 +88,6 @@ stream Suspicious = Login as login
     .emit(user_id: login.user_id, amount: tx.amount)
 ```
 
-## Attention Windows
-
-```vpl
-stream Anomalies = Metrics
-    .attention_window(duration: 30s, heads: 4, embedding: "rule_based")
-    .where(attention_score > 0.85)
-    .emit(anomaly: true, score: attention_score)
-```
-
 ## Event Type Declaration
 
 ```vpl
@@ -137,6 +128,28 @@ stream Alerts = Source
     .emit(alert_type: "critical", value: value)
     .to(KafkaOutput)
 ```
+
+## Pattern Forecasting (.forecast)
+
+Predict whether a partially-matched sequence pattern will complete:
+
+```vpl
+stream Forecast = EventA as a
+    -> EventB where value > a.value as b
+    .within(5m)
+    .forecast(confidence: 0.7, horizon: 2m, warmup: 500, max_depth: 5)
+    .where(forecast_probability > 0.8)
+    .emit(probability: forecast_probability, expected_time: forecast_time)
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `confidence` | 0.5 | Min probability to emit forecast |
+| `horizon` | within duration | Forecast time window |
+| `warmup` | 100 | Events before forecasting starts |
+| `max_depth` | 5 | PST context depth |
+
+Built-in variables after `.forecast()`: `forecast_probability`, `forecast_time`, `forecast_state`, `forecast_context_depth`
 
 ## Contexts (Multi-Threading)
 

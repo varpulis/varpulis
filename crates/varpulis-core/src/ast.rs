@@ -288,8 +288,6 @@ pub enum StreamOp {
     ToExpr(Expr),
     /// Pattern matching: `.pattern(...)`
     Pattern(PatternDef),
-    /// Attention window: `.attention_window(...)`
-    AttentionWindow(Vec<NamedArg>),
     /// Concurrent processing: `.concurrent(...)`
     Concurrent(Vec<NamedArg>),
     /// Process with function: `.process(fn)`
@@ -325,6 +323,8 @@ pub enum StreamOp {
     TrendAggregate(Vec<TrendAggItem>),
     /// ONNX model scoring: `.score(model: "path.onnx", inputs: [...], outputs: [...])`
     Score(ScoreSpec),
+    /// PST-based pattern forecasting: `.forecast(confidence: 0.7, horizon: 2m, warmup: 500, max_depth: 5)`
+    Forecast(ForecastSpec),
 }
 
 /// A path in a fork construct
@@ -353,6 +353,19 @@ pub struct ScoreSpec {
     pub model_path: String,
     pub inputs: Vec<String>,
     pub outputs: Vec<String>,
+}
+
+/// Specification for PST-based pattern forecasting
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ForecastSpec {
+    /// Minimum probability to emit forecast (default 0.5)
+    pub confidence: Option<Expr>,
+    /// Forecast time horizon (default = within duration)
+    pub horizon: Option<Expr>,
+    /// Events before forecasting starts (default 100)
+    pub warmup: Option<Expr>,
+    /// Maximum PST context depth (default 5)
+    pub max_depth: Option<Expr>,
 }
 
 /// Followed-by clause for temporal sequences

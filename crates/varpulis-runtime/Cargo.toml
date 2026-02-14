@@ -22,7 +22,6 @@ rustc-hash = { workspace = true }
 async-trait = "0.1"
 rayon = "1.10"
 smallvec = "1.13"
-hnsw_rs = "0.3"
 lru = "0.13"
 reqwest = { workspace = true }
 warp = "0.3"
@@ -78,10 +77,6 @@ name = "pattern_benchmark"
 harness = false
 
 [[bench]]
-name = "attention_benchmark"
-harness = false
-
-[[bench]]
 name = "imperative_benchmark"
 harness = false
 
@@ -99,5 +94,9 @@ harness = false
 
 [[bench]]
 name = "hamlet_zdd_benchmark"
+harness = false
+
+[[bench]]
+name = "pst_forecast_benchmark"
 harness = false
 

@@ -3,7 +3,7 @@
 #
 # This example demonstrates real-time trading signals using:
 # - Technical indicators (SMA, EMA, RSI, Bollinger Bands, MACD)
-# - Pattern detection with attention mechanism
+# - SASE+ temporal sequence patterns
 # - Multi-timeframe analysis
 
 # =============================================================================
@@ -469,31 +469,6 @@ stream StrongSellSignal = TechnicalAnalysis
     )
 
 # =============================================================================
-# Pattern Detection with Attention (Advanced)
-# =============================================================================
-
-# Anomalous activity detection using attention window
-# Only emits when attention score is high (strong correlation between recent events)
-stream AnomalousActivity = Ticks
-    .partition_by(symbol)
-    .attention_window(
-        duration: 5m,
-        heads: 4,
-        embedding: "rule_based"
-    )
-    .where(attention_score > 0.7 and attention_matches > 5)
-    .emit(
-        signal_type: "PUMP_DETECTED",
-        direction: "CAUTION",
-        symbol: symbol,
-        confidence: 0.75,
-        attention_score: attention_score,
-        attention_matches: attention_matches,
-        correlation_strength: attention_context_norm,
-        reason: "High attention score - correlated price/volume activity detected"
-    )
-
-# =============================================================================
 # Temporal Sequence Patterns (using -> operator)
 # =============================================================================
 
@@ -632,7 +607,6 @@ stream AllSignals = merge(
     MACDBearish,
     StrongBuySignal,
     StrongSellSignal,
-    AnomalousActivity,
     NewsDrivenMove,
     PumpAndDump,
     FlashCrashRecovery,

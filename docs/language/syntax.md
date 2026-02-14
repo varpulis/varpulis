@@ -114,25 +114,6 @@ stream EnrichedOrders = join(
 )
 ```
 
-## Pattern Matching with Attention
-
-The attention window scores correlations between recent events automatically. Use `.where()` on the built-in `attention_score` and `attention_matches` fields:
-
-```varpulis
-stream FraudDetection = Trades
-    .attention_window(
-        duration: 30s,
-        heads: 4,
-        embedding: "rule_based"
-    )
-    .where(attention_score > 0.85 and attention_matches > 3)
-    .emit(
-        alert_type: "attention_pattern_fraud",
-        score: attention_score,
-        correlated_events: attention_matches
-    )
-```
-
 ## Contexts (Multi-Threaded Execution)
 
 Contexts declare isolated execution domains, each running on a dedicated OS thread.
@@ -308,6 +289,44 @@ stream Output = Processed
     .emit(result: value)
     .to(KafkaBroker)
 ```
+
+## Pattern Forecasting
+
+Use `.forecast()` after a sequence pattern to predict completion probability:
+
+```varpulis
+stream FraudForecast = Transaction as t1
+    -> Transaction as t2 where t2.amount > t1.amount * 5
+    -> Transaction as t3 where t3.location != t1.location
+    .within(5m)
+    .forecast(confidence: 0.7, horizon: 2m, warmup: 500, max_depth: 5)
+    .where(forecast_probability > 0.8)
+    .emit(
+        probability: forecast_probability,
+        expected_time: forecast_time,
+        state: forecast_state
+    )
+```
+
+### Forecast Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `confidence` | `float` | 0.5 | Minimum probability threshold to emit forecast |
+| `horizon` | `duration` | `within` duration | Forecast time window |
+| `warmup` | `int` | 100 | Events before forecasting starts |
+| `max_depth` | `int` | 5 | PST context depth |
+
+### Forecast Built-in Variables
+
+Available in `.where()` and `.emit()` after `.forecast()`:
+
+| Variable | Type | Description |
+|----------|------|-------------|
+| `forecast_probability` | `float` | Pattern completion probability (0.0–1.0) |
+| `forecast_time` | `int` | Expected time to completion (nanoseconds) |
+| `forecast_state` | `str` | Current NFA state label |
+| `forecast_context_depth` | `int` | PST context depth used for prediction |
 
 ## Output Routing
 

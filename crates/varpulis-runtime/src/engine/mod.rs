@@ -23,14 +23,13 @@ pub use evaluator::eval_filter_expr;
 
 // Re-export internal types for use within the engine module
 use types::{
-    AttentionWindowConfig, DistinctState, EmitConfig, EmitExprConfig, LimitState, LogConfig,
-    MergeSource, PartitionedAggregatorState, PartitionedSlidingCountWindowState,
-    PartitionedWindowState, PatternConfig, PrintConfig, RuntimeOp, RuntimeSource, SelectConfig,
-    StreamDefinition, StreamProcessResult, TimerConfig, ToConfig, TrendAggregateConfig, WindowType,
+    DistinctState, EmitConfig, EmitExprConfig, ForecastConfig, LimitState, LogConfig, MergeSource,
+    PartitionedAggregatorState, PartitionedSlidingCountWindowState, PartitionedWindowState,
+    PatternConfig, PrintConfig, RuntimeOp, RuntimeSource, SelectConfig, StreamDefinition,
+    StreamProcessResult, TimerConfig, ToConfig, TrendAggregateConfig, WindowType,
 };
 
 use crate::aggregation::Aggregator;
-use crate::attention::{AttentionConfig, AttentionWindow, EmbeddingConfig};
 use crate::connector;
 use crate::context::ContextMap;
 use crate::event::{Event, SharedEvent};
@@ -834,7 +833,7 @@ impl Engine {
         }
 
         // Check if we have sequence operations and build SASE+ engine
-        let (runtime_ops, sase_engine, sequence_event_types, hamlet_aggregator) =
+        let (runtime_ops, sase_engine, sequence_event_types, hamlet_aggregator, pst_forecaster) =
             self.compile_ops_with_sequences(source, ops)?;
 
         // Mapping from event_type to source name (for join streams)
@@ -1049,9 +1048,6 @@ impl Engine {
             );
         }
 
-        // Extract attention window config from operations if present
-        let attention_window = self.extract_attention_window(&runtime_ops);
-
         // Create JoinBuffer for Join sources
         let join_buffer = if let StreamSource::Join(clauses) = source {
             let join_sources: Vec<String> = clauses.iter().map(|c| c.source.clone()).collect();
@@ -1077,12 +1073,12 @@ impl Engine {
                 name: name.to_string(),
                 source: runtime_source,
                 operations: runtime_ops,
-                attention_window,
                 sase_engine,
                 join_buffer,
                 event_type_to_source,
                 hamlet_aggregator,
                 shared_hamlet_ref: None,
+                pst_forecaster,
             },
         );
 
@@ -1101,6 +1097,7 @@ impl Engine {
             Option<SaseEngine>,
             Vec<String>,
             Option<crate::hamlet::HamletAggregator>,
+            Option<crate::pst::PatternMarkovChain>,
         ),
         String,
     > {
@@ -1116,6 +1113,9 @@ impl Engine {
         // For Hamlet trend aggregation
         let mut trend_agg_items: Option<Vec<varpulis_core::ast::TrendAggItem>> = None;
         let mut within_expr_for_hamlet: Option<varpulis_core::ast::Expr> = None;
+
+        // For PST forecasting
+        let mut forecast_spec: Option<varpulis_core::ast::ForecastSpec> = None;
 
         // Helper closure to resolve a stream/event name to the underlying event type
         let resolve_event_type = |name: &str| -> String {
@@ -1217,6 +1217,10 @@ impl Engine {
                 }
                 StreamOp::TrendAggregate(items) => {
                     trend_agg_items = Some(items.clone());
+                    continue;
+                }
+                StreamOp::Forecast(spec) => {
+                    forecast_spec = Some(spec.clone());
                     continue;
                 }
                 StreamOp::Score(spec) => {
@@ -1495,46 +1499,6 @@ impl Engine {
                     // Store expression for runtime evaluation with user functions
                     runtime_ops.push(RuntimeOp::WhereExpr(expr.clone()));
                 }
-                StreamOp::AttentionWindow(args) => {
-                    // Parse attention window configuration
-                    let mut duration_ns = 60_000_000_000u64; // 1 minute default
-                    let mut num_heads = 4;
-                    let mut embedding_dim = 64;
-                    let mut threshold = 0.0f32;
-
-                    for arg in args {
-                        match arg.name.as_str() {
-                            "duration" => {
-                                if let varpulis_core::ast::Expr::Duration(ns) = &arg.value {
-                                    duration_ns = *ns;
-                                }
-                            }
-                            "heads" | "num_heads" => {
-                                if let varpulis_core::ast::Expr::Int(n) = &arg.value {
-                                    num_heads = *n as usize;
-                                }
-                            }
-                            "dim" | "embedding_dim" => {
-                                if let varpulis_core::ast::Expr::Int(n) = &arg.value {
-                                    embedding_dim = *n as usize;
-                                }
-                            }
-                            "threshold" => {
-                                if let varpulis_core::ast::Expr::Float(f) = &arg.value {
-                                    threshold = *f as f32;
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-
-                    runtime_ops.push(RuntimeOp::AttentionWindow(AttentionWindowConfig {
-                        duration_ns,
-                        num_heads,
-                        embedding_dim,
-                        threshold,
-                    }));
-                }
                 StreamOp::Pattern(def) => {
                     runtime_ops.push(RuntimeOp::Pattern(PatternConfig {
                         name: def.name.clone(),
@@ -1794,8 +1758,19 @@ impl Engine {
                 kleene_info.len()
             );
 
-            return Ok((runtime_ops, None, sequence_event_types, Some(aggregator)));
+            return Ok((
+                runtime_ops,
+                None,
+                sequence_event_types,
+                Some(aggregator),
+                None,
+            ));
         }
+
+        // === Forecast Mode (PST + SASE) ===
+        // If .forecast() is present, we need a sequence pattern (SASE engine)
+        // and must not have .trend_aggregate()
+        let mut pst_forecaster = None;
 
         // === Detection Mode (SASE) ===
         // Build SASE+ engine if we have sequence patterns or a named pattern reference
@@ -1910,26 +1885,116 @@ impl Engine {
                 None
             };
 
-        Ok((runtime_ops, sase_engine, sequence_event_types, None))
-    }
-
-    /// Extract and create AttentionWindow from runtime operations
-    fn extract_attention_window(&self, ops: &[RuntimeOp]) -> Option<AttentionWindow> {
-        for op in ops {
-            if let RuntimeOp::AttentionWindow(config) = op {
-                let attention_config = AttentionConfig {
-                    num_heads: config.num_heads,
-                    embedding_dim: config.embedding_dim,
-                    threshold: config.threshold,
-                    max_history: 1000,
-                    embedding_config: EmbeddingConfig::default(),
-                    cache_config: Default::default(),
-                };
-                let duration = std::time::Duration::from_nanos(config.duration_ns);
-                return Some(AttentionWindow::new(attention_config, duration));
+        // === Build PST Forecaster if .forecast() specified ===
+        if let Some(spec) = forecast_spec {
+            if sase_engine.is_none() {
+                return Err(
+                    ".forecast() requires a sequence pattern (use -> followed-by operators)"
+                        .to_string(),
+                );
             }
+
+            // Extract forecast parameters from expressions
+            let confidence = match &spec.confidence {
+                Some(varpulis_core::ast::Expr::Float(f)) => *f,
+                Some(varpulis_core::ast::Expr::Int(i)) => *i as f64,
+                _ => 0.5,
+            };
+            let horizon_ns = match &spec.horizon {
+                Some(varpulis_core::ast::Expr::Duration(ns)) => *ns,
+                _ => global_within
+                    .map(|d| d.as_nanos() as u64)
+                    .unwrap_or(300_000_000_000),
+            };
+            let warmup = match &spec.warmup {
+                Some(varpulis_core::ast::Expr::Int(n)) => *n as u64,
+                _ => 100,
+            };
+            let max_depth = match &spec.max_depth {
+                Some(varpulis_core::ast::Expr::Int(n)) => *n as usize,
+                _ => 5,
+            };
+
+            // Build NFA transition map from SASE engine
+            let sase = sase_engine.as_ref().unwrap();
+            let nfa = sase.nfa();
+            let num_states = nfa.states.len();
+            let accept_states = nfa.accept_states.clone();
+
+            // Collect event types and build transition map
+            let pst_config = crate::pst::PSTConfig {
+                max_depth,
+                smoothing: 0.01,
+            };
+            let pmc_config = crate::pst::PMCConfig {
+                confidence_threshold: confidence,
+                horizon_ns,
+                warmup_events: warmup,
+                max_simulation_steps: 1000,
+            };
+
+            // Build NFA transitions: for each state, map symbol_id -> next_state
+            let mut nfa_transitions = vec![rustc_hash::FxHashMap::default(); num_states];
+            let mut nfa_event_types: Vec<String> = Vec::new();
+
+            // Register event types and build symbol map
+            let mut temp_pst = crate::pst::PredictionSuffixTree::new(crate::pst::PSTConfig {
+                max_depth,
+                smoothing: 0.01,
+            });
+            for et in &sequence_event_types {
+                temp_pst.register_symbol(et);
+                if !nfa_event_types.contains(et) {
+                    nfa_event_types.push(et.clone());
+                }
+            }
+
+            // Extract transitions from NFA states
+            for state in &nfa.states {
+                if let Some(ref event_type) = state.event_type {
+                    if let Some(sym_id) = temp_pst.symbol_id(event_type) {
+                        for &next in &state.transitions {
+                            nfa_transitions[state.id].insert(sym_id, next);
+                        }
+                    }
+                }
+            }
+
+            let pmc = crate::pst::PatternMarkovChain::new(
+                &nfa_event_types,
+                nfa_transitions,
+                accept_states,
+                num_states,
+                pst_config,
+                pmc_config,
+            );
+
+            // Insert Forecast op after Sequence
+            let forecast_config = ForecastConfig {
+                confidence_threshold: confidence,
+                horizon_ns,
+                warmup_events: warmup,
+                max_depth,
+            };
+            runtime_ops.push(RuntimeOp::Forecast(forecast_config));
+
+            pst_forecaster = Some(pmc);
+
+            info!(
+                "Created PST forecaster for pattern forecasting ({} event types, max_depth={}, warmup={})",
+                nfa_event_types.len(),
+                max_depth,
+                warmup
+            );
         }
-        None
+
+        Ok((
+            runtime_ops,
+            sase_engine,
+            sequence_event_types,
+            None,
+            pst_forecaster,
+        ))
     }
 
     /// Extract join keys from join clauses and operations
@@ -2516,43 +2581,10 @@ impl Engine {
             });
         }
 
-        // Process through attention window if present — skip clone when not needed
-        let pipeline_event = if stream.attention_window.is_some() {
-            let mut enriched_event = (*event).clone();
-            if let Some(ref mut attention_window) = stream.attention_window {
-                let result = attention_window.process((*event).clone());
-                let attention_score = if result.scores.is_empty() {
-                    0.0
-                } else {
-                    result
-                        .scores
-                        .iter()
-                        .map(|(_, s)| *s)
-                        .fold(f32::NEG_INFINITY, f32::max)
-                };
-                enriched_event.data.insert(
-                    "attention_score".into(),
-                    Value::Float(attention_score as f64),
-                );
-                let context_norm: f32 = result.context.iter().map(|x| x * x).sum::<f32>().sqrt();
-                enriched_event.data.insert(
-                    "attention_context_norm".into(),
-                    Value::Float(context_norm as f64),
-                );
-                enriched_event.data.insert(
-                    "attention_matches".into(),
-                    Value::Int(result.scores.len() as i64),
-                );
-            }
-            Arc::new(enriched_event)
-        } else {
-            event // zero-copy: reuse the existing Arc
-        };
-
         // Use synchronous pipeline execution
         pipeline::execute_pipeline_sync(
             stream,
-            vec![pipeline_event],
+            vec![event],
             0,
             pipeline::SkipFlags::none(),
             functions,
@@ -2760,47 +2792,10 @@ impl Engine {
             }
         }
 
-        // Process through attention window if present - compute and add attention_score
-        // We need to enrich the event, so clone and modify
-        let mut enriched_event = (*event).clone();
-        if let Some(ref mut attention_window) = stream.attention_window {
-            let result = attention_window.process((*event).clone());
-
-            // Compute aggregate attention score (max of all scores)
-            let attention_score = if result.scores.is_empty() {
-                0.0
-            } else {
-                result
-                    .scores
-                    .iter()
-                    .map(|(_, s)| *s)
-                    .fold(f32::NEG_INFINITY, f32::max)
-            };
-
-            // Add attention_score to event data for use in expressions
-            enriched_event.data.insert(
-                "attention_score".into(),
-                Value::Float(attention_score as f64),
-            );
-
-            // Add attention context vector norm as additional metric
-            let context_norm: f32 = result.context.iter().map(|x| x * x).sum::<f32>().sqrt();
-            enriched_event.data.insert(
-                "attention_context_norm".into(),
-                Value::Float(context_norm as f64),
-            );
-
-            // Add number of correlated events
-            enriched_event.data.insert(
-                "attention_matches".into(),
-                Value::Int(result.scores.len() as i64),
-            );
-        }
-
         // Delegate to unified pipeline execution
         pipeline::execute_pipeline(
             stream,
-            vec![Arc::new(enriched_event)],
+            vec![event],
             0,
             pipeline::SkipFlags::none(),
             functions,
@@ -3681,7 +3676,6 @@ fn stream_op_name(op: &StreamOp) -> &'static str {
         StreamOp::To { .. } => ".to()",
         StreamOp::ToExpr(_) => ".to()",
         StreamOp::Pattern(_) => ".pattern()",
-        StreamOp::AttentionWindow(_) => ".attention_window()",
         StreamOp::Concurrent(_) => ".concurrent()",
         StreamOp::Process(_) => ".process()",
         StreamOp::OnError(_) => ".on_error()",
@@ -3699,6 +3693,7 @@ fn stream_op_name(op: &StreamOp) -> &'static str {
         StreamOp::AllowedLateness(_) => ".allowed_lateness()",
         StreamOp::TrendAggregate(_) => ".trend_aggregate()",
         StreamOp::Score(_) => ".score()",
+        StreamOp::Forecast(_) => ".forecast()",
     }
 }
 

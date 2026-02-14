@@ -156,6 +156,14 @@ fn hover_stream_ops_to() {
 }
 
 #[test]
+fn hover_stream_ops_forecast() {
+    let text = "forecast params";
+    let h = hover_text(text, 0, 0).unwrap();
+    assert!(h.contains("forecast"));
+    assert!(h.contains("forecasting"));
+}
+
+#[test]
 fn hover_stream_ops_partition_by() {
     let text = "partition_by key";
     let h = hover_text(text, 0, 0).unwrap();
@@ -245,7 +253,6 @@ fn hover_window_types() {
         ("tumbling", "non-overlapping"),
         ("sliding", "overlapping"),
         ("session_window", "session"),
-        ("attention_window", "ai-based"),
     ] {
         let text = format!("{} something", name);
         let h =
@@ -847,8 +854,8 @@ fn completion_after_dot() {
     assert!(labels.contains(&"limit"));
     assert!(labels.contains(&"order_by"));
     assert!(labels.contains(&"tap"));
-    assert!(labels.contains(&"attention_window"));
     assert!(labels.contains(&"partition_by"));
+    assert!(labels.contains(&"forecast"));
 }
 
 #[test]

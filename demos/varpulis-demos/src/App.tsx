@@ -153,7 +153,7 @@ function App() {
                 <Shield className="w-6 h-6 text-purple-400" />
               </div>
               <h3 className="text-lg font-semibold text-white mb-2">Production Ready</h3>
-              <p className="text-slate-400 text-sm">Battle-tested SASE+ algorithm with attention windows</p>
+              <p className="text-slate-400 text-sm">Battle-tested SASE+ algorithm with Hamlet optimization</p>
             </div>
           </div>
         </div>

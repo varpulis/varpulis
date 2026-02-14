@@ -2,7 +2,7 @@
 
 ## Overview
 
-Real-time trading signal generation using classic technical indicators and pattern detection with attention mechanisms.
+Real-time trading signal generation using classic technical indicators and SASE+ pattern detection.
 
 ## Target Market
 
@@ -66,8 +66,6 @@ Real-time trading signal generation using classic technical indicators and patte
 │  ├── STRONG_BUY           - Multiple bullish indicators    │
 │  └── STRONG_SELL          - Multiple bearish indicators    │
 │                                                             │
-│  ATTENTION-BASED                                            │
-│  └── PUMP_DETECTED        - Anomalous price/volume activity│
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -107,11 +105,11 @@ The most powerful signals come from **indicator confluence** - when multiple ind
                             │
          ┌──────────────────┼──────────────────┐
          │                  │                  │
-    ┌────▼────┐       ┌─────▼────┐      ┌─────▼────┐
-    │Indicator│       │ Pattern  │      │Attention │
-    │ Streams │       │ Matcher  │      │ Engine   │
-    │(SMA,RSI)│       │(Crosses) │      │ (Pumps)  │
-    └────┬────┘       └─────┬────┘      └─────┬────┘
+    ┌────▼────┐       ┌─────▼────┐
+    │Indicator│       │ Pattern  │
+    │ Streams │       │ Matcher  │
+    │(SMA,RSI)│       │(Crosses) │
+    └────┬────┘       └─────┬────┘
          │                  │                  │
          └──────────────────┼──────────────────┘
                             │
@@ -155,7 +153,7 @@ The most powerful signals come from **indicator confluence** - when multiple ind
 | **Latency** | 10-100ms | < 1ms |
 | **Code complexity** | 500+ lines | ~400 lines (declarative) |
 | **Multi-indicator join** | Manual state management | Native stream joins |
-| **Pattern detection** | Custom implementation | Built-in + Attention |
+| **Pattern detection** | Custom implementation | Built-in SASE+ |
 | **Scaling** | Manual threading | Declarative parallelization |
 | **Observability** | Add-on libraries | Built-in metrics |
 
@@ -185,5 +183,4 @@ varpulis run --file examples/financial_markets.vpl
 ## See Also
 
 - [VPL Syntax](../language/syntax.md)
-- [Attention Engine](../architecture/attention-engine.md)
 - [HVAC Building Example](hvac-building.md)
