@@ -74,30 +74,6 @@ stream MACD = join(EMA12, EMA26)
 
 ---
 
-## Attention Functions (Implemented)
-
-Used within `.attention_window()` blocks for AI-powered correlation.
-
-| Function | Description | Example | Status |
-|----------|-------------|---------|--------|
-| `attention_score(e1, e2)` | Correlation score between events | `attention_score(evt1, evt2)` | Implemented |
-| `top_attention(e, n)` | Top N correlated events | `top_attention(event, 5)` | Implemented |
-
-### Attention Example
-
-```varpulis
-stream Anomalies = Metrics
-    .attention_window(
-        duration: 1h,
-        heads: 4,
-        embedding: "rule_based"
-    )
-    .where(attention_score > 0.8)
-    .emit(anomaly: true)
-```
-
----
-
 ## Planned Functions (Not Yet Implemented)
 
 The following functions are planned for future versions but are **not currently available**.
@@ -153,6 +129,37 @@ The following functions are planned for future versions but are **not currently 
 | `coalesce(a, b, ...)` | First non-null value |
 | `uuid()` | Generate UUID |
 | `random()` | Random number |
+
+---
+
+## Forecast Built-in Variables (Implemented)
+
+These variables are available in streams that use the `.forecast()` operator after a sequence pattern. They are populated by the PST-based pattern forecasting engine.
+
+| Variable | Type | Description |
+|----------|------|-------------|
+| `forecast_probability` | `float` | Pattern completion probability (0.0–1.0) |
+| `forecast_time` | `int` | Expected time to completion (nanoseconds) |
+| `forecast_state` | `str` | Current NFA state label |
+| `forecast_context_depth` | `int` | PST context depth used for prediction |
+
+### Forecast Example
+
+```varpulis
+stream FraudForecast = Transaction as t1
+    -> Transaction as t2 where t2.amount > t1.amount * 5
+    -> Transaction as t3 where t3.location != t1.location
+    .within(5m)
+    .forecast(confidence: 0.7, horizon: 2m, warmup: 500, max_depth: 5)
+    .where(forecast_probability > 0.8)
+    .emit(
+        probability: forecast_probability,
+        expected_time: forecast_time,
+        state: forecast_state
+    )
+```
+
+See [Forecasting Tutorial](../tutorials/forecasting-tutorial.md) and [Forecasting Architecture](../architecture/forecasting.md) for details.
 
 ---
 

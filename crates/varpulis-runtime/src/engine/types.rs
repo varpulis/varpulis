@@ -3,7 +3,6 @@
 //! This module contains all the structs, enums and type definitions used by the engine.
 
 use crate::aggregation::Aggregator;
-use crate::attention::AttentionWindow;
 use crate::event::SharedEvent;
 use crate::join::JoinBuffer;
 use crate::sase::SaseEngine;
@@ -103,8 +102,6 @@ pub(crate) struct StreamDefinition {
     pub name: String,
     pub source: RuntimeSource,
     pub operations: Vec<RuntimeOp>,
-    /// Attention window for correlation scoring
-    pub attention_window: Option<AttentionWindow>,
     /// SASE+ pattern matching engine (NFA-based, primary engine for sequences)
     pub sase_engine: Option<SaseEngine>,
     /// Join buffer for correlating events from multiple sources
@@ -115,6 +112,8 @@ pub(crate) struct StreamDefinition {
     pub hamlet_aggregator: Option<crate::hamlet::HamletAggregator>,
     /// Shared Hamlet aggregator reference (when multi-query sharing is active)
     pub shared_hamlet_ref: Option<Arc<std::sync::Mutex<crate::hamlet::HamletAggregator>>>,
+    /// PST-based pattern forecaster (when .forecast() is used)
+    pub pst_forecaster: Option<crate::pst::PatternMarkovChain>,
 }
 
 /// Source of events for a stream
@@ -188,8 +187,6 @@ pub(crate) enum RuntimeOp {
     Log(LogConfig),
     /// Sequence operation - index into sequence_tracker steps
     Sequence,
-    /// Attention window for correlation scoring
-    AttentionWindow(AttentionWindowConfig),
     /// Pattern matching with lambda expression
     Pattern(PatternConfig),
     /// Process with expression: `.process(expr)` - evaluates for side effects (emit)
@@ -201,6 +198,8 @@ pub(crate) enum RuntimeOp {
     /// ONNX model scoring: extract input fields, run inference, add output fields
     #[allow(dead_code)]
     Score(ScoreConfig),
+    /// PST-based pattern forecasting: predict pattern completion probability and time
+    Forecast(ForecastConfig),
     /// Deduplicate events by expression value (or entire event if None)
     Distinct(DistinctState),
     /// Pass at most N events, then stop the stream
@@ -213,6 +212,19 @@ pub(crate) struct TrendAggregateConfig {
     pub fields: Vec<(String, crate::greta::GretaAggregate)>,
     /// Query ID in the Hamlet aggregator
     pub query_id: crate::greta::QueryId,
+}
+
+/// Configuration for PST-based pattern forecasting
+#[allow(dead_code)]
+pub(crate) struct ForecastConfig {
+    /// Minimum probability to emit forecast events.
+    pub confidence_threshold: f64,
+    /// Forecast horizon in nanoseconds.
+    pub horizon_ns: u64,
+    /// Events before forecasting starts.
+    pub warmup_events: u64,
+    /// Maximum PST context depth.
+    pub max_depth: usize,
 }
 
 /// Configuration for ONNX model scoring
@@ -373,14 +385,6 @@ impl PartitionedAggregatorState {
 pub(crate) struct PatternConfig {
     pub name: String,
     pub matcher: varpulis_core::ast::Expr,
-}
-
-/// Configuration for attention window
-pub(crate) struct AttentionWindowConfig {
-    pub duration_ns: u64,
-    pub num_heads: usize,
-    pub embedding_dim: usize,
-    pub threshold: f32,
 }
 
 /// Configuration for print operation

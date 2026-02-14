@@ -53,7 +53,7 @@
 
 # =============================================================================
 # SCENARIO 7: Compressor Degradation Pattern (pressure increasing over time)
-# Expected: CompressorDegradation alert via attention mechanism
+# Expected: CompressorDegradation alert via threshold-based detection
 # =============================================================================
 @30s HVACStatus { unit_id: "hvac_01", zone: "Zone_A", mode: "cooling", power_consumption: 2.6, compressor_pressure: 13.0, refrigerant_temp: -4.8, fan_speed: 1200, runtime_hours: 1002, ts: 1030 }
 @32s HVACStatus { unit_id: "hvac_01", zone: "Zone_A", mode: "cooling", power_consumption: 2.7, compressor_pressure: 13.5, refrigerant_temp: -4.5, fan_speed: 1200, runtime_hours: 1002, ts: 1032 }

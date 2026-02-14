@@ -299,11 +299,11 @@ fn get_stream_operation_completions() -> Vec<CompletionItem> {
             Some(".tap(|e| => print(e))"),
         ),
         completion_item(
-            "attention_window",
+            "forecast",
             CompletionItemKind::METHOD,
-            "AI-based adaptive window",
-            "attention_window(size: $1, attention: { $2 })",
-            Some(".attention_window(...)"),
+            "PST-based pattern forecasting",
+            "forecast(confidence: ${1:0.7}, horizon: ${2:2m}, warmup: ${3:500})",
+            Some(".forecast(confidence: 0.7, horizon: 2m)"),
         ),
     ]
 }

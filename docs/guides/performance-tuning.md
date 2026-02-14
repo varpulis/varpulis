@@ -388,7 +388,6 @@ cargo bench -p varpulis-runtime pattern_benchmark
 | Benchmark | What It Tests |
 |-----------|---------------|
 | `pattern_benchmark` | SASE+ pattern matching throughput |
-| `attention_benchmark` | Attention engine performance |
 | `kleene_benchmark` | Kleene closure overhead |
 | `comparison_benchmark` | Cross-engine comparisons |
 

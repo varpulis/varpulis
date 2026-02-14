@@ -7,7 +7,6 @@
 //! - **Stream Processing**: Real-time event processing with filtering and transformation
 //! - **SASE+ Pattern Matching**: Complex event detection with sequences, Kleene closures, and negation
 //! - **Windowed Aggregations**: Time and count-based windows with SIMD-optimized aggregations
-//! - **Attention Engine**: ML-inspired event correlation and anomaly detection
 //! - **Connectors**: MQTT, HTTP, and file-based event sources/sinks
 //!
 //! ## Features
@@ -38,8 +37,7 @@
 //! - [`simd`]: SIMD-optimized operations using AVX2
 //!
 //! ### Advanced Features
-//! - [`attention`]: Attention-based event correlation
-//! - [`join`]: Multi-stream join operations
+//! //! - [`join`]: Multi-stream join operations
 //!
 //! ### Multi-Query Trend Aggregation
 //! - [`greta`]: GRETA baseline aggregation (VLDB 2017)
@@ -106,7 +104,6 @@
 //! - [`varpulis_cli`](../varpulis_cli): Command-line interface
 
 pub mod aggregation;
-pub mod attention;
 pub mod columnar;
 pub mod connector;
 pub mod context;
@@ -118,6 +115,7 @@ pub mod hamlet;
 pub mod join;
 pub mod metrics;
 pub mod persistence;
+pub mod pst;
 pub mod sase;
 pub mod scoring;
 pub mod sequence;

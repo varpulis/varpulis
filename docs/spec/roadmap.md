@@ -34,14 +34,11 @@
 - [x] Tenant/pipeline state recovery on restart
 - [x] Multi-tenant SaaS API (REST, usage metering, quotas)
 - [ ] Engine checkpoint integration (window/pattern state save/restore)
-- [ ] Embedding engine (rule-based)
-- [ ] Deterministic attention mechanism
-- [ ] HVAC degradation detection demo
 - [ ] Declarative parallelization (`.concurrent()`)
 - [ ] Automatic supervision and restart
 
 ### Phase 3 Deliverables
-- Complex pattern detection via attention
+- Complex pattern detection via SASE+
 - Horizontal scaling on multi-cores
 - Engine state durability across restarts
 
@@ -58,8 +55,6 @@
 
 ## Phase 5: Advanced Features
 
-- [ ] Learned embeddings (pre-trained models)
-- [ ] GPU support for attention (optional)
 - [ ] Distributed mode (multi-nodes)
 - [ ] Hot reload of configurations
 - [ ] Additional connectors (Pulsar, Redis Streams, etc.)

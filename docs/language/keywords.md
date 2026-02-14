@@ -44,14 +44,22 @@
 | `limit` | Limitation |
 | `distinct` | Deduplication |
 | `emit` | Emit output events |
+| `forecast` | PST-based pattern forecasting |
 
-## Patterns and Attention
+### Forecast Built-in Variables
+
+| Variable | Description |
+|----------|-------------|
+| `forecast_probability` | Pattern completion probability (0.0–1.0) |
+| `forecast_time` | Expected time to completion (nanoseconds) |
+| `forecast_state` | Current NFA state label |
+| `forecast_context_depth` | PST context depth used for prediction |
+
+## Patterns
 
 | Keyword | Description |
 |---------|-------------|
 | `pattern` | Defines a detection pattern |
-| `attention_window` | Window with attention mechanism |
-| `attention_score` | Correlation score between events |
 
 ## Types and Values
 

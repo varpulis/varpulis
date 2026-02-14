@@ -5,7 +5,7 @@ use crate::span::Span;
 
 use super::builtins::{
     self, ParamContext, AGGREGATE_FUNCTIONS, AGGREGATE_REQUIRES_FIELD, AGGREGATE_REQUIRES_TWO_ARGS,
-    ATTENTION_WINDOW_PARAMS, LOG_PARAMS, WATERMARK_PARAMS,
+    LOG_PARAMS, WATERMARK_PARAMS,
 };
 use super::scope::*;
 use super::suggest::{did_you_mean, suggest};
@@ -521,15 +521,6 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
             StreamOp::Log(args) => {
                 check_named_params(v, args, LOG_PARAMS, ".log()", span);
             }
-            StreamOp::AttentionWindow(args) => {
-                check_named_params(
-                    v,
-                    args,
-                    ATTENTION_WINDOW_PARAMS,
-                    ".attention_window()",
-                    span,
-                );
-            }
             StreamOp::Watermark(args) => {
                 check_named_params(v, args, WATERMARK_PARAMS, ".watermark()", span);
             }
@@ -630,7 +621,8 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
             | StreamOp::Process(_)
             | StreamOp::On(_)
             | StreamOp::TrendAggregate(_)
-            | StreamOp::Score(_) => {}
+            | StreamOp::Score(_)
+            | StreamOp::Forecast(_) => {}
         }
     }
 }

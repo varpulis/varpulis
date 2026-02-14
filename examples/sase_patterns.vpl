@@ -170,21 +170,20 @@ stream RiskyTransaction = Transaction
     )
 
 # =============================================================================
-# PATTERN 9: Pattern with Partition and Attention
-# Correlate related events using attention mechanism
+# PATTERN 9: High-Frequency Transaction Detection
+# Detect users with many transactions in a short window
 # =============================================================================
 
-stream CorrelatedAlerts = Transaction
+stream HighFrequencyTrader = Transaction
     .partition_by(user_id)
     .window(1h)
-    .attention_window(
-        embedding: "auto",
-        threshold: 0.7,
-        top_k: 10
+    .aggregate(
+        tx_count: count(),
+        total_amount: sum(amount)
     )
-    .pattern(correlated: events => events.len() > 3)
+    .where(tx_count > 20)
     .emit(
-        alert_type: "correlated_activity",
+        alert_type: "high_frequency_activity",
         severity: "high"
     )
 
@@ -211,5 +210,5 @@ stream AllTransactionsAfterLogin = Login as login
 # 5. Window (Time): .window(10m), .window(24h)
 # 6. Aggregation: sum(), count()
 # 7. Pattern Lambdas: events => events.len() > N
-# 8. Attention Window: Correlation scoring
+# 8. Windowed Aggregation with filter
 # 9. Match All: -> all EventType

@@ -76,18 +76,11 @@ pub static AGGREGATE_REQUIRES_TWO_ARGS: &[&str] = &["ema"];
 /// Valid parameter names for `.log()`.
 pub static LOG_PARAMS: &[&str] = &["level", "message", "data"];
 
-/// Valid parameter names for `.attention_window()`.
-pub static ATTENTION_WINDOW_PARAMS: &[&str] = &[
-    "duration",
-    "heads",
-    "num_heads",
-    "dim",
-    "embedding_dim",
-    "threshold",
-];
-
 /// Valid parameter names for `.watermark()`.
 pub static WATERMARK_PARAMS: &[&str] = &["out_of_order"];
+
+/// Valid parameter names for `.forecast()`.
+pub static FORECAST_PARAMS: &[&str] = &["confidence", "horizon", "warmup", "max_depth"];
 
 /// Check if a function name is a known builtin (scalar or aggregate).
 pub fn is_known_function(name: &str) -> bool {

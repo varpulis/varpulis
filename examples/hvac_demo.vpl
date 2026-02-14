@@ -1,10 +1,10 @@
 # Varpulis HVAC Building Demo
-# Smart Building Supervision with Attention-based Degradation Detection
+# Smart Building Supervision with Threshold-based Degradation Detection
 #
 # This example demonstrates:
 # - Real-time temperature/humidity monitoring
 # - HVAC equipment efficiency tracking
-# - Attention-based progressive degradation detection
+# - Threshold-based degradation detection
 # - Predictive maintenance alerts
 
 # =============================================================================
@@ -191,74 +191,53 @@ stream PowerSpike = HVACMetrics
     )
 
 # =============================================================================
-# ATTENTION-BASED DEGRADATION DETECTION
+# THRESHOLD-BASED DEGRADATION DETECTION
 # =============================================================================
 
-# Compressor degradation detection using attention
+# Compressor degradation detection using windowed metrics
 # Looks for progressive performance decline patterns
-stream CompressorDegradation = HVAC
-    .partition_by(unit_id)
-    .attention_window(
-        duration: 1h,
-        heads: 4,
-        embedding: "rule_based"
-    )
-    .where(attention_score > 0.75 and attention_matches > 5)
+stream CompressorDegradation = HVACMetrics
+    .where(avg_pressure > 14.0 and avg_power > 3.0)
     .emit(
         alert_type: "COMPRESSOR_DEGRADATION",
         severity: "warning",
         unit_id: unit_id,
         zone: zone,
         confidence: 0.75,
-        attention_score: attention_score,
-        attention_matches: attention_matches,
-        correlation_strength: attention_context_norm,
+        avg_pressure: avg_pressure,
+        avg_power: avg_power,
         recommendation: "Schedule preventive maintenance - compressor showing signs of wear",
         reason: "Progressive decline in compressor pressure with increasing power consumption"
     )
 
-# Refrigerant leak detection using attention
-stream RefrigerantLeak = HVAC
-    .partition_by(unit_id)
-    .attention_window(
-        duration: 30m,
-        heads: 4,
-        embedding: "rule_based"
-    )
-    .where(attention_score > 0.85 and attention_matches > 5 and refrigerant_temp > 45)
+# Refrigerant leak detection using threshold-based rules
+stream RefrigerantLeak = HVACMetrics
+    .where(avg_refrigerant_temp > 45 and avg_pressure > 13.0)
     .emit(
         alert_type: "REFRIGERANT_LEAK_SUSPECTED",
         severity: "critical",
         unit_id: unit_id,
         zone: zone,
         confidence: 0.8,
-        attention_score: attention_score,
-        attention_matches: attention_matches,
-        correlation_strength: attention_context_norm,
+        avg_refrigerant_temp: avg_refrigerant_temp,
+        avg_pressure: avg_pressure,
         recommendation: "Immediate inspection required - possible refrigerant leak",
         reason: "Rising refrigerant temperature with elevated compressor pressure"
     )
 
-# Fan motor degradation
-stream FanDegradation = HVAC
-    .partition_by(unit_id)
-    .attention_window(
-        duration: 2h,
-        heads: 4,
-        embedding: "rule_based"
-    )
-    .where(attention_score > 0.7 and attention_matches > 3)
+# Fan motor degradation detection
+stream FanDegradation = HVACMetrics
+    .where(avg_power > 4.0 and avg_fan_speed > 1400)
     .emit(
         alert_type: "FAN_MOTOR_DEGRADATION",
         severity: "warning",
         unit_id: unit_id,
         zone: zone,
         confidence: 0.7,
-        attention_score: attention_score,
-        attention_matches: attention_matches,
-        correlation_strength: attention_context_norm,
+        avg_power: avg_power,
+        avg_fan_speed: avg_fan_speed,
         recommendation: "Check fan motor bearings and balance",
-        reason: "Increased fan speed variance with rising power consumption"
+        reason: "Increased fan speed with rising power consumption"
     )
 
 # =============================================================================

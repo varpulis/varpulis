@@ -200,15 +200,11 @@
                 },
                 {
                     "name": "support.function.builtin.window.varpulis",
-                    "match": "\\b(window|sliding|tumbling|session_window|attention_window)\\b"
+                    "match": "\\b(window|sliding|tumbling|session_window)\\b"
                 },
                 {
                     "name": "support.function.builtin.varpulis",
                     "match": "\\b(now|uuid|abs|sqrt|pow|log|exp|floor|ceil|round|len|map|filter|reduce|flatten|zip|enumerate|range|sort|reverse|join|split|trim|upper|lower|contains|starts_with|ends_with|replace|substring|parse_json|to_json|parse_timestamp|format_timestamp)\\b"
-                },
-                {
-                    "name": "support.function.attention.varpulis",
-                    "match": "\\b(attention_score|embedding|linear_regression_slope|baseline_pressure|baseline_energy|baseline_volume|ema)\\b"
                 },
                 {
                     "name": "entity.name.function.varpulis",
@@ -220,7 +216,7 @@
             "patterns": [
                 {
                     "name": "keyword.operator.stream.varpulis",
-                    "match": "\\.(where|select|aggregate|partition_by|order_by|limit|distinct|emit|to|tap|pattern|window|attention_window|concurrent|process|on_error|collect|merge|join|on)\\b"
+                    "match": "\\.(where|select|aggregate|partition_by|order_by|limit|distinct|emit|to|tap|pattern|window|concurrent|process|on_error|collect|merge|join|on|forecast)\\b"
                 }
             ]
         },

@@ -13,7 +13,6 @@
 //! - Return statements for early exit
 //! - Variable declarations and assignments
 
-use crate::attention::AttentionWindow;
 use crate::sequence::SequenceContext;
 use crate::Event;
 use indexmap::IndexMap;
@@ -1184,7 +1183,7 @@ pub fn eval_expr_ctx(expr: &varpulis_core::ast::Expr, ctx: &EvalContext) -> Opti
     eval_expr_with_functions(expr, ctx.event, ctx.seq_ctx, ctx.functions, ctx.bindings)
 }
 
-/// Evaluate a pattern expression with support for attention_score builtin
+/// Evaluate a pattern expression
 #[allow(clippy::only_used_in_recursion)]
 pub fn eval_pattern_expr(
     expr: &varpulis_core::ast::Expr,
@@ -1192,7 +1191,6 @@ pub fn eval_pattern_expr(
     ctx: &SequenceContext,
     functions: &FxHashMap<String, UserFunction>,
     pattern_vars: &FxHashMap<String, Value>,
-    attention_window: Option<&AttentionWindow>,
 ) -> Option<Value> {
     use varpulis_core::ast::{Arg, Expr};
 
@@ -1200,75 +1198,31 @@ pub fn eval_pattern_expr(
         // Lambda: params => body - evaluate body with params bound
         Expr::Lambda { params: _, body } => {
             // For pattern lambdas, the first param is typically "events"
-            eval_pattern_expr(body, events, ctx, functions, pattern_vars, attention_window)
+            eval_pattern_expr(body, events, ctx, functions, pattern_vars)
         }
 
         // Block with let bindings
         Expr::Block { stmts, result } => {
             let mut local_vars = pattern_vars.clone();
             for (name, _ty, value_expr, _mutable) in stmts {
-                if let Some(val) = eval_pattern_expr(
-                    value_expr,
-                    events,
-                    ctx,
-                    functions,
-                    &local_vars,
-                    attention_window,
-                ) {
+                if let Some(val) =
+                    eval_pattern_expr(value_expr, events, ctx, functions, &local_vars)
+                {
                     local_vars.insert(name.clone(), val);
                 }
             }
-            eval_pattern_expr(
-                result,
-                events,
-                ctx,
-                functions,
-                &local_vars,
-                attention_window,
-            )
+            eval_pattern_expr(result, events, ctx, functions, &local_vars)
         }
 
-        // Function call - check for builtins like attention_score
+        // Function call - check for builtins
         Expr::Call { func, args } => {
             if let Expr::Ident(func_name) = func.as_ref() {
-                if func_name == "attention_score" && args.len() == 2 {
-                    // attention_score(e1, e2) - compute attention between two events
-                    if let Some(aw) = attention_window {
-                        let e1_val = args.first().and_then(|a| match a {
-                            Arg::Positional(e) => {
-                                eval_pattern_expr(e, events, ctx, functions, pattern_vars, Some(aw))
-                            }
-                            _ => None,
-                        });
-                        let e2_val = args.get(1).and_then(|a| match a {
-                            Arg::Positional(e) => {
-                                eval_pattern_expr(e, events, ctx, functions, pattern_vars, Some(aw))
-                            }
-                            _ => None,
-                        });
-
-                        if let (Some(Value::Map(m1)), Some(Value::Map(m2))) = (e1_val, e2_val) {
-                            // Convert maps back to events for attention scoring
-                            let ev1 = map_to_event(&m1);
-                            let ev2 = map_to_event(&m2);
-                            let score = aw.attention_score(&ev1, &ev2);
-                            return Some(Value::Float(score as f64));
-                        }
-                    }
-                    return Some(Value::Float(0.0));
-                }
-
                 // len() on arrays
                 if func_name == "len" {
                     if let Some(Arg::Positional(arr_expr)) = args.first() {
-                        if let Some(Value::Array(arr)) = eval_pattern_expr(
-                            arr_expr,
-                            events,
-                            ctx,
-                            functions,
-                            pattern_vars,
-                            attention_window,
-                        ) {
+                        if let Some(Value::Array(arr)) =
+                            eval_pattern_expr(arr_expr, events, ctx, functions, pattern_vars)
+                        {
                             return Some(Value::Int(arr.len() as i64));
                         }
                     }
@@ -1277,14 +1231,9 @@ pub fn eval_pattern_expr(
                 // first() - get first element of array
                 if func_name == "first" {
                     if let Some(Arg::Positional(arr_expr)) = args.first() {
-                        if let Some(Value::Array(arr)) = eval_pattern_expr(
-                            arr_expr,
-                            events,
-                            ctx,
-                            functions,
-                            pattern_vars,
-                            attention_window,
-                        ) {
+                        if let Some(Value::Array(arr)) =
+                            eval_pattern_expr(arr_expr, events, ctx, functions, pattern_vars)
+                        {
                             return arr.first().cloned();
                         }
                     }
@@ -1293,14 +1242,9 @@ pub fn eval_pattern_expr(
                 // last() - get last element of array
                 if func_name == "last" {
                     if let Some(Arg::Positional(arr_expr)) = args.first() {
-                        if let Some(Value::Array(arr)) = eval_pattern_expr(
-                            arr_expr,
-                            events,
-                            ctx,
-                            functions,
-                            pattern_vars,
-                            attention_window,
-                        ) {
+                        if let Some(Value::Array(arr)) =
+                            eval_pattern_expr(arr_expr, events, ctx, functions, pattern_vars)
+                        {
                             return arr.last().cloned();
                         }
                     }
@@ -1309,14 +1253,9 @@ pub fn eval_pattern_expr(
                 // avg() - average of array
                 if func_name == "avg" {
                     if let Some(Arg::Positional(arr_expr)) = args.first() {
-                        if let Some(Value::Array(arr)) = eval_pattern_expr(
-                            arr_expr,
-                            events,
-                            ctx,
-                            functions,
-                            pattern_vars,
-                            attention_window,
-                        ) {
+                        if let Some(Value::Array(arr)) =
+                            eval_pattern_expr(arr_expr, events, ctx, functions, pattern_vars)
+                        {
                             let nums: Vec<f64> = arr
                                 .iter()
                                 .filter_map(|v| match v {
@@ -1337,14 +1276,9 @@ pub fn eval_pattern_expr(
                 // variance() - variance of array
                 if func_name == "variance" {
                     if let Some(Arg::Positional(arr_expr)) = args.first() {
-                        if let Some(Value::Array(arr)) = eval_pattern_expr(
-                            arr_expr,
-                            events,
-                            ctx,
-                            functions,
-                            pattern_vars,
-                            attention_window,
-                        ) {
+                        if let Some(Value::Array(arr)) =
+                            eval_pattern_expr(arr_expr, events, ctx, functions, pattern_vars)
+                        {
                             let nums: Vec<f64> = arr
                                 .iter()
                                 .filter_map(|v| match v {
@@ -1367,14 +1301,9 @@ pub fn eval_pattern_expr(
                 // sum() - sum of array
                 if func_name == "sum" {
                     if let Some(Arg::Positional(arr_expr)) = args.first() {
-                        if let Some(Value::Array(arr)) = eval_pattern_expr(
-                            arr_expr,
-                            events,
-                            ctx,
-                            functions,
-                            pattern_vars,
-                            attention_window,
-                        ) {
+                        if let Some(Value::Array(arr)) =
+                            eval_pattern_expr(arr_expr, events, ctx, functions, pattern_vars)
+                        {
                             let sum: f64 = arr
                                 .iter()
                                 .filter_map(|v| match v {
@@ -1391,14 +1320,9 @@ pub fn eval_pattern_expr(
                 // min() - minimum of array
                 if func_name == "min" {
                     if let Some(Arg::Positional(arr_expr)) = args.first() {
-                        if let Some(Value::Array(arr)) = eval_pattern_expr(
-                            arr_expr,
-                            events,
-                            ctx,
-                            functions,
-                            pattern_vars,
-                            attention_window,
-                        ) {
+                        if let Some(Value::Array(arr)) =
+                            eval_pattern_expr(arr_expr, events, ctx, functions, pattern_vars)
+                        {
                             let min = arr
                                 .iter()
                                 .filter_map(|v| match v {
@@ -1418,14 +1342,9 @@ pub fn eval_pattern_expr(
                 // max() - maximum of array
                 if func_name == "max" {
                     if let Some(Arg::Positional(arr_expr)) = args.first() {
-                        if let Some(Value::Array(arr)) = eval_pattern_expr(
-                            arr_expr,
-                            events,
-                            ctx,
-                            functions,
-                            pattern_vars,
-                            attention_window,
-                        ) {
+                        if let Some(Value::Array(arr)) =
+                            eval_pattern_expr(arr_expr, events, ctx, functions, pattern_vars)
+                        {
                             let max = arr
                                 .iter()
                                 .filter_map(|v| match v {
@@ -1449,14 +1368,8 @@ pub fn eval_pattern_expr(
                 member,
             } = func.as_ref()
             {
-                let receiver_val = eval_pattern_expr(
-                    receiver,
-                    events,
-                    ctx,
-                    functions,
-                    pattern_vars,
-                    attention_window,
-                )?;
+                let receiver_val =
+                    eval_pattern_expr(receiver, events, ctx, functions, pattern_vars)?;
 
                 match member.as_str() {
                     "filter" => {
@@ -1471,16 +1384,9 @@ pub fn eval_pattern_expr(
                                     .filter(|item| {
                                         let mut local = pattern_vars.clone();
                                         local.insert(param_name.clone(), item.clone());
-                                        eval_pattern_expr(
-                                            body,
-                                            events,
-                                            ctx,
-                                            functions,
-                                            &local,
-                                            attention_window,
-                                        )
-                                        .and_then(|v| v.as_bool())
-                                        .unwrap_or(false)
+                                        eval_pattern_expr(body, events, ctx, functions, &local)
+                                            .and_then(|v| v.as_bool())
+                                            .unwrap_or(false)
                                     })
                                     .collect();
                                 return Some(Value::array(filtered));
@@ -1521,14 +1427,7 @@ pub fn eval_pattern_expr(
                                             local.insert(param_name, item);
                                         }
 
-                                        eval_pattern_expr(
-                                            body,
-                                            events,
-                                            ctx,
-                                            functions,
-                                            &local,
-                                            attention_window,
-                                        )
+                                        eval_pattern_expr(body, events, ctx, functions, &local)
                                     })
                                     .collect();
                                 return Some(Value::array(mapped));
@@ -1653,14 +1552,7 @@ pub fn eval_pattern_expr(
             expr: receiver,
             member,
         } => {
-            let recv_val = eval_pattern_expr(
-                receiver,
-                events,
-                ctx,
-                functions,
-                pattern_vars,
-                attention_window,
-            )?;
+            let recv_val = eval_pattern_expr(receiver, events, ctx, functions, pattern_vars)?;
             match recv_val {
                 Value::Map(m) => m.get(member.as_str()).cloned(),
                 _ => None,
@@ -1678,43 +1570,12 @@ pub fn eval_pattern_expr(
 
         // Binary comparison
         Expr::Binary { op, left, right } => {
-            let l =
-                eval_pattern_expr(left, events, ctx, functions, pattern_vars, attention_window)?;
-            let r = eval_pattern_expr(
-                right,
-                events,
-                ctx,
-                functions,
-                pattern_vars,
-                attention_window,
-            )?;
+            let l = eval_pattern_expr(left, events, ctx, functions, pattern_vars)?;
+            let r = eval_pattern_expr(right, events, ctx, functions, pattern_vars)?;
             eval_binary_op(op, &l, &r)
         }
 
         _ => None,
-    }
-}
-
-/// Convert a Value::Map back to an Event for attention scoring
-pub fn map_to_event(map: &IndexMap<std::sync::Arc<str>, Value, FxBuildHasher>) -> Event {
-    let event_type = map
-        .get("event_type")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown")
-        .to_string();
-
-    let mut data: IndexMap<std::sync::Arc<str>, Value, FxBuildHasher> =
-        IndexMap::with_hasher(FxBuildHasher);
-    for (k, v) in map {
-        if &**k != "event_type" {
-            data.insert(k.clone(), v.clone());
-        }
-    }
-
-    Event {
-        event_type: event_type.into(),
-        timestamp: chrono::Utc::now(),
-        data,
     }
 }
 

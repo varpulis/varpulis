@@ -127,11 +127,12 @@ dot_op = { "." ~ (
     context_op | where_op | select_op | window_op | aggregate_op | having_op | partition_by_op
     | order_by_op | limit_op | distinct_op | map_op | filter_op
     | tap_op | print_op | log_op | emit_op | to_op | pattern_op
-    | attention_window_op | concurrent_op | process_op | on_error_op
+    | concurrent_op | process_op | on_error_op
     | collect_op | on_op | within_op | not_op | fork_op | any_op
     | all_op | first_op | watermark_op | allowed_lateness_op
     | trend_aggregate_op
     | score_op
+    | forecast_op
 )}
 
 // followed_by: use filter_expr for filter (stops before stream ops), 'as identifier' handled at end
@@ -192,7 +193,6 @@ pattern_xor_expr = { pattern_unary_expr ~ ("xor" ~ pattern_unary_expr)* }
 pattern_unary_expr = { "not"? ~ pattern_primary }
 pattern_primary = { "(" ~ pattern_or_expr ~ ")" | pattern_sequence }
 pattern_sequence = { identifier ~ ("->" ~ identifier)* }
-attention_window_op = { "attention_window" ~ "(" ~ named_arg_list ~ ")" }
 concurrent_op = { "concurrent" ~ "(" ~ named_arg_list ~ ")" }
 process_op = { "process" ~ "(" ~ expr ~ ")" }
 on_error_op = { "on_error" ~ "(" ~ expr ~ ")" }
@@ -215,6 +215,11 @@ score_op = { "score" ~ "(" ~ score_params ~ ")" }
 score_params = { score_param ~ ("," ~ score_param)* }
 score_param = { identifier ~ ":" ~ (score_field_list | string) }
 score_field_list = { "[" ~ identifier ~ ("," ~ identifier)* ~ "]" }
+// .forecast(confidence: 0.7, horizon: 2m, warmup: 500, max_depth: 5)
+forecast_op = { "forecast" ~ "(" ~ forecast_params? ~ ")" }
+forecast_params = { forecast_param ~ ("," ~ forecast_param)* }
+forecast_param = { identifier ~ ":" ~ expr }
+
 trend_agg_list = { trend_agg_item ~ ("," ~ trend_agg_item)* }
 trend_agg_item = { identifier ~ ":" ~ trend_agg_func }
 trend_agg_func = { identifier ~ "(" ~ expr? ~ ")" }

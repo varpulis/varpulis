@@ -106,7 +106,7 @@ docker exec apama engine_send -p 15903 "StockTick(\"AAPL\", 150.0, 1000)"
 1. **Kleene+ native support** - SASE+ patterns are first-class
 2. **Declarative syntax** - Less boilerplate
 3. **Temporal operators** - `->` and `.within()` are intuitive
-4. **Attention mechanism** - Unique ML-based correlation (not in Apama)
+4. **Hamlet engine** - Multi-query trend aggregation (not in Apama)
 
 ### Apama Strengths
 1. **Mature ecosystem** - Extensive connectors

@@ -176,14 +176,4 @@ mod tests {
         "#;
         assert!(check_syntax(source).is_ok());
     }
-
-    #[test]
-    fn test_check_syntax_attention_window() {
-        let source = r#"
-            stream Attention = Events
-                .attention_window(duration: 1h, heads: 4)
-                .emit(alert_type: "attention")
-        "#;
-        assert!(check_syntax(source).is_ok());
-    }
 }

@@ -3,7 +3,7 @@
  * Shows real data from Varpulis CEP engine only
  */
 
-import { AlertTriangle, Brain, Thermometer, Wifi, WifiOff } from 'lucide-react'
+import { AlertTriangle, Thermometer, Wifi, WifiOff } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import PipelineGraph, { HVAC_PIPELINE } from '../components/PipelineGraph'
 import { useVarpulis } from '../hooks/useVarpulis'
@@ -15,7 +15,6 @@ export default function HVACDemo() {
     const [eventCounts, setEventCounts] = useState<Record<string, number>>({})
     const [zoneData, setZoneData] = useState<Record<string, { temp: number, humidity: number }>>({})
     const [recentAlerts, setRecentAlerts] = useState<Array<{ type: string, zone: string, severity: string, reason: string }>>([])
-    const [attentionMetrics, setAttentionMetrics] = useState<{ score: number, matches: number, events: number }>({ score: 0, matches: 0, events: 0 })
 
     const lastEventRef = useRef<string>('')
     const lastAlertRef = useRef<string>('')
@@ -76,16 +75,6 @@ export default function HVACDemo() {
             }, ...prev].slice(0, 8))
         }
 
-        // Attention metrics (from degradation detection)
-        const attentionScore = Number(data.attention_score || 0)
-        const attentionMatches = Number(data.attention_matches || 0)
-        if (attentionScore > 0 || attentionMatches > 0) {
-            setAttentionMetrics(prev => ({
-                score: attentionScore || prev.score,
-                matches: attentionMatches || prev.matches,
-                events: prev.events + 1
-            }))
-        }
     }, [alerts])
 
     const totalEvents = Object.values(eventCounts).reduce((a, b) => a + b, 0)
@@ -110,19 +99,19 @@ export default function HVACDemo() {
             {/* Pipeline Graph - Compact */}
             <div className="bg-slate-800/50 rounded-lg p-2 border border-slate-700">
                 <div className="text-xs text-slate-400 mb-1 px-1">
-                    Pipeline: Sensor events partitioned by zone, HVAC status through attention window for degradation detection
+                    Pipeline: Sensor events partitioned by zone, HVAC status monitored for degradation detection
                 </div>
                 <PipelineGraph
                     nodes={HVAC_PIPELINE.nodes}
                     edges={HVAC_PIPELINE.edges}
                     eventCounts={eventCounts}
-                    streamCounts={{ Zones: Object.keys(zoneData).length, Attention: attentionMetrics.events }}
+                    streamCounts={{ Zones: Object.keys(zoneData).length }}
                     patternCounts={{ Alerts: recentAlerts.length }}
                 />
             </div>
 
-            {/* Main Grid - 4 columns */}
-            <div className="grid grid-cols-4 gap-3">
+            {/* Main Grid - 3 columns */}
+            <div className="grid grid-cols-3 gap-3">
                 {/* Col 1: Events */}
                 <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-700">
                     <h2 className="text-sm font-semibold text-white mb-2 flex items-center gap-1.5">
@@ -159,32 +148,7 @@ export default function HVACDemo() {
                     </div>
                 </div>
 
-                {/* Col 3: Attention Engine */}
-                <div className="bg-slate-800/50 rounded-lg p-3 border border-purple-500/30">
-                    <h2 className="text-sm font-semibold text-white mb-1 flex items-center gap-1.5">
-                        <Brain className="w-4 h-4 text-purple-400" />
-                        Attention Engine
-                    </h2>
-                    <div className="text-[10px] text-slate-400 mb-2">
-                        Detects progressive equipment degradation by correlating pressure, temperature, and power consumption patterns over time windows.
-                    </div>
-                    <div className="grid grid-cols-3 gap-1.5">
-                        <div className="bg-slate-900/50 rounded p-1.5 border border-purple-500/20">
-                            <div className="text-[10px] text-slate-400">Score</div>
-                            <div className="text-sm font-mono text-purple-400">{attentionMetrics.score.toFixed(2)}</div>
-                        </div>
-                        <div className="bg-slate-900/50 rounded p-1.5 border border-purple-500/20">
-                            <div className="text-[10px] text-slate-400">Matches</div>
-                            <div className="text-sm font-mono text-cyan-400">{attentionMetrics.matches}</div>
-                        </div>
-                        <div className="bg-slate-900/50 rounded p-1.5 border border-purple-500/20">
-                            <div className="text-[10px] text-slate-400">Detects</div>
-                            <div className="text-sm font-mono text-pink-400">{attentionMetrics.events}</div>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Col 4: Alerts */}
+                {/* Col 3: Alerts */}
                 <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-700">
                     <h2 className="text-sm font-semibold text-white mb-2 flex items-center gap-1.5">
                         <AlertTriangle className="w-4 h-4 text-yellow-400" />

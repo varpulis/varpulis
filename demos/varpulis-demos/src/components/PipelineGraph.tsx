@@ -292,14 +292,12 @@ export const FINANCIAL_PIPELINE = {
         { id: 'MarketTick', label: '📈 MarketTick', type: 'event' as const },
         { id: 'OHLCV', label: '📊 OHLCV', type: 'event' as const },
         { id: 'Indicators', label: 'Indicators', type: 'stream' as const },
-        { id: 'Attention', label: '🧠 Attention', type: 'stream' as const },
         { id: 'Signals', label: 'Signals', type: 'pattern' as const },
     ],
     edges: [
-        { from: 'MarketTick', to: 'Attention', label: 'attention_window' },
+        { from: 'MarketTick', to: 'Indicators', label: 'window' },
         { from: 'OHLCV', to: 'Indicators', label: 'SMA/RSI/MACD' },
         { from: 'Indicators', to: 'Signals', label: 'join + filter' },
-        { from: 'Attention', to: 'Signals', label: 'pattern detect' },
     ]
 }
 
@@ -308,14 +306,12 @@ export const HVAC_PIPELINE = {
         { id: 'TemperatureReading', label: '🌡️ Sensors', type: 'event' as const },
         { id: 'HVACStatus', label: '❄️ HVAC', type: 'event' as const },
         { id: 'Zones', label: 'Zones', type: 'stream' as const },
-        { id: 'Attention', label: '🧠 Attention', type: 'stream' as const },
         { id: 'Alerts', label: 'Alerts', type: 'pattern' as const },
     ],
     edges: [
         { from: 'TemperatureReading', to: 'Zones', label: 'partition by zone' },
-        { from: 'HVACStatus', to: 'Attention', label: 'attention_window' },
+        { from: 'HVACStatus', to: 'Alerts', label: 'degradation detect' },
         { from: 'Zones', to: 'Alerts', label: 'anomaly detect' },
-        { from: 'Attention', to: 'Alerts', label: 'degradation' },
     ]
 }
 

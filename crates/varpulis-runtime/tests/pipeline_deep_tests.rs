@@ -1097,24 +1097,6 @@ async fn aggregate_count_only() {
 }
 
 // ===========================================================================
-// 39. AttentionWindow op compiles
-// ===========================================================================
-
-#[tokio::test]
-async fn attention_window_op_compiles() {
-    let code = r#"
-        stream S = Tick
-            .attention_window(heads: 4, window_size: 100)
-            .emit(val: x)
-    "#;
-    let program = parse(code).expect("parse");
-    let (tx, _rx) = mpsc::channel(100);
-    let mut engine = Engine::new(tx);
-    engine.load(&program).expect("load");
-    assert!(engine.stream_names().contains(&"S"));
-}
-
-// ===========================================================================
 // 40. Multiple derived streams consuming from same parent
 // ===========================================================================
 

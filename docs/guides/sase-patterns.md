@@ -519,10 +519,37 @@ See [Trend Aggregation Reference](../reference/trend-aggregation.md) and [Trend 
 
 ---
 
+## Pattern Forecasting
+
+Use `.forecast()` to predict whether a partially-matched pattern will complete, and when. This uses **Prediction Suffix Trees** (PST) combined with the SASE NFA to form a Pattern Markov Chain (PMC):
+
+```vpl
+stream FraudForecast = Transaction as t1
+    -> Transaction as t2 where t2.amount > t1.amount * 5
+    -> Transaction as t3 where t3.location != t1.location
+    .within(5m)
+    .forecast(confidence: 0.7, horizon: 2m, warmup: 500)
+    .where(forecast_probability > 0.8)
+    .emit(
+        probability: forecast_probability,
+        expected_time: forecast_time
+    )
+```
+
+**Parameters**: `confidence` (min probability, default 0.5), `horizon` (forecast window), `warmup` (learning period, default 100), `max_depth` (PST depth, default 5)
+
+**Built-in variables** (available after `.forecast()`): `forecast_probability`, `forecast_time`, `forecast_state`, `forecast_context_depth`
+
+The PST learns online from the event stream — no pre-training required. See [Forecasting Tutorial](../tutorials/forecasting-tutorial.md) and [Forecasting Architecture](../architecture/forecasting.md) for details.
+
+---
+
 ## See Also
 
 - [Language Tutorial](../tutorials/language-tutorial.md) - VPL basics
 - [Windows & Aggregations](../reference/windows-aggregations.md) - Windowed pattern matching
 - [Trend Aggregation](../reference/trend-aggregation.md) - `.trend_aggregate()` reference
+- [Forecasting Tutorial](../tutorials/forecasting-tutorial.md) - PST-based pattern forecasting
+- [Forecasting Architecture](../architecture/forecasting.md) - PST/PMC design
 - [Troubleshooting Guide](troubleshooting.md) - Pattern debugging tips
 - [SIGMOD 2006 Paper](https://dl.acm.org/doi/10.1145/1142473.1142520) - Original SASE+ research

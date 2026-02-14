@@ -103,7 +103,6 @@ runtime performance optimizations. A live public demo is available at
   zero-clone event draining
 - **Event parsing** — `split_fields()` returns `Vec<&str>` (zero-alloc),
   `with_capacity_at()` skips `Utc::now()`
-- **HNSW index** — batch parallel inserts for attention-based pattern detection
 - **Multi-worker scaling** — round-robin event distribution with join key inference
 
 #### Metrics & Observability
@@ -159,7 +158,6 @@ runtime performance optimizations. A live public demo is available at
 - Sequence detection with `followed_by` operator
 - MQTT source/sink connectors
 - CLI with `run`, `simulate`, `check` commands
-- Attention-based pattern detection with HNSW index
 - ZDD-based multi-query optimization (research baseline)
 
 [0.2.0]: https://github.com/varpulis/varpulis/compare/v0.1.0...v0.2.0

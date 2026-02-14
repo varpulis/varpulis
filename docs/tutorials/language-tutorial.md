@@ -8,9 +8,8 @@ A comprehensive guide to writing VPL programs, from basic event processing to ad
 2. [Part 2: Windows and Aggregations](#part-2-windows-and-aggregations)
 3. [Part 3: Sequence Patterns](#part-3-sequence-patterns)
 4. [Part 4: SASE+ Advanced](#part-4-sase-advanced) - Kleene, negation, AND/OR
-5. [Part 5: Attention Windows](#part-5-attention-windows)
-6. [Part 6: Joins](#part-6-joins)
-7. [Part 7: Contexts](#part-7-contexts) - Multi-threaded execution with CPU affinity
+5. [Part 5: Joins](#part-5-joins)
+6. [Part 6: Contexts](#part-6-contexts) - Multi-threaded execution with CPU affinity
 
 ---
 
@@ -478,80 +477,7 @@ stream UserAttacks = LoginFailed+ as fails -> LoginSuccess
 
 ---
 
-## Part 5: Attention Windows
-
-Attention windows use machine learning-inspired correlation to find related events.
-
-### Basic Attention Window
-
-```vpl
-stream CorrelatedEvents = SensorReading
-    .attention_window(duration: 30s, heads: 4, embedding: "rule_based", threshold: 0.7)
-    .where(attention_score > 0.85)
-    .emit(alert_type: "HighCorrelation", message: "Events highly correlated")
-```
-
-### Configuration Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `duration` | `30s` | Window duration |
-| `heads` | `4` | Number of attention heads |
-| `embedding` | `rule_based` | Embedding type: `rule_based`, `learned`, `composite` |
-| `threshold` | `0.0` | Minimum attention score |
-| `max_history` | `1000` | Maximum events to retain |
-
-### Feature Configuration
-
-```vpl
-stream FraudDetection = Transaction
-    .attention_window(
-        duration: 1m,
-        heads: 8,
-        embedding: "composite",
-        features: {
-            numeric: [
-                { field: "amount", transform: "log_scale", weight: 2.0 },
-                { field: "hour", transform: "cyclical", period: 24 }
-            ],
-            categorical: [
-                { field: "merchant_type", method: "hash", dim: 16 },
-                { field: "country", method: "one_hot", vocab: ["US", "UK", "EU", "OTHER"] }
-            ]
-        }
-    )
-    .where(attention_score > 0.9)
-    .emit(alert_type: "SuspiciousPattern", message: "Transaction pattern detected")
-```
-
-### Numeric Transforms
-
-| Transform | Description |
-|-----------|-------------|
-| `identity` | No transformation |
-| `log_scale` | Logarithmic scaling for large values |
-| `normalize` | Sigmoid normalization to [0, 1] |
-| `zscore` | Z-score standardization |
-| `cyclical` | Cyclical encoding (for time-of-day, etc.) |
-| `bucketize` | Bucket into discrete ranges |
-
-### Accessing Attention Scores
-
-```vpl
-stream Correlations = Event
-    .attention_window(duration: 1m, heads: 4)
-    .select(
-        current_event: event_type,
-        score: attention_score,
-        related_events: attention_matches
-    )
-    .where(score > 0.8)
-    .print("Found {related_events.len()} related events with score {score}")
-```
-
----
-
-## Part 6: Joins
+## Part 5: Joins
 
 Join multiple event streams based on conditions.
 
@@ -628,7 +554,7 @@ stream AllSensors = merge(
 
 ---
 
-## Part 7: Contexts
+## Part 6: Contexts
 
 Contexts let you run streams on dedicated OS threads for true multi-core parallelism.
 

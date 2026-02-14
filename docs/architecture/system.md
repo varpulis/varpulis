@@ -19,16 +19,16 @@
 ├─────────▼───────────────────────────────────▼───────────────┤
 │                                                             │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
-│  │   Ingestion  │  │    Pattern   │  │   Attention  │       │
-│  │    Layer     │──│    Matcher   │──│    Engine    │       │
-│  │              │  │  (Hypertrees)│  │(Deterministic)│      │
+│  │   Ingestion  │  │    Pattern   │  │   State Mgmt │       │
+│  │    Layer     │──│    Matcher   │──│  (RocksDB*/  │       │
+│  │              │  │   (SASE+)   │  │   In-Memory) │       │
 │  └──────────────┘  └──────────────┘  └──────────────┘       │
 │                                                             │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
-│  │  Embedding   │  │   State Mgmt │  │ Aggregation  │       │
-│  │   Engine     │  │  (RocksDB*/  │  │   Engine     │       │
-│  │              │  │   In-Memory) │  │              │       │
-│  └──────────────┘  └──────────────┘  └──────────────┘       │
+│  ┌──────────────┐  ┌──────────────┐                         │
+│  │ Aggregation  │  │  Hamlet     │                         │
+│  │   Engine     │  │  (Trend Agg)│                         │
+│  │              │  │             │                         │
+│  └──────────────┘  └──────────────┘                         │
 │                                                             │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
 │  │ Observability│  │ Parallelism  │  │  Checkpoint  │       │
@@ -48,10 +48,10 @@
 ## Processing Flow
 
 ```
-Event Sources → Ingestion → Embedding → Pattern Matching → Aggregation → Output (.to)
-                                 ↓              ↑
-                            Attention      Hypertree
-                             Scores       Structures
+Event Sources → Ingestion → Pattern Matching → Aggregation → Output (.to)
+                                   ↑
+                              SASE+ NFA
+                              Structures
 ```
 
 ## Components
@@ -75,13 +75,6 @@ Event Sources → Ingestion → Embedding → Pattern Matching → Aggregation �
 - NFA-based SASE+ engine for sequence and Kleene pattern detection
 - **ZDD** (`varpulis-zdd` crate): compactly represents Kleene capture combinations — e.g., 100 matching events produce ~100 ZDD nodes instead of 2^100 explicit subsets
 - Temporal constraints, negation, partition-by support
-
-### Attention Engine
-- See [attention-engine.md](attention-engine.md)
-
-### Embedding Engine
-- Vector generation for events
-- Rule-based or learned mode
 
 ### State Manager
 - See [state-management.md](state-management.md)

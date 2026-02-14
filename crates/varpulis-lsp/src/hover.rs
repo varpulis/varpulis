@@ -246,7 +246,6 @@ fn get_documentation(word: &str) -> Option<String> {
             - `tumbling(duration)` - Non-overlapping fixed windows\n\
             - `sliding(size, slide)` - Overlapping windows\n\
             - `session_window(gap)` - Gap-based sessions\n\
-            - `attention_window(...)` - AI-based adaptive windows\n\n\
             **Example:**\n\
             ```vpl\n\
             stream\n\
@@ -276,6 +275,31 @@ fn get_documentation(word: &str) -> Option<String> {
             **Example:**\n\
             ```vpl\n\
             stream.to(\"file://output.json\")\n\
+            ```"
+        )),
+
+        "forecast" => Some(format!(
+            "## .forecast()\n\n\
+            PST-based pattern forecasting. Predicts whether a partially-matched\n\
+            sequence pattern will complete, and estimates when.\n\n\
+            **Parameters:**\n\
+            - `confidence` — Minimum probability to emit (default 0.5)\n\
+            - `horizon` — Forecast window (default = within duration)\n\
+            - `warmup` — Events before forecasting starts (default 100)\n\
+            - `max_depth` — PST context depth (default 5)\n\n\
+            **Built-in variables** (after `.forecast()`):\n\
+            - `forecast_probability` — Completion probability\n\
+            - `forecast_time` — Expected time to completion (ns)\n\
+            - `forecast_state` — Current NFA state label\n\
+            - `forecast_context_depth` — PST context depth used\n\n\
+            **Example:**\n\
+            ```vpl\n\
+            stream Alerts = Event as e1\n\
+                -> Event as e2 where e2.value > e1.value\n\
+                .within(5m)\n\
+                .forecast(confidence: 0.7, horizon: 2m)\n\
+                .where(forecast_probability > 0.8)\n\
+                .emit(prob: forecast_probability)\n\
             ```"
         )),
 
@@ -510,20 +534,6 @@ fn get_documentation(word: &str) -> Option<String> {
                 .aggregate({{ ... }})\n\
             ```\n\n\
             A new window starts after `gap` duration of inactivity."
-        )),
-
-        "attention_window" => Some(format!(
-            "## attention_window(...)\n\n\
-            Creates AI-based adaptive windows that focus on important events.\n\n\
-            **Example:**\n\
-            ```vpl\n\
-            stream\n\
-                .attention_window(\n\
-                    size: 100,\n\
-                    attention: {{ query: value, key: timestamp }}\n\
-                )\n\
-            ```\n\n\
-            Uses attention mechanisms to weight events by relevance."
         )),
 
         // Built-in functions

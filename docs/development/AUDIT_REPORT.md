@@ -45,7 +45,7 @@
 | **Unit Tests** | 81+ tests (3,819 lines) |
 | **Test Coverage** | 62.92% |
 | **Clippy Warnings** | 0 |
-| **Unsafe Blocks** | 4 (in attention.rs for HNSW) |
+| **Unsafe Blocks** | 4 (in SIMD code) |
 
 ### Key Findings - Resolved
 
@@ -81,7 +81,6 @@
 |------|-------|------------|
 | `pest_parser.rs` | 2,156 | High - Main parser |
 | `sase.rs` | 1,587 | High - SASE+ NFA engine |
-| `attention.rs` | 1,169 | High - Attention mechanism |
 | `engine/tests.rs` | 1,048 | Medium - Unit tests |
 | `connector.rs` | 942 | Medium - External connectors |
 | `aggregation.rs` | 782 | Medium - Aggregation functions |
@@ -99,7 +98,7 @@
 +----------------------------------------------------------------------+
 |  Compiler -> Optimizer -> Validator                                   |
 |  |                                                                    |
-|  Ingestion -> Pattern Matching (SASE+) -> Attention                  |
+|  Ingestion -> Pattern Matching (SASE+) -> Aggregation                |
 |              |             |              |                           |
 |           Embedding -> State Management -> Aggregation                |
 |  |                                                                    |
@@ -110,7 +109,7 @@
 ### Processing Flow
 
 ```
-Event Sources -> Ingestion -> Embedding -> Pattern Matching -> Aggregation -> Output (.to)
+Event Sources -> Ingestion -> Pattern Matching -> Aggregation -> Output (.to)
 ```
 
 ### Workspace Structure
@@ -188,8 +187,6 @@ let stream_names = self.event_sources.get(&current_event.event_type)
 // Line 1477 - Every event cloned
 current_event.clone()
 
-// Line 1548 - Additional clone for attention
-let mut enriched_event = event.clone();
 ```
 
 **Recommendation:** Use `Arc<Event>` for shared events, `Cow<str>` for strings.
@@ -352,7 +349,6 @@ pub struct MqttConfig {
 | Test Suite | Tests | Lines | Status |
 |------------|-------|-------|--------|
 | `engine/tests.rs` | 25+ | 1,048 | Passing |
-| `attention_tests.rs` | 30+ | 1,430 | Passing |
 | `integration_scenarios.rs` | 62 | 1,496 | Passing |
 | `join_tests.rs` | 10+ | ~300 | Passing |
 | `partition_tests.rs` | 5+ | ~200 | Passing |
@@ -362,7 +358,6 @@ pub struct MqttConfig {
 
 | Module | Coverage | Target |
 |--------|----------|--------|
-| `attention.rs` | ~85% | Excellent |
 | `join.rs` | ~80% | Good |
 | `sase.rs` | ~75% | Good |
 | `engine/mod.rs` | ~55% | Needs improvement |
@@ -379,7 +374,6 @@ pub struct MqttConfig {
 - Numeric/boolean types (3 tests)
 - Negation (.not) (3 tests)
 - EmitExpr with functions (3 tests)
-- Attention window (4 tests)
 - Merge streams (3 tests)
 - Count distinct (1 test)
 - Pattern matching (3 tests)
@@ -413,7 +407,6 @@ pub struct MqttConfig {
 | **Time** | chrono | 0.4 | Current |
 | **Metrics** | prometheus | 0.13 | Current |
 | **Web** | warp | 0.3 | Dated (2+ years) |
-| **ML/Search** | hnsw_rs | 0.3 | Current |
 | **MQTT** | rumqttc | 0.24 | Current |
 
 ### Dependency Security
@@ -504,8 +497,8 @@ pub struct MqttConfig {
 
 **Result: 4 UNSAFE BLOCKS FOUND**
 
-All in `attention.rs` for HNSW library operations:
-- Required for FFI with hnsw_rs library
+All in SIMD code for vectorized aggregation:
+- Required for AVX2 intrinsics
 - Well-contained and documented
 - No user-facing unsafe code
 
@@ -562,7 +555,7 @@ The Varpulis CEP engine demonstrates **solid architectural design** and good Rus
 **Strengths:**
 - Clean modular architecture with well-separated concerns
 - Comprehensive SASE+ pattern matching engine
-- Optimized attention mechanism (~30x speedup)
+- Hamlet multi-query aggregation engine
 - Parser fully secured with proper error handling
 - Good test coverage in critical modules
 - No memory-unsafe code in core functionality

@@ -522,9 +522,9 @@ function provideCompletionItems(
             { label: 'window', detail: 'Temporal window', insertText: 'window($1)' },
             { label: 'partition_by', detail: 'Partition stream', insertText: 'partition_by($1)' },
             { label: 'emit', detail: 'Emit to sink', insertText: 'emit(\n    $1\n)' },
-            { label: 'attention_window', detail: 'Attention-based window', insertText: 'attention_window(\n    duration: $1,\n    heads: 4,\n    embedding: "rule_based"\n)' },
             { label: 'pattern', detail: 'Pattern matching', insertText: 'pattern(\n    $1: events => $2\n)' },
             { label: 'to', detail: 'Output destination', insertText: 'to("$1")' },
+            { label: 'forecast', detail: 'PST pattern forecasting', insertText: 'forecast(confidence: ${1:0.7}, horizon: ${2:2m})' },
         ];
 
         for (const op of streamOps) {
@@ -574,10 +574,9 @@ function provideHover(
         'where': '**.where(condition)** - Filters events based on a condition\n\n```varpulis\n.where(value > 10)\n.where(status == "active" and count > 0)\n```',
         'window': '**.window(duration)** - Creates a temporal window\n\n```varpulis\n.window(5m)              # Tumbling window\n.window(5m, sliding: 1m) # Sliding window\n```',
         'aggregate': '**.aggregate(...)** - Aggregates values in a window\n\n```varpulis\n.aggregate(\n    total: sum(value),\n    average: avg(value),\n    count: count()\n)\n```',
-        'attention_window': '**.attention_window(...)** - Creates an attention-based window for pattern detection\n\n```varpulis\n.attention_window(\n    duration: 30m,\n    heads: 4,\n    embedding: "rule_based"\n)\n```',
         'pattern': '**.pattern(...)** - Defines a pattern to detect\n\n```varpulis\n.pattern(\n    my_pattern: events =>\n        events.filter(...).count() > threshold\n)\n```',
-        'attention_score': '**attention_score(e1, e2)** - Computes the attention score between two events (0.0 - 1.0)',
         'emit': '**.emit(...)** - Emits an alert or output event\n\n```varpulis\n.emit(\n    alert_type: "anomaly",\n    severity: "warning"\n)\n```',
+        'forecast': '**.forecast(...)** - PST-based pattern forecasting\n\nPredicts whether a partially-matched sequence will complete.\n\n```varpulis\n.forecast(confidence: 0.7, horizon: 2m, warmup: 500)\n```\n\n**Built-in variables:** `forecast_probability`, `forecast_time`, `forecast_state`',
     };
 
     if (docs[word]) {

@@ -47,7 +47,7 @@
 | SASE+ Core | 0 | 0 | **10** |
 | SASE+ Improvements | 1 | 0 | **6** |
 | ZDD | 0 | 0 | **2** |
-| Attention | 0 | 0 | **4** |
+| Attention (removed) | 0 | 0 | **4** |
 | Runtime Optimization | 0 | 0 | **6** |
 | Engine Cleanup | 0 | 0 | **1** |
 | Benchmarks | 0 | 0 | **3** |
@@ -293,7 +293,7 @@ graph LR
 
 - [x] **PROD-01**: Reduire unwrap() dans runtime (~200 → 0)
   - **Resultat**: 0 unwraps en production (tous dans tests)
-  - **Fichiers corriges**: sase.rs, persistence.rs, join.rs, metrics.rs, attention.rs
+  - **Fichiers corriges**: sase.rs, persistence.rs, join.rs, metrics.rs
   - **Patterns utilises**: let-else, unwrap_or_default(), is_some_and()
 
 - [x] **PROD-02**: Rate Limiting pour WebSocket API
@@ -412,24 +412,6 @@ Phase 3 (3-4 semaines) - SaaS Ready
 > **Reference**: Analysis originally in `RUNTIME_ANALYSIS.md`
 
 ### P0 - Bloquants pour production
-
-- [x] **ATT-PROJ**: Pre-calcul projections Key
-  - **Probleme**: K projections recalculees a chaque compute_attention()
-  - **Solution implementee**: Pre-calcul a l'ajout dans history tuple
-  - **Fichier**: attention.rs lines 600-606
-  - **Statut**: DEJA FAIT
-
-- [x] **ATT-LRU**: Cache LRU O(n) -> O(1)
-  - **Probleme**: EmbeddingCache utilise HashMap + Vec pour LRU, retain() est O(n)
-  - **Solution implementee**: Crate `lru` pour O(1) get/put
-  - **Fichier**: attention.rs EmbeddingCache struct
-  - **Tests**: 46 attention tests passent
-
-- [x] **ATT-HIST**: History removal O(n) -> O(1)
-  - **Probleme**: `history.remove(0)` est O(n) sur Vec
-  - **Solution implementee**: `VecDeque` pour O(1) pop_front/push_back
-  - **Fichier**: attention.rs AttentionEngine::history field
-  - **Tests**: 46 attention tests passent
 
 - [x] **SINK-ASYNC**: FileSink bloque runtime async
   - **Probleme**: std::fs::File::write bloque le worker thread tokio
@@ -832,58 +814,12 @@ fn compute_stats(prices: [float]) -> {str: float}:
 
 ---
 
-## TERMINE - Attention Engine (Performance)
-
-> **Statut**: Toutes optimisations implementees - **Total ~30x speedup**
-
-### Termine
-
-- [x] **ATT-00**: Metriques performance (`AttentionStats`)
-  - `avg_compute_time_us`, `max_compute_time_us`, `ops_per_sec`
-  - `check_performance()` warnings, `estimated_throughput()`
-
-- [x] **ATT-01**: ANN Indexing (HNSW)
-  - `hnsw_rs` pour recherche top-k en O(log n)
-  - `HnswIndex` avec ef_search=30, min_size=100
-  - `new_without_hnsw()` pour comparaison
-
-- [x] **ATT-02**: SIMD Projections **~3x speedup**
-  - Loop unrolling 4x avec `get_unchecked` sur `project()`
-  - SIMD dot product pour Q.K
-
-- [x] **ATT-03**: Batch Processing
-  - `compute_attention_batch()` avec `rayon`
-
-- [x] **ATT-04**: Cache Q + Pre-calcul K **~8x speedup**
-  - Q projection calcule 1x par head (au lieu de k fois)
-  - K projections pre-calculees a l'insertion
-  - Stockage: `history: Vec<(Event, Vec<f32>, Vec<Vec<f32>>)>`
-
-### Performance finale (apres toutes optimisations)
-
-| History | Avant | Apres | Speedup |
-|---------|-------|-------|---------|
-| 1000 | 41.2ms | **4.9ms** | **8.4x** |
-| 2000 | 71.6ms | **12.7ms** | **5.6x** |
-
-| History Size | Latence | Throughput | Verdict |
-|--------------|---------|------------|----------|
-| 500 | <2ms | **>500 evt/s** | Excellent |
-| 1K | 5ms | **200 evt/s** | Production |
-| 2K | 13ms | **77 evt/s** | OK |
-
----
-
 ## TERMINE - Benchmarks (criterion)
 
 - [x] **BENCH-01**: Benchmarks SASE+ (`pattern_benchmark.rs`)
   - Simple sequence, Kleene+, predicates, long sequences
   - Complex patterns (negation, OR, nested)
   - Scalabilite 100K events
-- [x] **BENCH-02**: Benchmarks Attention (`attention_benchmark.rs`)
-  - Single event, batch processing
-  - Comparaison sequentiel vs parallel
-  - Cache embedding warm/cold
 - [x] **BENCH-03**: Comparaison Apama (`APAMA_COMPARISON_2026.md`)
   - ZDD vs Apama manual state machines
   - Kleene+ benchmark: 400x faster than naive, 25000x memory compression
@@ -981,7 +917,6 @@ python run_scenario.py scenarios/fraud_scenario.yaml
     - [x] Tests import statement
     - [x] Tests window module (CountWindow, SlidingCountWindow, PartitionedWindows)
     - [x] Tests join module (3-way join, max events, common key detection, continuous correlation)
-    - [x] Tests attention module (transforms, embeddings, stats, history)
     - [x] Tests connector module (Console, HTTP, Kafka, MQTT sources/sinks, registry, errors)
     - [x] Tests metrics module (gauges, histograms, cloning, multiple streams)
     - [x] Tests sequence module (negation, timeouts, context, correlations)
@@ -1267,7 +1202,6 @@ cargo test -p varpulis-parser pest
 
 # Benchmarks
 cargo bench --bench pattern_benchmark
-cargo bench --bench attention_benchmark
 
 # Coverage (necessite cargo-tarpaulin)
 cargo tarpaulin --out Html
@@ -1282,7 +1216,6 @@ cargo tarpaulin --out Html
 | `crates/varpulis-parser/src/varpulis.pest` | Grammaire PEG Pest |
 | `crates/varpulis-parser/src/pest_parser.rs` | Parser Pest -> AST |
 | `crates/varpulis-runtime/src/sase.rs` | Moteur SASE+ |
-| `crates/varpulis-runtime/src/attention.rs` | Attention mechanism |
 | `crates/varpulis-runtime/src/engine/mod.rs` | Runtime engine |
 | `crates/varpulis-runtime/src/watermark.rs` | Per-source watermark tracker |
 | `crates/varpulis-runtime/src/persistence.rs` | State persistence + checkpoint types |
@@ -1349,7 +1282,6 @@ Version 0.1.0
 |
 +-- varpulis-runtime (~11,000 lignes)
 |   +-- sase.rs - SASE+ NFA engine
-|   +-- attention.rs - Attention mechanism
 |   +-- engine/ - Runtime engine (modularise)
 |   +-- context.rs - Context runtime + checkpoint coordinator
 |   +-- persistence.rs - State persistence + checkpoint types

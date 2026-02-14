@@ -18,7 +18,7 @@ This grammar uses simplified EBNF notation:
 STREAM EVENT TYPE LET VAR CONST FN CONFIG CONTEXT
 IF ELSE ELIF MATCH FOR WHILE BREAK CONTINUE RETURN
 FROM WHERE SELECT JOIN MERGE WINDOW AGGREGATE PARTITION_BY ORDER_BY LIMIT DISTINCT EMIT TO
-PATTERN ATTENTION_WINDOW ATTENTION_SCORE
+PATTERN
 TRUE FALSE NULL
 AND OR NOT IN IS
 TRY CATCH FINALLY RAISE
@@ -143,17 +143,17 @@ stream_op       ::= '.context' '(' IDENTIFIER ')'
                   | '.emit' '(' emit_args? ')'
                   | '.to' '(' connector_target ')'
                   | '.pattern' '(' pattern_def ')'
-                  | '.attention_window' '(' attention_args ')'
                   | '.concurrent' '(' concurrent_args ')'
                   | '.process' '(' lambda ')'
                   | '.on_error' '(' lambda ')'
                   | '.collect' '(' ')'
+                  | '.forecast' '(' forecast_args? ')'
 
 window_args     ::= expr (',' named_arg)*
-attention_args  ::= named_arg (',' named_arg)*
 concurrent_args ::= named_arg (',' named_arg)*
 tap_args        ::= named_arg (',' named_arg)*
 emit_args       ::= named_arg (',' named_arg)*
+forecast_args   ::= named_arg (',' named_arg)*
 
 select_list     ::= select_item (',' select_item)*
 select_item     ::= IDENTIFIER
@@ -291,6 +291,18 @@ config_list     ::= config_value (',' config_value)*
 config_map      ::= config_entry (',' config_entry)*
 
 config_entry    ::= (STRING | IDENTIFIER) ':' config_value
+```
+
+### Forecast Parameters
+
+```ebnf
+forecast_args   ::= named_arg (',' named_arg)*
+
+# Valid named arguments for .forecast():
+# confidence: float  — minimum probability threshold (default 0.5)
+# horizon: duration  — forecast time window (default = within duration)
+# warmup: int        — events before forecasting starts (default 100)
+# max_depth: int     — PST context depth (default 5)
 ```
 
 ## See Also

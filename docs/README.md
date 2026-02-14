@@ -59,7 +59,6 @@ stream Alert = Events
 ### Architecture
 - [`architecture/system.md`](architecture/system.md) - System architecture
 - [`architecture/cluster.md`](architecture/cluster.md) - **Distributed execution (cluster mode)**
-- [`architecture/attention-engine.md`](architecture/attention-engine.md) - Attention mechanism
 - [`architecture/state-management.md`](architecture/state-management.md) - State management
 - [`architecture/parallelism.md`](architecture/parallelism.md) - Parallelization
 - [`architecture/observability.md`](architecture/observability.md) - Metrics and traces

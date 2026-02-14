@@ -145,7 +145,6 @@ cargo bench -p varpulis-runtime
 ### Engine
 
 - **Connectors**: MQTT (production), Kafka, PostgreSQL/MySQL/SQLite, Redis, Kinesis, S3, Elasticsearch — via feature flags
-- **Attention window**: AI-powered anomaly detection with configurable multi-head attention
 - **Context parallelism**: Named execution contexts with OS thread isolation and CPU affinity
 - **Cluster mode**: Coordinator/worker architecture with pipeline groups and routing
 - **Hot reload**: Update pipelines without restart

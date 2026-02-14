@@ -33,7 +33,6 @@
   "emit"
   "to"
   "pattern"
-  "attention_window"
   "and"
   "or"
   "not"
@@ -65,6 +64,7 @@
   "first"
   "sliding"
   "policy"
+  "forecast"
 ] @function.method
 
 ; Types

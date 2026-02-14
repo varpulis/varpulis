@@ -2,7 +2,7 @@
 
 ## Overview
 
-Smart building supervision with real-time monitoring, anomaly detection, and **attention-based predictive maintenance** for HVAC equipment.
+Smart building supervision with real-time monitoring, anomaly detection, and predictive maintenance for HVAC equipment.
 
 ## Business Context
 
@@ -16,7 +16,7 @@ A smart building equipped with IoT sensors to monitor:
 
 1. **Temperature anomaly detection** (overheating, under-cooling)
 2. **Temperature/HVAC correlation** (is the equipment responding correctly?)
-3. **Predictive maintenance** using attention-based degradation detection
+3. **Predictive maintenance** using threshold-based degradation detection
 4. **Comfort scoring** by zone
 5. **Energy optimization**
 
@@ -72,37 +72,26 @@ A smart building equipped with IoT sensors to monitor:
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## Attention-Based Degradation Detection
+## Degradation Detection
 
-The key innovation in this example is using the **attention mechanism** to detect progressive equipment degradation that simple threshold-based rules would miss.
+Degradation detection uses SASE+ temporal sequence patterns and threshold-based rules to detect progressive equipment degradation.
 
 ### Compressor Degradation Pattern
 
-The attention window automatically computes correlation scores across recent events. Use `.where()` on the built-in `attention_score` and `attention_matches` fields:
+Temporal patterns detect progressive performance decline:
 
 ```varpulis
-stream CompressorDegradation = HVAC
+stream CompressorDegradation = HVACMetrics
     .partition_by(unit_id)
-    .attention_window(duration: 1h, heads: 4, embedding: "rule_based")
-    .where(attention_score > 0.75 and attention_matches > 5)
+    .where(avg_pressure > 14.0 and avg_power > 3.0)
     .emit(
         alert_type: "COMPRESSOR_DEGRADATION",
         severity: "warning",
         unit_id: unit_id,
         zone: zone,
-        attention_score: attention_score,
         recommendation: "Schedule preventive maintenance"
     )
 ```
-
-### Why Attention Works
-
-| Traditional Rule-Based | Attention-Based |
-|------------------------|-----------------|
-| Fixed thresholds | Learns normal patterns |
-| Misses gradual drift | Detects progressive changes |
-| High false positives | Correlates multiple signals |
-| Per-metric analysis | Holistic event comparison |
 
 ## Health Score Calculation
 
@@ -124,7 +113,7 @@ health_score = 100
   "severity": "warning",
   "unit_id": "hvac_unit_01",
   "zone": "server_room",
-  "confidence": 0.75,
+  "confidence": 0.80,
   "recommendation": "Schedule preventive maintenance - compressor showing signs of wear",
   "reason": "Progressive decline in compressor pressure with increasing power consumption",
   "timestamp": "2026-01-23T01:20:00Z"
@@ -158,5 +147,4 @@ varpulis run examples/hvac_demo.vpl \
 ## See Also
 
 - [Financial Markets Example](financial-markets.md)
-- [Attention Engine Architecture](../architecture/attention-engine.md)
 - [VPL Syntax](../language/syntax.md)

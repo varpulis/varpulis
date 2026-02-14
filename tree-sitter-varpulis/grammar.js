@@ -172,7 +172,6 @@ module.exports = grammar({
                 $.emit_op,
                 $.to_op,
                 $.pattern_op,
-                $.attention_window_op,
                 $.concurrent_op,
                 $.process_op,
                 $.on_error_op,
@@ -184,6 +183,7 @@ module.exports = grammar({
                 $.any_op,
                 $.all_op,
                 $.first_op,
+                $.forecast_op,
             ),
         ),
 
@@ -203,7 +203,6 @@ module.exports = grammar({
         emit_op: $ => seq('emit', '(', optional(commaSep1($.named_argument)), ')'),
         to_op: $ => seq('to', '(', $._expression, ')'),
         pattern_op: $ => seq('pattern', '(', $.pattern_def, ')'),
-        attention_window_op: $ => seq('attention_window', '(', commaSep1($.named_argument), ')'),
         concurrent_op: $ => seq('concurrent', '(', commaSep1($.named_argument), ')'),
         process_op: $ => seq('process', '(', $._expression, ')'),
         on_error_op: $ => seq('on_error', '(', $._expression, ')'),
@@ -215,6 +214,7 @@ module.exports = grammar({
         any_op: $ => seq('any', '(', optional($.integer), ')'),
         all_op: $ => seq('all', '(', ')'),
         first_op: $ => seq('first', '(', ')'),
+        forecast_op: $ => seq('forecast', '(', optional(commaSep1($.named_argument)), ')'),
 
         followed_by_operation: $ => seq(
             '->',

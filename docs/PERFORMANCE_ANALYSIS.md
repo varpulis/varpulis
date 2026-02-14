@@ -66,7 +66,7 @@ Current test coverage (COV-01/COV-02 - COMPLETE):
 | window.rs | ~20 tests | ✅ Good |
 | aggregation.rs | ~15 tests | ✅ Good |
 | pattern.rs | 40+ tests | ✅ Comprehensive |
-| attention.rs | 35+ tests | ✅ Comprehensive |
+| (removed modules) | - | - |
 
 ### Pattern Tests Coverage (40+ tests)
 - Event matching with filters (eq, neq, gt, ge, lt, le)
@@ -75,9 +75,3 @@ Current test coverage (COV-01/COV-02 - COMPLETE):
 - PatternContext merging
 - Engine state management
 
-### Attention Tests Coverage (35+ tests)
-- Numeric transforms (identity, log, normalize, zscore, cyclical, bucketize)
-- Categorical embeddings (hash, onehot, lookup)
-- SIMD dot product optimization
-- Cache operations
-- History management
