@@ -149,7 +149,7 @@ stream Forecast = EventA as a
 | `warmup` | 100 | Events before forecasting starts |
 | `max_depth` | 5 | PST context depth |
 
-Built-in variables after `.forecast()`: `forecast_probability`, `forecast_time`, `forecast_state`, `forecast_context_depth`
+Built-in variables after `.forecast()`: `forecast_probability`, `forecast_time`, `forecast_state`, `forecast_context_depth`, `forecast_lower`, `forecast_upper`
 
 ## Contexts (Multi-Threading)
 

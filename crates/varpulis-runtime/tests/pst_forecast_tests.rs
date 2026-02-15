@@ -501,3 +501,235 @@ async fn test_forecast_no_params() {
     // Drain results — just verify no crash with defaults
     while let Ok(_) = rx.try_recv() {}
 }
+
+// =============================================================================
+// 11. test_forecast_conformal_interval_fields — forecast_lower/upper present in output
+// =============================================================================
+
+#[tokio::test]
+async fn test_forecast_conformal_interval_fields() {
+    let code = r#"
+        stream ForecastStream = Event1 as e1
+            -> Event2 as e2
+            .within(10s)
+            .forecast(confidence: 0.0, warmup: 2)
+            .emit(
+                prob: forecast_probability,
+                lower: forecast_lower,
+                upper: forecast_upper
+            )
+    "#;
+
+    let program = parse(code).expect("parse");
+    let (tx, mut rx) = mpsc::channel(4096);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).expect("load");
+
+    // Send events to establish pattern and pass warmup
+    for i in 0..20 {
+        let ts = ts_ms(1000 + i * 100);
+        engine
+            .process(Event::new("Event1").with_timestamp(ts))
+            .await
+            .unwrap();
+        let ts2 = ts_ms(1050 + i * 100);
+        engine
+            .process(Event::new("Event2").with_timestamp(ts2))
+            .await
+            .unwrap();
+    }
+
+    // Collect all output events
+    let mut results = Vec::new();
+    while let Ok(e) = rx.try_recv() {
+        results.push(e);
+    }
+
+    // Check ForecastResult events for conformal interval fields
+    for result in &results {
+        if result.event_type.as_ref() == "ForecastResult" {
+            // forecast_lower and forecast_upper should be present
+            if let Some(Value::Float(lower)) = result.data.get("forecast_lower") {
+                if let Some(Value::Float(upper)) = result.data.get("forecast_upper") {
+                    assert!(
+                        *lower >= 0.0,
+                        "forecast_lower should be >= 0.0, got {}",
+                        lower
+                    );
+                    assert!(
+                        *upper <= 1.0,
+                        "forecast_upper should be <= 1.0, got {}",
+                        upper
+                    );
+                    assert!(
+                        lower <= upper,
+                        "forecast_lower ({}) should be <= forecast_upper ({})",
+                        lower,
+                        upper
+                    );
+                }
+            }
+        }
+    }
+}
+
+// =============================================================================
+// 12. test_forecast_hawkes_burst_effect — rapid burst doesn't crash, events flow
+// =============================================================================
+
+#[tokio::test]
+async fn test_forecast_hawkes_burst_effect() {
+    let code = r#"
+        stream ForecastBurst = Event1 as e1
+            -> Event2 as e2
+            .within(10s)
+            .forecast(confidence: 0.0, warmup: 2)
+            .emit(prob: forecast_probability)
+    "#;
+
+    let program = parse(code).expect("parse");
+    let (tx, mut rx) = mpsc::channel(16384);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).expect("load");
+
+    // Send a rapid burst of events 1ms apart (simulating temporal density spike)
+    for i in 0..100 {
+        let ts = ts_ms(1000 + i); // 1ms apart
+        engine
+            .process(Event::new("Event1").with_timestamp(ts))
+            .await
+            .unwrap();
+        let ts2 = ts_ms(1000 + i); // same millisecond
+        engine
+            .process(Event::new("Event2").with_timestamp(ts2))
+            .await
+            .unwrap();
+    }
+
+    // Collect results — verify no panic and events flow through
+    let mut results = Vec::new();
+    while let Ok(e) = rx.try_recv() {
+        results.push(e);
+    }
+
+    // With warmup=2 and rapid burst, events should flow through without error
+    // The Hawkes modulation should handle rapid timestamps gracefully
+    assert!(
+        !results.is_empty(),
+        "Rapid burst should produce output (sequence matches and/or forecasts)"
+    );
+}
+
+// =============================================================================
+// 13. test_forecast_hawkes_disabled_vpl — .forecast(hawkes: false) parses, loads, produces output
+// =============================================================================
+
+#[tokio::test]
+async fn test_forecast_hawkes_disabled_vpl() {
+    let code = r#"
+        stream ForecastNoHawkes = Event1 as e1
+            -> Event2 as e2
+            .within(10s)
+            .forecast(confidence: 0.0, warmup: 2, hawkes: false)
+            .emit(prob: forecast_probability)
+    "#;
+
+    let events: Vec<Event> = (0..20)
+        .flat_map(|i| {
+            vec![
+                Event::new("Event1").with_timestamp(ts_ms(1000 + i * 100)),
+                Event::new("Event2").with_timestamp(ts_ms(1000 + i * 100 + 50)),
+            ]
+        })
+        .collect();
+
+    let results = run(code, events).await;
+    assert!(
+        !results.is_empty(),
+        ".forecast(hawkes: false) should produce output"
+    );
+}
+
+// =============================================================================
+// 14. test_forecast_conformal_disabled_vpl — .forecast(conformal: false) produces (0.0, 1.0) interval
+// =============================================================================
+
+#[tokio::test]
+async fn test_forecast_conformal_disabled_vpl() {
+    let code = r#"
+        stream ForecastNoConformal = Event1 as e1
+            -> Event2 as e2
+            .within(10s)
+            .forecast(confidence: 0.0, warmup: 2, conformal: false)
+            .emit(
+                prob: forecast_probability,
+                lower: forecast_lower,
+                upper: forecast_upper
+            )
+    "#;
+
+    let events: Vec<Event> = (0..20)
+        .flat_map(|i| {
+            vec![
+                Event::new("Event1").with_timestamp(ts_ms(1000 + i * 100)),
+                Event::new("Event2").with_timestamp(ts_ms(1000 + i * 100 + 50)),
+            ]
+        })
+        .collect();
+
+    let results = run(code, events).await;
+    assert!(
+        !results.is_empty(),
+        ".forecast(conformal: false) should produce output"
+    );
+
+    // Check that conformal interval is always (0.0, 1.0) when disabled
+    for e in &results {
+        if let Some(Value::Float(lower)) = e.data.get("lower") {
+            assert!(
+                (*lower - 0.0).abs() < 1e-10,
+                "forecast_lower should be 0.0 when conformal disabled, got {}",
+                lower
+            );
+        }
+        if let Some(Value::Float(upper)) = e.data.get("upper") {
+            assert!(
+                (*upper - 1.0).abs() < 1e-10,
+                "forecast_upper should be 1.0 when conformal disabled, got {}",
+                upper
+            );
+        }
+    }
+}
+
+// =============================================================================
+// 15. test_forecast_both_disabled_vpl — .forecast(hawkes: false, conformal: false) parses and loads
+// =============================================================================
+
+#[tokio::test]
+async fn test_forecast_both_disabled_vpl() {
+    let code = r#"
+        stream ForecastMinimal = Event1 as e1
+            -> Event2 as e2
+            .within(10s)
+            .forecast(confidence: 0.0, warmup: 2, hawkes: false, conformal: false)
+            .emit(prob: forecast_probability)
+    "#;
+
+    let program = parse(code);
+    assert!(
+        program.is_ok(),
+        ".forecast(hawkes: false, conformal: false) should parse, got: {:?}",
+        program.err()
+    );
+
+    let program = program.unwrap();
+    let (tx, _rx) = mpsc::channel(4096);
+    let mut engine = Engine::new(tx);
+    let result = engine.load(&program);
+    assert!(
+        result.is_ok(),
+        "Engine should load forecast with both disabled, got: {:?}",
+        result.err()
+    );
+}

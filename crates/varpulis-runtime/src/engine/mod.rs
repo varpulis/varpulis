@@ -1079,6 +1079,7 @@ impl Engine {
                 hamlet_aggregator,
                 shared_hamlet_ref: None,
                 pst_forecaster,
+                last_raw_event: None,
             },
         );
 
@@ -1116,6 +1117,7 @@ impl Engine {
 
         // For PST forecasting
         let mut forecast_spec: Option<varpulis_core::ast::ForecastSpec> = None;
+        let mut forecast_insert_idx: Option<usize> = None;
 
         // Helper closure to resolve a stream/event name to the underlying event type
         let resolve_event_type = |name: &str| -> String {
@@ -1221,6 +1223,9 @@ impl Engine {
                 }
                 StreamOp::Forecast(spec) => {
                     forecast_spec = Some(spec.clone());
+                    // Record current position so Forecast op is inserted here,
+                    // BEFORE any subsequent .emit()/.where() ops.
+                    forecast_insert_idx = Some(runtime_ops.len());
                     continue;
                 }
                 StreamOp::Score(spec) => {
@@ -1914,6 +1919,14 @@ impl Engine {
                 Some(varpulis_core::ast::Expr::Int(n)) => *n as usize,
                 _ => 5,
             };
+            let hawkes = match &spec.hawkes {
+                Some(varpulis_core::ast::Expr::Bool(b)) => *b,
+                _ => true,
+            };
+            let conformal = match &spec.conformal {
+                Some(varpulis_core::ast::Expr::Bool(b)) => *b,
+                _ => true,
+            };
 
             // Build NFA transition map from SASE engine
             let sase = sase_engine.as_ref().unwrap();
@@ -1931,6 +1944,8 @@ impl Engine {
                 horizon_ns,
                 warmup_events: warmup,
                 max_simulation_steps: 1000,
+                hawkes_enabled: hawkes,
+                conformal_enabled: conformal,
             };
 
             // Build NFA transitions: for each state, map symbol_id -> next_state
@@ -1949,11 +1964,15 @@ impl Engine {
                 }
             }
 
-            // Extract transitions from NFA states
+            // Extract transitions from NFA states.
+            // SASE run current_state means "this state's event was already matched".
+            // The transition label is the NEXT state's event_type (what's needed
+            // to advance from current_state to the next state).
             for state in &nfa.states {
-                if let Some(ref event_type) = state.event_type {
-                    if let Some(sym_id) = temp_pst.symbol_id(event_type) {
-                        for &next in &state.transitions {
+                for &next in &state.transitions {
+                    let next_state = &nfa.states[next];
+                    if let Some(ref next_event_type) = next_state.event_type {
+                        if let Some(sym_id) = temp_pst.symbol_id(next_event_type) {
                             nfa_transitions[state.id].insert(sym_id, next);
                         }
                     }
@@ -1969,14 +1988,25 @@ impl Engine {
                 pmc_config,
             );
 
-            // Insert Forecast op after Sequence
+            // Insert Forecast op at the position where .forecast() appeared in the
+            // VPL source (after Sequence but BEFORE any downstream .where()/.emit()).
+            // It reads the raw event from `last_raw_event` (set before pipeline
+            // execution) so it can learn from every event even when Sequence
+            // clears current_events.
             let forecast_config = ForecastConfig {
                 confidence_threshold: confidence,
                 horizon_ns,
                 warmup_events: warmup,
                 max_depth,
+                hawkes,
+                conformal,
             };
-            runtime_ops.push(RuntimeOp::Forecast(forecast_config));
+            // Sequence was inserted at position 0 after forecast_insert_idx was
+            // recorded, shifting all indices by 1.  Account for that offset.
+            let insert_pos = forecast_insert_idx
+                .map(|i| i + 1)
+                .unwrap_or(runtime_ops.len());
+            runtime_ops.insert(insert_pos, RuntimeOp::Forecast(forecast_config));
 
             pst_forecaster = Some(pmc);
 
