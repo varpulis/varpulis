@@ -27,7 +27,10 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use rustc_hash::FxHashMap;
 use std::time::Duration;
-use varpulis_runtime::pst::*;
+use varpulis_runtime::pst::{
+    ConformalCalibrator, HawkesIntensity, OnlinePSTLearner, PMCConfig, PSTConfig,
+    PatternMarkovChain, PredictionSuffixTree, PruningStrategy, RunSnapshot, SymbolId,
+};
 
 // =============================================================================
 // Sequence generators
@@ -97,6 +100,8 @@ fn build_pmc(num_states: usize, alphabet_size: usize, warmup: u64) -> PatternMar
         confidence_threshold: 0.5,
         horizon_ns: 300_000_000_000,
         max_simulation_steps: 50,
+        hawkes_enabled: true,
+        conformal_enabled: true,
     };
 
     // Linear NFA: state i --(symbol i)--> state i+1; last state is accept
@@ -434,6 +439,111 @@ fn bench_alphabet_scaling(c: &mut Criterion) {
 }
 
 // =============================================================================
+// Benchmark: Hawkes Intensity
+// =============================================================================
+
+fn bench_hawkes_intensity(c: &mut Criterion) {
+    let mut group = c.benchmark_group("hawkes_intensity");
+    group.measurement_time(Duration::from_secs(5));
+
+    let num_events: i64 = 100_000;
+    group.throughput(Throughput::Elements(num_events as u64));
+
+    // Update throughput: 100K events at regular intervals
+    group.bench_function("update_regular", |b| {
+        b.iter(|| {
+            let mut hawkes = HawkesIntensity::new();
+            for i in 0..num_events {
+                hawkes.update(black_box(i * 1_000_000)); // 1ms apart
+            }
+            black_box(hawkes.boost_factor(num_events * 1_000_000))
+        })
+    });
+
+    // Update throughput: burst pattern (alternating fast/slow)
+    group.bench_function("update_burst", |b| {
+        b.iter(|| {
+            let mut hawkes = HawkesIntensity::new();
+            for i in 0..num_events {
+                let ts = if i % 100 < 50 {
+                    // Burst phase: 10us apart
+                    i * 10_000
+                } else {
+                    // Quiet phase: 100ms apart
+                    i * 100_000_000
+                };
+                hawkes.update(black_box(ts));
+            }
+            black_box(hawkes.boost_factor(num_events * 100_000_000))
+        })
+    });
+
+    // Boost factor computation throughput
+    group.bench_function("boost_computation", |b| {
+        let mut hawkes = HawkesIntensity::new();
+        for i in 0..1000i64 {
+            hawkes.update(i * 1_000_000);
+        }
+        b.iter(|| {
+            let mut total = 0.0f64;
+            for i in 0..num_events {
+                total += hawkes.boost_factor(black_box(1_000_000_000 + i * 1000));
+            }
+            black_box(total)
+        })
+    });
+
+    group.finish();
+}
+
+// =============================================================================
+// Benchmark: Conformal Calibration
+// =============================================================================
+
+fn bench_conformal_calibration(c: &mut Criterion) {
+    let mut group = c.benchmark_group("conformal_calibration");
+    group.measurement_time(Duration::from_secs(5));
+
+    let num_cycles = 1_000;
+    group.throughput(Throughput::Elements(num_cycles as u64));
+
+    // Record + predict cycle
+    group.bench_function("record_and_predict", |b| {
+        b.iter(|| {
+            let mut cal = ConformalCalibrator::with_defaults();
+            let mut total_width = 0.0f64;
+            for i in 0..num_cycles {
+                let predicted = (i as f64 / num_cycles as f64).sin().abs();
+                let completed = i % 3 != 0;
+                cal.record_outcome(predicted, completed);
+                let (lower, upper) = cal.prediction_interval(predicted);
+                total_width += upper - lower;
+            }
+            black_box(total_width)
+        })
+    });
+
+    // Prediction interval only (pre-populated calibrator)
+    group.bench_function("predict_only", |b| {
+        let mut cal = ConformalCalibrator::with_defaults();
+        for i in 0..1000 {
+            cal.record_outcome(i as f64 / 1000.0, i % 2 == 0);
+        }
+        b.iter(|| {
+            let mut total_width = 0.0f64;
+            for i in 0..num_cycles {
+                let predicted = i as f64 / num_cycles as f64;
+                let (lower, upper) = cal.prediction_interval(black_box(predicted));
+                total_width += upper - lower;
+            }
+            black_box(total_width)
+        })
+    });
+
+    group.finish();
+}
+
+// =============================================================================
 // Main
 // =============================================================================
 
@@ -444,6 +554,8 @@ criterion_group!(
     bench_pmc_forecast,
     bench_online_learning,
     bench_alphabet_scaling,
+    bench_hawkes_intensity,
+    bench_conformal_calibration,
 );
 
 criterion_main!(benches);

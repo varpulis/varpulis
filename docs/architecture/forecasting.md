@@ -94,7 +94,71 @@ When `PMC.process()` is called with a new event:
 4. **Select best active run** (most advanced NFA state)
 5. **Compute completion probability** via forward algorithm
 6. **Estimate waiting time** via BFS + probability weighting
-7. **Return `ForecastResult`** with probability, expected time, state label, context depth
+7. **Track outcomes**: compare active runs to previous snapshot; disappeared runs feed the conformal calibrator
+8. **Compute Hawkes-modulated probability** via forward algorithm with intensity boosting
+9. **Compute conformal interval**: `(lower, upper)` from calibration history
+10. **Return `ForecastResult`** with probability, expected time, state label, context depth, lower, upper
+
+## Hawkes Process Intensity Modulation
+
+The PST alone is temporally blind: it sees only symbol order, not timing density. A burst of 5 vibration events in 10 seconds and 1 event per hour look identical. The Hawkes process tracks temporal intensity for each event type, boosting completion probability when relevant events cluster in time.
+
+### Self-Exciting Point Process
+
+Each event type has an independent `HawkesIntensity` tracker:
+
+```
+intensity(t) = mu + (intensity(t_prev) - mu + alpha) * exp(-beta * dt)
+```
+
+- **mu**: baseline rate (events/ns), estimated online from mean inter-event time
+- **alpha**: excitation magnitude (fraction of mu), how much each event raises intensity
+- **beta**: decay rate (1/ns), inversely proportional to inter-event time variance
+- **boost_factor**: `clamp(intensity / mu, 1.0, 5.0)`
+
+The update is O(1) per event via the recursive formula. Parameters are re-estimated every 50 events using moment matching after a minimum of 10 observations.
+
+### Integration with PMC
+
+In `compute_completion_probability()`, each PST transition probability is modulated by the Hawkes boost factor for that symbol's event type:
+
+```
+modulated_prob(symbol) = pst_prob(symbol) * hawkes_boost(symbol, now_ns)
+```
+
+The modulated probabilities are renormalized per-state to maintain valid transition distributions, then scaled by the original PST total to preserve the overall probability magnitude.
+
+## Conformal Prediction Intervals
+
+Raw probability forecasts like `0.73` provide no indication of confidence. The conformal calibrator produces distribution-free `[lower, upper]` bounds with formal 90% coverage guarantees.
+
+### Nonconformity Scores
+
+For each past forecast, a nonconformity score records the prediction error:
+
+```
+score = |predicted_probability - actual_outcome|
+```
+
+where `actual_outcome` is 1.0 (pattern completed) or 0.0 (pattern expired/aborted).
+
+### Outcome Tracking
+
+The PMC detects outcomes by comparing the current set of active SASE runs to the previous snapshot:
+- **Disappeared run in accept state** -> pattern completed (outcome = 1.0)
+- **Disappeared run not in accept state** -> pattern expired (outcome = 0.0)
+
+Each outcome is paired with its stored forecast probability to produce a calibration score.
+
+### Prediction Interval
+
+Given a predicted probability `p` and the empirical quantile `q` at coverage level `1 - alpha`:
+
+```
+interval = [max(0, p - q), min(1, p + q)]
+```
+
+The quantile is computed from a sliding window of 1000 recent scores using the standard conformal prediction formula: `index = ceil((n+1) * alpha)`. Before calibration data is available, the interval defaults to `[0.0, 1.0]` (maximum uncertainty). As the engine observes outcomes, the interval narrows.
 
 ## Online Learning
 
@@ -126,6 +190,9 @@ Pruning is triggered every `prune_interval` updates (default: 10,000). Only leaf
 | Completion probability | O(S * T * I) | S=states, T=transitions, I=iterations |
 | Waiting time | O(S + T) | BFS traversal |
 | Pruning | O(N * K) | N=nodes, K=alphabet size for KL computation |
+| Hawkes update | O(1) | Recursive intensity formula per event |
+| Conformal interval | O(W log W) | W=window size (1000), sort for quantile |
+| Outcome tracking | O(R) | R=number of active runs |
 
 Memory usage scales with `O(|alphabet|^d)` in the worst case (all possible contexts observed), but pruning and the variable-order property keep the actual tree much smaller in practice.
 
@@ -145,7 +212,9 @@ crates/varpulis-runtime/src/pst/
 ├── tree.rs           # PredictionSuffixTree, PSTNode, PSTConfig
 ├── markov_chain.rs   # PatternMarkovChain, PMCConfig, ForecastResult, RunSnapshot
 ├── online.rs         # OnlinePSTLearner (incremental updates)
-└── pruning.rs        # PruningStrategy (KL divergence, entropy)
+├── pruning.rs        # PruningStrategy (KL divergence, entropy)
+├── hawkes.rs         # HawkesIntensity (self-exciting temporal density tracker)
+└── conformal.rs      # ConformalCalibrator (distribution-free prediction intervals)
 ```
 
 ## VPL Integration
@@ -153,16 +222,21 @@ crates/varpulis-runtime/src/pst/
 In VPL, forecasting is attached to sequence patterns via the `.forecast()` operator:
 
 ```vpl
-stream FraudAlert = Login as login
-    -> PasswordChange where user_id == login.user_id
-    -> Transaction where user_id == login.user_id and amount > 10000
-    .within(30m)
-    .forecast(confidence: 0.7, horizon: 5m, warmup: 500)
-    .where(forecast_probability > 0.8)
+# Industrial predictive maintenance: predict bearing failure from sensor cascade
+stream BearingFailureAlert = VibrationReading as vib
+    -> TemperatureReading where machine_id == vib.machine_id and value_celsius > 75 as temp
+    -> MachineFailure where machine_id == vib.machine_id as failure
+    .within(4h)
+    .forecast(confidence: 0.5, horizon: 2h, warmup: 500)
+    .where(forecast_probability > 0.7)
     .emit(
-        alert_type: "LIKELY_FRAUD",
+        alert_type: "PREDICTED_BEARING_FAILURE",
+        machine_id: vib.machine_id,
         probability: forecast_probability,
-        expected_time: forecast_expected_time
+        expected_time: forecast_expected_time,
+        recommendation: if forecast_probability > 0.85
+            then "Schedule emergency bearing replacement"
+            else "Monitor closely, prepare replacement parts"
     )
 ```
 
@@ -171,3 +245,11 @@ The `.forecast()` operator:
 2. Runs online learning on every incoming event
 3. Emits `forecast_probability` and `forecast_expected_time` fields
 4. The subsequent `.where()` can filter on these fields to suppress low-confidence predictions
+
+### Why Forecasting Fits Industrial and Security Domains
+
+PST-based forecasting is most effective when:
+- **Sequences are physics-constrained or procedurally ordered** — vibration always precedes thermal failure; reconnaissance always precedes exploitation
+- **Intervention windows are wide** — hours to days for equipment, hours to weeks for cyber intrusions
+- **The cost of missing a prediction is high** — unplanned downtime ($100K-$300K/hr in heavy industry) or data exfiltration
+- **Variable-order context matters** — the same temperature spike means different things after a vibration anomaly vs. after routine startup

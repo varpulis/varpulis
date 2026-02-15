@@ -232,6 +232,8 @@ fn match_token(s: &str) -> Option<(usize, u32)> {
         "forecast_time",
         "forecast_state",
         "forecast_context_depth",
+        "forecast_lower",
+        "forecast_upper",
     ];
 
     // Check if followed by ( to confirm it's a function call

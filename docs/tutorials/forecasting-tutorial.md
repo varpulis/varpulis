@@ -4,13 +4,13 @@
 
 Standard complex event processing detects patterns *after* they complete. Forecasting goes further: it predicts whether a partially-matched pattern will complete, and estimates when.
 
-For example, a fraud detection pattern might be:
+For example, an industrial equipment failure pattern might be:
 
 ```
-Login -> PasswordChange -> LargeTransaction
+VibrationAnomaly -> TemperatureRise -> BearingFailure
 ```
 
-With forecasting, after observing `Login -> PasswordChange`, the engine can estimate the probability that `LargeTransaction` will follow, *before* it happens. This enables proactive intervention rather than reactive alerting.
+With forecasting, after observing `VibrationAnomaly -> TemperatureRise`, the engine can estimate the probability that `BearingFailure` will follow, *before* it happens. This turns hours of warning into proactive maintenance instead of reactive repair — avoiding unplanned downtime that costs $100K-$300K per hour in heavy industry.
 
 Varpulis implements forecasting using Prediction Suffix Trees (PST) combined with the SASE NFA to form a Pattern Markov Chain (PMC). The model learns transition probabilities from the live event stream and applies them to the pattern structure.
 
@@ -43,76 +43,84 @@ After `.forecast()`, two new fields become available for use in `.where()` and `
 - **`forecast_probability`**: a value between 0.0 and 1.0 representing the estimated probability that the pattern will complete
 - **`forecast_expected_time`**: estimated time until pattern completion (in the same duration format as `.within()`)
 
-## Step-by-Step Example
+## Step-by-Step Example: Industrial Predictive Maintenance
 
-### Step 1: Define the Pattern
+### Step 1: Define the Events
 
-Start with a standard sequence pattern. Here we detect a suspicious login sequence:
+Start with the sensor events that form the failure cascade. In rotating equipment (pumps, turbines, compressors), bearing failure follows a well-known physical sequence: vibration anomaly → temperature rise → mechanical failure.
 
 ```vpl
-event Login:
-    user_id: str
-    ip_address: str
-    country: str
+event VibrationReading:
+    machine_id: str
+    amplitude_mm: float
+    frequency_hz: float
+    zone: str
     ts: timestamp
 
-event PasswordChange:
-    user_id: str
+event TemperatureReading:
+    machine_id: str
+    value_celsius: float
+    zone: str
     ts: timestamp
 
-event LargeTransfer:
-    user_id: str
-    amount: float
-    destination: str
+event MachineFailure:
+    machine_id: str
+    failure_type: str
+    severity: str
     ts: timestamp
 ```
 
 ### Step 2: Add the Sequence
 
 ```vpl
-stream SuspiciousSequence = Login as login
-    -> PasswordChange where user_id == login.user_id as pwd_change
-    -> LargeTransfer where user_id == login.user_id and amount > 50000 as transfer
-    .within(1h)
+stream BearingFailurePattern = VibrationReading as vib
+    -> TemperatureReading where machine_id == vib.machine_id and value_celsius > 75 as temp
+    -> MachineFailure where machine_id == vib.machine_id as failure
+    .within(4h)
 ```
 
-This matches the full three-step pattern within one hour.
+This matches the full three-step failure cascade within a 4-hour window. Without forecasting, alerts fire only *after* the failure has already occurred.
 
 ### Step 3: Add Forecasting
 
 ```vpl
-stream FraudForecast = Login as login
-    -> PasswordChange where user_id == login.user_id as pwd_change
-    -> LargeTransfer where user_id == login.user_id and amount > 50000 as transfer
-    .within(1h)
-    .forecast(confidence: 0.6, horizon: 30m, warmup: 1000)
+stream BearingFailureForecast = VibrationReading as vib
+    -> TemperatureReading where machine_id == vib.machine_id and value_celsius > 75 as temp
+    -> MachineFailure where machine_id == vib.machine_id as failure
+    .within(4h)
+    .forecast(confidence: 0.5, horizon: 2h, warmup: 500)
 ```
 
 Now the engine will:
-1. Wait for 1,000 events to learn the event stream's statistical properties (warmup)
-2. For each partially-matched pattern, compute the probability of completion
-3. Only emit forecasts where the probability exceeds 0.6
+1. Wait for 500 events to learn the sensor stream's statistical properties (warmup)
+2. For each partially-matched pattern (e.g., vibration seen, waiting for temperature rise), compute the probability of eventual failure
+3. Only emit forecasts where the probability exceeds 0.5
 
 ### Step 4: Filter and Emit
 
 ```vpl
-stream FraudForecast = Login as login
-    -> PasswordChange where user_id == login.user_id as pwd_change
-    -> LargeTransfer where user_id == login.user_id and amount > 50000 as transfer
-    .within(1h)
-    .forecast(confidence: 0.6, horizon: 30m, warmup: 1000)
-    .where(forecast_probability > 0.75)
+stream BearingFailureForecast = VibrationReading as vib
+    -> TemperatureReading where machine_id == vib.machine_id and value_celsius > 75 as temp
+    -> MachineFailure where machine_id == vib.machine_id as failure
+    .within(4h)
+    .forecast(confidence: 0.5, horizon: 2h, warmup: 500)
+    .where(forecast_probability > 0.7)
     .emit(
-        alert_type: "FRAUD_FORECAST",
-        user_id: login.user_id,
+        alert_type: "PREDICTED_BEARING_FAILURE",
+        machine_id: vib.machine_id,
+        zone: vib.zone,
         probability: forecast_probability,
         expected_time: forecast_expected_time,
-        login_country: login.country,
-        severity: if forecast_probability > 0.9 then "critical" else "high"
+        vibration_amplitude: vib.amplitude_mm,
+        temperature: temp.value_celsius,
+        severity: if forecast_probability > 0.85 then "critical" else "warning",
+        recommendation: if forecast_probability > 0.85
+            then "Schedule emergency bearing replacement within 1 hour"
+            else "Monitor closely and prepare replacement parts"
     )
 ```
 
-The `.where(forecast_probability > 0.75)` acts as a secondary filter on top of the `confidence: 0.6` threshold, allowing you to separate low-confidence from high-confidence forecasts.
+The `.where(forecast_probability > 0.7)` acts as a secondary filter on top of the `confidence: 0.5` threshold, allowing you to separate low-confidence from high-confidence forecasts. A maintenance team can then act on high-probability alerts (>85%) with emergency repairs, while monitoring lower-probability alerts (70-85%) with standby parts ready.
 
 ## Tuning Parameters
 
@@ -152,29 +160,29 @@ More warmup events produce a better-calibrated model, but delay the start of for
 Use multiple filters on `forecast_probability` to create tiered alert levels:
 
 ```vpl
-# High-confidence: automated block
-stream AutoBlock = Login as login
-    -> PasswordChange where user_id == login.user_id
-    -> LargeTransfer where user_id == login.user_id and amount > 50000
-    .within(1h)
-    .forecast(confidence: 0.5, horizon: 30m, warmup: 500)
+# High-confidence: automated shutdown
+stream EmergencyShutdown = VibrationReading as vib
+    -> TemperatureReading where machine_id == vib.machine_id and value_celsius > 75
+    -> MachineFailure where machine_id == vib.machine_id
+    .within(4h)
+    .forecast(confidence: 0.5, horizon: 2h, warmup: 500)
     .where(forecast_probability > 0.9)
     .emit(
-        action: "AUTO_BLOCK",
-        user_id: login.user_id,
+        action: "EMERGENCY_SHUTDOWN",
+        machine_id: vib.machine_id,
         probability: forecast_probability
     )
 
-# Medium-confidence: human review
-stream ReviewQueue = Login as login
-    -> PasswordChange where user_id == login.user_id
-    -> LargeTransfer where user_id == login.user_id and amount > 50000
-    .within(1h)
-    .forecast(confidence: 0.5, horizon: 30m, warmup: 500)
+# Medium-confidence: schedule maintenance
+stream MaintenanceQueue = VibrationReading as vib
+    -> TemperatureReading where machine_id == vib.machine_id and value_celsius > 75
+    -> MachineFailure where machine_id == vib.machine_id
+    .within(4h)
+    .forecast(confidence: 0.5, horizon: 2h, warmup: 500)
     .where(forecast_probability > 0.6 and forecast_probability <= 0.9)
     .emit(
-        action: "HUMAN_REVIEW",
-        user_id: login.user_id,
+        action: "SCHEDULE_MAINTENANCE",
+        machine_id: vib.machine_id,
         probability: forecast_probability,
         expected_time: forecast_expected_time
     )
@@ -196,6 +204,63 @@ stream UrgentForecast = SensorReading as baseline
         sensor_id: baseline.sensor_id,
         probability: forecast_probability,
         minutes_remaining: forecast_expected_time
+    )
+```
+
+## Full Example: Cybersecurity APT Detection
+
+Advanced Persistent Threats (APTs) follow a predictable kill chain: reconnaissance → initial exploitation → lateral movement → data exfiltration. With dwell times of 56-200 days, there is a wide intervention window — but only if you can predict that a partial sequence will progress.
+
+```vpl
+connector SiemKafka = kafka(
+    brokers: ["siem-kafka:9092"],
+    group_id: "apt-forecaster"
+)
+
+event NetworkScan:
+    source_ip: str
+    target_subnet: str
+    ports_scanned: int
+    ts: timestamp
+
+event ExploitAttempt:
+    source_ip: str
+    target_host: str
+    cve_id: str
+    success: bool
+    ts: timestamp
+
+event LateralMovement:
+    source_host: str
+    target_host: str
+    method: str  # "pass_the_hash", "psexec", "wmi", "ssh"
+    ts: timestamp
+
+event DataExfiltration:
+    source_host: str
+    destination_ip: str
+    bytes_transferred: int
+    protocol: str
+    ts: timestamp
+
+# Forecast: scan -> exploit -> lateral move -> exfiltration
+stream APTForecast = NetworkScan as scan
+    -> ExploitAttempt where source_ip == scan.source_ip and success == true as exploit
+    -> LateralMovement where source_host == exploit.target_host as lateral
+    -> DataExfiltration where source_host == lateral.target_host as exfil
+    .within(7d)
+    .forecast(confidence: 0.4, horizon: 3d, warmup: 2000)
+    .where(forecast_probability > 0.5)
+    .emit(
+        alert_type: "APT_KILL_CHAIN_FORECAST",
+        severity: if forecast_probability > 0.8 then "critical" else "high",
+        source_ip: scan.source_ip,
+        compromised_host: exploit.target_host,
+        probability: forecast_probability,
+        expected_time: forecast_expected_time,
+        recommendation: if forecast_probability > 0.75
+            then "Isolate compromised host immediately, begin incident response"
+            else "Increase monitoring on subnet, block lateral movement paths"
     )
 ```
 
@@ -250,7 +315,7 @@ stream PredictiveMaintenanceAlert = VibrationReading as vib
 
 2. **Online Learning**: As events flow through the engine, the PST continuously updates its model of event transition probabilities. It uses variable-order Markov modeling -- deeper context where it helps, shallower where it does not.
 
-3. **Forward Algorithm**: When a partial match is active (e.g., `Login` matched, waiting for `PasswordChange`), the PMC runs a forward computation over the product of NFA states and PST-predicted transition probabilities to estimate completion probability.
+3. **Forward Algorithm**: When a partial match is active (e.g., `VibrationAnomaly` matched, waiting for `TemperatureRise`), the PMC runs a forward computation over the product of NFA states and PST-predicted transition probabilities to estimate completion probability.
 
 4. **Adaptive Pruning**: The PST periodically prunes nodes whose distributions do not differ significantly from their parent, keeping the model compact and fast.
 

@@ -1,7 +1,18 @@
 # Fraud Detection with Pattern Forecasting
 # Varpulis CEP Engine Example
 #
-# This example demonstrates real-time fraud forecasting using:
+# NOTE: Financial fraud is a secondary use case for PST forecasting.
+# Simple heuristics (velocity checks, amount thresholds) capture ~90%
+# of fraud value. PST forecasting adds value for multi-step chains
+# where the order and timing of events matters -- account takeover,
+# credential stuffing, and SIM swap sequences where predicting the
+# NEXT step enables proactive blocking before funds leave.
+#
+# For the strongest PST forecasting use cases, see:
+# - forecast_iot.vpl (industrial predictive maintenance -- Tier 1)
+# - forecast_cybersecurity.vpl (APT kill chain detection -- Tier 1)
+#
+# This example demonstrates:
 # - SASE+ temporal sequence patterns for fraud chain detection
 # - PST-based forecasting to predict fraud before completion
 # - Tiered alerting based on forecast confidence

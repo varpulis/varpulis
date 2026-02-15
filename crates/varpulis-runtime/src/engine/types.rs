@@ -114,6 +114,9 @@ pub(crate) struct StreamDefinition {
     pub shared_hamlet_ref: Option<Arc<std::sync::Mutex<crate::hamlet::HamletAggregator>>>,
     /// PST-based pattern forecaster (when .forecast() is used)
     pub pst_forecaster: Option<crate::pst::PatternMarkovChain>,
+    /// Last raw event that entered the pipeline (used by Forecast op to learn
+    /// from every event even when the Sequence op clears current_events).
+    pub last_raw_event: Option<crate::event::SharedEvent>,
 }
 
 /// Source of events for a stream
@@ -225,6 +228,10 @@ pub(crate) struct ForecastConfig {
     pub warmup_events: u64,
     /// Maximum PST context depth.
     pub max_depth: usize,
+    /// Whether Hawkes intensity modulation is enabled.
+    pub hawkes: bool,
+    /// Whether conformal prediction intervals are enabled.
+    pub conformal: bool,
 }
 
 /// Configuration for ONNX model scoring

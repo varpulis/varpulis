@@ -80,7 +80,14 @@ pub static LOG_PARAMS: &[&str] = &["level", "message", "data"];
 pub static WATERMARK_PARAMS: &[&str] = &["out_of_order"];
 
 /// Valid parameter names for `.forecast()`.
-pub static FORECAST_PARAMS: &[&str] = &["confidence", "horizon", "warmup", "max_depth"];
+pub static FORECAST_PARAMS: &[&str] = &[
+    "confidence",
+    "horizon",
+    "warmup",
+    "max_depth",
+    "hawkes",
+    "conformal",
+];
 
 /// Check if a function name is a known builtin (scalar or aggregate).
 pub fn is_known_function(name: &str) -> bool {

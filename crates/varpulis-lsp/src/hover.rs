@@ -286,12 +286,16 @@ fn get_documentation(word: &str) -> Option<String> {
             - `confidence` — Minimum probability to emit (default 0.5)\n\
             - `horizon` — Forecast window (default = within duration)\n\
             - `warmup` — Events before forecasting starts (default 100)\n\
-            - `max_depth` — PST context depth (default 5)\n\n\
+            - `max_depth` — PST context depth (default 5)\n\
+            - `hawkes` — Enable Hawkes intensity modulation (default true)\n\
+            - `conformal` — Enable conformal prediction intervals (default true)\n\n\
             **Built-in variables** (after `.forecast()`):\n\
-            - `forecast_probability` — Completion probability\n\
+            - `forecast_probability` — Completion probability (Hawkes-modulated)\n\
             - `forecast_time` — Expected time to completion (ns)\n\
             - `forecast_state` — Current NFA state label\n\
-            - `forecast_context_depth` — PST context depth used\n\n\
+            - `forecast_context_depth` — PST context depth used\n\
+            - `forecast_lower` — Conformal prediction interval lower bound\n\
+            - `forecast_upper` — Conformal prediction interval upper bound\n\n\
             **Example:**\n\
             ```vpl\n\
             stream Alerts = Event as e1\n\
