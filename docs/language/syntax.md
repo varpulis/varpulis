@@ -304,7 +304,9 @@ stream FraudForecast = Transaction as t1
     .emit(
         probability: forecast_probability,
         expected_time: forecast_time,
-        state: forecast_state
+        state: forecast_state,
+        confidence_lower: forecast_lower,
+        confidence_upper: forecast_upper
     )
 ```
 
@@ -316,6 +318,8 @@ stream FraudForecast = Transaction as t1
 | `horizon` | `duration` | `within` duration | Forecast time window |
 | `warmup` | `int` | 100 | Events before forecasting starts |
 | `max_depth` | `int` | 5 | PST context depth |
+| `hawkes` | `bool` | `true` | Enable Hawkes intensity modulation |
+| `conformal` | `bool` | `true` | Enable conformal prediction intervals |
 
 ### Forecast Built-in Variables
 
@@ -323,10 +327,12 @@ Available in `.where()` and `.emit()` after `.forecast()`:
 
 | Variable | Type | Description |
 |----------|------|-------------|
-| `forecast_probability` | `float` | Pattern completion probability (0.0–1.0) |
+| `forecast_probability` | `float` | Pattern completion probability (0.0–1.0), Hawkes-modulated |
 | `forecast_time` | `int` | Expected time to completion (nanoseconds) |
 | `forecast_state` | `str` | Current NFA state label |
 | `forecast_context_depth` | `int` | PST context depth used for prediction |
+| `forecast_lower` | `float` | Lower bound of conformal prediction interval (0.0–1.0) |
+| `forecast_upper` | `float` | Upper bound of conformal prediction interval (0.0–1.0) |
 
 ## Output Routing
 

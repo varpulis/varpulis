@@ -138,10 +138,16 @@ These variables are available in streams that use the `.forecast()` operator aft
 
 | Variable | Type | Description |
 |----------|------|-------------|
-| `forecast_probability` | `float` | Pattern completion probability (0.0–1.0) |
+| `forecast_probability` | `float` | Pattern completion probability (0.0–1.0), Hawkes-modulated |
 | `forecast_time` | `int` | Expected time to completion (nanoseconds) |
 | `forecast_state` | `str` | Current NFA state label |
 | `forecast_context_depth` | `int` | PST context depth used for prediction |
+| `forecast_lower` | `float` | Lower bound of conformal prediction interval (0.0–1.0) |
+| `forecast_upper` | `float` | Upper bound of conformal prediction interval (0.0–1.0) |
+
+The `forecast_lower` and `forecast_upper` variables provide calibrated 90%-coverage prediction intervals via conformal prediction. Before sufficient calibration data is available, the interval defaults to `[0.0, 1.0]` (maximum uncertainty). As the engine observes forecast outcomes (pattern completions and expirations), the interval narrows automatically. Conformal intervals can be disabled per-pipeline with `conformal: false` — in that case, `forecast_lower` is always `0.0` and `forecast_upper` is always `1.0`.
+
+The `forecast_probability` is modulated by Hawkes process intensity tracking. When events needed for the next NFA transition arrive in a temporal burst, the probability is boosted proportionally (up to 5x). During normal event rates, the boost factor is ~1.0. Hawkes modulation can be disabled per-pipeline with `hawkes: false` for latency-sensitive workloads.
 
 ### Forecast Example
 
@@ -155,7 +161,9 @@ stream FraudForecast = Transaction as t1
     .emit(
         probability: forecast_probability,
         expected_time: forecast_time,
-        state: forecast_state
+        state: forecast_state,
+        confidence_lower: forecast_lower,
+        confidence_upper: forecast_upper
     )
 ```
 

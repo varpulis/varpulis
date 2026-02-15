@@ -84,8 +84,15 @@ pub(crate) async fn execute_pipeline(
     functions: &FxHashMap<String, UserFunction>,
     sinks: &FxHashMap<String, Arc<dyn crate::sink::Sink>>,
 ) -> Result<StreamProcessResult, String> {
+    // Store the raw event for the Forecast op (it needs to learn from every
+    // event, even when the Sequence op clears current_events on non-match).
+    if stream.pst_forecaster.is_some() {
+        stream.last_raw_event = initial_events.first().cloned();
+    }
+
     let mut current_events = initial_events;
     let mut emitted_events: Vec<SharedEvent> = Vec::new();
+    let has_forecast = stream.pst_forecaster.is_some();
 
     // Iterate operations starting from start_idx
     // We need the index for RuntimeOp::Sequence which accesses stream.sase_engine
@@ -102,6 +109,7 @@ pub(crate) async fn execute_pipeline(
             &mut stream.hamlet_aggregator,
             &stream.shared_hamlet_ref,
             &mut stream.pst_forecaster,
+            &stream.last_raw_event,
             &mut current_events,
             &mut emitted_events,
             functions,
@@ -109,7 +117,9 @@ pub(crate) async fn execute_pipeline(
         )
         .await?;
 
-        if current_events.is_empty() {
+        // Don't exit early if the Forecast op hasn't run yet — it needs to
+        // learn from every event even when Sequence produces no match.
+        if current_events.is_empty() && !(has_forecast && matches!(op, RuntimeOp::Sequence)) {
             return Ok(StreamProcessResult {
                 emitted_events,
                 output_events: vec![],
@@ -169,6 +179,7 @@ async fn execute_op(
     hamlet_aggregator: &mut Option<crate::hamlet::HamletAggregator>,
     shared_hamlet_ref: &Option<Arc<std::sync::Mutex<crate::hamlet::HamletAggregator>>>,
     pst_forecaster: &mut Option<crate::pst::PatternMarkovChain>,
+    last_raw_event: &Option<SharedEvent>,
     current_events: &mut Vec<SharedEvent>,
     emitted_events: &mut Vec<SharedEvent>,
     functions: &FxHashMap<String, UserFunction>,
@@ -546,20 +557,28 @@ async fn execute_op(
         }
 
         RuntimeOp::Forecast(config) => {
-            // Process events through PST forecaster (async path)
-            let mut forecast_results = Vec::new();
+            // Process events through PST forecaster (async path).
+            //
+            // ALWAYS uses last_raw_event for PMC learning so the PST sees every
+            // raw event regardless of what the Sequence op produced (the Sequence
+            // op may output SequenceMatch events which have an unrecognized event
+            // type, or may clear current_events entirely on non-match).
+            //
+            // Forecast results replace current_events so downstream .where()/.emit()
+            // can filter and shape them.
 
             if let Some(ref mut pmc) = pst_forecaster {
-                // Get active run snapshots from SASE engine
                 let run_snapshots = if let Some(ref sase) = sase_engine {
                     sase.active_run_snapshots()
                 } else {
                     Vec::new()
                 };
 
-                for event in current_events.iter() {
-                    let event_type = event.event_type.to_string();
-                    let event_ts = event.timestamp.timestamp_nanos_opt().unwrap_or(0);
+                // Always learn from the raw event (not SequenceMatch)
+                let mut forecast_results = Vec::new();
+                if let Some(ref raw) = last_raw_event {
+                    let event_type = raw.event_type.to_string();
+                    let event_ts = raw.timestamp.timestamp_nanos_opt().unwrap_or(0);
 
                     if let Some(forecast) = pmc.process(&event_type, event_ts, &run_snapshots) {
                         if forecast.probability >= config.confidence_threshold {
@@ -588,23 +607,30 @@ async fn execute_op(
                                 "active_runs".into(),
                                 Value::Int(forecast.active_runs as i64),
                             );
-                            // Copy source event fields
-                            for (k, v) in &event.data {
+                            forecast_event.data.insert(
+                                "forecast_lower".into(),
+                                Value::Float(forecast.forecast_lower),
+                            );
+                            forecast_event.data.insert(
+                                "forecast_upper".into(),
+                                Value::Float(forecast.forecast_upper),
+                            );
+                            for (k, v) in &raw.data {
                                 if !forecast_event.data.contains_key(k) {
                                     forecast_event.data.insert(k.clone(), v.clone());
                                 }
                             }
-                            forecast_event.timestamp = event.timestamp;
+                            forecast_event.timestamp = raw.timestamp;
                             forecast_results.push(Arc::new(forecast_event));
                         }
                     }
                 }
-            }
 
-            if forecast_results.is_empty() {
-                current_events.clear();
-            } else {
-                *current_events = forecast_results;
+                if !forecast_results.is_empty() {
+                    *current_events = forecast_results;
+                }
+                // If no forecast produced, leave current_events as-is
+                // (may contain SequenceMatch events from upstream Sequence op)
             }
         }
 
@@ -727,8 +753,14 @@ pub(crate) fn execute_pipeline_sync(
     functions: &FxHashMap<String, UserFunction>,
     skip_output_rename: bool,
 ) -> Result<StreamProcessResult, String> {
+    // Store the raw event for the Forecast op
+    if stream.pst_forecaster.is_some() {
+        stream.last_raw_event = initial_events.first().cloned();
+    }
+
     let mut current_events = initial_events;
     let mut emitted_events: Vec<SharedEvent> = Vec::new();
+    let has_forecast = stream.pst_forecaster.is_some();
 
     // Iterate operations starting from start_idx
     for op in &mut stream.operations[start_idx..] {
@@ -749,12 +781,14 @@ pub(crate) fn execute_pipeline_sync(
             &mut stream.hamlet_aggregator,
             &stream.shared_hamlet_ref,
             &mut stream.pst_forecaster,
+            &stream.last_raw_event,
             &mut current_events,
             &mut emitted_events,
             functions,
         )?;
 
-        if current_events.is_empty() {
+        // Don't exit early if the Forecast op hasn't run yet
+        if current_events.is_empty() && !(has_forecast && matches!(op, RuntimeOp::Sequence)) {
             return Ok(StreamProcessResult {
                 emitted_events,
                 output_events: vec![],
@@ -791,6 +825,7 @@ fn execute_op_sync(
     hamlet_aggregator: &mut Option<crate::hamlet::HamletAggregator>,
     shared_hamlet_ref: &Option<Arc<std::sync::Mutex<crate::hamlet::HamletAggregator>>>,
     pst_forecaster: &mut Option<crate::pst::PatternMarkovChain>,
+    last_raw_event: &Option<SharedEvent>,
     current_events: &mut Vec<SharedEvent>,
     emitted_events: &mut Vec<SharedEvent>,
     functions: &FxHashMap<String, UserFunction>,
@@ -1157,8 +1192,8 @@ fn execute_op_sync(
         }
 
         RuntimeOp::Forecast(config) => {
-            // Process events through PST forecaster (sync path)
-            let mut forecast_results = Vec::new();
+            // Process events through PST forecaster (sync path).
+            // Always uses last_raw_event for PMC learning.
 
             if let Some(ref mut pmc) = pst_forecaster {
                 let run_snapshots = if let Some(ref sase) = sase_engine {
@@ -1167,9 +1202,10 @@ fn execute_op_sync(
                     Vec::new()
                 };
 
-                for event in current_events.iter() {
-                    let event_type = event.event_type.to_string();
-                    let event_ts = event.timestamp.timestamp_nanos_opt().unwrap_or(0);
+                let mut forecast_results = Vec::new();
+                if let Some(ref raw) = last_raw_event {
+                    let event_type = raw.event_type.to_string();
+                    let event_ts = raw.timestamp.timestamp_nanos_opt().unwrap_or(0);
 
                     if let Some(forecast) = pmc.process(&event_type, event_ts, &run_snapshots) {
                         if forecast.probability >= config.confidence_threshold {
@@ -1198,22 +1234,28 @@ fn execute_op_sync(
                                 "active_runs".into(),
                                 Value::Int(forecast.active_runs as i64),
                             );
-                            for (k, v) in &event.data {
+                            forecast_event.data.insert(
+                                "forecast_lower".into(),
+                                Value::Float(forecast.forecast_lower),
+                            );
+                            forecast_event.data.insert(
+                                "forecast_upper".into(),
+                                Value::Float(forecast.forecast_upper),
+                            );
+                            for (k, v) in &raw.data {
                                 if !forecast_event.data.contains_key(k) {
                                     forecast_event.data.insert(k.clone(), v.clone());
                                 }
                             }
-                            forecast_event.timestamp = event.timestamp;
+                            forecast_event.timestamp = raw.timestamp;
                             forecast_results.push(Arc::new(forecast_event));
                         }
                     }
                 }
-            }
 
-            if forecast_results.is_empty() {
-                current_events.clear();
-            } else {
-                *current_events = forecast_results;
+                if !forecast_results.is_empty() {
+                    *current_events = forecast_results;
+                }
             }
         }
 

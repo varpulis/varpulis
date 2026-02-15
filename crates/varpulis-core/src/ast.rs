@@ -366,6 +366,10 @@ pub struct ForecastSpec {
     pub warmup: Option<Expr>,
     /// Maximum PST context depth (default 5)
     pub max_depth: Option<Expr>,
+    /// Enable Hawkes intensity modulation (default true)
+    pub hawkes: Option<Expr>,
+    /// Enable conformal prediction intervals (default true)
+    pub conformal: Option<Expr>,
 }
 
 /// Followed-by clause for temporal sequences

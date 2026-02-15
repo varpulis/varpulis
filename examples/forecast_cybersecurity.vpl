@@ -1,0 +1,301 @@
+# Cybersecurity APT Kill Chain Forecasting
+# Varpulis CEP Engine Example
+#
+# This example demonstrates real-time threat prediction for Advanced Persistent
+# Threats (APTs) and multi-stage cyber attacks using:
+# - Kill chain sequence detection with PST-based forecasting
+# - Variable-order context learning (attacker "signatures")
+# - Tiered response based on forecast confidence
+# - Cross-stage correlation with wide time windows (days to weeks)
+#
+# WHY PST FORECASTING FITS CYBERSECURITY:
+# - Kill chains are procedurally ordered (recon -> exploit -> lateral -> exfil)
+# - Dwell times are long (56-200 days median) -- wide intervention window
+# - Variable-order context captures attacker TTPs: the same lateral movement
+#   means different things after a phishing exploit vs. a zero-day
+# - Cost of missing a prediction is catastrophic (data breach, $4.5M avg)
+
+# =============================================================================
+# Connector Definitions
+# =============================================================================
+
+connector SiemKafka = kafka (
+    brokers: ["siem-kafka:9092"],
+    group_id: "apt-forecaster"
+)
+
+connector SocWebhook = http (
+    base_url: "https://soc.internal/api/v1/alerts"
+)
+
+# =============================================================================
+# Event Definitions
+# =============================================================================
+
+event NetworkScan:
+    source_ip: str
+    target_subnet: str
+    ports_scanned: int
+    scan_type: str       # "syn", "connect", "udp", "service_enum"
+    ts: timestamp
+
+event DnsAnomaly:
+    source_ip: str
+    query_count: int
+    unique_domains: int
+    entropy: float       # domain name entropy (high = DGA)
+    ts: timestamp
+
+event ExploitAttempt:
+    source_ip: str
+    target_host: str
+    target_port: int
+    cve_id: str
+    success: bool
+    ts: timestamp
+
+event CredentialAccess:
+    source_host: str
+    technique: str       # "mimikatz", "kerberoast", "lsass_dump", "brute_force"
+    accounts_compromised: int
+    ts: timestamp
+
+event LateralMovement:
+    source_host: str
+    target_host: str
+    method: str          # "pass_the_hash", "psexec", "wmi", "ssh", "rdp"
+    ts: timestamp
+
+event PrivilegeEscalation:
+    host: str
+    from_user: str
+    to_user: str
+    technique: str       # "token_impersonation", "exploit", "dll_hijack"
+    ts: timestamp
+
+event DataStaging:
+    host: str
+    path: str
+    size_bytes: int
+    compression: bool
+    ts: timestamp
+
+event DataExfiltration:
+    source_host: str
+    destination_ip: str
+    bytes_transferred: int
+    protocol: str        # "https", "dns_tunnel", "icmp", "ftp"
+    ts: timestamp
+
+event C2Communication:
+    source_host: str
+    destination_ip: str
+    beacon_interval_ms: int
+    jitter_percent: float
+    ts: timestamp
+
+# =============================================================================
+# Base Streams
+# =============================================================================
+
+stream Scans = NetworkScan
+    .from(SiemKafka, topic: "siem.network.scans")
+
+stream DnsAnomalies = DnsAnomaly
+    .from(SiemKafka, topic: "siem.dns.anomalies")
+
+stream Exploits = ExploitAttempt
+    .from(SiemKafka, topic: "siem.exploits")
+
+stream CredAccess = CredentialAccess
+    .from(SiemKafka, topic: "siem.credentials")
+
+stream LateralMoves = LateralMovement
+    .from(SiemKafka, topic: "siem.lateral")
+
+stream PrivEsc = PrivilegeEscalation
+    .from(SiemKafka, topic: "siem.privesc")
+
+stream Staging = DataStaging
+    .from(SiemKafka, topic: "siem.staging")
+
+stream Exfiltration = DataExfiltration
+    .from(SiemKafka, topic: "siem.exfiltration")
+
+stream C2 = C2Communication
+    .from(SiemKafka, topic: "siem.c2")
+
+# =============================================================================
+# Pre-filtered Streams
+# =============================================================================
+
+stream SuccessfulExploits = Exploits
+    .where(success == true)
+
+stream HighEntropyDns = DnsAnomalies
+    .where(entropy > 3.5 or unique_domains > 100)
+
+stream LargeExfil = Exfiltration
+    .where(bytes_transferred > 10000000)  # >10 MB
+
+# =============================================================================
+# PATTERN 1: Full APT Kill Chain Forecasting
+# Reconnaissance -> Exploitation -> Lateral Movement -> Exfiltration
+# =============================================================================
+
+stream APTKillChainForecast = NetworkScan as recon
+    -> ExploitAttempt where source_ip == recon.source_ip and success == true as exploit
+    -> LateralMovement where source_host == exploit.target_host as lateral
+    -> DataExfiltration where source_host == lateral.target_host as exfil
+    .within(14d)
+    .forecast(confidence: 0.3, horizon: 7d, warmup: 2000)
+    .where(forecast_probability > 0.5)
+    .emit(
+        alert_type: "APT_KILL_CHAIN_FORECAST",
+        severity: if forecast_probability > 0.8 then "critical" else "high",
+        source_ip: recon.source_ip,
+        compromised_host: exploit.target_host,
+        lateral_target: lateral.target_host,
+        probability: forecast_probability,
+        expected_time: forecast_expected_time,
+        exploit_cve: exploit.cve_id,
+        lateral_method: lateral.method,
+        recommendation: if forecast_probability > 0.75
+            then "ISOLATE compromised hosts immediately. Begin incident response."
+            else "Increase monitoring on affected subnet. Block known lateral paths."
+    )
+
+# =============================================================================
+# PATTERN 2: Credential Theft -> Privilege Escalation -> Domain Compromise
+# =============================================================================
+
+stream DomainCompromiseForecast = CredentialAccess as cred
+    -> PrivilegeEscalation where host == cred.source_host as privesc
+    -> LateralMovement where source_host == privesc.host as lateral
+    .within(7d)
+    .forecast(confidence: 0.4, horizon: 3d, warmup: 1000)
+    .where(forecast_probability > 0.55)
+    .emit(
+        alert_type: "DOMAIN_COMPROMISE_FORECAST",
+        severity: if forecast_probability > 0.85 then "critical" else "high",
+        initial_host: cred.source_host,
+        cred_technique: cred.technique,
+        accounts_compromised: cred.accounts_compromised,
+        privesc_technique: privesc.technique,
+        escalated_to: privesc.to_user,
+        probability: forecast_probability,
+        expected_time: forecast_expected_time,
+        recommendation: if forecast_probability > 0.8
+            then "Reset all domain credentials. Assume breach of domain admin."
+            else "Force password rotation for compromised accounts. Monitor DC logs."
+    )
+
+# =============================================================================
+# PATTERN 3: C2 Establishment -> Data Staging -> Exfiltration
+# Post-compromise data theft sequence
+# =============================================================================
+
+stream DataTheftForecast = C2Communication as c2
+    -> DataStaging where host == c2.source_host as staging
+    -> DataExfiltration where source_host == staging.host as exfil
+    .within(30d)
+    .forecast(confidence: 0.4, horizon: 14d, warmup: 1000)
+    .where(forecast_probability > 0.5)
+    .emit(
+        alert_type: "DATA_THEFT_FORECAST",
+        severity: "critical",
+        compromised_host: c2.source_host,
+        c2_server: c2.destination_ip,
+        beacon_interval_ms: c2.beacon_interval_ms,
+        staged_path: staging.path,
+        staged_size_bytes: staging.size_bytes,
+        probability: forecast_probability,
+        expected_time: forecast_expected_time,
+        recommendation: "Block C2 IP at perimeter. Preserve staging directory for forensics."
+    )
+
+# =============================================================================
+# PATTERN 4: DNS Tunneling -> C2 -> Lateral Movement
+# Stealthy communication channel establishment
+# =============================================================================
+
+stream StealthC2Forecast = DnsAnomaly as dns
+    -> C2Communication where source_host == dns.source_ip as c2
+    -> LateralMovement where source_host == c2.source_host as lateral
+    .within(7d)
+    .forecast(confidence: 0.4, horizon: 3d, warmup: 1500)
+    .where(forecast_probability > 0.5)
+    .emit(
+        alert_type: "STEALTH_C2_FORECAST",
+        severity: "high",
+        source_ip: dns.source_ip,
+        dns_entropy: dns.entropy,
+        c2_destination: c2.destination_ip,
+        probability: forecast_probability,
+        expected_time: forecast_expected_time,
+        recommendation: "Sinkhole suspicious DNS domains. Monitor host for lateral movement."
+    )
+
+# =============================================================================
+# PATTERN 5: Ransomware Pre-Deployment Sequence
+# Credential theft -> Lateral spread -> Privilege escalation -> (Encryption)
+# =============================================================================
+
+stream RansomwareForecast = CredentialAccess as cred
+    -> LateralMovement where source_host == cred.source_host as lateral1
+    -> LateralMovement where source_host == lateral1.target_host and target_host != lateral1.source_host as lateral2
+    -> PrivilegeEscalation where host == lateral2.target_host as privesc
+    .within(5d)
+    .forecast(confidence: 0.4, horizon: 2d, warmup: 1500)
+    .where(forecast_probability > 0.5)
+    .emit(
+        alert_type: "RANSOMWARE_PRECURSOR_FORECAST",
+        severity: "critical",
+        initial_host: cred.source_host,
+        spread_path: cred.source_host,
+        hops: 2,
+        technique: cred.technique,
+        probability: forecast_probability,
+        expected_time: forecast_expected_time,
+        recommendation: if forecast_probability > 0.7
+            then "INITIATE RANSOMWARE RESPONSE PLAYBOOK. Isolate affected segment."
+            else "Verify backups. Prepare network segmentation. Increase EDR sensitivity."
+    )
+
+# =============================================================================
+# PATTERN 6: Insider Threat Sequence
+# Unusual access -> Data staging -> Exfiltration via non-standard protocol
+# =============================================================================
+
+stream InsiderThreatForecast = CredentialAccess as access
+    -> DataStaging where host == access.source_host and compression == true as staging
+    -> DataExfiltration where source_host == staging.host and protocol != "https" as exfil
+    .within(14d)
+    .forecast(confidence: 0.4, horizon: 7d, warmup: 1000)
+    .where(forecast_probability > 0.5)
+    .emit(
+        alert_type: "INSIDER_THREAT_FORECAST",
+        severity: "high",
+        source_host: access.source_host,
+        staged_size_bytes: staging.size_bytes,
+        exfil_protocol: exfil.protocol,
+        probability: forecast_probability,
+        expected_time: forecast_expected_time,
+        recommendation: "Alert HR and legal. Preserve evidence. Do not alert the user."
+    )
+
+# =============================================================================
+# AGGREGATE THREAT FORECASTS
+# =============================================================================
+
+stream AllThreatForecasts = merge(
+    APTKillChainForecast,
+    DomainCompromiseForecast,
+    DataTheftForecast,
+    StealthC2Forecast,
+    RansomwareForecast,
+    InsiderThreatForecast
+)
+.tap(counter: "threat_forecasts_total", labels: [alert_type, severity])
+.emit()
+.to(SocWebhook)

@@ -1,12 +1,24 @@
-# IoT Sensor Pattern Forecasting
+# Industrial Equipment Failure Forecasting (Predictive Maintenance)
 # Varpulis CEP Engine Example
 #
-# This example demonstrates predictive maintenance and anomaly forecasting
-# for industrial IoT environments using:
-# - Sensor degradation sequence detection with forecasting
-# - Multi-sensor correlation patterns
-# - Environmental cascade prediction
-# - Equipment lifecycle forecasting
+# PRIMARY USE CASE: Predict equipment failures before they happen using
+# physics-constrained sensor sequences. In heavy industry, unplanned
+# downtime costs $100K-$300K per hour. PST forecasting provides hours
+# of advance warning by learning that vibration anomalies followed by
+# temperature rises have historically led to bearing failures.
+#
+# WHY PST FORECASTING IS IDEAL HERE:
+# - Failure sequences are physics-constrained (vibration -> heat -> failure)
+# - Intervention windows are wide (hours to days)
+# - Variable-order context matters: the same temperature spike means
+#   different things after a vibration anomaly vs. after routine startup
+# - The PST learns machine-specific failure signatures without labeled data
+#
+# This example demonstrates:
+# - Bearing, hydraulic, compressor, motor failure prediction
+# - Cross-machine cascade failure forecasting
+# - Maintenance effectiveness tracking
+# - Zone-level risk aggregation
 
 # =============================================================================
 # Connector Definitions
