@@ -596,8 +596,8 @@ fn config_example_toml_is_parseable() {
 #[test]
 fn config_yaml_roundtrip() {
     let original = Config::example();
-    let yaml = serde_yml::to_string(&original).unwrap();
-    let restored: Config = serde_yml::from_str(&yaml).unwrap();
+    let yaml = serde_yaml::to_string(&original).unwrap();
+    let restored: Config = serde_yaml::from_str(&yaml).unwrap();
     assert_eq!(restored.server.port, original.server.port);
     assert_eq!(restored.server.bind, original.server.bind);
     assert_eq!(restored.query_file, original.query_file);

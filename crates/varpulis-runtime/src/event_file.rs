@@ -420,8 +420,15 @@ impl EventFileParser {
         Ok(event)
     }
 
-    /// Convert serde_json::Value to varpulis Value
+    /// Convert serde_json::Value to varpulis Value (depth-bounded to prevent stack overflow)
     fn json_to_value(v: &serde_json::Value) -> Value {
+        Self::json_to_value_bounded(v, 32)
+    }
+
+    fn json_to_value_bounded(v: &serde_json::Value, depth: usize) -> Value {
+        if depth == 0 {
+            return Value::Null;
+        }
         match v {
             serde_json::Value::Null => Value::Null,
             serde_json::Value::Bool(b) => Value::Bool(*b),
@@ -435,14 +442,16 @@ impl EventFileParser {
                 }
             }
             serde_json::Value::String(s) => Value::Str(s.clone().into()),
-            serde_json::Value::Array(arr) => {
-                Value::array(arr.iter().map(Self::json_to_value).collect())
-            }
+            serde_json::Value::Array(arr) => Value::array(
+                arr.iter()
+                    .map(|v| Self::json_to_value_bounded(v, depth - 1))
+                    .collect(),
+            ),
             serde_json::Value::Object(obj) => {
                 let mut map: IndexMap<std::sync::Arc<str>, Value, FxBuildHasher> =
                     IndexMap::with_hasher(FxBuildHasher);
                 for (k, v) in obj {
-                    map.insert(k.as_str().into(), Self::json_to_value(v));
+                    map.insert(k.as_str().into(), Self::json_to_value_bounded(v, depth - 1));
                 }
                 Value::map(map)
             }

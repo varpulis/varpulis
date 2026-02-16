@@ -4,6 +4,9 @@ use crate::event::Event;
 use indexmap::IndexMap;
 use rustc_hash::FxBuildHasher;
 
+/// Maximum JSON nesting depth for connector event parsing.
+const MAX_JSON_DEPTH: usize = 32;
+
 /// Convert JSON value to Event
 pub(crate) fn json_to_event(event_type: &str, json: &serde_json::Value) -> Event {
     let mut event = Event::new(event_type);
@@ -23,7 +26,16 @@ pub(crate) fn json_to_event(event_type: &str, json: &serde_json::Value) -> Event
 
 /// Convert serde_json::Value to varpulis Value
 pub(crate) fn json_to_value(json: &serde_json::Value) -> Option<varpulis_core::Value> {
+    json_to_value_bounded(json, MAX_JSON_DEPTH)
+}
+
+/// Depth-bounded JSON to Value conversion. Returns None if depth exceeded.
+fn json_to_value_bounded(json: &serde_json::Value, depth: usize) -> Option<varpulis_core::Value> {
     use varpulis_core::Value;
+
+    if depth == 0 {
+        return None;
+    }
 
     match json {
         serde_json::Value::Null => Some(Value::Null),
@@ -34,14 +46,17 @@ pub(crate) fn json_to_value(json: &serde_json::Value) -> Option<varpulis_core::V
             .or_else(|| n.as_f64().map(Value::Float)),
         serde_json::Value::String(s) => Some(Value::Str(s.clone().into())),
         serde_json::Value::Array(arr) => {
-            let values: Vec<Value> = arr.iter().filter_map(json_to_value).collect();
+            let values: Vec<Value> = arr
+                .iter()
+                .filter_map(|v| json_to_value_bounded(v, depth - 1))
+                .collect();
             Some(Value::array(values))
         }
         serde_json::Value::Object(obj) => {
             let mut map: IndexMap<std::sync::Arc<str>, Value, FxBuildHasher> =
                 IndexMap::with_hasher(FxBuildHasher);
             for (key, value) in obj {
-                if let Some(v) = json_to_value(value) {
+                if let Some(v) = json_to_value_bounded(value, depth - 1) {
                     map.insert(key.as_str().into(), v);
                 }
             }
