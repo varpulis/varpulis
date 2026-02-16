@@ -184,6 +184,7 @@ module.exports = grammar({
                 $.all_op,
                 $.first_op,
                 $.forecast_op,
+                $.enrich_op,
             ),
         ),
 
@@ -215,6 +216,7 @@ module.exports = grammar({
         all_op: $ => seq('all', '(', ')'),
         first_op: $ => seq('first', '(', ')'),
         forecast_op: $ => seq('forecast', '(', optional(commaSep1($.named_argument)), ')'),
+        enrich_op: $ => seq('enrich', '(', $.identifier, ',', commaSep1($.named_argument), ')'),
 
         followed_by_operation: $ => seq(
             '->',

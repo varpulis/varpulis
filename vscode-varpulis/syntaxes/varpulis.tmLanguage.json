@@ -216,7 +216,7 @@
             "patterns": [
                 {
                     "name": "keyword.operator.stream.varpulis",
-                    "match": "\\.(where|select|aggregate|partition_by|order_by|limit|distinct|emit|to|tap|pattern|window|concurrent|process|on_error|collect|merge|join|on|forecast)\\b"
+                    "match": "\\.(where|select|aggregate|partition_by|order_by|limit|distinct|emit|to|tap|pattern|window|concurrent|process|on_error|collect|merge|join|on|forecast|enrich)\\b"
                 }
             ]
         },

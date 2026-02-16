@@ -117,6 +117,11 @@ pub(crate) struct StreamDefinition {
     /// Last raw event that entered the pipeline (used by Forecast op to learn
     /// from every event even when the Sequence op clears current_events).
     pub last_raw_event: Option<crate::event::SharedEvent>,
+    /// Enrichment provider + cache (when .enrich() is used)
+    pub enrichment: Option<(
+        Arc<dyn crate::enrichment::EnrichmentProvider>,
+        Arc<crate::enrichment::EnrichmentCache>,
+    )>,
 }
 
 /// Source of events for a stream
@@ -203,6 +208,8 @@ pub(crate) enum RuntimeOp {
     Score(ScoreConfig),
     /// PST-based pattern forecasting: predict pattern completion probability and time
     Forecast(ForecastConfig),
+    /// External connector enrichment: lookup reference data and inject fields
+    Enrich(EnrichConfig),
     /// Deduplicate events by expression value (or entire event if None)
     Distinct(DistinctState),
     /// Pass at most N events, then stop the stream
@@ -232,6 +239,22 @@ pub(crate) struct ForecastConfig {
     pub hawkes: bool,
     /// Whether conformal prediction intervals are enabled.
     pub conformal: bool,
+}
+
+/// Configuration for external connector enrichment
+pub(crate) struct EnrichConfig {
+    /// Name of the connector to use for lookups
+    pub connector_name: String,
+    /// Expression to evaluate as the lookup key
+    pub key_expr: varpulis_core::ast::Expr,
+    /// Fields to extract from the enrichment response
+    pub fields: Vec<String>,
+    /// Cache TTL in nanoseconds (None = no caching)
+    pub cache_ttl_ns: Option<u64>,
+    /// Timeout in nanoseconds (default 5s)
+    pub timeout_ns: u64,
+    /// Fallback value when lookup fails (None = skip event)
+    pub fallback: Option<varpulis_core::Value>,
 }
 
 /// Configuration for ONNX model scoring

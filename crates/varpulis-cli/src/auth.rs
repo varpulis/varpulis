@@ -201,39 +201,27 @@ fn url_decode(s: &str) -> String {
     result
 }
 
-/// Constant-time string comparison to prevent timing attacks
+/// Constant-time string comparison to prevent timing attacks.
+///
+/// Delegates to [`varpulis_core::security::constant_time_compare`] which
+/// does **not** leak the expected key length via timing.
 pub fn constant_time_compare(a: &str, b: &str) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-
-    let mut result = 0u8;
-    for (x, y) in a.bytes().zip(b.bytes()) {
-        result |= x ^ y;
-    }
-
-    result == 0
+    varpulis_core::security::constant_time_compare(a, b)
 }
 
-/// Generate a random API key
+/// Generate a cryptographically random API key.
+///
+/// Uses the OS CSPRNG (via `rand::thread_rng`) to produce a 32-character
+/// alphanumeric key with ~190 bits of entropy.
 pub fn generate_api_key() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use rand::Rng;
 
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_else(|_| std::time::Duration::from_secs(0));
-
-    // Simple random generation using timestamp and random bytes
-    let seed = timestamp.as_nanos();
-    let mut state = seed;
-
+    let mut rng = rand::thread_rng();
     let mut key = String::with_capacity(32);
     const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
     for _ in 0..32 {
-        // LCG random number generator
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
-        let idx = ((state >> 33) as usize) % CHARSET.len();
+        let idx = rng.gen_range(0..CHARSET.len());
         key.push(CHARSET[idx] as char);
     }
 

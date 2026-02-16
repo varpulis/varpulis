@@ -1,0 +1,28 @@
+# Weather enrichment example
+# Enriches temperature sensor events with weather forecast data from an HTTP API
+
+connector WeatherAPI = http(url: "https://api.weather.com/v1/forecast", method: "GET")
+
+event Temperature:
+    sensor_id: str
+    city: str
+    temperature: float
+    humidity: float
+
+# Enrich with weather forecast, filter for rain with high temps
+stream WeatherAlerts = Temperature as t
+    .enrich(WeatherAPI, key: t.city, fields: [forecast, wind_speed, uv_index], cache_ttl: 15m, timeout: 3s)
+    .where(forecast == "rain" and t.temperature > 30)
+    .emit(
+        city: t.city,
+        temperature: t.temperature,
+        forecast: forecast,
+        wind_speed: wind_speed,
+        status: enrich_status,
+        lookup_ms: enrich_latency_ms
+    )
+
+# Enrich with fallback for resilient processing
+stream AllTemps = Temperature as t
+    .enrich(WeatherAPI, key: t.city, fields: [forecast], cache_ttl: 10m, fallback: "unavailable")
+    .emit(city: t.city, temp: t.temperature, forecast: forecast)

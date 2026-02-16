@@ -13,10 +13,7 @@ use varpulis_runtime::Event;
 use warp::http::StatusCode;
 use warp::{Filter, Rejection, Reply};
 
-/// Maximum body size for normal JSON endpoints (1 MB).
-const JSON_BODY_LIMIT: u64 = 1024 * 1024;
-/// Maximum body size for large payloads: inject-batch, checkpoints (16 MB).
-const LARGE_BODY_LIMIT: u64 = 16 * 1024 * 1024;
+use varpulis_core::security::{JSON_BODY_LIMIT, LARGE_BODY_LIMIT};
 
 // =============================================================================
 // Request/Response types
@@ -288,7 +285,9 @@ pub fn api_routes(
         .and(with_manager(manager.clone()))
         .and_then(handle_usage);
 
-    // CORS configuration for browser-based clients
+    // SECURITY: allow_any_origin() is acceptable here because production
+    // deployments sit behind nginx which enforces origin restrictions.
+    // Per-tenant API keys provide the actual access-control boundary.
     let cors = warp::cors()
         .allow_any_origin()
         .allow_methods(vec!["GET", "POST", "DELETE", "OPTIONS"])

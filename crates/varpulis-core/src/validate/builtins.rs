@@ -90,6 +90,15 @@ pub static FORECAST_PARAMS: &[&str] = &[
     "mode",
 ];
 
+/// Valid parameter names for `.enrich()`.
+pub static ENRICH_PARAMS: &[&str] = &["key", "fields", "cache_ttl", "timeout", "fallback"];
+
+/// Built-in variables available after `.enrich()`.
+pub static ENRICH_BUILTIN_VARS: &[&str] = &["enrich_status", "enrich_latency_ms"];
+
+/// Connector types that support request-response lookups for `.enrich()`.
+pub static ENRICH_COMPATIBLE_TYPES: &[&str] = &["http", "database", "redis"];
+
 /// Check if a function name is a known builtin (scalar or aggregate).
 pub fn is_known_function(name: &str) -> bool {
     BUILTIN_FUNCTIONS.contains(&name) || AGGREGATE_FUNCTIONS.contains(&name)
