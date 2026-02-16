@@ -2374,6 +2374,9 @@ impl Engine {
                         }
                     }
 
+                    // Count events sent to connector sinks via .to() operations
+                    self.output_events_emitted += result.sink_events_sent;
+
                     // Queue output events for processing by dependent streams
                     for output_event in result.output_events {
                         pending_events.push_back((output_event, depth + 1));
@@ -2474,6 +2477,9 @@ impl Engine {
                         emitted_batch.extend(result.output_events.iter().map(Arc::clone));
                     }
 
+                    // Count events sent to connector sinks via .to() operations
+                    self.output_events_emitted += result.sink_events_sent;
+
                     // Queue output events (push_back to maintain order)
                     for output_event in result.output_events {
                         pending_events.push_back((output_event, depth + 1));
@@ -2569,6 +2575,9 @@ impl Engine {
                         emitted_batch.extend(result.output_events.iter().map(Arc::clone));
                     }
 
+                    // Count events sent to connector sinks via .to() operations
+                    self.output_events_emitted += result.sink_events_sent;
+
                     // Queue output events (push_back to maintain order)
                     for output_event in result.output_events {
                         pending_events.push_back((output_event, depth + 1));
@@ -2624,6 +2633,7 @@ impl Engine {
                 return Ok(StreamProcessResult {
                     emitted_events: vec![],
                     output_events: vec![],
+                    sink_events_sent: 0,
                 });
             }
         }
@@ -2633,6 +2643,7 @@ impl Engine {
             return Ok(StreamProcessResult {
                 emitted_events: vec![],
                 output_events: vec![],
+                sink_events_sent: 0,
             });
         }
 
@@ -2720,6 +2731,9 @@ impl Engine {
                         emitted_batch.extend(result.output_events.iter().map(Arc::clone));
                     }
 
+                    // Count events sent to connector sinks via .to() operations
+                    self.output_events_emitted += result.sink_events_sent;
+
                     for output_event in result.output_events {
                         pending_events.push_back((output_event, depth + 1));
                     }
@@ -2782,6 +2796,7 @@ impl Engine {
                 return Ok(StreamProcessResult {
                     emitted_events: vec![],
                     output_events: vec![],
+                    sink_events_sent: 0,
                 });
             }
             // Log which merge source matched (uses ms.name)
@@ -2835,6 +2850,7 @@ impl Engine {
                         return Ok(StreamProcessResult {
                             emitted_events: vec![],
                             output_events: vec![],
+                            sink_events_sent: 0,
                         });
                     }
                 }
@@ -2843,6 +2859,7 @@ impl Engine {
                 return Ok(StreamProcessResult {
                     emitted_events: vec![],
                     output_events: vec![],
+                    sink_events_sent: 0,
                 });
             }
         }
