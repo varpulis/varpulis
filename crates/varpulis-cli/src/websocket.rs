@@ -251,6 +251,12 @@ async fn handle_get_metrics(state: &Arc<RwLock<ServerState>>) -> WsMessage {
     }
 }
 
+/// Maximum number of fields per injected event.
+const MAX_EVENT_FIELDS: usize = 256;
+
+/// Maximum JSON nesting depth for injected event data.
+const MAX_JSON_DEPTH: usize = 16;
+
 /// Handle InjectEvent message
 async fn handle_inject_event(
     event_type: &str,
@@ -271,10 +277,19 @@ async fn handle_inject_event(
     // Create event from injected data
     let mut event = Event::new(event_type);
 
-    // Convert JSON data to event fields
+    // Convert JSON data to event fields with safety limits
     if let Some(obj) = data.as_object() {
+        if obj.len() > MAX_EVENT_FIELDS {
+            return WsMessage::Error {
+                message: format!(
+                    "Event exceeds maximum field count ({} > {})",
+                    obj.len(),
+                    MAX_EVENT_FIELDS
+                ),
+            };
+        }
         for (key, value) in obj {
-            let v = json_to_value(value);
+            let v = json_to_value_bounded(value, MAX_JSON_DEPTH);
             event.data.insert(key.as_str().into(), v);
         }
     }
@@ -401,7 +416,15 @@ pub fn forward_output_events_to_websocket(
 
 /// Convert a serde_json::Value to varpulis_core::Value
 pub fn json_to_value(json: &serde_json::Value) -> varpulis_core::Value {
+    json_to_value_bounded(json, MAX_JSON_DEPTH)
+}
+
+/// Depth-bounded JSON to Value conversion. Returns Null if depth exceeded.
+fn json_to_value_bounded(json: &serde_json::Value, depth: usize) -> varpulis_core::Value {
     use varpulis_core::Value;
+    if depth == 0 {
+        return Value::Null;
+    }
     match json {
         serde_json::Value::Null => Value::Null,
         serde_json::Value::Bool(b) => Value::Bool(*b),
@@ -415,11 +438,20 @@ pub fn json_to_value(json: &serde_json::Value) -> varpulis_core::Value {
             }
         }
         serde_json::Value::String(s) => Value::Str(s.clone().into()),
-        serde_json::Value::Array(arr) => Value::array(arr.iter().map(json_to_value).collect()),
+        serde_json::Value::Array(arr) => Value::array(
+            arr.iter()
+                .map(|v| json_to_value_bounded(v, depth - 1))
+                .collect(),
+        ),
         serde_json::Value::Object(obj) => {
             let map: IndexMap<std::sync::Arc<str>, Value, FxBuildHasher> = obj
                 .iter()
-                .map(|(k, v)| (std::sync::Arc::from(k.as_str()), json_to_value(v)))
+                .map(|(k, v)| {
+                    (
+                        std::sync::Arc::from(k.as_str()),
+                        json_to_value_bounded(v, depth - 1),
+                    )
+                })
                 .collect();
             Value::map(map)
         }

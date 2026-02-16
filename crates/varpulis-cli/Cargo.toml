@@ -29,7 +29,7 @@ chrono = { workspace = true }
 indexmap = { workspace = true }
 rustc-hash = { workspace = true }
 rayon = "1.10"
-serde_yml = "0.0.12"
+serde_yaml = "0.9"
 toml = "0.8"
 thiserror = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
