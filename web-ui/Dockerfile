@@ -14,6 +14,10 @@ RUN npm ci --prefer-offline --no-audit
 # Copy source files
 COPY . .
 
+# Optional: pre-populate API key at build time (for demos)
+ARG VITE_API_KEY=""
+ENV VITE_API_KEY=$VITE_API_KEY
+
 # Build the application
 RUN npm run build
 

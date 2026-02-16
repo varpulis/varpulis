@@ -81,6 +81,16 @@ export interface PipelineDetailedMetrics {
   active_streams: number
 }
 
+// Forecast metrics from .forecast() pipelines
+export interface ForecastMetrics {
+  forecast_probability: number
+  forecast_confidence: number
+  forecast_lower: number
+  forecast_upper: number
+  forecast_state: string
+  forecast_time_ns: number
+}
+
 // Metrics query parameters
 export interface MetricsQuery {
   start_time?: number // Unix timestamp

@@ -245,6 +245,25 @@ onUnmounted(() => {
           </v-card-text>
         </v-card>
       </v-col>
+
+      <!-- Forecast Card (conditional) -->
+      <v-col v-if="metricsStore.forecastData.length > 0" cols="12" md="6" lg="3">
+        <v-card class="h-100" @click="navigateToMetrics" style="cursor: pointer">
+          <v-card-text>
+            <div class="d-flex align-center mb-2">
+              <v-icon color="purple" size="32">mdi-crystal-ball</v-icon>
+              <span class="text-h6 ml-2">Forecast</span>
+            </div>
+            <div class="text-h3 font-weight-bold">
+              {{ (metricsStore.forecastConfidence * 100).toFixed(0) }}%
+              <span class="text-h6 text-medium-emphasis">conf</span>
+            </div>
+            <div class="text-caption text-medium-emphasis mt-2">
+              Latest: {{ metricsStore.forecastData.length > 0 ? metricsStore.forecastData[metricsStore.forecastData.length - 1].value.toFixed(3) : '0.000' }} probability
+            </div>
+          </v-card-text>
+        </v-card>
+      </v-col>
     </v-row>
 
     <!-- Throughput Chart & Alerts Row -->

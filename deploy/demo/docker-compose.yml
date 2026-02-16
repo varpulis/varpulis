@@ -39,6 +39,8 @@ services:
     build:
       context: ../../web-ui
       dockerfile: Dockerfile
+      args:
+        VITE_API_KEY: "${VARPULIS_API_KEY}"
     container_name: demo-web-ui
     expose:
       - "8080"
