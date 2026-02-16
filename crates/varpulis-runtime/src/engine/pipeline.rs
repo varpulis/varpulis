@@ -92,6 +92,7 @@ pub(crate) async fn execute_pipeline(
 
     let mut current_events = initial_events;
     let mut emitted_events: Vec<SharedEvent> = Vec::new();
+    let mut sink_events_sent: u64 = 0;
     let has_forecast = stream.pst_forecaster.is_some();
 
     // Iterate operations starting from start_idx
@@ -114,6 +115,7 @@ pub(crate) async fn execute_pipeline(
             &mut emitted_events,
             functions,
             sinks,
+            &mut sink_events_sent,
         )
         .await?;
 
@@ -123,6 +125,7 @@ pub(crate) async fn execute_pipeline(
             return Ok(StreamProcessResult {
                 emitted_events,
                 output_events: vec![],
+                sink_events_sent,
             });
         }
     }
@@ -140,6 +143,7 @@ pub(crate) async fn execute_pipeline(
     Ok(StreamProcessResult {
         emitted_events,
         output_events,
+        sink_events_sent,
     })
 }
 
@@ -184,6 +188,7 @@ async fn execute_op(
     emitted_events: &mut Vec<SharedEvent>,
     functions: &FxHashMap<String, UserFunction>,
     sinks: &FxHashMap<String, Arc<dyn crate::sink::Sink>>,
+    sink_sent: &mut u64,
 ) -> Result<(), String> {
     match op {
         RuntimeOp::WhereClosure(predicate) => {
@@ -704,11 +709,14 @@ async fn execute_op(
             // Send current events to the named connector as a side-effect.
             // Events continue flowing through the pipeline unchanged.
             if let Some(sink) = sinks.get(&config.sink_key) {
+                let batch_size = current_events.len() as u64;
                 if let Err(e) = sink.send_batch(current_events).await {
                     warn!(
                         "Failed to send batch to connector '{}': {}",
                         config.connector_name, e
                     );
+                } else {
+                    *sink_sent += batch_size;
                 }
             } else {
                 warn!("Connector '{}' not found for .to()", config.connector_name);
@@ -796,6 +804,7 @@ pub(crate) fn execute_pipeline_sync(
             return Ok(StreamProcessResult {
                 emitted_events,
                 output_events: vec![],
+                sink_events_sent: 0,
             });
         }
     }
@@ -817,6 +826,7 @@ pub(crate) fn execute_pipeline_sync(
     Ok(StreamProcessResult {
         emitted_events,
         output_events,
+        sink_events_sent: 0,
     })
 }
 
