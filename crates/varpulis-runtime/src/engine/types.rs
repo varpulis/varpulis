@@ -284,6 +284,8 @@ pub(crate) struct StreamProcessResult {
     pub emitted_events: Vec<SharedEvent>,
     /// Output events to feed to dependent streams (with stream name as event_type)
     pub output_events: Vec<SharedEvent>,
+    /// Number of events sent to connector sinks via .to() operations
+    pub sink_events_sent: u64,
 }
 
 /// State for partitioned windows - maintains separate windows per partition key
