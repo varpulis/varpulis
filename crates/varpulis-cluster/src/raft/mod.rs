@@ -79,6 +79,10 @@ pub enum ClusterCommand {
         id: String,
         status: String,
     },
+    WorkerPipelinesUpdated {
+        id: String,
+        assigned_pipelines: Vec<String>,
+    },
 
     // -- Pipeline groups --
     GroupDeployed {

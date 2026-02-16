@@ -1289,6 +1289,135 @@ impl Coordinator {
         result
     }
 
+    /// Reconcile pipeline placements: re-deploy pipelines to workers that
+    /// restarted and lost their in-memory state.  Called from the health-sweep
+    /// loop on the leader when `pending_rebalance` is true.
+    pub async fn reconcile_placements(&mut self) -> usize {
+        // Collect (group_id, pipeline_name, worker_id, worker_addr, api_key, source)
+        // for placements where the worker is available but doesn't list the pipeline.
+        let mut to_redeploy: Vec<(String, String, WorkerId, String, String, String)> = Vec::new();
+
+        for (gid, group) in &self.pipeline_groups {
+            if group.status != GroupStatus::Running {
+                continue;
+            }
+            for (pname, dep) in &group.placements {
+                if dep.status != PipelineDeploymentStatus::Running {
+                    continue;
+                }
+                let worker = match self.workers.get(&dep.worker_id) {
+                    Some(w) if w.is_available() => w,
+                    _ => continue,
+                };
+                // If the worker's assigned_pipelines already lists this pipeline,
+                // the placement is healthy — nothing to do.
+                if worker.assigned_pipelines.contains(&pname.to_string()) {
+                    continue;
+                }
+                // Resolve source: strip replica suffix to find pipeline spec
+                let logical = pname
+                    .rsplit_once('#')
+                    .map(|(base, _)| base)
+                    .unwrap_or(pname);
+                let source = group
+                    .spec
+                    .pipelines
+                    .iter()
+                    .find(|p| p.name == logical)
+                    .map(|p| {
+                        let (enriched, _) =
+                            connector_config::inject_connectors(&p.source, &self.connectors);
+                        enriched
+                    });
+                if let Some(src) = source {
+                    to_redeploy.push((
+                        gid.clone(),
+                        pname.clone(),
+                        dep.worker_id.clone(),
+                        worker.address.clone(),
+                        worker.api_key.clone(),
+                        src,
+                    ));
+                }
+            }
+        }
+
+        if to_redeploy.is_empty() {
+            return 0;
+        }
+
+        info!(
+            "Reconciling {} stale placement(s) — re-deploying pipelines",
+            to_redeploy.len()
+        );
+
+        let mut redeployed = 0usize;
+        let mut updated_workers: std::collections::HashSet<WorkerId> =
+            std::collections::HashSet::new();
+
+        for (gid, pname, worker_id, worker_addr, api_key, source) in to_redeploy {
+            let url = format!("{}/api/v1/pipelines", worker_addr);
+            let body = serde_json::json!({
+                "name": pname,
+                "source": source,
+            });
+
+            match self
+                .http_client
+                .post(&url)
+                .header("x-api-key", &api_key)
+                .json(&body)
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    info!(
+                        "Reconciled pipeline '{}' on worker {} (group {})",
+                        pname, worker_id, gid
+                    );
+                    // Update worker's assigned_pipelines
+                    if let Some(w) = self.workers.get_mut(&worker_id) {
+                        w.assigned_pipelines.push(pname.clone());
+                        w.capacity.pipelines_running += 1;
+                    }
+                    updated_workers.insert(worker_id);
+                    redeployed += 1;
+                }
+                Ok(resp) => {
+                    let status = resp.status();
+                    let body = resp.text().await.unwrap_or_default();
+                    error!(
+                        "Reconcile failed for pipeline '{}' on worker {}: HTTP {} - {}",
+                        pname, worker_id, status, body
+                    );
+                }
+                Err(e) => {
+                    error!(
+                        "Reconcile failed — cannot reach worker {} for pipeline '{}': {}",
+                        worker_id, pname, e
+                    );
+                }
+            }
+        }
+
+        // Propagate updated assigned_pipelines to Raft so sync_from_raft
+        // doesn't overwrite them with stale empty values.
+        #[cfg(feature = "raft")]
+        for wid in &updated_workers {
+            if let Some(w) = self.workers.get(wid) {
+                let cmd = crate::raft::ClusterCommand::WorkerPipelinesUpdated {
+                    id: wid.0.clone(),
+                    assigned_pipelines: w.assigned_pipelines.clone(),
+                };
+                if let Err(e) = self.raft_replicate(cmd).await {
+                    warn!("Failed to replicate reconciled pipelines for {wid} to Raft: {e}");
+                }
+            }
+        }
+
+        redeployed
+    }
+
     // =========================================================================
     // Migration & Failover
     // =========================================================================
