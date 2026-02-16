@@ -8,10 +8,7 @@ use warp::Filter;
 
 use super::{NodeId, RaftNode, TypeConfig, VarpulisRaft};
 
-/// Maximum body size for normal JSON endpoints (1 MB).
-const JSON_BODY_LIMIT: u64 = 1024 * 1024;
-/// Maximum body size for large payloads: append entries, snapshots (16 MB).
-const LARGE_BODY_LIMIT: u64 = 16 * 1024 * 1024;
+use varpulis_core::security::{JSON_BODY_LIMIT, LARGE_BODY_LIMIT};
 
 /// Shared Raft handle type.
 pub type SharedRaft = Arc<VarpulisRaft>;
