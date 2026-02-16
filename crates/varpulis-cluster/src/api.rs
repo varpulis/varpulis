@@ -538,8 +538,9 @@ impl warp::reject::Reject for Unauthorized {}
 // Leader forwarding helper
 // =============================================================================
 
-/// Forward a write request to the Raft leader if this node is a follower.
+/// Forward a request to the Raft leader if this node is a follower.
 /// Returns `Some(response)` if forwarded, `None` if this node is the leader.
+/// Used for both read and write endpoints so the Raft topology is invisible.
 #[cfg(feature = "raft")]
 async fn forward_to_leader(
     coordinator: &SharedCoordinator,
@@ -566,6 +567,7 @@ async fn forward_to_leader(
 
     let url = format!("{}{}", leader_addr, path);
     let mut req = match method {
+        "GET" => client.get(&url),
         "PUT" => client.put(&url),
         "DELETE" => client.delete(&url),
         _ => client.post(&url),
@@ -580,12 +582,18 @@ async fn forward_to_leader(
     match req.send().await {
         Ok(resp) => {
             let status = resp.status();
+            let content_type = resp
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("application/json")
+                .to_string();
             let body_text = resp.text().await.unwrap_or_default();
             let warp_status = warp::http::StatusCode::from_u16(status.as_u16())
                 .unwrap_or(StatusCode::BAD_GATEWAY);
             Some(
                 warp::reply::with_status(
-                    warp::reply::with_header(body_text, "content-type", "application/json"),
+                    warp::reply::with_header(body_text, "content-type", content_type),
                     warp_status,
                 )
                 .into_response(),
@@ -751,6 +759,11 @@ async fn handle_list_workers(
     _auth: (),
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    if let Some(resp) =
+        forward_to_leader(&coordinator, "GET", "/api/v1/cluster/workers", None).await
+    {
+        return Ok(resp);
+    }
     let coord = coordinator.read().await;
     let workers: Vec<WorkerInfo> = coord.workers.values().map(WorkerInfo::from).collect();
     let resp = serde_json::json!({
@@ -765,6 +778,16 @@ async fn handle_get_worker(
     _auth: (),
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    if let Some(resp) = forward_to_leader(
+        &coordinator,
+        "GET",
+        &format!("/api/v1/cluster/workers/{worker_id}"),
+        None,
+    )
+    .await
+    {
+        return Ok(resp);
+    }
     let coord = coordinator.read().await;
     match coord.workers.get(&WorkerId(worker_id)) {
         Some(node) => {
@@ -891,6 +914,11 @@ async fn handle_list_groups(
     _auth: (),
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    if let Some(resp) =
+        forward_to_leader(&coordinator, "GET", "/api/v1/cluster/pipeline-groups", None).await
+    {
+        return Ok(resp);
+    }
     let coord = coordinator.read().await;
     let groups: Vec<PipelineGroupInfo> = coord
         .pipeline_groups
@@ -909,6 +937,16 @@ async fn handle_get_group(
     _auth: (),
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    if let Some(resp) = forward_to_leader(
+        &coordinator,
+        "GET",
+        &format!("/api/v1/cluster/pipeline-groups/{group_id}"),
+        None,
+    )
+    .await
+    {
+        return Ok(resp);
+    }
     let coord = coordinator.read().await;
     match coord.pipeline_groups.get(&group_id) {
         Some(group) => {
@@ -987,6 +1025,16 @@ async fn handle_inject_event(
     body: InjectEventRequest,
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    if let Some(resp) = forward_to_leader(
+        &coordinator,
+        "POST",
+        &format!("/api/v1/cluster/pipeline-groups/{group_id}/inject"),
+        serde_json::to_value(&body).ok(),
+    )
+    .await
+    {
+        return Ok(resp);
+    }
     // Phase 1: Resolve target under read lock
     let (target, http_client) = {
         let coord = coordinator.read().await;
@@ -1013,6 +1061,16 @@ async fn handle_inject_batch(
     body: InjectBatchRequest,
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    if let Some(resp) = forward_to_leader(
+        &coordinator,
+        "POST",
+        &format!("/api/v1/cluster/pipeline-groups/{group_id}/inject-batch"),
+        serde_json::to_value(&body).ok(),
+    )
+    .await
+    {
+        return Ok(resp);
+    }
     let coord = coordinator.read().await;
     match coord.inject_batch(&group_id, body).await {
         Ok(resp) => {
@@ -1258,6 +1316,11 @@ async fn handle_topology(
     _auth: (),
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    if let Some(resp) =
+        forward_to_leader(&coordinator, "GET", "/api/v1/cluster/topology", None).await
+    {
+        return Ok(resp);
+    }
     let coord = coordinator.read().await;
 
     // Build worker→pipeline_groups mapping
@@ -1361,6 +1424,10 @@ async fn handle_list_models(
     _auth: (),
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    if let Some(resp) = forward_to_leader(&coordinator, "GET", "/api/v1/cluster/models", None).await
+    {
+        return Ok(resp);
+    }
     let coord = coordinator.read().await;
     let models: Vec<&crate::model_registry::ModelRegistryEntry> =
         coord.model_registry.values().collect();
@@ -1484,6 +1551,16 @@ async fn handle_download_model(
     _auth: (),
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    if let Some(resp) = forward_to_leader(
+        &coordinator,
+        "GET",
+        &format!("/api/v1/cluster/models/{name}/download"),
+        None,
+    )
+    .await
+    {
+        return Ok(resp);
+    }
     let coord = coordinator.read().await;
     match coord.model_registry.get(&name) {
         Some(entry) => {
@@ -1509,6 +1586,16 @@ async fn handle_chat(
     body: crate::chat::ChatRequest,
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    if let Some(resp) = forward_to_leader(
+        &coordinator,
+        "POST",
+        "/api/v1/cluster/chat",
+        serde_json::to_value(&body).ok(),
+    )
+    .await
+    {
+        return Ok(resp);
+    }
     let config = {
         let coord = coordinator.read().await;
         coord.llm_config.clone()
@@ -1546,6 +1633,11 @@ async fn handle_get_chat_config(
     _auth: (),
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    if let Some(resp) =
+        forward_to_leader(&coordinator, "GET", "/api/v1/cluster/chat/config", None).await
+    {
+        return Ok(resp);
+    }
     let coord = coordinator.read().await;
     let resp = match &coord.llm_config {
         Some(config) => crate::chat::LlmConfigResponse {
@@ -1682,6 +1774,11 @@ async fn handle_list_migrations(
     _auth: (),
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    if let Some(resp) =
+        forward_to_leader(&coordinator, "GET", "/api/v1/cluster/migrations", None).await
+    {
+        return Ok(resp);
+    }
     let coord = coordinator.read().await;
     let migrations: Vec<MigrationInfo> = coord
         .active_migrations
@@ -1709,6 +1806,16 @@ async fn handle_get_migration(
     _auth: (),
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    if let Some(resp) = forward_to_leader(
+        &coordinator,
+        "GET",
+        &format!("/api/v1/cluster/migrations/{migration_id}"),
+        None,
+    )
+    .await
+    {
+        return Ok(resp);
+    }
     let coord = coordinator.read().await;
     match coord.active_migrations.get(&migration_id) {
         Some(m) => {
@@ -1835,6 +1942,11 @@ async fn handle_list_connectors(
     _auth: (),
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    if let Some(resp) =
+        forward_to_leader(&coordinator, "GET", "/api/v1/cluster/connectors", None).await
+    {
+        return Ok(resp);
+    }
     let coord = coordinator.read().await;
     let connectors: Vec<&ClusterConnector> = coord.list_connectors();
     let resp = serde_json::json!({
@@ -1849,6 +1961,16 @@ async fn handle_get_connector(
     _auth: (),
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    if let Some(resp) = forward_to_leader(
+        &coordinator,
+        "GET",
+        &format!("/api/v1/cluster/connectors/{name}"),
+        None,
+    )
+    .await
+    {
+        return Ok(resp);
+    }
     let coord = coordinator.read().await;
     match coord.get_connector(&name) {
         Ok(connector) => Ok(
@@ -1986,6 +2108,11 @@ async fn handle_metrics(
     _auth: (),
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    if let Some(resp) =
+        forward_to_leader(&coordinator, "GET", "/api/v1/cluster/metrics", None).await
+    {
+        return Ok(resp);
+    }
     let coord = coordinator.read().await;
     let metrics = coord.get_cluster_metrics();
     Ok(warp::reply::with_status(warp::reply::json(&metrics), StatusCode::OK).into_response())
@@ -1994,19 +2121,30 @@ async fn handle_metrics(
 async fn handle_prometheus_metrics(
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    if let Some(resp) =
+        forward_to_leader(&coordinator, "GET", "/api/v1/cluster/prometheus", None).await
+    {
+        return Ok(resp);
+    }
     let coord = coordinator.read().await;
     let text = coord.cluster_metrics.gather();
     Ok(warp::reply::with_header(
         warp::reply::with_status(text, StatusCode::OK),
         "content-type",
         "text/plain; version=0.0.4; charset=utf-8",
-    ))
+    )
+    .into_response())
 }
 
 async fn handle_scaling(
     _auth: (),
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    if let Some(resp) =
+        forward_to_leader(&coordinator, "GET", "/api/v1/cluster/scaling", None).await
+    {
+        return Ok(resp);
+    }
     let coord = coordinator.read().await;
     match &coord.last_scaling_recommendation {
         Some(rec) => {
@@ -2031,6 +2169,11 @@ async fn handle_cluster_summary(
     _auth: (),
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    if let Some(resp) =
+        forward_to_leader(&coordinator, "GET", "/api/v1/cluster/summary", None).await
+    {
+        return Ok(resp);
+    }
     let coord = coordinator.read().await;
 
     let total_workers = coord.workers.len();
