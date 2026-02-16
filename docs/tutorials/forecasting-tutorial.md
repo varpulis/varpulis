@@ -16,15 +16,26 @@ Varpulis implements forecasting using Prediction Suffix Trees (PST) combined wit
 
 ## Basic `.forecast()` Syntax
 
-The `.forecast()` operator is attached to a sequence pattern, after `.within()`:
+The `.forecast()` operator is attached to a sequence pattern, after `.within()`. In the simplest case, no parameters are needed:
+
+```vpl
+# Zero-config — adaptive warmup, balanced defaults
+stream AlertName = EventA as a -> EventB as b
+    .within(5m)
+    .forecast()
+    .where(forecast_confidence > 0.8)
+    .emit(prob: forecast_probability)
+```
+
+For more control, use preset modes or individual parameters:
 
 ```vpl
 stream AlertName = EventA as a
     -> EventB where condition as b
     -> EventC where condition as c
     .within(time_window)
-    .forecast(confidence: threshold, horizon: duration, warmup: count)
-    .where(forecast_probability > threshold)
+    .forecast(mode: "accurate", confidence: 0.7)
+    .where(forecast_confidence > 0.8 and forecast_probability > 0.7)
     .emit(fields...)
 ```
 
@@ -32,16 +43,34 @@ stream AlertName = EventA as a
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
+| `mode` | str | `"balanced"` | Preset: `"fast"`, `"accurate"`, or `"balanced"` |
 | `confidence` | float | `0.5` | Minimum probability to emit a forecast |
 | `horizon` | duration | `5m` | How far ahead to forecast |
-| `warmup` | integer | `100` | Events to observe before forecasting starts |
+| `warmup` | integer | `100` | Minimum events before forecasting starts |
+| `max_depth` | integer | `3` | PST context depth for prediction |
+| `hawkes` | bool | `true` | Enable Hawkes intensity modulation |
+| `conformal` | bool | `true` | Enable conformal prediction intervals |
+
+### Modes
+
+| Mode | Best for | Hawkes | Conformal | Warmup | Adaptive |
+|------|----------|--------|-----------|--------|----------|
+| `"fast"` | Low-latency, high-throughput | off | off | 50 | off |
+| `"balanced"` | General use (default) | on | on | 100 | on |
+| `"accurate"` | Maximum precision | on | on | 200 | on |
+
+Modes provide defaults; explicit parameters override them. For example, `.forecast(mode: "fast", conformal: true)` uses fast mode but keeps conformal intervals.
 
 ### Forecast Fields
 
-After `.forecast()`, two new fields become available for use in `.where()` and `.emit()`:
+After `.forecast()`, these fields become available for use in `.where()` and `.emit()`:
 
 - **`forecast_probability`**: a value between 0.0 and 1.0 representing the estimated probability that the pattern will complete
-- **`forecast_expected_time`**: estimated time until pattern completion (in the same duration format as `.within()`)
+- **`forecast_confidence`**: a value between 0.0 and 1.0 indicating prediction stability — high values mean the model has converged and the prediction is reliable
+- **`forecast_time`**: estimated time until pattern completion in nanoseconds
+- **`forecast_state`**: current NFA state label (e.g., "state_2_of_4")
+- **`forecast_context_depth`**: PST context depth used for prediction
+- **`forecast_lower`** / **`forecast_upper`**: conformal prediction interval bounds
 
 ## Step-by-Step Example: Industrial Predictive Maintenance
 
@@ -88,13 +117,13 @@ stream BearingFailureForecast = VibrationReading as vib
     -> TemperatureReading where machine_id == vib.machine_id and value_celsius > 75 as temp
     -> MachineFailure where machine_id == vib.machine_id as failure
     .within(4h)
-    .forecast(confidence: 0.5, horizon: 2h, warmup: 500)
+    .forecast(mode: "accurate")
 ```
 
 Now the engine will:
-1. Wait for 500 events to learn the sensor stream's statistical properties (warmup)
+1. Learn the sensor stream's statistical properties during warmup (minimum 200 events, extended by adaptive warmup until predictions stabilize)
 2. For each partially-matched pattern (e.g., vibration seen, waiting for temperature rise), compute the probability of eventual failure
-3. Only emit forecasts where the probability exceeds 0.5
+3. Only emit forecasts where the probability exceeds the confidence threshold (default 0.5)
 
 ### Step 4: Filter and Emit
 
@@ -103,14 +132,15 @@ stream BearingFailureForecast = VibrationReading as vib
     -> TemperatureReading where machine_id == vib.machine_id and value_celsius > 75 as temp
     -> MachineFailure where machine_id == vib.machine_id as failure
     .within(4h)
-    .forecast(confidence: 0.5, horizon: 2h, warmup: 500)
-    .where(forecast_probability > 0.7)
+    .forecast(mode: "accurate", confidence: 0.5, horizon: 2h)
+    .where(forecast_confidence > 0.8 and forecast_probability > 0.7)
     .emit(
         alert_type: "PREDICTED_BEARING_FAILURE",
         machine_id: vib.machine_id,
         zone: vib.zone,
         probability: forecast_probability,
-        expected_time: forecast_expected_time,
+        stability: forecast_confidence,
+        expected_time: forecast_time,
         vibration_amplitude: vib.amplitude_mm,
         temperature: temp.value_celsius,
         severity: if forecast_probability > 0.85 then "critical" else "warning",
@@ -120,7 +150,7 @@ stream BearingFailureForecast = VibrationReading as vib
     )
 ```
 
-The `.where(forecast_probability > 0.7)` acts as a secondary filter on top of the `confidence: 0.5` threshold, allowing you to separate low-confidence from high-confidence forecasts. A maintenance team can then act on high-probability alerts (>85%) with emergency repairs, while monitoring lower-probability alerts (70-85%) with standby parts ready.
+The `.where(forecast_confidence > 0.8 and forecast_probability > 0.7)` combines two filters: `forecast_confidence` ensures the model has converged (stable predictions), and `forecast_probability` sets the minimum completion threshold. A maintenance team can then act on high-probability alerts (>85%) with emergency repairs, while monitoring lower-probability alerts (70-85%) with standby parts ready.
 
 ## Tuning Parameters
 

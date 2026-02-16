@@ -229,6 +229,7 @@ fn match_token(s: &str) -> Option<(usize, u32)> {
         "ema",
         "forecast",
         "forecast_probability",
+        "forecast_confidence",
         "forecast_time",
         "forecast_state",
         "forecast_context_depth",

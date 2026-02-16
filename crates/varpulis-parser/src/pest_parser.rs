@@ -945,6 +945,7 @@ fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
             let mut max_depth = None;
             let mut hawkes = None;
             let mut conformal = None;
+            let mut mode = None;
             for p in pair.into_inner() {
                 if p.as_rule() == Rule::forecast_params {
                     for param_pair in p.into_inner() {
@@ -960,6 +961,7 @@ fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
                                 "max_depth" => max_depth = Some(expr),
                                 "hawkes" => hawkes = Some(expr),
                                 "conformal" => conformal = Some(expr),
+                                "mode" => mode = Some(expr),
                                 _ => {}
                             }
                         }
@@ -973,6 +975,7 @@ fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
                 max_depth,
                 hawkes,
                 conformal,
+                mode,
             }))
         }
         Rule::score_op => {

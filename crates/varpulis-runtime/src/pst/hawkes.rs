@@ -12,6 +12,9 @@
 /// Tracks temporal density using a self-exciting point process model.
 /// The intensity increases with each event arrival and decays exponentially
 /// between events.
+///
+/// Uses exponential moving averages for parameter estimation, allowing fast
+/// adaptation to regime changes (~20-40 events) instead of slow cumulative averaging.
 #[derive(Debug, Clone)]
 pub struct HawkesIntensity {
     /// Baseline rate (events per nanosecond), estimated online.
@@ -26,18 +29,16 @@ pub struct HawkesIntensity {
     last_time_ns: i64,
     /// Total events processed.
     event_count: u64,
-    /// First event timestamp for baseline estimation.
-    first_time_ns: i64,
-    /// Running sum of inter-event deltas (ns) for online mu estimation.
-    sum_delta_ns: f64,
-    /// Running sum of squared inter-event deltas for variance estimation.
-    sum_delta_sq_ns: f64,
+    /// EMA of inter-event deltas (ns) for online mu estimation.
+    ema_delta_ns: f64,
+    /// EMA of squared inter-event deltas for variance estimation.
+    ema_delta_sq_ns: f64,
 }
 
-/// Interval (in events) between parameter re-estimation passes.
-const PARAM_ESTIMATE_INTERVAL: u64 = 50;
 /// Minimum events before parameter estimation is attempted.
 const MIN_EVENTS_FOR_ESTIMATION: u64 = 10;
+/// EMA smoothing factor — alpha=0.05 gives effective window of ~20 events.
+const EMA_ALPHA: f64 = 0.05;
 
 impl Default for HawkesIntensity {
     fn default() -> Self {
@@ -55,9 +56,8 @@ impl HawkesIntensity {
             intensity: 1e-9,
             last_time_ns: 0,
             event_count: 0,
-            first_time_ns: 0,
-            sum_delta_ns: 0.0,
-            sum_delta_sq_ns: 0.0,
+            ema_delta_ns: 0.0,
+            ema_delta_sq_ns: 0.0,
         }
     }
 
@@ -65,9 +65,11 @@ impl HawkesIntensity {
     ///
     /// Uses the O(1) recursive formula:
     /// `intensity = mu + (intensity - mu + alpha) * exp(-beta * dt)`
+    ///
+    /// Parameters are re-estimated every event using EMA, allowing the model
+    /// to adapt to regime changes within ~20-40 events.
     pub fn update(&mut self, timestamp_ns: i64) {
         if self.event_count == 0 {
-            self.first_time_ns = timestamp_ns;
             self.last_time_ns = timestamp_ns;
             self.intensity = self.mu + self.alpha;
             self.event_count = 1;
@@ -76,9 +78,15 @@ impl HawkesIntensity {
 
         let dt = (timestamp_ns - self.last_time_ns).max(0) as f64;
 
-        // Track inter-event statistics
-        self.sum_delta_ns += dt;
-        self.sum_delta_sq_ns += dt * dt;
+        // EMA update of inter-event statistics
+        if self.event_count == 1 {
+            // Initialize EMA with first observation
+            self.ema_delta_ns = dt;
+            self.ema_delta_sq_ns = dt * dt;
+        } else {
+            self.ema_delta_ns = EMA_ALPHA * dt + (1.0 - EMA_ALPHA) * self.ema_delta_ns;
+            self.ema_delta_sq_ns = EMA_ALPHA * dt * dt + (1.0 - EMA_ALPHA) * self.ema_delta_sq_ns;
+        }
 
         // Recursive intensity update
         let decay = (-self.beta * dt).exp();
@@ -87,10 +95,8 @@ impl HawkesIntensity {
         self.last_time_ns = timestamp_ns;
         self.event_count += 1;
 
-        // Periodically re-estimate parameters
-        if self.event_count >= MIN_EVENTS_FOR_ESTIMATION
-            && self.event_count.is_multiple_of(PARAM_ESTIMATE_INTERVAL)
-        {
+        // Re-estimate parameters every event after minimum history (cheap with EMA)
+        if self.event_count >= MIN_EVENTS_FOR_ESTIMATION {
             self.estimate_parameters();
         }
     }
@@ -117,27 +123,25 @@ impl HawkesIntensity {
         (current / self.mu).clamp(1.0, 5.0)
     }
 
-    /// Re-estimate baseline rate (mu) and decay rate (beta) from observed statistics.
+    /// Re-estimate baseline rate (mu) and decay rate (beta) from EMA statistics.
     ///
-    /// Uses moment matching on inter-event deltas:
-    /// - mu = 1 / mean_delta (baseline rate = inverse of mean inter-event time)
-    /// - beta = 1 / stddev_delta (decay inversely proportional to timing variability)
+    /// Uses moment matching on EMA-smoothed inter-event deltas:
+    /// - mu = 1 / ema_delta (baseline rate = inverse of smoothed inter-event time)
+    /// - beta = 1 / stddev (decay inversely proportional to timing variability)
+    ///
+    /// EMA-based estimation adapts to regime changes in ~20-40 events (effective
+    /// window = 1/EMA_ALPHA = 20), compared to hundreds with cumulative averaging.
     fn estimate_parameters(&mut self) {
-        let n = (self.event_count - 1) as f64; // number of deltas
-        if n < 2.0 {
-            return;
-        }
-
-        let mean_delta = self.sum_delta_ns / n;
+        let mean_delta = self.ema_delta_ns;
         if mean_delta <= 0.0 {
             return;
         }
 
-        // Baseline rate: inverse of mean inter-event time
+        // Baseline rate: inverse of smoothed mean inter-event time
         self.mu = (1.0 / mean_delta).max(1e-15);
 
-        // Variance for beta estimation
-        let variance = (self.sum_delta_sq_ns / n) - (mean_delta * mean_delta);
+        // Variance from EMA: Var ≈ E[X²] - E[X]²
+        let variance = self.ema_delta_sq_ns - mean_delta * mean_delta;
         if variance > 0.0 {
             let stddev = variance.sqrt();
             // Decay rate inversely proportional to timing variability

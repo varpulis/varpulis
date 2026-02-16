@@ -148,8 +148,8 @@ stream APTKillChainForecast = NetworkScan as recon
     -> LateralMovement where source_host == exploit.target_host as lateral
     -> DataExfiltration where source_host == lateral.target_host as exfil
     .within(14d)
-    .forecast(confidence: 0.3, horizon: 7d, warmup: 2000)
-    .where(forecast_probability > 0.5)
+    .forecast(mode: "accurate", confidence: 0.3, horizon: 7d)
+    .where(forecast_confidence > 0.7 and forecast_probability > 0.5)
     .emit(
         alert_type: "APT_KILL_CHAIN_FORECAST",
         severity: if forecast_probability > 0.8 then "critical" else "high",
@@ -157,7 +157,8 @@ stream APTKillChainForecast = NetworkScan as recon
         compromised_host: exploit.target_host,
         lateral_target: lateral.target_host,
         probability: forecast_probability,
-        expected_time: forecast_expected_time,
+        stability: forecast_confidence,
+        expected_time: forecast_time,
         exploit_cve: exploit.cve_id,
         lateral_method: lateral.method,
         recommendation: if forecast_probability > 0.75

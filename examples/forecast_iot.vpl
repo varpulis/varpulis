@@ -142,15 +142,16 @@ stream BearingFailureForecast = VibrationReading as vib
     -> TemperatureReading where machine_id == vib.machine_id and value_celsius > 75 as temp
     -> MachineFailure where machine_id == vib.machine_id as failure
     .within(4h)
-    .forecast(confidence: 0.5, horizon: 2h, warmup: 500)
-    .where(forecast_probability > 0.6)
+    .forecast(mode: "accurate", horizon: 2h)
+    .where(forecast_confidence > 0.8 and forecast_probability > 0.6)
     .emit(
         alert_type: "BEARING_FAILURE_FORECAST",
         severity: if forecast_probability > 0.85 then "critical" else "warning",
         machine_id: vib.machine_id,
         zone: vib.zone,
         probability: forecast_probability,
-        expected_time: forecast_expected_time,
+        stability: forecast_confidence,
+        expected_time: forecast_time,
         vibration_amplitude: vib.amplitude_mm,
         vibration_frequency: vib.frequency_hz,
         current_temperature: temp.value_celsius,

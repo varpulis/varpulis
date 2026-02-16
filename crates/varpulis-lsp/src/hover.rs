@@ -283,14 +283,20 @@ fn get_documentation(word: &str) -> Option<String> {
             PST-based pattern forecasting. Predicts whether a partially-matched\n\
             sequence pattern will complete, and estimates when.\n\n\
             **Parameters:**\n\
+            - `mode` — Preset: `\"fast\"`, `\"accurate\"`, or `\"balanced\"` (default)\n\
             - `confidence` — Minimum probability to emit (default 0.5)\n\
             - `horizon` — Forecast window (default = within duration)\n\
-            - `warmup` — Events before forecasting starts (default 100)\n\
-            - `max_depth` — PST context depth (default 5)\n\
+            - `warmup` — Min events before forecasting starts (default 100)\n\
+            - `max_depth` — PST context depth (default 3)\n\
             - `hawkes` — Enable Hawkes intensity modulation (default true)\n\
             - `conformal` — Enable conformal prediction intervals (default true)\n\n\
+            **Modes:**\n\
+            - `\"fast\"` — hawkes:off, conformal:off, warmup:50, max_depth:3\n\
+            - `\"accurate\"` — hawkes:on, conformal:on, warmup:200, max_depth:5\n\
+            - `\"balanced\"` — hawkes:on, conformal:on, warmup:100 (default)\n\n\
             **Built-in variables** (after `.forecast()`):\n\
-            - `forecast_probability` — Completion probability (Hawkes-modulated)\n\
+            - `forecast_probability` — Completion probability (0.0–1.0)\n\
+            - `forecast_confidence` — Prediction stability (0.0–1.0)\n\
             - `forecast_time` — Expected time to completion (ns)\n\
             - `forecast_state` — Current NFA state label\n\
             - `forecast_context_depth` — PST context depth used\n\
@@ -301,8 +307,8 @@ fn get_documentation(word: &str) -> Option<String> {
             stream Alerts = Event as e1\n\
                 -> Event as e2 where e2.value > e1.value\n\
                 .within(5m)\n\
-                .forecast(confidence: 0.7, horizon: 2m)\n\
-                .where(forecast_probability > 0.8)\n\
+                .forecast(mode: \"accurate\")\n\
+                .where(forecast_confidence > 0.8)\n\
                 .emit(prob: forecast_probability)\n\
             ```"
         )),

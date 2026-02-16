@@ -87,6 +87,7 @@ pub static FORECAST_PARAMS: &[&str] = &[
     "max_depth",
     "hawkes",
     "conformal",
+    "mode",
 ];
 
 /// Check if a function name is a known builtin (scalar or aggregate).

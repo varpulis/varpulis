@@ -102,6 +102,7 @@ fn build_pmc(num_states: usize, alphabet_size: usize, warmup: u64) -> PatternMar
         max_simulation_steps: 50,
         hawkes_enabled: true,
         conformal_enabled: true,
+        adaptive_warmup: false,
     };
 
     // Linear NFA: state i --(symbol i)--> state i+1; last state is accept

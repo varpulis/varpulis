@@ -103,14 +103,15 @@ stream AccountTakeoverForecast = Login as login
     -> PasswordChange where user_id == login.user_id as pwd
     -> Transaction where user_id == login.user_id and amount > 5000 as tx
     .within(30m)
-    .forecast(confidence: 0.5, horizon: 15m, warmup: 500)
-    .where(forecast_probability > 0.7)
+    .forecast(mode: "accurate", confidence: 0.5, horizon: 15m)
+    .where(forecast_confidence > 0.8 and forecast_probability > 0.7)
     .emit(
         alert_type: "ACCOUNT_TAKEOVER_FORECAST",
         severity: if forecast_probability > 0.9 then "critical" else "high",
         user_id: login.user_id,
         probability: forecast_probability,
-        expected_time: forecast_expected_time,
+        stability: forecast_confidence,
+        expected_time: forecast_time,
         login_ip: login.ip_address,
         login_country: login.country,
         device: login.device_fingerprint,

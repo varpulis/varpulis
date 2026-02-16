@@ -576,7 +576,7 @@ function provideHover(
         'aggregate': '**.aggregate(...)** - Aggregates values in a window\n\n```varpulis\n.aggregate(\n    total: sum(value),\n    average: avg(value),\n    count: count()\n)\n```',
         'pattern': '**.pattern(...)** - Defines a pattern to detect\n\n```varpulis\n.pattern(\n    my_pattern: events =>\n        events.filter(...).count() > threshold\n)\n```',
         'emit': '**.emit(...)** - Emits an alert or output event\n\n```varpulis\n.emit(\n    alert_type: "anomaly",\n    severity: "warning"\n)\n```',
-        'forecast': '**.forecast(...)** - PST-based pattern forecasting\n\nPredicts whether a partially-matched sequence will complete.\n\n```varpulis\n.forecast(confidence: 0.7, horizon: 2m, warmup: 500)\n```\n\n**Built-in variables:** `forecast_probability`, `forecast_time`, `forecast_state`, `forecast_lower`, `forecast_upper`',
+        'forecast': '**.forecast(...)** - PST-based pattern forecasting\n\nPredicts whether a partially-matched sequence will complete.\n\n```varpulis\n# Zero-config with adaptive warmup\n.forecast()\n\n# With mode preset\n.forecast(mode: \"accurate\")\n\n# Fully configured\n.forecast(confidence: 0.7, horizon: 2m, warmup: 500)\n```\n\n**Modes:** `\"fast\"`, `\"balanced\"` (default), `\"accurate\"`\n\n**Built-in variables:** `forecast_probability`, `forecast_confidence`, `forecast_time`, `forecast_state`, `forecast_lower`, `forecast_upper`',
     };
 
     if (docs[word]) {

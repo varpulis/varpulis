@@ -21,12 +21,15 @@ pub struct PMCConfig {
     pub horizon_ns: u64,
     /// Maximum simulation steps for waiting time estimation.
     pub max_simulation_steps: usize,
-    /// Number of events before forecasting starts.
+    /// Minimum events before forecasting starts. With adaptive warmup,
+    /// the actual warmup may extend beyond this until predictions stabilize.
     pub warmup_events: u64,
     /// Enable Hawkes intensity modulation (default true).
     pub hawkes_enabled: bool,
     /// Enable conformal prediction intervals (default true).
     pub conformal_enabled: bool,
+    /// Enable adaptive warmup: extend warmup until predictions stabilize (default true).
+    pub adaptive_warmup: bool,
 }
 
 impl Default for PMCConfig {
@@ -38,6 +41,7 @@ impl Default for PMCConfig {
             warmup_events: 100,
             hawkes_enabled: true,
             conformal_enabled: true,
+            adaptive_warmup: true,
         }
     }
 }
@@ -59,6 +63,9 @@ pub struct ForecastResult {
     pub forecast_lower: f64,
     /// Upper bound of the conformal prediction interval (0.0–1.0).
     pub forecast_upper: f64,
+    /// Prediction stability (0.0–1.0). High values mean the prediction has
+    /// converged and is reliable. Low values indicate the model is still learning.
+    pub forecast_confidence: f64,
 }
 
 /// Snapshot of an active SASE run for forecast computation.
@@ -103,6 +110,12 @@ pub struct PatternMarkovChain {
     previous_run_states: FxHashMap<i64, usize>,
     /// Pending forecasts for outcome tracking: started_at_ns -> predicted_probability.
     pending_forecasts: FxHashMap<i64, f64>,
+    /// Last prediction per (NFA state, context tail), for per-context stability tracking.
+    last_prediction_per_key: FxHashMap<u64, f64>,
+    /// Running count of consecutive "stable" predictions (delta < threshold).
+    stable_prediction_count: usize,
+    /// Whether adaptive warmup has declared the model stable.
+    adaptive_warmup_complete: bool,
 }
 
 impl PatternMarkovChain {
@@ -149,6 +162,9 @@ impl PatternMarkovChain {
             conformal: ConformalCalibrator::with_defaults(),
             previous_run_states: FxHashMap::default(),
             pending_forecasts: FxHashMap::default(),
+            last_prediction_per_key: FxHashMap::default(),
+            stable_prediction_count: 0,
+            adaptive_warmup_complete: false,
         }
     }
 
@@ -191,7 +207,7 @@ impl PatternMarkovChain {
 
         self.events_processed += 1;
 
-        // Suppress during warmup
+        // Suppress during minimum warmup
         if self.events_processed < self.config.warmup_events {
             return None;
         }
@@ -204,19 +220,30 @@ impl PatternMarkovChain {
         // Compute forecast for the most advanced active run
         let best_run = active_runs.iter().max_by_key(|r| r.current_state)?;
 
-        let context = self.learner.current_context();
+        // Copy context to avoid borrow conflict with mutable methods below
+        let context: Vec<SymbolId> = self.learner.current_context().to_vec();
         let context_depth = context.len();
 
         // Compute completion probability (Hawkes-modulated or plain PST)
         let probability = if self.config.hawkes_enabled {
             self.compute_completion_probability_hawkes(
                 best_run.current_state,
-                context,
+                &context,
                 event_timestamp_ns,
             )
         } else {
-            self.compute_completion_probability_plain(best_run.current_state, context)
+            self.compute_completion_probability_plain(best_run.current_state, &context)
         };
+
+        // Track prediction stability for adaptive warmup and forecast_confidence
+        let last_ctx_symbol = context.last().copied();
+        let forecast_confidence =
+            self.update_prediction_stability(probability, best_run.current_state, last_ctx_symbol);
+
+        // Adaptive warmup: suppress until predictions stabilize
+        if self.config.adaptive_warmup && !self.adaptive_warmup_complete {
+            return None;
+        }
 
         // Store pending forecast for future outcome tracking (conformal only)
         if self.config.conformal_enabled {
@@ -232,7 +259,7 @@ impl PatternMarkovChain {
         };
 
         // Estimate waiting time
-        let expected_time_ns = self.estimate_waiting_time(best_run.current_state, context);
+        let expected_time_ns = self.estimate_waiting_time(best_run.current_state, &context);
 
         // State label
         let state_label = format!("state_{}_of_{}", best_run.current_state, self.num_states);
@@ -245,7 +272,50 @@ impl PatternMarkovChain {
             active_runs: active_runs.len(),
             forecast_lower,
             forecast_upper,
+            forecast_confidence,
         })
+    }
+
+    /// Update prediction stability tracker. Returns the current forecast_confidence
+    /// (0.0–1.0) based on how stable recent predictions are.
+    ///
+    /// Keys by (NFA state, last context symbol) to handle alternating event patterns
+    /// correctly. For A→B at state 1, P(B|A)≈1.0 and P(B|B)≈0.0 are both stable —
+    /// they just differ by context. Tracking per-(state, context) avoids false oscillation.
+    fn update_prediction_stability(
+        &mut self,
+        probability: f64,
+        current_state: usize,
+        last_context_symbol: Option<SymbolId>,
+    ) -> f64 {
+        const DELTA_THRESHOLD: f64 = 0.05;
+        const STABLE_COUNT_TARGET: usize = 10;
+
+        // Composite key: upper 32 bits = state, lower 32 bits = last context symbol
+        let ctx_part = last_context_symbol.unwrap_or(0) as u64;
+        let key = ((current_state as u64) << 32) | ctx_part;
+
+        let last = self.last_prediction_per_key.get(&key).copied();
+        self.last_prediction_per_key.insert(key, probability);
+
+        if let Some(prev) = last {
+            let delta = (probability - prev).abs();
+            if delta < DELTA_THRESHOLD {
+                self.stable_prediction_count += 1;
+            } else {
+                self.stable_prediction_count = self.stable_prediction_count.saturating_sub(1);
+            }
+        }
+
+        // Confidence: fraction of target stable predictions, capped at 1.0
+        let confidence =
+            (self.stable_prediction_count as f64 / STABLE_COUNT_TARGET as f64).min(1.0);
+
+        if self.stable_prediction_count >= STABLE_COUNT_TARGET {
+            self.adaptive_warmup_complete = true;
+        }
+
+        confidence
     }
 
     /// Track outcomes of previously observed runs by comparing current active_runs
@@ -289,13 +359,14 @@ impl PatternMarkovChain {
 
         let max_steps = self.config.max_simulation_steps.min(50);
         let mut prob = vec![0.0f64; self.num_states];
+        let mut new_prob = vec![0.0f64; self.num_states];
 
         for &s in &self.accept_states {
             prob[s] = 1.0;
         }
 
         for _ in 0..max_steps {
-            let mut new_prob = prob.clone();
+            new_prob.copy_from_slice(&prob);
             for (state, new_p) in new_prob.iter_mut().enumerate().take(self.num_states) {
                 if self.accept_states.contains(&state) {
                     continue;
@@ -309,10 +380,18 @@ impl PatternMarkovChain {
                     *new_p = state_prob;
                 }
             }
-            prob = new_prob;
+            // Early exit if converged
+            if prob
+                .iter()
+                .zip(new_prob.iter())
+                .all(|(a, b)| (a - b).abs() < 1e-10)
+            {
+                break;
+            }
+            std::mem::swap(&mut prob, &mut new_prob);
         }
 
-        prob.get(current_state).copied().unwrap_or(0.0).min(1.0)
+        new_prob.get(current_state).copied().unwrap_or(0.0).min(1.0)
     }
 
     /// Forward algorithm: compute probability using Hawkes-modulated PST-predicted transitions.
@@ -328,13 +407,14 @@ impl PatternMarkovChain {
 
         let max_steps = self.config.max_simulation_steps.min(50);
         let mut prob = vec![0.0f64; self.num_states];
+        let mut new_prob = vec![0.0f64; self.num_states];
 
         for &s in &self.accept_states {
             prob[s] = 1.0;
         }
 
         for _ in 0..max_steps {
-            let mut new_prob = prob.clone();
+            new_prob.copy_from_slice(&prob);
             for (state, new_p) in new_prob.iter_mut().enumerate().take(self.num_states) {
                 if self.accept_states.contains(&state) {
                     continue;
@@ -375,10 +455,18 @@ impl PatternMarkovChain {
                     *new_p = state_prob;
                 }
             }
-            prob = new_prob;
+            // Early exit if converged
+            if prob
+                .iter()
+                .zip(new_prob.iter())
+                .all(|(a, b)| (a - b).abs() < 1e-10)
+            {
+                break;
+            }
+            std::mem::swap(&mut prob, &mut new_prob);
         }
 
-        prob.get(current_state).copied().unwrap_or(0.0).min(1.0)
+        new_prob.get(current_state).copied().unwrap_or(0.0).min(1.0)
     }
 
     /// Estimate expected waiting time (nanoseconds) to pattern completion
@@ -479,6 +567,7 @@ mod tests {
         let pmc_config = PMCConfig {
             warmup_events: 5,
             confidence_threshold: 0.5,
+            adaptive_warmup: false,
             ..Default::default()
         };
 
@@ -691,6 +780,7 @@ mod tests {
             warmup_events: 5,
             confidence_threshold: 0.5,
             hawkes_enabled: false,
+            adaptive_warmup: false,
             ..Default::default()
         };
 
@@ -754,6 +844,7 @@ mod tests {
             warmup_events: 5,
             confidence_threshold: 0.5,
             conformal_enabled: false,
+            adaptive_warmup: false,
             ..Default::default()
         };
 
