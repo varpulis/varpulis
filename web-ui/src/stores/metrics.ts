@@ -8,6 +8,7 @@ import type {
   WorkerMetrics,
   TimeRange,
   TimeRangePreset,
+  ForecastMetrics,
 } from '@/types/metrics'
 
 const MAX_DATA_POINTS = 300 // 5 minutes at 1s resolution
@@ -37,6 +38,12 @@ export const useMetricsStore = defineStore('metrics', () => {
   })
 
   const workerMetrics = ref<WorkerMetrics[]>([])
+
+  // Forecast-specific data
+  const forecastData = ref<DataPoint[]>([])
+  const forecastConfidence = ref(0)
+  const forecastInterval = ref<{ lower: number; upper: number }>({ lower: 0, upper: 0 })
+  const forecastState = ref('')
 
   const aggregated = ref<AggregatedMetrics>({
     events_processed_total: 0,
@@ -174,6 +181,20 @@ export const useMetricsStore = defineStore('metrics', () => {
     }
   }
 
+  function updateForecast(data: ForecastMetrics): void {
+    const now = Date.now()
+    forecastConfidence.value = data.forecast_confidence
+    forecastInterval.value = { lower: data.forecast_lower, upper: data.forecast_upper }
+    forecastState.value = data.forecast_state
+
+    forecastData.value.push({ timestamp: now, value: data.forecast_probability })
+    const cutoff = now - timeRangeMs.value
+    forecastData.value = forecastData.value.filter((p) => p.timestamp >= cutoff)
+    if (forecastData.value.length > MAX_DATA_POINTS) {
+      forecastData.value = forecastData.value.slice(-MAX_DATA_POINTS)
+    }
+  }
+
   // Parse Prometheus metrics format
   function parsePrometheusMetrics(text: string): void {
     const lines = text.split('\n')
@@ -214,6 +235,10 @@ export const useMetricsStore = defineStore('metrics', () => {
     loading,
     error,
     lastUpdate,
+    forecastData,
+    forecastConfidence,
+    forecastInterval,
+    forecastState,
 
     // Computed
     throughputData,
@@ -225,6 +250,7 @@ export const useMetricsStore = defineStore('metrics', () => {
     updateMetrics,
     updateLatencyHistogram,
     updateWorkerMetrics,
+    updateForecast,
     setTimeRange,
     setCustomTimeRange,
     clearMetrics,

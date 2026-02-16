@@ -26,7 +26,8 @@ export function registerVplLanguage(getConnectorNames?: () => string[]): void {
       'from', 'where', 'select', 'window', 'aggregate', 'emit', 'to',
       'join', 'merge', 'partition_by', 'order_by', 'limit', 'distinct',
       'true', 'false', 'null', 'and', 'or', 'not', 'in', 'is',
-      'SEQ', 'NOT', 'AND', 'OR', 'within', 'as', 'import', 'export'
+      'SEQ', 'NOT', 'AND', 'OR', 'within', 'as', 'import', 'export',
+      'forecast', 'trend_aggregate'
     ],
     typeKeywords: [
       'int', 'float', 'bool', 'str', 'timestamp', 'duration', 'Stream',
@@ -171,6 +172,15 @@ export function registerVplLanguage(getConnectorNames?: () => string[]): void {
         { label: 'within', kind: monaco.languages.CompletionItemKind.Keyword, insertText: 'within ${1:5m}', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet },
         { label: 'window', kind: monaco.languages.CompletionItemKind.Keyword, insertText: 'window ${1:tumbling}(${2:5m})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet },
         { label: 'aggregate', kind: monaco.languages.CompletionItemKind.Keyword, insertText: 'aggregate {\n\t${1:count}: count(),\n\t$0\n}', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet },
+
+        // Forecast
+        { label: 'forecast', kind: monaco.languages.CompletionItemKind.Function, insertText: '.forecast(confidence: ${1:0.7}, horizon: ${2:2m}, warmup: ${3:500}, max_depth: ${4:5})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, documentation: 'Enable PST-based pattern forecasting. Requires a sequence pattern.' },
+        { label: 'forecast_probability', kind: monaco.languages.CompletionItemKind.Variable, insertText: 'forecast_probability', documentation: 'Predicted probability of pattern completion (0.0–1.0)' },
+        { label: 'forecast_confidence', kind: monaco.languages.CompletionItemKind.Variable, insertText: 'forecast_confidence', documentation: 'Confidence level of the forecast (0.0–1.0)' },
+        { label: 'forecast_time', kind: monaco.languages.CompletionItemKind.Variable, insertText: 'forecast_time', documentation: 'Predicted time until pattern completion (nanoseconds)' },
+        { label: 'forecast_state', kind: monaco.languages.CompletionItemKind.Variable, insertText: 'forecast_state', documentation: 'Current state label in the pattern sequence' },
+        { label: 'forecast_context_depth', kind: monaco.languages.CompletionItemKind.Variable, insertText: 'forecast_context_depth', documentation: 'Depth of PST context used for this prediction' },
+        { label: 'trend_aggregate', kind: monaco.languages.CompletionItemKind.Function, insertText: '.trend_aggregate(${1:sum}: ${2:field})', insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet, documentation: 'Hamlet-based trend aggregation over Kleene patterns' },
 
         // Types
         { label: 'int', kind: monaco.languages.CompletionItemKind.TypeParameter, insertText: 'int' },

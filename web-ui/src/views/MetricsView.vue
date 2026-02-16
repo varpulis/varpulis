@@ -6,6 +6,7 @@ import { fetchClusterMetrics } from '@/api/cluster'
 import ThroughputChart from '@/components/metrics/ThroughputChart.vue'
 import MetricCard from '@/components/metrics/MetricCard.vue'
 import MetricsGrid from '@/components/metrics/MetricsGrid.vue'
+import ForecastPanel from '@/components/metrics/ForecastPanel.vue'
 import type { TimeRangePreset } from '@/types/metrics'
 import type { PipelineWorkerMetrics } from '@/api/cluster'
 
@@ -292,6 +293,15 @@ onUnmounted(() => {
         </v-card>
       </v-col>
     </v-row>
+
+    <!-- Forecast Accuracy (conditional — only shown when forecast data is available) -->
+    <div v-if="metricsStore.forecastData.length > 0" class="mt-4">
+      <h2 class="text-h6 mb-2">
+        <v-icon class="mr-1" color="purple">mdi-crystal-ball</v-icon>
+        Forecast Accuracy
+      </h2>
+      <ForecastPanel />
+    </div>
 
     <!-- Worker Metrics Grid -->
     <v-row class="mt-4">

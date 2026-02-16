@@ -25,7 +25,12 @@ const isDark = computed(() => theme.global.current.value.dark)
 
 // Check for API key on mount and start health check
 onMounted(() => {
-  const existingKey = getApiKey() || settingsStore.apiKey
+  let existingKey = getApiKey() || settingsStore.apiKey
+  // Auto-populate from build-time env var (for demo deployments)
+  if (!existingKey && import.meta.env.VITE_API_KEY) {
+    setApiKey(import.meta.env.VITE_API_KEY)
+    existingKey = import.meta.env.VITE_API_KEY
+  }
   if (!existingKey) {
     showApiKeyBanner.value = true
   } else {
