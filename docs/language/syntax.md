@@ -295,14 +295,23 @@ stream Output = Processed
 Use `.forecast()` after a sequence pattern to predict completion probability:
 
 ```varpulis
+# Zero-config — uses balanced defaults with adaptive warmup
+stream SimpleForecast = EventA as a -> EventB as b
+    .within(5m)
+    .forecast()
+    .where(forecast_confidence > 0.8)
+    .emit(prob: forecast_probability)
+
+# Fully configured
 stream FraudForecast = Transaction as t1
     -> Transaction as t2 where t2.amount > t1.amount * 5
     -> Transaction as t3 where t3.location != t1.location
     .within(5m)
-    .forecast(confidence: 0.7, horizon: 2m, warmup: 500, max_depth: 5)
-    .where(forecast_probability > 0.8)
+    .forecast(mode: "accurate", confidence: 0.7)
+    .where(forecast_confidence > 0.8 and forecast_probability > 0.7)
     .emit(
         probability: forecast_probability,
+        stability: forecast_confidence,
         expected_time: forecast_time,
         state: forecast_state,
         confidence_lower: forecast_lower,
@@ -314,12 +323,21 @@ stream FraudForecast = Transaction as t1
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
+| `mode` | `str` | `"balanced"` | Preset: `"fast"`, `"accurate"`, or `"balanced"` |
 | `confidence` | `float` | 0.5 | Minimum probability threshold to emit forecast |
 | `horizon` | `duration` | `within` duration | Forecast time window |
-| `warmup` | `int` | 100 | Events before forecasting starts |
-| `max_depth` | `int` | 5 | PST context depth |
+| `warmup` | `int` | 100 | Min events before forecasting starts |
+| `max_depth` | `int` | 3 | PST context depth |
 | `hawkes` | `bool` | `true` | Enable Hawkes intensity modulation |
 | `conformal` | `bool` | `true` | Enable conformal prediction intervals |
+
+Mode presets provide convenient defaults (explicit params override):
+
+| Mode | `warmup` | `max_depth` | `hawkes` | `conformal` | Adaptive warmup |
+|------|----------|-------------|----------|-------------|-----------------|
+| `"fast"` | 50 | 3 | off | off | off |
+| `"accurate"` | 200 | 5 | on | on | on |
+| `"balanced"` | 100 | 3 | on | on | on |
 
 ### Forecast Built-in Variables
 
@@ -327,7 +345,8 @@ Available in `.where()` and `.emit()` after `.forecast()`:
 
 | Variable | Type | Description |
 |----------|------|-------------|
-| `forecast_probability` | `float` | Pattern completion probability (0.0–1.0), Hawkes-modulated |
+| `forecast_probability` | `float` | Pattern completion probability (0.0–1.0) |
+| `forecast_confidence` | `float` | Prediction stability (0.0–1.0) — high = converged |
 | `forecast_time` | `int` | Expected time to completion (nanoseconds) |
 | `forecast_state` | `str` | Current NFA state label |
 | `forecast_context_depth` | `int` | PST context depth used for prediction |

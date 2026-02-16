@@ -134,22 +134,35 @@ stream Alerts = Source
 Predict whether a partially-matched sequence pattern will complete:
 
 ```vpl
+# Zero-config (uses balanced defaults with adaptive warmup)
+stream Forecast = EventA as a -> EventB as b
+    .within(5m)
+    .forecast()
+    .where(forecast_confidence > 0.8)
+    .emit(prob: forecast_probability)
+
+# With mode and parameters
 stream Forecast = EventA as a
     -> EventB where value > a.value as b
     .within(5m)
-    .forecast(confidence: 0.7, horizon: 2m, warmup: 500, max_depth: 5)
-    .where(forecast_probability > 0.8)
-    .emit(probability: forecast_probability, expected_time: forecast_time)
+    .forecast(mode: "accurate", confidence: 0.7)
+    .where(forecast_confidence > 0.8 and forecast_probability > 0.7)
+    .emit(probability: forecast_probability, stability: forecast_confidence)
 ```
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
+| `mode` | `"balanced"` | Preset: `"fast"`, `"accurate"`, or `"balanced"` |
 | `confidence` | 0.5 | Min probability to emit forecast |
 | `horizon` | within duration | Forecast time window |
-| `warmup` | 100 | Events before forecasting starts |
-| `max_depth` | 5 | PST context depth |
+| `warmup` | 100 | Min events before forecasting starts |
+| `max_depth` | 3 | PST context depth |
+| `hawkes` | true | Enable Hawkes intensity modulation |
+| `conformal` | true | Enable conformal prediction intervals |
 
-Built-in variables after `.forecast()`: `forecast_probability`, `forecast_time`, `forecast_state`, `forecast_context_depth`, `forecast_lower`, `forecast_upper`
+Modes: `"fast"` (hawkes/conformal off, warmup:50), `"balanced"` (default), `"accurate"` (warmup:200, max_depth:5)
+
+Built-in variables after `.forecast()`: `forecast_probability`, `forecast_confidence`, `forecast_time`, `forecast_state`, `forecast_context_depth`, `forecast_lower`, `forecast_upper`
 
 ## Contexts (Multi-Threading)
 
