@@ -535,6 +535,82 @@ struct Unauthorized;
 impl warp::reject::Reject for Unauthorized {}
 
 // =============================================================================
+// Leader forwarding helper
+// =============================================================================
+
+/// Forward a write request to the Raft leader if this node is a follower.
+/// Returns `Some(response)` if forwarded, `None` if this node is the leader.
+#[cfg(feature = "raft")]
+async fn forward_to_leader(
+    coordinator: &SharedCoordinator,
+    method: &str,
+    path: &str,
+    body: Option<serde_json::Value>,
+) -> Option<warp::reply::Response> {
+    let coord = coordinator.read().await;
+    coord.raft_handle.as_ref()?;
+    if coord.is_raft_leader() {
+        return None;
+    }
+    let leader_addr = match coord.raft_leader_addr() {
+        Some(addr) => addr,
+        None => {
+            return Some(cluster_error_response(ClusterError::NotLeader(
+                "no leader elected yet".into(),
+            )));
+        }
+    };
+    let client = coord.http_client.clone();
+    let admin_key = coord.raft_handle.as_ref().and_then(|h| h.admin_key.clone());
+    drop(coord);
+
+    let url = format!("{}{}", leader_addr, path);
+    let mut req = match method {
+        "PUT" => client.put(&url),
+        "DELETE" => client.delete(&url),
+        _ => client.post(&url),
+    };
+    if let Some(key) = &admin_key {
+        req = req.header("x-api-key", key);
+    }
+    if let Some(b) = body {
+        req = req.json(&b);
+    }
+
+    match req.send().await {
+        Ok(resp) => {
+            let status = resp.status();
+            let body_text = resp.text().await.unwrap_or_default();
+            let warp_status = warp::http::StatusCode::from_u16(status.as_u16())
+                .unwrap_or(StatusCode::BAD_GATEWAY);
+            Some(
+                warp::reply::with_status(
+                    warp::reply::with_header(body_text, "content-type", "application/json"),
+                    warp_status,
+                )
+                .into_response(),
+            )
+        }
+        Err(e) => {
+            tracing::warn!("Cannot reach Raft leader at {leader_addr}: {e}");
+            Some(cluster_error_response(ClusterError::NotLeader(format!(
+                "cannot reach leader: {e}"
+            ))))
+        }
+    }
+}
+
+#[cfg(not(feature = "raft"))]
+async fn forward_to_leader(
+    _coordinator: &SharedCoordinator,
+    _method: &str,
+    _path: &str,
+    _body: Option<serde_json::Value>,
+) -> Option<warp::reply::Response> {
+    None
+}
+
+// =============================================================================
 // Handlers
 // =============================================================================
 
@@ -704,11 +780,18 @@ async fn handle_delete_worker(
     _auth: (),
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
-    let mut coord = coordinator.write().await;
-
-    if let Err(e) = coord.require_writer() {
-        return Ok(cluster_error_response(e));
+    if let Some(resp) = forward_to_leader(
+        &coordinator,
+        "DELETE",
+        &format!("/api/v1/cluster/workers/{worker_id}"),
+        None,
+    )
+    .await
+    {
+        return Ok(resp);
     }
+
+    let mut coord = coordinator.write().await;
 
     // Replicate through Raft if enabled
     #[cfg(feature = "raft")]
@@ -738,13 +821,20 @@ async fn handle_deploy_group(
     body: PipelineGroupSpec,
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    if let Some(resp) = forward_to_leader(
+        &coordinator,
+        "POST",
+        "/api/v1/cluster/pipeline-groups",
+        serde_json::to_value(&body).ok(),
+    )
+    .await
+    {
+        return Ok(resp);
+    }
+
     // Phase 1: Plan (read lock — released before HTTP I/O)
     let (plan, http_client) = {
         let coord = coordinator.read().await;
-
-        if let Err(e) = coord.require_writer() {
-            return Ok(cluster_error_response(e));
-        }
 
         match coord.plan_deploy_group(&body) {
             Ok(plan) => (plan, coord.http_client.clone()),
@@ -837,13 +927,20 @@ async fn handle_delete_group(
     _auth: (),
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    if let Some(resp) = forward_to_leader(
+        &coordinator,
+        "DELETE",
+        &format!("/api/v1/cluster/pipeline-groups/{group_id}"),
+        None,
+    )
+    .await
+    {
+        return Ok(resp);
+    }
+
     // Phase 1: Plan teardown under read lock
     let (plan, http_client) = {
         let coord = coordinator.read().await;
-
-        if let Err(e) = coord.require_writer() {
-            return Ok(cluster_error_response(e));
-        }
 
         match coord.plan_teardown_group(&group_id) {
             Ok(plan) => (plan, coord.http_client.clone()),
@@ -954,7 +1051,7 @@ struct ValidateResponse {
 // =============================================================================
 
 /// Request body for the drain endpoint.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct DrainRequest {
     pub timeout_secs: Option<u64>,
 }
@@ -981,7 +1078,7 @@ struct MigrationInfo {
 }
 
 /// Request body for manual migration.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct ManualMigrateRequest {
     pub target_worker_id: String,
 }
@@ -1271,7 +1368,7 @@ async fn handle_list_models(
     Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct UploadModelRequest {
     name: String,
     format: Option<String>,
@@ -1289,12 +1386,17 @@ async fn handle_upload_model(
     body: UploadModelRequest,
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    if let Some(resp) = forward_to_leader(
+        &coordinator,
+        "POST",
+        "/api/v1/cluster/models",
+        serde_json::to_value(&body).ok(),
+    )
+    .await
     {
-        let coord = coordinator.read().await;
-        if let Err(e) = coord.require_writer() {
-            return Ok(cluster_error_response(e));
-        }
+        return Ok(resp);
     }
+
     let name = body.name.clone();
     let s3_key = format!("models/{}.onnx", &name);
     let size_bytes = body.data_base64.len() as u64 * 3 / 4; // approximate
@@ -1338,11 +1440,18 @@ async fn handle_delete_model(
     _auth: (),
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
-    let mut coord = coordinator.write().await;
-
-    if let Err(e) = coord.require_writer() {
-        return Ok(cluster_error_response(e));
+    if let Some(resp) = forward_to_leader(
+        &coordinator,
+        "DELETE",
+        &format!("/api/v1/cluster/models/{name}"),
+        None,
+    )
+    .await
+    {
+        return Ok(resp);
     }
+
+    let mut coord = coordinator.write().await;
 
     if !coord.model_registry.contains_key(&name) {
         let resp = serde_json::json!({ "error": format!("Model '{}' not found", name) });
@@ -1464,12 +1573,18 @@ async fn handle_update_chat_config(
     body: crate::chat::LlmConfig,
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
-    let mut coord = coordinator.write().await;
-
-    if let Err(e) = coord.require_writer() {
-        return Ok(cluster_error_response(e));
+    if let Some(resp) = forward_to_leader(
+        &coordinator,
+        "PUT",
+        "/api/v1/cluster/chat/config",
+        serde_json::to_value(&body).ok(),
+    )
+    .await
+    {
+        return Ok(resp);
     }
 
+    let mut coord = coordinator.write().await;
     coord.llm_config = Some(body);
     let resp = serde_json::json!({ "status": "ok" });
     Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
@@ -1485,11 +1600,18 @@ async fn handle_drain_worker(
     body: DrainRequest,
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
-    let mut coord = coordinator.write().await;
-
-    if let Err(e) = coord.require_writer() {
-        return Ok(cluster_error_response(e));
+    if let Some(resp) = forward_to_leader(
+        &coordinator,
+        "POST",
+        &format!("/api/v1/cluster/workers/{worker_id}/drain"),
+        serde_json::to_value(&body).ok(),
+    )
+    .await
+    {
+        return Ok(resp);
     }
+
+    let mut coord = coordinator.write().await;
 
     let timeout = body.timeout_secs.map(std::time::Duration::from_secs);
     match coord
@@ -1512,11 +1634,13 @@ async fn handle_rebalance(
     _auth: (),
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
-    let mut coord = coordinator.write().await;
-
-    if let Err(e) = coord.require_writer() {
-        return Ok(cluster_error_response(e));
+    if let Some(resp) =
+        forward_to_leader(&coordinator, "POST", "/api/v1/cluster/rebalance", None).await
+    {
+        return Ok(resp);
     }
+
+    let mut coord = coordinator.write().await;
 
     match coord.rebalance().await {
         Ok(migration_ids) => {
@@ -1611,13 +1735,20 @@ async fn handle_manual_migrate(
     body: ManualMigrateRequest,
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    if let Some(resp) = forward_to_leader(
+        &coordinator,
+        "POST",
+        &format!("/api/v1/cluster/pipelines/{group_id}/{pipeline_name}/migrate"),
+        serde_json::to_value(&body).ok(),
+    )
+    .await
+    {
+        return Ok(resp);
+    }
+
     // Phase 1: Plan (read lock — released before HTTP I/O)
     let (plan, http_client, source_alive, connectors) = {
         let coord = coordinator.read().await;
-
-        if let Err(e) = coord.require_writer() {
-            return Ok(cluster_error_response(e));
-        }
 
         match coord.plan_migrate_pipeline(
             &pipeline_name,
@@ -1732,11 +1863,18 @@ async fn handle_create_connector(
     body: ClusterConnector,
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
-    let mut coord = coordinator.write().await;
-
-    if let Err(e) = coord.require_writer() {
-        return Ok(cluster_error_response(e));
+    if let Some(resp) = forward_to_leader(
+        &coordinator,
+        "POST",
+        "/api/v1/cluster/connectors",
+        serde_json::to_value(&body).ok(),
+    )
+    .await
+    {
+        return Ok(resp);
     }
+
+    let mut coord = coordinator.write().await;
 
     // Replicate through Raft if enabled
     #[cfg(feature = "raft")]
@@ -1768,11 +1906,18 @@ async fn handle_update_connector(
     body: ClusterConnector,
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
-    let mut coord = coordinator.write().await;
-
-    if let Err(e) = coord.require_writer() {
-        return Ok(cluster_error_response(e));
+    if let Some(resp) = forward_to_leader(
+        &coordinator,
+        "PUT",
+        &format!("/api/v1/cluster/connectors/{name}"),
+        serde_json::to_value(&body).ok(),
+    )
+    .await
+    {
+        return Ok(resp);
     }
+
+    let mut coord = coordinator.write().await;
 
     #[cfg(feature = "raft")]
     if let Some(ref handle) = coord.raft_handle {
@@ -1800,11 +1945,18 @@ async fn handle_delete_connector(
     _auth: (),
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
-    let mut coord = coordinator.write().await;
-
-    if let Err(e) = coord.require_writer() {
-        return Ok(cluster_error_response(e));
+    if let Some(resp) = forward_to_leader(
+        &coordinator,
+        "DELETE",
+        &format!("/api/v1/cluster/connectors/{name}"),
+        None,
+    )
+    .await
+    {
+        return Ok(resp);
     }
+
+    let mut coord = coordinator.write().await;
 
     #[cfg(feature = "raft")]
     if let Some(ref handle) = coord.raft_handle {
