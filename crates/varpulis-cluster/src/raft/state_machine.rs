@@ -80,6 +80,16 @@ pub fn apply_command(state: &mut CoordinatorState, cmd: ClusterCommand) -> Clust
             ClusterResponse::Ok
         }
 
+        ClusterCommand::WorkerPipelinesUpdated {
+            id,
+            assigned_pipelines,
+        } => {
+            if let Some(w) = state.workers.get_mut(&id) {
+                w.assigned_pipelines = assigned_pipelines;
+            }
+            ClusterResponse::Ok
+        }
+
         ClusterCommand::GroupDeployed { name, group } => {
             state.pipeline_groups.insert(name, group);
             ClusterResponse::Ok

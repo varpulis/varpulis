@@ -2293,8 +2293,14 @@ async fn run_coordinator(
             // Clean up stale completed migrations (older than 1 hour)
             coord.cleanup_completed_migrations(std::time::Duration::from_secs(3600));
 
-            // Trigger rebalance if a new worker was recently registered
+            // Reconcile stale placements: re-deploy pipelines to workers
+            // that restarted and lost their in-memory state.
             if coord.pending_rebalance {
+                let n = coord.reconcile_placements().await;
+                if n > 0 {
+                    tracing::info!("Reconciled {n} pipeline placement(s)");
+                }
+                // Then attempt rebalance across workers
                 match coord.rebalance().await {
                     Ok(ids) if !ids.is_empty() => {
                         tracing::info!("Auto-rebalance: {} migration(s) started", ids.len());
