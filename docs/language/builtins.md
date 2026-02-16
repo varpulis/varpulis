@@ -203,6 +203,30 @@ See [Forecasting Tutorial](../tutorials/forecasting-tutorial.md) and [Forecastin
 
 ---
 
+## Enrichment Built-in Variables (Implemented)
+
+These variables are available after `.enrich()`:
+
+| Variable | Type | Description | Status |
+|----------|------|-------------|--------|
+| `enrich_status` | str | `"ok"`, `"error"`, `"cached"`, or `"timeout"` | Implemented |
+| `enrich_latency_ms` | int | Lookup latency in ms (0 for cache hits) | Implemented |
+
+### Enrichment Example
+
+```varpulis
+connector WeatherAPI = http(url: "https://api.weather.com/v1")
+
+stream Enriched = Temperature as t
+    .enrich(WeatherAPI, key: t.city, fields: [forecast, humidity], cache_ttl: 5m)
+    .where(enrich_status == "ok" and forecast == "rain")
+    .emit(city: t.city, forecast: forecast, latency: enrich_latency_ms)
+```
+
+See [Enrichment Reference](../reference/enrichment.md) for details.
+
+---
+
 ## See Also
 
 - [Syntax Reference](syntax.md)

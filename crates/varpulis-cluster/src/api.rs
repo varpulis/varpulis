@@ -23,10 +23,7 @@ use varpulis_parser::ParseError;
 use warp::http::StatusCode;
 use warp::{Filter, Rejection, Reply};
 
-/// Maximum body size for normal JSON endpoints (1 MB).
-const JSON_BODY_LIMIT: u64 = 1024 * 1024;
-/// Maximum body size for large payloads: inject-batch, models, snapshots (16 MB).
-const LARGE_BODY_LIMIT: u64 = 16 * 1024 * 1024;
+use varpulis_core::security::{JSON_BODY_LIMIT, LARGE_BODY_LIMIT};
 
 /// Shared coordinator state.
 pub type SharedCoordinator = Arc<RwLock<Coordinator>>;
@@ -53,6 +50,9 @@ pub fn cluster_routes_with_raft(
 }
 
 /// Build all coordinator API routes under `/api/v1/cluster/`.
+///
+/// CORS is configured to allow any origin. In production, set `admin_key`
+/// and use a reverse proxy (e.g. nginx) to restrict origins.
 pub fn cluster_routes(
     coordinator: SharedCoordinator,
     admin_key: Option<String>,
@@ -431,6 +431,9 @@ pub fn cluster_routes(
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_update_chat_config);
 
+    // SECURITY: allow_any_origin() is acceptable here because production
+    // deployments sit behind nginx which enforces origin restrictions.
+    // The admin_key provides the actual access-control boundary.
     let cors = warp::cors()
         .allow_any_origin()
         .allow_methods(vec!["GET", "POST", "PUT", "DELETE", "OPTIONS"])
@@ -525,7 +528,11 @@ fn with_optional_auth(
                 match &key {
                     None => Ok::<(), Rejection>(()), // no auth required
                     Some(expected) => match provided {
-                        Some(ref p) if p == expected => Ok(()),
+                        Some(ref p)
+                            if varpulis_core::security::constant_time_compare(expected, p) =>
+                        {
+                            Ok(())
+                        }
                         _ => Err(warp::reject::custom(Unauthorized)),
                     },
                 }

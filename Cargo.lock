@@ -5784,6 +5784,7 @@ dependencies = [
  "clap",
  "futures-util",
  "indexmap 2.12.1",
+ "rand 0.8.5",
  "rayon",
  "reqwest",
  "rustc-hash 2.1.1",

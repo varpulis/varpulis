@@ -164,6 +164,14 @@ fn hover_stream_ops_forecast() {
 }
 
 #[test]
+fn hover_stream_ops_enrich() {
+    let text = "enrich connector";
+    let h = hover_text(text, 0, 0).unwrap();
+    assert!(h.contains("enrich"));
+    assert!(h.contains("Enriches"));
+}
+
+#[test]
 fn hover_stream_ops_partition_by() {
     let text = "partition_by key";
     let h = hover_text(text, 0, 0).unwrap();
@@ -856,6 +864,7 @@ fn completion_after_dot() {
     assert!(labels.contains(&"tap"));
     assert!(labels.contains(&"partition_by"));
     assert!(labels.contains(&"forecast"));
+    assert!(labels.contains(&"enrich"));
 }
 
 #[test]

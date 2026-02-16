@@ -978,6 +978,72 @@ fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
                 mode,
             }))
         }
+        Rule::enrich_op => {
+            let mut inner = pair.into_inner();
+            let connector_name = inner.expect_next("connector name")?.as_str().to_string();
+            let mut key_expr = None;
+            let mut fields = Vec::new();
+            let mut cache_ttl = None;
+            let mut timeout = None;
+            let mut fallback = None;
+            for p in inner {
+                if p.as_rule() == Rule::enrich_params {
+                    for param_pair in p.into_inner() {
+                        if param_pair.as_rule() == Rule::enrich_param {
+                            let param_inner =
+                                param_pair.into_inner().expect_next("enrich param")?;
+                            match param_inner.as_rule() {
+                                Rule::enrich_key_param => {
+                                    let expr_pair =
+                                        param_inner.into_inner().expect_next("key expression")?;
+                                    key_expr = Some(parse_expr(expr_pair)?);
+                                }
+                                Rule::enrich_fields_param => {
+                                    for field in param_inner.into_inner() {
+                                        if field.as_rule() == Rule::identifier {
+                                            fields.push(field.as_str().to_string());
+                                        }
+                                    }
+                                }
+                                Rule::enrich_cache_ttl_param => {
+                                    let expr_pair = param_inner
+                                        .into_inner()
+                                        .expect_next("cache_ttl expression")?;
+                                    cache_ttl = Some(parse_expr(expr_pair)?);
+                                }
+                                Rule::enrich_timeout_param => {
+                                    let expr_pair = param_inner
+                                        .into_inner()
+                                        .expect_next("timeout expression")?;
+                                    timeout = Some(parse_expr(expr_pair)?);
+                                }
+                                Rule::enrich_fallback_param => {
+                                    let literal_pair =
+                                        param_inner.into_inner().expect_next("fallback literal")?;
+                                    fallback = Some(parse_expr(literal_pair)?);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+            let key = key_expr.ok_or_else(|| ParseError::Located {
+                line: 0,
+                column: 0,
+                position: 0,
+                message: ".enrich() requires a key: parameter".to_string(),
+                hint: Some("add key: <expression> to .enrich()".to_string()),
+            })?;
+            Ok(StreamOp::Enrich(EnrichSpec {
+                connector_name,
+                key_expr: Box::new(key),
+                fields,
+                cache_ttl,
+                timeout,
+                fallback,
+            }))
+        }
         Rule::score_op => {
             let mut model_path = String::new();
             let mut inputs = Vec::new();

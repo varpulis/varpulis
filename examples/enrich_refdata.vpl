@@ -1,0 +1,40 @@
+# Reference data enrichment example
+# Enriches order events with product catalog data from PostgreSQL
+# and user profile data from Redis
+
+connector ProductDB = database(
+    url: "postgres://localhost:5432/catalog",
+    query: "SELECT name, category, price, supplier FROM products WHERE id = $1"
+)
+
+connector UserCache = redis(url: "redis://localhost:6379")
+
+event Order:
+    order_id: str
+    user_id: str
+    product_id: str
+    quantity: int
+
+# Enrich orders with product details
+stream OrdersWithProducts = Order as o
+    .enrich(ProductDB, key: o.product_id, fields: [name, category, price, supplier], cache_ttl: 1h)
+    .emit(
+        order_id: o.order_id,
+        product: name,
+        category: category,
+        unit_price: price,
+        quantity: o.quantity
+    )
+
+# Chain enrichments: product data + user profile
+stream FullOrders = Order as o
+    .enrich(ProductDB, key: o.product_id, fields: [name, category, price], cache_ttl: 1h)
+    .enrich(UserCache, key: o.user_id, fields: [user_tier, country], cache_ttl: 10m)
+    .where(user_tier == "premium" and category == "electronics")
+    .emit(
+        order_id: o.order_id,
+        product: name,
+        user_tier: user_tier,
+        country: country,
+        status: enrich_status
+    )

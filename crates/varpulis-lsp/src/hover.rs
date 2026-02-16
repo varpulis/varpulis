@@ -313,6 +313,30 @@ fn get_documentation(word: &str) -> Option<String> {
             ```"
         )),
 
+        "enrich" => Some(format!(
+            "## .enrich()\n\n\
+            Enriches streaming events with data from an external connector\n\
+            (HTTP API, SQL database, or Redis).\n\n\
+            **Parameters:**\n\
+            - `connector` — Connector name (first positional arg)\n\
+            - `key` — Expression to use as lookup key (required)\n\
+            - `fields` — List of fields to extract from the response (required)\n\
+            - `cache_ttl` — How long to cache results (optional, e.g. `5m`)\n\
+            - `timeout` — Max time to wait for response (optional, default `5s`)\n\
+            - `fallback` — Default value on failure (optional)\n\n\
+            **Built-in variables** (after `.enrich()`):\n\
+            - `enrich_status` — `\"ok\"`, `\"error\"`, `\"cached\"`, or `\"timeout\"`\n\
+            - `enrich_latency_ms` — Lookup latency in ms (0 for cache hits)\n\n\
+            **Example:**\n\
+            ```vpl\n\
+            connector WeatherAPI = http(url: \"https://api.weather.com/v1\")\n\n\
+            stream Enriched = Temperature as t\n\
+                .enrich(WeatherAPI, key: t.city, fields: [forecast, humidity], cache_ttl: 5m)\n\
+                .where(forecast == \"rain\")\n\
+                .emit(city: t.city, forecast: forecast)\n\
+            ```"
+        )),
+
         "partition_by" => Some(format!(
             "## .partition_by()\n\n\
             Partitions the stream by a key for parallel processing.\n\n\

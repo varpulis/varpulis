@@ -353,6 +353,41 @@ Available in `.where()` and `.emit()` after `.forecast()`:
 | `forecast_lower` | `float` | Lower bound of conformal prediction interval (0.0–1.0) |
 | `forecast_upper` | `float` | Upper bound of conformal prediction interval (0.0–1.0) |
 
+## External Enrichment
+
+Use `.enrich()` to enrich streaming events with data from external connectors:
+
+```varpulis
+connector WeatherAPI = http(url: "https://api.weather.com/v1")
+
+stream Enriched = Temperature as t
+    .enrich(WeatherAPI, key: t.city, fields: [forecast, humidity], cache_ttl: 5m)
+    .where(forecast == "rain")
+    .emit(city: t.city, forecast: forecast, humidity: humidity)
+```
+
+### Enrich Parameters
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `connector` | Yes | — | Connector name (first positional arg) |
+| `key` | Yes | — | Expression used as lookup key |
+| `fields` | Yes | — | List of fields to extract from response |
+| `cache_ttl` | No | none | TTL for caching results (e.g., `5m`, `1h`) |
+| `timeout` | No | `5s` | Max time to wait for response |
+| `fallback` | No | none | Default value when lookup fails |
+
+### Enrich Built-in Variables
+
+Available in `.where()` and `.emit()` after `.enrich()`:
+
+| Variable | Type | Description |
+|----------|------|-------------|
+| `enrich_status` | `str` | `"ok"`, `"error"`, `"cached"`, or `"timeout"` |
+| `enrich_latency_ms` | `int` | Lookup latency in ms (0 for cache hits) |
+
+Compatible connectors: `http`, `database`, `redis`. See [Enrichment Reference](../reference/enrichment.md) for details.
+
 ## Output Routing
 
 Use `.to()` to route stream output to declared connectors:

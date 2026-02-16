@@ -325,6 +325,8 @@ pub enum StreamOp {
     Score(ScoreSpec),
     /// PST-based pattern forecasting: `.forecast(confidence: 0.7, horizon: 2m, warmup: 500, max_depth: 5)`
     Forecast(ForecastSpec),
+    /// External connector enrichment: `.enrich(WeatherAPI, key: t.city, fields: [forecast, humidity], cache_ttl: 5m)`
+    Enrich(EnrichSpec),
 }
 
 /// A path in a fork construct
@@ -372,6 +374,23 @@ pub struct ForecastSpec {
     pub conformal: Option<Expr>,
     /// Preset mode: "fast", "accurate", or "balanced" (default "balanced")
     pub mode: Option<Expr>,
+}
+
+/// Specification for external connector enrichment
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EnrichSpec {
+    /// Name of the connector to use for lookups
+    pub connector_name: String,
+    /// Expression to evaluate as the lookup key
+    pub key_expr: Box<Expr>,
+    /// Fields to extract from the enrichment response
+    pub fields: Vec<String>,
+    /// Cache TTL (optional, duration expression)
+    pub cache_ttl: Option<Expr>,
+    /// Timeout for the enrichment request (optional, duration expression)
+    pub timeout: Option<Expr>,
+    /// Fallback value when lookup fails (optional)
+    pub fallback: Option<Expr>,
 }
 
 /// Followed-by clause for temporal sequences

@@ -305,6 +305,20 @@ forecast_args   ::= named_arg (',' named_arg)*
 # max_depth: int     — PST context depth (default 5)
 ```
 
+### Enrichment Parameters
+
+```ebnf
+enrich_op       ::= '.enrich(' IDENTIFIER ',' enrich_params ')'
+
+enrich_params   ::= enrich_param (',' enrich_param)*
+
+enrich_param    ::= 'key' ':' expression
+                  | 'fields' ':' '[' IDENTIFIER (',' IDENTIFIER)* ']'
+                  | 'cache_ttl' ':' duration
+                  | 'timeout' ':' duration
+                  | 'fallback' ':' literal
+```
+
 ## See Also
 
 - [Pest Grammar](../../crates/varpulis-parser/src/varpulis.pest)

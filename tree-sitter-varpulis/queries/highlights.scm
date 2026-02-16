@@ -65,6 +65,7 @@
   "sliding"
   "policy"
   "forecast"
+  "enrich"
 ] @function.method
 
 ; Types

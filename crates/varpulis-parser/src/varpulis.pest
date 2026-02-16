@@ -133,6 +133,7 @@ dot_op = { "." ~ (
     | trend_aggregate_op
     | score_op
     | forecast_op
+    | enrich_op
 )}
 
 // followed_by: use filter_expr for filter (stops before stream ops), 'as identifier' handled at end
@@ -219,6 +220,16 @@ score_field_list = { "[" ~ identifier ~ ("," ~ identifier)* ~ "]" }
 forecast_op = { "forecast" ~ "(" ~ forecast_params? ~ ")" }
 forecast_params = { forecast_param ~ ("," ~ forecast_param)* }
 forecast_param = { identifier ~ ":" ~ expr }
+
+// .enrich(WeatherAPI, key: t.city, fields: [forecast, humidity], cache_ttl: 5m, timeout: 2s, fallback: "unknown")
+enrich_op = { "enrich" ~ "(" ~ identifier ~ "," ~ enrich_params ~ ")" }
+enrich_params = { enrich_param ~ ("," ~ enrich_param)* }
+enrich_param = { enrich_key_param | enrich_fields_param | enrich_cache_ttl_param | enrich_timeout_param | enrich_fallback_param }
+enrich_key_param = { "key" ~ ":" ~ expr }
+enrich_fields_param = { "fields" ~ ":" ~ "[" ~ identifier ~ ("," ~ identifier)* ~ "]" }
+enrich_cache_ttl_param = { "cache_ttl" ~ ":" ~ expr }
+enrich_timeout_param = { "timeout" ~ ":" ~ expr }
+enrich_fallback_param = { "fallback" ~ ":" ~ literal }
 
 trend_agg_list = { trend_agg_item ~ ("," ~ trend_agg_item)* }
 trend_agg_item = { identifier ~ ":" ~ trend_agg_func }

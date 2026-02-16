@@ -613,6 +613,51 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
                 }
             }
 
+            // --- Enrich connector validation ---
+            StreamOp::Enrich(spec) => {
+                if !v.symbols.connectors.contains_key(&spec.connector_name) {
+                    let suggestion =
+                        did_you_mean(&spec.connector_name, &v.symbols.connector_names());
+                    v.emit_with_hint(
+                        Severity::Error,
+                        span,
+                        "E030",
+                        format!("undefined connector '{}'", spec.connector_name),
+                        format!(
+                            "declare it with: connector {} = type (...){}",
+                            spec.connector_name, suggestion
+                        ),
+                    );
+                } else {
+                    let connector_type = &v.symbols.connectors[&spec.connector_name].connector_type;
+                    if !builtins::ENRICH_COMPATIBLE_TYPES.contains(&connector_type.as_str()) {
+                        v.emit_with_hint(
+                            Severity::Error,
+                            span,
+                            "E032",
+                            format!(
+                                ".enrich() is not compatible with '{}' connector type '{}'",
+                                spec.connector_name, connector_type
+                            ),
+                            format!(
+                                ".enrich() requires a request-response connector ({})",
+                                builtins::ENRICH_COMPATIBLE_TYPES.join(", ")
+                            ),
+                        );
+                    }
+                }
+                if spec.fields.is_empty() {
+                    v.emit_with_hint(
+                        Severity::Warning,
+                        span,
+                        "W032",
+                        ".enrich() has no fields specified".to_string(),
+                        "add fields: [field1, field2] to extract data from the enrichment response"
+                            .to_string(),
+                    );
+                }
+            }
+
             // --- Operations that are fine ---
             StreamOp::Select(_)
             | StreamOp::Tap(_)

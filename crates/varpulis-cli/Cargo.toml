@@ -28,6 +28,7 @@ futures-util = { workspace = true }
 chrono = { workspace = true }
 indexmap = { workspace = true }
 rustc-hash = { workspace = true }
+rand = { workspace = true }
 rayon = "1.10"
 serde_yaml = "0.9"
 toml = "0.8"

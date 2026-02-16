@@ -22,15 +22,21 @@ pub struct RateLimitConfig {
     pub requests_per_second: u32,
     /// Burst capacity (max tokens in bucket)
     pub burst_size: u32,
+    /// Maximum number of tracked IP addresses (prevents memory exhaustion)
+    pub max_tracked_ips: usize,
 }
 
 impl RateLimitConfig {
+    /// Default maximum number of tracked IP addresses.
+    const DEFAULT_MAX_TRACKED_IPS: usize = 10_000;
+
     /// Create a disabled rate limit config
     pub fn disabled() -> Self {
         Self {
             enabled: false,
             requests_per_second: 0,
             burst_size: 0,
+            max_tracked_ips: Self::DEFAULT_MAX_TRACKED_IPS,
         }
     }
 
@@ -41,6 +47,7 @@ impl RateLimitConfig {
             requests_per_second,
             // Default burst size is 2x the rate
             burst_size: requests_per_second.saturating_mul(2),
+            max_tracked_ips: Self::DEFAULT_MAX_TRACKED_IPS,
         }
     }
 
@@ -50,6 +57,7 @@ impl RateLimitConfig {
             enabled: true,
             requests_per_second,
             burst_size,
+            max_tracked_ips: Self::DEFAULT_MAX_TRACKED_IPS,
         }
     }
 }
@@ -156,6 +164,18 @@ impl RateLimiter {
         }
 
         let mut buckets = self.buckets.write().await;
+
+        // Evict oldest entry if at capacity and this is a new IP
+        if !buckets.contains_key(&ip) && buckets.len() >= self.config.max_tracked_ips {
+            let oldest_ip = buckets
+                .iter()
+                .min_by_key(|(_, b)| b.last_update)
+                .map(|(ip, _)| *ip);
+            if let Some(ip_to_evict) = oldest_ip {
+                buckets.remove(&ip_to_evict);
+            }
+        }
+
         let bucket = buckets.entry(ip).or_insert_with(|| {
             TokenBucket::new(self.config.burst_size, self.config.requests_per_second)
         });
@@ -410,6 +430,25 @@ mod tests {
         // Cleanup with very short max age should remove the bucket
         limiter.cleanup(Duration::from_nanos(1)).await;
         assert_eq!(limiter.client_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_rate_limiter_bounded() {
+        let mut config = RateLimitConfig::new(10);
+        config.max_tracked_ips = 3;
+        let limiter = RateLimiter::new(config);
+
+        // Add 3 IPs (at capacity)
+        for i in 1..=3u8 {
+            let ip: IpAddr = format!("10.0.0.{}", i).parse().unwrap();
+            limiter.check(ip).await;
+        }
+        assert_eq!(limiter.client_count().await, 3);
+
+        // Adding a 4th IP should evict the oldest
+        let ip4: IpAddr = "10.0.0.4".parse().unwrap();
+        limiter.check(ip4).await;
+        assert_eq!(limiter.client_count().await, 3);
     }
 
     #[test]

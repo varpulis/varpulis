@@ -108,6 +108,7 @@ pub mod columnar;
 pub mod connector;
 pub mod context;
 pub mod engine;
+pub mod enrichment;
 pub mod event;
 pub mod event_file;
 pub mod greta;

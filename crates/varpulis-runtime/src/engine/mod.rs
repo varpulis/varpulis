@@ -23,10 +23,10 @@ pub use evaluator::eval_filter_expr;
 
 // Re-export internal types for use within the engine module
 use types::{
-    DistinctState, EmitConfig, EmitExprConfig, ForecastConfig, LimitState, LogConfig, MergeSource,
-    PartitionedAggregatorState, PartitionedSlidingCountWindowState, PartitionedWindowState,
-    PatternConfig, PrintConfig, RuntimeOp, RuntimeSource, SelectConfig, StreamDefinition,
-    StreamProcessResult, TimerConfig, ToConfig, TrendAggregateConfig, WindowType,
+    DistinctState, EmitConfig, EmitExprConfig, EnrichConfig, ForecastConfig, LimitState, LogConfig,
+    MergeSource, PartitionedAggregatorState, PartitionedSlidingCountWindowState,
+    PartitionedWindowState, PatternConfig, PrintConfig, RuntimeOp, RuntimeSource, SelectConfig,
+    StreamDefinition, StreamProcessResult, TimerConfig, ToConfig, TrendAggregateConfig, WindowType,
 };
 
 use crate::aggregation::Aggregator;
@@ -1067,6 +1067,40 @@ impl Engine {
         // Log source description before moving
         let source_desc = runtime_source.describe();
 
+        // Build enrichment provider if any .enrich() ops reference a connector
+        let enrichment = {
+            let enrich_op = runtime_ops.iter().find_map(|op| {
+                if let RuntimeOp::Enrich(config) = op {
+                    Some(config)
+                } else {
+                    None
+                }
+            });
+            if let Some(config) = enrich_op {
+                if let Some(conn_config) = self.connectors.get(&config.connector_name) {
+                    let provider = crate::enrichment::create_provider(conn_config)
+                        .map_err(|e| format!("Failed to create enrichment provider: {}", e))?;
+                    let cache_ttl = config
+                        .cache_ttl_ns
+                        .map(std::time::Duration::from_nanos)
+                        .unwrap_or(std::time::Duration::from_secs(300));
+                    let cache = crate::enrichment::EnrichmentCache::new(cache_ttl);
+                    Some((
+                        Arc::from(provider) as Arc<dyn crate::enrichment::EnrichmentProvider>,
+                        Arc::new(cache),
+                    ))
+                } else {
+                    warn!(
+                        "Connector '{}' not found for .enrich() in stream '{}'",
+                        config.connector_name, name
+                    );
+                    None
+                }
+            } else {
+                None
+            }
+        };
+
         self.streams.insert(
             name.to_string(),
             StreamDefinition {
@@ -1080,6 +1114,7 @@ impl Engine {
                 shared_hamlet_ref: None,
                 pst_forecaster,
                 last_raw_event: None,
+                enrichment,
             },
         );
 
@@ -1226,6 +1261,44 @@ impl Engine {
                     // Record current position so Forecast op is inserted here,
                     // BEFORE any subsequent .emit()/.where() ops.
                     forecast_insert_idx = Some(runtime_ops.len());
+                    continue;
+                }
+                StreamOp::Enrich(spec) => {
+                    // Resolve timeout (default 5s = 5_000_000_000 ns)
+                    let timeout_ns = match &spec.timeout {
+                        Some(varpulis_core::ast::Expr::Duration(ns)) => *ns,
+                        _ => 5_000_000_000u64,
+                    };
+                    // Resolve cache TTL
+                    let cache_ttl_ns = match &spec.cache_ttl {
+                        Some(varpulis_core::ast::Expr::Duration(ns)) => Some(*ns),
+                        _ => None,
+                    };
+                    // Resolve fallback value
+                    let fallback = match &spec.fallback {
+                        Some(varpulis_core::ast::Expr::Str(s)) => {
+                            Some(varpulis_core::Value::str(s.as_str()))
+                        }
+                        Some(varpulis_core::ast::Expr::Int(i)) => {
+                            Some(varpulis_core::Value::Int(*i))
+                        }
+                        Some(varpulis_core::ast::Expr::Float(f)) => {
+                            Some(varpulis_core::Value::Float(*f))
+                        }
+                        Some(varpulis_core::ast::Expr::Bool(b)) => {
+                            Some(varpulis_core::Value::Bool(*b))
+                        }
+                        Some(varpulis_core::ast::Expr::Null) => Some(varpulis_core::Value::Null),
+                        _ => None,
+                    };
+                    runtime_ops.push(RuntimeOp::Enrich(EnrichConfig {
+                        connector_name: spec.connector_name.clone(),
+                        key_expr: (*spec.key_expr).clone(),
+                        fields: spec.fields.clone(),
+                        cache_ttl_ns,
+                        timeout_ns,
+                        fallback,
+                    }));
                     continue;
                 }
                 StreamOp::Score(spec) => {
@@ -2899,12 +2972,14 @@ impl Engine {
     // Session Window Sweep
     // =========================================================================
 
-    /// Check if any registered stream uses `.to()` sink operations.
-    /// When no sinks are present, the sync processing path can be used safely.
+    /// Check if any registered stream uses `.to()` or `.enrich()` operations.
+    /// When these are present, the async processing path must be used.
     pub fn has_sink_operations(&self) -> bool {
-        self.streams
-            .values()
-            .any(|s| s.operations.iter().any(|op| matches!(op, RuntimeOp::To(_))))
+        self.streams.values().any(|s| {
+            s.operations
+                .iter()
+                .any(|op| matches!(op, RuntimeOp::To(_) | RuntimeOp::Enrich(_)))
+        })
     }
 
     /// Returns (events_in, events_out) counters for this engine.
@@ -3766,6 +3841,7 @@ fn stream_op_name(op: &StreamOp) -> &'static str {
         StreamOp::TrendAggregate(_) => ".trend_aggregate()",
         StreamOp::Score(_) => ".score()",
         StreamOp::Forecast(_) => ".forecast()",
+        StreamOp::Enrich(_) => ".enrich()",
     }
 }
 

@@ -111,6 +111,7 @@ pub(crate) async fn execute_pipeline(
             &stream.shared_hamlet_ref,
             &mut stream.pst_forecaster,
             &stream.last_raw_event,
+            &stream.enrichment,
             &mut current_events,
             &mut emitted_events,
             functions,
@@ -173,10 +174,195 @@ fn should_skip_op(op: &RuntimeOp, flags: SkipFlags) -> bool {
     }
 }
 
-/// Execute a single RuntimeOp on the current event batch.
-/// Mutates `current_events` in place and appends to `emitted_events`.
+/// Execute a single RuntimeOp on the current event batch (async version).
+///
+/// Handles `RuntimeOp::To` and `RuntimeOp::Enrich` (which require `.await`),
+/// then delegates all other ops to [`execute_op_common`].
 #[allow(clippy::too_many_arguments)]
 async fn execute_op(
+    op: &mut RuntimeOp,
+    stream_name: &str,
+    sase_engine: &mut Option<crate::sase::SaseEngine>,
+    hamlet_aggregator: &mut Option<crate::hamlet::HamletAggregator>,
+    shared_hamlet_ref: &Option<Arc<std::sync::Mutex<crate::hamlet::HamletAggregator>>>,
+    pst_forecaster: &mut Option<crate::pst::PatternMarkovChain>,
+    last_raw_event: &Option<SharedEvent>,
+    enrichment: &Option<(
+        Arc<dyn crate::enrichment::EnrichmentProvider>,
+        Arc<crate::enrichment::EnrichmentCache>,
+    )>,
+    current_events: &mut Vec<SharedEvent>,
+    emitted_events: &mut Vec<SharedEvent>,
+    functions: &FxHashMap<String, UserFunction>,
+    sinks: &FxHashMap<String, Arc<dyn crate::sink::Sink>>,
+    sink_sent: &mut u64,
+) -> Result<(), String> {
+    // Handle async-requiring ops here; everything else is sync.
+    if let RuntimeOp::To(config) = op {
+        if let Some(sink) = sinks.get(&config.sink_key) {
+            let batch_size = current_events.len() as u64;
+            if let Err(e) = sink.send_batch(current_events).await {
+                warn!(
+                    "Failed to send batch to connector '{}': {}",
+                    config.connector_name, e
+                );
+            } else {
+                *sink_sent += batch_size;
+            }
+        } else {
+            warn!("Connector '{}' not found for .to()", config.connector_name);
+        }
+        return Ok(());
+    }
+
+    if let RuntimeOp::Enrich(config) = op {
+        if let Some((provider, cache)) = enrichment {
+            let timeout_duration = std::time::Duration::from_nanos(config.timeout_ns);
+            let mut enriched = Vec::new();
+
+            for event in current_events.drain(..) {
+                let start = std::time::Instant::now();
+
+                // Evaluate key expression
+                let key_value = evaluator::eval_expr_with_functions(
+                    &config.key_expr,
+                    event.as_ref(),
+                    SequenceContext::empty(),
+                    functions,
+                    empty_vars(),
+                )
+                .unwrap_or(Value::Null);
+
+                let cache_key = format!("{}:{:?}", config.connector_name, key_value);
+
+                // Check cache first
+                if let Some(cached_fields) = cache.get(&cache_key) {
+                    let mut enriched_event = (*event).clone();
+                    for (field_name, field_value) in &cached_fields {
+                        enriched_event
+                            .data
+                            .insert(Arc::<str>::from(field_name.as_str()), field_value.clone());
+                    }
+                    enriched_event
+                        .data
+                        .insert(Arc::<str>::from("enrich_status"), Value::str("cached"));
+                    enriched_event
+                        .data
+                        .insert(Arc::<str>::from("enrich_latency_ms"), Value::Int(0));
+                    enriched.push(Arc::new(enriched_event));
+                    continue;
+                }
+
+                // Perform async lookup with timeout
+                let lookup_result = tokio::time::timeout(
+                    timeout_duration,
+                    provider.lookup(&key_value, &config.fields),
+                )
+                .await;
+
+                let elapsed_ms = start.elapsed().as_millis() as i64;
+
+                match lookup_result {
+                    Ok(Ok(result)) => {
+                        // Cache the result
+                        cache.insert(cache_key, result.fields.clone());
+
+                        let mut enriched_event = (*event).clone();
+                        for (field_name, field_value) in &result.fields {
+                            enriched_event
+                                .data
+                                .insert(Arc::<str>::from(field_name.as_str()), field_value.clone());
+                        }
+                        enriched_event
+                            .data
+                            .insert(Arc::<str>::from("enrich_status"), Value::str("ok"));
+                        enriched_event.data.insert(
+                            Arc::<str>::from("enrich_latency_ms"),
+                            Value::Int(elapsed_ms),
+                        );
+                        enriched.push(Arc::new(enriched_event));
+                    }
+                    Ok(Err(e)) => {
+                        // Lookup failed — apply fallback or skip
+                        if let Some(ref fallback) = config.fallback {
+                            let mut enriched_event = (*event).clone();
+                            for field_name in &config.fields {
+                                enriched_event.data.insert(
+                                    Arc::<str>::from(field_name.as_str()),
+                                    fallback.clone(),
+                                );
+                            }
+                            enriched_event
+                                .data
+                                .insert(Arc::<str>::from("enrich_status"), Value::str("error"));
+                            enriched_event.data.insert(
+                                Arc::<str>::from("enrich_latency_ms"),
+                                Value::Int(elapsed_ms),
+                            );
+                            enriched.push(Arc::new(enriched_event));
+                        } else {
+                            warn!(
+                                "Enrichment failed for stream '{}': {} (event skipped)",
+                                stream_name, e
+                            );
+                        }
+                    }
+                    Err(_timeout) => {
+                        // Timeout — apply fallback or skip
+                        if let Some(ref fallback) = config.fallback {
+                            let mut enriched_event = (*event).clone();
+                            for field_name in &config.fields {
+                                enriched_event.data.insert(
+                                    Arc::<str>::from(field_name.as_str()),
+                                    fallback.clone(),
+                                );
+                            }
+                            enriched_event
+                                .data
+                                .insert(Arc::<str>::from("enrich_status"), Value::str("timeout"));
+                            enriched_event.data.insert(
+                                Arc::<str>::from("enrich_latency_ms"),
+                                Value::Int(elapsed_ms),
+                            );
+                            enriched.push(Arc::new(enriched_event));
+                        } else {
+                            warn!(
+                                "Enrichment timeout for stream '{}' after {}ms (event skipped)",
+                                stream_name, elapsed_ms
+                            );
+                        }
+                    }
+                }
+            }
+            *current_events = enriched;
+        } else {
+            warn!(
+                "No enrichment provider configured for stream '{}'",
+                stream_name
+            );
+        }
+        return Ok(());
+    }
+
+    execute_op_common(
+        op,
+        stream_name,
+        sase_engine,
+        hamlet_aggregator,
+        shared_hamlet_ref,
+        pst_forecaster,
+        last_raw_event,
+        current_events,
+        emitted_events,
+        functions,
+    )
+}
+
+/// Shared implementation of all RuntimeOps except `To` (which requires async).
+///
+/// Used by both the async [`execute_op`] and the sync [`execute_op_sync`].
+#[allow(clippy::too_many_arguments)]
+fn execute_op_common(
     op: &mut RuntimeOp,
     stream_name: &str,
     sase_engine: &mut Option<crate::sase::SaseEngine>,
@@ -187,8 +373,6 @@ async fn execute_op(
     current_events: &mut Vec<SharedEvent>,
     emitted_events: &mut Vec<SharedEvent>,
     functions: &FxHashMap<String, UserFunction>,
-    sinks: &FxHashMap<String, Arc<dyn crate::sink::Sink>>,
-    sink_sent: &mut u64,
 ) -> Result<(), String> {
     match op {
         RuntimeOp::WhereClosure(predicate) => {
@@ -196,7 +380,6 @@ async fn execute_op(
         }
 
         RuntimeOp::WhereExpr(expr) => {
-            // PERF: Use static empty context to avoid allocation
             current_events.retain(|e| {
                 evaluator::eval_expr_with_functions(
                     expr,
@@ -280,9 +463,7 @@ async fn execute_op(
         }
 
         RuntimeOp::Aggregate(aggregator) => {
-            // Use apply_shared to avoid cloning events
             let result = aggregator.apply_shared(current_events);
-            // Create synthetic event from aggregation result
             let mut agg_event = Event::new("AggregationResult");
             for (key, value) in result {
                 agg_event.data.insert(key.into(), value);
@@ -292,7 +473,6 @@ async fn execute_op(
 
         RuntimeOp::PartitionedAggregate(state) => {
             let results = state.apply(current_events);
-            // Create one synthetic event per partition
             *current_events = results
                 .into_iter()
                 .map(|(partition_key, result)| {
@@ -309,8 +489,6 @@ async fn execute_op(
         }
 
         RuntimeOp::Having(expr) => {
-            // Having filter - applied after aggregation to filter results
-            // PERF: Use static empty context to avoid allocation
             current_events.retain(|event| {
                 evaluator::eval_expr_with_functions(
                     expr,
@@ -325,8 +503,6 @@ async fn execute_op(
         }
 
         RuntimeOp::Select(config) => {
-            // Transform events by evaluating expressions and creating new fields
-            // PERF: Use static empty context to avoid allocation
             *current_events = current_events
                 .iter()
                 .map(|event| {
@@ -371,7 +547,6 @@ async fn execute_op(
         }
 
         RuntimeOp::EmitExpr(config) => {
-            // PERF: Use static empty context to avoid allocation
             let mut emitted: Vec<SharedEvent> = Vec::new();
             for event in current_events.iter() {
                 let mut new_event = Event::new(stream_name.to_string());
@@ -447,14 +622,12 @@ async fn execute_op(
         }
 
         RuntimeOp::Sequence => {
-            // Process events through SASE+ engine (NFA-based pattern matching)
             let mut sequence_results = Vec::new();
 
             if let Some(ref mut sase) = sase_engine {
                 for event in current_events.iter() {
                     let matches = sase.process_shared(Arc::clone(event));
                     for match_result in matches {
-                        // Create synthetic event from completed sequence
                         let mut seq_event = Event::new("SequenceMatch");
                         seq_event
                             .data
@@ -463,7 +636,6 @@ async fn execute_op(
                             "match_duration_ms".into(),
                             Value::Int(match_result.duration.as_millis() as i64),
                         );
-                        // Add captured events to the result
                         for (alias, captured) in &match_result.captured {
                             for (k, v) in &captured.data {
                                 seq_event
@@ -484,10 +656,8 @@ async fn execute_op(
         }
 
         RuntimeOp::TrendAggregate(config) => {
-            // Process events through Hamlet aggregator (async path)
             let mut trend_results = Vec::new();
 
-            // Use per-stream aggregator, or fall back to shared reference
             let mut shared_guard;
             let effective_hamlet: Option<&mut crate::hamlet::HamletAggregator> =
                 if let Some(ref mut h) = hamlet_aggregator {
@@ -562,16 +732,6 @@ async fn execute_op(
         }
 
         RuntimeOp::Forecast(config) => {
-            // Process events through PST forecaster (async path).
-            //
-            // ALWAYS uses last_raw_event for PMC learning so the PST sees every
-            // raw event regardless of what the Sequence op produced (the Sequence
-            // op may output SequenceMatch events which have an unrecognized event
-            // type, or may clear current_events entirely on non-match).
-            //
-            // Forecast results replace current_events so downstream .where()/.emit()
-            // can filter and shape them.
-
             if let Some(ref mut pmc) = pst_forecaster {
                 let run_snapshots = if let Some(ref sase) = sase_engine {
                     sase.active_run_snapshots()
@@ -579,7 +739,6 @@ async fn execute_op(
                     Vec::new()
                 };
 
-                // Always learn from the raw event (not SequenceMatch)
                 let mut forecast_results = Vec::new();
                 if let Some(ref raw) = last_raw_event {
                     let event_type = raw.event_type.to_string();
@@ -638,15 +797,10 @@ async fn execute_op(
                 if !forecast_results.is_empty() {
                     *current_events = forecast_results;
                 }
-                // If no forecast produced, leave current_events as-is
-                // (may contain SequenceMatch events from upstream Sequence op)
             }
         }
 
         RuntimeOp::Pattern(config) => {
-            // Pattern matching: evaluate the matcher expression with events as context
-            // The matcher is a lambda: events => predicate
-            // PERF: Use static empty context to avoid allocation
             let events_value = Value::array(
                 current_events
                     .iter()
@@ -665,14 +819,11 @@ async fn execute_op(
                     .collect(),
             );
 
-            // Create a context with "events" bound
             let mut pattern_vars = FxHashMap::default();
             pattern_vars.insert("events".into(), events_value);
 
-            // Dereference events for pattern evaluation
             let event_refs: Vec<Event> = current_events.iter().map(|e| (**e).clone()).collect();
 
-            // Evaluate the pattern matcher
             if let Some(result) = evaluator::eval_pattern_expr(
                 &config.matcher,
                 &event_refs,
@@ -681,14 +832,12 @@ async fn execute_op(
                 &pattern_vars,
             ) {
                 if !result.as_bool().unwrap_or(false) {
-                    // Pattern didn't match, filter out all events
                     current_events.clear();
                 }
             }
         }
 
         RuntimeOp::Process(expr) => {
-            // PERF: Use static empty context to avoid allocation
             let mut all_emitted = Vec::new();
             for event in current_events.iter() {
                 let (_, emitted) = evaluator::with_emit_collector(|| {
@@ -705,22 +854,12 @@ async fn execute_op(
             *current_events = all_emitted.into_iter().map(Arc::new).collect();
         }
 
-        RuntimeOp::To(config) => {
-            // Send current events to the named connector as a side-effect.
-            // Events continue flowing through the pipeline unchanged.
-            if let Some(sink) = sinks.get(&config.sink_key) {
-                let batch_size = current_events.len() as u64;
-                if let Err(e) = sink.send_batch(current_events).await {
-                    warn!(
-                        "Failed to send batch to connector '{}': {}",
-                        config.connector_name, e
-                    );
-                } else {
-                    *sink_sent += batch_size;
-                }
-            } else {
-                warn!("Connector '{}' not found for .to()", config.connector_name);
-            }
+        RuntimeOp::To(_) => {
+            // No-op in common path; handled by async execute_op only.
+        }
+
+        RuntimeOp::Enrich(_) => {
+            // No-op in common path; handled by async execute_op only.
         }
 
         RuntimeOp::Distinct(state) => {
@@ -736,7 +875,6 @@ async fn execute_op(
                     .map(|v| format!("{}", v))
                     .unwrap_or_default()
                 } else {
-                    // Hash all fields for whole-event dedup
                     format!("{:?}", event.data)
                 };
                 state.seen.put(key, ()).is_none()
@@ -781,8 +919,8 @@ pub(crate) fn execute_pipeline_sync(
             continue;
         }
 
-        // Skip .to() operations in sync mode
-        if matches!(op, RuntimeOp::To(_)) {
+        // Skip .to() and .enrich() operations in sync mode (they require async)
+        if matches!(op, RuntimeOp::To(_) | RuntimeOp::Enrich(_)) {
             continue;
         }
 
@@ -830,7 +968,7 @@ pub(crate) fn execute_pipeline_sync(
     })
 }
 
-/// Synchronous operation execution - handles all ops except .to() sinks.
+/// Synchronous operation execution — delegates to [`execute_op_common`].
 #[allow(clippy::too_many_arguments)]
 fn execute_op_sync(
     op: &mut RuntimeOp,
@@ -844,524 +982,16 @@ fn execute_op_sync(
     emitted_events: &mut Vec<SharedEvent>,
     functions: &FxHashMap<String, UserFunction>,
 ) -> Result<(), String> {
-    match op {
-        RuntimeOp::WhereClosure(predicate) => {
-            current_events.retain(|e| predicate(e));
-        }
-
-        RuntimeOp::WhereExpr(expr) => {
-            // PERF: Use static empty context to avoid allocation
-            current_events.retain(|e| {
-                evaluator::eval_expr_with_functions(
-                    expr,
-                    e.as_ref(),
-                    SequenceContext::empty(),
-                    functions,
-                    empty_vars(),
-                )
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-            });
-        }
-
-        RuntimeOp::Window(window) => {
-            let mut window_results = Vec::new();
-            for event in current_events.drain(..) {
-                match window {
-                    WindowType::Tumbling(w) => {
-                        if let Some(completed) = w.add_shared(event) {
-                            window_results.extend(completed);
-                        }
-                    }
-                    WindowType::Sliding(w) => {
-                        if let Some(window_events) = w.add_shared(event) {
-                            window_results.extend(window_events);
-                        }
-                    }
-                    WindowType::Count(w) => {
-                        if let Some(completed) = w.add_shared(event) {
-                            window_results.extend(completed);
-                        }
-                    }
-                    WindowType::SlidingCount(w) => {
-                        if let Some(window_events) = w.add_shared(event) {
-                            window_results.extend(window_events);
-                        }
-                    }
-                    WindowType::PartitionedTumbling(w) => {
-                        if let Some(completed) = w.add_shared(event) {
-                            window_results.extend(completed);
-                        }
-                    }
-                    WindowType::PartitionedSliding(w) => {
-                        if let Some(window_events) = w.add_shared(event) {
-                            window_results.extend(window_events);
-                        }
-                    }
-                    WindowType::Session(w) => {
-                        if let Some(completed) = w.add_shared(event) {
-                            window_results.extend(completed);
-                        }
-                    }
-                    WindowType::PartitionedSession(w) => {
-                        if let Some(completed) = w.add_shared(event) {
-                            window_results.extend(completed);
-                        }
-                    }
-                }
-            }
-            *current_events = window_results;
-        }
-
-        RuntimeOp::PartitionedWindow(state) => {
-            let mut window_results = Vec::new();
-            for event in current_events.drain(..) {
-                if let Some(completed) = state.add(event) {
-                    window_results.extend(completed);
-                }
-            }
-            *current_events = window_results;
-        }
-
-        RuntimeOp::PartitionedSlidingCountWindow(state) => {
-            let mut window_results = Vec::new();
-            for event in current_events.drain(..) {
-                if let Some(completed) = state.add(event) {
-                    window_results.extend(completed);
-                }
-            }
-            *current_events = window_results;
-        }
-
-        RuntimeOp::Aggregate(aggregator) => {
-            let result = aggregator.apply_shared(current_events);
-            let mut agg_event = Event::new("AggregationResult");
-            for (key, value) in result {
-                agg_event.data.insert(key.into(), value);
-            }
-            *current_events = vec![Arc::new(agg_event)];
-        }
-
-        RuntimeOp::PartitionedAggregate(state) => {
-            let results = state.apply(current_events);
-            *current_events = results
-                .into_iter()
-                .map(|(partition_key, result)| {
-                    let mut agg_event = Event::new("AggregationResult");
-                    agg_event
-                        .data
-                        .insert("_partition".into(), Value::Str(partition_key.into()));
-                    for (key, value) in result {
-                        agg_event.data.insert(key.into(), value);
-                    }
-                    Arc::new(agg_event)
-                })
-                .collect();
-        }
-
-        RuntimeOp::Having(expr) => {
-            current_events.retain(|event| {
-                evaluator::eval_expr_with_functions(
-                    expr,
-                    event.as_ref(),
-                    SequenceContext::empty(),
-                    functions,
-                    empty_vars(),
-                )
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-            });
-        }
-
-        RuntimeOp::Select(config) => {
-            *current_events = current_events
-                .iter()
-                .map(|event| {
-                    let mut new_event = Event::new(event.event_type.clone());
-                    new_event.timestamp = event.timestamp;
-                    for (out_name, expr) in &config.fields {
-                        if let Some(value) = evaluator::eval_expr_with_functions(
-                            expr,
-                            event.as_ref(),
-                            SequenceContext::empty(),
-                            functions,
-                            empty_vars(),
-                        ) {
-                            new_event.data.insert(out_name.clone().into(), value);
-                        }
-                    }
-                    Arc::new(new_event)
-                })
-                .collect();
-        }
-
-        RuntimeOp::Emit(config) => {
-            let mut emitted: Vec<SharedEvent> = Vec::new();
-            for event in current_events.iter() {
-                let mut new_event = Event::new(stream_name.to_string());
-                new_event.timestamp = event.timestamp;
-                for (out_name, source) in &config.fields {
-                    if let Some(value) = event.get(source) {
-                        new_event
-                            .data
-                            .insert(out_name.clone().into(), value.clone());
-                    } else {
-                        new_event
-                            .data
-                            .insert(out_name.clone().into(), Value::Str(source.clone().into()));
-                    }
-                }
-                emitted.push(Arc::new(new_event));
-            }
-            emitted_events.extend(emitted.iter().map(Arc::clone));
-            *current_events = emitted;
-        }
-
-        RuntimeOp::EmitExpr(config) => {
-            // PERF: Use static empty context to avoid allocation
-            let mut emitted: Vec<SharedEvent> = Vec::new();
-            for event in current_events.iter() {
-                let mut new_event = Event::new(stream_name.to_string());
-                new_event.timestamp = event.timestamp;
-                for (out_name, expr) in &config.fields {
-                    if let Some(value) = evaluator::eval_expr_with_functions(
-                        expr,
-                        event.as_ref(),
-                        SequenceContext::empty(),
-                        functions,
-                        empty_vars(),
-                    ) {
-                        new_event.data.insert(out_name.clone().into(), value);
-                    }
-                }
-                emitted.push(Arc::new(new_event));
-            }
-            emitted_events.extend(emitted.iter().map(Arc::clone));
-            *current_events = emitted;
-        }
-
-        RuntimeOp::Print(config) => {
-            for event in current_events.iter() {
-                let mut parts = Vec::new();
-                for expr in &config.exprs {
-                    let value =
-                        evaluator::eval_filter_expr(expr, event.as_ref(), SequenceContext::empty())
-                            .unwrap_or(Value::Null);
-                    parts.push(format!("{}", value));
-                }
-                let output = if parts.is_empty() {
-                    format!("[{}] {}: {:?}", stream_name, event.event_type, event.data)
-                } else {
-                    parts.join(" ")
-                };
-                println!("[PRINT] {}", output);
-            }
-        }
-
-        RuntimeOp::Log(config) => {
-            for event in current_events.iter() {
-                let msg = config
-                    .message
-                    .clone()
-                    .unwrap_or_else(|| event.event_type.to_string());
-                let data = if let Some(ref field) = config.data_field {
-                    event
-                        .get(field)
-                        .map(|v| format!("{}", v))
-                        .unwrap_or_default()
-                } else {
-                    format!("{:?}", event.data)
-                };
-
-                match config.level.as_str() {
-                    "error" => {
-                        tracing::error!(stream = %stream_name, message = %msg, data = %data, "Stream log")
-                    }
-                    "warn" | "warning" => {
-                        tracing::warn!(stream = %stream_name, message = %msg, data = %data, "Stream log")
-                    }
-                    "debug" => {
-                        tracing::debug!(stream = %stream_name, message = %msg, data = %data, "Stream log")
-                    }
-                    "trace" => {
-                        tracing::trace!(stream = %stream_name, message = %msg, data = %data, "Stream log")
-                    }
-                    _ => {
-                        tracing::info!(stream = %stream_name, message = %msg, data = %data, "Stream log")
-                    }
-                }
-            }
-        }
-
-        RuntimeOp::Sequence => {
-            let mut sequence_results = Vec::new();
-
-            if let Some(ref mut sase) = sase_engine {
-                for event in current_events.iter() {
-                    let matches = sase.process_shared(Arc::clone(event));
-                    for match_result in matches {
-                        let mut seq_event = Event::new("SequenceMatch");
-                        seq_event
-                            .data
-                            .insert("stream".into(), Value::Str(stream_name.to_string().into()));
-                        seq_event.data.insert(
-                            "match_duration_ms".into(),
-                            Value::Int(match_result.duration.as_millis() as i64),
-                        );
-                        for (alias, captured) in &match_result.captured {
-                            for (k, v) in &captured.data {
-                                seq_event
-                                    .data
-                                    .insert(format!("{}_{}", alias, k).into(), v.clone());
-                            }
-                        }
-                        sequence_results.push(Arc::new(seq_event));
-                    }
-                }
-            }
-
-            if sequence_results.is_empty() {
-                current_events.clear();
-            } else {
-                *current_events = sequence_results;
-            }
-        }
-
-        RuntimeOp::TrendAggregate(config) => {
-            // Process events through Hamlet aggregator (sync path)
-            let mut trend_results = Vec::new();
-
-            // Use per-stream aggregator, or fall back to shared reference
-            let mut shared_guard;
-            let effective_hamlet: Option<&mut crate::hamlet::HamletAggregator> =
-                if let Some(ref mut h) = hamlet_aggregator {
-                    Some(h)
-                } else if let Some(ref shared) = shared_hamlet_ref {
-                    shared_guard = shared.lock().unwrap();
-                    Some(&mut *shared_guard)
-                } else {
-                    None
-                };
-
-            if let Some(hamlet) = effective_hamlet {
-                for event in current_events.iter() {
-                    let results = hamlet.process(Arc::clone(event));
-                    for agg_result in results {
-                        let mut trend_event = Event::new("TrendAggregateResult");
-                        trend_event
-                            .data
-                            .insert("stream".into(), Value::Str(stream_name.to_string().into()));
-                        trend_event
-                            .data
-                            .insert("query_id".into(), Value::Int(agg_result.query_id as i64));
-                        for (alias, agg_type) in &config.fields {
-                            if agg_result.aggregate == *agg_type {
-                                trend_event.data.insert(
-                                    alias.clone().into(),
-                                    Value::Int(agg_result.value as i64),
-                                );
-                            }
-                        }
-                        trend_event
-                            .data
-                            .insert("is_final".into(), Value::Bool(agg_result.is_final));
-                        trend_results.push(Arc::new(trend_event));
-                    }
-                }
-            }
-
-            if trend_results.is_empty() {
-                current_events.clear();
-            } else {
-                *current_events = trend_results;
-            }
-        }
-
-        RuntimeOp::Score(config) => {
-            #[cfg(feature = "onnx")]
-            {
-                let mut enriched = Vec::with_capacity(current_events.len());
-                for event in current_events.drain(..) {
-                    match config.model.infer(event.as_ref()) {
-                        Ok(predictions) => {
-                            let mut new_event = (*event).clone();
-                            for (field, value) in predictions {
-                                new_event.data.insert(field.into(), Value::Float(value));
-                            }
-                            enriched.push(Arc::new(new_event));
-                        }
-                        Err(e) => {
-                            warn!(".score() inference error: {}", e);
-                            enriched.push(event);
-                        }
-                    }
-                }
-                *current_events = enriched;
-            }
-            #[cfg(not(feature = "onnx"))]
-            {
-                let _ = config;
-                warn!(".score() requires 'onnx' feature");
-            }
-        }
-
-        RuntimeOp::Forecast(config) => {
-            // Process events through PST forecaster (sync path).
-            // Always uses last_raw_event for PMC learning.
-
-            if let Some(ref mut pmc) = pst_forecaster {
-                let run_snapshots = if let Some(ref sase) = sase_engine {
-                    sase.active_run_snapshots()
-                } else {
-                    Vec::new()
-                };
-
-                let mut forecast_results = Vec::new();
-                if let Some(ref raw) = last_raw_event {
-                    let event_type = raw.event_type.to_string();
-                    let event_ts = raw.timestamp.timestamp_nanos_opt().unwrap_or(0);
-
-                    if let Some(forecast) = pmc.process(&event_type, event_ts, &run_snapshots) {
-                        if forecast.probability >= config.confidence_threshold {
-                            let mut forecast_event = Event::new("ForecastResult");
-                            forecast_event.data.insert(
-                                "stream".into(),
-                                Value::Str(stream_name.to_string().into()),
-                            );
-                            forecast_event.data.insert(
-                                "forecast_probability".into(),
-                                Value::Float(forecast.probability),
-                            );
-                            forecast_event.data.insert(
-                                "forecast_time".into(),
-                                Value::Int(forecast.expected_time_ns as i64),
-                            );
-                            forecast_event.data.insert(
-                                "forecast_state".into(),
-                                Value::Str(forecast.state_label.into()),
-                            );
-                            forecast_event.data.insert(
-                                "forecast_context_depth".into(),
-                                Value::Int(forecast.context_depth as i64),
-                            );
-                            forecast_event.data.insert(
-                                "active_runs".into(),
-                                Value::Int(forecast.active_runs as i64),
-                            );
-                            forecast_event.data.insert(
-                                "forecast_lower".into(),
-                                Value::Float(forecast.forecast_lower),
-                            );
-                            forecast_event.data.insert(
-                                "forecast_upper".into(),
-                                Value::Float(forecast.forecast_upper),
-                            );
-                            forecast_event.data.insert(
-                                "forecast_confidence".into(),
-                                Value::Float(forecast.forecast_confidence),
-                            );
-                            for (k, v) in &raw.data {
-                                if !forecast_event.data.contains_key(k) {
-                                    forecast_event.data.insert(k.clone(), v.clone());
-                                }
-                            }
-                            forecast_event.timestamp = raw.timestamp;
-                            forecast_results.push(Arc::new(forecast_event));
-                        }
-                    }
-                }
-
-                if !forecast_results.is_empty() {
-                    *current_events = forecast_results;
-                }
-            }
-        }
-
-        RuntimeOp::Pattern(config) => {
-            // PERF: Use static empty context to avoid allocation
-            let events_value = Value::array(
-                current_events
-                    .iter()
-                    .map(|e| {
-                        let mut map: IndexMap<Arc<str>, Value, FxBuildHasher> =
-                            IndexMap::with_hasher(FxBuildHasher);
-                        map.insert(
-                            "event_type".into(),
-                            Value::Str(e.event_type.to_string().into()),
-                        );
-                        for (k, v) in &e.data {
-                            map.insert(k.clone(), v.clone());
-                        }
-                        Value::map(map)
-                    })
-                    .collect(),
-            );
-
-            let mut pattern_vars = FxHashMap::default();
-            pattern_vars.insert("events".into(), events_value);
-
-            let event_refs: Vec<Event> = current_events.iter().map(|e| (**e).clone()).collect();
-
-            if let Some(result) = evaluator::eval_pattern_expr(
-                &config.matcher,
-                &event_refs,
-                SequenceContext::empty(),
-                functions,
-                &pattern_vars,
-            ) {
-                if !result.as_bool().unwrap_or(false) {
-                    current_events.clear();
-                }
-            }
-        }
-
-        RuntimeOp::Process(expr) => {
-            // PERF: Use static empty context to avoid allocation
-            let mut all_emitted = Vec::new();
-            for event in current_events.iter() {
-                let (_, emitted) = evaluator::with_emit_collector(|| {
-                    evaluator::eval_expr_with_functions(
-                        expr,
-                        event.as_ref(),
-                        SequenceContext::empty(),
-                        functions,
-                        empty_vars(),
-                    );
-                });
-                all_emitted.extend(emitted);
-            }
-            *current_events = all_emitted.into_iter().map(Arc::new).collect();
-        }
-
-        RuntimeOp::To(_) => {
-            // Skip .to() operations in sync mode - they require async
-        }
-
-        RuntimeOp::Distinct(state) => {
-            current_events.retain(|event| {
-                let key = if let Some(ref expr) = state.expr {
-                    evaluator::eval_expr_with_functions(
-                        expr,
-                        event.as_ref(),
-                        SequenceContext::empty(),
-                        functions,
-                        empty_vars(),
-                    )
-                    .map(|v| format!("{}", v))
-                    .unwrap_or_default()
-                } else {
-                    format!("{:?}", event.data)
-                };
-                state.seen.put(key, ()).is_none()
-            });
-        }
-
-        RuntimeOp::Limit(state) => {
-            let remaining = state.max.saturating_sub(state.count);
-            current_events.truncate(remaining);
-            state.count += current_events.len();
-        }
-    }
-
-    Ok(())
+    execute_op_common(
+        op,
+        stream_name,
+        sase_engine,
+        hamlet_aggregator,
+        shared_hamlet_ref,
+        pst_forecaster,
+        last_raw_event,
+        current_events,
+        emitted_events,
+        functions,
+    )
 }

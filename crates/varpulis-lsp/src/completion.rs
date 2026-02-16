@@ -305,6 +305,13 @@ fn get_stream_operation_completions() -> Vec<CompletionItem> {
             "forecast(confidence: ${1:0.7}, horizon: ${2:2m}, warmup: ${3:500})",
             Some(".forecast(confidence: 0.7, horizon: 2m)"),
         ),
+        completion_item(
+            "enrich",
+            CompletionItemKind::METHOD,
+            "Enrich events from external connector",
+            "enrich(${1:Connector}, key: ${2:expr}, fields: [${3:field}], cache_ttl: ${4:5m})",
+            Some(".enrich(Connector, key: e.id, fields: [name, category], cache_ttl: 5m)"),
+        ),
     ]
 }
 
