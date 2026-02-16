@@ -1899,11 +1899,32 @@ impl Engine {
                 );
             }
 
-            // Extract forecast parameters from expressions
+            // Resolve mode preset first, then allow explicit params to override
+            let mode_str = match &spec.mode {
+                Some(varpulis_core::ast::Expr::Str(s)) => Some(s.as_str()),
+                _ => None,
+            };
+
+            // Mode presets: defaults that can be overridden by explicit params
+            let (
+                mode_confidence,
+                mode_warmup,
+                mode_max_depth,
+                mode_hawkes,
+                mode_conformal,
+                mode_adaptive,
+            ) = match mode_str {
+                Some("fast") => (0.5, 50u64, 3usize, false, false, false),
+                Some("accurate") => (0.5, 200, 5, true, true, true),
+                // "balanced" or default
+                _ => (0.5, 100, 3, true, true, true),
+            };
+
+            // Extract forecast parameters — explicit params override mode defaults
             let confidence = match &spec.confidence {
                 Some(varpulis_core::ast::Expr::Float(f)) => *f,
                 Some(varpulis_core::ast::Expr::Int(i)) => *i as f64,
-                _ => 0.5,
+                _ => mode_confidence,
             };
             let horizon_ns = match &spec.horizon {
                 Some(varpulis_core::ast::Expr::Duration(ns)) => *ns,
@@ -1913,20 +1934,21 @@ impl Engine {
             };
             let warmup = match &spec.warmup {
                 Some(varpulis_core::ast::Expr::Int(n)) => *n as u64,
-                _ => 100,
+                _ => mode_warmup,
             };
             let max_depth = match &spec.max_depth {
                 Some(varpulis_core::ast::Expr::Int(n)) => *n as usize,
-                _ => 5,
+                _ => mode_max_depth,
             };
             let hawkes = match &spec.hawkes {
                 Some(varpulis_core::ast::Expr::Bool(b)) => *b,
-                _ => true,
+                _ => mode_hawkes,
             };
             let conformal = match &spec.conformal {
                 Some(varpulis_core::ast::Expr::Bool(b)) => *b,
-                _ => true,
+                _ => mode_conformal,
             };
+            let adaptive_warmup = mode_adaptive && spec.warmup.is_none();
 
             // Build NFA transition map from SASE engine
             let sase = sase_engine.as_ref().unwrap();
@@ -1946,6 +1968,7 @@ impl Engine {
                 max_simulation_steps: 1000,
                 hawkes_enabled: hawkes,
                 conformal_enabled: conformal,
+                adaptive_warmup,
             };
 
             // Build NFA transitions: for each state, map symbol_id -> next_state
@@ -2011,10 +2034,12 @@ impl Engine {
             pst_forecaster = Some(pmc);
 
             info!(
-                "Created PST forecaster for pattern forecasting ({} event types, max_depth={}, warmup={})",
+                "Created PST forecaster for pattern forecasting ({} event types, max_depth={}, warmup={}, mode={}, adaptive={})",
                 nfa_event_types.len(),
                 max_depth,
-                warmup
+                warmup,
+                mode_str.unwrap_or("balanced"),
+                adaptive_warmup
             );
         }
 

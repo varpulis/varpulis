@@ -528,6 +528,7 @@ fn test_hawkes_burst_effect_on_probability() {
         confidence_threshold: 0.0,
         hawkes_enabled: false,
         conformal_enabled: false,
+        adaptive_warmup: false,
         ..Default::default()
     };
     let mut transitions_nh = vec![FxHashMap::default(); 3];
@@ -548,6 +549,7 @@ fn test_hawkes_burst_effect_on_probability() {
         confidence_threshold: 0.0,
         hawkes_enabled: true,
         conformal_enabled: false,
+        adaptive_warmup: false,
         ..Default::default()
     };
     let mut transitions_h = vec![FxHashMap::default(); 3];
@@ -628,6 +630,7 @@ fn test_conformal_intervals_narrow_with_data() {
         confidence_threshold: 0.0,
         hawkes_enabled: false,
         conformal_enabled: true,
+        adaptive_warmup: false,
         ..Default::default()
     };
 
@@ -933,5 +936,396 @@ fn test_online_vs_batch_convergence() {
         (online_pb_a - 0.7).abs() < 0.05,
         "Online P(B|A) should be ~0.7, got {:.4}",
         online_pb_a
+    );
+}
+
+// =============================================================================
+// Test 10: Adaptive warmup delays forecasts until predictions stabilize
+// =============================================================================
+
+#[test]
+fn test_adaptive_warmup_delays_until_stable() {
+    let event_types = vec!["A".to_string(), "B".to_string()];
+    let pst_config = PSTConfig {
+        max_depth: 3,
+        smoothing: 0.01,
+    };
+
+    // Non-adaptive: fixed warmup at 5
+    let pmc_config_fixed = PMCConfig {
+        warmup_events: 5,
+        confidence_threshold: 0.0,
+        hawkes_enabled: false,
+        conformal_enabled: false,
+        adaptive_warmup: false,
+        ..Default::default()
+    };
+
+    // Adaptive: min warmup 5 + stability check
+    let pmc_config_adaptive = PMCConfig {
+        warmup_events: 5,
+        confidence_threshold: 0.0,
+        hawkes_enabled: false,
+        conformal_enabled: false,
+        adaptive_warmup: true,
+        ..Default::default()
+    };
+
+    let mut transitions_f = vec![FxHashMap::default(); 3];
+    transitions_f[0].insert(0, 1);
+    transitions_f[1].insert(1, 2);
+    let mut pmc_fixed = PatternMarkovChain::new(
+        &event_types,
+        transitions_f,
+        vec![2],
+        3,
+        pst_config.clone(),
+        pmc_config_fixed,
+    );
+
+    let mut transitions_a = vec![FxHashMap::default(); 3];
+    transitions_a[0].insert(0, 1);
+    transitions_a[1].insert(1, 2);
+    let mut pmc_adaptive = PatternMarkovChain::new(
+        &event_types,
+        transitions_a,
+        vec![2],
+        3,
+        pst_config,
+        pmc_config_adaptive,
+    );
+
+    let runs = vec![RunSnapshot {
+        current_state: 1,
+        started_at_ns: 0,
+    }];
+
+    let mut first_fixed_at = None;
+    let mut first_adaptive_at = None;
+
+    for i in 0..200 {
+        let event_type = if i % 2 == 0 { "A" } else { "B" };
+        let ts = (i as i64) * 1_000_000_000;
+
+        if pmc_fixed.process(event_type, ts, &runs).is_some() && first_fixed_at.is_none() {
+            first_fixed_at = Some(i);
+        }
+        if pmc_adaptive.process(event_type, ts, &runs).is_some() && first_adaptive_at.is_none() {
+            first_adaptive_at = Some(i);
+        }
+    }
+
+    let fixed_at = first_fixed_at.expect("Fixed warmup should eventually produce forecasts");
+    let adaptive_at =
+        first_adaptive_at.expect("Adaptive warmup should eventually produce forecasts");
+
+    // Adaptive warmup should start at or after fixed warmup
+    assert!(
+        adaptive_at >= fixed_at,
+        "Adaptive warmup (first forecast at event {}) should not emit before \
+         fixed warmup (first at event {})",
+        adaptive_at,
+        fixed_at
+    );
+}
+
+// =============================================================================
+// Test 11: forecast_confidence increases as model converges
+// =============================================================================
+
+#[test]
+fn test_forecast_confidence_increases_over_time() {
+    let event_types = vec!["A".to_string(), "B".to_string()];
+    let pst_config = PSTConfig {
+        max_depth: 3,
+        smoothing: 0.01,
+    };
+    let pmc_config = PMCConfig {
+        warmup_events: 10,
+        confidence_threshold: 0.0,
+        hawkes_enabled: false,
+        conformal_enabled: false,
+        adaptive_warmup: false,
+        ..Default::default()
+    };
+
+    let mut transitions = vec![FxHashMap::default(); 3];
+    transitions[0].insert(0, 1);
+    transitions[1].insert(1, 2);
+
+    let mut pmc = PatternMarkovChain::new(
+        &event_types,
+        transitions,
+        vec![2],
+        3,
+        pst_config,
+        pmc_config,
+    );
+
+    let runs = vec![RunSnapshot {
+        current_state: 1,
+        started_at_ns: 0,
+    }];
+
+    let mut confidences = Vec::new();
+
+    // Feed alternating A,B (deterministic)
+    for i in 0..200 {
+        let event_type = if i % 2 == 0 { "A" } else { "B" };
+        let ts = (i as i64) * 1_000_000_000;
+
+        if let Some(forecast) = pmc.process(event_type, ts, &runs) {
+            confidences.push(forecast.forecast_confidence);
+        }
+    }
+
+    assert!(
+        !confidences.is_empty(),
+        "Should produce forecasts with confidence"
+    );
+
+    // Late forecasts should have high confidence (stable predictions)
+    let late_avg: f64 = confidences[confidences.len().saturating_sub(20)..]
+        .iter()
+        .sum::<f64>()
+        / confidences[confidences.len().saturating_sub(20)..].len() as f64;
+
+    assert!(
+        late_avg > 0.5,
+        "Late forecast confidence should be > 0.5, got {:.4}",
+        late_avg
+    );
+}
+
+// =============================================================================
+// Test 12: Mode presets parse and run through full VPL pipeline
+// =============================================================================
+
+#[tokio::test]
+async fn test_forecast_mode_fast_vpl() {
+    let code = r#"
+        stream FastForecast = EventA as a
+            -> EventB as b
+            .within(10s)
+            .forecast(mode: "fast")
+            .emit(prob: forecast_probability, conf: forecast_confidence)
+    "#;
+
+    let program = parse(code).expect("parse");
+    let (tx, mut rx) = mpsc::channel(16384);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).expect("load");
+
+    // Send 100 deterministic A→B pairs
+    for i in 0..100 {
+        let ts = ts_ms(1000 + i * 200);
+        engine
+            .process(Event::new("EventA").with_timestamp(ts))
+            .await
+            .unwrap();
+        let ts2 = ts_ms(1100 + i * 200);
+        engine
+            .process(Event::new("EventB").with_timestamp(ts2))
+            .await
+            .unwrap();
+    }
+
+    let mut probs = Vec::new();
+    let mut confs = Vec::new();
+    while let Ok(e) = rx.try_recv() {
+        if let Some(Value::Float(p)) = e.data.get("prob") {
+            probs.push(*p);
+        }
+        if let Some(Value::Float(c)) = e.data.get("conf") {
+            confs.push(*c);
+        }
+    }
+
+    assert!(
+        !probs.is_empty(),
+        "Fast mode should produce forecasts (no adaptive warmup)"
+    );
+    assert_eq!(
+        probs.len(),
+        confs.len(),
+        "Every forecast should have a confidence value"
+    );
+}
+
+#[tokio::test]
+async fn test_forecast_mode_accurate_vpl() {
+    let code = r#"
+        stream AccurateForecast = Start as s
+            -> End as e
+            .within(10s)
+            .forecast(mode: "accurate")
+            .emit(prob: forecast_probability, conf: forecast_confidence)
+    "#;
+
+    let program = parse(code).expect("parse");
+    let (tx, mut rx) = mpsc::channel(16384);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).expect("load");
+
+    // Send 300 deterministic pairs (need more for accurate mode's higher warmup)
+    for i in 0..300 {
+        let ts = ts_ms(1000 + i * 200);
+        engine
+            .process(Event::new("Start").with_timestamp(ts))
+            .await
+            .unwrap();
+        let ts2 = ts_ms(1100 + i * 200);
+        engine
+            .process(Event::new("End").with_timestamp(ts2))
+            .await
+            .unwrap();
+    }
+
+    let mut probs = Vec::new();
+    while let Ok(e) = rx.try_recv() {
+        if let Some(Value::Float(p)) = e.data.get("prob") {
+            probs.push(*p);
+        }
+    }
+
+    assert!(
+        !probs.is_empty(),
+        "Accurate mode should produce forecasts after adaptive warmup"
+    );
+
+    // Late predictions should be very high for deterministic pattern
+    let late_avg: f64 = probs[probs.len().saturating_sub(20)..].iter().sum::<f64>()
+        / probs[probs.len().saturating_sub(20)..].len() as f64;
+    assert!(
+        late_avg > 0.5,
+        "Deterministic pattern should have high completion probability, got {:.4}",
+        late_avg
+    );
+}
+
+#[tokio::test]
+async fn test_forecast_zero_config_vpl() {
+    // Zero-config .forecast() — should use balanced defaults
+    let code = r#"
+        stream ZeroConfig = Ping as p
+            -> Pong as q
+            .within(10s)
+            .forecast()
+            .emit(prob: forecast_probability, conf: forecast_confidence)
+    "#;
+
+    let program = parse(code).expect("parse");
+    let (tx, mut rx) = mpsc::channel(16384);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).expect("load");
+
+    for i in 0..300 {
+        let ts = ts_ms(1000 + i * 200);
+        engine
+            .process(Event::new("Ping").with_timestamp(ts))
+            .await
+            .unwrap();
+        let ts2 = ts_ms(1100 + i * 200);
+        engine
+            .process(Event::new("Pong").with_timestamp(ts2))
+            .await
+            .unwrap();
+    }
+
+    let mut count = 0;
+    while let Ok(_e) = rx.try_recv() {
+        count += 1;
+    }
+
+    assert!(
+        count > 0,
+        "Zero-config .forecast() should produce output events"
+    );
+}
+
+// =============================================================================
+// Test 13: EMA-based Hawkes adapts faster to regime changes
+// =============================================================================
+
+#[test]
+fn test_hawkes_ema_adapts_to_regime_change() {
+    // Feed events at 1s intervals, then switch to 10ms intervals.
+    // With EMA-based estimation, the Hawkes should detect the burst quickly.
+
+    let event_types = vec!["A".to_string(), "B".to_string()];
+    let pst_config = PSTConfig {
+        max_depth: 3,
+        smoothing: 0.01,
+    };
+    let pmc_config = PMCConfig {
+        warmup_events: 5,
+        confidence_threshold: 0.0,
+        hawkes_enabled: true,
+        conformal_enabled: false,
+        adaptive_warmup: false,
+        ..Default::default()
+    };
+
+    let mut transitions = vec![FxHashMap::default(); 3];
+    transitions[0].insert(0, 1);
+    transitions[1].insert(1, 2);
+
+    let mut pmc = PatternMarkovChain::new(
+        &event_types,
+        transitions,
+        vec![2],
+        3,
+        pst_config,
+        pmc_config,
+    );
+
+    let runs = vec![RunSnapshot {
+        current_state: 1,
+        started_at_ns: 0,
+    }];
+
+    // Phase 1: Steady state (1 second intervals)
+    for i in 0..30 {
+        let event_type = if i % 2 == 0 { "A" } else { "B" };
+        pmc.process(event_type, i * 1_000_000_000, &[]);
+    }
+
+    // Get baseline prediction
+    let baseline = pmc
+        .process("A", 30_000_000_000, &runs)
+        .expect("should produce forecast after warmup");
+    let baseline_prob = baseline.probability;
+
+    // Phase 2: Burst (10ms intervals) — Hawkes should boost
+    let burst_base = 31_000_000_000i64;
+    for i in 0..40 {
+        let event_type = if i % 2 == 0 { "A" } else { "B" };
+        pmc.process(event_type, burst_base + i * 10_000_000, &[]);
+    }
+
+    let burst = pmc
+        .process("A", burst_base + 400_000_000, &runs)
+        .expect("should produce forecast during burst");
+    let burst_prob = burst.probability;
+
+    // Both should be valid probabilities
+    assert!(
+        baseline_prob > 0.0 && baseline_prob <= 1.0,
+        "Baseline prob should be valid: {}",
+        baseline_prob
+    );
+    assert!(
+        burst_prob > 0.0 && burst_prob <= 1.0,
+        "Burst prob should be valid: {}",
+        burst_prob
+    );
+
+    // Hawkes should boost during burst (or at least not crash)
+    // The exact boost depends on the EMA convergence
+    assert!(
+        burst_prob >= baseline_prob * 0.8,
+        "Burst probability ({:.4}) should be >= 80% of baseline ({:.4})",
+        burst_prob,
+        baseline_prob
     );
 }

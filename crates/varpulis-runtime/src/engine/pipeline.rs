@@ -615,6 +615,10 @@ async fn execute_op(
                                 "forecast_upper".into(),
                                 Value::Float(forecast.forecast_upper),
                             );
+                            forecast_event.data.insert(
+                                "forecast_confidence".into(),
+                                Value::Float(forecast.forecast_confidence),
+                            );
                             for (k, v) in &raw.data {
                                 if !forecast_event.data.contains_key(k) {
                                     forecast_event.data.insert(k.clone(), v.clone());
@@ -1241,6 +1245,10 @@ fn execute_op_sync(
                             forecast_event.data.insert(
                                 "forecast_upper".into(),
                                 Value::Float(forecast.forecast_upper),
+                            );
+                            forecast_event.data.insert(
+                                "forecast_confidence".into(),
+                                Value::Float(forecast.forecast_confidence),
                             );
                             for (k, v) in &raw.data {
                                 if !forecast_event.data.contains_key(k) {

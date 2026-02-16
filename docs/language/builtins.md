@@ -138,16 +138,47 @@ These variables are available in streams that use the `.forecast()` operator aft
 
 | Variable | Type | Description |
 |----------|------|-------------|
-| `forecast_probability` | `float` | Pattern completion probability (0.0–1.0), Hawkes-modulated |
+| `forecast_probability` | `float` | Pattern completion probability (0.0–1.0) |
+| `forecast_confidence` | `float` | Prediction stability (0.0–1.0) — high values mean the model has converged |
 | `forecast_time` | `int` | Expected time to completion (nanoseconds) |
 | `forecast_state` | `str` | Current NFA state label |
 | `forecast_context_depth` | `int` | PST context depth used for prediction |
 | `forecast_lower` | `float` | Lower bound of conformal prediction interval (0.0–1.0) |
 | `forecast_upper` | `float` | Upper bound of conformal prediction interval (0.0–1.0) |
 
+The `forecast_confidence` variable measures how stable the prediction is. It is computed from the coefficient of variation (CV) over a sliding window of the last 20 predictions. A value of 1.0 means predictions are perfectly stable; a value near 0.0 means the model is still learning. Use `.where(forecast_confidence > 0.8)` to filter out unstable early predictions.
+
 The `forecast_lower` and `forecast_upper` variables provide calibrated 90%-coverage prediction intervals via conformal prediction. Before sufficient calibration data is available, the interval defaults to `[0.0, 1.0]` (maximum uncertainty). As the engine observes forecast outcomes (pattern completions and expirations), the interval narrows automatically. Conformal intervals can be disabled per-pipeline with `conformal: false` — in that case, `forecast_lower` is always `0.0` and `forecast_upper` is always `1.0`.
 
-The `forecast_probability` is modulated by Hawkes process intensity tracking. When events needed for the next NFA transition arrive in a temporal burst, the probability is boosted proportionally (up to 5x). During normal event rates, the boost factor is ~1.0. Hawkes modulation can be disabled per-pipeline with `hawkes: false` for latency-sensitive workloads.
+The `forecast_probability` is modulated by Hawkes process intensity tracking when enabled. When events needed for the next NFA transition arrive in a temporal burst, the probability is boosted proportionally (up to 5x). During normal event rates, the boost factor is ~1.0. Hawkes modulation can be disabled per-pipeline with `hawkes: false` for latency-sensitive workloads. The Hawkes process uses EMA-based parameter estimation, adapting to regime changes in ~20-40 events.
+
+### Forecast Modes
+
+The `.forecast()` operator supports preset modes for common use cases:
+
+| Mode | `warmup` | `max_depth` | `hawkes` | `conformal` | Adaptive warmup |
+|------|----------|-------------|----------|-------------|-----------------|
+| `"fast"` | 50 | 3 | off | off | off |
+| `"accurate"` | 200 | 5 | on | on | on |
+| `"balanced"` (default) | 100 | 3 | on | on | on |
+
+Modes provide defaults that can be overridden by explicit parameters:
+
+```varpulis
+# Zero-config — uses balanced defaults with adaptive warmup
+.forecast()
+
+# Fast mode — no Hawkes overhead, no conformal
+.forecast(mode: "fast")
+
+# Accurate mode with custom confidence
+.forecast(mode: "accurate", confidence: 0.8)
+
+# Fast mode but keep conformal intervals
+.forecast(mode: "fast", conformal: true)
+```
+
+When `warmup` is not explicitly set, adaptive warmup is enabled (for balanced/accurate modes). It extends the warmup beyond the minimum event count until predictions stabilize, then starts emitting.
 
 ### Forecast Example
 
@@ -156,10 +187,11 @@ stream FraudForecast = Transaction as t1
     -> Transaction as t2 where t2.amount > t1.amount * 5
     -> Transaction as t3 where t3.location != t1.location
     .within(5m)
-    .forecast(confidence: 0.7, horizon: 2m, warmup: 500, max_depth: 5)
-    .where(forecast_probability > 0.8)
+    .forecast(mode: "accurate")
+    .where(forecast_confidence > 0.8 and forecast_probability > 0.7)
     .emit(
         probability: forecast_probability,
+        stability: forecast_confidence,
         expected_time: forecast_time,
         state: forecast_state,
         confidence_lower: forecast_lower,

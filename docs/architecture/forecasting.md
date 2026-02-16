@@ -90,14 +90,15 @@ When `PMC.process()` is called with a new event:
 
 1. **Update inter-event timing** (exponential moving average, alpha=0.05)
 2. **Update PST online** via the `OnlinePSTLearner`
-3. **Suppress during warmup** (configurable, default 100 events)
+3. **Suppress during minimum warmup** (configurable, default 100 events)
 4. **Select best active run** (most advanced NFA state)
-5. **Compute completion probability** via forward algorithm
-6. **Estimate waiting time** via BFS + probability weighting
-7. **Track outcomes**: compare active runs to previous snapshot; disappeared runs feed the conformal calibrator
-8. **Compute Hawkes-modulated probability** via forward algorithm with intensity boosting
-9. **Compute conformal interval**: `(lower, upper)` from calibration history
-10. **Return `ForecastResult`** with probability, expected time, state label, context depth, lower, upper
+5. **Compute completion probability** via forward algorithm (with early-exit convergence check)
+6. **Update prediction stability** — sliding window of last 20 predictions, compute CV
+7. **Adaptive warmup gate** — if enabled, extend warmup until predictions stabilize (CV < 0.15)
+8. **Track outcomes**: compare active runs to previous snapshot; disappeared runs feed the conformal calibrator
+9. **Compute Hawkes-modulated probability** (if enabled) via forward algorithm with intensity boosting
+10. **Compute conformal interval** (if enabled): `(lower, upper)` from calibration history
+11. **Return `ForecastResult`** with probability, confidence, expected time, state label, context depth, lower, upper
 
 ## Hawkes Process Intensity Modulation
 
@@ -116,7 +117,7 @@ intensity(t) = mu + (intensity(t_prev) - mu + alpha) * exp(-beta * dt)
 - **beta**: decay rate (1/ns), inversely proportional to inter-event time variance
 - **boost_factor**: `clamp(intensity / mu, 1.0, 5.0)`
 
-The update is O(1) per event via the recursive formula. Parameters are re-estimated every 50 events using moment matching after a minimum of 10 observations.
+The update is O(1) per event via the recursive formula. Parameters are re-estimated every event using EMA-based moment matching (EMA alpha=0.05, effective window ~20 events) after a minimum of 10 observations. This allows the Hawkes process to adapt to regime changes in ~20-40 events, compared to hundreds with the previous cumulative averaging approach.
 
 ### Integration with PMC
 

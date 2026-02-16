@@ -370,6 +370,8 @@ pub struct ForecastSpec {
     pub hawkes: Option<Expr>,
     /// Enable conformal prediction intervals (default true)
     pub conformal: Option<Expr>,
+    /// Preset mode: "fast", "accurate", or "balanced" (default "balanced")
+    pub mode: Option<Expr>,
 }
 
 /// Followed-by clause for temporal sequences
