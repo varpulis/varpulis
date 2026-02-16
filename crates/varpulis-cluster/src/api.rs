@@ -63,6 +63,7 @@ pub fn cluster_routes(
         .and(warp::path("cluster"));
 
     // WebSocket route for persistent worker connections
+    // Limit frame size to 64 KB (heartbeats are small JSON messages)
     let ws_route = api
         .and(warp::path("ws"))
         .and(warp::path::end())
@@ -75,9 +76,11 @@ pub fn cluster_routes(
              coordinator: SharedCoordinator,
              ws_mgr: SharedWsManager,
              key: Option<String>| {
-                ws.on_upgrade(move |socket| {
-                    crate::ws::handle_worker_ws(socket, coordinator, ws_mgr, key)
-                })
+                ws.max_frame_size(64 * 1024)
+                    .max_message_size(64 * 1024)
+                    .on_upgrade(move |socket| {
+                        crate::ws::handle_worker_ws(socket, coordinator, ws_mgr, key)
+                    })
             },
         );
 

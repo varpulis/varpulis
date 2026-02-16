@@ -1891,9 +1891,11 @@ async fn run_server(
              ws: warp::ws::Ws,
              state: Arc<RwLock<ServerState>>,
              broadcast_tx: Arc<tokio::sync::broadcast::Sender<String>>| {
-                ws.on_upgrade(move |socket| {
-                    websocket::handle_connection(socket, state, broadcast_tx)
-                })
+                ws.max_frame_size(1024 * 1024)
+                    .max_message_size(1024 * 1024)
+                    .on_upgrade(move |socket| {
+                        websocket::handle_connection(socket, state, broadcast_tx)
+                    })
             },
         );
 
