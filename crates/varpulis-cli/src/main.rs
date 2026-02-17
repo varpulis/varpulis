@@ -32,7 +32,7 @@ use varpulis_cli::websocket::{self, ServerState};
 #[derive(Parser)]
 #[command(name = "varpulis")]
 #[command(author = "Varpulis Contributors")]
-#[command(version = "0.1.0")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = "Varpulis - Modern streaming analytics engine", long_about = None)]
 struct Cli {
     /// Path to configuration file (YAML or TOML)
@@ -1458,7 +1458,8 @@ async fn run_simulation(
                         if partition_events.is_empty() {
                             return;
                         }
-                        let mut engine_guard = engines[worker_id].lock().unwrap();
+                        let mut engine_guard =
+                            engines[worker_id].lock().unwrap_or_else(|e| e.into_inner());
                         if let Err(e) = engine_guard.process_batch_sync(partition_events) {
                             eprintln!("Worker {}: Process error: {}", worker_id, e);
                         }
@@ -1470,7 +1471,7 @@ async fn run_simulation(
 
         // Collect final metrics from all worker engines
         for (i, engine_mutex) in worker_engines.iter().enumerate() {
-            let w_engine = engine_mutex.lock().unwrap();
+            let w_engine = engine_mutex.lock().unwrap_or_else(|e| e.into_inner());
             let worker_metrics = w_engine.metrics();
             total_events_processed.fetch_add(worker_metrics.events_processed, Ordering::Relaxed);
             output_emitted_count.fetch_add(worker_metrics.output_events_emitted, Ordering::Relaxed);
@@ -2032,6 +2033,8 @@ async fn run_server(
     });
 
     // Start server with or without TLS
+    // After the shutdown signal, allow up to 30s for in-flight requests to complete.
+    let shutdown_timeout = std::time::Duration::from_secs(30);
     if let Some((cert_path, key_path)) = tls_config {
         info!("TLS enabled with cert: {}", cert_path.display());
         let (_, server) = warp::serve(routes)
@@ -2041,13 +2044,23 @@ async fn run_server(
             .bind_with_graceful_shutdown((bind_addr, port), async {
                 shutdown_rx.await.ok();
             });
-        server.await;
+        if tokio::time::timeout(shutdown_timeout, server)
+            .await
+            .is_err()
+        {
+            tracing::warn!("Graceful shutdown timed out after 30s, forcing exit");
+        }
     } else {
         let (_, server) =
             warp::serve(routes).bind_with_graceful_shutdown((bind_addr, port), async {
                 shutdown_rx.await.ok();
             });
-        server.await;
+        if tokio::time::timeout(shutdown_timeout, server)
+            .await
+            .is_err()
+        {
+            tracing::warn!("Graceful shutdown timed out after 30s, forcing exit");
+        }
     }
 
     info!("Server shutdown complete");
@@ -2446,6 +2459,8 @@ async fn run_coordinator(
     });
 
     // Build and serve routes (split by cfg to avoid Reply type mismatch in if/else)
+    // After the shutdown signal, allow up to 30s for in-flight requests to complete.
+    let shutdown_timeout = std::time::Duration::from_secs(30);
     #[cfg(feature = "raft")]
     {
         if let Some(ref rh) = raft_handle {
@@ -2464,7 +2479,12 @@ async fn run_coordinator(
                 warp::serve(routes).bind_with_graceful_shutdown((bind_addr, port), async {
                     shutdown_rx.await.ok();
                 });
-            server.await;
+            if tokio::time::timeout(shutdown_timeout, server)
+                .await
+                .is_err()
+            {
+                tracing::warn!("Coordinator graceful shutdown timed out after 30s, forcing exit");
+            }
         } else {
             let api_routes = varpulis_cluster::cluster_routes(coordinator, api_key, ws_manager);
             let routes = health_route
@@ -2476,7 +2496,12 @@ async fn run_coordinator(
                 warp::serve(routes).bind_with_graceful_shutdown((bind_addr, port), async {
                     shutdown_rx.await.ok();
                 });
-            server.await;
+            if tokio::time::timeout(shutdown_timeout, server)
+                .await
+                .is_err()
+            {
+                tracing::warn!("Coordinator graceful shutdown timed out after 30s, forcing exit");
+            }
         }
     }
 
@@ -2492,7 +2517,12 @@ async fn run_coordinator(
             warp::serve(routes).bind_with_graceful_shutdown((bind_addr, port), async {
                 shutdown_rx.await.ok();
             });
-        server.await;
+        if tokio::time::timeout(shutdown_timeout, server)
+            .await
+            .is_err()
+        {
+            tracing::warn!("Coordinator graceful shutdown timed out after 30s, forcing exit");
+        }
     }
 
     info!("Coordinator shutdown complete");

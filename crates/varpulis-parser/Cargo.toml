@@ -2,6 +2,7 @@
 name = "varpulis-parser"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "Parser for VPL language"
 build = "build.rs"
 

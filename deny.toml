@@ -1,0 +1,79 @@
+# cargo-deny configuration
+# https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+targets = []
+all-features = true
+
+# ---------------------------------------------------------------------------
+# Advisories — check for known vulnerabilities and unmaintained crates
+# ---------------------------------------------------------------------------
+[advisories]
+# Fail on any vulnerability, but allow specific unmaintained crates that we've
+# evaluated and accepted the risk for (transitive dependencies we can't control).
+ignore = [
+    # lru 0.12/0.13: IterMut unsoundness (Stacked Borrows violation).
+    # Only reachable via aws-sdk-s3 → S3 connector feature. We never iterate
+    # mutably over the LRU cache ourselves.
+    { id = "RUSTSEC-2026-0002", reason = "we never use IterMut on the LRU cache" },
+
+    # bincode 1.x: unmaintained. Used for internal serialization only (no
+    # untrusted input). Will migrate to bincode2/postcard when stable.
+    { id = "RUSTSEC-2025-0141", reason = "internal serialization only, no untrusted input" },
+
+    # backoff 0.4: unmaintained. Transitive dep from kube-runtime (k8s feature only).
+    { id = "RUSTSEC-2025-0012", reason = "transitive via kube-runtime, k8s feature only" },
+
+    # instant 0.1: unmaintained. Transitive via backoff -> kube-runtime.
+    { id = "RUSTSEC-2024-0384", reason = "transitive via backoff, k8s feature only" },
+
+    # rustls-pemfile 2.x: unmaintained. Cert parsing only, low attack surface.
+    { id = "RUSTSEC-2025-0134", reason = "cert parsing only, low attack surface" },
+
+    # rsa 0.9: Marvin Attack timing side-channel. Transitive via sqlx-mysql.
+    # We don't use MySQL TLS with RSA keys in production; PostgreSQL is primary.
+    { id = "RUSTSEC-2023-0071", reason = "transitive via sqlx-mysql, not used in production" },
+]
+
+# ---------------------------------------------------------------------------
+# Licenses — only allow permissive licenses
+# ---------------------------------------------------------------------------
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+    "BSL-1.0",
+    "OpenSSL",
+    "CC0-1.0",
+    "MPL-2.0",
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.8
+
+[[licenses.clarify]]
+name = "ring"
+expression = "MIT AND ISC AND OpenSSL"
+license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
+
+# ---------------------------------------------------------------------------
+# Bans — disallow specific crates or features
+# ---------------------------------------------------------------------------
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+
+# ---------------------------------------------------------------------------
+# Sources — only allow crates from crates.io
+# ---------------------------------------------------------------------------
+[sources]
+unknown-registry = "deny"
+unknown-git = "warn"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
