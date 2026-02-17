@@ -104,9 +104,11 @@
 //! - [`varpulis_cli`](../varpulis_cli): Command-line interface
 
 pub mod aggregation;
+pub mod circuit_breaker;
 pub mod columnar;
 pub mod connector;
 pub mod context;
+pub mod dead_letter;
 pub mod engine;
 pub mod enrichment;
 pub mod event;
