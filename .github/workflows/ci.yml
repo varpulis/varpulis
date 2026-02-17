@@ -107,7 +107,7 @@ jobs:
       - name: Run chaos tests
         run: cargo test -p varpulis-cluster --test chaos -- --ignored --test-threads=1
         env:
-          VARPULIS_BIN: target/release/varpulis
+          VARPULIS_BIN: ${{ github.workspace }}/target/release/varpulis
 
   web-ui:
     name: Web UI

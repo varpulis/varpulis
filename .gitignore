@@ -20,6 +20,7 @@ Thumbs.db
 # Test artifacts
 *.profraw
 *.profdata
+*-dlq.jsonl
 
 # Local configuration
 .env

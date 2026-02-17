@@ -21,6 +21,9 @@ pub struct KafkaConfig {
     pub topic: String,
     pub group_id: Option<String>,
     pub properties: IndexMap<String, String>,
+    /// When set, enables Kafka exactly-once semantics via transactional producer.
+    /// The value must be unique per application instance.
+    pub transactional_id: Option<String>,
 }
 
 impl KafkaConfig {
@@ -30,6 +33,7 @@ impl KafkaConfig {
             topic: topic.to_string(),
             group_id: None,
             properties: IndexMap::new(),
+            transactional_id: None,
         }
     }
 
@@ -40,6 +44,11 @@ impl KafkaConfig {
 
     pub fn with_properties(mut self, props: IndexMap<String, String>) -> Self {
         self.properties = props;
+        self
+    }
+
+    pub fn with_transactional_id(mut self, id: &str) -> Self {
+        self.transactional_id = Some(id.to_string());
         self
     }
 }
@@ -313,15 +322,23 @@ mod kafka_impl {
         }
     }
 
-    /// Kafka sink connector with rdkafka
+    /// Kafka sink connector with rdkafka.
+    ///
+    /// Supports two delivery modes:
+    /// - **At-least-once** (default): fire-and-forget with `acks=all`
+    /// - **Exactly-once**: transactional producer when `transactional_id` is set
     pub struct KafkaSinkImpl {
         name: String,
         config: KafkaConfig,
         producer: FutureProducer,
+        /// True when the producer was initialized with a transactional.id.
+        transactional: bool,
     }
 
     impl KafkaSinkImpl {
         pub fn new(name: &str, config: KafkaConfig) -> Result<Self, ConnectorError> {
+            let transactional = config.transactional_id.is_some();
+
             let mut client_config = ClientConfig::new();
             client_config
                 .set("bootstrap.servers", &config.brokers)
@@ -332,6 +349,12 @@ mod kafka_impl {
                 .set("compression.type", "lz4")
                 .set("acks", "all");
 
+            if let Some(tid) = &config.transactional_id {
+                client_config.set("transactional.id", tid);
+                // Exactly-once requires idempotence
+                client_config.set("enable.idempotence", "true");
+            }
+
             // Apply user-provided properties (can override any of the above)
             apply_properties(&mut client_config, &config.properties);
 
@@ -339,11 +362,70 @@ mod kafka_impl {
                 .create()
                 .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
 
+            if transactional {
+                producer
+                    .init_transactions(Duration::from_secs(30))
+                    .map_err(|e| {
+                        ConnectorError::ConnectionFailed(format!(
+                            "Failed to init transactions: {}",
+                            e
+                        ))
+                    })?;
+                info!(
+                    "Kafka sink '{}' initialized with exactly-once semantics",
+                    name
+                );
+            }
+
             Ok(Self {
                 name: name.to_string(),
                 config,
                 producer,
+                transactional,
             })
+        }
+
+        /// Whether this sink uses transactional (exactly-once) delivery.
+        pub fn is_transactional(&self) -> bool {
+            self.transactional
+        }
+
+        /// Send a batch of events within a single Kafka transaction.
+        ///
+        /// All events are enqueued, then the transaction is committed atomically.
+        /// On failure the transaction is aborted and no events are visible to consumers.
+        pub async fn send_batch_transactional(
+            &self,
+            events: &[std::sync::Arc<Event>],
+        ) -> Result<(), ConnectorError> {
+            self.producer
+                .begin_transaction()
+                .map_err(|e| ConnectorError::SendFailed(format!("begin_transaction: {}", e)))?;
+
+            for event in events {
+                let payload = event.to_sink_payload();
+                let record = FutureRecord::to(&self.config.topic)
+                    .payload(&payload)
+                    .key(&*event.event_type);
+
+                if let Err((e, _)) = self.producer.send(record, Duration::ZERO).await {
+                    // Abort the transaction — none of the batch will be visible
+                    let _ = self.producer.abort_transaction(Duration::from_secs(10));
+                    return Err(ConnectorError::SendFailed(format!(
+                        "send in transaction: {}",
+                        e
+                    )));
+                }
+            }
+
+            self.producer
+                .commit_transaction(Duration::from_secs(30))
+                .map_err(|e| {
+                    let _ = self.producer.abort_transaction(Duration::from_secs(10));
+                    ConnectorError::SendFailed(format!("commit_transaction: {}", e))
+                })?;
+
+            Ok(())
         }
     }
 
@@ -360,13 +442,32 @@ mod kafka_impl {
                 .payload(&payload)
                 .key(&*event.event_type);
 
-            // Fire-and-forget: enqueue into librdkafka's internal batch buffer.
-            // The library handles batching via linger.ms / batch.size settings.
-            // We use Duration::ZERO so send() returns immediately once queued.
-            self.producer
-                .send(record, Duration::ZERO)
-                .await
-                .map_err(|(e, _)| ConnectorError::SendFailed(e.to_string()))?;
+            if self.transactional {
+                // Wrap single event in a transaction for exactly-once
+                self.producer
+                    .begin_transaction()
+                    .map_err(|e| ConnectorError::SendFailed(format!("begin_transaction: {}", e)))?;
+
+                if let Err((e, _)) = self.producer.send(record, Duration::ZERO).await {
+                    let _ = self.producer.abort_transaction(Duration::from_secs(10));
+                    return Err(ConnectorError::SendFailed(e.to_string()));
+                }
+
+                self.producer
+                    .commit_transaction(Duration::from_secs(30))
+                    .map_err(|e| {
+                        let _ = self.producer.abort_transaction(Duration::from_secs(10));
+                        ConnectorError::SendFailed(format!("commit_transaction: {}", e))
+                    })?;
+            } else {
+                // Fire-and-forget: enqueue into librdkafka's internal batch buffer.
+                // The library handles batching via linger.ms / batch.size settings.
+                // We use Duration::ZERO so send() returns immediately once queued.
+                self.producer
+                    .send(record, Duration::ZERO)
+                    .await
+                    .map_err(|(e, _)| ConnectorError::SendFailed(e.to_string()))?;
+            }
 
             Ok(())
         }

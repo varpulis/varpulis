@@ -269,3 +269,108 @@ async fn test_kafka_config_options() {
     assert_eq!(config.topic, "my-topic");
     assert_eq!(config.group_id, Some("my-consumer-group".to_string()));
 }
+
+#[tokio::test]
+#[ignore]
+async fn test_kafka_config_transactional() {
+    // Test transactional config builder
+    let config =
+        KafkaConfig::new("broker1:9092", "my-topic").with_transactional_id("my-app-txn-01");
+
+    assert_eq!(config.transactional_id, Some("my-app-txn-01".to_string()));
+
+    // Default config should have no transactional_id
+    let default_config = KafkaConfig::new("broker1:9092", "my-topic");
+    assert!(default_config.transactional_id.is_none());
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_kafka_transactional_sink() {
+    let bootstrap = kafka_bootstrap();
+    if !kafka_is_available().await {
+        eprintln!("Skipping test: Kafka not available at {}", bootstrap);
+        return;
+    }
+
+    let config = KafkaConfig::new(&bootstrap, TEST_TOPIC_OUTPUT)
+        .with_transactional_id(&format!("varpulis-test-txn-{}", std::process::id()));
+
+    let sink = KafkaSinkFull::new("txn-sink", config).expect("Failed to create transactional sink");
+    assert!(sink.is_transactional());
+
+    // Test single transactional send
+    let event = Event::new("TxnTest")
+        .with_field("message", "transactional event")
+        .with_field("seq", 1i64);
+
+    sink.send(&event)
+        .await
+        .expect("Failed to send transactional event");
+
+    // Test batch transactional send
+    let events: Vec<std::sync::Arc<Event>> = (0..10)
+        .map(|i| {
+            std::sync::Arc::new(
+                Event::new("TxnBatchTest")
+                    .with_field("seq", i as i64)
+                    .with_field("batch", "txn-batch-1"),
+            )
+        })
+        .collect();
+
+    sink.send_batch_transactional(&events)
+        .await
+        .expect("Failed to send transactional batch");
+
+    sink.flush().await.expect("Failed to flush");
+
+    println!("Transactional sink test passed: 1 single + 10 batch events committed");
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_kafka_transactional_batch_performance() {
+    let bootstrap = kafka_bootstrap();
+    if !kafka_is_available().await {
+        eprintln!("Skipping test: Kafka not available at {}", bootstrap);
+        return;
+    }
+
+    let config = KafkaConfig::new(&bootstrap, TEST_TOPIC_OUTPUT)
+        .with_transactional_id(&format!("varpulis-perf-txn-{}", std::process::id()));
+
+    let sink =
+        KafkaSinkFull::new("txn-perf-sink", config).expect("Failed to create transactional sink");
+
+    let batch_size = 100;
+    let num_batches = 10;
+    let start = std::time::Instant::now();
+
+    for batch_idx in 0..num_batches {
+        let events: Vec<std::sync::Arc<Event>> = (0..batch_size)
+            .map(|i| {
+                std::sync::Arc::new(
+                    Event::new("TxnPerfTest")
+                        .with_field("batch", batch_idx as i64)
+                        .with_field("seq", i as i64),
+                )
+            })
+            .collect();
+
+        sink.send_batch_transactional(&events)
+            .await
+            .expect("Failed to send transactional batch");
+    }
+
+    sink.flush().await.expect("Failed to flush");
+
+    let elapsed = start.elapsed();
+    let total_events = batch_size * num_batches;
+    let rate = total_events as f64 / elapsed.as_secs_f64();
+
+    println!(
+        "Transactional: {} events in {} batches, {:?} ({:.0} events/sec)",
+        total_events, num_batches, elapsed, rate
+    );
+}
