@@ -4,6 +4,7 @@ use crate::connector_config::{self, ClusterConnector};
 use crate::coordinator::{Coordinator, InjectBatchRequest, InjectEventRequest};
 use crate::migration::MigrationReason;
 use crate::pipeline_group::{PipelineGroupInfo, PipelineGroupSpec};
+use crate::rbac::{RbacConfig, Role};
 use crate::routing::{
     GroupTopology, PipelineTopologyEntry, RouteTopologyEntry, TopologyInfo, TopologyRouteEntry,
     TopologyWorkerEntry,
@@ -40,12 +41,12 @@ pub fn shared_coordinator() -> SharedCoordinator {
 #[cfg(feature = "raft")]
 pub fn cluster_routes_with_raft(
     coordinator: SharedCoordinator,
-    admin_key: Option<String>,
+    rbac: Arc<RbacConfig>,
     ws_manager: SharedWsManager,
     raft: crate::raft::routes::SharedRaft,
 ) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
-    let raft_routes = crate::raft::routes::raft_routes(raft, admin_key.clone());
-    let cluster = cluster_routes(coordinator, admin_key, ws_manager);
+    let raft_routes = crate::raft::routes::raft_routes(raft, rbac.any_admin_key());
+    let cluster = cluster_routes(coordinator, rbac, ws_manager);
     raft_routes.or(cluster)
 }
 
@@ -55,7 +56,7 @@ pub fn cluster_routes_with_raft(
 /// and use a reverse proxy (e.g. nginx) to restrict origins.
 pub fn cluster_routes(
     coordinator: SharedCoordinator,
-    admin_key: Option<String>,
+    rbac: Arc<RbacConfig>,
     ws_manager: SharedWsManager,
 ) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
     let api = warp::path("api")
@@ -64,22 +65,20 @@ pub fn cluster_routes(
 
     // WebSocket route for persistent worker connections
     // Limit frame size to 64 KB (heartbeats are small JSON messages)
+    let ws_rbac = rbac.clone();
     let ws_route = api
         .and(warp::path("ws"))
         .and(warp::path::end())
         .and(warp::ws())
         .and(with_coordinator(coordinator.clone()))
         .and(with_ws_manager(ws_manager))
-        .and(with_admin_key(admin_key.clone()))
         .map(
-            |ws: warp::ws::Ws,
-             coordinator: SharedCoordinator,
-             ws_mgr: SharedWsManager,
-             key: Option<String>| {
+            move |ws: warp::ws::Ws, coordinator: SharedCoordinator, ws_mgr: SharedWsManager| {
+                let ws_rbac = ws_rbac.clone();
                 ws.max_frame_size(64 * 1024)
                     .max_message_size(64 * 1024)
                     .on_upgrade(move |socket| {
-                        crate::ws::handle_worker_ws(socket, coordinator, ws_mgr, key)
+                        crate::ws::handle_worker_ws(socket, coordinator, ws_mgr, ws_rbac)
                     })
             },
         );
@@ -89,7 +88,7 @@ pub fn cluster_routes(
         .and(warp::path("register"))
         .and(warp::path::end())
         .and(warp::post())
-        .and(with_optional_auth(admin_key.clone()))
+        .and(with_rbac(rbac.clone(), Role::Operator))
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_coordinator(coordinator.clone()))
@@ -101,7 +100,7 @@ pub fn cluster_routes(
         .and(warp::path("heartbeat"))
         .and(warp::path::end())
         .and(warp::post())
-        .and(with_optional_auth(admin_key.clone()))
+        .and(with_rbac(rbac.clone(), Role::Operator))
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_coordinator(coordinator.clone()))
@@ -111,7 +110,7 @@ pub fn cluster_routes(
         .and(warp::path("workers"))
         .and(warp::path::end())
         .and(warp::get())
-        .and(with_optional_auth(admin_key.clone()))
+        .and(with_rbac(rbac.clone(), Role::Viewer))
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_list_workers);
 
@@ -120,7 +119,7 @@ pub fn cluster_routes(
         .and(warp::path::param::<String>())
         .and(warp::path::end())
         .and(warp::get())
-        .and(with_optional_auth(admin_key.clone()))
+        .and(with_rbac(rbac.clone(), Role::Viewer))
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_get_worker);
 
@@ -129,7 +128,7 @@ pub fn cluster_routes(
         .and(warp::path::param::<String>())
         .and(warp::path::end())
         .and(warp::delete())
-        .and(with_optional_auth(admin_key.clone()))
+        .and(with_rbac(rbac.clone(), Role::Admin))
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_delete_worker);
 
@@ -137,7 +136,7 @@ pub fn cluster_routes(
         .and(warp::path("pipeline-groups"))
         .and(warp::path::end())
         .and(warp::post())
-        .and(with_optional_auth(admin_key.clone()))
+        .and(with_rbac(rbac.clone(), Role::Operator))
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_coordinator(coordinator.clone()))
@@ -147,7 +146,7 @@ pub fn cluster_routes(
         .and(warp::path("pipeline-groups"))
         .and(warp::path::end())
         .and(warp::get())
-        .and(with_optional_auth(admin_key.clone()))
+        .and(with_rbac(rbac.clone(), Role::Viewer))
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_list_groups);
 
@@ -156,7 +155,7 @@ pub fn cluster_routes(
         .and(warp::path::param::<String>())
         .and(warp::path::end())
         .and(warp::get())
-        .and(with_optional_auth(admin_key.clone()))
+        .and(with_rbac(rbac.clone(), Role::Viewer))
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_get_group);
 
@@ -165,7 +164,7 @@ pub fn cluster_routes(
         .and(warp::path::param::<String>())
         .and(warp::path::end())
         .and(warp::delete())
-        .and(with_optional_auth(admin_key.clone()))
+        .and(with_rbac(rbac.clone(), Role::Admin))
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_delete_group);
 
@@ -175,7 +174,7 @@ pub fn cluster_routes(
         .and(warp::path("inject"))
         .and(warp::path::end())
         .and(warp::post())
-        .and(with_optional_auth(admin_key.clone()))
+        .and(with_rbac(rbac.clone(), Role::Operator))
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_coordinator(coordinator.clone()))
@@ -187,7 +186,7 @@ pub fn cluster_routes(
         .and(warp::path("inject-batch"))
         .and(warp::path::end())
         .and(warp::post())
-        .and(with_optional_auth(admin_key.clone()))
+        .and(with_rbac(rbac.clone(), Role::Operator))
         .and(warp::body::content_length_limit(LARGE_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_coordinator(coordinator.clone()))
@@ -197,7 +196,7 @@ pub fn cluster_routes(
         .and(warp::path("topology"))
         .and(warp::path::end())
         .and(warp::get())
-        .and(with_optional_auth(admin_key.clone()))
+        .and(with_rbac(rbac.clone(), Role::Viewer))
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_topology);
 
@@ -205,7 +204,7 @@ pub fn cluster_routes(
         .and(warp::path("validate"))
         .and(warp::path::end())
         .and(warp::post())
-        .and(with_optional_auth(admin_key.clone()))
+        .and(with_rbac(rbac.clone(), Role::Viewer))
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_coordinator(coordinator.clone()))
@@ -219,7 +218,7 @@ pub fn cluster_routes(
         .and(warp::path("drain"))
         .and(warp::path::end())
         .and(warp::post())
-        .and(with_optional_auth(admin_key.clone()))
+        .and(with_rbac(rbac.clone(), Role::Operator))
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_coordinator(coordinator.clone()))
@@ -229,7 +228,7 @@ pub fn cluster_routes(
         .and(warp::path("rebalance"))
         .and(warp::path::end())
         .and(warp::post())
-        .and(with_optional_auth(admin_key.clone()))
+        .and(with_rbac(rbac.clone(), Role::Operator))
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_rebalance);
 
@@ -237,7 +236,7 @@ pub fn cluster_routes(
         .and(warp::path("migrations"))
         .and(warp::path::end())
         .and(warp::get())
-        .and(with_optional_auth(admin_key.clone()))
+        .and(with_rbac(rbac.clone(), Role::Viewer))
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_list_migrations);
 
@@ -246,7 +245,7 @@ pub fn cluster_routes(
         .and(warp::path::param::<String>())
         .and(warp::path::end())
         .and(warp::get())
-        .and(with_optional_auth(admin_key.clone()))
+        .and(with_rbac(rbac.clone(), Role::Viewer))
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_get_migration);
 
@@ -257,7 +256,7 @@ pub fn cluster_routes(
         .and(warp::path("migrate"))
         .and(warp::path::end())
         .and(warp::post())
-        .and(with_optional_auth(admin_key.clone()))
+        .and(with_rbac(rbac.clone(), Role::Operator))
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_coordinator(coordinator.clone()))
@@ -269,7 +268,7 @@ pub fn cluster_routes(
         .and(warp::path("connectors"))
         .and(warp::path::end())
         .and(warp::get())
-        .and(with_optional_auth(admin_key.clone()))
+        .and(with_rbac(rbac.clone(), Role::Viewer))
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_list_connectors);
 
@@ -278,7 +277,7 @@ pub fn cluster_routes(
         .and(warp::path::param::<String>())
         .and(warp::path::end())
         .and(warp::get())
-        .and(with_optional_auth(admin_key.clone()))
+        .and(with_rbac(rbac.clone(), Role::Viewer))
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_get_connector);
 
@@ -286,7 +285,7 @@ pub fn cluster_routes(
         .and(warp::path("connectors"))
         .and(warp::path::end())
         .and(warp::post())
-        .and(with_optional_auth(admin_key.clone()))
+        .and(with_rbac(rbac.clone(), Role::Operator))
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_coordinator(coordinator.clone()))
@@ -297,7 +296,7 @@ pub fn cluster_routes(
         .and(warp::path::param::<String>())
         .and(warp::path::end())
         .and(warp::put())
-        .and(with_optional_auth(admin_key.clone()))
+        .and(with_rbac(rbac.clone(), Role::Operator))
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_coordinator(coordinator.clone()))
@@ -308,7 +307,7 @@ pub fn cluster_routes(
         .and(warp::path::param::<String>())
         .and(warp::path::end())
         .and(warp::delete())
-        .and(with_optional_auth(admin_key.clone()))
+        .and(with_rbac(rbac.clone(), Role::Admin))
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_delete_connector);
 
@@ -318,7 +317,7 @@ pub fn cluster_routes(
         .and(warp::path("metrics"))
         .and(warp::path::end())
         .and(warp::get())
-        .and(with_optional_auth(admin_key.clone()))
+        .and(with_rbac(rbac.clone(), Role::Viewer))
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_metrics);
 
@@ -337,7 +336,7 @@ pub fn cluster_routes(
         .and(warp::path("scaling"))
         .and(warp::path::end())
         .and(warp::get())
-        .and(with_optional_auth(admin_key.clone()))
+        .and(with_rbac(rbac.clone(), Role::Viewer))
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_scaling);
 
@@ -347,7 +346,7 @@ pub fn cluster_routes(
         .and(warp::path("summary"))
         .and(warp::path::end())
         .and(warp::get())
-        .and(with_optional_auth(admin_key.clone()))
+        .and(with_rbac(rbac.clone(), Role::Viewer))
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_cluster_summary);
 
@@ -366,7 +365,7 @@ pub fn cluster_routes(
         .and(warp::path("models"))
         .and(warp::path::end())
         .and(warp::get())
-        .and(with_optional_auth(admin_key.clone()))
+        .and(with_rbac(rbac.clone(), Role::Viewer))
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_list_models);
 
@@ -374,7 +373,7 @@ pub fn cluster_routes(
         .and(warp::path("models"))
         .and(warp::path::end())
         .and(warp::post())
-        .and(with_optional_auth(admin_key.clone()))
+        .and(with_rbac(rbac.clone(), Role::Operator))
         .and(warp::body::content_length_limit(LARGE_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_coordinator(coordinator.clone()))
@@ -385,7 +384,7 @@ pub fn cluster_routes(
         .and(warp::path::param::<String>())
         .and(warp::path::end())
         .and(warp::delete())
-        .and(with_optional_auth(admin_key.clone()))
+        .and(with_rbac(rbac.clone(), Role::Admin))
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_delete_model);
 
@@ -395,7 +394,7 @@ pub fn cluster_routes(
         .and(warp::path("download"))
         .and(warp::path::end())
         .and(warp::get())
-        .and(with_optional_auth(admin_key.clone()))
+        .and(with_rbac(rbac.clone(), Role::Viewer))
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_download_model);
 
@@ -405,7 +404,7 @@ pub fn cluster_routes(
         .and(warp::path("chat"))
         .and(warp::path::end())
         .and(warp::post())
-        .and(with_optional_auth(admin_key.clone()))
+        .and(with_rbac(rbac.clone(), Role::Viewer))
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_coordinator(coordinator.clone()))
@@ -416,7 +415,7 @@ pub fn cluster_routes(
         .and(warp::path("config"))
         .and(warp::path::end())
         .and(warp::get())
-        .and(with_optional_auth(admin_key.clone()))
+        .and(with_rbac(rbac.clone(), Role::Viewer))
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_get_chat_config);
 
@@ -425,7 +424,7 @@ pub fn cluster_routes(
         .and(warp::path("config"))
         .and(warp::path::end())
         .and(warp::put())
-        .and(with_optional_auth(admin_key))
+        .and(with_rbac(rbac, Role::Operator))
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_coordinator(coordinator.clone()))
@@ -437,7 +436,13 @@ pub fn cluster_routes(
     let cors = warp::cors()
         .allow_any_origin()
         .allow_methods(vec!["GET", "POST", "PUT", "DELETE", "OPTIONS"])
-        .allow_headers(vec!["content-type", "x-api-key", "authorization"]);
+        .allow_headers(vec![
+            "content-type",
+            "x-api-key",
+            "authorization",
+            "x-request-id",
+            "traceparent",
+        ]);
 
     // Group routes to avoid warp recursive type overflow
     let worker_routes = register_worker
@@ -477,6 +482,19 @@ pub fn cluster_routes(
 
     let chat_routes = chat.or(get_chat_config).or(update_chat_config).boxed();
 
+    // Request logging: log method, path, status, and latency for every request
+    let request_log = warp::log::custom(|info: warp::log::Info<'_>| {
+        tracing::info!(
+            target: "varpulis::http",
+            method = %info.method(),
+            path = info.path(),
+            status = info.status().as_u16(),
+            latency_ms = info.elapsed().as_millis() as u64,
+            remote = ?info.remote_addr(),
+            "request"
+        );
+    });
+
     ws_route
         .or(worker_routes)
         .or(pipeline_routes)
@@ -492,11 +510,41 @@ pub fn cluster_routes(
         .or(summary)
         .or(raft_status)
         .with(cors)
+        .with(request_log)
 }
 
 // =============================================================================
 // Filters
 // =============================================================================
+
+/// Generate a request ID and attach it as a response header.
+///
+/// Accepts an incoming `x-request-id` (or `traceparent`) header, or generates
+/// a new UUID. The ID is stored in a tracing span for log correlation and
+/// returned in the `x-request-id` response header via the `with_request_id_header` wrapper.
+#[allow(dead_code)]
+fn with_request_id() -> impl Filter<Extract = (String,), Error = Rejection> + Clone {
+    warp::header::optional::<String>("x-request-id")
+        .and(warp::header::optional::<String>("traceparent"))
+        .map(
+            |req_id: Option<String>, traceparent: Option<String>| -> String {
+                // Prefer explicit x-request-id, then extract trace-id from W3C traceparent, else generate
+                req_id.unwrap_or_else(|| {
+                    traceparent
+                        .and_then(|tp| {
+                            // W3C traceparent format: version-trace_id-parent_id-flags
+                            let parts: Vec<&str> = tp.split('-').collect();
+                            if parts.len() >= 2 {
+                                Some(parts[1].to_string())
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+                })
+            },
+        )
+}
 
 fn with_coordinator(
     coordinator: SharedCoordinator,
@@ -510,31 +558,19 @@ fn with_ws_manager(
     warp::any().map(move || ws_manager.clone())
 }
 
-fn with_admin_key(
-    admin_key: Option<String>,
-) -> impl Filter<Extract = (Option<String>,), Error = Infallible> + Clone {
-    warp::any().map(move || admin_key.clone())
-}
-
-fn with_optional_auth(
-    admin_key: Option<String>,
+fn with_rbac(
+    rbac: Arc<RbacConfig>,
+    required: Role,
 ) -> impl Filter<Extract = ((),), Error = Rejection> + Clone {
-    let key = admin_key.clone();
     warp::any()
         .and(warp::header::optional::<String>("x-api-key"))
         .and_then(move |provided: Option<String>| {
-            let key = key.clone();
+            let rbac = rbac.clone();
             async move {
-                match &key {
-                    None => Ok::<(), Rejection>(()), // no auth required
-                    Some(expected) => match provided {
-                        Some(ref p)
-                            if varpulis_core::security::constant_time_compare(expected, p) =>
-                        {
-                            Ok(())
-                        }
-                        _ => Err(warp::reject::custom(Unauthorized)),
-                    },
+                match rbac.authenticate(provided.as_deref()) {
+                    Some(role) if role.has_permission(required) => Ok(()),
+                    Some(_) => Err(warp::reject::custom(Forbidden)),
+                    None => Err(warp::reject::custom(Unauthorized)),
                 }
             }
         })
@@ -543,6 +579,10 @@ fn with_optional_auth(
 #[derive(Debug)]
 struct Unauthorized;
 impl warp::reject::Reject for Unauthorized {}
+
+#[derive(Debug)]
+struct Forbidden;
+impl warp::reject::Reject for Forbidden {}
 
 // =============================================================================
 // Leader forwarding helper
@@ -2334,6 +2374,12 @@ pub async fn handle_rejection(err: Rejection) -> Result<impl Reply, Infallible> 
             StatusCode::UNAUTHORIZED,
             "Invalid or missing API key",
         ))
+    } else if err.find::<Forbidden>().is_some() {
+        tracing::warn!("Authorization failed: insufficient role permissions");
+        Ok(error_response(
+            StatusCode::FORBIDDEN,
+            "Insufficient permissions for this operation",
+        ))
     } else if err.find::<warp::reject::MissingHeader>().is_some() {
         tracing::warn!("Authentication failed: missing API key header");
         Ok(error_response(
@@ -2387,7 +2433,11 @@ mod tests {
     ) {
         let coord = shared_coordinator();
         let ws_mgr = crate::ws::shared_ws_manager();
-        let routes = cluster_routes(coord.clone(), Some("admin-key".to_string()), ws_mgr);
+        let routes = cluster_routes(
+            coord.clone(),
+            Arc::new(RbacConfig::single_key("admin-key".to_string())),
+            ws_mgr,
+        );
         (coord, routes)
     }
 
@@ -2634,10 +2684,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_auth_mode() {
-        // When admin_key is None, no auth required
+        // When RBAC is disabled, no auth required
         let coord = shared_coordinator();
         let ws_mgr = crate::ws::shared_ws_manager();
-        let routes = cluster_routes(coord.clone(), None, ws_mgr);
+        let routes = cluster_routes(coord.clone(), Arc::new(RbacConfig::disabled()), ws_mgr);
 
         // Register without API key
         let resp = warp::test::request()
@@ -3033,5 +3083,128 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let body: WorkerInfo = serde_json::from_slice(resp.body()).unwrap();
         assert_eq!(body.pipelines_running, 3);
+    }
+
+    fn rbac_viewer() -> Arc<RbacConfig> {
+        use std::collections::HashMap;
+        let mut keys = HashMap::new();
+        keys.insert(
+            "viewer-key".to_string(),
+            crate::rbac::ApiKeyEntry {
+                role: Role::Viewer,
+                name: Some("grafana".to_string()),
+            },
+        );
+        Arc::new(RbacConfig::multi_key(keys))
+    }
+
+    #[tokio::test]
+    async fn test_rbac_viewer_can_read() {
+        let coord = shared_coordinator();
+        let ws_mgr = crate::ws::shared_ws_manager();
+        let routes = cluster_routes(coord, rbac_viewer(), ws_mgr);
+
+        // Viewer can list workers (GET)
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/api/v1/cluster/workers")
+            .header("x-api-key", "viewer-key")
+            .reply(&routes)
+            .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_rbac_viewer_cannot_deploy() {
+        let coord = shared_coordinator();
+        let ws_mgr = crate::ws::shared_ws_manager();
+        let routes = cluster_routes(coord, rbac_viewer(), ws_mgr).recover(handle_rejection);
+
+        // Viewer cannot deploy (POST = Operator required)
+        let resp = warp::test::request()
+            .method("POST")
+            .path("/api/v1/cluster/pipeline-groups")
+            .header("x-api-key", "viewer-key")
+            .json(&serde_json::json!({"name": "g1", "pipelines": []}))
+            .reply(&routes)
+            .await;
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_rbac_operator_cannot_delete() {
+        use std::collections::HashMap;
+        let mut keys = HashMap::new();
+        keys.insert(
+            "op-key".to_string(),
+            crate::rbac::ApiKeyEntry {
+                role: Role::Operator,
+                name: Some("ci".to_string()),
+            },
+        );
+        let rbac = Arc::new(RbacConfig::multi_key(keys));
+        let coord = shared_coordinator();
+        let ws_mgr = crate::ws::shared_ws_manager();
+        let routes = cluster_routes(coord, rbac, ws_mgr).recover(handle_rejection);
+
+        // Operator cannot delete workers (DELETE = Admin required)
+        let resp = warp::test::request()
+            .method("DELETE")
+            .path("/api/v1/cluster/workers/w1")
+            .header("x-api-key", "op-key")
+            .reply(&routes)
+            .await;
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_rbac_multi_key_hierarchy() {
+        use std::collections::HashMap;
+        let mut keys = HashMap::new();
+        keys.insert(
+            "admin-key".to_string(),
+            crate::rbac::ApiKeyEntry {
+                role: Role::Admin,
+                name: Some("admin".to_string()),
+            },
+        );
+        keys.insert(
+            "viewer-key".to_string(),
+            crate::rbac::ApiKeyEntry {
+                role: Role::Viewer,
+                name: Some("grafana".to_string()),
+            },
+        );
+        let rbac = Arc::new(RbacConfig::multi_key(keys));
+        let coord = shared_coordinator();
+        let ws_mgr = crate::ws::shared_ws_manager();
+        let routes = cluster_routes(coord, rbac, ws_mgr).recover(handle_rejection);
+
+        // Admin can delete (Admin required)
+        let resp = warp::test::request()
+            .method("DELETE")
+            .path("/api/v1/cluster/workers/w1")
+            .header("x-api-key", "admin-key")
+            .reply(&routes)
+            .await;
+        // 404 because w1 doesn't exist, but NOT 403 — auth passed
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+        // Viewer gets 403 on delete
+        let resp = warp::test::request()
+            .method("DELETE")
+            .path("/api/v1/cluster/workers/w1")
+            .header("x-api-key", "viewer-key")
+            .reply(&routes)
+            .await;
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+        // No key gets 401
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/api/v1/cluster/workers")
+            .reply(&routes)
+            .await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 }
