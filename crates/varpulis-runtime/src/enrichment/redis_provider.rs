@@ -2,7 +2,6 @@
 
 use async_trait::async_trait;
 use std::collections::HashMap;
-use std::sync::Arc;
 use varpulis_core::Value;
 
 use super::{EnrichmentError, EnrichmentProvider, EnrichmentResult};
@@ -96,26 +95,6 @@ impl EnrichmentProvider for RedisEnrichmentProvider {
 }
 
 fn json_to_value(v: &serde_json::Value) -> Value {
-    match v {
-        serde_json::Value::Null => Value::Null,
-        serde_json::Value::Bool(b) => Value::Bool(*b),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Value::Int(i)
-            } else if let Some(f) = n.as_f64() {
-                Value::Float(f)
-            } else {
-                Value::Str(n.to_string().into_boxed_str())
-            }
-        }
-        serde_json::Value::String(s) => Value::Str(s.clone().into_boxed_str()),
-        serde_json::Value::Array(arr) => Value::array(arr.iter().map(json_to_value).collect()),
-        serde_json::Value::Object(map) => {
-            let mut fxmap = varpulis_core::value::FxIndexMap::default();
-            for (k, v) in map {
-                fxmap.insert(Arc::<str>::from(k.as_str()), json_to_value(v));
-            }
-            Value::map(fxmap)
-        }
-    }
+    // Delegate to the centralized bounded converter
+    crate::connector::helpers::json_to_value(v).unwrap_or(Value::Null)
 }

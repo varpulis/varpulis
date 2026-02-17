@@ -89,7 +89,7 @@ mod mqtt_managed_impl {
             mqtt_opts.set_keep_alive(Duration::from_secs(60));
 
             if let (Some(user), Some(pass)) = (&self.config.username, &self.config.password) {
-                mqtt_opts.set_credentials(user, pass);
+                mqtt_opts.set_credentials(user, pass.expose());
             }
 
             let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 10_000);
@@ -169,7 +169,7 @@ mod mqtt_managed_impl {
             mqtt_opts.set_keep_alive(Duration::from_secs(60));
 
             if let (Some(user), Some(pass)) = (&self.config.username, &self.config.password) {
-                mqtt_opts.set_credentials(user, pass);
+                mqtt_opts.set_credentials(user, pass.expose());
             }
 
             let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 10_000);
@@ -219,7 +219,7 @@ mod mqtt_managed_impl {
             mqtt_opts.set_keep_alive(Duration::from_secs(60));
 
             if let (Some(user), Some(pass)) = (&self.config.username, &self.config.password) {
-                mqtt_opts.set_credentials(user, pass);
+                mqtt_opts.set_credentials(user, pass.expose());
             }
 
             let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 10_000);
@@ -267,7 +267,7 @@ mod mqtt_managed_impl {
             mqtt_opts.set_keep_alive(Duration::from_secs(60));
 
             if let (Some(user), Some(pass)) = (&self.config.username, &self.config.password) {
-                mqtt_opts.set_credentials(user, pass);
+                mqtt_opts.set_credentials(user, pass.expose());
             }
 
             let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 10_000);

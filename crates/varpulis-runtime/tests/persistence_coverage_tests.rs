@@ -632,7 +632,7 @@ fn checkpoint_manager_resumes_id_from_existing() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn checkpoint_bincode_round_trip() {
+fn checkpoint_serde_round_trip() {
     let cp = Checkpoint {
         id: 7,
         timestamp_ms: 123456789,
@@ -668,8 +668,8 @@ fn checkpoint_bincode_round_trip() {
         context_states: HashMap::new(),
     };
 
-    let encoded = bincode::serialize(&cp).unwrap();
-    let decoded: Checkpoint = bincode::deserialize(&encoded).unwrap();
+    let encoded = serde_json::to_vec(&cp).unwrap();
+    let decoded: Checkpoint = serde_json::from_slice(&encoded).unwrap();
 
     assert_eq!(decoded.id, 7);
     assert_eq!(decoded.timestamp_ms, 123456789);
@@ -717,8 +717,8 @@ fn checkpoint_with_events_round_trip() {
         context_states: HashMap::new(),
     };
 
-    let encoded = bincode::serialize(&cp).unwrap();
-    let decoded: Checkpoint = bincode::deserialize(&encoded).unwrap();
+    let encoded = serde_json::to_vec(&cp).unwrap();
+    let decoded: Checkpoint = serde_json::from_slice(&encoded).unwrap();
 
     let ws = decoded.window_states.get("s").unwrap();
     assert_eq!(ws.events.len(), 1);
