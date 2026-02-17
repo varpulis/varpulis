@@ -663,7 +663,7 @@ fn execute_op_common(
                 if let Some(ref mut h) = hamlet_aggregator {
                     Some(h)
                 } else if let Some(ref shared) = shared_hamlet_ref {
-                    shared_guard = shared.lock().unwrap();
+                    shared_guard = shared.lock().unwrap_or_else(|e| e.into_inner());
                     Some(&mut *shared_guard)
                 } else {
                     None

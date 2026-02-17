@@ -786,45 +786,60 @@ impl SharedArena {
 
     /// Get the base ZDD
     pub fn base(&self) -> ZddHandle {
-        self.inner.read().unwrap().base()
+        self.inner.read().unwrap_or_else(|e| e.into_inner()).base()
     }
 
     /// Get the empty ZDD
     pub fn empty(&self) -> ZddHandle {
-        self.inner.read().unwrap().empty()
+        self.inner.read().unwrap_or_else(|e| e.into_inner()).empty()
     }
 
     /// Create a singleton
     pub fn singleton(&self, var: u32) -> ZddHandle {
-        self.inner.write().unwrap().singleton(var)
+        self.inner
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .singleton(var)
     }
 
     /// Create from a set
     pub fn from_set(&self, elements: &[u32]) -> ZddHandle {
-        self.inner.write().unwrap().from_set(elements)
+        self.inner
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .from_set(elements)
     }
 
     /// Product with optional
     pub fn product_with_optional(&self, handle: ZddHandle, var: u32) -> ZddHandle {
         self.inner
             .write()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .product_with_optional(handle, var)
     }
 
     /// Union
     pub fn union(&self, a: ZddHandle, b: ZddHandle) -> ZddHandle {
-        self.inner.write().unwrap().union(a, b)
+        self.inner
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .union(a, b)
     }
 
     /// Intersection
     pub fn intersection(&self, a: ZddHandle, b: ZddHandle) -> ZddHandle {
-        self.inner.write().unwrap().intersection(a, b)
+        self.inner
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .intersection(a, b)
     }
 
     /// Difference
     pub fn difference(&self, a: ZddHandle, b: ZddHandle) -> ZddHandle {
-        self.inner.write().unwrap().difference(a, b)
+        self.inner
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .difference(a, b)
     }
 
     /// Count sets (read lock, no caching).
@@ -832,7 +847,10 @@ impl SharedArena {
     /// Uses a read lock for better concurrency. Each call recomputes the count.
     /// For repeated counts on the same ZDD, consider using [`count_cached`](Self::count_cached).
     pub fn count(&self, handle: ZddHandle) -> usize {
-        self.inner.read().unwrap().count_uncached(handle)
+        self.inner
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .count_uncached(handle)
     }
 
     /// Count sets (write lock, with caching).
@@ -840,40 +858,55 @@ impl SharedArena {
     /// Uses the arena's internal cache for repeated calls on the same ZDD.
     /// Takes a write lock, so may block concurrent reads.
     pub fn count_cached(&self, handle: ZddHandle) -> usize {
-        self.inner.write().unwrap().count(handle)
+        self.inner
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .count(handle)
     }
 
     /// Check containment
     pub fn contains(&self, handle: ZddHandle, elements: &[u32]) -> bool {
-        self.inner.read().unwrap().contains(handle, elements)
+        self.inner
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(handle, elements)
     }
 
     /// Check containment (pre-sorted, allocation-free)
     pub fn contains_sorted(&self, handle: ZddHandle, sorted_elements: &[u32]) -> bool {
         self.inner
             .read()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .contains_sorted(handle, sorted_elements)
     }
 
     /// Get node count
     pub fn node_count(&self) -> usize {
-        self.inner.read().unwrap().node_count()
+        self.inner
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .node_count()
     }
 
     /// Run garbage collection
     pub fn gc(&self, live_handles: &[ZddHandle]) -> (GcStats, Vec<ZddHandle>) {
-        self.inner.write().unwrap().gc(live_handles)
+        self.inner
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .gc(live_handles)
     }
 
     /// Clear caches only (no table compaction)
     pub fn gc_caches_only(&self) -> usize {
-        self.inner.write().unwrap().gc_caches_only()
+        self.inner
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .gc_caches_only()
     }
 
     /// Get statistics
     pub fn stats(&self) -> ArenaStats {
-        self.inner.read().unwrap().stats()
+        self.inner.read().unwrap_or_else(|e| e.into_inner()).stats()
     }
 
     /// Clone the Arc for sharing

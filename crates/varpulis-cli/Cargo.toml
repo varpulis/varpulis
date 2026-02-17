@@ -2,6 +2,7 @@
 name = "varpulis-cli"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "CLI for Varpulis streaming analytics engine"
 
 [lib]
