@@ -26,13 +26,13 @@ jobs:
 
       - name: Run benchmarks
         run: |
-          cargo bench -p varpulis-runtime -- --output-format bencher 2>&1 | tee bench-results.txt
+          cargo bench -p varpulis-runtime 2>&1 | tee bench-results.txt
 
       - name: Store benchmark results
         uses: benchmark-action/github-action-benchmark@v1
         with:
           name: Varpulis Performance
-          tool: cargo
+          tool: criterionrs
           output-file-path: bench-results.txt
           # On push to main: update baseline stored in gh-pages branch
           auto-push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
