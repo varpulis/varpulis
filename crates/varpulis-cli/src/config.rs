@@ -378,6 +378,112 @@ pub enum ConfigError {
     ParseError(String),
 }
 
+// =============================================================================
+// Project Config (.varpulis.toml) — lightweight config for SaaS CLI commands
+// =============================================================================
+
+/// Project-level configuration stored in `.varpulis.toml`.
+///
+/// This file stores the remote server URL and API key so that CLI commands
+/// like `deploy`, `status`, `pipelines`, and `undeploy` don't need
+/// `--server` and `--api-key` flags on every invocation.
+///
+/// # Example `.varpulis.toml`:
+/// ```toml
+/// [remote]
+/// url = "http://localhost:9000"
+/// api_key = "my-secret-key"
+///
+/// [deploy]
+/// name = "my-pipeline"
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct ProjectConfig {
+    /// Remote server connection settings
+    pub remote: RemoteConfig,
+
+    /// Default deploy settings
+    pub deploy: DeployConfig,
+}
+
+/// Remote server connection settings
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct RemoteConfig {
+    /// Server URL (e.g. "http://localhost:9000")
+    pub url: Option<String>,
+
+    /// Tenant API key
+    pub api_key: Option<String>,
+}
+
+/// Default deployment settings
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct DeployConfig {
+    /// Default pipeline name
+    pub name: Option<String>,
+}
+
+impl ProjectConfig {
+    /// Load project config from a `.varpulis.toml` file.
+    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, ConfigError> {
+        let path = path.as_ref();
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| ConfigError::IoError(path.to_path_buf(), e.to_string()))?;
+        toml::from_str(&content).map_err(|e| ConfigError::ParseError(e.to_string()))
+    }
+
+    /// Discover `.varpulis.toml` by walking up from the given directory.
+    /// Returns `None` if no config file is found.
+    pub fn discover(start_dir: &Path) -> Option<Self> {
+        let mut dir = start_dir;
+        loop {
+            let candidate = dir.join(".varpulis.toml");
+            if candidate.is_file() {
+                return Self::load(&candidate).ok();
+            }
+            dir = dir.parent()?;
+        }
+    }
+
+    /// Discover from the current working directory.
+    pub fn discover_cwd() -> Option<Self> {
+        let cwd = std::env::current_dir().ok()?;
+        Self::discover(&cwd)
+    }
+
+    /// Resolve the server URL: CLI flag > env var > project config.
+    pub fn resolve_url(&self, cli_flag: Option<&str>) -> Option<String> {
+        cli_flag
+            .map(|s| s.to_string())
+            .or_else(|| self.remote.url.clone())
+    }
+
+    /// Resolve the API key: CLI flag > env var > project config.
+    pub fn resolve_api_key(&self, cli_flag: Option<&str>) -> Option<String> {
+        cli_flag
+            .map(|s| s.to_string())
+            .or_else(|| self.remote.api_key.clone())
+    }
+
+    /// Generate example project config content.
+    pub fn example() -> String {
+        r#"# Varpulis project configuration
+# Place this file in your project root as .varpulis.toml
+
+[remote]
+url = "http://localhost:9000"
+api_key = "your-api-key-here"
+
+[deploy]
+name = "my-pipeline"
+"#
+        .to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -442,5 +548,148 @@ workers = 8
 
         base.merge(override_config);
         assert_eq!(base.server.port, 8888);
+    }
+
+    // Project config tests
+    #[test]
+    fn test_project_config_parse() {
+        let toml = r#"
+[remote]
+url = "http://prod.example.com:9000"
+api_key = "secret-123"
+
+[deploy]
+name = "fraud-detection"
+"#;
+        let config: ProjectConfig = toml::from_str(toml).unwrap();
+        assert_eq!(
+            config.remote.url.as_deref(),
+            Some("http://prod.example.com:9000")
+        );
+        assert_eq!(config.remote.api_key.as_deref(), Some("secret-123"));
+        assert_eq!(config.deploy.name.as_deref(), Some("fraud-detection"));
+    }
+
+    #[test]
+    fn test_project_config_partial() {
+        let toml = r#"
+[remote]
+url = "http://localhost:9000"
+"#;
+        let config: ProjectConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.remote.url.as_deref(), Some("http://localhost:9000"));
+        assert!(config.remote.api_key.is_none());
+        assert!(config.deploy.name.is_none());
+    }
+
+    #[test]
+    fn test_project_config_empty() {
+        let config: ProjectConfig = toml::from_str("").unwrap();
+        assert!(config.remote.url.is_none());
+        assert!(config.remote.api_key.is_none());
+    }
+
+    #[test]
+    fn test_project_config_resolve_url_flag_wins() {
+        let config = ProjectConfig {
+            remote: RemoteConfig {
+                url: Some("http://config-server:9000".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            config.resolve_url(Some("http://flag-server:9000")),
+            Some("http://flag-server:9000".to_string())
+        );
+    }
+
+    #[test]
+    fn test_project_config_resolve_url_config_fallback() {
+        let config = ProjectConfig {
+            remote: RemoteConfig {
+                url: Some("http://config-server:9000".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            config.resolve_url(None),
+            Some("http://config-server:9000".to_string())
+        );
+    }
+
+    #[test]
+    fn test_project_config_resolve_api_key() {
+        let config = ProjectConfig {
+            remote: RemoteConfig {
+                api_key: Some("config-key".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        // Flag wins
+        assert_eq!(
+            config.resolve_api_key(Some("flag-key")),
+            Some("flag-key".to_string())
+        );
+        // Fallback to config
+        assert_eq!(config.resolve_api_key(None), Some("config-key".to_string()));
+    }
+
+    #[test]
+    fn test_project_config_discover_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join(".varpulis.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+[remote]
+url = "http://test:9000"
+api_key = "test-key"
+"#,
+        )
+        .unwrap();
+
+        let config = ProjectConfig::discover(dir.path()).unwrap();
+        assert_eq!(config.remote.url.as_deref(), Some("http://test:9000"));
+        assert_eq!(config.remote.api_key.as_deref(), Some("test-key"));
+    }
+
+    #[test]
+    fn test_project_config_discover_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join(".varpulis.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+[remote]
+url = "http://parent:9000"
+"#,
+        )
+        .unwrap();
+
+        // Create a subdirectory and discover from there
+        let subdir = dir.path().join("sub").join("dir");
+        std::fs::create_dir_all(&subdir).unwrap();
+
+        let config = ProjectConfig::discover(&subdir).unwrap();
+        assert_eq!(config.remote.url.as_deref(), Some("http://parent:9000"));
+    }
+
+    #[test]
+    fn test_project_config_discover_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        // No .varpulis.toml exists
+        let config = ProjectConfig::discover(dir.path());
+        assert!(config.is_none());
+    }
+
+    #[test]
+    fn test_project_config_example() {
+        let example = ProjectConfig::example();
+        assert!(example.contains("[remote]"));
+        assert!(example.contains("url ="));
+        assert!(example.contains("api_key ="));
     }
 }

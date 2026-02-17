@@ -1,0 +1,3 @@
+stream NoAck = Request as r AND NOT Acknowledgment as a .within(30s)
+    .where(a.request_id == r.id)
+    .emit(timeout: r.id)

@@ -1,0 +1,9 @@
+config
+    connector = mqtt(url: "mqtt://localhost:1883", topic: "events")
+
+event SensorReading
+    temperature: float
+    humidity: float
+    sensor_id: string
+
+stream Filtered = SensorReading .where(temperature > 30.0)

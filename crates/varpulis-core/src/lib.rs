@@ -54,6 +54,7 @@
 //! - [`varpulis_runtime`](../varpulis_runtime): Executing VPL programs
 
 pub mod ast;
+pub mod pagination;
 pub mod security;
 pub mod span;
 pub mod types;

@@ -24,6 +24,7 @@ use varpulis_parser::ParseError;
 use warp::http::StatusCode;
 use warp::{Filter, Rejection, Reply};
 
+use varpulis_core::pagination::{PaginationParams, MAX_LIMIT};
 use varpulis_core::security::{JSON_BODY_LIMIT, LARGE_BODY_LIMIT};
 
 /// Shared coordinator state.
@@ -111,6 +112,7 @@ pub fn cluster_routes(
         .and(warp::path::end())
         .and(warp::get())
         .and(with_rbac(rbac.clone(), Role::Viewer))
+        .and(warp::query::<PaginationParams>())
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_list_workers);
 
@@ -147,6 +149,7 @@ pub fn cluster_routes(
         .and(warp::path::end())
         .and(warp::get())
         .and(with_rbac(rbac.clone(), Role::Viewer))
+        .and(warp::query::<PaginationParams>())
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_list_groups);
 
@@ -237,6 +240,7 @@ pub fn cluster_routes(
         .and(warp::path::end())
         .and(warp::get())
         .and(with_rbac(rbac.clone(), Role::Viewer))
+        .and(warp::query::<PaginationParams>())
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_list_migrations);
 
@@ -269,6 +273,7 @@ pub fn cluster_routes(
         .and(warp::path::end())
         .and(warp::get())
         .and(with_rbac(rbac.clone(), Role::Viewer))
+        .and(warp::query::<PaginationParams>())
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_list_connectors);
 
@@ -366,6 +371,7 @@ pub fn cluster_routes(
         .and(warp::path::end())
         .and(warp::get())
         .and(with_rbac(rbac.clone(), Role::Viewer))
+        .and(warp::query::<PaginationParams>())
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_list_models);
 
@@ -807,18 +813,27 @@ async fn handle_heartbeat(
 
 async fn handle_list_workers(
     _auth: (),
+    pagination: PaginationParams,
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    if pagination.exceeds_max() {
+        return Ok(error_response(
+            StatusCode::BAD_REQUEST,
+            &format!("limit must not exceed {MAX_LIMIT}"),
+        ));
+    }
     if let Some(resp) =
         forward_to_leader(&coordinator, "GET", "/api/v1/cluster/workers", None).await
     {
         return Ok(resp);
     }
     let coord = coordinator.read().await;
-    let workers: Vec<WorkerInfo> = coord.workers.values().map(WorkerInfo::from).collect();
+    let all_workers: Vec<WorkerInfo> = coord.workers.values().map(WorkerInfo::from).collect();
+    let (workers, meta) = pagination.paginate(all_workers);
     let resp = serde_json::json!({
         "workers": workers,
-        "total": workers.len(),
+        "total": meta.total,
+        "pagination": meta,
     });
     Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
 }
@@ -962,22 +977,31 @@ async fn handle_deploy_group(
 
 async fn handle_list_groups(
     _auth: (),
+    pagination: PaginationParams,
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    if pagination.exceeds_max() {
+        return Ok(error_response(
+            StatusCode::BAD_REQUEST,
+            &format!("limit must not exceed {MAX_LIMIT}"),
+        ));
+    }
     if let Some(resp) =
         forward_to_leader(&coordinator, "GET", "/api/v1/cluster/pipeline-groups", None).await
     {
         return Ok(resp);
     }
     let coord = coordinator.read().await;
-    let groups: Vec<PipelineGroupInfo> = coord
+    let all_groups: Vec<PipelineGroupInfo> = coord
         .pipeline_groups
         .values()
         .map(PipelineGroupInfo::from)
         .collect();
+    let (pipeline_groups, meta) = pagination.paginate(all_groups);
     let resp = serde_json::json!({
-        "pipeline_groups": groups,
-        "total": groups.len(),
+        "pipeline_groups": pipeline_groups,
+        "total": meta.total,
+        "pagination": meta,
     });
     Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
 }
@@ -1472,16 +1496,24 @@ async fn handle_topology(
 
 async fn handle_list_models(
     _auth: (),
+    pagination: PaginationParams,
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    if pagination.exceeds_max() {
+        return Ok(error_response(
+            StatusCode::BAD_REQUEST,
+            &format!("limit must not exceed {MAX_LIMIT}"),
+        ));
+    }
     if let Some(resp) = forward_to_leader(&coordinator, "GET", "/api/v1/cluster/models", None).await
     {
         return Ok(resp);
     }
     let coord = coordinator.read().await;
-    let models: Vec<&crate::model_registry::ModelRegistryEntry> =
-        coord.model_registry.values().collect();
-    let resp = serde_json::json!({ "models": models, "total": models.len() });
+    let all_models: Vec<crate::model_registry::ModelRegistryEntry> =
+        coord.model_registry.values().cloned().collect();
+    let (models, meta) = pagination.paginate(all_models);
+    let resp = serde_json::json!({ "models": models, "total": meta.total, "pagination": meta });
     Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
 }
 
@@ -1822,15 +1854,22 @@ async fn handle_rebalance(
 
 async fn handle_list_migrations(
     _auth: (),
+    pagination: PaginationParams,
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    if pagination.exceeds_max() {
+        return Ok(error_response(
+            StatusCode::BAD_REQUEST,
+            &format!("limit must not exceed {MAX_LIMIT}"),
+        ));
+    }
     if let Some(resp) =
         forward_to_leader(&coordinator, "GET", "/api/v1/cluster/migrations", None).await
     {
         return Ok(resp);
     }
     let coord = coordinator.read().await;
-    let migrations: Vec<MigrationInfo> = coord
+    let all_migrations: Vec<MigrationInfo> = coord
         .active_migrations
         .values()
         .map(|m| MigrationInfo {
@@ -1844,9 +1883,11 @@ async fn handle_list_migrations(
             elapsed_ms: m.started_at.elapsed().as_millis(),
         })
         .collect();
+    let (migrations, meta) = pagination.paginate(all_migrations);
     let resp = serde_json::json!({
         "migrations": migrations,
-        "total": migrations.len(),
+        "total": meta.total,
+        "pagination": meta,
     });
     Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
 }
@@ -1990,18 +2031,28 @@ async fn handle_manual_migrate(
 
 async fn handle_list_connectors(
     _auth: (),
+    pagination: PaginationParams,
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    if pagination.exceeds_max() {
+        return Ok(error_response(
+            StatusCode::BAD_REQUEST,
+            &format!("limit must not exceed {MAX_LIMIT}"),
+        ));
+    }
     if let Some(resp) =
         forward_to_leader(&coordinator, "GET", "/api/v1/cluster/connectors", None).await
     {
         return Ok(resp);
     }
     let coord = coordinator.read().await;
-    let connectors: Vec<&ClusterConnector> = coord.list_connectors();
+    let all_connectors: Vec<ClusterConnector> =
+        coord.list_connectors().into_iter().cloned().collect();
+    let (connectors, meta) = pagination.paginate(all_connectors);
     let resp = serde_json::json!({
         "connectors": connectors,
-        "total": connectors.len(),
+        "total": meta.total,
+        "pagination": meta,
     });
     Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
 }

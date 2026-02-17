@@ -215,6 +215,11 @@ pub enum StoreError {
     NotFound(String),
     /// Store not initialized
     NotInitialized,
+    /// Checkpoint version is newer than this binary supports
+    IncompatibleVersion {
+        checkpoint_version: u32,
+        current_version: u32,
+    },
 }
 
 impl std::fmt::Display for StoreError {
@@ -224,6 +229,14 @@ impl std::fmt::Display for StoreError {
             StoreError::SerializationError(s) => write!(f, "Serialization error: {}", s),
             StoreError::NotFound(s) => write!(f, "Key not found: {}", s),
             StoreError::NotInitialized => write!(f, "Store not initialized"),
+            StoreError::IncompatibleVersion {
+                checkpoint_version,
+                current_version,
+            } => write!(
+                f,
+                "Checkpoint version {} is newer than supported version {}",
+                checkpoint_version, current_version
+            ),
         }
     }
 }
@@ -275,8 +288,7 @@ impl MemoryStore {
 impl StateStore for MemoryStore {
     fn save_checkpoint(&self, checkpoint: &Checkpoint) -> Result<(), StoreError> {
         let key = format!("checkpoint:{}", checkpoint.id);
-        let data = serde_json::to_vec(checkpoint)
-            .map_err(|e| StoreError::SerializationError(e.to_string()))?;
+        let data = crate::codec::serialize(checkpoint, crate::codec::CheckpointFormat::active())?;
         self.put(&key, &data)
     }
 
@@ -292,8 +304,7 @@ impl StateStore for MemoryStore {
     fn load_checkpoint(&self, id: u64) -> Result<Option<Checkpoint>, StoreError> {
         let key = format!("checkpoint:{}", id);
         if let Some(data) = self.get(&key)? {
-            let checkpoint: Checkpoint = serde_json::from_slice(&data)
-                .map_err(|e| StoreError::SerializationError(e.to_string()))?;
+            let checkpoint: Checkpoint = crate::codec::deserialize(&data)?;
             Ok(Some(checkpoint))
         } else {
             Ok(None)
@@ -397,8 +408,7 @@ impl RocksDbStore {
 impl StateStore for RocksDbStore {
     fn save_checkpoint(&self, checkpoint: &Checkpoint) -> Result<(), StoreError> {
         let key = self.prefixed_key(&format!("checkpoint:{}", checkpoint.id));
-        let data = serde_json::to_vec(checkpoint)
-            .map_err(|e| StoreError::SerializationError(e.to_string()))?;
+        let data = crate::codec::serialize(checkpoint, crate::codec::CheckpointFormat::active())?;
 
         self.db
             .put(key.as_bytes(), &data)
@@ -437,8 +447,7 @@ impl StateStore for RocksDbStore {
             .get(key.as_bytes())
             .map_err(|e| StoreError::IoError(e.to_string()))?
         {
-            let checkpoint: Checkpoint = serde_json::from_slice(&data)
-                .map_err(|e| StoreError::SerializationError(e.to_string()))?;
+            let checkpoint: Checkpoint = crate::codec::deserialize(&data)?;
             debug!("Loaded checkpoint {}", id);
             Ok(Some(checkpoint))
         } else {
@@ -539,8 +548,7 @@ impl FileStore {
 impl StateStore for FileStore {
     fn save_checkpoint(&self, checkpoint: &Checkpoint) -> Result<(), StoreError> {
         let key = format!("checkpoint:{}", checkpoint.id);
-        let data = serde_json::to_vec(checkpoint)
-            .map_err(|e| StoreError::SerializationError(e.to_string()))?;
+        let data = crate::codec::serialize(checkpoint, crate::codec::CheckpointFormat::active())?;
         self.put(&key, &data)
     }
 
@@ -556,8 +564,7 @@ impl StateStore for FileStore {
     fn load_checkpoint(&self, id: u64) -> Result<Option<Checkpoint>, StoreError> {
         let key = format!("checkpoint:{}", id);
         if let Some(data) = self.get(&key)? {
-            let checkpoint: Checkpoint = serde_json::from_slice(&data)
-                .map_err(|e| StoreError::SerializationError(e.to_string()))?;
+            let checkpoint: Checkpoint = crate::codec::deserialize(&data)?;
             Ok(Some(checkpoint))
         } else {
             Ok(None)
@@ -694,9 +701,20 @@ impl CheckpointManager {
     }
 }
 
+/// Current checkpoint schema version.
+pub const CHECKPOINT_VERSION: u32 = 1;
+
+/// Default version for deserialized checkpoints that lack a version field (pre-versioning).
+fn default_checkpoint_version() -> u32 {
+    1
+}
+
 /// Checkpoint for a single engine instance (one context).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineCheckpoint {
+    /// Schema version for forward/backward compatibility.
+    #[serde(default = "default_checkpoint_version")]
+    pub version: u32,
     /// Window states by stream name
     pub window_states: HashMap<String, WindowCheckpoint>,
     /// SASE+ pattern engine states by stream name
@@ -718,6 +736,31 @@ pub struct EngineCheckpoint {
     /// Limit operator states by stream name (counter snapshot)
     #[serde(default)]
     pub limit_states: HashMap<String, LimitCheckpoint>,
+}
+
+impl EngineCheckpoint {
+    /// Validate and migrate a checkpoint to the current schema version.
+    ///
+    /// Returns `Err` if the checkpoint is from a future version that this
+    /// binary does not understand (forward-incompatible).
+    pub fn validate_and_migrate(&mut self) -> Result<(), StoreError> {
+        if self.version > CHECKPOINT_VERSION {
+            return Err(StoreError::IncompatibleVersion {
+                checkpoint_version: self.version,
+                current_version: CHECKPOINT_VERSION,
+            });
+        }
+
+        // Apply sequential migrations: v1 → v2 → … → CHECKPOINT_VERSION
+        // Currently at v1 — no migrations needed yet.
+        // Future example:
+        // if self.version < 2 {
+        //     migrate_v1_to_v2(self);
+        //     self.version = 2;
+        // }
+
+        Ok(())
+    }
 }
 
 /// Checkpoint for SASE+ pattern matching engine state.

@@ -1,0 +1,13 @@
+# Flaky Test Manifest
+#
+# Lists known flaky chaos tests with tracking information.
+# Format: <test_name> | <reason> | <date_added> | <ticket>
+#
+# Tests listed here will be retried up to 2 times before being reported
+# as failures. If a test consistently passes, remove it from this list.
+#
+# To add a test: append a line with the full test path and reason.
+# To remove: delete the line once the root cause is fixed.
+#
+# --- Known Flaky Tests ---
+# (none currently — all chaos tests stabilized)

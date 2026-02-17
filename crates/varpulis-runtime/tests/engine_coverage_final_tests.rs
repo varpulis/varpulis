@@ -350,7 +350,7 @@ async fn checkpoint_preserves_distinct_state() {
     let (tx2, mut rx2) = mpsc::channel(100);
     let mut engine2 = Engine::new(tx2);
     engine2.load(&program).expect("load");
-    engine2.restore_checkpoint(&cp);
+    engine2.restore_checkpoint(&cp).unwrap();
 
     engine2
         .process(Event::new("Tick").with_field("id", Value::Int(1)))
@@ -405,7 +405,7 @@ async fn checkpoint_preserves_limit_state() {
     let (tx2, mut rx2) = mpsc::channel(100);
     let mut engine2 = Engine::new(tx2);
     engine2.load(&program).expect("load");
-    engine2.restore_checkpoint(&cp);
+    engine2.restore_checkpoint(&cp).unwrap();
 
     for i in 3..=5 {
         engine2
@@ -448,7 +448,7 @@ async fn checkpoint_preserves_variables() {
     let (tx2, _rx2) = mpsc::channel(100);
     let mut engine2 = Engine::new(tx2);
     engine2.load(&program).expect("load");
-    engine2.restore_checkpoint(&cp);
+    engine2.restore_checkpoint(&cp).unwrap();
 
     assert_eq!(engine2.get_variable("counter"), Some(&Value::Int(0)));
 }
@@ -1633,7 +1633,7 @@ async fn checkpoint_preserves_count_window() {
     let (tx2, mut rx2) = mpsc::channel(100);
     let mut engine2 = Engine::new(tx2);
     engine2.load(&program).expect("load");
-    engine2.restore_checkpoint(&cp);
+    engine2.restore_checkpoint(&cp).unwrap();
 
     for i in 4..=5 {
         engine2

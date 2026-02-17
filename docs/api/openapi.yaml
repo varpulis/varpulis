@@ -1,0 +1,3014 @@
+openapi: 3.0.3
+info:
+  title: Varpulis CEP API
+  description: |
+    REST API for the Varpulis Complex Event Processing engine.
+
+    The API is split into two surfaces:
+
+    - **SaaS API** -- Multi-tenant pipeline management (deploy, inject, checkpoint/restore, metrics, logs).
+      Authenticated with a per-tenant `x-api-key` header or an `x-admin-key` header for tenant administration.
+    - **Cluster API** -- Coordinator-level endpoints for worker management, pipeline groups,
+      connectors, migrations, models, observability and AI chat.
+      Authenticated via RBAC roles (Viewer, Operator, Admin) resolved from the `x-api-key` header.
+
+    Health and readiness probes (`/health`, `/ready`) require no authentication.
+  version: "1.0.0"
+  license:
+    name: Proprietary
+
+servers:
+  - url: http://localhost:9100
+    description: Coordinator (cluster mode)
+  - url: http://localhost:9000
+    description: Single-node / worker
+
+tags:
+  - name: Pipelines
+    description: SaaS pipeline CRUD, event injection, checkpoint/restore, metrics, and log streaming.
+  - name: Tenants
+    description: Tenant administration (create, list, get, delete). Requires `x-admin-key`.
+  - name: Events
+    description: Event injection into pipelines (single and batch).
+  - name: Cluster
+    description: Cluster-wide operations -- topology, validation, rebalance, summary, Raft status.
+  - name: Workers
+    description: Worker registration, heartbeat, listing, drain, and deletion.
+  - name: Pipeline Groups
+    description: Distributed pipeline group deployment, listing, deletion, and event injection.
+  - name: Connectors
+    description: Cluster connector CRUD.
+  - name: Migrations
+    description: Pipeline migration listing, details, and manual migration.
+  - name: Models
+    description: ML model registry -- upload, list, download, delete.
+  - name: Observability
+    description: Health checks, readiness probes, metrics, Prometheus scrape, scaling recommendations.
+
+# ---------------------------------------------------------------------------
+# Security schemes
+# ---------------------------------------------------------------------------
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: x-api-key
+      description: Per-tenant API key (SaaS) or RBAC key (Cluster).
+    AdminKeyAuth:
+      type: apiKey
+      in: header
+      name: x-admin-key
+      description: Admin key for tenant administration endpoints.
+
+  # -------------------------------------------------------------------------
+  # Reusable parameters
+  # -------------------------------------------------------------------------
+  parameters:
+    LimitParam:
+      name: limit
+      in: query
+      required: false
+      description: Maximum number of items to return (default 50, max 1000).
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 1000
+        default: 50
+    OffsetParam:
+      name: offset
+      in: query
+      required: false
+      description: Number of items to skip before starting to return results.
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+    PipelineIdParam:
+      name: id
+      in: path
+      required: true
+      description: Pipeline identifier.
+      schema:
+        type: string
+    TenantIdParam:
+      name: id
+      in: path
+      required: true
+      description: Tenant identifier.
+      schema:
+        type: string
+    WorkerIdParam:
+      name: id
+      in: path
+      required: true
+      description: Worker identifier.
+      schema:
+        type: string
+    GroupIdParam:
+      name: id
+      in: path
+      required: true
+      description: Pipeline group identifier.
+      schema:
+        type: string
+    ConnectorNameParam:
+      name: name
+      in: path
+      required: true
+      description: Connector name.
+      schema:
+        type: string
+    MigrationIdParam:
+      name: id
+      in: path
+      required: true
+      description: Migration identifier.
+      schema:
+        type: string
+    ModelNameParam:
+      name: name
+      in: path
+      required: true
+      description: Model name.
+      schema:
+        type: string
+
+  # -------------------------------------------------------------------------
+  # Schemas
+  # -------------------------------------------------------------------------
+  schemas:
+    # ---- Common ----
+    ApiError:
+      type: object
+      required: [error, code]
+      properties:
+        error:
+          type: string
+          description: Human-readable error message.
+        code:
+          type: string
+          description: Machine-readable error code.
+
+    PaginationMeta:
+      type: object
+      required: [total, limit, offset, has_more]
+      properties:
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+        has_more:
+          type: boolean
+
+    # ---- SaaS Pipeline types ----
+    DeployPipelineRequest:
+      type: object
+      required: [name, source]
+      properties:
+        name:
+          type: string
+          description: Human-readable pipeline name.
+        source:
+          type: string
+          description: VPL source code.
+
+    DeployPipelineResponse:
+      type: object
+      required: [id, name, status]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+
+    PipelineInfo:
+      type: object
+      required: [id, name, status, source, uptime_secs]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+        source:
+          type: string
+        uptime_secs:
+          type: integer
+          format: uint64
+
+    PipelineListResponse:
+      type: object
+      required: [pipelines, total]
+      properties:
+        pipelines:
+          type: array
+          items:
+            $ref: "#/components/schemas/PipelineInfo"
+        total:
+          type: integer
+        pagination:
+          $ref: "#/components/schemas/PaginationMeta"
+
+    PipelineMetricsResponse:
+      type: object
+      required: [pipeline_id, events_processed, output_events_emitted]
+      properties:
+        pipeline_id:
+          type: string
+        events_processed:
+          type: integer
+          format: uint64
+        output_events_emitted:
+          type: integer
+          format: uint64
+
+    InjectEventRequest:
+      type: object
+      required: [event_type, fields]
+      properties:
+        event_type:
+          type: string
+        fields:
+          type: object
+          additionalProperties: true
+
+    InjectEventResponse:
+      type: object
+      properties:
+        accepted:
+          type: boolean
+        output_events:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+
+    InjectBatchRequest:
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/InjectEventRequest"
+
+    InjectBatchResponse:
+      type: object
+      required: [accepted, output_events, processing_time_us]
+      properties:
+        accepted:
+          type: integer
+        output_events:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        processing_time_us:
+          type: integer
+          format: uint64
+
+    ReloadPipelineRequest:
+      type: object
+      required: [source]
+      properties:
+        source:
+          type: string
+
+    EngineCheckpoint:
+      type: object
+      description: Opaque engine checkpoint blob. Pass the whole object to the restore endpoint.
+      properties:
+        window_states:
+          type: object
+          additionalProperties: true
+        sase_states:
+          type: object
+          additionalProperties: true
+        join_states:
+          type: object
+          additionalProperties: true
+        variables:
+          type: object
+          additionalProperties: true
+        events_processed:
+          type: integer
+          format: uint64
+        output_events_emitted:
+          type: integer
+          format: uint64
+        watermark_state:
+          type: object
+          nullable: true
+          additionalProperties: true
+        distinct_states:
+          type: object
+          additionalProperties: true
+        limit_states:
+          type: object
+          additionalProperties: true
+
+    CheckpointResponse:
+      type: object
+      required: [pipeline_id, checkpoint, events_processed]
+      properties:
+        pipeline_id:
+          type: string
+        checkpoint:
+          $ref: "#/components/schemas/EngineCheckpoint"
+        events_processed:
+          type: integer
+          format: uint64
+
+    RestoreRequest:
+      type: object
+      required: [checkpoint]
+      properties:
+        checkpoint:
+          $ref: "#/components/schemas/EngineCheckpoint"
+
+    RestoreResponse:
+      type: object
+      required: [pipeline_id, restored, events_restored]
+      properties:
+        pipeline_id:
+          type: string
+        restored:
+          type: boolean
+        events_restored:
+          type: integer
+          format: uint64
+
+    QuotaInfo:
+      type: object
+      required: [max_pipelines, max_events_per_second, max_streams_per_pipeline]
+      properties:
+        max_pipelines:
+          type: integer
+        max_events_per_second:
+          type: integer
+          format: uint64
+        max_streams_per_pipeline:
+          type: integer
+
+    UsageResponse:
+      type: object
+      required: [tenant_id, events_processed, output_events_emitted, active_pipelines, quota]
+      properties:
+        tenant_id:
+          type: string
+        events_processed:
+          type: integer
+          format: uint64
+        output_events_emitted:
+          type: integer
+          format: uint64
+        active_pipelines:
+          type: integer
+        quota:
+          $ref: "#/components/schemas/QuotaInfo"
+
+    LogEvent:
+      type: object
+      properties:
+        event_type:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        data:
+          type: object
+          additionalProperties: true
+
+    # ---- Tenant types ----
+    CreateTenantRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        quota_tier:
+          type: string
+          nullable: true
+          enum: [free, pro, enterprise]
+          description: Quota tier (defaults to free).
+
+    TenantResponse:
+      type: object
+      required: [id, name, api_key, quota]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        api_key:
+          type: string
+        quota:
+          $ref: "#/components/schemas/QuotaInfo"
+
+    TenantListResponse:
+      type: object
+      required: [tenants, total]
+      properties:
+        tenants:
+          type: array
+          items:
+            $ref: "#/components/schemas/TenantResponse"
+        total:
+          type: integer
+        pagination:
+          $ref: "#/components/schemas/PaginationMeta"
+
+    TenantUsageInfo:
+      type: object
+      required: [events_processed, output_events_emitted, active_pipelines]
+      properties:
+        events_processed:
+          type: integer
+          format: uint64
+        output_events_emitted:
+          type: integer
+          format: uint64
+        active_pipelines:
+          type: integer
+
+    TenantDetailResponse:
+      type: object
+      required: [id, name, api_key, quota, usage, pipeline_count]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        api_key:
+          type: string
+        quota:
+          $ref: "#/components/schemas/QuotaInfo"
+        usage:
+          $ref: "#/components/schemas/TenantUsageInfo"
+        pipeline_count:
+          type: integer
+
+    # ---- Cluster Worker types ----
+    WorkerCapacity:
+      type: object
+      required: [cpu_cores, pipelines_running, max_pipelines]
+      properties:
+        cpu_cores:
+          type: integer
+        pipelines_running:
+          type: integer
+        max_pipelines:
+          type: integer
+
+    RegisterWorkerRequest:
+      type: object
+      required: [worker_id, address, api_key, capacity]
+      properties:
+        worker_id:
+          type: string
+        address:
+          type: string
+        api_key:
+          type: string
+        capacity:
+          $ref: "#/components/schemas/WorkerCapacity"
+
+    RegisterWorkerResponse:
+      type: object
+      required: [worker_id, status]
+      properties:
+        worker_id:
+          type: string
+        status:
+          type: string
+        heartbeat_interval_secs:
+          type: integer
+          format: uint64
+          nullable: true
+
+    HeartbeatRequest:
+      type: object
+      required: [events_processed, pipelines_running]
+      properties:
+        events_processed:
+          type: integer
+          format: uint64
+        pipelines_running:
+          type: integer
+        pipeline_metrics:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+
+    HeartbeatResponse:
+      type: object
+      required: [acknowledged]
+      properties:
+        acknowledged:
+          type: boolean
+
+    WorkerInfo:
+      type: object
+      required: [id, address, status, pipelines_running, max_pipelines, cpu_cores, assigned_pipelines, events_processed]
+      properties:
+        id:
+          type: string
+        address:
+          type: string
+        status:
+          type: string
+          enum: [registering, ready, unhealthy, draining]
+        pipelines_running:
+          type: integer
+        max_pipelines:
+          type: integer
+        cpu_cores:
+          type: integer
+        assigned_pipelines:
+          type: array
+          items:
+            type: string
+        events_processed:
+          type: integer
+          format: uint64
+
+    WorkerListResponse:
+      type: object
+      required: [workers, total]
+      properties:
+        workers:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkerInfo"
+        total:
+          type: integer
+        pagination:
+          $ref: "#/components/schemas/PaginationMeta"
+
+    DrainRequest:
+      type: object
+      properties:
+        timeout_secs:
+          type: integer
+          format: uint64
+          nullable: true
+          description: Optional drain timeout in seconds.
+
+    DrainResponse:
+      type: object
+      required: [worker_id, pipelines_migrated, status]
+      properties:
+        worker_id:
+          type: string
+        pipelines_migrated:
+          type: integer
+        status:
+          type: string
+
+    # ---- Pipeline Group types ----
+    PipelinePlacement:
+      type: object
+      required: [name, source]
+      properties:
+        name:
+          type: string
+        source:
+          type: string
+          description: VPL source code.
+        worker_affinity:
+          type: string
+          nullable: true
+        replicas:
+          type: integer
+          default: 1
+        partition_key:
+          type: string
+          nullable: true
+
+    InterPipelineRoute:
+      type: object
+      required: [from_pipeline, to_pipeline, event_types]
+      properties:
+        from_pipeline:
+          type: string
+        to_pipeline:
+          type: string
+        event_types:
+          type: array
+          items:
+            type: string
+        mqtt_topic:
+          type: string
+          nullable: true
+
+    PipelineGroupSpec:
+      type: object
+      required: [name, pipelines]
+      properties:
+        name:
+          type: string
+        pipelines:
+          type: array
+          items:
+            $ref: "#/components/schemas/PipelinePlacement"
+        routes:
+          type: array
+          items:
+            $ref: "#/components/schemas/InterPipelineRoute"
+
+    PipelinePlacementInfo:
+      type: object
+      required: [pipeline_name, worker_id, worker_address, pipeline_id, status]
+      properties:
+        pipeline_name:
+          type: string
+        worker_id:
+          type: string
+        worker_address:
+          type: string
+        pipeline_id:
+          type: string
+        status:
+          type: string
+
+    PipelineGroupInfo:
+      type: object
+      required: [id, name, status, pipeline_count, placements]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+        pipeline_count:
+          type: integer
+        placements:
+          type: array
+          items:
+            $ref: "#/components/schemas/PipelinePlacementInfo"
+        sources:
+          type: object
+          additionalProperties:
+            type: string
+          description: Maps pipeline name to VPL source code.
+
+    PipelineGroupListResponse:
+      type: object
+      required: [pipeline_groups, total]
+      properties:
+        pipeline_groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/PipelineGroupInfo"
+        total:
+          type: integer
+        pagination:
+          $ref: "#/components/schemas/PaginationMeta"
+
+    # ---- Cluster Inject types ----
+    ClusterInjectEventRequest:
+      type: object
+      required: [event_type]
+      properties:
+        event_type:
+          type: string
+        fields:
+          type: object
+          additionalProperties: true
+
+    ClusterInjectBatchRequest:
+      type: object
+      required: [events_text]
+      properties:
+        events_text:
+          type: string
+          description: Newline-delimited event text.
+
+    ClusterInjectBatchResponse:
+      type: object
+      required: [events_sent, events_failed, output_events, errors, processing_time_us]
+      properties:
+        events_sent:
+          type: integer
+        events_failed:
+          type: integer
+        output_events:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        errors:
+          type: array
+          items:
+            type: string
+        processing_time_us:
+          type: integer
+          format: uint64
+
+    # ---- Topology types ----
+    TopologyWorkerEntry:
+      type: object
+      required: [id, address, status, pipeline_groups]
+      properties:
+        id:
+          type: string
+        address:
+          type: string
+        status:
+          type: string
+        pipeline_groups:
+          type: array
+          items:
+            type: string
+
+    TopologyRouteEntry:
+      type: object
+      required: [source_worker, source_pipeline, target_worker, target_pipeline, route_type]
+      properties:
+        source_worker:
+          type: string
+        source_pipeline:
+          type: string
+        target_worker:
+          type: string
+        target_pipeline:
+          type: string
+        route_type:
+          type: string
+
+    PipelineTopologyEntry:
+      type: object
+      required: [name, worker_id, worker_address]
+      properties:
+        name:
+          type: string
+        worker_id:
+          type: string
+        worker_address:
+          type: string
+
+    RouteTopologyEntry:
+      type: object
+      required: [from_pipeline, to_pipeline, event_types]
+      properties:
+        from_pipeline:
+          type: string
+        to_pipeline:
+          type: string
+        event_types:
+          type: array
+          items:
+            type: string
+
+    GroupTopology:
+      type: object
+      required: [group_id, group_name, pipelines, routes]
+      properties:
+        group_id:
+          type: string
+        group_name:
+          type: string
+        pipelines:
+          type: array
+          items:
+            $ref: "#/components/schemas/PipelineTopologyEntry"
+        routes:
+          type: array
+          items:
+            $ref: "#/components/schemas/RouteTopologyEntry"
+
+    TopologyInfo:
+      type: object
+      required: [workers, routes, groups]
+      properties:
+        workers:
+          type: array
+          items:
+            $ref: "#/components/schemas/TopologyWorkerEntry"
+        routes:
+          type: array
+          items:
+            $ref: "#/components/schemas/TopologyRouteEntry"
+        groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/GroupTopology"
+
+    # ---- Validate types ----
+    ValidateRequest:
+      type: object
+      required: [source]
+      properties:
+        source:
+          type: string
+          description: VPL source code to validate.
+
+    ValidateDiagnostic:
+      type: object
+      required: [severity, line, column, message]
+      properties:
+        severity:
+          type: string
+          enum: [error, warning]
+        line:
+          type: integer
+        column:
+          type: integer
+        message:
+          type: string
+        hint:
+          type: string
+          nullable: true
+
+    ValidateResponse:
+      type: object
+      required: [valid, diagnostics]
+      properties:
+        valid:
+          type: boolean
+        diagnostics:
+          type: array
+          items:
+            $ref: "#/components/schemas/ValidateDiagnostic"
+
+    # ---- Migration types ----
+    MigrationInfo:
+      type: object
+      required: [id, pipeline_name, group_id, source_worker, target_worker, status, reason, elapsed_ms]
+      properties:
+        id:
+          type: string
+        pipeline_name:
+          type: string
+        group_id:
+          type: string
+        source_worker:
+          type: string
+        target_worker:
+          type: string
+        status:
+          type: string
+        reason:
+          type: string
+        elapsed_ms:
+          type: integer
+          format: uint128
+
+    MigrationListResponse:
+      type: object
+      required: [migrations, total]
+      properties:
+        migrations:
+          type: array
+          items:
+            $ref: "#/components/schemas/MigrationInfo"
+        total:
+          type: integer
+        pagination:
+          $ref: "#/components/schemas/PaginationMeta"
+
+    ManualMigrateRequest:
+      type: object
+      required: [target_worker_id]
+      properties:
+        target_worker_id:
+          type: string
+
+    ManualMigrateResponse:
+      type: object
+      required: [migration_id, pipeline, group_id, status]
+      properties:
+        migration_id:
+          type: string
+        pipeline:
+          type: string
+        group_id:
+          type: string
+        status:
+          type: string
+
+    RebalanceResponse:
+      type: object
+      required: [migrations_started, migration_ids]
+      properties:
+        migrations_started:
+          type: integer
+        migration_ids:
+          type: array
+          items:
+            type: string
+
+    # ---- Connector types ----
+    ClusterConnector:
+      type: object
+      required: [name, connector_type, params]
+      properties:
+        name:
+          type: string
+        connector_type:
+          type: string
+          description: "Connector type (e.g. mqtt, kafka)."
+        params:
+          type: object
+          additionalProperties:
+            type: string
+        description:
+          type: string
+          nullable: true
+
+    ConnectorListResponse:
+      type: object
+      required: [connectors, total]
+      properties:
+        connectors:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClusterConnector"
+        total:
+          type: integer
+        pagination:
+          $ref: "#/components/schemas/PaginationMeta"
+
+    # ---- Metrics types ----
+    ConnectorHealth:
+      type: object
+      properties:
+        connector_name:
+          type: string
+        connector_type:
+          type: string
+        connected:
+          type: boolean
+        last_error:
+          type: string
+          nullable: true
+
+    PipelineWorkerMetrics:
+      type: object
+      required: [pipeline_name, worker_id, events_in, events_out]
+      properties:
+        pipeline_name:
+          type: string
+        worker_id:
+          type: string
+        events_in:
+          type: integer
+          format: uint64
+        events_out:
+          type: integer
+          format: uint64
+        connector_health:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConnectorHealth"
+
+    ClusterMetrics:
+      type: object
+      required: [pipelines]
+      properties:
+        pipelines:
+          type: array
+          items:
+            $ref: "#/components/schemas/PipelineWorkerMetrics"
+
+    ScalingRecommendation:
+      type: object
+      required: [action, current_workers, target_workers, reason, avg_pipelines_per_worker, total_pipelines, timestamp]
+      properties:
+        action:
+          type: string
+          enum: [scale_up, scale_down, stable]
+        current_workers:
+          type: integer
+        target_workers:
+          type: integer
+        reason:
+          type: string
+        avg_pipelines_per_worker:
+          type: number
+          format: double
+        total_pipelines:
+          type: integer
+        timestamp:
+          type: string
+          format: date-time
+
+    ClusterSummary:
+      type: object
+      required: [total_workers, healthy_workers, unhealthy_workers, draining_workers, total_pipeline_groups, active_pipeline_groups, total_events_processed, events_per_second]
+      properties:
+        total_workers:
+          type: integer
+        healthy_workers:
+          type: integer
+        unhealthy_workers:
+          type: integer
+        draining_workers:
+          type: integer
+        total_pipeline_groups:
+          type: integer
+        active_pipeline_groups:
+          type: integer
+        total_events_processed:
+          type: integer
+          format: uint64
+        events_per_second:
+          type: number
+          format: double
+
+    RaftNodeInfo:
+      type: object
+      properties:
+        id:
+          type: integer
+        address:
+          type: string
+        role:
+          type: string
+          enum: [leader, follower, unknown]
+        is_current:
+          type: boolean
+
+    RaftStatus:
+      type: object
+      required: [enabled, this_node_id, term, commit_index, nodes]
+      properties:
+        enabled:
+          type: boolean
+        this_node_id:
+          type: integer
+        leader_id:
+          type: integer
+          nullable: true
+        term:
+          type: integer
+          format: uint64
+        commit_index:
+          type: integer
+          format: uint64
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/RaftNodeInfo"
+
+    # ---- Model Registry types ----
+    ModelRegistryEntry:
+      type: object
+      required: [name, s3_key, format, inputs, outputs, size_bytes, uploaded_at]
+      properties:
+        name:
+          type: string
+        s3_key:
+          type: string
+        format:
+          type: string
+        inputs:
+          type: array
+          items:
+            type: string
+        outputs:
+          type: array
+          items:
+            type: string
+        size_bytes:
+          type: integer
+          format: uint64
+        uploaded_at:
+          type: string
+          format: date-time
+        description:
+          type: string
+
+    ModelListResponse:
+      type: object
+      required: [models, total]
+      properties:
+        models:
+          type: array
+          items:
+            $ref: "#/components/schemas/ModelRegistryEntry"
+        total:
+          type: integer
+        pagination:
+          $ref: "#/components/schemas/PaginationMeta"
+
+    UploadModelRequest:
+      type: object
+      required: [name, inputs, outputs]
+      properties:
+        name:
+          type: string
+        format:
+          type: string
+          nullable: true
+          description: "Model format (default: onnx)."
+        inputs:
+          type: array
+          items:
+            type: string
+        outputs:
+          type: array
+          items:
+            type: string
+        description:
+          type: string
+        data_base64:
+          type: string
+          description: Base64-encoded model data.
+
+    # ---- Chat types ----
+    ChatMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role:
+          type: string
+        content:
+          type: string
+
+    ChatRequest:
+      type: object
+      required: [messages]
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatMessage"
+
+    ToolCallInfo:
+      type: object
+      required: [tool_name, input, output]
+      properties:
+        tool_name:
+          type: string
+        input:
+          type: object
+          additionalProperties: true
+        output:
+          type: object
+          additionalProperties: true
+
+    ChatResponse:
+      type: object
+      required: [message]
+      properties:
+        message:
+          $ref: "#/components/schemas/ChatMessage"
+        tool_calls_executed:
+          type: array
+          items:
+            $ref: "#/components/schemas/ToolCallInfo"
+
+    LlmConfigResponse:
+      type: object
+      required: [provider, model, endpoint, has_api_key, configured]
+      properties:
+        provider:
+          type: string
+        model:
+          type: string
+        endpoint:
+          type: string
+        has_api_key:
+          type: boolean
+        configured:
+          type: boolean
+
+    LlmConfig:
+      type: object
+      required: [endpoint, model, provider]
+      properties:
+        endpoint:
+          type: string
+        model:
+          type: string
+        api_key:
+          type: string
+          nullable: true
+        provider:
+          type: string
+          enum: [openai-compatible, anthropic]
+
+    # ---- Health types ----
+    HealthResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, no_workers, critical]
+        role:
+          type: string
+        version:
+          type: string
+        uptime_seconds:
+          type: number
+          format: double
+        workers:
+          type: object
+          properties:
+            total:
+              type: integer
+            healthy:
+              type: integer
+            unhealthy:
+              type: integer
+            draining:
+              type: integer
+        ws_connections:
+          type: integer
+        pipeline_groups:
+          type: integer
+        active_migrations:
+          type: integer
+        total_events_processed:
+          type: integer
+          format: uint64
+        last_health_sweep:
+          type: object
+          nullable: true
+          properties:
+            workers_checked:
+              type: integer
+            workers_marked_unhealthy:
+              type: integer
+
+    ReadyResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+        role:
+          type: string
+        engine_loaded:
+          type: boolean
+        streams_count:
+          type: integer
+        events_processed:
+          type: integer
+          format: uint64
+        output_events_emitted:
+          type: integer
+          format: uint64
+        reason:
+          type: string
+          description: Present when status is not_ready.
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+paths:
+  # ==========================================================================
+  # Health / Readiness (no auth)
+  # ==========================================================================
+  /health:
+    get:
+      tags: [Observability]
+      summary: Liveness health check
+      description: Returns health status of the node. No authentication required. Used by Kubernetes liveness probes.
+      operationId: healthCheck
+      responses:
+        "200":
+          description: Health status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /ready:
+    get:
+      tags: [Observability]
+      summary: Readiness probe
+      description: Returns readiness status. Returns 503 if engine is not loaded. No authentication required. Used by Kubernetes readiness probes.
+      operationId: readinessCheck
+      responses:
+        "200":
+          description: Node is ready.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyResponse"
+        "503":
+          description: Node is not ready.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyResponse"
+
+  # ==========================================================================
+  # SaaS Pipeline endpoints
+  # ==========================================================================
+  /api/v1/pipelines:
+    post:
+      tags: [Pipelines]
+      summary: Deploy a new pipeline
+      operationId: deployPipeline
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeployPipelineRequest"
+      responses:
+        "201":
+          description: Pipeline deployed successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeployPipelineResponse"
+        "400":
+          description: Invalid VPL source.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          description: Invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "429":
+          description: Quota exceeded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+    get:
+      tags: [Pipelines]
+      summary: List pipelines
+      operationId: listPipelines
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+      responses:
+        "200":
+          description: Paginated list of pipelines.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PipelineListResponse"
+        "400":
+          description: Invalid pagination parameters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          description: Invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/v1/pipelines/{id}:
+    get:
+      tags: [Pipelines]
+      summary: Get pipeline details
+      operationId: getPipeline
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PipelineIdParam"
+      responses:
+        "200":
+          description: Pipeline details.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PipelineInfo"
+        "401":
+          description: Invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Pipeline not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+    delete:
+      tags: [Pipelines]
+      summary: Delete a pipeline
+      operationId: deletePipeline
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PipelineIdParam"
+      responses:
+        "200":
+          description: Pipeline deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+        "401":
+          description: Invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Pipeline not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/v1/pipelines/{id}/events:
+    post:
+      tags: [Pipelines, Events]
+      summary: Inject a single event
+      operationId: injectEvent
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PipelineIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InjectEventRequest"
+      responses:
+        "200":
+          description: Event accepted and processed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InjectEventResponse"
+        "401":
+          description: Invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Pipeline not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "429":
+          description: Rate limit exceeded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/v1/pipelines/{id}/events-batch:
+    post:
+      tags: [Pipelines, Events]
+      summary: Inject a batch of events
+      operationId: injectEventBatch
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PipelineIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InjectBatchRequest"
+      responses:
+        "200":
+          description: Batch processed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InjectBatchResponse"
+        "401":
+          description: Invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/v1/pipelines/{id}/checkpoint:
+    post:
+      tags: [Pipelines]
+      summary: Create a pipeline checkpoint
+      operationId: checkpointPipeline
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PipelineIdParam"
+      responses:
+        "200":
+          description: Checkpoint created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CheckpointResponse"
+        "401":
+          description: Invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Pipeline not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/v1/pipelines/{id}/restore:
+    post:
+      tags: [Pipelines]
+      summary: Restore a pipeline from checkpoint
+      operationId: restorePipeline
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PipelineIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RestoreRequest"
+      responses:
+        "200":
+          description: Pipeline restored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RestoreResponse"
+        "401":
+          description: Invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Pipeline not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/v1/pipelines/{id}/metrics:
+    get:
+      tags: [Pipelines, Observability]
+      summary: Get pipeline metrics
+      operationId: getPipelineMetrics
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PipelineIdParam"
+      responses:
+        "200":
+          description: Pipeline metrics.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PipelineMetricsResponse"
+        "401":
+          description: Invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Pipeline not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/v1/pipelines/{id}/reload:
+    post:
+      tags: [Pipelines]
+      summary: Reload pipeline with new VPL source
+      operationId: reloadPipeline
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PipelineIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReloadPipelineRequest"
+      responses:
+        "200":
+          description: Pipeline reloaded.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reloaded:
+                    type: boolean
+        "400":
+          description: Invalid VPL source.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          description: Invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Pipeline not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/v1/pipelines/{id}/logs:
+    get:
+      tags: [Pipelines, Observability]
+      summary: Stream pipeline logs (SSE)
+      description: Server-Sent Events stream of pipeline output events. Each SSE `data` payload is a JSON LogEvent.
+      operationId: streamPipelineLogs
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PipelineIdParam"
+      responses:
+        "200":
+          description: SSE event stream.
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/LogEvent"
+        "401":
+          description: Invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Pipeline not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  # ==========================================================================
+  # SaaS Usage endpoint
+  # ==========================================================================
+  /api/v1/usage:
+    get:
+      tags: [Pipelines, Observability]
+      summary: Get tenant usage
+      operationId: getUsage
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Usage information for the authenticated tenant.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsageResponse"
+        "401":
+          description: Invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  # ==========================================================================
+  # SaaS Tenant Admin endpoints
+  # ==========================================================================
+  /api/v1/tenants:
+    post:
+      tags: [Tenants]
+      summary: Create a new tenant
+      operationId: createTenant
+      security:
+        - AdminKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTenantRequest"
+      responses:
+        "201":
+          description: Tenant created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantResponse"
+        "401":
+          description: Invalid admin key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: Admin API disabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "409":
+          description: Tenant already exists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+    get:
+      tags: [Tenants]
+      summary: List all tenants
+      operationId: listTenants
+      security:
+        - AdminKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+      responses:
+        "200":
+          description: Paginated list of tenants.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantListResponse"
+        "400":
+          description: Invalid pagination parameters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          description: Invalid admin key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: Admin API disabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/v1/tenants/{id}:
+    get:
+      tags: [Tenants]
+      summary: Get tenant details
+      operationId: getTenant
+      security:
+        - AdminKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TenantIdParam"
+      responses:
+        "200":
+          description: Tenant details including usage and pipeline count.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantDetailResponse"
+        "401":
+          description: Invalid admin key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: Admin API disabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Tenant not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+    delete:
+      tags: [Tenants]
+      summary: Delete a tenant
+      operationId: deleteTenant
+      security:
+        - AdminKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TenantIdParam"
+      responses:
+        "200":
+          description: Tenant deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+        "401":
+          description: Invalid admin key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: Admin API disabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Tenant not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  # ==========================================================================
+  # Cluster Worker endpoints
+  # ==========================================================================
+  /api/v1/cluster/workers/register:
+    post:
+      tags: [Workers]
+      summary: Register a new worker
+      description: Register a worker node with the coordinator. Requires Operator role.
+      operationId: registerWorker
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterWorkerRequest"
+      responses:
+        "201":
+          description: Worker registered.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegisterWorkerResponse"
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: Insufficient permissions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/v1/cluster/workers/{id}/heartbeat:
+    post:
+      tags: [Workers]
+      summary: Send worker heartbeat
+      description: Workers send periodic heartbeats to report liveness and metrics. Requires Operator role.
+      operationId: workerHeartbeat
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/WorkerIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HeartbeatRequest"
+      responses:
+        "200":
+          description: Heartbeat acknowledged.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HeartbeatResponse"
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Worker not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/v1/cluster/workers:
+    get:
+      tags: [Workers]
+      summary: List workers
+      description: List all registered workers with their status and capacity. Requires Viewer role.
+      operationId: listWorkers
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+      responses:
+        "200":
+          description: Paginated list of workers.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkerListResponse"
+        "400":
+          description: Invalid pagination parameters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/v1/cluster/workers/{id}:
+    get:
+      tags: [Workers]
+      summary: Get worker details
+      description: Get detailed information about a specific worker. Requires Viewer role.
+      operationId: getWorker
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/WorkerIdParam"
+      responses:
+        "200":
+          description: Worker details.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkerInfo"
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Worker not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+    delete:
+      tags: [Workers]
+      summary: Delete (deregister) a worker
+      description: Remove a worker from the cluster. Requires Admin role.
+      operationId: deleteWorker
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/WorkerIdParam"
+      responses:
+        "200":
+          description: Worker deregistered.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: Insufficient permissions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Worker not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/v1/cluster/workers/{id}/drain:
+    post:
+      tags: [Workers]
+      summary: Drain a worker
+      description: Migrate all pipelines off a worker to other healthy workers. Requires Operator role.
+      operationId: drainWorker
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/WorkerIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DrainRequest"
+      responses:
+        "200":
+          description: Worker drained.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DrainResponse"
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Worker not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "409":
+          description: Worker already draining.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: No other workers available.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  # ==========================================================================
+  # Cluster Pipeline Group endpoints
+  # ==========================================================================
+  /api/v1/cluster/pipeline-groups:
+    post:
+      tags: [Pipeline Groups]
+      summary: Deploy a pipeline group
+      description: Deploy a group of related pipelines across the cluster. Requires Operator role.
+      operationId: deployPipelineGroup
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PipelineGroupSpec"
+      responses:
+        "201":
+          description: Pipeline group deployed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PipelineGroupInfo"
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: Insufficient permissions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "500":
+          description: Deployment failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: No workers available.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+    get:
+      tags: [Pipeline Groups]
+      summary: List pipeline groups
+      description: List all deployed pipeline groups. Requires Viewer role.
+      operationId: listPipelineGroups
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+      responses:
+        "200":
+          description: Paginated list of pipeline groups.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PipelineGroupListResponse"
+        "400":
+          description: Invalid pagination parameters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/v1/cluster/pipeline-groups/{id}:
+    get:
+      tags: [Pipeline Groups]
+      summary: Get pipeline group details
+      description: Get details of a specific pipeline group. Requires Viewer role.
+      operationId: getPipelineGroup
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/GroupIdParam"
+      responses:
+        "200":
+          description: Pipeline group details.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PipelineGroupInfo"
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Pipeline group not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+    delete:
+      tags: [Pipeline Groups]
+      summary: Delete (tear down) a pipeline group
+      description: Tear down all pipelines in a group and remove it. Requires Admin role.
+      operationId: deletePipelineGroup
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/GroupIdParam"
+      responses:
+        "200":
+          description: Pipeline group torn down.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  torn_down:
+                    type: boolean
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: Insufficient permissions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Pipeline group not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/v1/cluster/pipeline-groups/{id}/inject:
+    post:
+      tags: [Pipeline Groups, Events]
+      summary: Inject a single event into a pipeline group
+      description: Route an event to the appropriate pipeline in the group. Requires Operator role.
+      operationId: clusterInjectEvent
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/GroupIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClusterInjectEventRequest"
+      responses:
+        "200":
+          description: Event injected.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Pipeline group not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "502":
+          description: Routing failed to reach target worker.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/v1/cluster/pipeline-groups/{id}/inject-batch:
+    post:
+      tags: [Pipeline Groups, Events]
+      summary: Inject a batch of events into a pipeline group
+      description: Batch inject newline-delimited events. Requires Operator role.
+      operationId: clusterInjectEventBatch
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/GroupIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClusterInjectBatchRequest"
+      responses:
+        "200":
+          description: Batch processed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClusterInjectBatchResponse"
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Pipeline group not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  # ==========================================================================
+  # Cluster Topology, Validate, Rebalance
+  # ==========================================================================
+  /api/v1/cluster/topology:
+    get:
+      tags: [Cluster]
+      summary: Get cluster topology
+      description: Returns the full cluster topology including workers, pipelines, and routes. Requires Viewer role.
+      operationId: getTopology
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Cluster topology.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TopologyInfo"
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/v1/cluster/validate:
+    post:
+      tags: [Cluster]
+      summary: Validate VPL source
+      description: Parse and semantically validate VPL source code without deploying. Requires Viewer role.
+      operationId: validateVpl
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ValidateRequest"
+      responses:
+        "200":
+          description: Validation result (always 200, check `valid` field).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidateResponse"
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/v1/cluster/rebalance:
+    post:
+      tags: [Cluster]
+      summary: Rebalance cluster
+      description: Trigger pipeline rebalancing across workers. Requires Operator role.
+      operationId: rebalanceCluster
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Rebalance completed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RebalanceResponse"
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: Insufficient permissions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: No workers available.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  # ==========================================================================
+  # Cluster Migration endpoints
+  # ==========================================================================
+  /api/v1/cluster/migrations:
+    get:
+      tags: [Migrations]
+      summary: List active migrations
+      description: List all active and recent pipeline migrations. Requires Viewer role.
+      operationId: listMigrations
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+      responses:
+        "200":
+          description: Paginated list of migrations.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MigrationListResponse"
+        "400":
+          description: Invalid pagination parameters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/v1/cluster/migrations/{id}:
+    get:
+      tags: [Migrations]
+      summary: Get migration details
+      description: Get details of a specific migration. Requires Viewer role.
+      operationId: getMigration
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/MigrationIdParam"
+      responses:
+        "200":
+          description: Migration details.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MigrationInfo"
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Migration not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/v1/cluster/pipelines/{group}/{pipeline}/migrate:
+    post:
+      tags: [Migrations]
+      summary: Manually migrate a pipeline
+      description: Manually migrate a pipeline to a specific target worker. Requires Operator role.
+      operationId: manualMigratePipeline
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - name: group
+          in: path
+          required: true
+          description: Pipeline group identifier.
+          schema:
+            type: string
+        - name: pipeline
+          in: path
+          required: true
+          description: Pipeline name within the group.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ManualMigrateRequest"
+      responses:
+        "202":
+          description: Migration started.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManualMigrateResponse"
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Pipeline group or pipeline not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "500":
+          description: Migration failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  # ==========================================================================
+  # Cluster Connector endpoints
+  # ==========================================================================
+  /api/v1/cluster/connectors:
+    get:
+      tags: [Connectors]
+      summary: List connectors
+      description: List all registered cluster connectors. Requires Viewer role.
+      operationId: listConnectors
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+      responses:
+        "200":
+          description: Paginated list of connectors.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectorListResponse"
+        "400":
+          description: Invalid pagination parameters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+    post:
+      tags: [Connectors]
+      summary: Create a connector
+      description: Register a new cluster connector. Requires Operator role.
+      operationId: createConnector
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClusterConnector"
+      responses:
+        "201":
+          description: Connector created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClusterConnector"
+        "400":
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: Insufficient permissions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/v1/cluster/connectors/{name}:
+    get:
+      tags: [Connectors]
+      summary: Get connector details
+      description: Get details of a specific connector. Requires Viewer role.
+      operationId: getConnector
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ConnectorNameParam"
+      responses:
+        "200":
+          description: Connector details.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClusterConnector"
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Connector not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+    put:
+      tags: [Connectors]
+      summary: Update a connector
+      description: Update an existing cluster connector. Requires Operator role.
+      operationId: updateConnector
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ConnectorNameParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClusterConnector"
+      responses:
+        "200":
+          description: Connector updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClusterConnector"
+        "400":
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Connector not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+    delete:
+      tags: [Connectors]
+      summary: Delete a connector
+      description: Remove a cluster connector. Requires Admin role.
+      operationId: deleteConnector
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ConnectorNameParam"
+      responses:
+        "200":
+          description: Connector deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: Insufficient permissions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Connector not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  # ==========================================================================
+  # Cluster Observability endpoints
+  # ==========================================================================
+  /api/v1/cluster/metrics:
+    get:
+      tags: [Observability]
+      summary: Get cluster metrics
+      description: Get per-pipeline per-worker metrics aggregated across the cluster. Requires Viewer role.
+      operationId: getClusterMetrics
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Cluster metrics.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClusterMetrics"
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/v1/cluster/prometheus:
+    get:
+      tags: [Observability]
+      summary: Prometheus metrics scrape endpoint
+      description: Returns Prometheus-format metrics. No authentication required.
+      operationId: prometheusMetrics
+      responses:
+        "200":
+          description: Prometheus metrics in text exposition format.
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /api/v1/cluster/scaling:
+    get:
+      tags: [Observability]
+      summary: Get scaling recommendations
+      description: Get auto-scaling recommendation based on current load. Requires Viewer role.
+      operationId: getScalingRecommendation
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Scaling recommendation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScalingRecommendation"
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/v1/cluster/summary:
+    get:
+      tags: [Cluster, Observability]
+      summary: Get cluster summary
+      description: High-level cluster summary with worker and pipeline group counts. Requires Viewer role.
+      operationId: getClusterSummary
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: Cluster summary.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClusterSummary"
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/v1/cluster/raft:
+    get:
+      tags: [Cluster]
+      summary: Get Raft consensus status
+      description: Returns Raft cluster state including leader, term, and node list. No authentication required.
+      operationId: getRaftStatus
+      responses:
+        "200":
+          description: Raft status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RaftStatus"
+
+  # ==========================================================================
+  # Cluster Model Registry endpoints
+  # ==========================================================================
+  /api/v1/cluster/models:
+    get:
+      tags: [Models]
+      summary: List registered models
+      description: List all ML models in the registry. Requires Viewer role.
+      operationId: listModels
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/OffsetParam"
+      responses:
+        "200":
+          description: Paginated list of models.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelListResponse"
+        "400":
+          description: Invalid pagination parameters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+    post:
+      tags: [Models]
+      summary: Upload a model
+      description: Register and upload a new ML model. Requires Operator role.
+      operationId: uploadModel
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UploadModelRequest"
+      responses:
+        "201":
+          description: Model uploaded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelRegistryEntry"
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: Insufficient permissions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/v1/cluster/models/{name}:
+    delete:
+      tags: [Models]
+      summary: Delete a model
+      description: Remove a model from the registry. Requires Admin role.
+      operationId: deleteModel
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ModelNameParam"
+      responses:
+        "200":
+          description: Model deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: string
+                    description: Name of the deleted model.
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: Insufficient permissions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Model not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/v1/cluster/models/{name}/download:
+    get:
+      tags: [Models]
+      summary: Download model metadata
+      description: Get model metadata (including S3 key for download). Requires Viewer role.
+      operationId: downloadModel
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ModelNameParam"
+      responses:
+        "200":
+          description: Model metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelRegistryEntry"
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Model not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  # ==========================================================================
+  # Cluster Chat endpoints
+  # ==========================================================================
+  /api/v1/cluster/chat:
+    post:
+      tags: [Cluster]
+      summary: AI chat completion
+      description: Send messages to the configured LLM with cluster-aware tool calling. Requires Viewer role.
+      operationId: chat
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatRequest"
+      responses:
+        "200":
+          description: Chat response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatResponse"
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "502":
+          description: LLM provider error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: No LLM provider configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/v1/cluster/chat/config:
+    get:
+      tags: [Cluster]
+      summary: Get chat LLM configuration
+      description: Get the current LLM provider configuration. Requires Viewer role.
+      operationId: getChatConfig
+      security:
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: LLM configuration.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LlmConfigResponse"
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+    put:
+      tags: [Cluster]
+      summary: Update chat LLM configuration
+      description: Update the LLM provider configuration. Requires Operator role.
+      operationId: updateChatConfig
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LlmConfig"
+      responses:
+        "200":
+          description: Configuration updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+        "401":
+          description: Missing or invalid API key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: Insufficient permissions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"

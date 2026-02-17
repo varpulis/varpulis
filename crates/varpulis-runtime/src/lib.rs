@@ -105,6 +105,7 @@
 
 pub mod aggregation;
 pub mod circuit_breaker;
+pub mod codec;
 pub mod columnar;
 pub mod connector;
 pub mod context;
