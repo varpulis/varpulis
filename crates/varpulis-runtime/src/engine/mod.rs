@@ -555,6 +555,21 @@ impl Engine {
             self.context_name.as_deref(),
         );
 
+        // Wrap sinks with circuit breaker + DLQ when sink operations exist
+        if !self.sinks.cache().is_empty() {
+            let dlq = crate::dead_letter::DeadLetterQueue::open("varpulis-dlq.jsonl")
+                .map(Arc::new)
+                .ok();
+            if dlq.is_some() {
+                tracing::info!(
+                    "Dead letter queue enabled at varpulis-dlq.jsonl for {} sink(s)",
+                    self.sinks.cache().len()
+                );
+            }
+            self.sinks
+                .wrap_with_resilience(crate::circuit_breaker::CircuitBreakerConfig::default(), dlq);
+        }
+
         // Phase 2: Detect multi-query Hamlet sharing opportunities
         self.setup_hamlet_sharing();
 

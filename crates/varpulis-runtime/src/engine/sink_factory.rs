@@ -4,6 +4,8 @@
 //! and manage a registry of active sinks.
 
 use crate::connector;
+#[cfg(feature = "kafka")]
+use crate::connector::SinkConnector;
 use indexmap::IndexMap;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
@@ -103,6 +105,64 @@ impl crate::sink::Sink for SinkConnectorAdapter {
     }
 }
 
+/// Adapter for Kafka sinks using transactional (exactly-once) delivery.
+///
+/// Wraps `KafkaSinkFull` directly (not via the `SinkConnector` trait) to access
+/// the transactional batch API. Single sends and batches are both wrapped in
+/// Kafka transactions so that consumers with `isolation.level=read_committed`
+/// see atomic, exactly-once delivery.
+#[cfg(feature = "kafka")]
+pub struct TransactionalKafkaSinkAdapter {
+    name: String,
+    inner: tokio::sync::Mutex<connector::KafkaSinkFull>,
+}
+
+#[cfg(feature = "kafka")]
+impl TransactionalKafkaSinkAdapter {
+    pub fn new(name: &str, sink: connector::KafkaSinkFull) -> Self {
+        Self {
+            name: name.to_string(),
+            inner: tokio::sync::Mutex::new(sink),
+        }
+    }
+}
+
+#[cfg(feature = "kafka")]
+#[async_trait::async_trait]
+impl crate::sink::Sink for TransactionalKafkaSinkAdapter {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    async fn connect(&self) -> anyhow::Result<()> {
+        Ok(()) // Producer is connected at construction time
+    }
+    async fn send(&self, event: &crate::event::Event) -> anyhow::Result<()> {
+        let inner = self.inner.lock().await;
+        inner
+            .send(event)
+            .await
+            .map_err(|e| anyhow::anyhow!("{}", e))
+    }
+    async fn send_batch(
+        &self,
+        events: &[std::sync::Arc<crate::event::Event>],
+    ) -> anyhow::Result<()> {
+        let inner = self.inner.lock().await;
+        inner
+            .send_batch_transactional(events)
+            .await
+            .map_err(|e| anyhow::anyhow!("{}", e))
+    }
+    async fn flush(&self) -> anyhow::Result<()> {
+        let inner = self.inner.lock().await;
+        inner.flush().await.map_err(|e| anyhow::anyhow!("{}", e))
+    }
+    async fn close(&self) -> anyhow::Result<()> {
+        let inner = self.inner.lock().await;
+        inner.close().await.map_err(|e| anyhow::anyhow!("{}", e))
+    }
+}
+
 /// Create a sink from a ConnectorConfig, with an optional topic override from .to() params
 #[allow(unused_variables)]
 pub(crate) fn create_sink_from_config(
@@ -152,13 +212,39 @@ pub(crate) fn create_sink_from_config(
                     .map(|s| s.to_string())
                     .or_else(|| config.topic.clone())
                     .unwrap_or_else(|| format!("{}-output", name));
-                let kafka_config = connector::KafkaConfig::new(&brokers, &topic)
+
+                // Extract transactional_id from properties or auto-generate when
+                // exactly_once is requested
+                let transactional_id =
+                    config
+                        .properties
+                        .get("transactional_id")
+                        .cloned()
+                        .or_else(|| {
+                            config
+                                .properties
+                                .get("exactly_once")
+                                .filter(|v| v == &"true")
+                                .map(|_| format!("varpulis-{}", name))
+                        });
+
+                let mut kafka_config = connector::KafkaConfig::new(&brokers, &topic)
                     .with_properties(config.properties.clone());
+                if let Some(tid) = transactional_id {
+                    kafka_config = kafka_config.with_transactional_id(&tid);
+                }
+
                 match connector::KafkaSinkFull::new(name, kafka_config) {
-                    Ok(sink) => Some(Arc::new(SinkConnectorAdapter {
-                        name: name.to_string(),
-                        inner: tokio::sync::Mutex::new(Box::new(sink)),
-                    })),
+                    Ok(sink) => {
+                        if sink.is_transactional() {
+                            Some(Arc::new(TransactionalKafkaSinkAdapter::new(name, sink)))
+                        } else {
+                            Some(Arc::new(SinkConnectorAdapter {
+                                name: name.to_string(),
+                                inner: tokio::sync::Mutex::new(Box::new(sink)),
+                            }))
+                        }
+                    }
                     Err(e) => {
                         warn!("Failed to create Kafka sink '{}': {}", name, e);
                         None
@@ -304,6 +390,26 @@ impl SinkRegistry {
         }
         Ok(())
     }
+
+    /// Wrap all registered sinks with circuit breaker + DLQ protection.
+    ///
+    /// Call after `build_from_connectors()` to add resilience to every sink.
+    /// Events that fail delivery (or are rejected by the circuit breaker)
+    /// are routed to the DLQ file instead of being silently dropped.
+    pub fn wrap_with_resilience(
+        &mut self,
+        cb_config: crate::circuit_breaker::CircuitBreakerConfig,
+        dlq: Option<Arc<crate::dead_letter::DeadLetterQueue>>,
+    ) {
+        let old_cache = std::mem::take(&mut self.cache);
+        for (key, sink) in old_cache {
+            let cb = Arc::new(crate::circuit_breaker::CircuitBreaker::new(
+                cb_config.clone(),
+            ));
+            let resilient = Arc::new(crate::sink::ResilientSink::new(sink, cb, dlq.clone()));
+            self.cache.insert(key, resilient);
+        }
+    }
 }
 
 impl Default for SinkRegistry {
@@ -334,5 +440,56 @@ mod tests {
         let config = connector::ConnectorConfig::new("unknown_type", "");
         let sink = create_sink_from_config("test", &config, None, None);
         assert!(sink.is_none());
+    }
+
+    #[test]
+    fn test_connector_params_extracts_exactly_once() {
+        use varpulis_core::ast::{ConfigValue, ConnectorParam};
+
+        let params = vec![
+            ConnectorParam {
+                name: "brokers".to_string(),
+                value: ConfigValue::Str("localhost:9092".to_string()),
+            },
+            ConnectorParam {
+                name: "topic".to_string(),
+                value: ConfigValue::Str("my-topic".to_string()),
+            },
+            ConnectorParam {
+                name: "exactly_once".to_string(),
+                value: ConfigValue::Bool(true),
+            },
+        ];
+
+        let config = connector_params_to_config("kafka", &params);
+        assert_eq!(config.url, "localhost:9092");
+        assert_eq!(config.topic, Some("my-topic".to_string()));
+        // exactly_once=true should be stored in properties
+        assert_eq!(
+            config.properties.get("exactly_once"),
+            Some(&"true".to_string())
+        );
+    }
+
+    #[test]
+    fn test_connector_params_extracts_transactional_id() {
+        use varpulis_core::ast::{ConfigValue, ConnectorParam};
+
+        let params = vec![
+            ConnectorParam {
+                name: "brokers".to_string(),
+                value: ConfigValue::Str("localhost:9092".to_string()),
+            },
+            ConnectorParam {
+                name: "transactional_id".to_string(),
+                value: ConfigValue::Str("my-app-txn".to_string()),
+            },
+        ];
+
+        let config = connector_params_to_config("kafka", &params);
+        assert_eq!(
+            config.properties.get("transactional_id"),
+            Some(&"my-app-txn".to_string())
+        );
     }
 }

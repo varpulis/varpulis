@@ -535,6 +535,97 @@ impl Sink for MultiSink {
     }
 }
 
+/// A resilient sink wrapper that adds circuit breaker and dead letter queue.
+///
+/// Wraps any [`Sink`] implementation with:
+/// - **Circuit breaker**: rejects sends immediately when the downstream is unhealthy
+/// - **Dead letter queue**: routes failed events to a DLQ file instead of dropping them
+///
+/// When the circuit is open or a send fails, events are written to the DLQ.
+/// When the circuit recovers (half-open → closed), normal delivery resumes.
+pub struct ResilientSink {
+    inner: Arc<dyn Sink>,
+    cb: Arc<crate::circuit_breaker::CircuitBreaker>,
+    dlq: Option<Arc<crate::dead_letter::DeadLetterQueue>>,
+}
+
+impl ResilientSink {
+    /// Wrap a sink with circuit breaker protection.
+    pub fn new(
+        inner: Arc<dyn Sink>,
+        cb: Arc<crate::circuit_breaker::CircuitBreaker>,
+        dlq: Option<Arc<crate::dead_letter::DeadLetterQueue>>,
+    ) -> Self {
+        Self { inner, cb, dlq }
+    }
+
+    fn send_to_dlq(&self, error_msg: &str, events: &[Arc<Event>]) {
+        if let Some(ref dlq) = self.dlq {
+            dlq.write_batch(self.inner.name(), error_msg, events);
+        }
+    }
+}
+
+#[async_trait]
+impl Sink for ResilientSink {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    async fn connect(&self) -> Result<()> {
+        self.inner.connect().await
+    }
+
+    async fn send(&self, event: &Event) -> Result<()> {
+        if !self.cb.allow_request() {
+            let arc_event = Arc::new(event.clone());
+            self.send_to_dlq("circuit breaker open", &[arc_event]);
+            return Err(anyhow!("circuit breaker open for sink '{}'", self.name()));
+        }
+
+        match self.inner.send(event).await {
+            Ok(()) => {
+                self.cb.record_success();
+                Ok(())
+            }
+            Err(e) => {
+                self.cb.record_failure();
+                let error_msg = e.to_string();
+                let arc_event = Arc::new(event.clone());
+                self.send_to_dlq(&error_msg, &[arc_event]);
+                Err(e)
+            }
+        }
+    }
+
+    async fn send_batch(&self, events: &[Arc<Event>]) -> Result<()> {
+        if !self.cb.allow_request() {
+            self.send_to_dlq("circuit breaker open", events);
+            return Err(anyhow!("circuit breaker open for sink '{}'", self.name()));
+        }
+
+        match self.inner.send_batch(events).await {
+            Ok(()) => {
+                self.cb.record_success();
+                Ok(())
+            }
+            Err(e) => {
+                self.cb.record_failure();
+                self.send_to_dlq(&e.to_string(), events);
+                Err(e)
+            }
+        }
+    }
+
+    async fn flush(&self) -> Result<()> {
+        self.inner.flush().await
+    }
+
+    async fn close(&self) -> Result<()> {
+        self.inner.close().await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -898,5 +989,178 @@ mod tests {
         let sink = HttpSinkWithRetry::new("test", "http://localhost:8080");
         assert!(sink.flush().await.is_ok());
         assert!(sink.close().await.is_ok());
+    }
+
+    // ==========================================================================
+    // ResilientSink Tests
+    // ==========================================================================
+
+    /// A mock sink that fails on demand.
+    struct MockSink {
+        name: String,
+        fail: std::sync::atomic::AtomicBool,
+        send_count: std::sync::atomic::AtomicU64,
+    }
+
+    impl MockSink {
+        fn new(name: &str) -> Self {
+            Self {
+                name: name.to_string(),
+                fail: std::sync::atomic::AtomicBool::new(false),
+                send_count: std::sync::atomic::AtomicU64::new(0),
+            }
+        }
+
+        fn set_fail(&self, fail: bool) {
+            self.fail.store(fail, std::sync::atomic::Ordering::Relaxed);
+        }
+
+        fn send_count(&self) -> u64 {
+            self.send_count.load(std::sync::atomic::Ordering::Relaxed)
+        }
+    }
+
+    #[async_trait]
+    impl Sink for MockSink {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        async fn send(&self, _event: &Event) -> Result<()> {
+            if self.fail.load(std::sync::atomic::Ordering::Relaxed) {
+                Err(anyhow!("mock send failure"))
+            } else {
+                self.send_count
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                Ok(())
+            }
+        }
+
+        async fn flush(&self) -> Result<()> {
+            Ok(())
+        }
+        async fn close(&self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_resilient_sink_success_passthrough() {
+        let mock = Arc::new(MockSink::new("test-sink"));
+        let cb = Arc::new(crate::circuit_breaker::CircuitBreaker::new(
+            crate::circuit_breaker::CircuitBreakerConfig {
+                failure_threshold: 3,
+                reset_timeout: std::time::Duration::from_secs(60),
+            },
+        ));
+        let resilient = ResilientSink::new(mock.clone(), cb.clone(), None);
+
+        let event = Event::new("TestEvent");
+        assert!(resilient.send(&event).await.is_ok());
+        assert_eq!(mock.send_count(), 1);
+        assert_eq!(cb.state(), crate::circuit_breaker::State::Closed);
+    }
+
+    #[tokio::test]
+    async fn test_resilient_sink_failure_opens_circuit() {
+        let mock = Arc::new(MockSink::new("test-sink"));
+        mock.set_fail(true);
+
+        let cb = Arc::new(crate::circuit_breaker::CircuitBreaker::new(
+            crate::circuit_breaker::CircuitBreakerConfig {
+                failure_threshold: 2,
+                reset_timeout: std::time::Duration::from_secs(60),
+            },
+        ));
+
+        let dlq_path = std::env::temp_dir().join("varpulis_resilient_test_dlq.jsonl");
+        let _ = std::fs::remove_file(&dlq_path);
+        let dlq = Arc::new(crate::dead_letter::DeadLetterQueue::open(&dlq_path).unwrap());
+
+        let resilient = ResilientSink::new(mock.clone(), cb.clone(), Some(dlq.clone()));
+
+        let event = Event::new("TestEvent");
+
+        // First failure
+        assert!(resilient.send(&event).await.is_err());
+        assert_eq!(dlq.count(), 1);
+
+        // Second failure → opens circuit
+        assert!(resilient.send(&event).await.is_err());
+        assert_eq!(dlq.count(), 2);
+        assert_eq!(cb.state(), crate::circuit_breaker::State::Open);
+
+        // Third attempt: circuit open, rejected immediately (no send attempt)
+        assert!(resilient.send(&event).await.is_err());
+        assert_eq!(dlq.count(), 3);
+
+        let _ = std::fs::remove_file(&dlq_path);
+    }
+
+    #[tokio::test]
+    async fn test_resilient_sink_batch_with_dlq() {
+        let mock = Arc::new(MockSink::new("batch-sink"));
+        mock.set_fail(true);
+
+        let cb = Arc::new(crate::circuit_breaker::CircuitBreaker::new(
+            crate::circuit_breaker::CircuitBreakerConfig::default(),
+        ));
+
+        let dlq_path = std::env::temp_dir().join("varpulis_resilient_batch_dlq.jsonl");
+        let _ = std::fs::remove_file(&dlq_path);
+        let dlq = Arc::new(crate::dead_letter::DeadLetterQueue::open(&dlq_path).unwrap());
+
+        let resilient = ResilientSink::new(mock, cb, Some(dlq.clone()));
+
+        let events: Vec<Arc<Event>> = (0..3)
+            .map(|i| Arc::new(Event::new(format!("Event{}", i))))
+            .collect();
+
+        assert!(resilient.send_batch(&events).await.is_err());
+        assert_eq!(dlq.count(), 3); // All 3 events written to DLQ
+
+        let _ = std::fs::remove_file(&dlq_path);
+    }
+
+    #[tokio::test]
+    async fn test_resilient_sink_recovery() {
+        let mock = Arc::new(MockSink::new("recover-sink"));
+        mock.set_fail(true);
+
+        let cb = Arc::new(crate::circuit_breaker::CircuitBreaker::new(
+            crate::circuit_breaker::CircuitBreakerConfig {
+                failure_threshold: 1,
+                reset_timeout: std::time::Duration::from_millis(10),
+            },
+        ));
+
+        let resilient = ResilientSink::new(mock.clone(), cb.clone(), None);
+
+        let event = Event::new("TestEvent");
+
+        // Fail → opens circuit
+        assert!(resilient.send(&event).await.is_err());
+        assert_eq!(cb.state(), crate::circuit_breaker::State::Open);
+
+        // Wait for reset timeout
+        tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+
+        // Fix the sink
+        mock.set_fail(false);
+
+        // Next request: half-open probe succeeds → closes
+        assert!(resilient.send(&event).await.is_ok());
+        assert_eq!(cb.state(), crate::circuit_breaker::State::Closed);
+        assert_eq!(mock.send_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_resilient_sink_name_passthrough() {
+        let mock = Arc::new(MockSink::new("my-kafka-sink"));
+        let cb = Arc::new(crate::circuit_breaker::CircuitBreaker::new(
+            crate::circuit_breaker::CircuitBreakerConfig::default(),
+        ));
+        let resilient = ResilientSink::new(mock, cb, None);
+        assert_eq!(resilient.name(), "my-kafka-sink");
     }
 }

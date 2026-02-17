@@ -48,16 +48,24 @@ pub struct ProcessCluster {
 /// Locate the `varpulis` binary. Checks `VARPULIS_BIN` env, then
 /// `target/release/varpulis`, then `target/debug/varpulis`.
 fn find_binary() -> String {
-    if let Ok(bin) = std::env::var("VARPULIS_BIN") {
-        return bin;
-    }
-
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     // Walk up from crates/varpulis-cluster to the workspace root.
     let workspace_root = std::path::Path::new(manifest_dir)
         .parent() // crates/
         .and_then(|p| p.parent()) // workspace root
         .expect("Failed to determine workspace root");
+
+    if let Ok(bin) = std::env::var("VARPULIS_BIN") {
+        let bin_path = std::path::Path::new(&bin);
+        // If it's a relative path, resolve against workspace root
+        if bin_path.is_relative() {
+            let resolved = workspace_root.join(bin_path);
+            if resolved.exists() {
+                return resolved.to_string_lossy().into_owned();
+            }
+        }
+        return bin;
+    }
 
     let release = workspace_root.join("target/release/varpulis");
     if release.exists() {
