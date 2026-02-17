@@ -611,7 +611,7 @@ fn test_mqtt_config_all_builders() {
     assert_eq!(config.port, 8883);
     assert_eq!(config.client_id, Some("my-client".to_string()));
     assert_eq!(config.username, Some("user".to_string()));
-    assert_eq!(config.password, Some("pass".to_string()));
+    assert_eq!(config.password.as_ref().map(|s| s.expose()), Some("pass"));
     assert_eq!(config.qos, 2);
 }
 
@@ -798,8 +798,14 @@ fn test_elasticsearch_config_all_builders() {
     assert_eq!(config.batch_size, 500);
     assert_eq!(config.flush_interval_ms, 2000);
     assert_eq!(config.username, Some("elastic".to_string()));
-    assert_eq!(config.password, Some("changeme".to_string()));
-    assert_eq!(config.api_key, Some("my-api-key".to_string()));
+    assert_eq!(
+        config.password.as_ref().map(|s| s.expose()),
+        Some("changeme")
+    );
+    assert_eq!(
+        config.api_key.as_ref().map(|s| s.expose()),
+        Some("my-api-key")
+    );
 }
 
 #[test]
@@ -816,7 +822,10 @@ fn test_elasticsearch_config_batch_size_minimum() {
 fn test_database_config_defaults() {
     use varpulis_runtime::connector::DatabaseConfig;
     let config = DatabaseConfig::new("postgres://localhost/test", "events");
-    assert_eq!(config.connection_string, "postgres://localhost/test");
+    assert_eq!(
+        config.connection_string.expose(),
+        "postgres://localhost/test"
+    );
     assert_eq!(config.table, "events");
     assert_eq!(config.max_connections, 5);
 }

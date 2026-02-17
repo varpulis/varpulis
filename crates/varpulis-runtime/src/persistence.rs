@@ -275,7 +275,7 @@ impl MemoryStore {
 impl StateStore for MemoryStore {
     fn save_checkpoint(&self, checkpoint: &Checkpoint) -> Result<(), StoreError> {
         let key = format!("checkpoint:{}", checkpoint.id);
-        let data = bincode::serialize(checkpoint)
+        let data = serde_json::to_vec(checkpoint)
             .map_err(|e| StoreError::SerializationError(e.to_string()))?;
         self.put(&key, &data)
     }
@@ -292,7 +292,7 @@ impl StateStore for MemoryStore {
     fn load_checkpoint(&self, id: u64) -> Result<Option<Checkpoint>, StoreError> {
         let key = format!("checkpoint:{}", id);
         if let Some(data) = self.get(&key)? {
-            let checkpoint: Checkpoint = bincode::deserialize(&data)
+            let checkpoint: Checkpoint = serde_json::from_slice(&data)
                 .map_err(|e| StoreError::SerializationError(e.to_string()))?;
             Ok(Some(checkpoint))
         } else {
@@ -397,7 +397,7 @@ impl RocksDbStore {
 impl StateStore for RocksDbStore {
     fn save_checkpoint(&self, checkpoint: &Checkpoint) -> Result<(), StoreError> {
         let key = self.prefixed_key(&format!("checkpoint:{}", checkpoint.id));
-        let data = bincode::serialize(checkpoint)
+        let data = serde_json::to_vec(checkpoint)
             .map_err(|e| StoreError::SerializationError(e.to_string()))?;
 
         self.db
@@ -437,7 +437,7 @@ impl StateStore for RocksDbStore {
             .get(key.as_bytes())
             .map_err(|e| StoreError::IoError(e.to_string()))?
         {
-            let checkpoint: Checkpoint = bincode::deserialize(&data)
+            let checkpoint: Checkpoint = serde_json::from_slice(&data)
                 .map_err(|e| StoreError::SerializationError(e.to_string()))?;
             debug!("Loaded checkpoint {}", id);
             Ok(Some(checkpoint))
@@ -539,7 +539,7 @@ impl FileStore {
 impl StateStore for FileStore {
     fn save_checkpoint(&self, checkpoint: &Checkpoint) -> Result<(), StoreError> {
         let key = format!("checkpoint:{}", checkpoint.id);
-        let data = bincode::serialize(checkpoint)
+        let data = serde_json::to_vec(checkpoint)
             .map_err(|e| StoreError::SerializationError(e.to_string()))?;
         self.put(&key, &data)
     }
@@ -556,7 +556,7 @@ impl StateStore for FileStore {
     fn load_checkpoint(&self, id: u64) -> Result<Option<Checkpoint>, StoreError> {
         let key = format!("checkpoint:{}", id);
         if let Some(data) = self.get(&key)? {
-            let checkpoint: Checkpoint = bincode::deserialize(&data)
+            let checkpoint: Checkpoint = serde_json::from_slice(&data)
                 .map_err(|e| StoreError::SerializationError(e.to_string()))?;
             Ok(Some(checkpoint))
         } else {

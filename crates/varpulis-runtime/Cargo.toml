@@ -23,12 +23,13 @@ rustc-hash = { workspace = true }
 async-trait = "0.1"
 rayon = "1.10"
 smallvec = "1.13"
-lru = "0.13"
+hashlink = "0.10"
 reqwest = { workspace = true }
 warp = "0.3"
 futures = "0.3"
 uuid = { version = "1", features = ["v4"] }
 core_affinity = "0.8"
+zeroize = { workspace = true }
 
 # Optional connectors
 rumqttc = { version = "0.24", optional = true }
@@ -51,7 +52,6 @@ ort = { version = "=2.0.0-rc.11", features = ["load-dynamic"], optional = true }
 
 # State persistence
 rocksdb = { version = "0.22", optional = true }
-bincode = "1.3"
 
 [features]
 default = []

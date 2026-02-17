@@ -116,6 +116,7 @@ pub mod event_file;
 pub mod greta;
 pub mod hamlet;
 pub mod join;
+pub mod limits;
 pub mod metrics;
 pub mod persistence;
 pub mod pst;

@@ -64,6 +64,9 @@ warp = { version = "0.3", features = ["tls"] }
 tokio-tungstenite = "0.21"
 futures-util = "0.3"
 
+# Secrets
+zeroize = { version = "1.8", features = ["derive"] }
+
 # Testing
 pretty_assertions = "1.4"
 

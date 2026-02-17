@@ -399,6 +399,15 @@ impl EventFileParser {
 
     /// Parse a JSONL line
     fn parse_jsonl_line(line: &str) -> Result<Event, String> {
+        // Enforce payload size limit before parsing
+        if line.len() > crate::limits::MAX_EVENT_PAYLOAD_BYTES {
+            return Err(format!(
+                "JSONL line too large ({} bytes, max {})",
+                line.len(),
+                crate::limits::MAX_EVENT_PAYLOAD_BYTES
+            ));
+        }
+
         let json: serde_json::Value =
             serde_json::from_str(line).map_err(|e| format!("Invalid JSON: {}", e))?;
 
@@ -410,7 +419,7 @@ impl EventFileParser {
         let mut event = Event::new(event_type);
 
         if let Some(data) = json.get("data").and_then(|v| v.as_object()) {
-            for (key, value) in data {
+            for (key, value) in data.iter().take(crate::limits::MAX_FIELDS_PER_EVENT) {
                 event
                     .data
                     .insert(key.as_str().into(), Self::json_to_value(value));
@@ -422,7 +431,7 @@ impl EventFileParser {
 
     /// Convert serde_json::Value to varpulis Value (depth-bounded to prevent stack overflow)
     fn json_to_value(v: &serde_json::Value) -> Value {
-        Self::json_to_value_bounded(v, 32)
+        Self::json_to_value_bounded(v, crate::limits::MAX_JSON_DEPTH)
     }
 
     fn json_to_value_bounded(v: &serde_json::Value, depth: usize) -> Value {
@@ -441,16 +450,28 @@ impl EventFileParser {
                     Value::Null
                 }
             }
-            serde_json::Value::String(s) => Value::Str(s.clone().into()),
-            serde_json::Value::Array(arr) => Value::array(
-                arr.iter()
-                    .map(|v| Self::json_to_value_bounded(v, depth - 1))
-                    .collect(),
-            ),
+            serde_json::Value::String(s) => {
+                if s.len() > crate::limits::MAX_STRING_VALUE_BYTES {
+                    let truncated =
+                        &s[..s.floor_char_boundary(crate::limits::MAX_STRING_VALUE_BYTES)];
+                    Value::Str(truncated.into())
+                } else {
+                    Value::Str(s.clone().into())
+                }
+            }
+            serde_json::Value::Array(arr) => {
+                let capped = arr.len().min(crate::limits::MAX_ARRAY_ELEMENTS);
+                Value::array(
+                    arr.iter()
+                        .take(capped)
+                        .map(|v| Self::json_to_value_bounded(v, depth - 1))
+                        .collect(),
+                )
+            }
             serde_json::Value::Object(obj) => {
                 let mut map: IndexMap<std::sync::Arc<str>, Value, FxBuildHasher> =
                     IndexMap::with_hasher(FxBuildHasher);
-                for (k, v) in obj {
+                for (k, v) in obj.iter().take(crate::limits::MAX_FIELDS_PER_EVENT) {
                     map.insert(k.as_str().into(), Self::json_to_value_bounded(v, depth - 1));
                 }
                 Value::map(map)
@@ -503,6 +524,17 @@ impl<R: std::io::BufRead> Iterator for StreamingEventReader<R> {
             match self.reader.read_line(&mut self.line_buffer) {
                 Ok(0) => return None, // EOF
                 Ok(_) => {
+                    // Enforce line length limit to prevent OOM from single huge lines
+                    if self.line_buffer.len() > crate::limits::MAX_LINE_LENGTH {
+                        tracing::warn!(
+                            len = self.line_buffer.len(),
+                            "Skipping oversized line ({} bytes, max {})",
+                            self.line_buffer.len(),
+                            crate::limits::MAX_LINE_LENGTH
+                        );
+                        self.line_buffer.clear();
+                        continue;
+                    }
                     match EventFileParser::parse_line(&self.line_buffer) {
                         Ok(Some(event)) => {
                             self.events_read += 1;

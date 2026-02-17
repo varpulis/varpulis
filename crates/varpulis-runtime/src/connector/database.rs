@@ -4,11 +4,13 @@ use super::types::{ConnectorError, SinkConnector, SourceConnector};
 use crate::event::Event;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
+use varpulis_core::security::SecretString;
 
 /// Database configuration
 #[derive(Debug, Clone)]
 pub struct DatabaseConfig {
-    pub connection_string: String,
+    /// Connection string (zeroized on drop — may contain credentials)
+    pub connection_string: SecretString,
     pub table: String,
     pub max_connections: u32,
 }
@@ -16,7 +18,7 @@ pub struct DatabaseConfig {
 impl DatabaseConfig {
     pub fn new(connection_string: &str, table: &str) -> Self {
         Self {
-            connection_string: connection_string.to_string(),
+            connection_string: SecretString::new(connection_string),
             table: table.to_string(),
             max_connections: 5,
         }
@@ -71,7 +73,7 @@ mod database_impl {
             ensure_drivers();
             let pool = PoolOptions::<sqlx::Any>::new()
                 .max_connections(self.config.max_connections)
-                .connect(&self.config.connection_string)
+                .connect(self.config.connection_string.expose())
                 .await
                 .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
 
@@ -162,7 +164,7 @@ mod database_impl {
             ensure_drivers();
             let pool = PoolOptions::<sqlx::Any>::new()
                 .max_connections(config.max_connections)
-                .connect(&config.connection_string)
+                .connect(config.connection_string.expose())
                 .await
                 .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
 

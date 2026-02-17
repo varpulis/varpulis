@@ -286,7 +286,7 @@ pub(crate) struct DistinctState {
     /// Optional expression to evaluate for distinct key; None = entire event
     pub expr: Option<varpulis_core::ast::Expr>,
     /// LRU cache of seen value representations (bounded to prevent unbounded growth)
-    pub seen: lru::LruCache<String, ()>,
+    pub seen: hashlink::LruCache<String, ()>,
 }
 
 /// State for .limit(n) — passes at most `max` events

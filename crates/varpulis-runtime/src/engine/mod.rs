@@ -1650,9 +1650,7 @@ impl Engine {
                 StreamOp::Distinct(expr) => {
                     runtime_ops.push(RuntimeOp::Distinct(DistinctState {
                         expr: expr.clone(),
-                        seen: lru::LruCache::new(
-                            std::num::NonZeroUsize::new(types::DISTINCT_LRU_CAPACITY).unwrap(),
-                        ),
+                        seen: hashlink::LruCache::new(types::DISTINCT_LRU_CAPACITY),
                     }));
                 }
                 StreamOp::Limit(expr) => {
@@ -3566,7 +3564,7 @@ impl Engine {
                         state.seen.clear();
                         // Re-insert in reverse so most-recent ends up at the front
                         for key in dcp.keys.iter().rev() {
-                            state.seen.put(key.clone(), ());
+                            state.seen.insert(key.clone(), ());
                         }
                     }
                 }

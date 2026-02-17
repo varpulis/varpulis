@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use tokio::sync::mpsc;
 #[cfg(feature = "mqtt")]
 use tracing::{error, info, warn};
+use varpulis_core::security::SecretString;
 
 // =============================================================================
 // MQTT Configuration (always available, not feature-gated)
@@ -23,7 +24,7 @@ pub struct MqttConfig {
     pub topic: String,
     pub client_id: Option<String>,
     pub username: Option<String>,
-    pub password: Option<String>,
+    pub password: Option<SecretString>,
     pub qos: u8,
 }
 
@@ -52,7 +53,7 @@ impl MqttConfig {
 
     pub fn with_credentials(mut self, username: &str, password: &str) -> Self {
         self.username = Some(username.to_string());
-        self.password = Some(password.to_string());
+        self.password = Some(SecretString::new(password));
         self
     }
 
@@ -139,7 +140,7 @@ mod mqtt_impl {
             mqtt_opts.set_keep_alive(Duration::from_secs(60));
 
             if let (Some(user), Some(pass)) = (&self.config.username, &self.config.password) {
-                mqtt_opts.set_credentials(user, pass);
+                mqtt_opts.set_credentials(user, pass.expose());
             }
 
             let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 10_000);
@@ -171,7 +172,15 @@ mod mqtt_impl {
                         Ok(MqttEvent::Incoming(Packet::Publish(publish))) => {
                             // Reset error counter on successful message
                             consecutive_errors = 0;
-                            if let Ok(payload) = std::str::from_utf8(&publish.payload) {
+                            // Enforce payload size limit
+                            if publish.payload.len() > crate::limits::MAX_EVENT_PAYLOAD_BYTES {
+                                warn!(
+                                    "MQTT source {}: payload too large ({} bytes, max {}), skipped",
+                                    name,
+                                    publish.payload.len(),
+                                    crate::limits::MAX_EVENT_PAYLOAD_BYTES
+                                );
+                            } else if let Ok(payload) = std::str::from_utf8(&publish.payload) {
                                 if let Some(event) = parse_mqtt_payload(payload, &publish.topic) {
                                     if tx.send(event).await.is_err() {
                                         warn!("MQTT source {} channel closed", name);
@@ -273,7 +282,7 @@ mod mqtt_impl {
             mqtt_opts.set_keep_alive(Duration::from_secs(60));
 
             if let (Some(user), Some(pass)) = (&self.config.username, &self.config.password) {
-                mqtt_opts.set_credentials(user, pass);
+                mqtt_opts.set_credentials(user, pass.expose());
             }
 
             let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 10_000);
@@ -342,7 +351,7 @@ mod mqtt_impl {
     ///
     /// Uses serde_json::from_str into a HashMap first, then builds the Event
     /// with pre-allocated capacity. Falls back to topic-based event type
-    /// if not found in the payload.
+    /// if not found in the payload. Enforces field count limits.
     fn parse_mqtt_payload(payload: &str, topic: &str) -> Option<Event> {
         // Parse into ordered map directly — avoids the generic Value tree
         let map: indexmap::IndexMap<Arc<str>, serde_json::Value> =
@@ -370,23 +379,38 @@ mod mqtt_impl {
             .and_then(|v| v.as_object())
             .is_some();
 
+        let max_fields = crate::limits::MAX_FIELDS_PER_EVENT;
+
         if has_data {
             let data_obj = map.get("data" as &str).unwrap().as_object().unwrap();
+            let cap = data_obj.len().min(max_fields);
             let mut fields: FxIndexMap<FieldKey, varpulis_core::Value> =
-                indexmap::IndexMap::with_capacity_and_hasher(data_obj.len(), FxBuildHasher);
+                indexmap::IndexMap::with_capacity_and_hasher(cap, FxBuildHasher);
             for (k, v) in data_obj {
-                fields.insert(Arc::from(k.as_str()), json_value_to_native(v));
+                if fields.len() >= max_fields {
+                    break;
+                }
+                fields.insert(
+                    Arc::from(k.as_str()),
+                    json_value_to_native(v, crate::limits::MAX_JSON_DEPTH),
+                );
             }
             Some(Event::from_fields(event_type, fields))
         } else {
             // Build fields from top-level, excluding type keys
-            let capacity = map.len().saturating_sub(1); // minus event_type
+            let capacity = map.len().saturating_sub(1).min(max_fields);
             let mut fields: FxIndexMap<FieldKey, varpulis_core::Value> =
                 indexmap::IndexMap::with_capacity_and_hasher(capacity, FxBuildHasher);
             for (k, v) in &map {
                 let ks: &str = k;
                 if ks != "event_type" && ks != "type" {
-                    fields.insert(k.clone(), json_value_to_native(v));
+                    if fields.len() >= max_fields {
+                        break;
+                    }
+                    fields.insert(
+                        k.clone(),
+                        json_value_to_native(v, crate::limits::MAX_JSON_DEPTH),
+                    );
                 }
             }
             Some(Event::from_fields(event_type, fields))
@@ -394,7 +418,10 @@ mod mqtt_impl {
     }
 
     #[inline]
-    fn json_value_to_native(v: &serde_json::Value) -> varpulis_core::Value {
+    fn json_value_to_native(v: &serde_json::Value, depth: usize) -> varpulis_core::Value {
+        if depth == 0 {
+            return varpulis_core::Value::Null;
+        }
         match v {
             serde_json::Value::Bool(b) => varpulis_core::Value::Bool(*b),
             serde_json::Value::Number(n) => {
@@ -404,7 +431,15 @@ mod mqtt_impl {
                     varpulis_core::Value::Float(n.as_f64().unwrap_or(0.0))
                 }
             }
-            serde_json::Value::String(s) => varpulis_core::Value::Str(s.clone().into()),
+            serde_json::Value::String(s) => {
+                if s.len() > crate::limits::MAX_STRING_VALUE_BYTES {
+                    let truncated =
+                        &s[..s.floor_char_boundary(crate::limits::MAX_STRING_VALUE_BYTES)];
+                    varpulis_core::Value::Str(truncated.into())
+                } else {
+                    varpulis_core::Value::Str(s.clone().into())
+                }
+            }
             _ => varpulis_core::Value::Null,
         }
     }
