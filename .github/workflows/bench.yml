@@ -32,7 +32,7 @@ jobs:
         uses: benchmark-action/github-action-benchmark@v1
         with:
           name: Varpulis Performance
-          tool: criterionrs
+          tool: cargo
           output-file-path: bench-results.txt
           # On push to main: update baseline stored in gh-pages branch
           auto-push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
