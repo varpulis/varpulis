@@ -167,7 +167,7 @@ impl SinkConnector for KafkaSink {
 #[cfg(feature = "kafka")]
 mod kafka_impl {
     use super::*;
-    use crate::connector::helpers::json_to_value;
+    use crate::connector::helpers::json_to_event;
     use rdkafka::config::ClientConfig;
     use rdkafka::consumer::{CommitMode, Consumer, StreamConsumer};
     use rdkafka::producer::{FutureProducer, FutureRecord, Producer};
@@ -258,33 +258,35 @@ mod kafka_impl {
                             consecutive_errors = 0;
 
                             if let Some(payload) = msg.payload() {
-                                match serde_json::from_slice::<serde_json::Value>(payload) {
-                                    Ok(json) => {
-                                        let event_type = json
-                                            .get("event_type")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("KafkaEvent")
-                                            .to_string();
+                                // Enforce payload size limit
+                                if payload.len() > crate::limits::MAX_EVENT_PAYLOAD_BYTES {
+                                    warn!(
+                                        "Kafka source {}: payload too large ({} bytes, max {}), skipped",
+                                        name,
+                                        payload.len(),
+                                        crate::limits::MAX_EVENT_PAYLOAD_BYTES
+                                    );
+                                } else {
+                                    match serde_json::from_slice::<serde_json::Value>(payload) {
+                                        Ok(json) => {
+                                            let event = json_to_event(
+                                                json.get("event_type")
+                                                    .and_then(|v| v.as_str())
+                                                    .unwrap_or("KafkaEvent"),
+                                                &json,
+                                            );
 
-                                        let mut event = Event::new(event_type);
-
-                                        if let Some(obj) = json.as_object() {
-                                            for (key, value) in obj {
-                                                if key != "event_type" {
-                                                    if let Some(v) = json_to_value(value) {
-                                                        event = event.with_field(key.as_str(), v);
-                                                    }
-                                                }
+                                            if tx.send(event).await.is_err() {
+                                                warn!("Kafka source {}: channel closed", name);
+                                                break;
                                             }
                                         }
-
-                                        if tx.send(event).await.is_err() {
-                                            warn!("Kafka source {}: channel closed", name);
-                                            break;
+                                        Err(e) => {
+                                            warn!(
+                                                "Kafka source {}: failed to parse JSON: {}",
+                                                name, e
+                                            );
                                         }
-                                    }
-                                    Err(e) => {
-                                        warn!("Kafka source {}: failed to parse JSON: {}", name, e);
                                     }
                                 }
                             }

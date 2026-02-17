@@ -4,6 +4,7 @@ use super::types::{ConnectorError, SinkConnector};
 use crate::event::Event;
 use async_trait::async_trait;
 use tracing::warn;
+use varpulis_core::security::SecretString;
 
 /// Elasticsearch sink configuration
 ///
@@ -33,10 +34,10 @@ pub struct ElasticsearchConfig {
     pub flush_interval_ms: u64,
     /// Username for authentication (optional)
     pub username: Option<String>,
-    /// Password for authentication (optional)
-    pub password: Option<String>,
-    /// API key for authentication (optional)
-    pub api_key: Option<String>,
+    /// Password for authentication (zeroized on drop)
+    pub password: Option<SecretString>,
+    /// API key for authentication (zeroized on drop)
+    pub api_key: Option<SecretString>,
 }
 
 impl ElasticsearchConfig {
@@ -74,13 +75,13 @@ impl ElasticsearchConfig {
 
     /// Set password for basic authentication
     pub fn with_password(mut self, password: &str) -> Self {
-        self.password = Some(password.to_string());
+        self.password = Some(SecretString::new(password));
         self
     }
 
     /// Set API key for authentication
     pub fn with_api_key(mut self, key: &str) -> Self {
-        self.api_key = Some(key.to_string());
+        self.api_key = Some(SecretString::new(key));
         self
     }
 }
@@ -181,11 +182,17 @@ mod elasticsearch_impl {
 
             // Add authentication if configured
             if let Some(ref api_key) = config.api_key {
-                builder = builder.auth(Credentials::ApiKey(api_key.clone().into(), "".into()));
+                builder = builder.auth(Credentials::ApiKey(
+                    api_key.expose().to_string().into(),
+                    "".into(),
+                ));
             } else if let (Some(ref username), Some(ref password)) =
                 (&config.username, &config.password)
             {
-                builder = builder.auth(Credentials::Basic(username.clone(), password.clone()));
+                builder = builder.auth(Credentials::Basic(
+                    username.clone(),
+                    password.expose().to_string(),
+                ));
             }
 
             let transport = builder

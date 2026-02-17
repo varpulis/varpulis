@@ -233,6 +233,9 @@ impl SourceConnector for HttpWebhookSource {
             .and(warp::path(event_path))
             .and(warp::path::end())
             .and(with_auth.clone())
+            .and(warp::body::content_length_limit(
+                crate::limits::MAX_EVENT_PAYLOAD_BYTES as u64,
+            ))
             .and(warp::body::json::<serde_json::Value>())
             .and(warp::any().map(move || tx_single.clone()))
             .and(warp::any().map(move || rate_limiter_single.clone()))
@@ -283,10 +286,13 @@ impl SourceConnector for HttpWebhookSource {
             );
 
         // Batch event endpoint: POST /events
+        // Batch limit = max_batch_size * per-event limit
+        let batch_body_limit = (max_batch as u64) * (crate::limits::MAX_EVENT_PAYLOAD_BYTES as u64);
         let batch_events = warp::post()
             .and(warp::path(batch_path))
             .and(warp::path::end())
             .and(with_auth_batch)
+            .and(warp::body::content_length_limit(batch_body_limit))
             .and(warp::body::json::<Vec<serde_json::Value>>())
             .and(warp::any().map(move || tx_batch.clone()))
             .and(warp::any().map(move || rate_limiter_batch.clone()))
@@ -485,7 +491,7 @@ async fn handle_rejection(
 // JSON-to-Event Helper
 // =============================================================================
 
-/// Convert JSON to Event (helper for webhook)
+/// Convert JSON to Event (helper for webhook) with resource limits.
 fn json_to_event_from_json(json: &serde_json::Value) -> Event {
     let event_type = json
         .get("event_type")
@@ -499,10 +505,15 @@ fn json_to_event_from_json(json: &serde_json::Value) -> Event {
     // Handle nested "data" field or top-level fields
     let fields = json.get("data").or(Some(json));
     if let Some(obj) = fields.and_then(|v| v.as_object()) {
+        let mut count = 0;
         for (key, value) in obj {
             if key != "event_type" && key != "type" {
+                if count >= crate::limits::MAX_FIELDS_PER_EVENT {
+                    break;
+                }
                 if let Some(v) = json_to_value(value) {
                     event = event.with_field(key.as_str(), v);
+                    count += 1;
                 }
             }
         }

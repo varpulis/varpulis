@@ -1,13 +1,90 @@
 //! Shared security utilities for Varpulis.
 //!
-//! Provides constant-time string comparison and common body-size limits
-//! used across the CLI and cluster crates.
+//! Provides constant-time string comparison, common body-size limits,
+//! and a [`SecretString`] wrapper that zeroizes memory on drop.
+
+use std::fmt;
+use std::hash::{Hash, Hasher};
+use zeroize::Zeroize;
 
 /// Maximum body size for normal JSON endpoints (1 MB).
 pub const JSON_BODY_LIMIT: u64 = 1024 * 1024;
 
 /// Maximum body size for large payloads: inject-batch, models, snapshots (16 MB).
 pub const LARGE_BODY_LIMIT: u64 = 16 * 1024 * 1024;
+
+/// A string that zeroizes its contents when dropped.
+///
+/// Use this for passwords, API keys, private keys, and other secrets
+/// to prevent credential leakage from memory dumps / core files.
+///
+/// Implements `Deref<Target=str>` for ergonomic use but **never** prints
+/// the secret value in Debug/Display (always shows `[REDACTED]`).
+#[derive(Clone, Zeroize)]
+#[zeroize(drop)]
+pub struct SecretString(String);
+
+impl SecretString {
+    pub fn new(s: impl Into<String>) -> Self {
+        Self(s.into())
+    }
+
+    /// Expose the secret value.  Use sparingly — only when the value
+    /// must be compared or transmitted.
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for SecretString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("[REDACTED]")
+    }
+}
+
+impl fmt::Display for SecretString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("[REDACTED]")
+    }
+}
+
+impl PartialEq for SecretString {
+    fn eq(&self, other: &Self) -> bool {
+        constant_time_compare(&self.0, &other.0)
+    }
+}
+
+impl Eq for SecretString {}
+
+impl Hash for SecretString {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
+
+impl From<String> for SecretString {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl From<&str> for SecretString {
+    fn from(s: &str) -> Self {
+        Self(s.to_string())
+    }
+}
+
+impl serde::Serialize for SecretString {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str("[REDACTED]")
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for SecretString {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(SecretString)
+    }
+}
 
 /// Constant-time string comparison to prevent timing attacks.
 ///

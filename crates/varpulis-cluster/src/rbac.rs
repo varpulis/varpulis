@@ -22,6 +22,8 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
+use varpulis_core::security::SecretString;
+use zeroize::Zeroize;
 
 /// Access role with hierarchical permissions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -74,14 +76,27 @@ pub struct ApiKeyEntry {
 }
 
 /// RBAC configuration: maps API keys to roles.
-#[derive(Debug, Clone)]
+///
+/// API key strings are zeroized on drop to prevent credential leakage.
+#[derive(Debug)]
 pub struct RbacConfig {
-    /// Map from API key string to role entry.
-    keys: HashMap<String, ApiKeyEntry>,
+    /// Map from API key (secret) to role entry.
+    keys: HashMap<SecretString, ApiKeyEntry>,
     /// When true, unauthenticated requests are allowed (no API key required).
     pub allow_anonymous: bool,
     /// Default role for anonymous/unauthenticated requests (when allow_anonymous is true).
     pub anonymous_role: Role,
+}
+
+// Manual Clone because SecretString doesn't auto-derive Clone through HashMap
+impl Clone for RbacConfig {
+    fn clone(&self) -> Self {
+        Self {
+            keys: self.keys.clone(),
+            allow_anonymous: self.allow_anonymous,
+            anonymous_role: self.anonymous_role,
+        }
+    }
 }
 
 /// JSON format for the API keys file.
@@ -109,8 +124,12 @@ impl RbacConfig {
 
     /// Create an RBAC config with multiple keys and roles.
     pub fn multi_key(keys: HashMap<String, ApiKeyEntry>) -> Self {
+        let secret_keys = keys
+            .into_iter()
+            .map(|(k, v)| (SecretString::new(k), v))
+            .collect();
         Self {
-            keys,
+            keys: secret_keys,
             allow_anonymous: false,
             anonymous_role: Role::Viewer,
         }
@@ -120,7 +139,7 @@ impl RbacConfig {
     pub fn single_key(key: String) -> Self {
         let mut keys = HashMap::default();
         keys.insert(
-            key,
+            SecretString::new(key),
             ApiKeyEntry {
                 role: Role::Admin,
                 name: Some("default".to_string()),
@@ -135,11 +154,14 @@ impl RbacConfig {
 
     /// Load RBAC config from a JSON keys file.
     pub fn from_file(path: &Path) -> Result<Self, String> {
-        let content = std::fs::read_to_string(path)
+        let mut content = std::fs::read_to_string(path)
             .map_err(|e| format!("Failed to read API keys file '{}': {}", path.display(), e))?;
 
         let file: ApiKeysFile = serde_json::from_str(&content)
             .map_err(|e| format!("Invalid API keys file format: {}", e))?;
+
+        // Zeroize the raw file content now that we've parsed it
+        content.zeroize();
 
         let mut keys = HashMap::default();
         for entry in file.keys {
@@ -151,7 +173,7 @@ impl RbacConfig {
                 )
             })?;
             keys.insert(
-                entry.key,
+                SecretString::new(entry.key),
                 ApiKeyEntry {
                     role,
                     name: entry.name,
@@ -185,7 +207,7 @@ impl RbacConfig {
                 // Constant-time scan: check ALL keys to avoid timing leaks
                 let mut matched_role = None;
                 for (stored_key, entry) in &self.keys {
-                    if varpulis_core::security::constant_time_compare(stored_key, key) {
+                    if varpulis_core::security::constant_time_compare(stored_key.expose(), key) {
                         matched_role = Some(entry.role);
                     }
                 }
@@ -212,7 +234,7 @@ impl RbacConfig {
         self.keys
             .iter()
             .find(|(_, entry)| entry.role == Role::Admin)
-            .map(|(key, _)| key.clone())
+            .map(|(key, _)| key.expose().to_string())
     }
 }
 
@@ -277,11 +299,7 @@ mod tests {
                 name: Some("grafana".to_string()),
             },
         );
-        let config = RbacConfig {
-            keys,
-            allow_anonymous: false,
-            anonymous_role: Role::Viewer,
-        };
+        let config = RbacConfig::multi_key(keys);
 
         assert_eq!(config.authenticate(Some("admin-key")), Some(Role::Admin));
         assert_eq!(config.authenticate(Some("viewer-key")), Some(Role::Viewer));
@@ -306,5 +324,16 @@ mod tests {
         assert_eq!(config.authenticate(Some("k2")), Some(Role::Viewer));
 
         let _ = std::fs::remove_file(&dir);
+    }
+
+    #[test]
+    fn test_secret_string_debug_redacted() {
+        let config = RbacConfig::single_key("my-secret".to_string());
+        let debug = format!("{:?}", config);
+        assert!(
+            !debug.contains("my-secret"),
+            "Secret leaked in Debug output"
+        );
+        assert!(debug.contains("[REDACTED]"));
     }
 }

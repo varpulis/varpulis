@@ -877,7 +877,7 @@ fn execute_op_common(
                 } else {
                     format!("{:?}", event.data)
                 };
-                state.seen.put(key, ()).is_none()
+                state.seen.insert(key, ()).is_none()
             });
         }
 
