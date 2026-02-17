@@ -821,7 +821,7 @@ fn test_elasticsearch_config_batch_size_minimum() {
 #[test]
 fn test_database_config_defaults() {
     use varpulis_runtime::connector::DatabaseConfig;
-    let config = DatabaseConfig::new("postgres://localhost/test", "events");
+    let config = DatabaseConfig::new("postgres://localhost/test", "events").unwrap();
     assert_eq!(
         config.connection_string.expose(),
         "postgres://localhost/test"
@@ -833,9 +833,40 @@ fn test_database_config_defaults() {
 #[test]
 fn test_database_config_with_max_connections() {
     use varpulis_runtime::connector::DatabaseConfig;
-    let config =
-        DatabaseConfig::new("postgres://localhost/test", "events").with_max_connections(20);
+    let config = DatabaseConfig::new("postgres://localhost/test", "events")
+        .unwrap()
+        .with_max_connections(20);
     assert_eq!(config.max_connections, 20);
+}
+
+#[test]
+fn test_database_config_valid_table_names() {
+    use varpulis_runtime::connector::DatabaseConfig;
+    // Simple name
+    assert!(DatabaseConfig::new("postgres://localhost/test", "events").is_ok());
+    // Underscore prefix
+    assert!(DatabaseConfig::new("postgres://localhost/test", "_temp").is_ok());
+    // Schema-qualified
+    assert!(DatabaseConfig::new("postgres://localhost/test", "public.events").is_ok());
+    // Mixed case
+    assert!(DatabaseConfig::new("postgres://localhost/test", "MyTable_123").is_ok());
+}
+
+#[test]
+fn test_database_config_invalid_table_names() {
+    use varpulis_runtime::connector::DatabaseConfig;
+    // Empty
+    assert!(DatabaseConfig::new("postgres://localhost/test", "").is_err());
+    // SQL injection: semicolon
+    assert!(DatabaseConfig::new("postgres://localhost/test", "events; DROP TABLE users").is_err());
+    // SQL injection: comment
+    assert!(DatabaseConfig::new("postgres://localhost/test", "events--").is_err());
+    // Starts with number
+    assert!(DatabaseConfig::new("postgres://localhost/test", "123table").is_err());
+    // Space
+    assert!(DatabaseConfig::new("postgres://localhost/test", "my table").is_err());
+    // Parentheses
+    assert!(DatabaseConfig::new("postgres://localhost/test", "fn()").is_err());
 }
 
 // ==========================================================================
@@ -1192,7 +1223,7 @@ fn test_mqtt_sink_stub_name() {
 #[test]
 fn test_database_source_stub_name() {
     use varpulis_runtime::connector::{DatabaseConfig, DatabaseSource};
-    let config = DatabaseConfig::new("postgres://localhost/test", "events");
+    let config = DatabaseConfig::new("postgres://localhost/test", "events").unwrap();
     let source = DatabaseSource::new("db-src", config);
     assert_eq!(source.name(), "db-src");
 }
@@ -1200,7 +1231,7 @@ fn test_database_source_stub_name() {
 #[tokio::test]
 async fn test_database_sink_stub_construction() {
     use varpulis_runtime::connector::{DatabaseConfig, DatabaseSink};
-    let config = DatabaseConfig::new("postgres://localhost/test", "events");
+    let config = DatabaseConfig::new("postgres://localhost/test", "events").unwrap();
     let result = DatabaseSink::new("db-sink", config).await;
     assert!(result.is_ok());
     assert_eq!(result.unwrap().name(), "db-sink");

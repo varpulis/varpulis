@@ -4,6 +4,7 @@
 //! in a multi-tenant environment.
 
 use crate::auth::constant_time_compare;
+use futures_util::stream;
 use indexmap::IndexMap;
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
@@ -13,6 +14,7 @@ use varpulis_runtime::Event;
 use warp::http::StatusCode;
 use warp::{Filter, Rejection, Reply};
 
+use varpulis_core::pagination::{PaginationMeta, PaginationParams, MAX_LIMIT};
 use varpulis_core::security::{JSON_BODY_LIMIT, LARGE_BODY_LIMIT};
 
 // =============================================================================
@@ -45,9 +47,11 @@ pub struct PipelineInfo {
 pub struct PipelineListResponse {
     pub pipelines: Vec<PipelineInfo>,
     pub total: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pagination: Option<PaginationMeta>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PipelineMetricsResponse {
     pub pipeline_id: String,
     pub events_processed: u64,
@@ -141,6 +145,8 @@ pub struct TenantResponse {
 pub struct TenantListResponse {
     pub tenants: Vec<TenantResponse>,
     pub total: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pagination: Option<PaginationMeta>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -188,6 +194,7 @@ pub fn api_routes(
         .and(warp::path::end())
         .and(warp::get())
         .and(with_api_key())
+        .and(warp::query::<PaginationParams>())
         .and(with_manager(manager.clone()))
         .and_then(handle_list);
 
@@ -285,6 +292,16 @@ pub fn api_routes(
         .and(with_manager(manager.clone()))
         .and_then(handle_usage);
 
+    let logs = api
+        .and(warp::path("pipelines"))
+        .and(warp::path::param::<String>())
+        .and(warp::path("logs"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(with_api_key())
+        .and(with_manager(manager.clone()))
+        .and_then(handle_logs);
+
     // SECURITY: allow_any_origin() is acceptable here because production
     // deployments sit behind nginx which enforces origin restrictions.
     // Per-tenant API keys provide the actual access-control boundary.
@@ -304,6 +321,7 @@ pub fn api_routes(
         .or(metrics)
         .or(reload)
         .or(usage)
+        .or(logs)
         .or(admin_routes)
         .with(cors)
 }
@@ -367,8 +385,17 @@ async fn handle_deploy(
 
 async fn handle_list(
     api_key: String,
+    pagination: PaginationParams,
     manager: SharedTenantManager,
 ) -> Result<impl Reply, Infallible> {
+    if pagination.exceeds_max() {
+        return Ok(error_response(
+            StatusCode::BAD_REQUEST,
+            "invalid_limit",
+            &format!("limit must not exceed {MAX_LIMIT}"),
+        ));
+    }
+
     let mgr = manager.read().await;
 
     let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
@@ -393,7 +420,7 @@ async fn handle_list(
         }
     };
 
-    let pipelines: Vec<PipelineInfo> = tenant
+    let all_pipelines: Vec<PipelineInfo> = tenant
         .pipelines
         .values()
         .map(|p| PipelineInfo {
@@ -405,8 +432,13 @@ async fn handle_list(
         })
         .collect();
 
-    let total = pipelines.len();
-    let resp = PipelineListResponse { pipelines, total };
+    let (pipelines, meta) = pagination.paginate(all_pipelines);
+    let total = meta.total;
+    let resp = PipelineListResponse {
+        pipelines,
+        total,
+        pagination: Some(meta),
+    };
     Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
 }
 
@@ -860,6 +892,112 @@ async fn handle_usage(
     Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
 }
 
+/// Handle SSE log streaming for a pipeline
+async fn handle_logs(
+    pipeline_id: String,
+    api_key: String,
+    manager: SharedTenantManager,
+) -> Result<warp::reply::Response, Rejection> {
+    let mgr = manager.read().await;
+
+    let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
+        Some(id) => id.clone(),
+        None => {
+            return Ok(error_response(
+                StatusCode::UNAUTHORIZED,
+                "invalid_key",
+                "Invalid API key",
+            ))
+        }
+    };
+
+    // Verify tenant owns this pipeline
+    let tenant = match mgr.get_tenant(&tenant_id) {
+        Some(t) => t,
+        None => {
+            return Ok(error_response(
+                StatusCode::NOT_FOUND,
+                "tenant_not_found",
+                "Tenant not found",
+            ))
+        }
+    };
+
+    let rx: tokio::sync::broadcast::Receiver<Event> =
+        match tenant.subscribe_pipeline_logs(&pipeline_id) {
+            Ok(rx) => rx,
+            Err(_) => {
+                return Ok(error_response(
+                    StatusCode::NOT_FOUND,
+                    "pipeline_not_found",
+                    &format!("Pipeline {} not found", pipeline_id),
+                ))
+            }
+        };
+
+    drop(mgr); // Release the read lock before streaming
+
+    // Create SSE stream from broadcast receiver using futures unfold
+    let stream = stream::unfold(rx, |mut rx| async move {
+        match rx.recv().await {
+            Ok(event) => {
+                let data: serde_json::Map<String, serde_json::Value> = event
+                    .data
+                    .iter()
+                    .map(|(k, v): (&std::sync::Arc<str>, &varpulis_core::Value)| {
+                        (k.to_string(), json_from_value(v))
+                    })
+                    .collect();
+                let json = serde_json::to_string(&LogEvent {
+                    event_type: event.event_type.to_string(),
+                    timestamp: event.timestamp.to_rfc3339(),
+                    data,
+                })
+                .unwrap_or_default();
+                let sse = warp::sse::Event::default().data(json);
+                Some((Ok::<_, Infallible>(sse), rx))
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                let msg = format!("{{\"warning\":\"skipped {} events\"}}", n);
+                let sse = warp::sse::Event::default().event("warning").data(msg);
+                Some((Ok(sse), rx))
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => None,
+        }
+    });
+
+    Ok(warp::sse::reply(warp::sse::keep_alive().stream(stream)).into_response())
+}
+
+#[derive(Serialize)]
+struct LogEvent {
+    event_type: String,
+    timestamp: String,
+    data: serde_json::Map<String, serde_json::Value>,
+}
+
+fn json_from_value(v: &varpulis_core::Value) -> serde_json::Value {
+    match v {
+        varpulis_core::Value::Null => serde_json::Value::Null,
+        varpulis_core::Value::Bool(b) => serde_json::Value::Bool(*b),
+        varpulis_core::Value::Int(i) => serde_json::json!(*i),
+        varpulis_core::Value::Float(f) => serde_json::json!(*f),
+        varpulis_core::Value::Str(s) => serde_json::Value::String(s.to_string()),
+        varpulis_core::Value::Timestamp(ns) => serde_json::json!(*ns),
+        varpulis_core::Value::Duration(ns) => serde_json::json!(*ns),
+        varpulis_core::Value::Array(arr) => {
+            serde_json::Value::Array(arr.iter().map(json_from_value).collect())
+        }
+        varpulis_core::Value::Map(map) => {
+            let obj: serde_json::Map<String, serde_json::Value> = map
+                .iter()
+                .map(|(k, v)| (k.to_string(), json_from_value(v)))
+                .collect();
+            serde_json::Value::Object(obj)
+        }
+    }
+}
+
 // =============================================================================
 // Tenant Admin Routes
 // =============================================================================
@@ -897,6 +1035,7 @@ pub fn tenant_admin_routes(
         .and(warp::path::end())
         .and(warp::get())
         .and(with_admin_key())
+        .and(warp::query::<PaginationParams>())
         .and(with_manager(manager.clone()))
         .and(with_admin_key_config(admin_key.clone()))
         .and_then(handle_list_tenants);
@@ -993,6 +1132,7 @@ async fn handle_create_tenant(
 
 async fn handle_list_tenants(
     admin_key: String,
+    pagination: PaginationParams,
     manager: SharedTenantManager,
     configured_key: Option<String>,
 ) -> Result<impl Reply, Infallible> {
@@ -1000,8 +1140,16 @@ async fn handle_list_tenants(
         return Ok(resp);
     }
 
+    if pagination.exceeds_max() {
+        return Ok(error_response(
+            StatusCode::BAD_REQUEST,
+            "invalid_limit",
+            &format!("limit must not exceed {MAX_LIMIT}"),
+        ));
+    }
+
     let mgr = manager.read().await;
-    let tenants: Vec<TenantResponse> = mgr
+    let all_tenants: Vec<TenantResponse> = mgr
         .list_tenants()
         .iter()
         .map(|t| TenantResponse {
@@ -1015,8 +1163,13 @@ async fn handle_list_tenants(
             },
         })
         .collect();
-    let total = tenants.len();
-    let resp = TenantListResponse { tenants, total };
+    let (tenants, meta) = pagination.paginate(all_tenants);
+    let total = meta.total;
+    let resp = TenantListResponse {
+        tenants,
+        total,
+        pagination: Some(meta),
+    };
     Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
 }
 
@@ -1534,5 +1687,613 @@ mod tests {
             .await;
         let body: TenantResponse = serde_json::from_slice(resp.body()).unwrap();
         assert_eq!(body.quota.max_pipelines, 1000); // enterprise tier
+    }
+
+    // =========================================================================
+    // Pipeline CRUD handler tests
+    // =========================================================================
+
+    /// Helper: get the first pipeline ID from the test manager
+    async fn get_first_pipeline_id(mgr: &SharedTenantManager) -> String {
+        let m = mgr.read().await;
+        let tid = m.get_tenant_by_api_key("test-key-123").unwrap().clone();
+        let tenant = m.get_tenant(&tid).unwrap();
+        tenant.pipelines.keys().next().unwrap().clone()
+    }
+
+    #[tokio::test]
+    async fn test_get_single_pipeline() {
+        let mgr = setup_test_manager().await;
+        let pipeline_id = get_first_pipeline_id(&mgr).await;
+        let routes = api_routes(mgr, None);
+
+        let resp = warp::test::request()
+            .method("GET")
+            .path(&format!("/api/v1/pipelines/{}", pipeline_id))
+            .header("x-api-key", "test-key-123")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: PipelineInfo = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body.id, pipeline_id);
+        assert_eq!(body.name, "Test Pipeline");
+        assert_eq!(body.status, "running");
+        assert!(body.source.contains("SensorReading"));
+    }
+
+    #[tokio::test]
+    async fn test_get_pipeline_not_found() {
+        let mgr = setup_test_manager().await;
+        let routes = api_routes(mgr, None);
+
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/api/v1/pipelines/nonexistent-id")
+            .header("x-api-key", "test-key-123")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_delete_pipeline_api() {
+        let mgr = setup_test_manager().await;
+        let pipeline_id = get_first_pipeline_id(&mgr).await;
+        let routes = api_routes(mgr.clone(), None);
+
+        let resp = warp::test::request()
+            .method("DELETE")
+            .path(&format!("/api/v1/pipelines/{}", pipeline_id))
+            .header("x-api-key", "test-key-123")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body["deleted"], true);
+
+        // Verify it's gone
+        let list_resp = warp::test::request()
+            .method("GET")
+            .path("/api/v1/pipelines")
+            .header("x-api-key", "test-key-123")
+            .reply(&routes)
+            .await;
+        let list: PipelineListResponse = serde_json::from_slice(list_resp.body()).unwrap();
+        assert_eq!(list.total, 0);
+    }
+
+    #[tokio::test]
+    async fn test_delete_pipeline_not_found() {
+        let mgr = setup_test_manager().await;
+        let routes = api_routes(mgr, None);
+
+        let resp = warp::test::request()
+            .method("DELETE")
+            .path("/api/v1/pipelines/nonexistent-id")
+            .header("x-api-key", "test-key-123")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    // =========================================================================
+    // Batch inject handler tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_inject_batch() {
+        let mgr = setup_test_manager().await;
+        let pipeline_id = get_first_pipeline_id(&mgr).await;
+        let routes = api_routes(mgr, None);
+
+        let resp = warp::test::request()
+            .method("POST")
+            .path(&format!("/api/v1/pipelines/{}/events-batch", pipeline_id))
+            .header("x-api-key", "test-key-123")
+            .json(&InjectBatchRequest {
+                events: vec![
+                    InjectEventRequest {
+                        event_type: "SensorReading".into(),
+                        fields: {
+                            let mut m = serde_json::Map::new();
+                            m.insert("x".into(), serde_json::json!(5));
+                            m
+                        },
+                    },
+                    InjectEventRequest {
+                        event_type: "SensorReading".into(),
+                        fields: {
+                            let mut m = serde_json::Map::new();
+                            m.insert("x".into(), serde_json::json!(10));
+                            m
+                        },
+                    },
+                ],
+            })
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: InjectBatchResponse = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body.accepted, 2);
+        assert!(body.processing_time_us > 0);
+    }
+
+    #[tokio::test]
+    async fn test_inject_batch_invalid_pipeline() {
+        let mgr = setup_test_manager().await;
+        let routes = api_routes(mgr, None);
+
+        // Batch mode silently skips failed events (including nonexistent pipeline)
+        let resp = warp::test::request()
+            .method("POST")
+            .path("/api/v1/pipelines/nonexistent/events-batch")
+            .header("x-api-key", "test-key-123")
+            .json(&InjectBatchRequest {
+                events: vec![InjectEventRequest {
+                    event_type: "Test".into(),
+                    fields: serde_json::Map::new(),
+                }],
+            })
+            .reply(&routes)
+            .await;
+
+        // Returns 200 but accepted=0 since pipeline doesn't exist
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: InjectBatchResponse = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body.accepted, 0);
+    }
+
+    // =========================================================================
+    // Checkpoint/Restore handler tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_checkpoint_pipeline() {
+        let mgr = setup_test_manager().await;
+        let pipeline_id = get_first_pipeline_id(&mgr).await;
+        let routes = api_routes(mgr, None);
+
+        let resp = warp::test::request()
+            .method("POST")
+            .path(&format!("/api/v1/pipelines/{}/checkpoint", pipeline_id))
+            .header("x-api-key", "test-key-123")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: CheckpointResponse = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body.pipeline_id, pipeline_id);
+    }
+
+    #[tokio::test]
+    async fn test_checkpoint_not_found() {
+        let mgr = setup_test_manager().await;
+        let routes = api_routes(mgr, None);
+
+        let resp = warp::test::request()
+            .method("POST")
+            .path("/api/v1/pipelines/nonexistent/checkpoint")
+            .header("x-api-key", "test-key-123")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_restore_pipeline() {
+        let mgr = setup_test_manager().await;
+        let pipeline_id = get_first_pipeline_id(&mgr).await;
+        let routes = api_routes(mgr, None);
+
+        // First checkpoint
+        let cp_resp = warp::test::request()
+            .method("POST")
+            .path(&format!("/api/v1/pipelines/{}/checkpoint", pipeline_id))
+            .header("x-api-key", "test-key-123")
+            .reply(&routes)
+            .await;
+        let cp: CheckpointResponse = serde_json::from_slice(cp_resp.body()).unwrap();
+
+        // Then restore
+        let resp = warp::test::request()
+            .method("POST")
+            .path(&format!("/api/v1/pipelines/{}/restore", pipeline_id))
+            .header("x-api-key", "test-key-123")
+            .json(&RestoreRequest {
+                checkpoint: cp.checkpoint,
+            })
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: RestoreResponse = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body.pipeline_id, pipeline_id);
+        assert!(body.restored);
+    }
+
+    #[tokio::test]
+    async fn test_restore_not_found() {
+        let mgr = setup_test_manager().await;
+        let routes = api_routes(mgr, None);
+
+        let checkpoint = varpulis_runtime::persistence::EngineCheckpoint {
+            version: varpulis_runtime::persistence::CHECKPOINT_VERSION,
+            window_states: std::collections::HashMap::new(),
+            sase_states: std::collections::HashMap::new(),
+            join_states: std::collections::HashMap::new(),
+            variables: std::collections::HashMap::new(),
+            events_processed: 0,
+            output_events_emitted: 0,
+            watermark_state: None,
+            distinct_states: std::collections::HashMap::new(),
+            limit_states: std::collections::HashMap::new(),
+        };
+
+        let resp = warp::test::request()
+            .method("POST")
+            .path("/api/v1/pipelines/nonexistent/restore")
+            .header("x-api-key", "test-key-123")
+            .json(&RestoreRequest { checkpoint })
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    // =========================================================================
+    // Metrics handler tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_metrics_endpoint() {
+        let mgr = setup_test_manager().await;
+        let pipeline_id = get_first_pipeline_id(&mgr).await;
+        let routes = api_routes(mgr, None);
+
+        let resp = warp::test::request()
+            .method("GET")
+            .path(&format!("/api/v1/pipelines/{}/metrics", pipeline_id))
+            .header("x-api-key", "test-key-123")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: PipelineMetricsResponse = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body.pipeline_id, pipeline_id);
+    }
+
+    #[tokio::test]
+    async fn test_metrics_not_found() {
+        let mgr = setup_test_manager().await;
+        let routes = api_routes(mgr, None);
+
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/api/v1/pipelines/nonexistent/metrics")
+            .header("x-api-key", "test-key-123")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    // =========================================================================
+    // Reload handler tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_reload_pipeline() {
+        let mgr = setup_test_manager().await;
+        let pipeline_id = get_first_pipeline_id(&mgr).await;
+        let routes = api_routes(mgr, None);
+
+        let resp = warp::test::request()
+            .method("POST")
+            .path(&format!("/api/v1/pipelines/{}/reload", pipeline_id))
+            .header("x-api-key", "test-key-123")
+            .json(&ReloadPipelineRequest {
+                source: "stream B = Events .where(y > 10)".into(),
+            })
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body["reloaded"], true);
+    }
+
+    #[tokio::test]
+    async fn test_reload_invalid_vpl() {
+        let mgr = setup_test_manager().await;
+        let pipeline_id = get_first_pipeline_id(&mgr).await;
+        let routes = api_routes(mgr, None);
+
+        let resp = warp::test::request()
+            .method("POST")
+            .path(&format!("/api/v1/pipelines/{}/reload", pipeline_id))
+            .header("x-api-key", "test-key-123")
+            .json(&ReloadPipelineRequest {
+                source: "not valid {{{".into(),
+            })
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_reload_not_found() {
+        let mgr = setup_test_manager().await;
+        let routes = api_routes(mgr, None);
+
+        let resp = warp::test::request()
+            .method("POST")
+            .path("/api/v1/pipelines/nonexistent/reload")
+            .header("x-api-key", "test-key-123")
+            .json(&ReloadPipelineRequest {
+                source: "stream B = Events .where(y > 10)".into(),
+            })
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    // =========================================================================
+    // Logs (SSE) handler tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_logs_invalid_pipeline() {
+        let mgr = setup_test_manager().await;
+        let routes = api_routes(mgr, None);
+
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/api/v1/pipelines/nonexistent/logs")
+            .header("x-api-key", "test-key-123")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_logs_invalid_api_key() {
+        let mgr = setup_test_manager().await;
+        let pipeline_id = get_first_pipeline_id(&mgr).await;
+        let routes = api_routes(mgr, None);
+
+        let resp = warp::test::request()
+            .method("GET")
+            .path(&format!("/api/v1/pipelines/{}/logs", pipeline_id))
+            .header("x-api-key", "wrong-key")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // =========================================================================
+    // json_to_runtime_value extended tests
+    // =========================================================================
+
+    #[test]
+    fn test_json_to_runtime_value_array() {
+        let arr = serde_json::json!([1, "hello", true]);
+        let val = json_to_runtime_value(&arr);
+        match val {
+            varpulis_core::Value::Array(a) => {
+                assert_eq!(a.len(), 3);
+                assert_eq!(a[0], varpulis_core::Value::Int(1));
+                assert_eq!(a[1], varpulis_core::Value::Str("hello".into()));
+                assert_eq!(a[2], varpulis_core::Value::Bool(true));
+            }
+            _ => panic!("Expected Array"),
+        }
+    }
+
+    #[test]
+    fn test_json_to_runtime_value_object() {
+        let obj = serde_json::json!({"key": "val", "num": 42});
+        let val = json_to_runtime_value(&obj);
+        match val {
+            varpulis_core::Value::Map(m) => {
+                assert_eq!(m.len(), 2);
+            }
+            _ => panic!("Expected Map"),
+        }
+    }
+
+    #[test]
+    fn test_json_from_value_roundtrip() {
+        use varpulis_core::Value;
+        assert_eq!(json_from_value(&Value::Null), serde_json::json!(null));
+        assert_eq!(json_from_value(&Value::Bool(true)), serde_json::json!(true));
+        assert_eq!(json_from_value(&Value::Int(42)), serde_json::json!(42));
+        assert_eq!(
+            json_from_value(&Value::Float(2.71)),
+            serde_json::json!(2.71)
+        );
+        assert_eq!(
+            json_from_value(&Value::Str("hi".into())),
+            serde_json::json!("hi")
+        );
+        assert_eq!(
+            json_from_value(&Value::Timestamp(1000000)),
+            serde_json::json!(1000000)
+        );
+        assert_eq!(
+            json_from_value(&Value::Duration(5000)),
+            serde_json::json!(5000)
+        );
+    }
+
+    // =========================================================================
+    // Additional tenant_error_response coverage
+    // =========================================================================
+
+    #[test]
+    fn test_tenant_error_all_variants() {
+        let resp = tenant_error_response(TenantError::PipelineNotFound("p1".into()));
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+        let resp = tenant_error_response(TenantError::QuotaExceeded("max pipelines".into()));
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        let resp = tenant_error_response(TenantError::EngineError("boom".into()));
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        let resp = tenant_error_response(TenantError::AlreadyExists("t1".into()));
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+    }
+
+    // =========================================================================
+    // Pagination tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_list_pipelines_default_pagination() {
+        let mgr = setup_test_manager().await;
+        let routes = api_routes(mgr, None);
+
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/api/v1/pipelines")
+            .header("x-api-key", "test-key-123")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: PipelineListResponse = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body.total, 1);
+        let pagination = body.pagination.unwrap();
+        assert_eq!(pagination.total, 1);
+        assert_eq!(pagination.offset, 0);
+        assert_eq!(pagination.limit, 50);
+        assert!(!pagination.has_more);
+    }
+
+    #[tokio::test]
+    async fn test_list_pipelines_with_pagination_params() {
+        let mgr = setup_test_manager().await;
+
+        // Deploy two more pipelines
+        {
+            let mut m = mgr.write().await;
+            let tid = m.get_tenant_by_api_key("test-key-123").unwrap().clone();
+            let tenant = m.get_tenant_mut(&tid).unwrap();
+            tenant
+                .deploy_pipeline(
+                    "Pipeline B".into(),
+                    "stream B = Events .where(y > 2)".into(),
+                )
+                .await
+                .unwrap();
+            tenant
+                .deploy_pipeline(
+                    "Pipeline C".into(),
+                    "stream C = Events .where(z > 3)".into(),
+                )
+                .await
+                .unwrap();
+        }
+
+        let routes = api_routes(mgr, None);
+
+        // First page: limit=1, offset=0
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/api/v1/pipelines?limit=1&offset=0")
+            .header("x-api-key", "test-key-123")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: PipelineListResponse = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body.pipelines.len(), 1);
+        assert_eq!(body.total, 3);
+        let pagination = body.pagination.unwrap();
+        assert!(pagination.has_more);
+        assert_eq!(pagination.limit, 1);
+
+        // Second page: limit=1, offset=2
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/api/v1/pipelines?limit=1&offset=2")
+            .header("x-api-key", "test-key-123")
+            .reply(&routes)
+            .await;
+
+        let body: PipelineListResponse = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body.pipelines.len(), 1);
+        assert_eq!(body.total, 3);
+        assert!(!body.pagination.unwrap().has_more);
+    }
+
+    #[tokio::test]
+    async fn test_list_pipelines_limit_exceeds_max() {
+        let mgr = setup_test_manager().await;
+        let routes = api_routes(mgr, None);
+
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/api/v1/pipelines?limit=1001")
+            .header("x-api-key", "test-key-123")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_list_tenants_with_pagination() {
+        let (_mgr, routes) = setup_admin_routes(Some("admin-secret"));
+
+        // Create 3 tenants
+        for name in &["T1", "T2", "T3"] {
+            warp::test::request()
+                .method("POST")
+                .path("/api/v1/tenants")
+                .header("x-admin-key", "admin-secret")
+                .json(&CreateTenantRequest {
+                    name: name.to_string(),
+                    quota_tier: None,
+                })
+                .reply(&routes)
+                .await;
+        }
+
+        // Page through with limit=2
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/api/v1/tenants?limit=2&offset=0")
+            .header("x-admin-key", "admin-secret")
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: TenantListResponse = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body.tenants.len(), 2);
+        assert_eq!(body.total, 3);
+        assert!(body.pagination.unwrap().has_more);
+
+        // Last page
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/api/v1/tenants?limit=2&offset=2")
+            .header("x-admin-key", "admin-secret")
+            .reply(&routes)
+            .await;
+
+        let body: TenantListResponse = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body.tenants.len(), 1);
+        assert!(!body.pagination.unwrap().has_more);
     }
 }

@@ -794,7 +794,14 @@ impl ContextOrchestrator {
 
                         // Restore from checkpoint if available
                         if let Some(cp) = ctx_recovery {
-                            engine.restore_checkpoint(&cp);
+                            if let Err(e) = engine.restore_checkpoint(&cp) {
+                                tracing::error!(
+                                    "Context {} failed to restore checkpoint: {}",
+                                    ctx_name_clone,
+                                    e
+                                );
+                                return;
+                            }
                         }
 
                         let mut ctx_runtime = ContextRuntime::new(

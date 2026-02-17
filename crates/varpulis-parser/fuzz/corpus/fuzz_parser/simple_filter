@@ -1,0 +1,1 @@
+stream A = Events .where(x > 1)

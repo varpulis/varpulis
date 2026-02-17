@@ -13,6 +13,7 @@ use varpulis_runtime::event::Event;
 use varpulis_runtime::event_file::EventFileParser;
 use varpulis_runtime::persistence::{
     Checkpoint, CheckpointConfig, CheckpointManager, EngineCheckpoint, MemoryStore,
+    CHECKPOINT_VERSION,
 };
 use varpulis_runtime::StateStore;
 
@@ -77,7 +78,7 @@ async fn test_engine_checkpoint_restore_count_window() {
     // Phase 2: Restore into new engine, send 3rd event from phase1 + 2 from phase2
     let (mut engine2, mut rx2) = create_engine();
     engine2.load(&program).expect("Failed to load program");
-    engine2.restore_checkpoint(&checkpoint);
+    engine2.restore_checkpoint(&checkpoint).unwrap();
 
     // Send remaining event from phase1
     engine2
@@ -128,7 +129,7 @@ async fn test_engine_checkpoint_restore_metrics() {
     // Restore and verify metrics continue
     let (mut engine2, _rx2) = create_engine();
     engine2.load(&program).expect("Failed to load program");
-    engine2.restore_checkpoint(&checkpoint);
+    engine2.restore_checkpoint(&checkpoint).unwrap();
 
     let metrics = engine2.metrics();
     assert_eq!(metrics.events_processed, 5);
@@ -186,7 +187,7 @@ async fn test_engine_checkpoint_empty_state() {
     // Restore empty checkpoint and verify engine works
     let (mut engine2, mut rx2) = create_engine();
     engine2.load(&program).expect("Failed to load program");
-    engine2.restore_checkpoint(&checkpoint);
+    engine2.restore_checkpoint(&checkpoint).unwrap();
 
     let event = Event::new("TestEvent").with_field("value", 42);
     engine2.process(event).await.expect("Failed to process");
@@ -285,7 +286,7 @@ async fn test_kill_restart_count_window_state_continuity() {
 
         let (mut engine, mut rx) = create_engine();
         engine.load(&program).expect("Failed to load");
-        engine.restore_checkpoint(&engine_cp);
+        engine.restore_checkpoint(&engine_cp).unwrap();
 
         // Process 2 more events from phase2 file to fill the window (3 restored + 2 new = 5)
         let phase2_events = load_events("checkpoint_count_window_phase2.evt");
@@ -400,7 +401,7 @@ async fn test_kill_restart_session_window_state() {
 
         let (mut engine, mut rx) = create_engine();
         engine.load(&program).expect("Failed to load");
-        engine.restore_checkpoint(&engine_cp);
+        engine.restore_checkpoint(&engine_cp).unwrap();
 
         // Send event with 6s gap from last event (closes the session)
         let event = Event::new("SensorEvent")
@@ -455,7 +456,7 @@ async fn test_kill_restart_variables_preserved() {
 
         let (mut engine, _rx) = create_engine();
         engine.load(&program).expect("Failed to load");
-        engine.restore_checkpoint(&engine_cp);
+        engine.restore_checkpoint(&engine_cp).unwrap();
 
         let val = engine.get_variable("counter");
         assert!(val.is_some(), "Variable 'counter' should survive restart");
@@ -548,7 +549,7 @@ async fn test_kill_restart_watermark_state_preserved() {
 
         let (mut engine, _rx) = create_engine();
         engine.load(&program).expect("Failed to load");
-        engine.restore_checkpoint(&engine_cp);
+        engine.restore_checkpoint(&engine_cp).unwrap();
 
         // Continue processing - should work with restored watermark
         let event = Event::new("SensorEvent")
@@ -559,4 +560,69 @@ async fn test_kill_restart_watermark_state_preserved() {
             .await
             .expect("Should process after watermark restore");
     }
+}
+
+/// Test that created checkpoints carry the current schema version.
+#[tokio::test]
+async fn test_checkpoint_has_current_version() {
+    let program = load_vpl("checkpoint_variables.vpl");
+    let (tx, _rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).expect("Failed to load");
+
+    let cp = engine.create_checkpoint();
+    assert_eq!(cp.version, CHECKPOINT_VERSION);
+}
+
+/// Test that restoring a checkpoint with a future version is rejected.
+#[tokio::test]
+async fn test_reject_future_checkpoint_version() {
+    let program = load_vpl("checkpoint_variables.vpl");
+    let (tx, _rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).expect("Failed to load");
+
+    let mut cp = engine.create_checkpoint();
+    cp.version = CHECKPOINT_VERSION + 1;
+
+    let result = engine.restore_checkpoint(&cp);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.to_string().contains("newer than supported"),
+        "Expected version mismatch error, got: {}",
+        err
+    );
+}
+
+/// Test that validate_and_migrate succeeds for current version.
+#[tokio::test]
+async fn test_validate_and_migrate_current_version() {
+    let program = load_vpl("checkpoint_variables.vpl");
+    let (tx, _rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).expect("Failed to load");
+
+    let mut cp = engine.create_checkpoint();
+    assert!(cp.validate_and_migrate().is_ok());
+    assert_eq!(cp.version, CHECKPOINT_VERSION);
+}
+
+/// Test that a v1 checkpoint (pre-versioning, via serde default) deserializes correctly.
+#[test]
+fn test_pre_versioning_checkpoint_deserialization() {
+    // Simulate a checkpoint JSON without the "version" field (pre-versioning)
+    let json = r#"{
+        "window_states": {},
+        "sase_states": {},
+        "join_states": {},
+        "variables": {},
+        "events_processed": 42,
+        "output_events_emitted": 10
+    }"#;
+
+    let cp: EngineCheckpoint = serde_json::from_str(json).expect("Should deserialize");
+    assert_eq!(cp.version, 1, "Missing version field should default to 1");
+    assert_eq!(cp.events_processed, 42);
+    assert_eq!(cp.output_events_emitted, 10);
 }

@@ -217,43 +217,43 @@ enum Commands {
 
     /// Deploy a pipeline to a remote Varpulis server
     Deploy {
-        /// Server URL (e.g. http://localhost:9000)
+        /// Server URL (e.g. http://localhost:9000). Also reads from .varpulis.toml
         #[arg(long, env = "VARPULIS_SERVER")]
-        server: String,
+        server: Option<String>,
 
-        /// Tenant API key
+        /// Tenant API key. Also reads from .varpulis.toml
         #[arg(long, env = "VARPULIS_API_KEY")]
-        api_key: String,
+        api_key: Option<String>,
 
         /// Path to the .vpl file
         #[arg(short, long)]
         file: PathBuf,
 
-        /// Pipeline name
+        /// Pipeline name (defaults to .varpulis.toml [deploy].name or filename)
         #[arg(short, long)]
-        name: String,
+        name: Option<String>,
     },
 
     /// List pipelines on a remote Varpulis server
     Pipelines {
-        /// Server URL (e.g. http://localhost:9000)
+        /// Server URL (e.g. http://localhost:9000). Also reads from .varpulis.toml
         #[arg(long, env = "VARPULIS_SERVER")]
-        server: String,
+        server: Option<String>,
 
-        /// Tenant API key
+        /// Tenant API key. Also reads from .varpulis.toml
         #[arg(long, env = "VARPULIS_API_KEY")]
-        api_key: String,
+        api_key: Option<String>,
     },
 
     /// Delete a pipeline from a remote Varpulis server
     Undeploy {
-        /// Server URL (e.g. http://localhost:9000)
+        /// Server URL (e.g. http://localhost:9000). Also reads from .varpulis.toml
         #[arg(long, env = "VARPULIS_SERVER")]
-        server: String,
+        server: Option<String>,
 
-        /// Tenant API key
+        /// Tenant API key. Also reads from .varpulis.toml
         #[arg(long, env = "VARPULIS_API_KEY")]
-        api_key: String,
+        api_key: Option<String>,
 
         /// Pipeline ID to delete
         #[arg(long)]
@@ -262,13 +262,39 @@ enum Commands {
 
     /// Show usage statistics from a remote Varpulis server
     Status {
-        /// Server URL (e.g. http://localhost:9000)
+        /// Server URL (e.g. http://localhost:9000). Also reads from .varpulis.toml
         #[arg(long, env = "VARPULIS_SERVER")]
-        server: String,
+        server: Option<String>,
 
-        /// Tenant API key
+        /// Tenant API key. Also reads from .varpulis.toml
         #[arg(long, env = "VARPULIS_API_KEY")]
-        api_key: String,
+        api_key: Option<String>,
+    },
+
+    /// Initialize a .varpulis.toml project configuration file
+    Init {
+        /// Server URL to configure
+        #[arg(long)]
+        server: Option<String>,
+
+        /// API key to configure
+        #[arg(long)]
+        api_key: Option<String>,
+    },
+
+    /// Stream live output events from a deployed pipeline (SSE)
+    Logs {
+        /// Server URL (e.g. http://localhost:9000). Also reads from .varpulis.toml
+        #[arg(long, env = "VARPULIS_SERVER")]
+        server: Option<String>,
+
+        /// Tenant API key. Also reads from .varpulis.toml
+        #[arg(long, env = "VARPULIS_API_KEY")]
+        api_key: Option<String>,
+
+        /// Pipeline ID to stream logs from
+        #[arg(long)]
+        pipeline_id: String,
     },
 
     /// Start cluster coordinator (control plane for distributed execution)
@@ -572,6 +598,24 @@ async fn main() -> Result<()> {
             file,
             name,
         } => {
+            let project = varpulis_cli::config::ProjectConfig::discover_cwd().unwrap_or_default();
+            let server = project.resolve_url(server.as_deref()).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No server URL. Use --server, VARPULIS_SERVER env, or .varpulis.toml"
+                )
+            })?;
+            let api_key = project.resolve_api_key(api_key.as_deref()).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No API key. Use --api-key, VARPULIS_API_KEY env, or .varpulis.toml"
+                )
+            })?;
+            let name = name.or(project.deploy.name).unwrap_or_else(|| {
+                file.file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("pipeline")
+                    .to_string()
+            });
+
             let source = std::fs::read_to_string(&file)?;
             let client = VarpulisClient::new(&server, &api_key);
             match client.deploy_pipeline(&name, &source).await {
@@ -588,6 +632,18 @@ async fn main() -> Result<()> {
         }
 
         Commands::Pipelines { server, api_key } => {
+            let project = varpulis_cli::config::ProjectConfig::discover_cwd().unwrap_or_default();
+            let server = project.resolve_url(server.as_deref()).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No server URL. Use --server, VARPULIS_SERVER env, or .varpulis.toml"
+                )
+            })?;
+            let api_key = project.resolve_api_key(api_key.as_deref()).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No API key. Use --api-key, VARPULIS_API_KEY env, or .varpulis.toml"
+                )
+            })?;
+
             let client = VarpulisClient::new(&server, &api_key);
             match client.list_pipelines().await {
                 Ok(resp) => {
@@ -610,6 +666,18 @@ async fn main() -> Result<()> {
             api_key,
             pipeline_id,
         } => {
+            let project = varpulis_cli::config::ProjectConfig::discover_cwd().unwrap_or_default();
+            let server = project.resolve_url(server.as_deref()).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No server URL. Use --server, VARPULIS_SERVER env, or .varpulis.toml"
+                )
+            })?;
+            let api_key = project.resolve_api_key(api_key.as_deref()).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No API key. Use --api-key, VARPULIS_API_KEY env, or .varpulis.toml"
+                )
+            })?;
+
             let client = VarpulisClient::new(&server, &api_key);
             match client.delete_pipeline(&pipeline_id).await {
                 Ok(()) => {
@@ -622,6 +690,18 @@ async fn main() -> Result<()> {
         }
 
         Commands::Status { server, api_key } => {
+            let project = varpulis_cli::config::ProjectConfig::discover_cwd().unwrap_or_default();
+            let server = project.resolve_url(server.as_deref()).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No server URL. Use --server, VARPULIS_SERVER env, or .varpulis.toml"
+                )
+            })?;
+            let api_key = project.resolve_api_key(api_key.as_deref()).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No API key. Use --api-key, VARPULIS_API_KEY env, or .varpulis.toml"
+                )
+            })?;
+
             let client = VarpulisClient::new(&server, &api_key);
             match client.get_usage().await {
                 Ok(usage) => {
@@ -642,6 +722,105 @@ async fn main() -> Result<()> {
                 }
                 Err(e) => {
                     anyhow::bail!("Failed to get status: {}", e);
+                }
+            }
+        }
+
+        Commands::Init { server, api_key } => {
+            let path = std::env::current_dir()?.join(".varpulis.toml");
+            if path.exists() {
+                anyhow::bail!(".varpulis.toml already exists in current directory");
+            }
+
+            let mut content = String::from("# Varpulis project configuration\n\n[remote]\n");
+            if let Some(url) = server {
+                content.push_str(&format!("url = \"{}\"\n", url));
+            } else {
+                content.push_str("url = \"http://localhost:9000\"\n");
+            }
+            if let Some(key) = api_key {
+                content.push_str(&format!("api_key = \"{}\"\n", key));
+            } else {
+                content.push_str("# api_key = \"your-api-key-here\"\n");
+            }
+            content.push_str("\n[deploy]\n# name = \"my-pipeline\"\n");
+
+            std::fs::write(&path, &content)?;
+            println!("Created {}", path.display());
+        }
+
+        Commands::Logs {
+            server,
+            api_key,
+            pipeline_id,
+        } => {
+            let project = varpulis_cli::config::ProjectConfig::discover_cwd().unwrap_or_default();
+            let server = project.resolve_url(server.as_deref()).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No server URL. Use --server, VARPULIS_SERVER env, or .varpulis.toml"
+                )
+            })?;
+            let api_key = project.resolve_api_key(api_key.as_deref()).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No API key. Use --api-key, VARPULIS_API_KEY env, or .varpulis.toml"
+                )
+            })?;
+
+            let client = VarpulisClient::new(&server, &api_key);
+            let url = client.logs_url(&pipeline_id);
+            println!("Streaming logs for pipeline {}...", pipeline_id);
+            println!("(Press Ctrl+C to stop)\n");
+
+            // Connect to SSE endpoint
+            let resp = reqwest::Client::new()
+                .get(&url)
+                .header("x-api-key", client.api_key())
+                .send()
+                .await?;
+
+            if !resp.status().is_success() {
+                let status = resp.status().as_u16();
+                let text = resp.text().await.unwrap_or_default();
+                anyhow::bail!("Failed to connect to log stream ({}): {}", status, text);
+            }
+
+            // Stream SSE events line by line
+            let mut stream = resp.bytes_stream();
+            use futures_util::StreamExt;
+            let mut buffer = String::new();
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk?;
+                buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+                // Process complete SSE events (double newline separated)
+                while let Some(pos) = buffer.find("\n\n") {
+                    let event_block = buffer[..pos].to_string();
+                    buffer = buffer[pos + 2..].to_string();
+
+                    for line in event_block.lines() {
+                        if let Some(data) = line.strip_prefix("data:") {
+                            let data = data.trim();
+                            // Pretty-print the JSON event
+                            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
+                                if let Some(event_type) = parsed.get("event_type") {
+                                    let ts = parsed
+                                        .get("timestamp")
+                                        .and_then(|t| t.as_str())
+                                        .unwrap_or("?");
+                                    print!("[{}] {} ", ts, event_type);
+                                    if let Some(fields) = parsed.get("data") {
+                                        println!("{}", fields);
+                                    } else {
+                                        println!();
+                                    }
+                                } else {
+                                    println!("{}", data);
+                                }
+                            } else {
+                                println!("{}", data);
+                            }
+                        }
+                    }
                 }
             }
         }
