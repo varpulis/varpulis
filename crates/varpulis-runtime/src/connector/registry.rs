@@ -104,8 +104,8 @@ impl ConnectorRegistry {
             }
             "database" | "postgres" | "mysql" | "sqlite" => {
                 let table = config.topic.clone().unwrap_or_else(|| "events".to_string());
-                let sink =
-                    DatabaseSink::new("database", DatabaseConfig::new(&config.url, &table)).await?;
+                let sink = DatabaseSink::new("database", DatabaseConfig::new(&config.url, &table)?)
+                    .await?;
                 Ok(Box::new(sink))
             }
             "kinesis" => {

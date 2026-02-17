@@ -1,0 +1,28 @@
+[package]
+name = "varpulis-runtime-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+varpulis-runtime = { path = "..", default-features = false }
+varpulis-core = { path = "../../varpulis-core" }
+serde_json = "1"
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "fuzz_json_event"
+path = "fuzz_targets/fuzz_json_event.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_mqtt_message"
+path = "fuzz_targets/fuzz_mqtt_message.rs"
+doc = false

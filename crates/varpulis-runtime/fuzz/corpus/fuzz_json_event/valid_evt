@@ -1,0 +1,1 @@
+StockTick { symbol: "AAPL", price: 150.0, volume: 1000 }

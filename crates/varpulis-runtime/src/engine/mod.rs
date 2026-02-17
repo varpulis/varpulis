@@ -3480,6 +3480,7 @@ impl Engine {
         let watermark_state = self.watermark_tracker.as_ref().map(|t| t.checkpoint());
 
         EngineCheckpoint {
+            version: crate::persistence::CHECKPOINT_VERSION,
             window_states,
             sase_states,
             join_states,
@@ -3495,7 +3496,15 @@ impl Engine {
     /// Restore engine state from a checkpoint.
     ///
     /// Must be called after `load()` so that stream definitions exist.
-    pub fn restore_checkpoint(&mut self, cp: &crate::persistence::EngineCheckpoint) {
+    /// Returns an error if the checkpoint version is from an unsupported future version.
+    pub fn restore_checkpoint(
+        &mut self,
+        cp: &crate::persistence::EngineCheckpoint,
+    ) -> Result<(), crate::persistence::StoreError> {
+        // Validate and migrate (on a clone so we don't mutate the caller's reference)
+        let mut migrated = cp.clone();
+        migrated.validate_and_migrate()?;
+
         // Restore counters
         self.events_processed = cp.events_processed;
         self.output_events_emitted = cp.output_events_emitted;
@@ -3595,10 +3604,13 @@ impl Engine {
         }
 
         info!(
-            "Engine restored: {} events processed, {} streams with state",
+            "Engine restored: {} events processed, {} streams with state (schema v{})",
             cp.events_processed,
-            cp.window_states.len() + cp.sase_states.len() + cp.join_states.len()
+            cp.window_states.len() + cp.sase_states.len() + cp.join_states.len(),
+            cp.version
         );
+
+        Ok(())
     }
 
     /// Enable auto-checkpointing with the given store and config.
@@ -3616,7 +3628,7 @@ impl Engine {
         // Try to restore from latest checkpoint
         if let Some(cp) = manager.recover()? {
             if let Some(engine_cp) = cp.context_states.get("main") {
-                self.restore_checkpoint(engine_cp);
+                self.restore_checkpoint(engine_cp)?;
                 info!(
                     "Auto-restored from checkpoint {} ({} events)",
                     cp.id, cp.events_processed

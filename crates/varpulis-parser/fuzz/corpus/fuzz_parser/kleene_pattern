@@ -1,0 +1,3 @@
+stream Rising = Price as first -> Price+ as rest .within(10m)
+    .where(rest.value > first.value)
+    .emit(trend: "rising", count: count(rest))

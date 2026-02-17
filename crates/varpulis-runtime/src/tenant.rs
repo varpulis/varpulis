@@ -142,6 +142,9 @@ pub struct Pipeline {
     pub engine: Arc<tokio::sync::Mutex<Engine>>,
     /// Output event receiver for this pipeline
     pub output_rx: mpsc::Receiver<Event>,
+    /// Broadcast sender for log streaming (SSE subscribers).
+    /// Output events are forwarded here after being drained from output_rx.
+    pub log_broadcast: tokio::sync::broadcast::Sender<Event>,
     /// When the pipeline was created
     pub created_at: Instant,
     /// Pipeline status
@@ -401,12 +404,14 @@ impl Tenant {
             });
 
             let id = Uuid::new_v4().to_string();
+            let (log_tx, _) = tokio::sync::broadcast::channel(256);
             let pipeline = Pipeline {
                 id: id.clone(),
                 name,
                 source,
                 engine,
                 output_rx,
+                log_broadcast: log_tx,
                 created_at: Instant::now(),
                 status: PipelineStatus::Running,
                 orchestrator,
@@ -422,12 +427,14 @@ impl Tenant {
         // No source bindings — standard path without Arc<Mutex>
         let engine = Arc::new(tokio::sync::Mutex::new(engine));
         let id = Uuid::new_v4().to_string();
+        let (log_tx, _) = tokio::sync::broadcast::channel(256);
         let pipeline = Pipeline {
             id: id.clone(),
             name,
             source,
             engine,
             output_rx,
+            log_broadcast: log_tx,
             created_at: Instant::now(),
             status: PipelineStatus::Running,
             orchestrator,
@@ -503,13 +510,28 @@ impl Tenant {
                 .map_err(|e| TenantError::EngineError(e.to_string()))?;
         }
 
-        // Drain output events from the channel
+        // Drain output events from the channel and broadcast to log subscribers
         let mut output_events = Vec::new();
         while let Ok(ev) = pipeline.output_rx.try_recv() {
+            // Best-effort broadcast to SSE log subscribers (ignore if no receivers)
+            let _ = pipeline.log_broadcast.send(ev.clone());
             output_events.push(ev);
         }
 
         Ok(output_events)
+    }
+
+    /// Subscribe to a pipeline's output event stream for log streaming.
+    /// Returns a broadcast receiver that yields events as they are produced.
+    pub fn subscribe_pipeline_logs(
+        &self,
+        pipeline_id: &str,
+    ) -> Result<tokio::sync::broadcast::Receiver<Event>, TenantError> {
+        let pipeline = self
+            .pipelines
+            .get(pipeline_id)
+            .ok_or_else(|| TenantError::PipelineNotFound(pipeline_id.to_string()))?;
+        Ok(pipeline.log_broadcast.subscribe())
     }
 
     /// Create a checkpoint of a pipeline's engine state.
@@ -538,7 +560,9 @@ impl Tenant {
             .ok_or_else(|| TenantError::PipelineNotFound(pipeline_id.to_string()))?;
 
         let mut engine = pipeline.engine.lock().await;
-        engine.restore_checkpoint(checkpoint);
+        engine
+            .restore_checkpoint(checkpoint)
+            .map_err(|e| TenantError::EngineError(e.to_string()))?;
         Ok(())
     }
 
@@ -896,12 +920,14 @@ impl TenantManager {
             .load(&program)
             .map_err(|e| TenantError::EngineError(e.to_string()))?;
 
+        let (log_tx, _) = tokio::sync::broadcast::channel(256);
         Ok(Pipeline {
             id: snapshot.id,
             name: snapshot.name,
             source: snapshot.source,
             engine: Arc::new(tokio::sync::Mutex::new(engine)),
             output_rx,
+            log_broadcast: log_tx,
             created_at: Instant::now(),
             status: snapshot.status,
             orchestrator: None,

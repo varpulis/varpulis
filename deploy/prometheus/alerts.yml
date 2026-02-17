@@ -1,0 +1,276 @@
+groups:
+  - name: varpulis_engine
+    rules:
+      # -- Processing Latency (p99) --
+      - alert: VarpulisHighProcessingLatency
+        expr: >
+          histogram_quantile(0.99,
+            sum(rate(varpulis_processing_latency_seconds_bucket[5m])) by (le, stream)
+          ) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High event processing latency on stream {{ $labels.stream }}"
+          description: >
+            The p99 processing latency for stream {{ $labels.stream }} has exceeded
+            100ms for the last 5 minutes. Current value: {{ $value | humanizeDuration }}.
+          runbook: "docs/operations/alerting.md#varpulishighprocessinglatency"
+
+      # -- Error Rate Spike --
+      - alert: VarpulisHighErrorRate
+        expr: >
+          (
+            sum(rate(varpulis_events_total[5m])) - sum(rate(varpulis_events_processed[5m]))
+          ) / sum(rate(varpulis_events_total[5m])) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Event error rate exceeds 1%"
+          description: >
+            More than 1% of incoming events are failing processing.
+            Received rate: {{ with printf `sum(rate(varpulis_events_total[5m]))` | query }}{{ . | first | value | humanize }}{{ end }} evt/s.
+          runbook: "docs/operations/alerting.md#varpulishigherrorrate"
+
+      # -- Error Rate Critical --
+      - alert: VarpulisCriticalErrorRate
+        expr: >
+          (
+            sum(rate(varpulis_events_total[5m])) - sum(rate(varpulis_events_processed[5m]))
+          ) / sum(rate(varpulis_events_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Event error rate exceeds 5%"
+          description: >
+            More than 5% of incoming events are failing processing.
+            Immediate investigation required.
+          runbook: "docs/operations/alerting.md#varpuliscriticalerrorrate"
+
+      # -- Stream Queue Backlog --
+      - alert: VarpulisStreamQueueBacklog
+        expr: varpulis_stream_queue_size > 10000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Stream queue backlog growing on {{ $labels.stream }}"
+          description: >
+            Stream {{ $labels.stream }} has more than 10K events queued.
+            Current queue size: {{ $value }}.
+            The engine may not be keeping up with incoming event rate.
+          runbook: "docs/operations/alerting.md#varpulisstreamqueuebacklog"
+
+      # -- SASE Run Backlog --
+      - alert: VarpulisSaseRunBacklog
+        expr: varpulis_sase_peak_active_runs > 10000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "SASE active runs exceeding 10K"
+          description: >
+            The SASE pattern engine has {{ $value }} active runs.
+            This may indicate overly broad patterns or missing window constraints,
+            leading to memory growth.
+          runbook: "docs/operations/alerting.md#varpulissaserunbacklog"
+
+      # -- No Events Received --
+      - alert: VarpulisNoEventsReceived
+        expr: sum(rate(varpulis_events_total[5m])) == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No events received for 10 minutes"
+          description: >
+            Varpulis has not received any events in the last 10 minutes.
+            Check connector health and upstream event sources.
+          runbook: "docs/operations/alerting.md#varpulisnoeventsreceived"
+
+  - name: varpulis_cluster
+    rules:
+      # -- Worker Heartbeat Missed --
+      - alert: VarpulisWorkerUnhealthy
+        expr: varpulis_cluster_workers_total{status="unhealthy"} > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $value }} unhealthy worker(s) detected"
+          description: >
+            One or more workers have missed heartbeats and are marked unhealthy.
+            Pipelines on unhealthy workers will be migrated automatically, but
+            verify the workers are reachable and not resource-starved.
+          runbook: "docs/operations/alerting.md#varpulisworkerunhealthy"
+
+      # -- No Ready Workers --
+      - alert: VarpulisNoReadyWorkers
+        expr: varpulis_cluster_workers_total{status="ready"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No ready workers in cluster"
+          description: >
+            There are zero workers in ready status. All pipelines are effectively
+            stalled. Investigate worker processes and network connectivity.
+          runbook: "docs/operations/alerting.md#varpulisnoreadyworkers"
+
+      # -- Raft Leader Election Churn --
+      - alert: VarpulisRaftLeaderChurn
+        expr: changes(varpulis_cluster_raft_role[15m]) > 4
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Frequent Raft leader elections detected"
+          description: >
+            The Raft role has changed {{ $value }} times in 15 minutes.
+            Frequent elections indicate network instability, clock skew,
+            or an undersized cluster.
+          runbook: "docs/operations/alerting.md#varpulisraftleaderchurn"
+
+      # -- Raft Term Advancing Rapidly --
+      - alert: VarpulisRaftTermAdvancing
+        expr: increase(varpulis_cluster_raft_term[10m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Raft term advancing rapidly"
+          description: >
+            The Raft term has increased by {{ $value }} in 10 minutes.
+            This often correlates with split-brain scenarios or repeated
+            election failures.
+          runbook: "docs/operations/alerting.md#varpulisrafttermadvancing"
+
+      # -- Migration Failures --
+      - alert: VarpulisMigrationFailures
+        expr: rate(varpulis_cluster_migrations_total{result="failure"}[10m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pipeline migration failures detected"
+          description: >
+            Pipeline migrations are failing. This may leave pipelines unassigned
+            or cause duplicate processing. Check coordinator and worker logs.
+          runbook: "docs/operations/alerting.md#varpulismigrationfailures"
+
+      # -- Deployment Failures --
+      - alert: VarpulisDeploymentFailures
+        expr: rate(varpulis_cluster_deploy_duration_seconds_count{result="failure"}[10m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pipeline deployment failures detected"
+          description: >
+            Pipeline deployments are failing. Verify VPL syntax, connector
+            configurations, and worker capacity.
+          runbook: "docs/operations/alerting.md#varpulisdeploymentfailures"
+
+      # -- Slow Health Sweeps --
+      - alert: VarpulisSlowHealthSweeps
+        expr: >
+          histogram_quantile(0.99,
+            sum(rate(varpulis_cluster_health_sweep_duration_seconds_bucket[5m])) by (le)
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Cluster health sweeps taking too long"
+          description: >
+            Health sweep p99 latency exceeds 50ms. This may delay detection
+            of unhealthy workers. Current p99: {{ $value | humanizeDuration }}.
+          runbook: "docs/operations/alerting.md#varpulisslowhealthsweeps"
+
+  - name: varpulis_infrastructure
+    rules:
+      # -- Memory Usage --
+      - alert: VarpulisHighMemoryUsage
+        expr: process_resident_memory_bytes{job=~"varpulis.*"} > 2e+9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Varpulis process memory exceeds 2 GB"
+          description: >
+            Process RSS is {{ $value | humanize1024 }}B. If this continues to grow,
+            the process may be OOM-killed. Check for unbounded SASE runs,
+            large windows, or connector buffer growth.
+          runbook: "docs/operations/alerting.md#varpulishighmemoryusage"
+
+      # -- Memory Critical --
+      - alert: VarpulisCriticalMemoryUsage
+        expr: process_resident_memory_bytes{job=~"varpulis.*"} > 4e+9
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Varpulis process memory exceeds 4 GB"
+          description: >
+            Process RSS is {{ $value | humanize1024 }}B and approaching dangerous
+            levels. Immediate action required to prevent OOM kills.
+          runbook: "docs/operations/alerting.md#varpuliscriticalmemoryusage"
+
+      # -- DLQ Growing --
+      - alert: VarpulisDlqGrowing
+        expr: increase(varpulis_dlq_events_total[10m]) > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Dead letter queue is accumulating events"
+          description: >
+            {{ $value }} events have been written to the dead letter queue
+            in the last 10 minutes. This indicates connector failures or
+            processing errors that are causing events to be diverted.
+          runbook: "docs/operations/alerting.md#varpulisdlqgrowing"
+
+      # -- DLQ Critical --
+      - alert: VarpulisDlqCritical
+        expr: increase(varpulis_dlq_events_total[10m]) > 1000
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Dead letter queue growing rapidly"
+          description: >
+            Over 1000 events written to DLQ in 10 minutes. A sink connector
+            is likely down. Check circuit breaker state and connector health.
+          runbook: "docs/operations/alerting.md#varpulisdlqcritical"
+
+      # -- Connector Health Degraded --
+      - alert: VarpulisConnectorUnhealthy
+        expr: varpulis_connector_healthy == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Connector {{ $labels.connector }} is unhealthy"
+          description: >
+            Connector {{ $labels.connector }} ({{ $labels.connector_type }})
+            has been unhealthy for at least 2 minutes. Events may be queuing
+            or routing to the dead letter queue.
+          runbook: "docs/operations/alerting.md#varpulisconnectorunhealthy"
+
+      # -- High Deploy Latency --
+      - alert: VarpulisSlowDeploys
+        expr: >
+          histogram_quantile(0.99,
+            sum(rate(varpulis_cluster_deploy_duration_seconds_bucket[5m])) by (le)
+          ) > 30
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pipeline deploys taking over 30 seconds"
+          description: >
+            Deploy p99 latency exceeds 30s. This affects pipeline update
+            responsiveness. Check worker load and network latency.
+          runbook: "docs/operations/alerting.md#varpulisslowdeploys"

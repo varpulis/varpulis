@@ -4,9 +4,10 @@
 
 <p align="center"><strong>A modern Complex Event Processing engine.</strong> Rust performance. Pipeline syntax. SASE+ pattern matching.</p>
 
-[![Tests](https://img.shields.io/badge/tests-1134%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-3776%20passing-brightgreen)]()
+[![Coverage](https://img.shields.io/badge/coverage-%E2%89%A570%25-brightgreen)]()
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange)]()
-[![Release](https://img.shields.io/badge/release-v0.2.0-blue)]()
+[![Release](https://img.shields.io/badge/release-v0.3.0-blue)]()
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-MIT)
 
 [Live Demo](https://demo.varpulis-cep.com/) | [Documentation](docs/) | [Quick Start](#quick-start) | [Benchmarks](#benchmarks)
@@ -238,6 +239,7 @@ deploy/                 # Docker, Kubernetes, Helm, Prometheus, Grafana
 - [Production Deployment](docs/PRODUCTION_DEPLOYMENT.md)
 - [System Architecture](docs/architecture/system.md)
 - [Interactive Demos](demos/README.md)
+- [Security Policy](SECURITY.md)
 
 ## Testing
 

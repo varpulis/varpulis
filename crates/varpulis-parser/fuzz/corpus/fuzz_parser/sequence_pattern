@@ -1,0 +1,3 @@
+stream Alert = Login as a -> Transfer as b .within(5m)
+    .where(b.amount > 10000)
+    .emit(user: a.user_id, amount: b.amount)

@@ -1,6 +1,8 @@
 //! Managed MQTT connector — single connection shared across all sources and sinks
 
-use super::managed::{ConnectorHealthReport, ManagedConnector};
+#[cfg(feature = "mqtt")]
+use super::managed::ConnectorHealthReport;
+use super::managed::ManagedConnector;
 use super::mqtt::MqttConfig;
 use super::types::ConnectorError;
 use crate::event::Event;

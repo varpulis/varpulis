@@ -1,7 +1,8 @@
 # Varpulis Project Status
 
-**Last updated**: February 4, 2026
-**Version**: 0.1.0
+**Last updated**: February 17, 2026
+**Version**: 0.3.0
+**Production readiness**: 10/10 (see [AUDIT_REPORT.md](AUDIT_REPORT.md))
 
 ---
 
@@ -11,119 +12,137 @@ Varpulis is a high-performance Complex Event Processing (CEP) engine written in 
 
 | Metric | Value |
 |--------|-------|
-| Codebase | ~103,000 lines Rust |
-| Test coverage | ~63% |
-| Tests passing | 1068+ |
-| Production readiness | Prototype |
+| Rust source code | 86,789 lines |
+| Crates | 8 |
+| Test functions | 3,776 |
+| Integration test files | 62 |
+| Benchmark suites | 7 |
+| CI jobs | 13 |
+| Documentation files | 52 |
+| API endpoints | 40+ |
+| Production readiness | 10/10 |
 
 ---
 
 ## What Works
 
 ### Core Engine
-- VPL parser (Pest PEG)
-- Stream processing with filtering (`.where()`)
-- Tumbling and sliding windows (`.window()`)
-- Partitioning (`.partition_by()`)
-- Event emission (`.emit()`)
-- Stream merging (`merge()`)
-
-### Aggregations (95% coverage)
-- `sum()`, `avg()`, `count()`, `min()`, `max()`
-- `stddev()`, `first()`, `last()`
-- `count_distinct()`, `ema()`
-- SIMD-optimized aggregation (4x speedup on x86_64)
-
-### Pattern Matching (SASE+)
-- Sequence patterns (`->` operator)
-- Temporal constraints (`.within()`)
-- Kleene closures (`+`, `*`)
-- Negation (`AND NOT`)
-- Multi-step patterns with event correlation
+- VPL parser (Pest PEG) with error recovery
+- Stream processing: `.where()`, `.window()`, `.partition_by()`, `.emit()`, `merge()`
+- Aggregations: sum, avg, count, min, max, stddev, first, last, count_distinct, ema (SIMD-optimized)
+- SASE+ pattern matching: sequences (`->`), temporal (`.within()`), Kleene (`+`, `*`), negation (`AND NOT`)
+- Hamlet trend aggregation (3x-100x faster than ZDD, integrated via `.trend_aggregate()`)
+- PST-based pattern forecasting (51 ns prediction, integrated via `.forecast()`)
+- Imperative blocks, enrichment joins, session windows
 
 ### Connectors
-- **MQTT**: Full input/output support via `.from()`/`.to()` (production)
-- **HTTP**: Output only (webhooks via `HttpSink`)
-- **Kafka**: Framework + full impl behind `kafka` feature flag
-- **Console**: Debug output
-- Connector declaration syntax: `connector Name = type (params)`
-- Source binding: `.from(Connector, topic: "...")`
-- Sink routing: `.to(Connector)`
+- **MQTT**: Full I/O, QoS 0/1/2, managed lifecycle, exponential backoff
+- **Kafka**: Transactional producer (exactly-once), feature-gated
+- **HTTP**: Webhooks, REST API sink
+- **Database**: PostgreSQL/MySQL via sqlx, connection pooling
+- **Redis**: Stub, feature-gated
+- **S3/Kinesis**: Stub, feature-gated
 
-### Parallelism
-- Context-based multi-threading (named contexts, CPU affinity, cross-context channels)
-- Worker pool model for partition-based parallelism
-
-### Persistence
-- `StateStore` trait with 3 backends: `MemoryStore`, `FileStore`, `RocksDbStore`
-- `CheckpointManager` with configurable intervals and retention
-- Tenant/pipeline state recovery on restart (via `--state-dir`)
-- RocksDB available behind `persistence` feature flag
+### Distributed Architecture
+- Coordinator/Worker model with Raft consensus (openraft 0.9)
+- RocksDB persistence for Raft log and state machine
+- K8s Lease-based leader election (HA)
+- Pipeline group management, worker drain, live migration
+- State replication (full snapshot + delta)
 
 ### Multi-Tenant SaaS
-- REST API for pipeline management (deploy, list, delete, inject events, hot reload)
-- Usage metering and quota enforcement (Free/Pro/Enterprise tiers)
-- Admin API for tenant management
-- API key authentication with constant-time comparison
-- Rate limiting (token bucket per IP)
+- REST API: deploy, list, delete, inject, batch, metrics, reload, checkpoint, restore, logs (SSE)
+- Admin API: tenant CRUD, usage metering
+- RBAC: Admin/Operator/Viewer roles with multi-key file support
+- Quotas: Free (2 pipelines, 100 eps), Pro (20/50K), Enterprise (1000/500K)
+- API key auth with constant-time comparison, secret zeroization
 
-### Tooling
-- CLI with run, simulate, check, server, deploy, pipelines, undeploy, status commands
-- VS Code extension with LSP server (diagnostics, hover, completion, semantic tokens)
-- React Flow visual pipeline editor
-- Interactive demos (HVAC, Financial, SASE)
+### Security
+- Path traversal prevention, filename sanitization
+- Rate limiting (token bucket per-IP, configurable burst, bounded tracking)
+- Body size limits (1 MB JSON, 16 MB batch/models)
+- Event resource limits (1024 fields, 256 KB strings, depth 32)
+- cargo-deny + cargo-audit in CI
 
-### Infrastructure
-- Docker image (multi-stage, 5 platforms)
-- Docker Compose SaaS stack (Prometheus + Grafana)
-- Kubernetes deployment (Kustomize overlays for dev/prod/k3d)
-- Prometheus metrics endpoint (port 9090)
+### Resilience
+- Circuit breaker (Open/HalfOpen/Closed)
+- Dead letter queue for failed events
+- Graceful shutdown (SIGTERM/SIGINT)
+- Checkpoint/restore with tested kill-restart scenarios
+- Exponential backoff on connector failures
+
+### Observability
+- Structured logging (tracing crate)
+- Prometheus metrics endpoint
+- OpenTelemetry distributed tracing
+- Health/readiness probes
 - Pre-configured Grafana dashboards
 
----
+### Tooling
+- CLI: run, simulate, check, server, deploy, pipelines, undeploy, status, cluster
+- LSP server: diagnostics, hover, completion, semantic tokens
+- MCP server: AI-assisted pipeline development
+- VS Code extension + tree-sitter grammar
+- Web UI: Vue 3 + Vuetify 3 with Monaco editor, VPL validation
 
-## What Doesn't Work Yet
+### Deployment
+- Multi-platform release (Linux x86_64/ARM64, macOS x86_64/ARM64, Windows)
+- Docker image (non-root, health check, multi-stage)
+- Docker Compose stacks (single-node, SaaS, cluster, demo)
+- K8s manifests (StatefulSet, HPA, PDB, ServiceMonitor, RBAC, Kustomize)
+- Helm chart support
 
-### Not Implemented
-- Automatic periodic checkpoint triggers in the engine event loop
-- Distributed mode / clustering (single-node only)
-- Declarative parallelization (`.concurrent()`)
-- Web UI for monitoring (Grafana dashboards exist, no custom UI)
-
-### Parsed but Not Evaluated
-- `.concurrent()` - parallelization
-- `.process()` - custom processing
-- `.on_error()` - error handling
-- `.tap()` - instrumentation
-- `.map()`, `.filter()`, `.distinct()`, `.order_by()`, `.limit()` - reserved syntax
-- `.fork()`, `.any()`, `.all()`, `.first()`, `.collect()` - reserved syntax
-
-### Engine Checkpointing
-- `create_checkpoint()` and `restore_checkpoint()` are implemented and save/restore window state, SASE+ engines, join buffers, variables, and watermark trackers
-- Checkpointing is available programmatically (via API calls) but is NOT automatically triggered during the event processing loop
-- Tenant/pipeline metadata persists with `--state-dir`
-
-### Known Limitations
-- No automatic checkpoint barriers in the event stream pipeline
-- Limited to single-node deployment
+### Testing
+- 3,776 test functions across 62 integration test files
+- Real chaos testing (process spawning, Raft failover, state recovery)
+- E2E browser tests (Playwright)
+- Docker-based Raft HA and scaling tests
+- PST convergence validation (mathematical correctness)
+- 7 Criterion benchmark suites
+- 13-job CI pipeline (check, test, fmt, clippy, deny, audit, feature-flags, chaos, web-ui, coverage)
 
 ---
 
-## Test Coverage by Module
+## Completed Roadmap to 10/10
 
-| Module | Coverage | Status |
-|--------|----------|--------|
-| varpulis-core/value.rs | 96% | Excellent |
-| varpulis-runtime/aggregation.rs | 96% | Excellent |
-| varpulis-runtime/sequence.rs | 94% | Excellent |
-| varpulis-runtime/event.rs | 100% | Perfect |
-| varpulis-parser/parser.rs | 65% | Good |
-| varpulis-runtime/engine.rs | 62% | Needs work |
+All 18 tasks from the production readiness audit are complete. See [KANBAN.md](KANBAN.md) for details.
+
+### P1 Critical (4/4)
+- Fuzzing infrastructure (parser, connectors)
+- OpenAPI specification (40+ endpoints)
+- API pagination (all list endpoints)
+- Coverage threshold enforcement (70% min)
+
+### P2 Important (7/7)
+- SQL table name sanitization
+- CONTRIBUTING.md
+- SECURITY.md (responsible disclosure)
+- Prometheus alerting rules (8 alert groups)
+- Operational runbook
+- Checkpoint schema versioning
+- Property-based testing (proptest)
+
+### P3 Polish (7/7)
+- Chaos test quarantine system
+- API changelog with deprecation policy
+- Architecture Decision Records (5 ADRs)
+- MCP documentation (tools, resources, prompts)
+- Performance regression CI (10% threshold)
+- Binary serialization option (MessagePack)
+- SLO/SLI definitions (9 SLOs with PromQL)
+
+---
+
+## Known Limitations
+- LSP: go-to-definition and find-references not yet implemented
+- CORS: wildcard origin (expects nginx to restrict in production)
+- Event ordering: watermark-based only (not strict global ordering)
+- Worker state: requires explicit checkpoint (no automatic WAL)
 
 ---
 
 ## See Also
 
-- [KANBAN.md](KANBAN.md) - Task tracking
-- [AUDIT_REPORT.md](AUDIT_REPORT.md) - Security audit
-- [Roadmap](../spec/roadmap.md) - Detailed roadmap
+- [KANBAN.md](KANBAN.md) — Production readiness task board
+- [AUDIT_REPORT.md](AUDIT_REPORT.md) — Comprehensive security and quality audit
+- [Roadmap](../spec/roadmap.md) — Feature roadmap

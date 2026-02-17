@@ -6,6 +6,30 @@ use async_trait::async_trait;
 use tokio::sync::mpsc;
 use varpulis_core::security::SecretString;
 
+/// Validate that a table name is safe for interpolation into SQL.
+///
+/// Allows alphanumeric, underscores, dots (for schema-qualified names like `public.events`).
+/// Rejects anything that could be used for SQL injection.
+fn validate_table_name(table: &str) -> Result<(), ConnectorError> {
+    if table.is_empty() {
+        return Err(ConnectorError::ConfigError(
+            "Table name must not be empty".to_string(),
+        ));
+    }
+    // Must match: starts with letter or underscore, rest is alphanumeric, underscore, or dot
+    let valid = table.chars().enumerate().all(|(i, c)| match (i, c) {
+        (0, c) => c.is_ascii_alphabetic() || c == '_',
+        (_, c) => c.is_ascii_alphanumeric() || c == '_' || c == '.',
+    });
+    if !valid {
+        return Err(ConnectorError::ConfigError(format!(
+            "Invalid table name '{}': must match [a-zA-Z_][a-zA-Z0-9_.]*",
+            table
+        )));
+    }
+    Ok(())
+}
+
 /// Database configuration
 #[derive(Debug, Clone)]
 pub struct DatabaseConfig {
@@ -16,12 +40,13 @@ pub struct DatabaseConfig {
 }
 
 impl DatabaseConfig {
-    pub fn new(connection_string: &str, table: &str) -> Self {
-        Self {
+    pub fn new(connection_string: &str, table: &str) -> Result<Self, ConnectorError> {
+        validate_table_name(table)?;
+        Ok(Self {
             connection_string: SecretString::new(connection_string),
             table: table.to_string(),
             max_connections: 5,
-        }
+        })
     }
 
     pub fn with_max_connections(mut self, max: u32) -> Self {

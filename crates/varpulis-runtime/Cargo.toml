@@ -53,6 +53,9 @@ ort = { version = "=2.0.0-rc.11", features = ["load-dynamic"], optional = true }
 # State persistence
 rocksdb = { version = "0.22", optional = true }
 
+# Binary serialization
+rmp-serde = { version = "1.3", optional = true }
+
 [features]
 default = []
 mqtt = ["rumqttc"]
@@ -67,11 +70,13 @@ kinesis = ["aws-config", "aws-sdk-kinesis", "aws-credential-types"]
 s3 = ["aws-config", "aws-sdk-s3", "aws-credential-types"]
 elasticsearch = ["dep:elasticsearch"]
 onnx = ["ort"]
+binary-codec = ["rmp-serde"]
 all-connectors = ["mqtt", "kafka", "database", "redis", "kinesis", "s3", "elasticsearch"]
 
 [dev-dependencies]
 tempfile = "3"
 criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1.5"
 
 [[bench]]
 name = "pattern_benchmark"

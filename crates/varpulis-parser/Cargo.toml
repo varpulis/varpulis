@@ -13,5 +13,8 @@ thiserror = { workspace = true }
 pest = "2.8.5"
 pest_derive = "2.8.5"
 
+[dev-dependencies]
+proptest = "1.5"
+
 [build-dependencies]
 # Tree-sitter will be added here

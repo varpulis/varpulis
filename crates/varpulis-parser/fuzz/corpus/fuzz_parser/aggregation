@@ -1,0 +1,4 @@
+stream Avg = SensorReading
+    .window(tumbling: 1m)
+    .partition_by(sensor_id)
+    .emit(avg_temp: avg(temperature), count: count())

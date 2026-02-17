@@ -22,6 +22,7 @@ fn make_event(event_type: &str) -> Arc<Event> {
 
 fn make_engine_checkpoint() -> EngineCheckpoint {
     EngineCheckpoint {
+        version: varpulis_runtime::persistence::CHECKPOINT_VERSION,
         window_states: HashMap::new(),
         sase_states: HashMap::new(),
         join_states: HashMap::new(),

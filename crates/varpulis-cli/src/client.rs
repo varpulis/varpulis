@@ -105,6 +105,17 @@ impl VarpulisClient {
         Ok(())
     }
 
+    /// Stream logs for a pipeline via SSE.
+    /// Returns the URL for SSE connection (caller handles streaming).
+    pub fn logs_url(&self, pipeline_id: &str) -> String {
+        format!("{}/api/v1/pipelines/{}/logs", self.base_url, pipeline_id)
+    }
+
+    /// Get the API key for SSE header authentication.
+    pub fn api_key(&self) -> &str {
+        &self.api_key
+    }
+
     /// Get usage statistics for the authenticated tenant.
     pub async fn get_usage(&self) -> Result<UsageResponse, ClientError> {
         let url = format!("{}/api/v1/usage", self.base_url);

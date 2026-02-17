@@ -1,0 +1,62 @@
+name: Fuzz Testing
+
+on:
+  schedule:
+    # Run nightly at 3 AM UTC
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  fuzz-parser:
+    name: Fuzz VPL Parser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+      - name: Fuzz VPL parser (5 minutes)
+        working-directory: crates/varpulis-parser
+        run: cargo +nightly fuzz run fuzz_parser -- -max_total_time=300
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parser-crashes
+          path: crates/varpulis-parser/fuzz/artifacts/
+
+  fuzz-json-event:
+    name: Fuzz JSON Event Parsing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+      - name: Fuzz JSON event parsing (5 minutes)
+        working-directory: crates/varpulis-runtime
+        run: cargo +nightly fuzz run fuzz_json_event -- -max_total_time=300
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: json-event-crashes
+          path: crates/varpulis-runtime/fuzz/artifacts/
+
+  fuzz-mqtt-message:
+    name: Fuzz MQTT Message Parsing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+      - name: Fuzz MQTT message parsing (5 minutes)
+        working-directory: crates/varpulis-runtime
+        run: cargo +nightly fuzz run fuzz_mqtt_message -- -max_total_time=300
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mqtt-message-crashes
+          path: crates/varpulis-runtime/fuzz/artifacts/
