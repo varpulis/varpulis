@@ -101,7 +101,7 @@ pub async fn handle_worker_ws(
     ws: warp::ws::WebSocket,
     coordinator: crate::api::SharedCoordinator,
     ws_manager: SharedWsManager,
-    admin_key: Option<String>,
+    rbac: Arc<crate::rbac::RbacConfig>,
 ) {
     use futures_util::{SinkExt, StreamExt};
     use tracing::{error, info, warn};
@@ -164,9 +164,12 @@ pub async fn handle_worker_ws(
 
         match worker_msg {
             WorkerMessage::Identify { worker_id, api_key } => {
-                // Validate API key if configured
-                if let Some(ref expected) = admin_key {
-                    if &api_key != expected {
+                // Validate API key against RBAC config (workers need at least Operator role)
+                if !rbac.allow_anonymous {
+                    let auth_ok = rbac
+                        .authenticate(Some(&api_key))
+                        .is_some_and(|role| role.has_permission(crate::rbac::Role::Operator));
+                    if !auth_ok {
                         warn!(worker_id = %worker_id, "WebSocket authentication rejected");
                         let _ = msg_tx.send(CoordinatorMessage::Error {
                             message: "Invalid API key".to_string(),

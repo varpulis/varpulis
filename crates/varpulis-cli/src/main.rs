@@ -7,8 +7,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
-use tracing::{info, Level};
-use tracing_subscriber::FmtSubscriber;
+use tracing::info;
+use tracing_subscriber::EnvFilter;
 use warp::Filter;
 
 use varpulis_core::ast::{Program, Stmt};
@@ -146,6 +146,19 @@ enum Commands {
         /// is not reachable from the coordinator (e.g., in Docker networks).
         #[arg(long, env = "VARPULIS_ADVERTISE_ADDRESS")]
         advertise_address: Option<String>,
+
+        /// Path to CA certificate for verifying the coordinator's TLS certificate.
+        /// Required when connecting to a coordinator using HTTPS with a private CA.
+        #[arg(long, env = "VARPULIS_TLS_CA_CERT")]
+        tls_ca_cert: Option<PathBuf>,
+
+        /// Path to client certificate for mTLS authentication with the coordinator (PEM format)
+        #[arg(long, env = "VARPULIS_TLS_CLIENT_CERT")]
+        tls_client_cert: Option<PathBuf>,
+
+        /// Path to client private key for mTLS authentication (PEM format)
+        #[arg(long, env = "VARPULIS_TLS_CLIENT_KEY")]
+        tls_client_key: Option<PathBuf>,
     },
 
     /// Simulate events from an event file (.evt)
@@ -268,9 +281,13 @@ enum Commands {
         #[arg(long, default_value = "127.0.0.1")]
         bind: String,
 
-        /// API key for coordinator authentication
+        /// API key for coordinator authentication (single admin key, backward-compatible)
         #[arg(long, env = "VARPULIS_API_KEY")]
         api_key: Option<String>,
+
+        /// Path to API keys JSON file for multi-key RBAC (overrides --api-key)
+        #[arg(long, env = "VARPULIS_API_KEYS")]
+        api_keys: Option<PathBuf>,
 
         /// Heartbeat interval in seconds (workers send heartbeats this often)
         #[arg(long, default_value = "5", env = "VARPULIS_HEARTBEAT_INTERVAL")]
@@ -357,16 +374,32 @@ enum Commands {
             env = "VARPULIS_LLM_PROVIDER"
         )]
         llm_provider: String,
+
+        /// Path to TLS certificate file (PEM format). Enables HTTPS when provided with --tls-key
+        #[arg(long, env = "VARPULIS_TLS_CERT")]
+        tls_cert: Option<PathBuf>,
+
+        /// Path to TLS private key file (PEM format). Required when --tls-cert is provided
+        #[arg(long, env = "VARPULIS_TLS_KEY")]
+        tls_key: Option<PathBuf>,
+
+        /// Path to CA certificate for client verification (mTLS). When set, workers must present
+        /// a valid client certificate signed by this CA to connect.
+        #[arg(long, env = "VARPULIS_TLS_CA_CERT")]
+        tls_ca_cert: Option<PathBuf>,
     },
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize logging
-    let subscriber = FmtSubscriber::builder()
-        .with_max_level(Level::INFO)
-        .finish();
-    tracing::subscriber::set_global_default(subscriber)?;
+    // Initialize logging with RUST_LOG support
+    // Default: info level, can be overridden with RUST_LOG env var
+    // Examples: RUST_LOG=debug, RUST_LOG=varpulis=trace,info
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
+        .init();
 
     let cli = Cli::parse();
 
@@ -420,6 +453,9 @@ async fn main() -> Result<()> {
             coordinator,
             worker_id,
             advertise_address,
+            tls_ca_cert,
+            tls_client_cert,
+            tls_client_key,
         } => {
             // Use security module to validate workdir - NO unwrap()!
             let workdir =
@@ -450,6 +486,13 @@ async fn main() -> Result<()> {
                 }
             };
 
+            // Build mTLS client config for worker→coordinator communication
+            let mtls_client_config = build_mtls_client_config(
+                tls_ca_cert.as_deref(),
+                tls_client_cert.as_deref(),
+                tls_client_key.as_deref(),
+            )?;
+
             run_server(
                 port,
                 metrics,
@@ -463,6 +506,7 @@ async fn main() -> Result<()> {
                 coordinator,
                 worker_id,
                 advertise_address,
+                mtls_client_config,
             )
             .await?;
         }
@@ -606,6 +650,7 @@ async fn main() -> Result<()> {
             port,
             bind,
             api_key,
+            api_keys,
             heartbeat_interval,
             heartbeat_timeout,
             scaling_min_workers,
@@ -625,6 +670,9 @@ async fn main() -> Result<()> {
             llm_model,
             llm_api_key,
             llm_provider,
+            tls_cert,
+            tls_key,
+            tls_ca_cert,
         } => {
             let scaling_policy = if scaling_min_workers > 0 {
                 Some(varpulis_cluster::ScalingPolicy {
@@ -638,10 +686,31 @@ async fn main() -> Result<()> {
             } else {
                 None
             };
+            // Build RBAC config: --api-keys file takes priority over --api-key
+            let rbac_config = if let Some(ref keys_path) = api_keys {
+                std::sync::Arc::new(
+                    varpulis_cluster::RbacConfig::from_file(keys_path)
+                        .map_err(|e| anyhow::anyhow!("{}", e))?,
+                )
+            } else if let Some(ref key) = api_key {
+                std::sync::Arc::new(varpulis_cluster::RbacConfig::single_key(key.clone()))
+            } else {
+                std::sync::Arc::new(varpulis_cluster::RbacConfig::disabled())
+            };
+
+            // Validate TLS config: cert and key must come together
+            let coordinator_tls = match (tls_cert, tls_key) {
+                (Some(cert), Some(key)) => Some((cert, key)),
+                (None, None) => None,
+                _ => anyhow::bail!(
+                    "Both --tls-cert and --tls-key must be provided together for coordinator TLS"
+                ),
+            };
+
             run_coordinator(
                 port,
                 &bind,
-                api_key,
+                rbac_config,
                 heartbeat_interval,
                 heartbeat_timeout,
                 scaling_policy,
@@ -657,6 +726,8 @@ async fn main() -> Result<()> {
                 llm_model,
                 llm_api_key,
                 llm_provider,
+                coordinator_tls,
+                tls_ca_cert,
             )
             .await?;
         }
@@ -1778,6 +1849,71 @@ async fn run_demo(
 }
 
 // =============================================================================
+// mTLS Client Configuration
+// =============================================================================
+
+/// Build a reqwest client configured for mTLS communication.
+///
+/// - `ca_cert`: CA certificate to verify the server's TLS certificate
+/// - `client_cert`: Client certificate for mutual authentication
+/// - `client_key`: Client private key
+///
+/// Returns `None` when no TLS parameters are provided.
+fn build_mtls_client_config(
+    ca_cert: Option<&std::path::Path>,
+    client_cert: Option<&std::path::Path>,
+    client_key: Option<&std::path::Path>,
+) -> Result<Option<reqwest::Client>> {
+    // If no TLS params at all, return None (plain HTTP)
+    if ca_cert.is_none() && client_cert.is_none() && client_key.is_none() {
+        return Ok(None);
+    }
+
+    let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(10));
+
+    // Add CA certificate for server verification
+    if let Some(ca_path) = ca_cert {
+        let ca_pem = std::fs::read(ca_path).map_err(|e| {
+            anyhow::anyhow!("Failed to read CA cert '{}': {}", ca_path.display(), e)
+        })?;
+        let ca = reqwest::Certificate::from_pem(&ca_pem)
+            .map_err(|e| anyhow::anyhow!("Invalid CA cert: {}", e))?;
+        builder = builder.add_root_certificate(ca);
+    }
+
+    // Add client certificate + key for mTLS
+    match (client_cert, client_key) {
+        (Some(cert_path), Some(key_path)) => {
+            let cert_pem = std::fs::read(cert_path).map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to read client cert '{}': {}",
+                    cert_path.display(),
+                    e
+                )
+            })?;
+            let key_pem = std::fs::read(key_path).map_err(|e| {
+                anyhow::anyhow!("Failed to read client key '{}': {}", key_path.display(), e)
+            })?;
+
+            // reqwest expects a combined PEM with both cert and key
+            let mut combined = cert_pem;
+            combined.push(b'\n');
+            combined.extend_from_slice(&key_pem);
+
+            let identity = reqwest::Identity::from_pem(&combined)
+                .map_err(|e| anyhow::anyhow!("Invalid client identity: {}", e))?;
+            builder = builder.identity(identity);
+        }
+        (None, None) => {} // No mTLS, just CA verification
+        _ => {
+            anyhow::bail!("Both --tls-client-cert and --tls-client-key must be provided together");
+        }
+    }
+
+    Ok(Some(builder.build()?))
+}
+
+// =============================================================================
 // Server Mode - WebSocket API for VSCode Extension
 // =============================================================================
 
@@ -1795,6 +1931,7 @@ async fn run_server(
     coordinator_url: Option<String>,
     worker_id: Option<String>,
     advertise_address: Option<String>,
+    mtls_client: Option<reqwest::Client>,
 ) -> Result<()> {
     let tls_enabled = tls_config.is_some();
     let protocol = if tls_enabled { "wss" } else { "ws" };
@@ -2013,13 +2150,24 @@ async fn run_server(
             "Registering with coordinator at {} as worker '{}'",
             coordinator_url, worker_id
         );
-        tokio::spawn(varpulis_cluster::worker_registration_loop(
-            coordinator_url,
-            worker_id,
-            worker_addr,
-            worker_api_key,
-            Some(tenant_manager_for_heartbeat.clone()),
-        ));
+        if let Some(client) = mtls_client {
+            tokio::spawn(varpulis_cluster::worker_registration_loop_with_client(
+                coordinator_url,
+                worker_id,
+                worker_addr,
+                worker_api_key,
+                Some(tenant_manager_for_heartbeat.clone()),
+                client,
+            ));
+        } else {
+            tokio::spawn(varpulis_cluster::worker_registration_loop(
+                coordinator_url,
+                worker_id,
+                worker_addr,
+                worker_api_key,
+                Some(tenant_manager_for_heartbeat.clone()),
+            ));
+        }
     }
 
     info!("Server listening on {}:{}", bind, port);
@@ -2075,7 +2223,7 @@ async fn run_server(
 async fn run_coordinator(
     port: u16,
     bind: &str,
-    api_key: Option<String>,
+    rbac: std::sync::Arc<varpulis_cluster::RbacConfig>,
     heartbeat_interval_secs: u64,
     heartbeat_timeout_secs: u64,
     scaling_policy: Option<varpulis_cluster::ScalingPolicy>,
@@ -2091,23 +2239,42 @@ async fn run_coordinator(
     llm_model: String,
     llm_api_key: Option<String>,
     llm_provider: String,
+    tls_config: Option<(PathBuf, PathBuf)>,
+    _tls_ca_cert: Option<PathBuf>,
 ) -> Result<()> {
-    let http_protocol = "http";
+    let tls_enabled = tls_config.is_some();
+    let http_protocol = if tls_enabled { "https" } else { "http" };
+    let ws_protocol = if tls_enabled { "wss" } else { "ws" };
     println!("Varpulis Coordinator");
     println!("=======================");
     println!(
         "API:       {}://{}:{}/api/v1/cluster/",
         http_protocol, bind, port
     );
-    println!("WebSocket: ws://{}:{}/api/v1/cluster/ws", bind, port);
+    println!(
+        "WebSocket: {}://{}:{}/api/v1/cluster/ws",
+        ws_protocol, bind, port
+    );
     println!(
         "Auth:      {}",
-        if api_key.is_some() {
-            "enabled (API key required)"
-        } else {
+        if rbac.allow_anonymous {
             "disabled"
+        } else if rbac.key_count() > 1 {
+            "enabled (RBAC multi-key)"
+        } else {
+            "enabled (API key required)"
         }
     );
+    if tls_enabled {
+        println!(
+            "TLS:       enabled{}",
+            if _tls_ca_cert.is_some() {
+                " (mTLS: client certificates required)"
+            } else {
+                ""
+            }
+        );
+    }
     println!(
         "Heartbeat: {}s interval, {}s timeout",
         heartbeat_interval_secs, heartbeat_timeout_secs
@@ -2157,7 +2324,7 @@ async fn run_coordinator(
                     varpulis_cluster::raft::bootstrap_persistent(
                         node_id,
                         &peer_addrs,
-                        api_key.clone(),
+                        rbac.any_admin_key(),
                         data_dir,
                     )
                     .await
@@ -2170,7 +2337,7 @@ async fn run_coordinator(
                     );
                 }
             } else {
-                varpulis_cluster::raft::bootstrap(node_id, &peer_addrs, api_key.clone())
+                varpulis_cluster::raft::bootstrap(node_id, &peer_addrs, rbac.any_admin_key())
                     .await
                     .map_err(|e| anyhow::anyhow!("Raft bootstrap failed: {e}"))?
             };
@@ -2219,7 +2386,7 @@ async fn run_coordinator(
                 raft: rh.raft.clone(),
                 store_state: rh.shared_state.clone(),
                 peer_addrs: raft_peer_addrs_map.clone(),
-                admin_key: api_key.clone(),
+                admin_key: rbac.any_admin_key(),
             });
         }
     }
@@ -2458,15 +2625,51 @@ async fn run_coordinator(
         shutdown_tx.send(()).ok();
     });
 
-    // Build and serve routes (split by cfg to avoid Reply type mismatch in if/else)
-    // After the shutdown signal, allow up to 30s for in-flight requests to complete.
-    let shutdown_timeout = std::time::Duration::from_secs(30);
+    // Macro to start warp with or without TLS (avoids duplicating the TLS branching
+    // across the raft/non-raft cfg blocks).
+    macro_rules! serve_coordinator {
+        ($routes:expr, $shutdown_rx:expr) => {{
+            let shutdown_timeout = std::time::Duration::from_secs(30);
+            if let Some((ref cert_path, ref key_path)) = tls_config {
+                info!("Coordinator TLS enabled with cert: {}", cert_path.display());
+                let (_, server) = warp::serve($routes)
+                    .tls()
+                    .cert_path(cert_path)
+                    .key_path(key_path)
+                    .bind_with_graceful_shutdown((bind_addr, port), async {
+                        $shutdown_rx.await.ok();
+                    });
+                if tokio::time::timeout(shutdown_timeout, server)
+                    .await
+                    .is_err()
+                {
+                    tracing::warn!(
+                        "Coordinator graceful shutdown timed out after 30s, forcing exit"
+                    );
+                }
+            } else {
+                let (_, server) =
+                    warp::serve($routes).bind_with_graceful_shutdown((bind_addr, port), async {
+                        $shutdown_rx.await.ok();
+                    });
+                if tokio::time::timeout(shutdown_timeout, server)
+                    .await
+                    .is_err()
+                {
+                    tracing::warn!(
+                        "Coordinator graceful shutdown timed out after 30s, forcing exit"
+                    );
+                }
+            }
+        }};
+    }
+
     #[cfg(feature = "raft")]
     {
         if let Some(ref rh) = raft_handle {
             let api_routes = varpulis_cluster::api::cluster_routes_with_raft(
                 coordinator,
-                api_key,
+                rbac,
                 ws_manager,
                 rh.raft.clone(),
             );
@@ -2475,54 +2678,27 @@ async fn run_coordinator(
                 .or(metrics_route)
                 .or(api_routes)
                 .recover(varpulis_cluster::api::handle_rejection);
-            let (_, server) =
-                warp::serve(routes).bind_with_graceful_shutdown((bind_addr, port), async {
-                    shutdown_rx.await.ok();
-                });
-            if tokio::time::timeout(shutdown_timeout, server)
-                .await
-                .is_err()
-            {
-                tracing::warn!("Coordinator graceful shutdown timed out after 30s, forcing exit");
-            }
+            serve_coordinator!(routes, shutdown_rx);
         } else {
-            let api_routes = varpulis_cluster::cluster_routes(coordinator, api_key, ws_manager);
+            let api_routes = varpulis_cluster::cluster_routes(coordinator, rbac, ws_manager);
             let routes = health_route
                 .or(ready_route)
                 .or(metrics_route)
                 .or(api_routes)
                 .recover(varpulis_cluster::api::handle_rejection);
-            let (_, server) =
-                warp::serve(routes).bind_with_graceful_shutdown((bind_addr, port), async {
-                    shutdown_rx.await.ok();
-                });
-            if tokio::time::timeout(shutdown_timeout, server)
-                .await
-                .is_err()
-            {
-                tracing::warn!("Coordinator graceful shutdown timed out after 30s, forcing exit");
-            }
+            serve_coordinator!(routes, shutdown_rx);
         }
     }
 
     #[cfg(not(feature = "raft"))]
     {
-        let api_routes = varpulis_cluster::cluster_routes(coordinator, api_key, ws_manager);
+        let api_routes = varpulis_cluster::cluster_routes(coordinator, rbac, ws_manager);
         let routes = health_route
             .or(ready_route)
             .or(metrics_route)
             .or(api_routes)
             .recover(varpulis_cluster::api::handle_rejection);
-        let (_, server) =
-            warp::serve(routes).bind_with_graceful_shutdown((bind_addr, port), async {
-                shutdown_rx.await.ok();
-            });
-        if tokio::time::timeout(shutdown_timeout, server)
-            .await
-            .is_err()
-        {
-            tracing::warn!("Coordinator graceful shutdown timed out after 30s, forcing exit");
-        }
+        serve_coordinator!(routes, shutdown_rx);
     }
 
     info!("Coordinator shutdown complete");

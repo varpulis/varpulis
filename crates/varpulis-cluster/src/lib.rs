@@ -40,6 +40,7 @@ pub mod model_registry;
 pub mod pipeline_group;
 #[cfg(feature = "raft")]
 pub mod raft;
+pub mod rbac;
 pub mod routing;
 pub mod worker;
 pub mod ws;
@@ -62,6 +63,7 @@ pub use pipeline_group::{
     PipelineDeploymentStatus, PipelineGroupInfo, PipelineGroupSpec, PipelinePlacement,
     ReplicaGroup,
 };
+pub use rbac::{RbacConfig, Role};
 pub use routing::{event_type_matches, find_target_pipeline, RoutingTable};
 pub use worker::{
     ConnectorHealth, HeartbeatRequest, HeartbeatResponse, PipelineMetrics, RegisterWorkerRequest,
@@ -177,9 +179,27 @@ pub async fn worker_registration_loop(
     api_key: String,
     tenant_manager: Option<varpulis_runtime::SharedTenantManager>,
 ) {
-    use tracing::{info, warn};
+    worker_registration_loop_with_client(
+        coordinator_url,
+        worker_id,
+        worker_address,
+        api_key,
+        tenant_manager,
+        reqwest::Client::new(),
+    )
+    .await
+}
 
-    let client = reqwest::Client::new();
+/// Worker registration loop with a custom HTTP client (e.g. TLS-configured).
+pub async fn worker_registration_loop_with_client(
+    coordinator_url: String,
+    worker_id: String,
+    worker_address: String,
+    api_key: String,
+    tenant_manager: Option<varpulis_runtime::SharedTenantManager>,
+    client: reqwest::Client,
+) {
+    use tracing::{info, warn};
     let register_url = format!("{}/api/v1/cluster/workers/register", coordinator_url);
     let heartbeat_url = format!(
         "{}/api/v1/cluster/workers/{}/heartbeat",
