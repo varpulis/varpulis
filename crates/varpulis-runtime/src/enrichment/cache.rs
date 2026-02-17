@@ -40,7 +40,7 @@ impl EnrichmentCache {
 
     /// Look up a cached result. Returns None on miss or expiry.
     pub fn get(&self, key: &str) -> Option<HashMap<String, Value>> {
-        let mut entries = self.entries.lock().unwrap();
+        let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(entry) = entries.get(key) {
             if entry.expires_at > Instant::now() {
                 self.hits.fetch_add(1, Ordering::Relaxed);
@@ -55,7 +55,7 @@ impl EnrichmentCache {
 
     /// Insert a result into the cache.
     pub fn insert(&self, key: String, fields: HashMap<String, Value>) {
-        let mut entries = self.entries.lock().unwrap();
+        let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         // Evict oldest entries if at capacity
         if entries.len() >= MAX_ENTRIES {
             // Simple eviction: remove ~10% of oldest entries
