@@ -6049,6 +6049,7 @@ dependencies = [
 name = "varpulis-cluster"
 version = "0.3.0"
 dependencies = [
+ "async-nats",
  "chrono",
  "futures-util",
  "k8s-openapi",
@@ -6063,7 +6064,6 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tokio-stream",
- "tokio-tungstenite",
  "tracing",
  "uuid",
  "varpulis-core",

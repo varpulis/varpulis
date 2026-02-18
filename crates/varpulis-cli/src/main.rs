@@ -147,6 +147,12 @@ enum Commands {
         #[arg(long, env = "VARPULIS_ADVERTISE_ADDRESS")]
         advertise_address: Option<String>,
 
+        /// NATS server URL for cluster communication (e.g., nats://localhost:4222).
+        /// When set with --coordinator, uses NATS instead of HTTP/WebSocket for
+        /// registration, heartbeats, and command dispatch.
+        #[arg(long, env = "VARPULIS_NATS")]
+        nats: Option<String>,
+
         /// Path to CA certificate for verifying the coordinator's TLS certificate.
         /// Required when connecting to a coordinator using HTTPS with a private CA.
         #[arg(long, env = "VARPULIS_TLS_CA_CERT")]
@@ -413,6 +419,12 @@ enum Commands {
         /// a valid client certificate signed by this CA to connect.
         #[arg(long, env = "VARPULIS_TLS_CA_CERT")]
         tls_ca_cert: Option<PathBuf>,
+
+        /// NATS server URL for cluster communication (e.g., nats://localhost:4222).
+        /// When set, the coordinator uses NATS for worker registration, heartbeats,
+        /// and command dispatch instead of HTTP/WebSocket.
+        #[arg(long, env = "VARPULIS_NATS")]
+        nats: Option<String>,
     },
 }
 
@@ -479,6 +491,7 @@ async fn main() -> Result<()> {
             coordinator,
             worker_id,
             advertise_address,
+            nats,
             tls_ca_cert,
             tls_client_cert,
             tls_client_key,
@@ -532,6 +545,7 @@ async fn main() -> Result<()> {
                 coordinator,
                 worker_id,
                 advertise_address,
+                nats,
                 mtls_client_config,
             )
             .await?;
@@ -852,6 +866,7 @@ async fn main() -> Result<()> {
             tls_cert,
             tls_key,
             tls_ca_cert,
+            nats,
         } => {
             let scaling_policy = if scaling_min_workers > 0 {
                 Some(varpulis_cluster::ScalingPolicy {
@@ -907,6 +922,7 @@ async fn main() -> Result<()> {
                 llm_provider,
                 coordinator_tls,
                 tls_ca_cert,
+                nats,
             )
             .await?;
         }
@@ -2110,6 +2126,7 @@ async fn run_server(
     coordinator_url: Option<String>,
     worker_id: Option<String>,
     advertise_address: Option<String>,
+    nats_url: Option<String>,
     mtls_client: Option<reqwest::Client>,
 ) -> Result<()> {
     let tls_enabled = tls_config.is_some();
@@ -2325,27 +2342,73 @@ async fn run_server(
         let worker_addr =
             advertise_address.unwrap_or_else(|| format!("{}://{}:{}", http_protocol, bind, port));
         let worker_api_key = auth_config.api_key().unwrap_or("no-key").to_string();
-        info!(
-            "Registering with coordinator at {} as worker '{}'",
-            coordinator_url, worker_id
-        );
-        if let Some(client) = mtls_client {
-            tokio::spawn(varpulis_cluster::worker_registration_loop_with_client(
-                coordinator_url,
-                worker_id,
-                worker_addr,
-                worker_api_key,
-                Some(tenant_manager_for_heartbeat.clone()),
-                client,
-            ));
+
+        // NATS transport: use NATS for registration, heartbeats, and command dispatch
+        #[cfg(feature = "nats-transport")]
+        if let Some(ref nats_url) = nats_url {
+            info!(
+                "Registering with coordinator via NATS ({}) as worker '{}'",
+                nats_url, worker_id
+            );
+            let nats_url = nats_url.clone();
+            let wid = worker_id.clone();
+            let wkey = worker_api_key.clone();
+            let tm = tenant_manager_for_heartbeat.clone();
+            tokio::spawn(async move {
+                varpulis_cluster::worker_nats_registration_loop(&nats_url, &wid, &wkey, Some(tm))
+                    .await;
+            });
         } else {
-            tokio::spawn(varpulis_cluster::worker_registration_loop(
-                coordinator_url,
-                worker_id,
-                worker_addr,
-                worker_api_key,
-                Some(tenant_manager_for_heartbeat.clone()),
-            ));
+            info!(
+                "Registering with coordinator at {} as worker '{}'",
+                coordinator_url, worker_id
+            );
+            if let Some(client) = mtls_client {
+                tokio::spawn(varpulis_cluster::worker_registration_loop_with_client(
+                    coordinator_url,
+                    worker_id,
+                    worker_addr,
+                    worker_api_key,
+                    Some(tenant_manager_for_heartbeat.clone()),
+                    client,
+                ));
+            } else {
+                tokio::spawn(varpulis_cluster::worker_registration_loop(
+                    coordinator_url,
+                    worker_id,
+                    worker_addr,
+                    worker_api_key,
+                    Some(tenant_manager_for_heartbeat.clone()),
+                ));
+            }
+        }
+
+        // Without nats-transport feature: always use HTTP
+        #[cfg(not(feature = "nats-transport"))]
+        {
+            let _ = &nats_url; // suppress unused warning
+            info!(
+                "Registering with coordinator at {} as worker '{}'",
+                coordinator_url, worker_id
+            );
+            if let Some(client) = mtls_client {
+                tokio::spawn(varpulis_cluster::worker_registration_loop_with_client(
+                    coordinator_url,
+                    worker_id,
+                    worker_addr,
+                    worker_api_key,
+                    Some(tenant_manager_for_heartbeat.clone()),
+                    client,
+                ));
+            } else {
+                tokio::spawn(varpulis_cluster::worker_registration_loop(
+                    coordinator_url,
+                    worker_id,
+                    worker_addr,
+                    worker_api_key,
+                    Some(tenant_manager_for_heartbeat.clone()),
+                ));
+            }
         }
     }
 
@@ -2420,20 +2483,19 @@ async fn run_coordinator(
     llm_provider: String,
     tls_config: Option<(PathBuf, PathBuf)>,
     _tls_ca_cert: Option<PathBuf>,
+    nats_url: Option<String>,
 ) -> Result<()> {
     let tls_enabled = tls_config.is_some();
     let http_protocol = if tls_enabled { "https" } else { "http" };
-    let ws_protocol = if tls_enabled { "wss" } else { "ws" };
     println!("Varpulis Coordinator");
     println!("=======================");
     println!(
         "API:       {}://{}:{}/api/v1/cluster/",
         http_protocol, bind, port
     );
-    println!(
-        "WebSocket: {}://{}:{}/api/v1/cluster/ws",
-        ws_protocol, bind, port
-    );
+    if let Some(ref nurl) = nats_url {
+        println!("NATS:      {}", nurl);
+    }
     println!(
         "Auth:      {}",
         if rbac.allow_anonymous {
@@ -2536,7 +2598,26 @@ async fn run_coordinator(
     println!();
 
     let coordinator = varpulis_cluster::shared_coordinator();
-    let ws_manager = varpulis_cluster::shared_ws_manager();
+
+    // Spawn NATS coordinator handler if NATS URL is configured
+    #[cfg(feature = "nats-transport")]
+    if let Some(ref nurl) = nats_url {
+        let nats_client = varpulis_cluster::nats_transport::connect_nats(nurl)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to connect to NATS: {}", e))?;
+        info!("Coordinator connected to NATS at {}", nurl);
+        let coord_for_nats = coordinator.clone();
+        tokio::spawn(async move {
+            varpulis_cluster::nats_coordinator::run_coordinator_nats_handler(
+                nats_client,
+                coord_for_nats,
+            )
+            .await;
+        });
+    }
+    #[cfg(not(feature = "nats-transport"))]
+    let _ = &nats_url;
+
     {
         let mut coord = coordinator.write().await;
         coord.heartbeat_interval = std::time::Duration::from_secs(heartbeat_interval_secs);
@@ -2691,13 +2772,10 @@ async fn run_coordinator(
 
     // Health endpoint (no auth) — includes operational data
     let health_coordinator = coordinator.clone();
-    let health_ws_manager = ws_manager.clone();
     let health_route = warp::path("health").and(warp::get()).and_then(move || {
         let coord = health_coordinator.clone();
-        let ws_mgr = health_ws_manager.clone();
         async move {
             let coord = coord.read().await;
-            let ws_mgr = ws_mgr.read().await;
             let total_workers = coord.workers.len();
             let healthy_workers = coord
                 .workers
@@ -2726,7 +2804,6 @@ async fn run_coordinator(
                 })
                 .count();
             let total_events: u64 = coord.workers.values().map(|w| w.events_processed).sum();
-            let ws_connections = ws_mgr.connected_count();
             let last_sweep = coord.last_health_sweep.as_ref().map(|s| {
                 serde_json::json!({
                     "workers_checked": s.workers_checked,
@@ -2754,7 +2831,6 @@ async fn run_coordinator(
                     "unhealthy": unhealthy_workers,
                     "draining": draining_workers,
                 },
-                "ws_connections": ws_connections,
                 "pipeline_groups": coord.pipeline_groups.len(),
                 "active_migrations": active_migrations,
                 "total_events_processed": total_events,
@@ -2846,12 +2922,8 @@ async fn run_coordinator(
     #[cfg(feature = "raft")]
     {
         if let Some(ref rh) = raft_handle {
-            let api_routes = varpulis_cluster::api::cluster_routes_with_raft(
-                coordinator,
-                rbac,
-                ws_manager,
-                rh.raft.clone(),
-            );
+            let api_routes =
+                varpulis_cluster::api::cluster_routes_with_raft(coordinator, rbac, rh.raft.clone());
             let routes = health_route
                 .or(ready_route)
                 .or(metrics_route)
@@ -2859,7 +2931,7 @@ async fn run_coordinator(
                 .recover(varpulis_cluster::api::handle_rejection);
             serve_coordinator!(routes, shutdown_rx);
         } else {
-            let api_routes = varpulis_cluster::cluster_routes(coordinator, rbac, ws_manager);
+            let api_routes = varpulis_cluster::cluster_routes(coordinator, rbac);
             let routes = health_route
                 .or(ready_route)
                 .or(metrics_route)
@@ -2871,7 +2943,7 @@ async fn run_coordinator(
 
     #[cfg(not(feature = "raft"))]
     {
-        let api_routes = varpulis_cluster::cluster_routes(coordinator, rbac, ws_manager);
+        let api_routes = varpulis_cluster::cluster_routes(coordinator, rbac);
         let routes = health_route
             .or(ready_route)
             .or(metrics_route)
