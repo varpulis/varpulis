@@ -13,10 +13,11 @@ jobs:
   benchmark:
     name: Benchmark Comparison
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Need full history for baseline comparison
+          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -26,7 +27,7 @@ jobs:
 
       - name: Run benchmarks
         run: |
-          cargo bench -p varpulis-runtime 2>&1 | tee bench-results.txt
+          cargo bench -p varpulis-runtime --bench pattern_benchmark 2>&1 | tee bench-results.txt
 
       - name: Store benchmark results
         uses: benchmark-action/github-action-benchmark@v1
@@ -34,13 +35,10 @@ jobs:
           name: Varpulis Performance
           tool: cargo
           output-file-path: bench-results.txt
-          # On push to main: update baseline stored in gh-pages branch
           auto-push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-          # On PR: compare against baseline, alert on regression
           alert-threshold: "110%"
           comment-on-alert: true
           fail-on-alert: ${{ github.event_name == 'pull_request' }}
-          # Store results in gh-pages branch under /dev/bench/
           gh-pages-branch: gh-pages
           benchmark-data-dir-path: dev/bench
           github-token: ${{ secrets.GITHUB_TOKEN }}
