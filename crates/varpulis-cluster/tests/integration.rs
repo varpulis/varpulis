@@ -623,13 +623,13 @@ async fn test_inject_event_routed_correctly() {
                 from_pipeline: "_external".into(),
                 to_pipeline: "temps".into(),
                 event_types: vec!["Temperature*".into()],
-                mqtt_topic: None,
+                nats_subject: None,
             },
             InterPipelineRoute {
                 from_pipeline: "_external".into(),
                 to_pipeline: "humidity".into(),
                 event_types: vec!["Humidity*".into()],
-                mqtt_topic: None,
+                nats_subject: None,
             },
         ],
     };
@@ -757,7 +757,7 @@ async fn test_inject_event_pipeline_not_deployed() {
             from_pipeline: "_external".into(),
             to_pipeline: "phantom".into(),
             event_types: vec!["*".into()],
-            mqtt_topic: None,
+            nats_subject: None,
         }],
     };
 
@@ -816,7 +816,7 @@ async fn test_full_lifecycle_register_deploy_inject_teardown() {
             from_pipeline: "_external".into(),
             to_pipeline: "analytics".into(),
             event_types: vec!["SensorReading".into()],
-            mqtt_topic: None,
+            nats_subject: None,
         }],
     };
 
@@ -919,7 +919,7 @@ async fn test_distributed_mandelbrot_style_deployment() {
                 from_pipeline: "_external".into(),
                 to_pipeline: format!("row{}", i),
                 event_types: vec![format!("ComputeTile{}*", i)],
-                mqtt_topic: None,
+                nats_subject: None,
             })
             .collect(),
     };
@@ -1037,11 +1037,9 @@ async fn test_api_deploy_inject_teardown_e2e() {
     let worker_addr = format!("http://127.0.0.1:{}", port);
 
     let coord = shared_coordinator();
-    let ws_mgr = varpulis_cluster::shared_ws_manager();
     let routes = cluster_routes(
         coord.clone(),
         Arc::new(RbacConfig::single_key("admin".into())),
-        ws_mgr,
     )
     .recover(varpulis_cluster::api::handle_rejection);
 

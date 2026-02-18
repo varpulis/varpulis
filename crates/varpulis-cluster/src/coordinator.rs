@@ -166,6 +166,9 @@ pub struct Coordinator {
     pub heartbeat_timeout: Duration,
     placement: Box<dyn PlacementStrategy>,
     pub(crate) http_client: reqwest::Client,
+    /// Optional NATS client for worker communication (replaces HTTP when set).
+    #[cfg(feature = "nats-transport")]
+    pub nats_client: Option<async_nats::Client>,
     /// HA role of this coordinator instance.
     pub ha_role: HaRole,
     /// Optional Raft consensus handle (enabled with `raft` feature).
@@ -217,6 +220,8 @@ impl Coordinator {
                 .timeout(Duration::from_secs(10))
                 .build()
                 .expect("Failed to build HTTP client"),
+            #[cfg(feature = "nats-transport")]
+            nats_client: None,
             ha_role: HaRole::default(),
             #[cfg(feature = "raft")]
             raft_handle: None,
@@ -356,7 +361,6 @@ impl Coordinator {
                     last_heartbeat: Instant::now(),
                     assigned_pipelines: entry.assigned_pipelines.clone(),
                     events_processed: entry.events_processed,
-                    ws_disconnected_at: None,
                 };
                 self.workers.insert(wid, worker);
             }
@@ -458,7 +462,6 @@ impl Coordinator {
             .ok_or_else(|| ClusterError::WorkerNotFound(worker_id.0.clone()))?;
 
         worker.last_heartbeat = std::time::Instant::now();
-        worker.ws_disconnected_at = None; // Clear WS grace period on heartbeat
         worker.capacity.pipelines_running = hb.pipelines_running;
         worker.events_processed = hb.events_processed;
 
@@ -638,6 +641,67 @@ impl Coordinator {
                     error!(
                         "Failed to reach worker {} for pipeline '{}': {}",
                         task.worker_id, task.replica_name, e
+                    );
+                    Err(e.to_string())
+                }
+            };
+
+            results.push(DeployTaskResult {
+                replica_name: task.replica_name.clone(),
+                pipeline_name: task.pipeline_name.clone(),
+                worker_id: task.worker_id.clone(),
+                worker_address: task.worker_address.clone(),
+                worker_api_key: task.worker_api_key.clone(),
+                replica_count: task.replica_count,
+                outcome,
+            });
+        }
+
+        results
+    }
+
+    /// Execute deployment plan via NATS request/reply.
+    #[cfg(feature = "nats-transport")]
+    pub async fn execute_deploy_plan_nats(
+        nats_client: &async_nats::Client,
+        plan: &DeployGroupPlan,
+    ) -> Vec<DeployTaskResult> {
+        use crate::nats_transport;
+
+        let mut results = Vec::with_capacity(plan.tasks.len());
+        let timeout = std::time::Duration::from_secs(10);
+
+        for task in &plan.tasks {
+            let subject = nats_transport::subject_cmd(&task.worker_id.0, "deploy");
+            let deploy_body = serde_json::json!({
+                "name": task.replica_name,
+                "source": task.source,
+            });
+
+            info!(
+                "Deploying pipeline '{}' to worker {} via NATS",
+                task.replica_name, task.worker_id
+            );
+
+            let outcome = match nats_transport::nats_request::<_, DeployResponse>(
+                nats_client,
+                &subject,
+                &deploy_body,
+                timeout,
+            )
+            .await
+            {
+                Ok(resp_body) => {
+                    info!(
+                        "Pipeline '{}' deployed on worker {} (id={}, status={})",
+                        resp_body.name, task.worker_id, resp_body.id, resp_body.status
+                    );
+                    Ok(resp_body)
+                }
+                Err(e) => {
+                    error!(
+                        "Failed to deploy pipeline '{}' on worker {}: {}",
+                        task.replica_name, task.worker_id, e
                     );
                     Err(e.to_string())
                 }
@@ -1090,6 +1154,68 @@ impl Coordinator {
             .json()
             .await
             .map_err(|e| ClusterError::RoutingFailed(e.to_string()))?;
+
+        Ok(InjectResponse {
+            routed_to: target.target_name.clone(),
+            worker_id: target.worker_id.clone(),
+            worker_response,
+        })
+    }
+
+    /// Execute teardown plan via NATS request/reply.
+    #[cfg(feature = "nats-transport")]
+    pub async fn execute_teardown_plan_nats(nats_client: &async_nats::Client, plan: &TeardownPlan) {
+        use crate::nats_transport;
+
+        let timeout = std::time::Duration::from_secs(10);
+
+        for (name, deployment) in &plan.tasks {
+            let subject = nats_transport::subject_cmd(&deployment.worker_id.0, "undeploy");
+            let body = serde_json::json!({
+                "pipeline_id": deployment.pipeline_id,
+            });
+
+            match nats_transport::nats_request::<_, serde_json::Value>(
+                nats_client,
+                &subject,
+                &body,
+                timeout,
+            )
+            .await
+            {
+                Ok(_) => info!(
+                    "Torn down pipeline '{}' from worker {} via NATS",
+                    name, deployment.worker_id
+                ),
+                Err(e) => warn!(
+                    "Failed to tear down pipeline '{}' from worker {}: {}",
+                    name, deployment.worker_id, e
+                ),
+            }
+        }
+    }
+
+    /// Execute inject event via NATS request/reply.
+    #[cfg(feature = "nats-transport")]
+    pub async fn execute_inject_event_nats(
+        nats_client: &async_nats::Client,
+        target: &InjectTarget,
+        event: &InjectEventRequest,
+    ) -> Result<InjectResponse, ClusterError> {
+        use crate::nats_transport;
+
+        let subject = nats_transport::subject_cmd(&target.worker_id, "inject");
+        let body = serde_json::json!({
+            "pipeline_id": target.target_name,
+            "event_type": event.event_type,
+            "fields": event.fields,
+        });
+
+        let timeout = std::time::Duration::from_secs(10);
+        let worker_response: serde_json::Value =
+            nats_transport::nats_request(nats_client, &subject, &body, timeout)
+                .await
+                .map_err(|e| ClusterError::RoutingFailed(e.to_string()))?;
 
         Ok(InjectResponse {
             routed_to: target.target_name.clone(),

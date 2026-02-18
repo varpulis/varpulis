@@ -36,6 +36,7 @@ rumqttc = { version = "0.24", optional = true }
 rdkafka = { version = "0.36", features = ["cmake-build"], optional = true }
 sqlx = { version = "0.8", features = ["runtime-tokio", "any", "postgres", "mysql", "sqlite"], optional = true }
 redis = { version = "0.25", features = ["tokio-comp", "connection-manager"], optional = true }
+async-nats = { version = "0.38", optional = true }
 
 # AWS connectors
 aws-config = { version = "1.5", optional = true }
@@ -68,10 +69,11 @@ redis = ["dep:redis"]
 persistence = ["rocksdb"]
 kinesis = ["aws-config", "aws-sdk-kinesis", "aws-credential-types"]
 s3 = ["aws-config", "aws-sdk-s3", "aws-credential-types"]
+nats = ["async-nats"]
 elasticsearch = ["dep:elasticsearch"]
 onnx = ["ort"]
 binary-codec = ["rmp-serde"]
-all-connectors = ["mqtt", "kafka", "database", "redis", "kinesis", "s3", "elasticsearch"]
+all-connectors = ["mqtt", "kafka", "nats", "database", "redis", "kinesis", "s3", "elasticsearch"]
 
 [dev-dependencies]
 tempfile = "3"
