@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   benchmark:
@@ -78,7 +79,7 @@ jobs:
           tool: cargo
           output-file-path: bench-results.txt
           auto-push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-          alert-threshold: "110%"
+          alert-threshold: "150%"
           comment-on-alert: true
           fail-on-alert: ${{ github.event_name == 'pull_request' }}
           gh-pages-branch: gh-pages

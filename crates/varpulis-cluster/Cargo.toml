@@ -16,19 +16,26 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 warp = { workspace = true }
 reqwest = { workspace = true }
-tokio-tungstenite = { workspace = true }
-futures-util = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
 chrono = { workspace = true }
 prometheus = { workspace = true }
 zeroize = { workspace = true }
 
+[dependencies.async-nats]
+version = "0.38"
+optional = true
+
+[dependencies.futures-util]
+workspace = true
+optional = true
+
 [features]
 default = []
-k8s = ["kube", "k8s-openapi"]
+k8s = ["kube", "k8s-openapi", "futures-util"]
 onnx = ["varpulis-runtime/onnx"]
 raft = ["openraft"]
 persistent = ["raft", "rocksdb"]
+nats-transport = ["async-nats", "futures-util"]
 
 [dependencies.kube]
 version = "0.98"

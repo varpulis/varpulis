@@ -582,7 +582,7 @@ fn heartbeat_constants() {
         DEFAULT_HEARTBEAT_TIMEOUT,
         std::time::Duration::from_secs(15)
     );
-    assert_eq!(DEFAULT_WS_GRACE_PERIOD, std::time::Duration::from_secs(5));
+    // DEFAULT_WS_GRACE_PERIOD removed — WS transport replaced by NATS
     // Legacy aliases
     assert_eq!(HEARTBEAT_INTERVAL, DEFAULT_HEARTBEAT_INTERVAL);
     assert_eq!(HEARTBEAT_TIMEOUT, DEFAULT_HEARTBEAT_TIMEOUT);
@@ -755,17 +755,18 @@ fn inject_response_serde() {
 }
 
 // =============================================================================
-// WorkerNode ws_disconnected_at field
+// WorkerNode creation
 // =============================================================================
 
 #[test]
-fn worker_node_ws_disconnected_at_default() {
+fn worker_node_creation() {
     let node = WorkerNode::new(
         WorkerId("w1".into()),
         "http://localhost:9000".into(),
         "key".into(),
     );
-    assert!(node.ws_disconnected_at.is_none());
+    assert_eq!(node.id, WorkerId("w1".into()));
+    assert_eq!(node.status, WorkerStatus::Registering);
 }
 
 // =============================================================================

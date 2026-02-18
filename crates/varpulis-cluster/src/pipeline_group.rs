@@ -43,7 +43,7 @@ pub struct InterPipelineRoute {
     pub to_pipeline: String,
     pub event_types: Vec<String>,
     #[serde(default)]
-    pub mqtt_topic: Option<String>,
+    pub nats_subject: Option<String>,
 }
 
 /// Status of a deployed pipeline group.
@@ -650,25 +650,25 @@ mod tests {
             from_pipeline: "a".into(),
             to_pipeline: "b".into(),
             event_types: vec!["TypeA*".into(), "TypeB".into()],
-            mqtt_topic: Some("custom/topic".into()),
+            nats_subject: Some("custom/topic".into()),
         };
         let json = serde_json::to_string(&route).unwrap();
         let parsed: InterPipelineRoute = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.from_pipeline, "a");
         assert_eq!(parsed.to_pipeline, "b");
         assert_eq!(parsed.event_types.len(), 2);
-        assert_eq!(parsed.mqtt_topic, Some("custom/topic".into()));
+        assert_eq!(parsed.nats_subject, Some("custom/topic".into()));
     }
 
     #[test]
-    fn test_inter_pipeline_route_no_mqtt_topic() {
+    fn test_inter_pipeline_route_no_nats_subject() {
         let json = r#"{
             "from_pipeline": "a",
             "to_pipeline": "b",
             "event_types": ["*"]
         }"#;
         let parsed: InterPipelineRoute = serde_json::from_str(json).unwrap();
-        assert!(parsed.mqtt_topic.is_none());
+        assert!(parsed.nats_subject.is_none());
     }
 
     #[test]

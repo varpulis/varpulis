@@ -13,7 +13,6 @@ use crate::worker::{
     HeartbeatRequest, HeartbeatResponse, RegisterWorkerRequest, RegisterWorkerResponse, WorkerId,
     WorkerInfo, WorkerNode,
 };
-use crate::ws::SharedWsManager;
 use crate::ClusterError;
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
@@ -43,11 +42,10 @@ pub fn shared_coordinator() -> SharedCoordinator {
 pub fn cluster_routes_with_raft(
     coordinator: SharedCoordinator,
     rbac: Arc<RbacConfig>,
-    ws_manager: SharedWsManager,
     raft: crate::raft::routes::SharedRaft,
 ) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
     let raft_routes = crate::raft::routes::raft_routes(raft, rbac.any_admin_key());
-    let cluster = cluster_routes(coordinator, rbac, ws_manager);
+    let cluster = cluster_routes(coordinator, rbac);
     raft_routes.or(cluster)
 }
 
@@ -58,31 +56,10 @@ pub fn cluster_routes_with_raft(
 pub fn cluster_routes(
     coordinator: SharedCoordinator,
     rbac: Arc<RbacConfig>,
-    ws_manager: SharedWsManager,
 ) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
     let api = warp::path("api")
         .and(warp::path("v1"))
         .and(warp::path("cluster"));
-
-    // WebSocket route for persistent worker connections
-    // Limit frame size to 64 KB (heartbeats are small JSON messages)
-    let ws_rbac = rbac.clone();
-    let ws_route = api
-        .and(warp::path("ws"))
-        .and(warp::path::end())
-        .and(warp::ws())
-        .and(with_coordinator(coordinator.clone()))
-        .and(with_ws_manager(ws_manager))
-        .map(
-            move |ws: warp::ws::Ws, coordinator: SharedCoordinator, ws_mgr: SharedWsManager| {
-                let ws_rbac = ws_rbac.clone();
-                ws.max_frame_size(64 * 1024)
-                    .max_message_size(64 * 1024)
-                    .on_upgrade(move |socket| {
-                        crate::ws::handle_worker_ws(socket, coordinator, ws_mgr, ws_rbac)
-                    })
-            },
-        );
 
     let register_worker = api
         .and(warp::path("workers"))
@@ -501,8 +478,7 @@ pub fn cluster_routes(
         );
     });
 
-    ws_route
-        .or(worker_routes)
+    worker_routes
         .or(pipeline_routes)
         .or(topology)
         .or(validate)
@@ -556,12 +532,6 @@ fn with_coordinator(
     coordinator: SharedCoordinator,
 ) -> impl Filter<Extract = (SharedCoordinator,), Error = Infallible> + Clone {
     warp::any().map(move || coordinator.clone())
-}
-
-fn with_ws_manager(
-    ws_manager: SharedWsManager,
-) -> impl Filter<Extract = (SharedWsManager,), Error = Infallible> + Clone {
-    warp::any().map(move || ws_manager.clone())
 }
 
 fn with_rbac(
@@ -717,7 +687,6 @@ async fn handle_register_worker(
                                 last_heartbeat: std::time::Instant::now(),
                                 assigned_pipelines: Vec::new(),
                                 events_processed: 0,
-                                ws_disconnected_at: None,
                             };
                             let id = coord.register_worker(node);
                             let reg_resp = RegisterWorkerResponse {
@@ -783,7 +752,6 @@ async fn handle_register_worker(
         last_heartbeat: std::time::Instant::now(),
         assigned_pipelines: Vec::new(),
         events_processed: 0,
-        ws_disconnected_at: None,
     };
     let id = coord.register_worker(node);
     let resp = RegisterWorkerResponse {
@@ -2483,11 +2451,10 @@ mod tests {
         impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone,
     ) {
         let coord = shared_coordinator();
-        let ws_mgr = crate::ws::shared_ws_manager();
+
         let routes = cluster_routes(
             coord.clone(),
             Arc::new(RbacConfig::single_key("admin-key".to_string())),
-            ws_mgr,
         );
         (coord, routes)
     }
@@ -2737,8 +2704,8 @@ mod tests {
     async fn test_no_auth_mode() {
         // When RBAC is disabled, no auth required
         let coord = shared_coordinator();
-        let ws_mgr = crate::ws::shared_ws_manager();
-        let routes = cluster_routes(coord.clone(), Arc::new(RbacConfig::disabled()), ws_mgr);
+
+        let routes = cluster_routes(coord.clone(), Arc::new(RbacConfig::disabled()));
 
         // Register without API key
         let resp = warp::test::request()
@@ -2891,7 +2858,7 @@ mod tests {
                     from_pipeline: "_external".into(),
                     to_pipeline: "p1".into(),
                     event_types: vec!["*".into()],
-                    mqtt_topic: None,
+                    nats_subject: None,
                 }],
             };
 
@@ -3152,8 +3119,8 @@ mod tests {
     #[tokio::test]
     async fn test_rbac_viewer_can_read() {
         let coord = shared_coordinator();
-        let ws_mgr = crate::ws::shared_ws_manager();
-        let routes = cluster_routes(coord, rbac_viewer(), ws_mgr);
+
+        let routes = cluster_routes(coord, rbac_viewer());
 
         // Viewer can list workers (GET)
         let resp = warp::test::request()
@@ -3168,8 +3135,8 @@ mod tests {
     #[tokio::test]
     async fn test_rbac_viewer_cannot_deploy() {
         let coord = shared_coordinator();
-        let ws_mgr = crate::ws::shared_ws_manager();
-        let routes = cluster_routes(coord, rbac_viewer(), ws_mgr).recover(handle_rejection);
+
+        let routes = cluster_routes(coord, rbac_viewer()).recover(handle_rejection);
 
         // Viewer cannot deploy (POST = Operator required)
         let resp = warp::test::request()
@@ -3195,8 +3162,8 @@ mod tests {
         );
         let rbac = Arc::new(RbacConfig::multi_key(keys));
         let coord = shared_coordinator();
-        let ws_mgr = crate::ws::shared_ws_manager();
-        let routes = cluster_routes(coord, rbac, ws_mgr).recover(handle_rejection);
+
+        let routes = cluster_routes(coord, rbac).recover(handle_rejection);
 
         // Operator cannot delete workers (DELETE = Admin required)
         let resp = warp::test::request()
@@ -3228,8 +3195,8 @@ mod tests {
         );
         let rbac = Arc::new(RbacConfig::multi_key(keys));
         let coord = shared_coordinator();
-        let ws_mgr = crate::ws::shared_ws_manager();
-        let routes = cluster_routes(coord, rbac, ws_mgr).recover(handle_rejection);
+
+        let routes = cluster_routes(coord, rbac).recover(handle_rejection);
 
         // Admin can delete (Admin required)
         let resp = warp::test::request()
