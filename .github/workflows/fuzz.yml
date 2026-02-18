@@ -15,9 +15,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz
-      - name: Fuzz VPL parser (5 minutes)
+      - name: Restore corpus cache
+        uses: actions/cache@v4
+        with:
+          path: crates/varpulis-parser/fuzz/corpus/fuzz_parser
+          key: fuzz-parser-corpus-${{ github.run_number }}
+          restore-keys: |
+            fuzz-parser-corpus-
+      - name: Fuzz VPL parser (30 minutes)
         working-directory: crates/varpulis-parser
-        run: cargo +nightly fuzz run fuzz_parser -- -max_total_time=300
+        run: cargo +nightly fuzz run fuzz_parser -- -max_total_time=1800
       - name: Upload crash artifacts
         if: failure()
         uses: actions/upload-artifact@v4
@@ -33,9 +40,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz
-      - name: Fuzz JSON event parsing (5 minutes)
+      - name: Restore corpus cache
+        uses: actions/cache@v4
+        with:
+          path: crates/varpulis-runtime/fuzz/corpus/fuzz_json_event
+          key: fuzz-json-event-corpus-${{ github.run_number }}
+          restore-keys: |
+            fuzz-json-event-corpus-
+      - name: Fuzz JSON event parsing (30 minutes)
         working-directory: crates/varpulis-runtime
-        run: cargo +nightly fuzz run fuzz_json_event -- -max_total_time=300
+        run: cargo +nightly fuzz run fuzz_json_event -- -max_total_time=1800
       - name: Upload crash artifacts
         if: failure()
         uses: actions/upload-artifact@v4
@@ -51,9 +65,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz
-      - name: Fuzz MQTT message parsing (5 minutes)
+      - name: Restore corpus cache
+        uses: actions/cache@v4
+        with:
+          path: crates/varpulis-runtime/fuzz/corpus/fuzz_mqtt_message
+          key: fuzz-mqtt-message-corpus-${{ github.run_number }}
+          restore-keys: |
+            fuzz-mqtt-message-corpus-
+      - name: Fuzz MQTT message parsing (30 minutes)
         working-directory: crates/varpulis-runtime
-        run: cargo +nightly fuzz run fuzz_mqtt_message -- -max_total_time=300
+        run: cargo +nightly fuzz run fuzz_mqtt_message -- -max_total_time=1800
       - name: Upload crash artifacts
         if: failure()
         uses: actions/upload-artifact@v4

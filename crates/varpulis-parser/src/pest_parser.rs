@@ -57,6 +57,108 @@ pub fn parse(source: &str) -> ParseResult<Program> {
         })
 }
 
+/// Maximum bracket nesting depth allowed before pest parsing.
+/// Pest's recursive descent uses ~14 stack frames per nesting level,
+/// so 64 levels is a safe limit to prevent stack overflow.
+const MAX_NESTING_DEPTH: usize = 64;
+
+/// O(n) pre-scan that rejects inputs with bracket nesting deeper than
+/// `MAX_NESTING_DEPTH`. Respects string literals and comments so that
+/// brackets inside `"..."`, `'...'`, `// ...`, or `/* ... */` are ignored.
+fn check_nesting_depth(source: &str) -> ParseResult<()> {
+    let mut depth: usize = 0;
+    let mut max_depth: usize = 0;
+    let mut max_depth_pos: usize = 0;
+    let bytes = source.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+
+    while i < len {
+        let b = bytes[i];
+
+        // Skip double-quoted strings
+        if b == b'"' {
+            i += 1;
+            while i < len {
+                if bytes[i] == b'\\' {
+                    i += 2; // skip escaped char
+                    continue;
+                }
+                if bytes[i] == b'"' {
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            continue;
+        }
+
+        // Skip single-quoted strings
+        if b == b'\'' {
+            i += 1;
+            while i < len {
+                if bytes[i] == b'\\' {
+                    i += 2;
+                    continue;
+                }
+                if bytes[i] == b'\'' {
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            continue;
+        }
+
+        // Skip line comments
+        if b == b'/' && i + 1 < len && bytes[i + 1] == b'/' {
+            i += 2;
+            while i < len && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+
+        // Skip block comments
+        if b == b'/' && i + 1 < len && bytes[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < len {
+                if bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                    i += 2;
+                    break;
+                }
+                i += 1;
+            }
+            continue;
+        }
+
+        // Track bracket depth
+        if b == b'(' || b == b'[' || b == b'{' {
+            depth += 1;
+            if depth > max_depth {
+                max_depth = depth;
+                max_depth_pos = i;
+            }
+        } else if b == b')' || b == b']' || b == b'}' {
+            depth = depth.saturating_sub(1);
+        }
+
+        if max_depth > MAX_NESTING_DEPTH {
+            return Err(ParseError::InvalidToken {
+                position: max_depth_pos,
+                message: format!(
+                    "Nesting depth exceeds maximum of {} levels",
+                    MAX_NESTING_DEPTH
+                ),
+            });
+        }
+
+        i += 1;
+    }
+
+    Ok(())
+}
+
 fn parse_inner(source: &str) -> ParseResult<Program> {
     // Expand compile-time declaration loops (top-level for with {var} interpolation)
     let expanded =
@@ -66,6 +168,9 @@ fn parse_inner(source: &str) -> ParseResult<Program> {
         })?;
     // Preprocess to add INDENT/DEDENT markers
     let preprocessed = preprocess_indentation(&expanded);
+
+    // Reject deeply nested input before pest parsing to prevent stack overflow
+    check_nesting_depth(&preprocessed)?;
 
     let pairs = VarpulisParser::parse(Rule::program, &preprocessed).map_err(convert_pest_error)?;
 
@@ -327,7 +432,9 @@ fn parse_pattern_decl(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
             }
             Rule::pattern_within_clause => {
                 let dur_pair = p.into_inner().expect_next("within duration")?;
-                within = Some(Expr::Duration(parse_duration(dur_pair.as_str())));
+                within = Some(Expr::Duration(
+                    parse_duration(dur_pair.as_str()).map_err(ParseError::InvalidDuration)?,
+                ));
             }
             Rule::pattern_partition_clause => {
                 let key = p
@@ -1466,7 +1573,9 @@ fn parse_config_value(pair: pest::iterators::Pair<Rule>) -> ParseResult<ConfigVa
             let s = inner.as_str();
             Ok(ConfigValue::Str(s[1..s.len() - 1].to_string()))
         }
-        Rule::duration => Ok(ConfigValue::Duration(parse_duration(inner.as_str()))),
+        Rule::duration => Ok(ConfigValue::Duration(
+            parse_duration(inner.as_str()).map_err(ParseError::InvalidDuration)?,
+        )),
         Rule::boolean => Ok(ConfigValue::Bool(inner.as_str() == "true")),
         Rule::identifier => Ok(ConfigValue::Ident(inner.as_str().to_string())),
         _ => Ok(ConfigValue::Ident(inner.as_str().to_string())),
@@ -2379,7 +2488,9 @@ fn parse_literal(pair: pest::iterators::Pair<Rule>) -> ParseResult<Expr> {
             let s = inner.as_str();
             Ok(Expr::Str(s[1..s.len() - 1].to_string()))
         }
-        Rule::duration => Ok(Expr::Duration(parse_duration(inner.as_str()))),
+        Rule::duration => Ok(Expr::Duration(
+            parse_duration(inner.as_str()).map_err(ParseError::InvalidDuration)?,
+        )),
         Rule::timestamp => Ok(Expr::Timestamp(parse_timestamp(inner.as_str()))),
         Rule::boolean => Ok(Expr::Bool(inner.as_str() == "true")),
         Rule::null => Ok(Expr::Null),

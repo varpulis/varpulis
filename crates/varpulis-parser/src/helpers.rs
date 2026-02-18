@@ -1,7 +1,9 @@
 //! Helper functions for parsing literals in LALRPOP grammar
 
-/// Parse a duration string like "5s", "100ms", "1h" into nanoseconds
-pub fn parse_duration(s: &str) -> u64 {
+/// Parse a duration string like "5s", "100ms", "1h" into nanoseconds.
+///
+/// Returns `Err` if the numeric value overflows `u64` when converted to nanoseconds.
+pub fn parse_duration(s: &str) -> Result<u64, String> {
     let len = s.len();
     let (num_str, unit) = if s.ends_with("ns") {
         (&s[..len - 2], "ns")
@@ -18,19 +20,25 @@ pub fn parse_duration(s: &str) -> u64 {
     } else if s.ends_with('d') {
         (&s[..len - 1], "d")
     } else {
-        return 0;
+        return Ok(0);
     };
 
-    let num: u64 = num_str.parse().unwrap_or(0);
+    let num: u64 = num_str
+        .parse()
+        .map_err(|_| format!("invalid numeric value in duration: {}", s))?;
+    let mul = |a: u64, b: u64| {
+        a.checked_mul(b)
+            .ok_or_else(|| format!("duration overflows u64 nanoseconds: {}", s))
+    };
     match unit {
-        "ns" => num,
-        "us" => num.saturating_mul(1_000),
-        "ms" => num.saturating_mul(1_000_000),
-        "s" => num.saturating_mul(1_000_000_000),
-        "m" => num.saturating_mul(60).saturating_mul(1_000_000_000),
-        "h" => num.saturating_mul(3600).saturating_mul(1_000_000_000),
-        "d" => num.saturating_mul(86400).saturating_mul(1_000_000_000),
-        _ => 0,
+        "ns" => Ok(num),
+        "us" => mul(num, 1_000),
+        "ms" => mul(num, 1_000_000),
+        "s" => mul(num, 1_000_000_000),
+        "m" => mul(num, 60_000_000_000),
+        "h" => mul(num, 3_600_000_000_000),
+        "d" => mul(num, 86_400_000_000_000),
+        _ => Ok(0),
     }
 }
 
@@ -135,30 +143,37 @@ mod tests {
 
     #[test]
     fn test_parse_duration_seconds() {
-        assert_eq!(parse_duration("5s"), 5_000_000_000);
-        assert_eq!(parse_duration("1s"), 1_000_000_000);
+        assert_eq!(parse_duration("5s").unwrap(), 5_000_000_000);
+        assert_eq!(parse_duration("1s").unwrap(), 1_000_000_000);
     }
 
     #[test]
     fn test_parse_duration_milliseconds() {
-        assert_eq!(parse_duration("100ms"), 100_000_000);
-        assert_eq!(parse_duration("1ms"), 1_000_000);
+        assert_eq!(parse_duration("100ms").unwrap(), 100_000_000);
+        assert_eq!(parse_duration("1ms").unwrap(), 1_000_000);
     }
 
     #[test]
     fn test_parse_duration_minutes() {
-        assert_eq!(parse_duration("1m"), 60_000_000_000);
-        assert_eq!(parse_duration("5m"), 300_000_000_000);
+        assert_eq!(parse_duration("1m").unwrap(), 60_000_000_000);
+        assert_eq!(parse_duration("5m").unwrap(), 300_000_000_000);
     }
 
     #[test]
     fn test_parse_duration_hours() {
-        assert_eq!(parse_duration("1h"), 3_600_000_000_000);
+        assert_eq!(parse_duration("1h").unwrap(), 3_600_000_000_000);
     }
 
     #[test]
     fn test_parse_duration_days() {
-        assert_eq!(parse_duration("1d"), 86_400_000_000_000);
+        assert_eq!(parse_duration("1d").unwrap(), 86_400_000_000_000);
+    }
+
+    #[test]
+    fn test_parse_duration_overflow() {
+        assert!(parse_duration("999999999999d").is_err());
+        assert!(parse_duration("99999999999999999999h").is_err());
+        assert!(parse_duration("18446744073709551616ns").is_err()); // u64::MAX + 1
     }
 
     #[test]

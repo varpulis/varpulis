@@ -50,3 +50,6 @@ benchmarks/flink-comparison/test-harness/dependency-reduced-pom.xml
 apama-samples/
 benchmarks/apama-comparison/data/*.evt
 benchmarks/apama-comparison/data/*.jsonl
+
+# Fuzz artifacts (crash/timeout reproductions)
+**/fuzz/artifacts/
