@@ -10,9 +10,6 @@ pub const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 /// Default timeout before marking a worker as unhealthy.
 pub const DEFAULT_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// Default grace period for WebSocket disconnects before triggering failover.
-pub const DEFAULT_WS_GRACE_PERIOD: Duration = Duration::from_secs(5);
-
 /// Legacy alias for backward compatibility.
 pub const HEARTBEAT_INTERVAL: Duration = DEFAULT_HEARTBEAT_INTERVAL;
 
@@ -26,22 +23,12 @@ pub struct HealthSweepResult {
     pub workers_marked_unhealthy: Vec<WorkerId>,
 }
 
-/// Perform a health sweep: check each worker's last heartbeat against the timeout,
-/// and check WS disconnect grace period expiry.
+/// Perform a health sweep: check each worker's last heartbeat against the timeout.
 ///
 /// Returns the list of workers newly marked as unhealthy.
 pub fn health_sweep(
     workers: &mut std::collections::HashMap<WorkerId, crate::worker::WorkerNode>,
     timeout: Duration,
-) -> HealthSweepResult {
-    health_sweep_with_grace(workers, timeout, DEFAULT_WS_GRACE_PERIOD)
-}
-
-/// Health sweep with configurable WS grace period.
-pub fn health_sweep_with_grace(
-    workers: &mut std::collections::HashMap<WorkerId, crate::worker::WorkerNode>,
-    timeout: Duration,
-    ws_grace_period: Duration,
 ) -> HealthSweepResult {
     let mut result = HealthSweepResult::default();
 
@@ -52,27 +39,13 @@ pub fn health_sweep_with_grace(
             continue;
         }
 
-        // Check heartbeat timeout (existing behavior)
-        let heartbeat_expired = worker.last_heartbeat.elapsed() > timeout;
-
-        // Check WS disconnect grace period expiry
-        let ws_grace_expired = worker
-            .ws_disconnected_at
-            .is_some_and(|t| t.elapsed() > ws_grace_period);
-
-        if heartbeat_expired || ws_grace_expired {
-            let reason = if ws_grace_expired {
-                format!(
-                    "WS disconnected for {:?} (grace period {:?} exceeded)",
-                    worker.ws_disconnected_at.unwrap().elapsed(),
-                    ws_grace_period
-                )
-            } else {
-                format!("no heartbeat for {:?}", worker.last_heartbeat.elapsed())
-            };
-            warn!("Worker {} marked unhealthy ({})", worker.id, reason);
+        if worker.last_heartbeat.elapsed() > timeout {
+            warn!(
+                "Worker {} marked unhealthy (no heartbeat for {:?})",
+                worker.id,
+                worker.last_heartbeat.elapsed()
+            );
             worker.status = WorkerStatus::Unhealthy;
-            worker.ws_disconnected_at = None;
             result.workers_marked_unhealthy.push(worker.id.clone());
         }
     }

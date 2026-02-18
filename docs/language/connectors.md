@@ -7,6 +7,7 @@ This document describes how to connect Varpulis to external systems for both eve
 | Connector | Input | Output | Status | Feature Flag |
 |-----------|-------|--------|--------|--------------|
 | **MQTT**  | Yes | Yes | Production | `mqtt` |
+| **NATS**  | Yes | Yes | Production | `nats` |
 | **HTTP**  | No | Yes | Output only (webhooks) | default |
 | **Kafka** | Yes | Yes | Available | `kafka` |
 | **Console** | No | Yes | Debug | default |
@@ -28,7 +29,7 @@ docker build -f deploy/docker/Dockerfile \
   -t varpulis/varpulis:latest .
 ```
 
-Available features: `mqtt`, `kafka`, `postgres`, `mysql`, `sqlite`, `database`, `redis`, `persistence`, `all-connectors`.
+Available features: `mqtt`, `kafka`, `nats`, `postgres`, `mysql`, `sqlite`, `database`, `redis`, `persistence`, `all-connectors`.
 
 ---
 
@@ -268,6 +269,57 @@ stream AlertsOut = ProcessedAlerts
 ```bash
 # Requires rdkafka (librdkafka)
 cargo build --release --features mqtt,kafka
+```
+
+---
+
+## NATS Connector
+
+NATS provides lightweight, high-performance messaging. It uses a single multiplexed connection for both subscriptions and publishing. Requires the `nats` feature flag.
+
+### Declaration
+
+```varpulis
+connector NatsMarket = nats (
+    servers: "nats://localhost:4222",
+    queue_group: "varpulis"
+)
+```
+
+### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `servers` | string | Yes | - | NATS server URL(s), e.g. `nats://host:4222` |
+| `queue_group` | string | No | - | Queue group for load-balanced consumption |
+
+### Subject Wildcards
+
+NATS subjects use `.` as a separator with two wildcard tokens:
+
+- `*` — Matches a single token: `trades.*` matches `trades.AAPL` but not `trades.us.AAPL`
+- `>` — Matches one or more tokens (must be last): `trades.>` matches `trades.AAPL` and `trades.us.AAPL`
+
+### Usage
+
+```varpulis
+# Ingest from NATS
+stream Trades = Trade
+    .from(NatsMarket, topic: "trades.>")
+
+# Output to NATS
+stream Alerts = HighValueTrades
+    .to(NatsMarket, topic: "alerts.high-value")
+```
+
+### Building with NATS
+
+```bash
+# Build with NATS support
+cargo build --release --features nats
+
+# Build with multiple connectors
+cargo build --release --features mqtt,nats,kafka
 ```
 
 ---

@@ -33,7 +33,7 @@ pub(crate) fn connector_params_to_config(
             varpulis_core::ast::ConfigValue::Map(_) => continue,
         };
         match param.name.as_str() {
-            "url" | "host" | "brokers" => url = value_str,
+            "url" | "host" | "brokers" | "servers" => url = value_str,
             "topic" => topic = Some(value_str),
             other => {
                 properties.insert(other.to_string(), value_str);
@@ -291,6 +291,35 @@ pub(crate) fn create_sink_from_config(
             #[cfg(not(feature = "mqtt"))]
             {
                 warn!("MQTT connector '{}' requires 'mqtt' feature flag", name);
+                None
+            }
+        }
+        "nats" => {
+            #[cfg(feature = "nats")]
+            {
+                let servers = if config.url.is_empty() {
+                    config
+                        .properties
+                        .get("servers")
+                        .cloned()
+                        .unwrap_or_else(|| "nats://localhost:4222".to_string())
+                } else {
+                    config.url.clone()
+                };
+                let subject = topic_override
+                    .map(|s| s.to_string())
+                    .or_else(|| config.topic.clone())
+                    .unwrap_or_else(|| format!("{}-output", name));
+                let nats_config = connector::NatsConfig::new(&servers, &subject);
+                let sink = connector::NatsSink::new(name, nats_config);
+                Some(Arc::new(SinkConnectorAdapter {
+                    name: name.to_string(),
+                    inner: tokio::sync::Mutex::new(Box::new(sink)),
+                }))
+            }
+            #[cfg(not(feature = "nats"))]
+            {
+                warn!("NATS connector '{}' requires 'nats' feature flag", name);
                 None
             }
         }

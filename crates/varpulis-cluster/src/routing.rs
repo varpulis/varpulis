@@ -7,9 +7,9 @@ use std::collections::HashMap;
 /// Routing table for inter-pipeline event routing.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct RoutingTable {
-    /// pipeline_name -> Vec<(event_type_pattern, mqtt_topic)>
+    /// pipeline_name -> Vec<(event_type_pattern, nats_subject)>
     pub output_routes: HashMap<String, Vec<(String, String)>>,
-    /// pipeline_name -> Vec<(mqtt_topic, event_type_filter)>
+    /// pipeline_name -> Vec<(nats_subject, event_type_filter)>
     pub input_subscriptions: HashMap<String, Vec<(String, String)>>,
 }
 
@@ -52,9 +52,9 @@ pub fn build_routing_table(group_id: &str, routes: &[InterPipelineRoute]) -> Rou
     let mut table = RoutingTable::default();
 
     for route in routes {
-        let topic = route.mqtt_topic.clone().unwrap_or_else(|| {
+        let topic = route.nats_subject.clone().unwrap_or_else(|| {
             format!(
-                "varpulis/cluster/{}/{}/{}",
+                "varpulis.cluster.pipeline.{}.{}.{}",
                 group_id, route.from_pipeline, route.to_pipeline
             )
         });
@@ -158,13 +158,13 @@ mod tests {
                 from_pipeline: "_external".into(),
                 to_pipeline: "row0".into(),
                 event_types: vec!["ComputeTile0*".into()],
-                mqtt_topic: None,
+                nats_subject: None,
             },
             InterPipelineRoute {
                 from_pipeline: "_external".into(),
                 to_pipeline: "row1".into(),
                 event_types: vec!["ComputeTile1*".into()],
-                mqtt_topic: None,
+                nats_subject: None,
             },
         ];
 
@@ -203,13 +203,13 @@ mod tests {
                     from_pipeline: "_external".into(),
                     to_pipeline: "row0".into(),
                     event_types: vec!["ComputeTile0*".into()],
-                    mqtt_topic: None,
+                    nats_subject: None,
                 },
                 InterPipelineRoute {
                     from_pipeline: "_external".into(),
                     to_pipeline: "row1".into(),
                     event_types: vec!["ComputeTile1*".into()],
-                    mqtt_topic: None,
+                    nats_subject: None,
                 },
             ],
         };
@@ -320,13 +320,13 @@ mod tests {
                     from_pipeline: "_external".into(),
                     to_pipeline: "specific".into(),
                     event_types: vec!["Temperature*".into()],
-                    mqtt_topic: None,
+                    nats_subject: None,
                 },
                 InterPipelineRoute {
                     from_pipeline: "_external".into(),
                     to_pipeline: "catchall".into(),
                     event_types: vec!["*".into()],
-                    mqtt_topic: None,
+                    nats_subject: None,
                 },
             ],
         };
@@ -365,7 +365,7 @@ mod tests {
                     "Humidity*".into(),
                     "Pressure*".into(),
                 ],
-                mqtt_topic: None,
+                nats_subject: None,
             }],
         };
 
@@ -387,7 +387,7 @@ mod tests {
             from_pipeline: "ingress".into(),
             to_pipeline: "analytics".into(),
             event_types: vec!["SensorData".into()],
-            mqtt_topic: Some("custom/topic/sensor".into()),
+            nats_subject: Some("custom/topic/sensor".into()),
         }];
 
         let table = build_routing_table("grp1", &routes);
@@ -404,12 +404,15 @@ mod tests {
             from_pipeline: "ingress".into(),
             to_pipeline: "analytics".into(),
             event_types: vec!["SensorData".into()],
-            mqtt_topic: None,
+            nats_subject: None,
         }];
 
         let table = build_routing_table("grp1", &routes);
         let outputs = &table.output_routes["ingress"];
-        assert_eq!(outputs[0].1, "varpulis/cluster/grp1/ingress/analytics");
+        assert_eq!(
+            outputs[0].1,
+            "varpulis.cluster.pipeline.grp1.ingress.analytics"
+        );
     }
 
     #[test]
@@ -425,7 +428,7 @@ mod tests {
             from_pipeline: "src".into(),
             to_pipeline: "dst".into(),
             event_types: vec!["TypeA".into(), "TypeB".into(), "TypeC*".into()],
-            mqtt_topic: None,
+            nats_subject: None,
         }];
 
         let table = build_routing_table("grp1", &routes);
@@ -442,7 +445,7 @@ mod tests {
             from_pipeline: "a".into(),
             to_pipeline: "b".into(),
             event_types: vec!["Event*".into()],
-            mqtt_topic: None,
+            nats_subject: None,
         }];
 
         let table = build_routing_table("grp1", &routes);
