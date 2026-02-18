@@ -1,6 +1,8 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 
+const MAX_DEPTH: usize = 32;
+
 /// Fuzz the MQTT/JSON message parsing path.
 ///
 /// This exercises the same JSON deserialization and Value conversion
@@ -10,7 +12,7 @@ fuzz_target!(|data: &[u8]| {
         // Try to parse as JSON (mirrors what MQTT connector does)
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(payload) {
             // Exercise the JSON-to-Value conversion path
-            json_to_value(&json);
+            json_to_value(&json, MAX_DEPTH);
         }
 
         // Also exercise the EventFileParser JSONL path
@@ -18,7 +20,10 @@ fuzz_target!(|data: &[u8]| {
     }
 });
 
-fn json_to_value(v: &serde_json::Value) -> varpulis_core::Value {
+fn json_to_value(v: &serde_json::Value, depth: usize) -> varpulis_core::Value {
+    if depth == 0 {
+        return varpulis_core::Value::Null;
+    }
     match v {
         serde_json::Value::Null => varpulis_core::Value::Null,
         serde_json::Value::Bool(b) => varpulis_core::Value::Bool(*b),
@@ -33,7 +38,7 @@ fn json_to_value(v: &serde_json::Value) -> varpulis_core::Value {
         }
         serde_json::Value::String(s) => varpulis_core::Value::Str(s.clone().into()),
         serde_json::Value::Array(arr) => {
-            varpulis_core::Value::array(arr.iter().map(json_to_value).collect())
+            varpulis_core::Value::array(arr.iter().map(|v| json_to_value(v, depth - 1)).collect())
         }
         serde_json::Value::Object(_) => varpulis_core::Value::Null,
     }
