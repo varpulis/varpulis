@@ -41,6 +41,7 @@ varpulis-cluster = { path = "../varpulis-cluster" }
 [features]
 default = []
 kafka = ["varpulis-runtime/kafka"]
+nats-transport = ["varpulis-cluster/nats-transport"]
 onnx = ["varpulis-runtime/onnx"]
 k8s = ["varpulis-cluster/k8s"]
 raft = ["varpulis-cluster/raft"]
