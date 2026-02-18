@@ -289,6 +289,11 @@ impl EventFileParser {
 
     /// Parse a value string into a Value
     fn parse_value(s: &str) -> Result<Value, String> {
+        Self::parse_value_bounded(s, crate::limits::MAX_JSON_DEPTH)
+    }
+
+    /// Depth-bounded value parsing to prevent stack overflow on nested arrays.
+    fn parse_value_bounded(s: &str, depth: usize) -> Result<Value, String> {
         let s = s.trim();
 
         // Boolean
@@ -347,11 +352,14 @@ impl EventFileParser {
 
         // Array [v1, v2, ...]
         if s.starts_with('[') && s.ends_with(']') {
+            if depth == 0 {
+                return Err("Array nesting too deep".to_string());
+            }
             let inner = &s[1..s.len() - 1];
             let items: Result<Vec<Value>, String> = Self::split_fields(inner)
                 .iter()
                 .filter(|s| !s.is_empty())
-                .map(|item| Self::parse_value(item))
+                .map(|item| Self::parse_value_bounded(item, depth - 1))
                 .collect();
             return Ok(Value::array(items?));
         }

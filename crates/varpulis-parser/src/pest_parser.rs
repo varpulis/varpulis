@@ -34,8 +34,30 @@ impl<'a> IteratorExt<'a> for pest::iterators::Pairs<'a, Rule> {
 #[grammar = "varpulis.pest"]
 pub struct VarpulisParser;
 
-/// Parse a VPL source string into a Program AST
+/// Parse a VPL source string into a Program AST.
+///
+/// Runs pest parsing in a thread with a 16 MB stack to prevent stack overflow
+/// from deeply nested or adversarial inputs that trigger deep recursion in the
+/// PEG recursive descent parser.
 pub fn parse(source: &str) -> ParseResult<Program> {
+    let source = source.to_string();
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || parse_inner(&source))
+        .map_err(|e| ParseError::InvalidToken {
+            position: 0,
+            message: format!("Failed to spawn parser thread: {}", e),
+        })?
+        .join()
+        .unwrap_or_else(|_| {
+            Err(ParseError::InvalidToken {
+                position: 0,
+                message: "Parser stack overflow on deeply nested input".to_string(),
+            })
+        })
+}
+
+fn parse_inner(source: &str) -> ParseResult<Program> {
     // Expand compile-time declaration loops (top-level for with {var} interpolation)
     let expanded =
         crate::expand::expand_declaration_loops(source).map_err(|e| ParseError::InvalidToken {
