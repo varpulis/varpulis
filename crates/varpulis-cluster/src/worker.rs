@@ -69,8 +69,6 @@ pub struct WorkerNode {
     pub assigned_pipelines: Vec<String>,
     /// Total events processed by this worker (from heartbeats).
     pub events_processed: u64,
-    /// When the WebSocket connection was lost (for grace period before failover).
-    pub ws_disconnected_at: Option<Instant>,
 }
 
 impl WorkerNode {
@@ -84,7 +82,6 @@ impl WorkerNode {
             last_heartbeat: Instant::now(),
             assigned_pipelines: Vec::new(),
             events_processed: 0,
-            ws_disconnected_at: None,
         }
     }
 

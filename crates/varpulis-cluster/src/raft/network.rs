@@ -1,4 +1,7 @@
-//! HTTP-based Raft network transport using reqwest.
+//! Raft network transport.
+//!
+//! Provides both HTTP (reqwest) and NATS network implementations.
+//! The NATS implementation is gated behind the `nats-transport` feature.
 
 use openraft::error::{InstallSnapshotError, RPCError, RaftError};
 use openraft::network::{RPCOption, RaftNetwork, RaftNetworkFactory};
@@ -153,5 +156,108 @@ impl RaftNetwork<TypeConfig> for NetworkClient {
             .await
             .map_err(|e| RPCError::Unreachable(openraft::error::Unreachable::new(&e)))?;
         Ok(body)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// NATS-based Raft network (feature-gated)
+// ---------------------------------------------------------------------------
+
+/// Creates NATS network clients for Raft peer communication.
+#[cfg(feature = "nats-transport")]
+#[derive(Debug, Clone)]
+pub struct NatsNetworkFactory {
+    client: async_nats::Client,
+}
+
+#[cfg(feature = "nats-transport")]
+impl NatsNetworkFactory {
+    pub fn new(client: async_nats::Client) -> Self {
+        Self { client }
+    }
+}
+
+#[cfg(feature = "nats-transport")]
+impl RaftNetworkFactory<TypeConfig> for NatsNetworkFactory {
+    type Network = NatsNetworkClient;
+
+    async fn new_client(&mut self, target: NodeId, _node: &RaftNode) -> Self::Network {
+        NatsNetworkClient {
+            node_id: target,
+            client: self.client.clone(),
+        }
+    }
+}
+
+/// NATS client for a single Raft peer.
+#[cfg(feature = "nats-transport")]
+#[derive(Debug, Clone)]
+pub struct NatsNetworkClient {
+    node_id: NodeId,
+    client: async_nats::Client,
+}
+
+#[cfg(feature = "nats-transport")]
+impl NatsNetworkClient {
+    async fn nats_rpc<Req: serde::Serialize, Resp: serde::de::DeserializeOwned>(
+        &self,
+        rpc_name: &str,
+        payload: &Req,
+    ) -> Result<Resp, RPCError<NodeId, RaftNode, openraft::error::Unreachable>> {
+        let subject = crate::nats_transport::subject_raft(self.node_id, rpc_name);
+        let timeout = std::time::Duration::from_secs(5);
+
+        crate::nats_transport::nats_request(&self.client, &subject, payload, timeout)
+            .await
+            .map_err(|e| {
+                RPCError::Unreachable(openraft::error::Unreachable::new(&std::io::Error::other(
+                    e.to_string(),
+                )))
+            })
+    }
+}
+
+#[cfg(feature = "nats-transport")]
+impl RaftNetwork<TypeConfig> for NatsNetworkClient {
+    async fn vote(
+        &mut self,
+        rpc: VoteRequest<NodeId>,
+        _option: RPCOption,
+    ) -> Result<VoteResponse<NodeId>, RPCError<NodeId, RaftNode, RaftError<NodeId>>> {
+        self.nats_rpc("vote", &rpc).await.map_err(|e| match e {
+            RPCError::Unreachable(u) => RPCError::Unreachable(u),
+            _ => RPCError::Unreachable(openraft::error::Unreachable::new(&std::io::Error::other(
+                "unexpected error",
+            ))),
+        })
+    }
+
+    async fn append_entries(
+        &mut self,
+        rpc: AppendEntriesRequest<TypeConfig>,
+        _option: RPCOption,
+    ) -> Result<AppendEntriesResponse<NodeId>, RPCError<NodeId, RaftNode, RaftError<NodeId>>> {
+        self.nats_rpc("append", &rpc).await.map_err(|e| match e {
+            RPCError::Unreachable(u) => RPCError::Unreachable(u),
+            _ => RPCError::Unreachable(openraft::error::Unreachable::new(&std::io::Error::other(
+                "unexpected error",
+            ))),
+        })
+    }
+
+    async fn install_snapshot(
+        &mut self,
+        rpc: InstallSnapshotRequest<TypeConfig>,
+        _option: RPCOption,
+    ) -> Result<
+        InstallSnapshotResponse<NodeId>,
+        RPCError<NodeId, RaftNode, RaftError<NodeId, InstallSnapshotError>>,
+    > {
+        self.nats_rpc("snapshot", &rpc).await.map_err(|e| match e {
+            RPCError::Unreachable(u) => RPCError::Unreachable(u),
+            _ => RPCError::Unreachable(openraft::error::Unreachable::new(&std::io::Error::other(
+                "unexpected error",
+            ))),
+        })
     }
 }

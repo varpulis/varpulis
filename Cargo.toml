@@ -59,9 +59,8 @@ rand = "0.8"
 # HTTP client
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 
-# Web/WebSocket
+# Web
 warp = { version = "0.3", features = ["tls"] }
-tokio-tungstenite = "0.21"
 futures-util = "0.3"
 
 # Secrets

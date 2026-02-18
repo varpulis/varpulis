@@ -61,7 +61,7 @@ pub fn is_valid_connector_name(name: &str) -> bool {
 }
 
 /// Known connector types.
-pub const VALID_CONNECTOR_TYPES: &[&str] = &["mqtt", "kafka", "http", "console"];
+pub const VALID_CONNECTOR_TYPES: &[&str] = &["mqtt", "kafka", "nats", "http", "console"];
 
 /// Check if a connector type is valid.
 pub fn is_valid_connector_type(ct: &str) -> bool {
@@ -87,6 +87,11 @@ pub fn validate_required_params(
         "http" => {
             if !params.contains_key("url") {
                 return Err("http connector requires 'url' parameter".to_string());
+            }
+        }
+        "nats" => {
+            if !params.contains_key("servers") {
+                return Err("nats connector requires 'servers' parameter".to_string());
             }
         }
         "console" => {} // no required params
@@ -296,6 +301,7 @@ mod tests {
     fn test_valid_connector_types() {
         assert!(is_valid_connector_type("mqtt"));
         assert!(is_valid_connector_type("kafka"));
+        assert!(is_valid_connector_type("nats"));
         assert!(is_valid_connector_type("http"));
         assert!(is_valid_connector_type("console"));
         assert!(!is_valid_connector_type("redis"));
@@ -318,6 +324,11 @@ mod tests {
         assert!(validate_required_params("http", &params).is_err());
         params.insert("url".to_string(), "http://example.com".to_string());
         assert!(validate_required_params("http", &params).is_ok());
+
+        let mut params = HashMap::new();
+        assert!(validate_required_params("nats", &params).is_err());
+        params.insert("servers".to_string(), "nats://localhost:4222".to_string());
+        assert!(validate_required_params("nats", &params).is_ok());
 
         assert!(validate_required_params("console", &HashMap::new()).is_ok());
         assert!(validate_required_params("unknown", &HashMap::new()).is_err());

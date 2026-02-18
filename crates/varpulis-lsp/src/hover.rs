@@ -271,6 +271,7 @@ fn get_documentation(word: &str) -> Option<String> {
             - `file://` - File output\n\
             - `mqtt://` - MQTT publish\n\
             - `kafka://` - Kafka produce\n\
+            - `nats://` - NATS publish\n\
             - `http://` - HTTP POST\n\n\
             **Example:**\n\
             ```vpl\n\

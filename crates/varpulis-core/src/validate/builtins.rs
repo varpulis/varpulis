@@ -219,6 +219,23 @@ static CONSOLE_PARAMS: &[ConnectorParamDef] = &[ConnectorParamDef {
     context: ParamContext::Sink,
 }];
 
+static NATS_PARAMS: &[ConnectorParamDef] = &[
+    ConnectorParamDef {
+        name: "topic",
+        param_type: ParamType::Str,
+        required: false,
+        description: "NATS subject to subscribe/publish",
+        context: ParamContext::Both,
+    },
+    ConnectorParamDef {
+        name: "queue_group",
+        param_type: ParamType::Str,
+        required: false,
+        description: "Queue group for load-balanced consumption",
+        context: ParamContext::Source,
+    },
+];
+
 /// Look up the parameter schema for a connector type.
 ///
 /// Returns `None` for unknown connector types (forward-compatible).
@@ -227,6 +244,7 @@ pub fn connector_params_for_type(connector_type: &str) -> Option<&'static [Conne
         "mqtt" => Some(MQTT_PARAMS),
         "kafka" => Some(KAFKA_PARAMS),
         "http" => Some(HTTP_PARAMS),
+        "nats" => Some(NATS_PARAMS),
         "console" => Some(CONSOLE_PARAMS),
         _ => None,
     }

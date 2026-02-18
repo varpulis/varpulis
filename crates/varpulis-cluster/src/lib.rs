@@ -37,13 +37,15 @@ pub mod k8s_watcher;
 pub mod metrics;
 pub mod migration;
 pub mod model_registry;
+pub mod nats_coordinator;
+pub mod nats_transport;
+pub mod nats_worker;
 pub mod pipeline_group;
 #[cfg(feature = "raft")]
 pub mod raft;
 pub mod rbac;
 pub mod routing;
 pub mod worker;
-pub mod ws;
 
 // Re-exports
 pub use api::{cluster_routes, shared_coordinator, SharedCoordinator};
@@ -53,8 +55,7 @@ pub use coordinator::{
     ScalingRecommendation,
 };
 pub use health::{
-    DEFAULT_HEARTBEAT_INTERVAL, DEFAULT_HEARTBEAT_TIMEOUT, DEFAULT_WS_GRACE_PERIOD,
-    HEARTBEAT_INTERVAL, HEARTBEAT_TIMEOUT,
+    DEFAULT_HEARTBEAT_INTERVAL, DEFAULT_HEARTBEAT_TIMEOUT, HEARTBEAT_INTERVAL, HEARTBEAT_TIMEOUT,
 };
 pub use metrics::ClusterPrometheusMetrics;
 pub use migration::{MigrationReason, MigrationStatus, MigrationTask};
@@ -69,7 +70,6 @@ pub use worker::{
     ConnectorHealth, HeartbeatRequest, HeartbeatResponse, PipelineMetrics, RegisterWorkerRequest,
     RegisterWorkerResponse, WorkerCapacity, WorkerId, WorkerInfo, WorkerNode, WorkerStatus,
 };
-pub use ws::{shared_ws_manager, SharedWsManager};
 
 /// Errors that can occur in the cluster.
 #[derive(Debug, thiserror::Error)]
@@ -209,7 +209,7 @@ pub async fn worker_registration_loop_with_client(
     // Registration with exponential backoff
     let mut backoff = std::time::Duration::from_secs(1);
     let max_backoff = std::time::Duration::from_secs(30);
-    let mut coordinator_heartbeat_interval: Option<u64> = None;
+    let mut coordinator_heartbeat_interval = None;
 
     loop {
         let body = RegisterWorkerRequest {
@@ -260,44 +260,8 @@ pub async fn worker_registration_loop_with_client(
         .map(std::time::Duration::from_secs)
         .unwrap_or(HEARTBEAT_INTERVAL);
 
-    // Try WebSocket connection for fast failure detection
-    let ws_url = coordinator_url
-        .replace("http://", "ws://")
-        .replace("https://", "wss://");
-    let ws_endpoint = format!("{}/api/v1/cluster/ws", ws_url);
-
-    loop {
-        // Attempt WebSocket connection
-        match try_ws_heartbeat_loop(
-            &ws_endpoint,
-            &worker_id,
-            &api_key,
-            interval,
-            &tenant_manager,
-        )
-        .await
-        {
-            Ok(()) => {
-                // WS loop ended cleanly (shouldn't happen normally)
-                warn!("WebSocket heartbeat loop ended, falling back to REST");
-            }
-            Err(e) => {
-                warn!("WebSocket connection failed: {}, using REST heartbeats", e);
-            }
-        }
-
-        // Fall back to REST heartbeat loop
-        rest_heartbeat_loop(
-            &client,
-            &heartbeat_url,
-            interval,
-            &tenant_manager,
-            &ws_endpoint,
-            &worker_id,
-            &api_key,
-        )
-        .await;
-    }
+    // REST heartbeat loop (HTTP fallback when NATS transport is not used)
+    rest_heartbeat_loop(&client, &heartbeat_url, interval, &tenant_manager, &api_key).await;
 }
 
 /// Collect pipeline metrics from the tenant manager (async).
@@ -353,112 +317,16 @@ fn build_heartbeat(
     }
 }
 
-/// Try to run heartbeats over WebSocket. Returns Err if WS connection fails.
-async fn try_ws_heartbeat_loop(
-    ws_endpoint: &str,
-    worker_id: &str,
-    api_key: &str,
-    interval: std::time::Duration,
-    tenant_manager: &Option<varpulis_runtime::SharedTenantManager>,
-) -> Result<(), String> {
-    use futures_util::{SinkExt, StreamExt};
-    use tracing::{info, warn};
-
-    let (ws_stream, _) = tokio_tungstenite::connect_async(ws_endpoint)
-        .await
-        .map_err(|e| format!("WS connect failed: {}", e))?;
-
-    info!("WebSocket connected to coordinator at {}", ws_endpoint);
-
-    let (mut ws_tx, mut ws_rx) = ws_stream.split();
-
-    // Send Identify message
-    let identify = ws::WorkerMessage::Identify {
-        worker_id: worker_id.to_string(),
-        api_key: api_key.to_string(),
-    };
-    let identify_json = serde_json::to_string(&identify).map_err(|e| e.to_string())?;
-    ws_tx
-        .send(tokio_tungstenite::tungstenite::Message::Text(identify_json))
-        .await
-        .map_err(|e| format!("WS send failed: {}", e))?;
-
-    // Wait for IdentifyAck
-    let ack_msg = tokio::time::timeout(std::time::Duration::from_secs(5), ws_rx.next())
-        .await
-        .map_err(|_| "Timeout waiting for IdentifyAck".to_string())?
-        .ok_or("WS stream ended before IdentifyAck")?
-        .map_err(|e| format!("WS read error: {}", e))?;
-
-    if let tokio_tungstenite::tungstenite::Message::Text(text) = ack_msg {
-        let coord_msg: ws::CoordinatorMessage =
-            serde_json::from_str(&text).map_err(|e| e.to_string())?;
-        match coord_msg {
-            ws::CoordinatorMessage::IdentifyAck { .. } => {
-                info!("Worker {} identified via WebSocket", worker_id);
-            }
-            ws::CoordinatorMessage::Error { message } => {
-                return Err(format!("Coordinator rejected: {}", message));
-            }
-            _ => {
-                return Err("Unexpected response to Identify".to_string());
-            }
-        }
-    } else {
-        return Err("Non-text response to Identify".to_string());
-    }
-
-    // Heartbeat loop over WebSocket
-    let mut heartbeat_interval = tokio::time::interval(interval);
-    loop {
-        tokio::select! {
-            _ = heartbeat_interval.tick() => {
-                let (pipelines_running, pipeline_metrics) =
-                    collect_worker_metrics(tenant_manager).await;
-                let hb = build_heartbeat(pipelines_running, pipeline_metrics);
-                let ws_msg = ws::WorkerMessage::Heartbeat(hb);
-                let json = serde_json::to_string(&ws_msg).map_err(|e| e.to_string())?;
-                if ws_tx
-                    .send(tokio_tungstenite::tungstenite::Message::Text(json))
-                    .await
-                    .is_err()
-                {
-                    warn!("WebSocket send failed, reconnecting...");
-                    return Ok(());
-                }
-            }
-            msg = ws_rx.next() => {
-                match msg {
-                    Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_))) | None => {
-                        warn!("WebSocket closed by coordinator");
-                        return Ok(());
-                    }
-                    Some(Err(e)) => {
-                        warn!("WebSocket error: {}", e);
-                        return Ok(());
-                    }
-                    _ => {
-                        // HeartbeatAck or other — continue
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// REST heartbeat fallback loop. Runs until a WS reconnection succeeds.
+/// REST heartbeat fallback loop.
 async fn rest_heartbeat_loop(
     client: &reqwest::Client,
     heartbeat_url: &str,
     interval: std::time::Duration,
     tenant_manager: &Option<varpulis_runtime::SharedTenantManager>,
-    ws_endpoint: &str,
-    _worker_id: &str,
     api_key: &str,
 ) {
-    use tracing::{error, info, warn};
+    use tracing::{error, warn};
 
-    let mut rest_cycles = 0u32;
     loop {
         tokio::time::sleep(interval).await;
 
@@ -482,15 +350,99 @@ async fn rest_heartbeat_loop(
                 error!("Heartbeat failed: {}", e);
             }
         }
+    }
+}
 
-        // Periodically try to reconnect via WebSocket (every 6 REST cycles)
-        rest_cycles += 1;
-        if rest_cycles.is_multiple_of(6) {
-            if let Ok((ws_stream, _)) = tokio_tungstenite::connect_async(ws_endpoint).await {
-                info!("WebSocket reconnected, switching back to WS heartbeats");
-                drop(ws_stream);
-                return; // Exit REST loop to retry WS in outer loop
+// ---------------------------------------------------------------------------
+// NATS-based worker registration + heartbeat
+// ---------------------------------------------------------------------------
+
+/// Background task: worker registration and heartbeat over NATS.
+///
+/// Replaces the HTTP/WebSocket registration loop with NATS request/reply for
+/// registration and pub/sub for heartbeats.
+#[cfg(feature = "nats-transport")]
+pub async fn worker_nats_registration_loop(
+    nats_url: &str,
+    worker_id: &str,
+    api_key: &str,
+    tenant_manager: Option<varpulis_runtime::SharedTenantManager>,
+) {
+    use tracing::{info, warn};
+
+    // Connect to NATS (built-in reconnection)
+    let client = match nats_transport::connect_nats(nats_url).await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("Failed to connect to NATS at {}: {}", nats_url, e);
+            return;
+        }
+    };
+    info!("Connected to NATS at {}", nats_url);
+
+    // Registration with exponential backoff
+    let mut backoff = std::time::Duration::from_secs(1);
+    let max_backoff = std::time::Duration::from_secs(30);
+    let timeout = std::time::Duration::from_secs(10);
+    let coordinator_heartbeat_interval: Option<u64>;
+
+    loop {
+        let body = RegisterWorkerRequest {
+            worker_id: worker_id.to_string(),
+            address: String::new(), // Not needed for NATS transport
+            api_key: api_key.to_string(),
+            capacity: WorkerCapacity::default(),
+        };
+
+        match nats_transport::nats_request::<_, RegisterWorkerResponse>(
+            &client,
+            &nats_transport::subject_register(),
+            &body,
+            timeout,
+        )
+        .await
+        {
+            Ok(resp) => {
+                coordinator_heartbeat_interval = resp.heartbeat_interval_secs;
+                info!("Registered with coordinator via NATS as '{}'", worker_id);
+                break;
             }
+            Err(e) => {
+                warn!("NATS registration failed: {}, retrying in {:?}", e, backoff);
+            }
+        }
+
+        tokio::time::sleep(backoff).await;
+        backoff = (backoff * 2).min(max_backoff);
+    }
+
+    // Spawn NATS command handler for coordinator→worker commands
+    if let Some(ref tm) = tenant_manager {
+        let cmd_client = client.clone();
+        let wid = worker_id.to_string();
+        let key = api_key.to_string();
+        let tm_clone = tm.clone();
+        tokio::spawn(async move {
+            nats_worker::run_worker_nats_handler(cmd_client, &wid, &key, tm_clone).await;
+        });
+    }
+
+    // Heartbeat loop — publish heartbeats at the coordinator-specified interval
+    let interval = coordinator_heartbeat_interval
+        .map(std::time::Duration::from_secs)
+        .unwrap_or(HEARTBEAT_INTERVAL);
+
+    let heartbeat_subject = nats_transport::subject_heartbeat(worker_id);
+    let mut ticker = tokio::time::interval(interval);
+
+    loop {
+        ticker.tick().await;
+
+        let (pipelines_running, pipeline_metrics) = collect_worker_metrics(&tenant_manager).await;
+        let hb = build_heartbeat(pipelines_running, pipeline_metrics);
+
+        if let Err(e) = nats_transport::nats_publish(&client, &heartbeat_subject, &hb).await {
+            warn!("Failed to publish heartbeat: {}", e);
         }
     }
 }
