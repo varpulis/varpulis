@@ -309,8 +309,11 @@ impl EventFileParser {
             return Ok(Value::Null);
         }
 
-        // String (quoted)
-        if (s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')) {
+        // String (quoted) — require at least 2 chars for open+close quotes
+        if s.len() >= 2
+            && ((s.starts_with('"') && s.ends_with('"'))
+                || (s.starts_with('\'') && s.ends_with('\'')))
+        {
             let inner = &s[1..s.len() - 1];
             // Fast path: no escape sequences (common case) — zero allocations
             if !inner.contains('\\') {
