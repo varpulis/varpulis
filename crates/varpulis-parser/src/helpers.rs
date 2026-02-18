@@ -24,12 +24,12 @@ pub fn parse_duration(s: &str) -> u64 {
     let num: u64 = num_str.parse().unwrap_or(0);
     match unit {
         "ns" => num,
-        "us" => num * 1_000,
-        "ms" => num * 1_000_000,
-        "s" => num * 1_000_000_000,
-        "m" => num * 60 * 1_000_000_000,
-        "h" => num * 3600 * 1_000_000_000,
-        "d" => num * 86400 * 1_000_000_000,
+        "us" => num.saturating_mul(1_000),
+        "ms" => num.saturating_mul(1_000_000),
+        "s" => num.saturating_mul(1_000_000_000),
+        "m" => num.saturating_mul(60).saturating_mul(1_000_000_000),
+        "h" => num.saturating_mul(3600).saturating_mul(1_000_000_000),
+        "d" => num.saturating_mul(86400).saturating_mul(1_000_000_000),
         _ => 0,
     }
 }
