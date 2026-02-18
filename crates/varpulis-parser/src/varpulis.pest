@@ -61,7 +61,7 @@ connector_decl = {
     "connector" ~ identifier ~ "=" ~ connector_type ~ "(" ~ connector_params? ~ ")"
 }
 
-connector_type = { "mqtt" | "kafka" | "http" | "amqp" | "file" | "websocket" | "grpc" | identifier }
+connector_type = { "mqtt" | "kafka" | "nats" | "http" | "amqp" | "file" | "websocket" | "grpc" | identifier }
 
 connector_params = { connector_param ~ ("," ~ connector_param)* }
 connector_param = { identifier ~ ":" ~ config_value }

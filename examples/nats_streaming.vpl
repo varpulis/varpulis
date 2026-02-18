@@ -1,0 +1,40 @@
+# NATS Streaming Example — Market Data Processing
+#
+# Demonstrates NATS connector with sequence pattern detection and alerting.
+# Build with: cargo build --features nats
+
+connector NatsMarket = nats(servers: "nats://localhost:4222", queue_group: "varpulis")
+
+event Trade:
+    symbol: str
+    price: float
+    volume: int
+
+event Quote:
+    symbol: str
+    bid: float
+    ask: float
+
+# Ingest trades from NATS
+stream Trades = Trade.from(NatsMarket, topic: "market.trades.>")
+
+# Filter high-value trades
+stream HighValue = Trade.from(NatsMarket, topic: "market.trades.>")
+    .where(price > 100 and volume > 1000)
+    .emit(symbol: symbol, price: price, total: price * volume)
+
+# Detect rapid price movements: trade followed by another trade of same symbol
+# with >5% price difference within 1 minute
+stream RapidMove = Trade as t1
+    -> Trade where symbol == t1.symbol as t2
+    .within(1m)
+    .where((t2.price - t1.price) / t1.price > 0.05 or (t1.price - t2.price) / t1.price > 0.05)
+    .emit(
+        symbol: t1.symbol,
+        price_from: t1.price,
+        price_to: t2.price,
+        alert: "rapid_price_movement"
+    )
+
+# Route alerts to NATS
+stream AlertsOut = RapidMove.to(NatsMarket, topic: "alerts.price-movement")

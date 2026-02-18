@@ -2,7 +2,9 @@
 
 use super::managed::ManagedConnector;
 use super::managed_mqtt::ManagedMqttConnector;
+use super::managed_nats::ManagedNatsConnector;
 use super::mqtt::MqttConfig;
+use super::nats::NatsConfig;
 use super::types::{ConnectorConfig, ConnectorError};
 use crate::event::Event;
 use crate::sink::Sink;
@@ -143,8 +145,27 @@ fn create_managed(
 
             Ok(Box::new(ManagedKafkaConnector::new(name, kafka_config)))
         }
+        "nats" => {
+            let servers = if config.url.is_empty() {
+                config
+                    .properties
+                    .get("servers")
+                    .cloned()
+                    .unwrap_or_else(|| "nats://localhost:4222".to_string())
+            } else {
+                config.url.clone()
+            };
+            let subject = config.topic.as_deref().unwrap_or(">");
+            let mut nats_config = NatsConfig::new(&servers, subject);
+
+            if let Some(queue_group) = config.properties.get("queue_group") {
+                nats_config = nats_config.with_queue_group(queue_group);
+            }
+
+            Ok(Box::new(ManagedNatsConnector::new(name, nats_config)))
+        }
         other => Err(ConnectorError::NotAvailable(format!(
-            "No managed connector for type '{}'. Supported: mqtt{}",
+            "No managed connector for type '{}'. Supported: mqtt, nats{}",
             other,
             if cfg!(feature = "kafka") {
                 ", kafka"

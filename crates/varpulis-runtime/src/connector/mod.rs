@@ -59,6 +59,7 @@ mod http;
 mod kafka;
 mod kinesis;
 mod mqtt;
+mod nats;
 mod redis;
 mod registry;
 mod rest_api;
@@ -70,6 +71,7 @@ mod managed;
 #[cfg(feature = "kafka")]
 mod managed_kafka;
 mod managed_mqtt;
+mod managed_nats;
 mod managed_registry;
 
 // Re-export everything for backwards compatibility
@@ -91,6 +93,9 @@ pub use kafka::{KafkaSinkFull, KafkaSourceFull};
 
 // MQTT connectors
 pub use mqtt::{MqttConfig, MqttSink, MqttSource};
+
+// NATS connectors
+pub use nats::{NatsConfig, NatsSink, NatsSource};
 
 // Kinesis connectors
 pub use kinesis::{KinesisConfig, KinesisSink, KinesisSource};
@@ -124,6 +129,7 @@ pub use managed::{ConnectorHealthReport, ManagedConnector};
 #[cfg(feature = "kafka")]
 pub use managed_kafka::ManagedKafkaConnector;
 pub use managed_mqtt::ManagedMqttConnector;
+pub use managed_nats::ManagedNatsConnector;
 pub use managed_registry::ManagedConnectorRegistry;
 
 #[cfg(test)]
@@ -171,6 +177,18 @@ mod tests {
         assert_eq!(config.broker, "mqtt.example.com");
         assert_eq!(config.port, 8883);
         assert_eq!(config.topic, "sensors/#");
+        assert_eq!(config.username, Some("user".to_string()));
+    }
+
+    #[test]
+    fn test_nats_config() {
+        let config = NatsConfig::new("nats://localhost:4222", "events.>")
+            .with_queue_group("varpulis")
+            .with_credentials("user", "pass");
+
+        assert_eq!(config.servers, "nats://localhost:4222");
+        assert_eq!(config.subject, "events.>");
+        assert_eq!(config.queue_group, Some("varpulis".to_string()));
         assert_eq!(config.username, Some("user".to_string()));
     }
 
