@@ -79,6 +79,10 @@ all-connectors = ["mqtt", "kafka", "nats", "database", "redis", "kinesis", "s3",
 tempfile = "3"
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1.5"
+async-nats = "0.38"
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+uuid = { version = "1", features = ["v4"] }
+futures = "0.3"
 
 [[bench]]
 name = "pattern_benchmark"

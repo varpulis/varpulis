@@ -59,3 +59,8 @@ optional = true
 [dev-dependencies]
 pretty_assertions = { workspace = true }
 tokio-stream = { version = "0.1", features = ["net"] }
+async-nats = "0.38"
+futures-util = "0.3"
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+uuid = { version = "1", features = ["v4"] }
+serde_json = { workspace = true }
