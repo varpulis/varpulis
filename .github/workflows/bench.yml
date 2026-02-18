@@ -6,9 +6,6 @@ on:
   pull_request:
     branches: [main]
 
-env:
-  CARGO_TERM_COLOR: never
-
 jobs:
   benchmark:
     name: Benchmark Comparison
@@ -26,8 +23,50 @@ jobs:
           key: bench
 
       - name: Run benchmarks
+        env:
+          CARGO_TERM_COLOR: never
+        run: cargo bench -p varpulis-runtime --bench pattern_benchmark 2>&1 | tee criterion-output.txt
+
+      - name: Convert Criterion output to bencher format
         run: |
-          cargo bench -p varpulis-runtime --bench pattern_benchmark 2>&1 | tee bench-results.txt
+          python3 -c "
+          import re, sys
+          # Criterion outputs: name on one line, then 'time:   [low mid high]' on next.
+          # Each value is 'number unit' (e.g. '52.423 µs'). We use \S+\s+\S+ to capture pairs.
+          # Output bencher format: 'test name ... bench: N ns/iter (+/- 0)'
+          name = None
+          for line in open('criterion-output.txt'):
+              line = line.strip()
+              # Try: name and time on same line
+              m = re.match(r'^(\S+.*\S)\s+time:\s+\[(\S+\s+\S+)\s+(\S+\s+\S+)\s+(\S+\s+\S+)\]', line)
+              if m:
+                  name = m.group(1)
+                  median_str = m.group(3)
+              elif line.startswith('time:'):
+                  m2 = re.match(r'time:\s+\[(\S+\s+\S+)\s+(\S+\s+\S+)\s+(\S+\s+\S+)\]', line)
+                  if m2:
+                      median_str = m2.group(2)
+                  else:
+                      continue
+              else:
+                  # Check if this is just a bench name (no time)
+                  if line and not line.startswith(('Running', 'Compiling', 'Download', 'Bench', 'Warning', 'warning', 'Gnuplot', 'Found', 'Finished')):
+                      candidate = line.rstrip()
+                      if candidate and '/' in candidate and 'time' not in candidate:
+                          name = candidate
+                  continue
+              if name is None:
+                  continue
+              # Convert to nanoseconds
+              val, unit = median_str.strip().split()
+              val = float(val.replace(',', ''))
+              mult = {'ps': 0.001, 'ns': 1, '\u00b5s': 1000, 'us': 1000, 'ms': 1_000_000, 's': 1_000_000_000}
+              ns = val * mult.get(unit, 1)
+              print(f'test {name} ... bench: {int(ns)} ns/iter (+/- 0)')
+              name = None
+          " > bench-results.txt
+          echo "Converted results:"
+          cat bench-results.txt
 
       - name: Store benchmark results
         uses: benchmark-action/github-action-benchmark@v1
