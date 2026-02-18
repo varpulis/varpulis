@@ -73,7 +73,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        features: [kafka, raft, persistent, k8s, binary-codec]
+        features: [kafka, raft, persistent, k8s, binary-codec, nats]
         include:
           - features: kafka
             apt-packages: libcurl4-openssl-dev
@@ -141,3 +141,23 @@ jobs:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
+
+  nats-e2e:
+    name: NATS E2E
+    runs-on: ubuntu-latest
+    needs: [check]
+    services:
+      nats:
+        image: nats:latest
+        ports:
+          - 4222:4222
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: nats-e2e
+      - name: Runtime NATS E2E tests
+        run: cargo test -p varpulis-runtime --features nats --test nats_e2e -- --nocapture
+      - name: Cluster NATS E2E tests
+        run: cargo test -p varpulis-cluster --features nats-transport --test nats_cluster_e2e -- --nocapture
