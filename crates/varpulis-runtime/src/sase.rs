@@ -181,6 +181,9 @@ pub struct State {
     pub negation_info: Option<NegationInfo>,
     /// SIGMOD 2014: Inconsistent predicate postponed to enumeration phase
     pub postponed_predicate: Option<Predicate>,
+    /// PERF: Pre-computed flag — true when an epsilon transition leads to Accept.
+    /// Avoids per-event iteration over epsilon_transitions in Kleene hot paths.
+    pub has_epsilon_to_accept: bool,
 }
 
 impl State {
@@ -198,6 +201,7 @@ impl State {
             and_config: None,
             negation_info: None,
             postponed_predicate: None,
+            has_epsilon_to_accept: false,
         }
     }
 
@@ -293,6 +297,22 @@ impl NfaCompiler {
     pub fn compile(mut self, pattern: &SasePattern) -> Nfa {
         let (_, end) = self.compile_pattern(pattern, self.nfa.start_state);
         self.nfa.set_accept(end);
+        // PERF: Pre-compute has_epsilon_to_accept for each state
+        let accept_flags: Vec<(usize, bool)> = self
+            .nfa
+            .states
+            .iter()
+            .map(|s| {
+                let flag = s
+                    .epsilon_transitions
+                    .iter()
+                    .any(|&eps_id| self.nfa.states[eps_id].state_type == StateType::Accept);
+                (s.id, flag)
+            })
+            .collect();
+        for (id, flag) in accept_flags {
+            self.nfa.states[id].has_epsilon_to_accept = flag;
+        }
         self.nfa
     }
 
@@ -543,6 +563,9 @@ pub struct KleeneCapture {
     next_var: u32,
     /// SIGMOD 2014: Deferred predicate for postponed evaluation during enumeration
     pub deferred_predicate: Option<Predicate>,
+    /// PERF: When true, ZDD operations are needed (inconsistent predicate).
+    /// When false, we skip expensive `product_with_optional` calls.
+    needs_zdd: bool,
 }
 
 impl KleeneCapture {
@@ -558,6 +581,7 @@ impl KleeneCapture {
             aliases: Vec::new(),
             next_var: 0,
             deferred_predicate: None,
+            needs_zdd: false,
         }
     }
 
@@ -573,6 +597,16 @@ impl KleeneCapture {
 
         // S × {∅, {var}} = S ∪ {s ∪ {var} | s ∈ S}
         self.handle = self.arena.product_with_optional(self.handle, var);
+    }
+
+    /// PERF: Lightweight extend that only appends to vectors — no ZDD operation.
+    /// Used when `needs_zdd` is false (no deferred/postponed predicate),
+    /// because `complete_run()` returns a single MatchResult without enumerating.
+    #[inline]
+    pub fn extend_simple(&mut self, event: SharedEvent, alias: Option<String>) {
+        self.next_var += 1;
+        self.events.push(event);
+        self.aliases.push(alias);
     }
 
     /// Number of valid combinations (computed in O(|nodes|), not O(2^n))
@@ -1721,6 +1755,37 @@ impl Run {
         });
     }
 
+    /// PERF(Opt2): Push with a pre-captured timestamp to avoid per-event Instant::now()
+    #[inline]
+    pub fn push_at(&mut self, event: SharedEvent, alias: Option<String>, ts: Instant) {
+        if let Some(ref a) = alias {
+            self.captured.insert(a.clone(), Arc::clone(&event));
+        }
+        self.stack.push(StackEntry {
+            event,
+            alias,
+            timestamp: ts,
+        });
+    }
+
+    /// PERF(Opt4): Push for Kleene self-loop where alias key already exists in captured.
+    /// Updates existing captured value via get_mut (no key allocation) and borrows alias.
+    #[inline]
+    pub fn push_at_kleene(&mut self, event: SharedEvent, alias: &Option<String>, ts: Instant) {
+        if let Some(ref a) = alias {
+            if let Some(entry) = self.captured.get_mut(a.as_str()) {
+                *entry = Arc::clone(&event);
+            } else {
+                self.captured.insert(a.clone(), Arc::clone(&event));
+            }
+        }
+        self.stack.push(StackEntry {
+            event,
+            alias: alias.clone(),
+            timestamp: ts,
+        });
+    }
+
     /// Check if run has timed out based on wall-clock time (legacy mode)
     pub fn is_timed_out(&self) -> bool {
         if let Some(deadline) = self.deadline {
@@ -1837,6 +1902,10 @@ pub struct SaseEngine {
     /// Maximum results emitted by deferred-predicate enumeration.
     /// Default: `MAX_ENUMERATION_RESULTS` (10 000).
     max_enumeration_results: usize,
+    /// PERF(Opt5): Last time cleanup_timeouts() actually ran
+    last_cleanup: Instant,
+    /// PERF(Opt5): Minimum interval between cleanup_timeouts() invocations
+    cleanup_interval: Duration,
 }
 
 impl SaseEngine {
@@ -1868,6 +1937,8 @@ impl SaseEngine {
             instrumentation_enabled: false,
             max_kleene_events: MAX_KLEENE_EVENTS,
             max_enumeration_results: MAX_ENUMERATION_RESULTS,
+            last_cleanup: Instant::now(),
+            cleanup_interval: Duration::from_millis(100),
         }
     }
 
@@ -2237,10 +2308,10 @@ impl SaseEngine {
 
         let mut completed = Vec::new();
 
-        // Process runs
-        if let Some(ref partition_field) = self.partition_by.clone() {
+        // PERF(Opt7): Borrow partition_by instead of cloning per event
+        if let Some(ref partition_field) = self.partition_by {
             let partition_key = event
-                .get(partition_field)
+                .get(partition_field.as_str())
                 .map(|v| v.to_partition_key().into_owned())
                 .unwrap_or_default();
 
@@ -2299,10 +2370,10 @@ impl SaseEngine {
         // Check global negations - invalidate runs that match
         self.check_global_negations(&event);
 
-        // If using partitioning, route to appropriate partition
-        if let Some(ref partition_field) = self.partition_by.clone() {
+        // PERF(Opt7): Borrow partition_by instead of cloning per event
+        if let Some(ref partition_field) = self.partition_by {
             let partition_key = event
-                .get(partition_field)
+                .get(partition_field.as_str())
                 .map(|v| v.to_partition_key().into_owned())
                 .unwrap_or_default();
 
@@ -2573,6 +2644,8 @@ impl SaseEngine {
     ) -> Vec<MatchResult> {
         let mut completed = Vec::with_capacity(4);
         let limits = self.kleene_limits();
+        // PERF(Opt2): Capture time once per event instead of per-push
+        let now = Instant::now();
 
         if let Some(runs) = self.partitioned_runs.get_mut(partition_key) {
             let mut i = 0;
@@ -2588,6 +2661,7 @@ impl SaseEngine {
                     &mut runs[i],
                     Arc::clone(&event),
                     limits,
+                    now,
                 ) {
                     RunAdvanceResult::Continue => i += 1,
                     RunAdvanceResult::Complete(result) => {
@@ -2617,6 +2691,8 @@ impl SaseEngine {
     fn process_runs_shared(&mut self, event: SharedEvent) -> Vec<MatchResult> {
         let mut completed = Vec::with_capacity(4);
         let limits = self.kleene_limits();
+        // PERF(Opt2): Capture time once per event instead of per-push
+        let now = Instant::now();
         let mut i = 0;
 
         while i < self.runs.len() {
@@ -2632,6 +2708,7 @@ impl SaseEngine {
                 &mut self.runs[i],
                 Arc::clone(&event),
                 limits,
+                now,
             ) {
                 RunAdvanceResult::Continue => i += 1,
                 RunAdvanceResult::Complete(result) => {
@@ -2788,6 +2865,17 @@ impl SaseEngine {
     }
 
     fn cleanup_timeouts(&mut self) {
+        // PERF(Opt5): For ProcessingTime, skip cleanup if we ran recently — the per-run
+        // is_timed_out() checks in process_partition_shared/process_runs_shared still
+        // catch expired runs. For EventTime, always run since watermark can jump
+        // arbitrarily and per-run checks don't use watermark.
+        if self.time_semantics == TimeSemantics::ProcessingTime
+            && self.last_cleanup.elapsed() < self.cleanup_interval
+        {
+            return;
+        }
+        self.last_cleanup = Instant::now();
+
         match self.time_semantics {
             TimeSemantics::ProcessingTime => {
                 // NEG-01: Confirm negations based on processing time
@@ -2910,6 +2998,10 @@ impl SaseEngine {
 
     /// Check global negation conditions and invalidate matching runs
     fn check_global_negations(&mut self, event: &Event) {
+        // PERF(Opt6): Skip iteration when no global negations are configured
+        if self.global_negations.is_empty() {
+            return;
+        }
         for negation in &self.global_negations {
             // Check if event type matches the negation
             if *event.event_type != negation.event_type {
@@ -3014,7 +3106,14 @@ fn advance_run(
     limits: KleeneLimits,
 ) -> RunAdvanceResult {
     // Wrap in Arc for the shared version
-    advance_run_shared(nfa, strategy, run, Arc::new(event.clone()), limits)
+    advance_run_shared(
+        nfa,
+        strategy,
+        run,
+        Arc::new(event.clone()),
+        limits,
+        Instant::now(),
+    )
 }
 
 /// Complete a run, checking for deferred Kleene predicates first.
@@ -3038,6 +3137,7 @@ fn advance_run_shared(
     run: &mut Run,
     event: SharedEvent,
     limits: KleeneLimits,
+    now: Instant,
 ) -> RunAdvanceResult {
     let current_state = &nfa.states[run.current_state];
 
@@ -3089,14 +3189,11 @@ fn advance_run_shared(
             }
         }
 
-        run.push(Arc::clone(&event), current_state.alias.clone());
+        // PERF(Opt4): Use push_at_kleene to avoid re-allocating captured key
+        run.push_at_kleene(Arc::clone(&event), &current_state.alias, now);
 
-        // For `all` patterns (Kleene with epsilon to Accept): emit each event
-        let has_epsilon_to_accept = current_state
-            .epsilon_transitions
-            .iter()
-            .any(|&eps_id| nfa.states[eps_id].state_type == StateType::Accept);
-        if has_epsilon_to_accept {
+        // PERF(Opt3): Use pre-computed flag instead of per-event iteration
+        if current_state.has_epsilon_to_accept {
             return RunAdvanceResult::CompleteAndContinue(MatchResult {
                 captured: run.captured.clone(),
                 stack: run.stack.clone(),
@@ -3104,16 +3201,22 @@ fn advance_run_shared(
             });
         }
 
-        // No epsilon to accept: accumulate in ZDD for deferred emission (SEQ(A, B+, C))
+        // No epsilon to accept: accumulate for deferred emission (SEQ(A, B+, C))
         if run.kleene_capture.is_none() {
             let mut kc = KleeneCapture::new();
-            if let Some(ref pp) = current_state.postponed_predicate {
-                kc.deferred_predicate = Some(pp.clone());
+            if current_state.postponed_predicate.is_some() {
+                kc.deferred_predicate = current_state.postponed_predicate.clone();
+                kc.needs_zdd = true;
             }
             run.kleene_capture = Some(kc);
         }
+        // PERF(Opt1): Skip ZDD product_with_optional when no deferred predicate
         if let Some(ref mut kc) = run.kleene_capture {
-            kc.extend(Arc::clone(&event), current_state.alias.clone());
+            if kc.needs_zdd {
+                kc.extend(Arc::clone(&event), current_state.alias.clone());
+            } else {
+                kc.extend_simple(Arc::clone(&event), current_state.alias.clone());
+            }
         }
         return RunAdvanceResult::Continue;
     }
@@ -3148,7 +3251,7 @@ fn advance_run_shared(
 
         if event_matches_state(nfa, &event, next_state, &run.captured) {
             run.current_state = next_id;
-            run.push(Arc::clone(&event), next_state.alias.clone());
+            run.push_at(Arc::clone(&event), next_state.alias.clone(), now);
 
             if next_state.state_type == StateType::Accept {
                 // PERF: Use std::mem::take since run is discarded after Complete
@@ -3156,15 +3259,8 @@ fn advance_run_shared(
             }
 
             if next_state.state_type == StateType::Kleene && next_state.self_loop {
-                // Kleene state: check if there's an epsilon to Accept
-                let has_epsilon_to_accept = next_state
-                    .epsilon_transitions
-                    .iter()
-                    .any(|&eps_id| nfa.states[eps_id].state_type == StateType::Accept);
-
-                if has_epsilon_to_accept {
-                    // For `all` patterns: emit match for current event, keep run active
-                    // This allows each matching event to produce a result
+                // PERF(Opt3): Use pre-computed flag instead of per-event iteration
+                if next_state.has_epsilon_to_accept {
                     return RunAdvanceResult::CompleteAndContinue(MatchResult {
                         captured: run.captured.clone(),
                         stack: run.stack.clone(),
@@ -3172,21 +3268,25 @@ fn advance_run_shared(
                     });
                 }
 
-                // No epsilon to accept: accumulate events in ZDD for deferred emission
-                // This handles patterns like SEQ(A, B+, C) where we need to wait for C
+                // No epsilon to accept: accumulate for deferred emission (SEQ(A, B+, C))
                 if run.kleene_capture.is_none() {
                     let mut kc = KleeneCapture::new();
-                    if let Some(ref pp) = next_state.postponed_predicate {
-                        kc.deferred_predicate = Some(pp.clone());
+                    if next_state.postponed_predicate.is_some() {
+                        kc.deferred_predicate = next_state.postponed_predicate.clone();
+                        kc.needs_zdd = true;
                     }
                     run.kleene_capture = Some(kc);
                 }
+                // PERF(Opt1): Skip ZDD when no deferred predicate
                 if let Some(ref mut kc) = run.kleene_capture {
                     if kc.next_var >= limits.max_events {
-                        // Safety: stop accumulating to prevent 2^n enumeration blowup
                         return RunAdvanceResult::Continue;
                     }
-                    kc.extend(Arc::clone(&event), next_state.alias.clone());
+                    if kc.needs_zdd {
+                        kc.extend(Arc::clone(&event), next_state.alias.clone());
+                    } else {
+                        kc.extend_simple(Arc::clone(&event), next_state.alias.clone());
+                    }
                 }
 
                 return RunAdvanceResult::Continue;
@@ -3209,7 +3309,7 @@ fn advance_run_shared(
             let next_state = &nfa.states[next_id];
             if event_matches_state(nfa, &event, next_state, &run.captured) {
                 run.current_state = next_id;
-                run.push(Arc::clone(&event), next_state.alias.clone());
+                run.push_at(Arc::clone(&event), next_state.alias.clone(), now);
 
                 if next_state.state_type == StateType::Accept {
                     // PERF: Use std::mem::take since run is discarded after Complete
