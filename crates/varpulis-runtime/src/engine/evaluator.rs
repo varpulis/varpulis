@@ -13,6 +13,7 @@
 //! - Return statements for early exit
 //! - Variable declarations and assignments
 
+use crate::event::SharedEvent;
 use crate::sequence::SequenceContext;
 use crate::Event;
 use indexmap::IndexMap;
@@ -1187,7 +1188,7 @@ pub fn eval_expr_ctx(expr: &varpulis_core::ast::Expr, ctx: &EvalContext) -> Opti
 #[allow(clippy::only_used_in_recursion)]
 pub fn eval_pattern_expr(
     expr: &varpulis_core::ast::Expr,
-    events: &[Event],
+    events: &[SharedEvent],
     ctx: &SequenceContext,
     functions: &FxHashMap<String, UserFunction>,
     pattern_vars: &FxHashMap<String, Value>,

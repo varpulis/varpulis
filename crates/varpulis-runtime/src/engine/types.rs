@@ -100,6 +100,9 @@ pub struct NamedPattern {
 /// Runtime stream definition
 pub(crate) struct StreamDefinition {
     pub name: String,
+    /// Cached `Arc<str>` of the stream name — avoids repeated `String→Arc<str>` conversions
+    /// in the hot path (output event renaming, emit/sequence event construction).
+    pub name_arc: Arc<str>,
     pub source: RuntimeSource,
     pub operations: Vec<RuntimeOp>,
     /// SASE+ pattern matching engine (NFA-based, primary engine for sequences)

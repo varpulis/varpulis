@@ -349,7 +349,7 @@ mod pattern_expr_tests {
     use super::*;
 
     fn eval_p(expr: &Expr, pattern_vars: &FxHashMap<String, Value>) -> Option<Value> {
-        let events: Vec<Event> = vec![];
+        let events: Vec<varpulis_runtime::event::SharedEvent> = vec![];
         let ctx = empty_seq_ctx();
         let functions = empty_functions();
         eval_pattern_expr(expr, &events, &ctx, &functions, pattern_vars)
