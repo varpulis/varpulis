@@ -323,6 +323,43 @@ NATS subjects use `.` as a separator with two wildcard tokens:
 - `*` — Matches a single token: `trades.*` matches `trades.AAPL` but not `trades.us.AAPL`
 - `>` — Matches one or more tokens (must be last): `trades.>` matches `trades.AAPL` and `trades.us.AAPL`
 
+**Examples:**
+```
+sensors.*              # Matches sensors.temp, sensors.humidity (NOT sensors.zone1.temp)
+sensors.>              # Matches sensors.temp, sensors.zone1.temp, sensors.zone1.zone2.temp
+market.trades.*        # Matches market.trades.AAPL, market.trades.GOOG
+market.>               # Matches market.trades.AAPL, market.quotes.AAPL, etc.
+```
+
+### Event Format
+
+Events received from NATS must be JSON. Two formats are supported:
+
+**Flat format** (recommended):
+```json
+{"type": "Trade", "symbol": "AAPL", "price": 150.25, "volume": 1000}
+```
+
+**Nested format** (with `data` envelope):
+```json
+{"event_type": "Trade", "data": {"symbol": "AAPL", "price": 150.25, "volume": 1000}}
+```
+
+The `type` or `event_type` field determines which VPL stream processes the event. If neither is present, the last `.`-delimited segment of the NATS subject is used as the event type.
+
+### Queue Groups (Load Balancing)
+
+When multiple Varpulis instances share the same `queue_group`, each NATS message is delivered to exactly one instance:
+
+```varpulis
+connector NatsShared = nats (
+    servers: "nats://localhost:4222",
+    queue_group: "varpulis-workers"
+)
+```
+
+Without `queue_group`, every instance receives every message (fan-out).
+
 ### Usage
 
 ```varpulis
@@ -335,6 +372,68 @@ stream Alerts = HighValueTrades
     .to(NatsMarket, topic: "alerts.high-value")
 ```
 
+### Complete Example
+
+```varpulis
+connector NatsMarket = nats (
+    servers: "nats://localhost:4222",
+    queue_group: "market-processor"
+)
+
+connector NatsAlerts = nats (
+    servers: "nats://localhost:4222"
+)
+
+event Trade:
+    symbol: str
+    price: float
+    volume: int
+    exchange: str
+
+# Ingest trades from all exchanges
+stream Trades = Trade
+    .from(NatsMarket, topic: "market.trades.>")
+
+# Detect large trades and publish alerts
+stream LargeTrades = Trade
+    .from(NatsMarket, topic: "market.trades.>")
+    .where(volume > 10000)
+    .emit(
+        alert_type: "LARGE_TRADE",
+        symbol: symbol,
+        price: price,
+        volume: volume,
+        exchange: exchange
+    )
+    .to(NatsAlerts, topic: "alerts.large-trades")
+
+# Detect rapid trade sequence: 3 trades for the same symbol within 10s
+stream RapidTrading = Trade as t1
+    -> Trade where symbol == t1.symbol as t2
+    -> Trade where symbol == t1.symbol as t3
+    .within(10s)
+    .emit(
+        alert_type: "RAPID_TRADING",
+        symbol: t1.symbol,
+        trade_count: 3,
+        price_change: t3.price - t1.price
+    )
+    .to(NatsAlerts, topic: "alerts.rapid-trading")
+```
+
+### Running with NATS
+
+```bash
+# Start nats-server
+docker run -d -p 4222:4222 nats:latest
+
+# Run the pipeline
+varpulis run --file market_pipeline.vpl
+
+# Publish test events
+nats pub market.trades.NYSE '{"type":"Trade","symbol":"AAPL","price":150.25,"volume":15000,"exchange":"NYSE"}'
+```
+
 ### Building with NATS
 
 ```bash
@@ -344,6 +443,10 @@ cargo build --release --features nats
 # Build with multiple connectors
 cargo build --release --features mqtt,nats,kafka
 ```
+
+### NATS Cluster Transport
+
+NATS is also used as the transport layer for Varpulis cluster communication (coordinator-worker messaging). This is a separate feature from the data connector. See [NATS Transport Architecture](../architecture/nats-transport.md) for details.
 
 ---
 
@@ -400,4 +503,6 @@ stream DebugOutput = SomeStream
 
 - [Syntax Reference](syntax.md) - Complete VPL syntax
 - [Architecture](../architecture/system.md) - System architecture
+- [NATS Transport Architecture](../architecture/nats-transport.md) - NATS cluster transport layer
+- [NATS Connector Tutorial](../tutorials/nats-connector.md) - Step-by-step NATS setup
 - [Configuration Guide](../guides/configuration.md) - CLI and server configuration
