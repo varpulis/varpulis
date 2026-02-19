@@ -1120,6 +1120,7 @@ impl Engine {
             name.to_string(),
             StreamDefinition {
                 name: name.to_string(),
+                name_arc: Arc::from(name),
                 source: runtime_source,
                 operations: runtime_ops,
                 sase_engine,
