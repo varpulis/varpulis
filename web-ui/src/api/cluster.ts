@@ -198,11 +198,21 @@ export async function deleteConnector(name: string): Promise<void> {
 
 // === Metrics ===
 
+export interface ConnectorHealthInfo {
+  connector_name: string
+  connector_type: string
+  connected: boolean
+  last_error?: string
+  messages_received: number
+  seconds_since_last_message: number
+}
+
 export interface PipelineWorkerMetrics {
   pipeline_name: string
   worker_id: string
   events_in: number
   events_out: number
+  connector_health: ConnectorHealthInfo[]
 }
 
 export interface ClusterMetricsResponse {

@@ -34,6 +34,12 @@ const router = createRouter({
       meta: { title: 'Editor' },
     },
     {
+      path: '/monitoring',
+      name: 'monitoring',
+      component: () => import('@/views/MonitoringView.vue'),
+      meta: { title: 'Monitoring' },
+    },
+    {
       path: '/metrics',
       name: 'metrics',
       component: () => import('@/views/MetricsView.vue'),
