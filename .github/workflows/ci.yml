@@ -161,3 +161,5 @@ jobs:
         run: cargo test -p varpulis-runtime --features nats --test nats_e2e -- --nocapture
       - name: Cluster NATS E2E tests
         run: cargo test -p varpulis-cluster --features nats-transport --test nats_cluster_e2e -- --nocapture
+      - name: Multi-worker NATS E2E tests
+        run: cargo test -p varpulis-cluster --features nats-transport --test nats_multi_worker_e2e -- --nocapture
