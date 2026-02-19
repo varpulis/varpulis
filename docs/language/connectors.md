@@ -251,6 +251,29 @@ connector KafkaBroker = kafka (
 |-----------|------|----------|---------|-------------|
 | `brokers` | array | Yes | - | List of Kafka broker addresses |
 | `group_id` | string | Yes | - | Consumer group ID |
+| `batch_size` | int | No | 65536 | Maximum size (bytes) of a Kafka producer batch |
+| `linger_ms` | int | No | 5 | Time (ms) to wait for additional messages before sending a batch |
+| `compression_type` | string | No | `lz4` | Compression codec: `none`, `gzip`, `snappy`, `lz4`, `zstd` |
+| `message_timeout_ms` | int | No | 30000 | Timeout (ms) for message delivery acknowledgment |
+| `exactly_once` | bool | No | false | Enable transactional (exactly-once) delivery semantics |
+| `transactional_id` | string | No | - | Explicit transactional ID (implies exactly-once) |
+
+### Batching and Throughput
+
+By default, Varpulis sends Kafka events concurrently: all events in a batch are enqueued into librdkafka's internal buffer, then delivery acknowledgments are awaited together. This lets librdkafka's internal batcher combine messages according to `batch_size` and `linger_ms`, yielding 10x+ throughput compared to per-event delivery.
+
+Tune these parameters for your workload:
+
+```varpulis
+connector HighThroughputKafka = kafka (
+    brokers: "broker1:9092,broker2:9092",
+    batch_size: 131072,
+    linger_ms: 10,
+    compression_type: "lz4"
+)
+```
+
+> **Note:** These parameter names use VPL underscore convention. They map to rdkafka's `batch.size`, `linger.ms`, `compression.type`, and `message.timeout.ms` respectively. You can also use the dot-notation names directly.
 
 ### Usage
 

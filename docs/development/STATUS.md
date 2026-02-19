@@ -105,7 +105,7 @@ Varpulis is a high-performance Complex Event Processing (CEP) engine written in 
 
 ## Completed Roadmap to 10/10
 
-All 18 tasks from the production readiness audit are complete. See [KANBAN.md](KANBAN.md) for details.
+All 18 tasks from the production readiness audit are complete. See [AUDIT_REPORT.md](AUDIT_REPORT.md) for details.
 
 ### P1 Critical (4/4)
 - Fuzzing infrastructure (parser, connectors)
@@ -143,6 +143,5 @@ All 18 tasks from the production readiness audit are complete. See [KANBAN.md](K
 
 ## See Also
 
-- [KANBAN.md](KANBAN.md) — Production readiness task board
 - [AUDIT_REPORT.md](AUDIT_REPORT.md) — Comprehensive security and quality audit
 - [Roadmap](../spec/roadmap.md) — Feature roadmap

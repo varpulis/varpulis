@@ -36,7 +36,6 @@ stream Alert = Events
 
 ### Project Status
 - [`development/STATUS.md`](development/STATUS.md) - **Current project status**
-- [`development/KANBAN.md`](development/KANBAN.md) - Task tracking
 - [`development/AUDIT_REPORT.md`](development/AUDIT_REPORT.md) - Security audit
 - [`PRODUCTION_DEPLOYMENT.md`](PRODUCTION_DEPLOYMENT.md) - **Production deployment guide**
 

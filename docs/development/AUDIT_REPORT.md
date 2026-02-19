@@ -337,7 +337,7 @@ Varpulis is a **production-grade Complex Event Processing engine** at v0.3.0. Af
 | Reference | 4 (CLI, enrichment, trend-agg, windows) | Good |
 | Scenarios | 6 (fraud, cyber, insider-trading, patient-safety, predictive-maint) | Excellent |
 | Examples | 2 (financial-markets, hvac) | Good |
-| Spec | 5 (benchmarks, event-listeners, glossary, overview, roadmap) | Good |
+| Spec | 4 (benchmarks, glossary, overview, roadmap) | Good |
 | Deployment | 1 (PRODUCTION_DEPLOYMENT.md) | Good |
 | Development | 2 (STATUS.md, AUDIT_REPORT.md) | Being updated |
 
