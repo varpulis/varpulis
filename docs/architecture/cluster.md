@@ -16,7 +16,7 @@ pipeline processing by distributing workloads across machines.
                   │  - Event routing     │
                   │  - Health monitor    │
                   └──────┬───────────────┘
-                         │ REST + heartbeat
+                         │ REST or NATS transport
            ┌─────────────┼─────────────┐
            │             │             │
      ┌─────┴──┐   ┌──────┴──┐   ┌─────┴──┐
@@ -28,14 +28,14 @@ pipeline processing by distributing workloads across machines.
      └────────┘   └─────────┘   └────────┘
            │             │             │
            └─────────────┴─────────────┘
-                    MQTT (inter-pipeline events)
+              MQTT or NATS (inter-pipeline events)
 ```
 
 ### Key Principles
 
 1. **Workers are standard `varpulis server` processes** that register with a coordinator
 2. **The coordinator manages deployment, routing, and health** — it does NOT process events itself
-3. **Inter-pipeline communication uses MQTT** (existing infrastructure)
+3. **Inter-pipeline communication uses MQTT or NATS** (see [NATS Transport Architecture](nats-transport.md))
 4. **Each worker runs one or more pipelines** with their own ContextOrchestrators
 5. **The API is backward-compatible**: existing single-server mode still works unchanged
 
@@ -523,11 +523,16 @@ The cluster functionality lives in `crates/varpulis-cluster/`:
 | `health.rs` | Heartbeat protocol and failure detection |
 | `api.rs` | Coordinator REST API (warp routes) |
 
+| `nats_transport.rs` | NATS subject helpers and request/reply utilities |
+| `nats_coordinator.rs` | Coordinator-side NATS handler (registration, heartbeats) |
+| `nats_worker.rs` | Worker-side NATS command handler (deploy, inject, etc.) |
+
 ### Dependencies
 
-- `varpulis-runtime` (for MQTT connector types)
+- `varpulis-runtime` (for connector types)
 - `warp` (REST API framework, same as worker API)
 - `reqwest` (coordinator → worker HTTP calls)
+- `async-nats` (NATS transport, optional via `nats-transport` feature)
 - `tokio` (async runtime, heartbeat intervals)
 - `serde` / `serde_json` (API serialization)
 
@@ -556,6 +561,8 @@ The cluster functionality lives in `crates/varpulis-cluster/`:
 
 ## See Also
 
+- [NATS Transport Architecture](nats-transport.md) -- NATS-based cluster transport (subjects, commands, heartbeats)
 - [Cluster Tutorial](../tutorials/cluster-tutorial.md) -- Step-by-step guide to running a distributed cluster
+- [NATS Connector Tutorial](../tutorials/nats-connector.md) -- NATS source/sink setup
 - [CLI Reference](../reference/cli-reference.md) -- Full command-line options for `coordinator` and `server`
 - [Contexts Tutorial](../tutorials/contexts-tutorial.md) -- Single-process parallelism (used within each worker)
