@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771501399024,
+  "lastUpdate": 1771511988243,
   "repoUrl": "https://github.com/varpulis/varpulis",
   "entries": {
     "Varpulis Performance": [
@@ -994,6 +994,148 @@ window.BENCHMARK_DATA = {
           {
             "name": "scalability/50k_kleene_plus",
             "value": 19195000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyril.poderà@gmail.com",
+            "name": "cpoder"
+          },
+          "committer": {
+            "email": "cyril.poderà@gmail.com",
+            "name": "cpoder"
+          },
+          "distinct": true,
+          "id": "eea24dc49209e8db24168e699e4f2699ea9a09d2",
+          "message": "perf(sase): optimize Kleene closure hot paths for 15-40% throughput improvement\n\nSeven targeted optimizations to the SASE+ Kleene pattern matching engine:\n\n1. Skip ZDD when no deferred predicate — add extend_simple() that bypasses\n   arena.product_with_optional() when postponed_predicate is None (common case)\n2. Eliminate per-push Instant::now() — capture once per event in process loop,\n   pass through advance_run_shared via push_at()\n3. Pre-compute has_epsilon_to_accept on State — avoid per-event iteration over\n   epsilon_transitions in Kleene self-loop and transition-entering paths\n4. Avoid alias key re-allocation in Kleene self-loop — push_at_kleene() uses\n   get_mut to update existing captured entry without re-inserting key\n5. Throttle cleanup_timeouts() — skip if <100ms elapsed (ProcessingTime only;\n   EventTime always runs to handle watermark jumps)\n6. Skip empty check_global_negations — early return when no negations configured\n7. Avoid partition_by.clone() per event — borrow with as_ref() instead\n\nBenchmarks (criterion):\n- nested_kleene_5k: -17.8% time (p=0.00)\n- kleene_plus/sase/5000: -5.4% time (p=0.00)\n- Pathological workload (A/B): +41% throughput (443 → 627 events/sec)\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>",
+          "timestamp": "2026-02-19T15:33:49+01:00",
+          "tree_id": "5b2b33dc7c2a09e6c907aa1fa54b344ab17aba1b",
+          "url": "https://github.com/varpulis/varpulis/commit/eea24dc49209e8db24168e699e4f2699ea9a09d2"
+        },
+        "date": 1771511987409,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "simple_sequence/sase/100",
+            "value": 34031,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "simple_sequence/sase/1000",
+            "value": 328390,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "simple_sequence/sase/10000",
+            "value": 3277600,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_plus/sase/100",
+            "value": 40454,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_plus/sase/1000",
+            "value": 438700,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_plus/sase/5000",
+            "value": 2211700,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "with_predicates/sase/100",
+            "value": 32313,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "with_predicates/sase/1000",
+            "value": 393990,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "with_predicates/sase/5000",
+            "value": 1987200,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "long_sequence/seq_5_events_5k",
+            "value": 2104700,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "long_sequence/seq_10_events_10k",
+            "value": 3954400,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "complex_patterns/negation_5k",
+            "value": 1485900,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "complex_patterns/or_pattern_5k",
+            "value": 1659100,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "complex_patterns/nested_kleene_5k",
+            "value": 114380000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "multi_predicates/chained_predicates_5k",
+            "value": 1748000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "throughput/seq_3/10000",
+            "value": 3385600,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "throughput/seq_3/50000",
+            "value": 16875000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "throughput/seq_3/100000",
+            "value": 34374000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "scalability/100k_simple_seq",
+            "value": 32918000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "scalability/50k_kleene_plus",
+            "value": 19405000,
             "range": "± 0",
             "unit": "ns/iter"
           }
