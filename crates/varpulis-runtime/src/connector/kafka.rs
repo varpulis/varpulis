@@ -429,6 +429,54 @@ mod kafka_impl {
 
             Ok(())
         }
+
+        /// Send a batch of events concurrently (non-transactional).
+        ///
+        /// Enqueues all events into librdkafka's internal buffer via `send_result()`
+        /// (synchronous, non-blocking), then awaits all delivery futures at once.
+        /// This lets librdkafka batch messages according to `linger.ms` / `batch.size`
+        /// instead of serializing one-at-a-time with per-event `.await`.
+        pub async fn send_batch(
+            &self,
+            events: &[std::sync::Arc<Event>],
+        ) -> Result<(), ConnectorError> {
+            let mut futures = Vec::with_capacity(events.len());
+
+            for event in events {
+                let payload = event.to_sink_payload();
+                let record = FutureRecord::to(&self.config.topic)
+                    .payload(&payload)
+                    .key(&*event.event_type);
+
+                match self.producer.send_result(record) {
+                    Ok(delivery_future) => futures.push(delivery_future),
+                    Err((e, _)) => {
+                        return Err(ConnectorError::SendFailed(format!("enqueue failed: {}", e)));
+                    }
+                }
+            }
+
+            // Await all delivery acknowledgments concurrently
+            let results = futures::future::join_all(futures).await;
+            for result in results {
+                match result {
+                    Ok(Ok(_)) => {}
+                    Ok(Err((e, _))) => {
+                        return Err(ConnectorError::SendFailed(format!(
+                            "delivery failed: {}",
+                            e
+                        )));
+                    }
+                    Err(_cancelled) => {
+                        return Err(ConnectorError::SendFailed(
+                            "delivery future cancelled".to_string(),
+                        ));
+                    }
+                }
+            }
+
+            Ok(())
+        }
     }
 
     #[async_trait]
