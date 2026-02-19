@@ -73,6 +73,11 @@ kafka:
   auto_commit: true
   auto_offset_reset: "latest"  # or "earliest"
 
+# NATS connector (configured in VPL, these are defaults for server mode)
+nats:
+  servers: "nats://localhost:4222"
+  queue_group: "varpulis"
+
 # HTTP webhook input
 http_webhook:
   enabled: true
@@ -126,6 +131,10 @@ bootstrap_servers = "kafka:9092"
 consumer_group = "varpulis-consumer"
 input_topic = "events"
 output_topic = "alerts"
+
+[nats]
+servers = "nats://localhost:4222"
+queue_group = "varpulis"
 
 [http_webhook]
 enabled = true
@@ -207,6 +216,81 @@ Varpulis automatically handles MQTT reconnection:
 - Initial connection retry with exponential backoff
 - Automatic resubscription on reconnect
 - Buffering of outgoing messages during disconnect (configurable)
+
+---
+
+## NATS Setup
+
+NATS connectors are configured in VPL files using the `connector` declaration syntax, similar to MQTT and Kafka.
+
+### Connector Declaration
+
+```vpl
+connector NatsBroker = nats (
+    servers: "nats://localhost:4222",
+    queue_group: "varpulis"
+)
+
+# Bind events to the connector
+stream Events = SensorReading
+    .from(NatsBroker, topic: "sensors.>")
+```
+
+### Configuration Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `servers` | required | NATS server URL(s), e.g. `nats://host:4222` |
+| `queue_group` | (none) | Queue group name for load-balanced consumption |
+
+### Subject Wildcards
+
+NATS uses `.` as a subject separator:
+
+```vpl
+// Single-token wildcard (*)
+topic: "sensors.*"           // Matches sensors.temp, sensors.humidity
+                             // Does NOT match sensors.zone1.temp
+
+// Multi-token wildcard (>)
+topic: "sensors.>"           // Matches sensors.temp AND sensors.zone1.temp
+topic: "market.trades.>"     // All topics under market.trades.
+```
+
+### NATS Server Requirements
+
+- **nats-server** v2.9+ recommended
+- Default port: 4222
+- No JetStream required for basic connector use
+- Build Varpulis with: `cargo build --release --features nats`
+
+### Authentication
+
+NATS server authentication can use user/password or token-based auth. Configure in `nats-server.conf`:
+
+```
+# User/password
+authorization {
+  users = [
+    {user: "varpulis", password: "secret"}
+  ]
+}
+
+# Token-based
+authorization {
+  token: "my-secret-token"
+}
+```
+
+### NATS Cluster Transport
+
+For distributed execution, NATS can also serve as the cluster transport layer (replacing REST for coordinator-worker communication). This requires the separate `nats-transport` feature flag:
+
+```bash
+cargo build --release --features nats,nats-transport
+```
+
+See [NATS Transport Architecture](../architecture/nats-transport.md) for details on the cluster transport layer.
 
 ---
 
@@ -591,6 +675,8 @@ varpulis status --server http://localhost:9000 --api-key "key"
 
 - [CLI Reference](../reference/cli-reference.md) - All command options
 - [Connectors](../language/connectors.md) - Connector syntax and configuration
+- [NATS Transport Architecture](../architecture/nats-transport.md) - NATS cluster transport
+- [NATS Connector Tutorial](../tutorials/nats-connector.md) - Step-by-step NATS setup
 - [State Management](../architecture/state-management.md) - Persistence and checkpointing
 - [Troubleshooting](troubleshooting.md) - Common issues and solutions
 - [Performance Tuning](performance-tuning.md) - Optimization guide
