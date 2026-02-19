@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771453333359,
+  "lastUpdate": 1771500401995,
   "repoUrl": "https://github.com/varpulis/varpulis",
   "entries": {
     "Varpulis Performance": [
@@ -568,6 +568,148 @@ window.BENCHMARK_DATA = {
           {
             "name": "scalability/50k_kleene_plus",
             "value": 19774000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyril.poderà@gmail.com",
+            "name": "cpoder"
+          },
+          "committer": {
+            "email": "cyril.poderà@gmail.com",
+            "name": "cpoder"
+          },
+          "distinct": true,
+          "id": "898ae47f8603b71153179ca02423e85fc1f1a695",
+          "message": "feat(kafka): concurrent batch delivery for 10x+ sink throughput\n\nAdd send_batch() to KafkaSinkImpl using producer.send_result() to enqueue\nall events synchronously, then await all DeliveryFutures at once via\njoin_all. New BatchKafkaSinkAdapter routes non-transactional Kafka sinks\nthrough this path. Also adds VPL parameter name mapping (batch_size →\nbatch.size, linger_ms → linger.ms, etc.).\n\nCloses #4.\n\nAlso removes obsolete docs: KANBAN.md (completed task board),\nevent-listeners.md (superseded by SASE+), HOT_RELOAD_AND_PARALLELISM.md\n(outdated design proposal).\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>",
+          "timestamp": "2026-02-19T12:20:37+01:00",
+          "tree_id": "d6dabda055f0b83a1afaa016f34b56676ad477e0",
+          "url": "https://github.com/varpulis/varpulis/commit/898ae47f8603b71153179ca02423e85fc1f1a695"
+        },
+        "date": 1771500401185,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "simple_sequence/sase/100",
+            "value": 28622,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "simple_sequence/sase/1000",
+            "value": 280430,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "simple_sequence/sase/10000",
+            "value": 2791700,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_plus/sase/100",
+            "value": 44506,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_plus/sase/1000",
+            "value": 492120,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_plus/sase/5000",
+            "value": 2441800,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "with_predicates/sase/100",
+            "value": 27600,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "with_predicates/sase/1000",
+            "value": 347380,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "with_predicates/sase/5000",
+            "value": 1764300,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "long_sequence/seq_5_events_5k",
+            "value": 1974800,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "long_sequence/seq_10_events_10k",
+            "value": 3587100,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "complex_patterns/negation_5k",
+            "value": 1178700,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "complex_patterns/or_pattern_5k",
+            "value": 1453900,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "complex_patterns/nested_kleene_5k",
+            "value": 192330000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "multi_predicates/chained_predicates_5k",
+            "value": 1495700,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "throughput/seq_3/10000",
+            "value": 3033100,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "throughput/seq_3/50000",
+            "value": 14934000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "throughput/seq_3/100000",
+            "value": 29706000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "scalability/100k_simple_seq",
+            "value": 28555000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "scalability/50k_kleene_plus",
+            "value": 19289000,
             "range": "± 0",
             "unit": "ns/iter"
           }
