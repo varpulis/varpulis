@@ -374,3 +374,50 @@ async fn test_kafka_transactional_batch_performance() {
         total_events, num_batches, elapsed, rate
     );
 }
+
+#[tokio::test]
+#[ignore]
+async fn test_kafka_sink_batch_concurrent_performance() {
+    let bootstrap = kafka_bootstrap();
+    if !kafka_is_available().await {
+        eprintln!("Skipping test: Kafka not available at {}", bootstrap);
+        return;
+    }
+
+    let config = KafkaConfig::new(&bootstrap, TEST_TOPIC_OUTPUT);
+    let sink = KafkaSinkFull::new("batch-perf-sink", config).expect("Failed to create sink");
+
+    let batch_size = 1000;
+    let events: Vec<std::sync::Arc<Event>> = (0..batch_size)
+        .map(|i| {
+            std::sync::Arc::new(
+                Event::new("BatchPerfTest")
+                    .with_field("seq", i as i64)
+                    .with_field("timestamp", chrono::Utc::now().timestamp_millis()),
+            )
+        })
+        .collect();
+
+    let start = std::time::Instant::now();
+
+    sink.send_batch(&events)
+        .await
+        .expect("Failed to send batch");
+
+    sink.flush().await.expect("Failed to flush");
+
+    let elapsed = start.elapsed();
+    let rate = batch_size as f64 / elapsed.as_secs_f64();
+
+    println!(
+        "Concurrent batch: {} events in {:?} ({:.0} events/sec)",
+        batch_size, elapsed, rate
+    );
+
+    // Concurrent batch should achieve >1K events/sec (vs ~166/s sequential)
+    assert!(
+        rate > 1000.0,
+        "Concurrent batch too slow: {:.0} events/sec (expected >1000)",
+        rate
+    );
+}

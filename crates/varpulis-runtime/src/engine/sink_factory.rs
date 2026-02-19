@@ -163,6 +163,64 @@ impl crate::sink::Sink for TransactionalKafkaSinkAdapter {
     }
 }
 
+/// Adapter for Kafka sinks using concurrent batch delivery (non-transactional).
+///
+/// Wraps `KafkaSinkFull` directly (not via the `SinkConnector` trait) to access
+/// the concurrent `send_batch()` API. This enqueues all events into librdkafka's
+/// internal buffer, then awaits all delivery futures at once — avoiding the
+/// per-event `.await` bottleneck that limits throughput to ~166 events/s.
+#[cfg(feature = "kafka")]
+pub struct BatchKafkaSinkAdapter {
+    name: String,
+    inner: tokio::sync::Mutex<connector::KafkaSinkFull>,
+}
+
+#[cfg(feature = "kafka")]
+impl BatchKafkaSinkAdapter {
+    pub fn new(name: &str, sink: connector::KafkaSinkFull) -> Self {
+        Self {
+            name: name.to_string(),
+            inner: tokio::sync::Mutex::new(sink),
+        }
+    }
+}
+
+#[cfg(feature = "kafka")]
+#[async_trait::async_trait]
+impl crate::sink::Sink for BatchKafkaSinkAdapter {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    async fn connect(&self) -> anyhow::Result<()> {
+        Ok(()) // Producer is connected at construction time
+    }
+    async fn send(&self, event: &crate::event::Event) -> anyhow::Result<()> {
+        let inner = self.inner.lock().await;
+        inner
+            .send(event)
+            .await
+            .map_err(|e| anyhow::anyhow!("{}", e))
+    }
+    async fn send_batch(
+        &self,
+        events: &[std::sync::Arc<crate::event::Event>],
+    ) -> anyhow::Result<()> {
+        let inner = self.inner.lock().await;
+        inner
+            .send_batch(events)
+            .await
+            .map_err(|e| anyhow::anyhow!("{}", e))
+    }
+    async fn flush(&self) -> anyhow::Result<()> {
+        let inner = self.inner.lock().await;
+        inner.flush().await.map_err(|e| anyhow::anyhow!("{}", e))
+    }
+    async fn close(&self) -> anyhow::Result<()> {
+        let inner = self.inner.lock().await;
+        inner.close().await.map_err(|e| anyhow::anyhow!("{}", e))
+    }
+}
+
 /// Create a sink from a ConnectorConfig, with an optional topic override from .to() params
 #[allow(unused_variables)]
 pub(crate) fn create_sink_from_config(
@@ -228,8 +286,22 @@ pub(crate) fn create_sink_from_config(
                                 .map(|_| format!("varpulis-{}", name))
                         });
 
-                let mut kafka_config = connector::KafkaConfig::new(&brokers, &topic)
-                    .with_properties(config.properties.clone());
+                // Translate VPL-friendly underscore names to rdkafka dot-notation
+                let mut properties = config.properties.clone();
+                let param_mapping: &[(&str, &str)] = &[
+                    ("batch_size", "batch.size"),
+                    ("linger_ms", "linger.ms"),
+                    ("compression_type", "compression.type"),
+                    ("message_timeout_ms", "message.timeout.ms"),
+                ];
+                for &(vpl_name, rdkafka_name) in param_mapping {
+                    if let Some(value) = properties.swap_remove(vpl_name) {
+                        properties.insert(rdkafka_name.to_string(), value);
+                    }
+                }
+
+                let mut kafka_config =
+                    connector::KafkaConfig::new(&brokers, &topic).with_properties(properties);
                 if let Some(tid) = transactional_id {
                     kafka_config = kafka_config.with_transactional_id(&tid);
                 }
@@ -239,10 +311,7 @@ pub(crate) fn create_sink_from_config(
                         if sink.is_transactional() {
                             Some(Arc::new(TransactionalKafkaSinkAdapter::new(name, sink)))
                         } else {
-                            Some(Arc::new(SinkConnectorAdapter {
-                                name: name.to_string(),
-                                inner: tokio::sync::Mutex::new(Box::new(sink)),
-                            }))
+                            Some(Arc::new(BatchKafkaSinkAdapter::new(name, sink)))
                         }
                     }
                     Err(e) => {
