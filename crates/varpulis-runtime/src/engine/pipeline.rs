@@ -105,7 +105,7 @@ pub(crate) async fn execute_pipeline(
 
         execute_op(
             op,
-            &stream.name,
+            &stream.name_arc,
             &mut stream.sase_engine,
             &mut stream.hamlet_aggregator,
             &stream.shared_hamlet_ref,
@@ -132,11 +132,12 @@ pub(crate) async fn execute_pipeline(
     }
 
     // Rename event_type to stream name for downstream routing
+    let name_arc = &stream.name_arc;
     let output_events = current_events
         .into_iter()
         .map(|e| {
-            let mut owned = (*e).clone();
-            owned.event_type = stream.name.clone().into();
+            let mut owned = Arc::try_unwrap(e).unwrap_or_else(|arc| (*arc).clone());
+            owned.event_type = Arc::clone(name_arc);
             Arc::new(owned)
         })
         .collect();
@@ -181,7 +182,7 @@ fn should_skip_op(op: &RuntimeOp, flags: SkipFlags) -> bool {
 #[allow(clippy::too_many_arguments)]
 async fn execute_op(
     op: &mut RuntimeOp,
-    stream_name: &str,
+    stream_name: &Arc<str>,
     sase_engine: &mut Option<crate::sase::SaseEngine>,
     hamlet_aggregator: &mut Option<crate::hamlet::HamletAggregator>,
     shared_hamlet_ref: &Option<Arc<std::sync::Mutex<crate::hamlet::HamletAggregator>>>,
@@ -364,7 +365,7 @@ async fn execute_op(
 #[allow(clippy::too_many_arguments)]
 fn execute_op_common(
     op: &mut RuntimeOp,
-    stream_name: &str,
+    stream_name: &Arc<str>,
     sase_engine: &mut Option<crate::sase::SaseEngine>,
     hamlet_aggregator: &mut Option<crate::hamlet::HamletAggregator>,
     shared_hamlet_ref: &Option<Arc<std::sync::Mutex<crate::hamlet::HamletAggregator>>>,
@@ -525,9 +526,9 @@ fn execute_op_common(
         }
 
         RuntimeOp::Emit(config) => {
-            let mut emitted: Vec<SharedEvent> = Vec::new();
+            let mut emitted: Vec<SharedEvent> = Vec::with_capacity(current_events.len());
             for event in current_events.iter() {
-                let mut new_event = Event::new(stream_name.to_string());
+                let mut new_event = Event::new(Arc::clone(stream_name));
                 new_event.timestamp = event.timestamp;
                 for (out_name, source) in &config.fields {
                     if let Some(value) = event.get(source) {
@@ -547,9 +548,9 @@ fn execute_op_common(
         }
 
         RuntimeOp::EmitExpr(config) => {
-            let mut emitted: Vec<SharedEvent> = Vec::new();
+            let mut emitted: Vec<SharedEvent> = Vec::with_capacity(current_events.len());
             for event in current_events.iter() {
-                let mut new_event = Event::new(stream_name.to_string());
+                let mut new_event = Event::new(Arc::clone(stream_name));
                 new_event.timestamp = event.timestamp;
                 for (out_name, expr) in &config.fields {
                     if let Some(value) = evaluator::eval_expr_with_functions(
@@ -570,7 +571,7 @@ fn execute_op_common(
 
         RuntimeOp::Print(config) => {
             for event in current_events.iter() {
-                let mut parts = Vec::new();
+                let mut parts = Vec::with_capacity(config.exprs.len());
                 for expr in &config.exprs {
                     let value =
                         evaluator::eval_filter_expr(expr, event.as_ref(), SequenceContext::empty())
@@ -588,10 +589,13 @@ fn execute_op_common(
 
         RuntimeOp::Log(config) => {
             for event in current_events.iter() {
-                let msg = config
-                    .message
-                    .clone()
-                    .unwrap_or_else(|| event.event_type.to_string());
+                let fallback;
+                let msg = if let Some(ref m) = config.message {
+                    m.as_str()
+                } else {
+                    fallback = event.event_type.to_string();
+                    &fallback
+                };
                 let data = if let Some(ref field) = config.data_field {
                     event
                         .get(field)
@@ -622,7 +626,7 @@ fn execute_op_common(
         }
 
         RuntimeOp::Sequence => {
-            let mut sequence_results = Vec::new();
+            let mut sequence_results = Vec::with_capacity(8);
 
             if let Some(ref mut sase) = sase_engine {
                 for event in current_events.iter() {
@@ -631,7 +635,7 @@ fn execute_op_common(
                         let mut seq_event = Event::new("SequenceMatch");
                         seq_event
                             .data
-                            .insert("stream".into(), Value::Str(stream_name.to_string().into()));
+                            .insert("stream".into(), Value::str(stream_name.as_ref()));
                         seq_event.data.insert(
                             "match_duration_ms".into(),
                             Value::Int(match_result.duration.as_millis() as i64),
@@ -676,7 +680,7 @@ fn execute_op_common(
                         let mut trend_event = Event::new("TrendAggregateResult");
                         trend_event
                             .data
-                            .insert("stream".into(), Value::Str(stream_name.to_string().into()));
+                            .insert("stream".into(), Value::str(stream_name.as_ref()));
                         trend_event
                             .data
                             .insert("query_id".into(), Value::Int(agg_result.query_id as i64));
@@ -747,10 +751,9 @@ fn execute_op_common(
                     if let Some(forecast) = pmc.process(&event_type, event_ts, &run_snapshots) {
                         if forecast.probability >= config.confidence_threshold {
                             let mut forecast_event = Event::new("ForecastResult");
-                            forecast_event.data.insert(
-                                "stream".into(),
-                                Value::Str(stream_name.to_string().into()),
-                            );
+                            forecast_event
+                                .data
+                                .insert("stream".into(), Value::str(stream_name.as_ref()));
                             forecast_event.data.insert(
                                 "forecast_probability".into(),
                                 Value::Float(forecast.probability),
@@ -822,11 +825,9 @@ fn execute_op_common(
             let mut pattern_vars = FxHashMap::default();
             pattern_vars.insert("events".into(), events_value);
 
-            let event_refs: Vec<Event> = current_events.iter().map(|e| (**e).clone()).collect();
-
             if let Some(result) = evaluator::eval_pattern_expr(
                 &config.matcher,
-                &event_refs,
+                current_events,
                 SequenceContext::empty(),
                 functions,
                 &pattern_vars,
@@ -838,7 +839,7 @@ fn execute_op_common(
         }
 
         RuntimeOp::Process(expr) => {
-            let mut all_emitted = Vec::new();
+            let mut all_emitted = Vec::with_capacity(current_events.len());
             for event in current_events.iter() {
                 let (_, emitted) = evaluator::with_emit_collector(|| {
                     evaluator::eval_expr_with_functions(
@@ -926,7 +927,7 @@ pub(crate) fn execute_pipeline_sync(
 
         execute_op_sync(
             op,
-            &stream.name,
+            &stream.name_arc,
             &mut stream.sase_engine,
             &mut stream.hamlet_aggregator,
             &stream.shared_hamlet_ref,
@@ -951,11 +952,12 @@ pub(crate) fn execute_pipeline_sync(
     let output_events = if skip_output_rename {
         current_events
     } else {
+        let name_arc = &stream.name_arc;
         current_events
             .into_iter()
             .map(|e| {
-                let mut owned = (*e).clone();
-                owned.event_type = stream.name.clone().into();
+                let mut owned = Arc::try_unwrap(e).unwrap_or_else(|arc| (*arc).clone());
+                owned.event_type = Arc::clone(name_arc);
                 Arc::new(owned)
             })
             .collect()
@@ -972,7 +974,7 @@ pub(crate) fn execute_pipeline_sync(
 #[allow(clippy::too_many_arguments)]
 fn execute_op_sync(
     op: &mut RuntimeOp,
-    stream_name: &str,
+    stream_name: &Arc<str>,
     sase_engine: &mut Option<crate::sase::SaseEngine>,
     hamlet_aggregator: &mut Option<crate::hamlet::HamletAggregator>,
     shared_hamlet_ref: &Option<Arc<std::sync::Mutex<crate::hamlet::HamletAggregator>>>,
