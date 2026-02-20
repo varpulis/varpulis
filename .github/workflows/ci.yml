@@ -73,10 +73,30 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        features: [kafka, raft, persistent, k8s, binary-codec, nats]
+        features:
+          - kafka
+          - raft
+          - persistent
+          - k8s
+          - binary-codec
+          - nats
+          - mqtt
+          - database
+          - redis
+          - elasticsearch
+          - s3
+          - kinesis
+          - onnx
+          - all-connectors
         include:
           - features: kafka
             apt-packages: libcurl4-openssl-dev
+          - features: elasticsearch
+            apt-packages: libssl-dev
+          - features: onnx
+            apt-packages: libssl-dev
+          - features: all-connectors
+            apt-packages: libcurl4-openssl-dev libssl-dev
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

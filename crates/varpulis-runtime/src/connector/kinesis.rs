@@ -5,6 +5,8 @@ use crate::event::Event;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 use tracing::warn;
+#[cfg(feature = "kinesis")]
+use tracing::{error, info};
 
 /// AWS Kinesis configuration
 ///
@@ -314,9 +316,7 @@ mod kinesis_impl {
 
         // Start consuming from each shard
         for shard in shards {
-            let shard_id = shard
-                .shard_id()
-                .ok_or_else(|| ConnectorError::ConnectionFailed("No shard ID".into()))?;
+            let shard_id = shard.shard_id();
 
             // Get shard iterator
             let iterator_result = client
@@ -357,12 +357,13 @@ mod kinesis_impl {
                             let mut event = Event::new("KinesisRecord");
                             event.data.insert(
                                 "data".into(),
-                                varpulis_core::Value::String(json_str.to_string()),
+                                varpulis_core::Value::str(json_str.to_string()),
                             );
-                            if let Some(partition_key) = record.partition_key() {
+                            let partition_key = record.partition_key();
+                            if !partition_key.is_empty() {
                                 event.data.insert(
                                     "partition_key".into(),
-                                    varpulis_core::Value::String(partition_key.to_string()),
+                                    varpulis_core::Value::str(partition_key),
                                 );
                             }
                             event

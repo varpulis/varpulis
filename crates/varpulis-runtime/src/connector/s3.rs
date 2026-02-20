@@ -288,7 +288,7 @@ mod s3_impl {
                 S3OutputFormat::Csv => {
                     // If first event, write header
                     if state.event_count == 0 {
-                        let header: Vec<&str> = event.data.keys().map(|s| s.as_str()).collect();
+                        let header: Vec<&str> = event.data.keys().map(|s| &**s).collect();
                         state.buffer.extend_from_slice(header.join(",").as_bytes());
                         state.buffer.push(b'\n');
                     }
@@ -297,7 +297,7 @@ mod s3_impl {
                         .data
                         .values()
                         .map(|v| match v {
-                            varpulis_core::Value::String(s) => {
+                            varpulis_core::Value::Str(s) => {
                                 format!("\"{}\"", s.replace('"', "\"\""))
                             }
                             _ => v.to_string(),
