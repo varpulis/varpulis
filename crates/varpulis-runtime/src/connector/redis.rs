@@ -1,5 +1,7 @@
 //! Redis connector
 
+#[cfg(feature = "redis")]
+use super::helpers::json_to_event;
 use super::types::{ConnectorError, SinkConnector, SourceConnector};
 use crate::event::Event;
 use async_trait::async_trait;
