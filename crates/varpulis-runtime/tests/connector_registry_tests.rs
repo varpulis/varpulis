@@ -13,9 +13,10 @@ use varpulis_runtime::connector::{
     ConnectorConfig, ConnectorError, ConnectorHealthReport, ConnectorRegistry, ConsoleSink,
     ConsoleSource, ElasticsearchConfig, ElasticsearchSink, HttpSink, KafkaConfig, KafkaSource,
     KinesisConfig, KinesisSink, ManagedConnectorRegistry, MqttConfig, MqttSink, MqttSource,
-    RedisConfig, RedisSink, RedisSource, RestApiConfig, RestApiSink, S3Config, S3Sink,
-    SinkConnector, SourceConnector,
+    RedisConfig, RestApiConfig, RestApiSink, S3Config, S3Sink, SinkConnector, SourceConnector,
 };
+#[cfg(not(feature = "redis"))]
+use varpulis_runtime::connector::{RedisSink, RedisSource};
 use varpulis_runtime::event::Event;
 
 // ==========================================================================
@@ -1181,6 +1182,7 @@ fn test_connector_health_report_clone() {
 // Stub source connectors: behavior tests
 // ==========================================================================
 
+#[cfg(not(feature = "redis"))]
 #[tokio::test]
 async fn test_redis_source_stub_is_not_running() {
     let config = RedisConfig::new("redis://localhost", "ch");
@@ -1241,6 +1243,7 @@ async fn test_database_sink_stub_construction() {
 // RedisSink stub
 // ==========================================================================
 
+#[cfg(not(feature = "redis"))]
 #[test]
 fn test_redis_sink_stub_name() {
     let config = RedisConfig::new("redis://localhost", "ch");

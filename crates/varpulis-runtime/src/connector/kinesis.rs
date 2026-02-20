@@ -355,10 +355,9 @@ mod kinesis_impl {
                         } else {
                             // Create event with raw data
                             let mut event = Event::new("KinesisRecord");
-                            event.data.insert(
-                                "data".into(),
-                                varpulis_core::Value::str(&json_str),
-                            );
+                            event
+                                .data
+                                .insert("data".into(), varpulis_core::Value::str(&json_str));
                             let partition_key = record.partition_key();
                             if !partition_key.is_empty() {
                                 event.data.insert(
