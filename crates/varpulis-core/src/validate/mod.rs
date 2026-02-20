@@ -6,7 +6,7 @@
 
 pub mod builtins;
 mod checks;
-mod scope;
+pub mod scope;
 mod suggest;
 
 use crate::ast::Program;
@@ -175,6 +175,22 @@ impl Validator {
 /// `source` is the original source text (used for formatting diagnostics).
 /// `program` is the parsed AST.
 pub fn validate(source: &str, program: &Program) -> ValidationResult {
+    let (diagnostics, _symbols) = validate_inner(source, program);
+    ValidationResult { diagnostics }
+}
+
+/// Validate a parsed VPL program and return both diagnostics and the symbol table.
+///
+/// This is used by the LSP for go-to-definition and find-references.
+pub fn validate_with_symbols(
+    source: &str,
+    program: &Program,
+) -> (ValidationResult, scope::SymbolTable) {
+    let (diagnostics, symbols) = validate_inner(source, program);
+    (ValidationResult { diagnostics }, symbols)
+}
+
+fn validate_inner(source: &str, program: &Program) -> (Vec<Diagnostic>, scope::SymbolTable) {
     let mut v = Validator::new(source);
 
     // Pass 1: collect declarations and detect duplicates
@@ -183,9 +199,7 @@ pub fn validate(source: &str, program: &Program) -> ValidationResult {
     // Pass 2: semantic checks
     checks::pass2_semantic(&mut v, program);
 
-    ValidationResult {
-        diagnostics: v.diagnostics,
-    }
+    (v.diagnostics, v.symbols)
 }
 
 #[cfg(test)]
