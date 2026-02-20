@@ -4,6 +4,7 @@ use crate::connector_config::{self, ClusterConnector};
 use crate::coordinator::{Coordinator, InjectBatchRequest, InjectEventRequest};
 use crate::migration::MigrationReason;
 use crate::pipeline_group::{PipelineGroupInfo, PipelineGroupSpec};
+use crate::rate_limit::{RateLimitRejection, RateLimiter};
 use crate::rbac::{RbacConfig, Role};
 use crate::routing::{
     GroupTopology, PipelineTopologyEntry, RouteTopologyEntry, TopologyInfo, TopologyRouteEntry,
@@ -43,9 +44,10 @@ pub fn cluster_routes_with_raft(
     coordinator: SharedCoordinator,
     rbac: Arc<RbacConfig>,
     raft: crate::raft::routes::SharedRaft,
+    rate_limiter: Option<Arc<RateLimiter>>,
 ) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
     let raft_routes = crate::raft::routes::raft_routes(raft, rbac.any_admin_key());
-    let cluster = cluster_routes(coordinator, rbac);
+    let cluster = cluster_routes(coordinator, rbac, rate_limiter);
     raft_routes.or(cluster)
 }
 
@@ -53,19 +55,52 @@ pub fn cluster_routes_with_raft(
 ///
 /// CORS is configured to allow any origin. In production, set `admin_key`
 /// and use a reverse proxy (e.g. nginx) to restrict origins.
+///
+/// When `rate_limiter` is `Some`, rate limiting is applied to all mutating
+/// (POST/PUT/DELETE) routes. Read-only GET routes are exempt.
 pub fn cluster_routes(
     coordinator: SharedCoordinator,
     rbac: Arc<RbacConfig>,
+    rate_limiter: Option<Arc<RateLimiter>>,
 ) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
     let api = warp::path("api")
         .and(warp::path("v1"))
         .and(warp::path("cluster"));
+
+    // Rate limit filter for mutating endpoints — extracts () or rejects with 429.
+    // When rate_limiter is None, this is a no-op that always allows requests.
+    let rate_limit_filter = {
+        let limiter = rate_limiter;
+        warp::addr::remote()
+            .and(warp::any().map(move || limiter.clone()))
+            .and_then(
+                |addr: Option<std::net::SocketAddr>, limiter: Option<Arc<RateLimiter>>| async move {
+                    if let Some(ref limiter) = limiter {
+                        let ip = addr
+                            .map(|a| a.ip())
+                            .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+                        match limiter.check(ip).await {
+                            crate::rate_limit::RateLimitResult::Allowed { .. } => Ok(()),
+                            crate::rate_limit::RateLimitResult::Limited { retry_after } => {
+                                Err(warp::reject::custom(RateLimitRejection {
+                                    retry_after_secs: retry_after.as_secs().max(1),
+                                }))
+                            }
+                        }
+                    } else {
+                        Ok(())
+                    }
+                },
+            )
+            .untuple_one()
+    };
 
     let register_worker = api
         .and(warp::path("workers"))
         .and(warp::path("register"))
         .and(warp::path::end())
         .and(warp::post())
+        .and(rate_limit_filter.clone())
         .and(with_rbac(rbac.clone(), Role::Operator))
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
@@ -78,6 +113,7 @@ pub fn cluster_routes(
         .and(warp::path("heartbeat"))
         .and(warp::path::end())
         .and(warp::post())
+        .and(rate_limit_filter.clone())
         .and(with_rbac(rbac.clone(), Role::Operator))
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
@@ -107,6 +143,7 @@ pub fn cluster_routes(
         .and(warp::path::param::<String>())
         .and(warp::path::end())
         .and(warp::delete())
+        .and(rate_limit_filter.clone())
         .and(with_rbac(rbac.clone(), Role::Admin))
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_delete_worker);
@@ -115,6 +152,7 @@ pub fn cluster_routes(
         .and(warp::path("pipeline-groups"))
         .and(warp::path::end())
         .and(warp::post())
+        .and(rate_limit_filter.clone())
         .and(with_rbac(rbac.clone(), Role::Operator))
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
@@ -144,6 +182,7 @@ pub fn cluster_routes(
         .and(warp::path::param::<String>())
         .and(warp::path::end())
         .and(warp::delete())
+        .and(rate_limit_filter.clone())
         .and(with_rbac(rbac.clone(), Role::Admin))
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_delete_group);
@@ -154,6 +193,7 @@ pub fn cluster_routes(
         .and(warp::path("inject"))
         .and(warp::path::end())
         .and(warp::post())
+        .and(rate_limit_filter.clone())
         .and(with_rbac(rbac.clone(), Role::Operator))
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
@@ -166,6 +206,7 @@ pub fn cluster_routes(
         .and(warp::path("inject-batch"))
         .and(warp::path::end())
         .and(warp::post())
+        .and(rate_limit_filter.clone())
         .and(with_rbac(rbac.clone(), Role::Operator))
         .and(warp::body::content_length_limit(LARGE_BODY_LIMIT))
         .and(warp::body::json())
@@ -184,6 +225,7 @@ pub fn cluster_routes(
         .and(warp::path("validate"))
         .and(warp::path::end())
         .and(warp::post())
+        .and(rate_limit_filter.clone())
         .and(with_rbac(rbac.clone(), Role::Viewer))
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
@@ -198,6 +240,7 @@ pub fn cluster_routes(
         .and(warp::path("drain"))
         .and(warp::path::end())
         .and(warp::post())
+        .and(rate_limit_filter.clone())
         .and(with_rbac(rbac.clone(), Role::Operator))
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
@@ -208,6 +251,7 @@ pub fn cluster_routes(
         .and(warp::path("rebalance"))
         .and(warp::path::end())
         .and(warp::post())
+        .and(rate_limit_filter.clone())
         .and(with_rbac(rbac.clone(), Role::Operator))
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_rebalance);
@@ -237,6 +281,7 @@ pub fn cluster_routes(
         .and(warp::path("migrate"))
         .and(warp::path::end())
         .and(warp::post())
+        .and(rate_limit_filter.clone())
         .and(with_rbac(rbac.clone(), Role::Operator))
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
@@ -267,6 +312,7 @@ pub fn cluster_routes(
         .and(warp::path("connectors"))
         .and(warp::path::end())
         .and(warp::post())
+        .and(rate_limit_filter.clone())
         .and(with_rbac(rbac.clone(), Role::Operator))
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
@@ -278,6 +324,7 @@ pub fn cluster_routes(
         .and(warp::path::param::<String>())
         .and(warp::path::end())
         .and(warp::put())
+        .and(rate_limit_filter.clone())
         .and(with_rbac(rbac.clone(), Role::Operator))
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
@@ -289,6 +336,7 @@ pub fn cluster_routes(
         .and(warp::path::param::<String>())
         .and(warp::path::end())
         .and(warp::delete())
+        .and(rate_limit_filter.clone())
         .and(with_rbac(rbac.clone(), Role::Admin))
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_delete_connector);
@@ -356,6 +404,7 @@ pub fn cluster_routes(
         .and(warp::path("models"))
         .and(warp::path::end())
         .and(warp::post())
+        .and(rate_limit_filter.clone())
         .and(with_rbac(rbac.clone(), Role::Operator))
         .and(warp::body::content_length_limit(LARGE_BODY_LIMIT))
         .and(warp::body::json())
@@ -367,6 +416,7 @@ pub fn cluster_routes(
         .and(warp::path::param::<String>())
         .and(warp::path::end())
         .and(warp::delete())
+        .and(rate_limit_filter.clone())
         .and(with_rbac(rbac.clone(), Role::Admin))
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_delete_model);
@@ -387,6 +437,7 @@ pub fn cluster_routes(
         .and(warp::path("chat"))
         .and(warp::path::end())
         .and(warp::post())
+        .and(rate_limit_filter.clone())
         .and(with_rbac(rbac.clone(), Role::Viewer))
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
@@ -407,6 +458,7 @@ pub fn cluster_routes(
         .and(warp::path("config"))
         .and(warp::path::end())
         .and(warp::put())
+        .and(rate_limit_filter)
         .and(with_rbac(rbac, Role::Operator))
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
@@ -2387,7 +2439,20 @@ fn cluster_error_response(err: ClusterError) -> warp::reply::Response {
 
 /// Handle warp rejections with specific HTTP status codes and messages.
 pub async fn handle_rejection(err: Rejection) -> Result<impl Reply, Infallible> {
-    if err.find::<Unauthorized>().is_some() {
+    if let Some(r) = err.find::<RateLimitRejection>() {
+        tracing::warn!("Rate limit exceeded (retry after {}s)", r.retry_after_secs);
+        let body = serde_json::json!({
+            "error": "rate_limited",
+            "message": "Too many requests",
+            "retry_after_seconds": r.retry_after_secs,
+        });
+        Ok(warp::reply::with_header(
+            warp::reply::with_status(warp::reply::json(&body), StatusCode::TOO_MANY_REQUESTS),
+            "retry-after",
+            r.retry_after_secs.to_string(),
+        )
+        .into_response())
+    } else if err.find::<Unauthorized>().is_some() {
         tracing::warn!("Authentication failed: invalid or missing API key");
         Ok(error_response(
             StatusCode::UNAUTHORIZED,
@@ -2455,6 +2520,7 @@ mod tests {
         let routes = cluster_routes(
             coord.clone(),
             Arc::new(RbacConfig::single_key("admin-key".to_string())),
+            None,
         );
         (coord, routes)
     }
@@ -2705,7 +2771,7 @@ mod tests {
         // When RBAC is disabled, no auth required
         let coord = shared_coordinator();
 
-        let routes = cluster_routes(coord.clone(), Arc::new(RbacConfig::disabled()));
+        let routes = cluster_routes(coord.clone(), Arc::new(RbacConfig::disabled()), None);
 
         // Register without API key
         let resp = warp::test::request()
@@ -3120,7 +3186,7 @@ mod tests {
     async fn test_rbac_viewer_can_read() {
         let coord = shared_coordinator();
 
-        let routes = cluster_routes(coord, rbac_viewer());
+        let routes = cluster_routes(coord, rbac_viewer(), None);
 
         // Viewer can list workers (GET)
         let resp = warp::test::request()
@@ -3136,7 +3202,7 @@ mod tests {
     async fn test_rbac_viewer_cannot_deploy() {
         let coord = shared_coordinator();
 
-        let routes = cluster_routes(coord, rbac_viewer()).recover(handle_rejection);
+        let routes = cluster_routes(coord, rbac_viewer(), None).recover(handle_rejection);
 
         // Viewer cannot deploy (POST = Operator required)
         let resp = warp::test::request()
@@ -3163,7 +3229,7 @@ mod tests {
         let rbac = Arc::new(RbacConfig::multi_key(keys));
         let coord = shared_coordinator();
 
-        let routes = cluster_routes(coord, rbac).recover(handle_rejection);
+        let routes = cluster_routes(coord, rbac, None).recover(handle_rejection);
 
         // Operator cannot delete workers (DELETE = Admin required)
         let resp = warp::test::request()
@@ -3196,7 +3262,7 @@ mod tests {
         let rbac = Arc::new(RbacConfig::multi_key(keys));
         let coord = shared_coordinator();
 
-        let routes = cluster_routes(coord, rbac).recover(handle_rejection);
+        let routes = cluster_routes(coord, rbac, None).recover(handle_rejection);
 
         // Admin can delete (Admin required)
         let resp = warp::test::request()
@@ -3224,5 +3290,227 @@ mod tests {
             .reply(&routes)
             .await;
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // =========================================================================
+    // Rate limiting tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_rate_limit_returns_429() {
+        use crate::rate_limit::{RateLimitConfig, RateLimiter};
+
+        // Allow burst of 2 requests, then rate limit
+        let limiter = Arc::new(RateLimiter::new(RateLimitConfig::with_burst(10, 2)));
+
+        let coord = shared_coordinator();
+        let routes = cluster_routes(
+            coord,
+            Arc::new(RbacConfig::single_key("admin-key".to_string())),
+            Some(limiter),
+        )
+        .recover(handle_rejection);
+
+        // First 2 requests should succeed (burst)
+        for _ in 0..2 {
+            let resp = warp::test::request()
+                .method("POST")
+                .path("/api/v1/cluster/workers/register")
+                .header("x-api-key", "admin-key")
+                .json(&serde_json::json!({
+                    "worker_id": "w1",
+                    "address": "http://localhost:9000",
+                    "api_key": "key",
+                    "capacity": {
+                        "cpu_cores": 4,
+                        "memory_mb": 8192,
+                        "max_pipelines": 10,
+                        "pipelines_running": 0
+                    }
+                }))
+                .reply(&routes)
+                .await;
+            assert!(
+                resp.status().is_success() || resp.status() == StatusCode::CREATED,
+                "Expected success, got {}",
+                resp.status()
+            );
+        }
+
+        // 3rd request should get 429 Too Many Requests
+        let resp = warp::test::request()
+            .method("POST")
+            .path("/api/v1/cluster/workers/register")
+            .header("x-api-key", "admin-key")
+            .json(&serde_json::json!({
+                "worker_id": "w2",
+                "address": "http://localhost:9001",
+                "api_key": "key",
+                "capacity": {
+                    "cpu_cores": 4,
+                    "memory_mb": 8192,
+                    "max_pipelines": 10,
+                    "pipelines_running": 0
+                }
+            }))
+            .reply(&routes)
+            .await;
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        // Verify JSON body
+        let body: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body["error"], "rate_limited");
+        assert_eq!(body["message"], "Too many requests");
+        assert!(body["retry_after_seconds"].is_number());
+
+        // Verify Retry-After header
+        let retry_after = resp.headers().get("retry-after");
+        assert!(retry_after.is_some(), "Expected Retry-After header");
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit_does_not_affect_get_routes() {
+        use crate::rate_limit::{RateLimitConfig, RateLimiter};
+
+        // Very restrictive: 1 request burst
+        let limiter = Arc::new(RateLimiter::new(RateLimitConfig::with_burst(1, 1)));
+
+        let coord = shared_coordinator();
+        let routes = cluster_routes(
+            coord,
+            Arc::new(RbacConfig::single_key("admin-key".to_string())),
+            Some(limiter),
+        )
+        .recover(handle_rejection);
+
+        // Exhaust the rate limit with a POST
+        let resp = warp::test::request()
+            .method("POST")
+            .path("/api/v1/cluster/workers/register")
+            .header("x-api-key", "admin-key")
+            .json(&serde_json::json!({
+                "worker_id": "w1",
+                "address": "http://localhost:9000",
+                "api_key": "key",
+                "capacity": {
+                    "cpu_cores": 4,
+                    "memory_mb": 8192,
+                    "max_pipelines": 10,
+                    "pipelines_running": 0
+                }
+            }))
+            .reply(&routes)
+            .await;
+        assert!(resp.status().is_success() || resp.status() == StatusCode::CREATED);
+
+        // Verify POST is now rate limited
+        let resp = warp::test::request()
+            .method("POST")
+            .path("/api/v1/cluster/workers/register")
+            .header("x-api-key", "admin-key")
+            .json(&serde_json::json!({
+                "worker_id": "w2",
+                "address": "http://localhost:9001",
+                "api_key": "key",
+                "capacity": {
+                    "cpu_cores": 4,
+                    "memory_mb": 8192,
+                    "max_pipelines": 10,
+                    "pipelines_running": 0
+                }
+            }))
+            .reply(&routes)
+            .await;
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        // GET requests should still work (they are exempt from rate limiting)
+        let resp = warp::test::request()
+            .method("GET")
+            .path("/api/v1/cluster/workers")
+            .header("x-api-key", "admin-key")
+            .reply(&routes)
+            .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit_disabled_allows_all() {
+        use crate::rate_limit::{RateLimitConfig, RateLimiter};
+
+        // Disabled rate limiter
+        let limiter = Arc::new(RateLimiter::new(RateLimitConfig::disabled()));
+
+        let coord = shared_coordinator();
+        let routes = cluster_routes(
+            coord,
+            Arc::new(RbacConfig::single_key("admin-key".to_string())),
+            Some(limiter),
+        )
+        .recover(handle_rejection);
+
+        // Many POST requests should all succeed
+        for i in 0..10 {
+            let resp = warp::test::request()
+                .method("POST")
+                .path("/api/v1/cluster/workers/register")
+                .header("x-api-key", "admin-key")
+                .json(&serde_json::json!({
+                    "worker_id": format!("w{}", i),
+                    "address": format!("http://localhost:{}", 9000 + i),
+                    "api_key": "key",
+                    "capacity": {
+                        "cpu_cores": 4,
+                        "memory_mb": 8192,
+                        "max_pipelines": 10,
+                        "pipelines_running": 0
+                    }
+                }))
+                .reply(&routes)
+                .await;
+            assert!(
+                resp.status().is_success() || resp.status() == StatusCode::CREATED,
+                "Request {} failed with {}",
+                i,
+                resp.status()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit_none_allows_all() {
+        let coord = shared_coordinator();
+        let routes = cluster_routes(
+            coord,
+            Arc::new(RbacConfig::single_key("admin-key".to_string())),
+            None, // No rate limiter
+        )
+        .recover(handle_rejection);
+
+        // Many POST requests should all succeed
+        for i in 0..10 {
+            let resp = warp::test::request()
+                .method("POST")
+                .path("/api/v1/cluster/workers/register")
+                .header("x-api-key", "admin-key")
+                .json(&serde_json::json!({
+                    "worker_id": format!("w{}", i),
+                    "address": format!("http://localhost:{}", 9000 + i),
+                    "api_key": "key",
+                    "capacity": {
+                        "cpu_cores": 4,
+                        "memory_mb": 8192,
+                        "max_pipelines": 10,
+                        "pipelines_running": 0
+                    }
+                }))
+                .reply(&routes)
+                .await;
+            assert!(
+                resp.status().is_success() || resp.status() == StatusCode::CREATED,
+                "Request {} failed with {}",
+                i,
+                resp.status()
+            );
+        }
     }
 }
