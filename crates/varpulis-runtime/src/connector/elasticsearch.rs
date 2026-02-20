@@ -183,10 +183,8 @@ mod elasticsearch_impl {
 
             // Add authentication if configured
             if let Some(ref api_key) = config.api_key {
-                builder = builder.auth(Credentials::ApiKey(
-                    api_key.expose().to_string().into(),
-                    "".into(),
-                ));
+                builder =
+                    builder.auth(Credentials::ApiKey(api_key.expose().to_string(), "".into()));
             } else if let (Some(ref username), Some(ref password)) =
                 (&config.username, &config.password)
             {
