@@ -328,7 +328,7 @@ mod kinesis_impl {
                 .await
                 .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
 
-            let mut shard_iterator = iterator_result.shard_iterator().map(|s| s.to_string());
+            let mut shard_iterator = iterator_result.shard_iterator().map(String::from);
 
             while running.load(Ordering::SeqCst) {
                 let Some(ref iterator) = shard_iterator else {
@@ -357,7 +357,7 @@ mod kinesis_impl {
                             let mut event = Event::new("KinesisRecord");
                             event.data.insert(
                                 "data".into(),
-                                varpulis_core::Value::str(json_str.to_string()),
+                                varpulis_core::Value::str(&json_str),
                             );
                             let partition_key = record.partition_key();
                             if !partition_key.is_empty() {
@@ -376,7 +376,7 @@ mod kinesis_impl {
                 }
 
                 // Update iterator for next batch
-                shard_iterator = records_result.next_shard_iterator().map(|s| s.to_string());
+                shard_iterator = records_result.next_shard_iterator().map(String::from);
 
                 // Rate limit polling
                 tokio::time::sleep(Duration::from_millis(config.poll_interval_ms)).await;
