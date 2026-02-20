@@ -135,6 +135,7 @@ impl SinkConnector for ElasticsearchSink {
 mod elasticsearch_impl {
     use super::*;
     use elasticsearch::auth::Credentials;
+    use elasticsearch::http::request::JsonBody;
     use elasticsearch::http::transport::{SingleNodeConnectionPool, TransportBuilder};
     use elasticsearch::{BulkParts, Elasticsearch};
     use std::sync::Arc;
@@ -227,7 +228,7 @@ mod elasticsearch_impl {
             let operations = std::mem::take(&mut buffer.operations);
             let count = operations.len() / 2; // Each doc has action + source
 
-            let body: Vec<serde_json::Value> = operations;
+            let body: Vec<JsonBody<_>> = operations.into_iter().map(JsonBody::new).collect();
 
             let response = self
                 .client
