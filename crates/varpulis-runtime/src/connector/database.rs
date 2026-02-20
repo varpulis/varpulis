@@ -1,5 +1,7 @@
 //! Database connector (PostgreSQL/MySQL/SQLite with sqlx)
 
+#[cfg(feature = "database")]
+use super::helpers::json_to_value;
 use super::types::{ConnectorError, SinkConnector, SourceConnector};
 use crate::event::Event;
 use async_trait::async_trait;
@@ -138,7 +140,7 @@ mod database_impl {
                                         if let Some(obj) = json.as_object() {
                                             for (key, value) in obj {
                                                 if let Some(v) = json_to_value(value) {
-                                                    event = event.with_field(key, v);
+                                                    event = event.with_field(key.as_str(), v);
                                                 }
                                             }
                                         }
