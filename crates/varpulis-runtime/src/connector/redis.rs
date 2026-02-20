@@ -37,7 +37,7 @@ mod redis_impl {
     use redis::AsyncCommands;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
-    use tracing::{error, info, warn};
+    use tracing::{info, warn};
 
     /// Redis source that subscribes to a channel
     pub struct RedisSource {

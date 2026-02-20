@@ -4,9 +4,13 @@ use super::console::ConsoleSink;
 use super::database::{DatabaseConfig, DatabaseSink};
 use super::http::HttpSink;
 use super::kafka::{KafkaConfig, KafkaSink};
-use super::kinesis::{KinesisConfig, KinesisSink};
+use super::kinesis::KinesisConfig;
+#[cfg(not(feature = "kinesis"))]
+use super::kinesis::KinesisSink;
 use super::mqtt::{MqttConfig, MqttSink};
-use super::redis::{RedisConfig, RedisSink};
+use super::redis::RedisConfig;
+#[cfg(not(feature = "redis"))]
+use super::redis::RedisSink;
 use super::rest_api::{RestApiConfig, RestApiSink};
 use super::types::{ConnectorConfig, ConnectorError, SinkConnector, SourceConnector};
 use indexmap::IndexMap;
@@ -24,7 +28,9 @@ use super::s3::S3Config;
 #[cfg(feature = "elasticsearch")]
 use super::elasticsearch::ElasticsearchSinkFull;
 
+#[cfg(not(feature = "elasticsearch"))]
 use super::elasticsearch::ElasticsearchSink;
+#[cfg(not(feature = "s3"))]
 use super::s3::S3Sink;
 
 /// Registry of available connectors

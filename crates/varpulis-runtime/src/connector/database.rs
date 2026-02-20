@@ -114,7 +114,7 @@ mod database_impl {
             tokio::spawn(async move {
                 info!("Database source {} started, polling table {}", name, table);
 
-                while let Ok(_) = tx.reserve().await {
+                while tx.reserve().await.is_ok() {
                     let query = format!(
                         "SELECT * FROM {} WHERE id > {} ORDER BY id LIMIT 100",
                         table, last_id
