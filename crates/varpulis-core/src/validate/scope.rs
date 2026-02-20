@@ -68,6 +68,12 @@ pub struct SymbolTable {
     pub types: HashMap<String, TypeInfo>,
 }
 
+impl Default for SymbolTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SymbolTable {
     pub fn new() -> Self {
         Self {

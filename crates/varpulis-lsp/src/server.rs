@@ -8,6 +8,7 @@ use tower_lsp::{Client, LanguageServer};
 use crate::completion::get_completions;
 use crate::diagnostics::get_diagnostics;
 use crate::hover::get_hover;
+use crate::navigation;
 use crate::semantic::{get_semantic_tokens, SEMANTIC_TOKEN_LEGEND};
 
 /// Document state stored by the server
@@ -164,16 +165,24 @@ impl LanguageServer for Backend {
         &self,
         params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
-        let _uri = &params.text_document_position_params.text_document.uri;
-        let _position = params.text_document_position_params.position;
+        let uri = &params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
 
-        // TODO: Implement go-to-definition by building a symbol table
-        // This requires parsing the AST and tracking where symbols are defined
+        if let Some(doc) = self.documents.get(uri) {
+            if let Some(location) = navigation::get_definition(&doc.text, position, uri) {
+                return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+            }
+        }
         Ok(None)
     }
 
-    async fn references(&self, _params: ReferenceParams) -> Result<Option<Vec<Location>>> {
-        // TODO: Implement find references
+    async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
+        let uri = &params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+
+        if let Some(doc) = self.documents.get(uri) {
+            return Ok(navigation::get_references(&doc.text, position, uri));
+        }
         Ok(None)
     }
 

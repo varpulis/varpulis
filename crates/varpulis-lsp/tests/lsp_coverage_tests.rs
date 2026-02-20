@@ -1049,3 +1049,215 @@ fn semantic_legend_struct() {
     assert!(!SEMANTIC_TOKEN_LEGEND.token_types.is_empty());
     assert!(SEMANTIC_TOKEN_LEGEND.token_modifiers.is_empty());
 }
+
+// ===========================================================================
+// 6. NAVIGATION: GO-TO-DEFINITION (target: navigation.rs)
+// ===========================================================================
+
+fn test_uri() -> Url {
+    Url::parse("file:///test.vpl").unwrap()
+}
+
+#[test]
+fn goto_definition_event_type() {
+    // Cursor on "Trade" in the stream source should jump to `event Trade`
+    let code = "event Trade:\n    price: float\n\nstream Filtered = Trade\n    .where(price > 100)\n    .emit()";
+    // "Trade" in "stream Filtered = Trade" is on line 3, col 18
+    let loc = varpulis_lsp::navigation::get_definition(code, pos(3, 18), &test_uri());
+    assert!(loc.is_some(), "should find definition for event Trade");
+    let loc = loc.unwrap();
+    // Definition should point to line 0 (where `event Trade:` is)
+    assert_eq!(loc.range.start.line, 0, "event Trade is on line 0");
+}
+
+#[test]
+fn goto_definition_stream_name() {
+    // Cursor on "SensorData" used as source in another stream
+    let code = "event Sensor:\n    temp: int\n\nstream SensorData = Sensor\n    .emit()\n\nstream Alerts = SensorData\n    .where(temp > 100)\n    .emit()";
+    // "SensorData" in "stream Alerts = SensorData" is on line 6, col 16
+    let loc = varpulis_lsp::navigation::get_definition(code, pos(6, 16), &test_uri());
+    assert!(
+        loc.is_some(),
+        "should find definition for stream SensorData"
+    );
+    let loc = loc.unwrap();
+    // "stream SensorData = ..." is on line 3
+    assert_eq!(loc.range.start.line, 3, "stream SensorData is on line 3");
+}
+
+#[test]
+fn goto_definition_connector() {
+    let code = "connector MyMqtt = mqtt(url: \"localhost\")\n\nevent Sensor:\n    temp: int\n\nstream S = Sensor\n    .to(MyMqtt, topic: \"out\")";
+    // "MyMqtt" in ".to(MyMqtt, ...)" is on line 6
+    let loc = varpulis_lsp::navigation::get_definition(code, pos(6, 8), &test_uri());
+    assert!(loc.is_some(), "should find definition for connector MyMqtt");
+    let loc = loc.unwrap();
+    assert_eq!(loc.range.start.line, 0, "connector MyMqtt is on line 0");
+}
+
+#[test]
+fn goto_definition_function() {
+    let code = "fn double(x: int) -> int:\n    return x * 2\n\nlet result = double(5)";
+    // "double" in "let result = double(5)" is on line 3, col 13
+    let loc = varpulis_lsp::navigation::get_definition(code, pos(3, 13), &test_uri());
+    assert!(loc.is_some(), "should find definition for function double");
+    let loc = loc.unwrap();
+    assert_eq!(loc.range.start.line, 0, "fn double is on line 0");
+}
+
+#[test]
+fn goto_definition_variable() {
+    let code = "let threshold = 25\nlet x = threshold";
+    // "threshold" on line 1, col 8
+    let loc = varpulis_lsp::navigation::get_definition(code, pos(1, 8), &test_uri());
+    assert!(
+        loc.is_some(),
+        "should find definition for variable threshold"
+    );
+    let loc = loc.unwrap();
+    assert_eq!(loc.range.start.line, 0, "let threshold is on line 0");
+}
+
+#[test]
+fn goto_definition_unknown_returns_none() {
+    let code = "event Trade:\n    price: float";
+    // "price" is a field, not a symbol; or put cursor on unknown word
+    let loc = varpulis_lsp::navigation::get_definition(code, pos(0, 6), &test_uri());
+    // "Trade" IS defined, so that finds it. Let's try an unknown word.
+    let code2 = "let x = unknown_symbol";
+    let loc2 = varpulis_lsp::navigation::get_definition(code2, pos(0, 10), &test_uri());
+    assert!(loc2.is_none(), "unknown symbol should return None");
+    let _ = loc; // suppress unused warning
+}
+
+#[test]
+fn goto_definition_on_definition_itself() {
+    // Cursor on the name in the declaration itself should still find it
+    let code = "event Trade:\n    price: float";
+    let loc = varpulis_lsp::navigation::get_definition(code, pos(0, 7), &test_uri());
+    assert!(
+        loc.is_some(),
+        "definition should resolve even at declaration site"
+    );
+}
+
+#[test]
+fn goto_definition_pattern_event_ref() {
+    // Cursor on "Warning" in a pattern should jump to the event declaration
+    let code = "event Warning:\n    level: int\n\nevent Error:\n    msg: str\n\npattern Alert = SEQ(Warning, Error) within 5m";
+    // "Warning" in SEQ on line 6, col 20
+    let loc = varpulis_lsp::navigation::get_definition(code, pos(6, 20), &test_uri());
+    assert!(
+        loc.is_some(),
+        "should find definition for Warning event in pattern"
+    );
+    let loc = loc.unwrap();
+    assert_eq!(loc.range.start.line, 0, "event Warning is on line 0");
+}
+
+#[test]
+fn goto_definition_empty_document() {
+    let code = "";
+    let loc = varpulis_lsp::navigation::get_definition(code, pos(0, 0), &test_uri());
+    assert!(loc.is_none(), "empty document should return None");
+}
+
+#[test]
+fn goto_definition_parse_error_returns_none() {
+    let code = "stream x = y.where(";
+    let loc = varpulis_lsp::navigation::get_definition(code, pos(0, 0), &test_uri());
+    assert!(loc.is_none(), "parse errors should return None gracefully");
+}
+
+// ===========================================================================
+// 7. NAVIGATION: FIND REFERENCES (target: navigation.rs)
+// ===========================================================================
+
+#[test]
+fn references_event_type_in_stream_source() {
+    let code = "event Trade:\n    price: float\n\nstream Filtered = Trade\n    .where(price > 100)\n    .emit()";
+    // Cursor on "Trade" in "event Trade:" (line 0, col 6)
+    let refs = varpulis_lsp::navigation::get_references(code, pos(0, 6), &test_uri());
+    assert!(refs.is_some(), "should find references for Trade");
+    let refs = refs.unwrap();
+    // Should have at least 2: the definition + the use in stream source
+    assert!(
+        refs.len() >= 2,
+        "expected at least 2 references for Trade, got {}",
+        refs.len()
+    );
+}
+
+#[test]
+fn references_connector_in_to() {
+    let code = "connector MyMqtt = mqtt(url: \"localhost\")\n\nevent Sensor:\n    temp: int\n\nstream S = Sensor\n    .to(MyMqtt, topic: \"out\")";
+    // Cursor on "MyMqtt" in connector declaration
+    let refs = varpulis_lsp::navigation::get_references(code, pos(0, 10), &test_uri());
+    assert!(refs.is_some(), "should find references for MyMqtt");
+    let refs = refs.unwrap();
+    assert!(
+        refs.len() >= 2,
+        "expected at least 2 references for MyMqtt, got {}",
+        refs.len()
+    );
+}
+
+#[test]
+fn references_stream_used_as_source() {
+    let code = "event Sensor:\n    temp: int\n\nstream SensorData = Sensor\n    .emit()\n\nstream Alerts = SensorData\n    .where(temp > 100)\n    .emit()";
+    // Cursor on "SensorData" in its declaration (line 3, col 7)
+    let refs = varpulis_lsp::navigation::get_references(code, pos(3, 7), &test_uri());
+    assert!(refs.is_some(), "should find references for SensorData");
+    let refs = refs.unwrap();
+    assert!(
+        refs.len() >= 2,
+        "expected at least 2 references for SensorData (definition + use), got {}",
+        refs.len()
+    );
+}
+
+#[test]
+fn references_unknown_symbol_returns_none() {
+    let code = "let x = totally_unknown";
+    let refs = varpulis_lsp::navigation::get_references(code, pos(0, 10), &test_uri());
+    assert!(
+        refs.is_none(),
+        "unknown symbol should return None for references"
+    );
+}
+
+#[test]
+fn references_empty_document() {
+    let code = "";
+    let refs = varpulis_lsp::navigation::get_references(code, pos(0, 0), &test_uri());
+    assert!(refs.is_none(), "empty document should return None");
+}
+
+#[test]
+fn references_event_in_pattern() {
+    let code = "event Warning:\n    level: int\n\nevent Error:\n    msg: str\n\npattern Alert = SEQ(Warning, Error) within 5m";
+    // Cursor on "Warning" in event declaration (line 0, col 6)
+    let refs = varpulis_lsp::navigation::get_references(code, pos(0, 6), &test_uri());
+    assert!(refs.is_some(), "should find references for Warning");
+    let refs = refs.unwrap();
+    // Should include: declaration + pattern usage
+    assert!(
+        refs.len() >= 2,
+        "expected at least 2 references for Warning, got {}",
+        refs.len()
+    );
+}
+
+#[test]
+fn references_event_in_followed_by() {
+    let code = "event A:\n    val: int\n\nevent B:\n    val: int\n\nstream S = A as a -> B as b .within(5m)\n    .emit()";
+    // Cursor on "B" in "-> B as b"
+    let refs = varpulis_lsp::navigation::get_references(code, pos(6, 21), &test_uri());
+    assert!(refs.is_some(), "should find references for event B");
+    let refs = refs.unwrap();
+    assert!(
+        refs.len() >= 2,
+        "expected at least 2 references for B (declaration + followed_by), got {}",
+        refs.len()
+    );
+}
