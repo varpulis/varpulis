@@ -43,6 +43,7 @@ pub mod nats_worker;
 pub mod pipeline_group;
 #[cfg(feature = "raft")]
 pub mod raft;
+pub mod rate_limit;
 pub mod rbac;
 pub mod routing;
 pub mod worker;

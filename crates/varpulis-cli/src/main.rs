@@ -425,6 +425,12 @@ enum Commands {
         /// and command dispatch instead of HTTP/WebSocket.
         #[arg(long, env = "VARPULIS_NATS")]
         nats: Option<String>,
+
+        /// Rate limit in requests per second per client (0 = disabled).
+        /// Applies to mutating API endpoints (POST/PUT/DELETE). Read-only GET
+        /// endpoints and health/readiness probes are exempt.
+        #[arg(long, env = "VARPULIS_COORDINATOR_RATE_LIMIT", default_value = "0")]
+        rate_limit: u32,
     },
 }
 
@@ -867,6 +873,7 @@ async fn main() -> Result<()> {
             tls_key,
             tls_ca_cert,
             nats,
+            rate_limit,
         } => {
             let scaling_policy = if scaling_min_workers > 0 {
                 Some(varpulis_cluster::ScalingPolicy {
@@ -923,6 +930,7 @@ async fn main() -> Result<()> {
                 coordinator_tls,
                 tls_ca_cert,
                 nats,
+                rate_limit,
             )
             .await?;
         }
@@ -2484,6 +2492,7 @@ async fn run_coordinator(
     tls_config: Option<(PathBuf, PathBuf)>,
     _tls_ca_cert: Option<PathBuf>,
     nats_url: Option<String>,
+    rate_limit_rps: u32,
 ) -> Result<()> {
     let tls_enabled = tls_config.is_some();
     let http_protocol = if tls_enabled { "https" } else { "http" };
@@ -2530,6 +2539,19 @@ async fn run_coordinator(
         let id = _coordinator_id.as_deref().unwrap_or("unknown");
         println!("HA:        enabled (id={})", id);
     }
+
+    // Build rate limiter for API routes
+    let coordinator_rate_limiter = if rate_limit_rps > 0 {
+        println!(
+            "Rate limit: {} req/s per client (mutating endpoints)",
+            rate_limit_rps
+        );
+        Some(Arc::new(varpulis_cluster::rate_limit::RateLimiter::new(
+            varpulis_cluster::rate_limit::RateLimitConfig::new(rate_limit_rps),
+        )))
+    } else {
+        None
+    };
 
     // -----------------------------------------------------------------------
     // Raft consensus bootstrap (when feature enabled + --raft flag set)
@@ -2922,8 +2944,12 @@ async fn run_coordinator(
     #[cfg(feature = "raft")]
     {
         if let Some(ref rh) = raft_handle {
-            let api_routes =
-                varpulis_cluster::api::cluster_routes_with_raft(coordinator, rbac, rh.raft.clone());
+            let api_routes = varpulis_cluster::api::cluster_routes_with_raft(
+                coordinator,
+                rbac,
+                rh.raft.clone(),
+                coordinator_rate_limiter,
+            );
             let routes = health_route
                 .or(ready_route)
                 .or(metrics_route)
@@ -2931,7 +2957,8 @@ async fn run_coordinator(
                 .recover(varpulis_cluster::api::handle_rejection);
             serve_coordinator!(routes, shutdown_rx);
         } else {
-            let api_routes = varpulis_cluster::cluster_routes(coordinator, rbac);
+            let api_routes =
+                varpulis_cluster::cluster_routes(coordinator, rbac, coordinator_rate_limiter);
             let routes = health_route
                 .or(ready_route)
                 .or(metrics_route)
@@ -2943,7 +2970,8 @@ async fn run_coordinator(
 
     #[cfg(not(feature = "raft"))]
     {
-        let api_routes = varpulis_cluster::cluster_routes(coordinator, rbac);
+        let api_routes =
+            varpulis_cluster::cluster_routes(coordinator, rbac, coordinator_rate_limiter);
         let routes = health_route
             .or(ready_route)
             .or(metrics_route)
