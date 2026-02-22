@@ -61,7 +61,7 @@
 
   <!-- Bidirectional arrow -->
   <line x1="497" y1="130" x2="525" y2="130" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-  <line x1="525" y1="124" x2="497" y2="124" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead-left)"/>
+  <line x1="525" y1="124" x2="497" y2="124" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
 
   <rect x="527" y="112" width="90" height="36" rx="6" ry="6" fill="#FFF3E0" stroke="#424242" stroke-width="1.5"/>
   <text x="572" y="134" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#212121">Workers</text>
