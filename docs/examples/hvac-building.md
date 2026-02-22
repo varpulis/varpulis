@@ -22,55 +22,11 @@ A smart building equipped with IoT sensors to monitor:
 
 ## Building Architecture
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                    ALPHA BUILDING                        │
-├─────────────────────────────────────────────────────────┤
-│                                                         │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐     │
-│  │   Zone A    │  │   Zone B    │  │   Zone C    │     │
-│  │  (Offices)  │  │(Server Room)│  │ (Reception) │     │
-│  │             │  │             │  │             │     │
-│  │ T: 21-23°C  │  │ T: 18-20°C  │  │ T: 20-24°C  │     │
-│  │ H: 40-60%   │  │ H: 45-55%   │  │ H: 40-60%   │     │
-│  └─────────────┘  └─────────────┘  └─────────────┘     │
-│         │                │                │             │
-│         └────────────────┼────────────────┘             │
-│                          │                              │
-│                   ┌──────▼──────┐                       │
-│                   │    HVAC     │                       │
-│                   │   Central   │                       │
-│                   └─────────────┘                       │
-└─────────────────────────────────────────────────────────┘
-```
+![Alpha Building HVAC layout](../images/examples/hvac-building-layout.svg)
 
 ## Alert Types
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      HVAC ALERTS                            │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  ENVIRONMENTAL                                              │
-│  ├── TEMPERATURE_ANOMALY    - Out of range temperature     │
-│  ├── SERVER_ROOM_CRITICAL   - Critical server room temp    │
-│  └── HUMIDITY_ANOMALY       - Out of range humidity        │
-│                                                             │
-│  EQUIPMENT                                                  │
-│  ├── HVAC_POWER_SPIKE       - Unusual power consumption    │
-│  ├── COMPRESSOR_DEGRADATION - Progressive wear detected    │
-│  ├── REFRIGERANT_LEAK       - Possible leak detected       │
-│  └── FAN_MOTOR_DEGRADATION  - Fan motor issues             │
-│                                                             │
-│  MAINTENANCE                                                │
-│  ├── MAINTENANCE_REMINDER   - Runtime-based reminder       │
-│  └── LOW_HEALTH_SCORE       - Overall health below 70%     │
-│                                                             │
-│  ENERGY                                                     │
-│  └── ENERGY_ANOMALY         - Unusual energy consumption   │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
-```
+![HVAC alert types hierarchy](../images/examples/hvac-alert-types.svg)
 
 ## Degradation Detection
 

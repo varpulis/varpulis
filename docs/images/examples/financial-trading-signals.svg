@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="750" height="500" viewBox="0 0 750 500">
+  <!-- Background -->
+  <rect width="750" height="500" fill="#FFFFFF"/>
+
+  <!-- Main container -->
+  <rect x="10" y="10" width="730" height="480" rx="6" ry="6" fill="none" stroke="#424242" stroke-width="1.5"/>
+
+  <!-- Header -->
+  <rect x="10" y="10" width="730" height="36" rx="6" ry="6" fill="#1A73E8"/>
+  <rect x="10" y="30" width="730" height="16" fill="#1A73E8"/>
+  <text x="375" y="34" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="15" font-weight="bold" fill="#FFFFFF" text-anchor="middle">TRADING SIGNALS</text>
+
+  <!-- TREND SIGNALS category -->
+  <rect x="30" y="60" width="150" height="30" rx="6" ry="6" fill="#1A73E8" stroke="#424242" stroke-width="1.5"/>
+  <text x="105" y="80" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" font-weight="bold" fill="#FFFFFF" text-anchor="middle">TREND SIGNALS</text>
+
+  <!-- Arrow lines from TREND -->
+  <line x1="180" y1="70" x2="230" y2="70" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <line x1="180" y1="82" x2="230" y2="100" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- GOLDEN_CROSS -->
+  <rect x="235" y="56" width="230" height="28" rx="6" ry="6" fill="#E8F5E9" stroke="#424242" stroke-width="1.5"/>
+  <text x="245" y="74" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">GOLDEN_CROSS (BUY)</text>
+  <text x="420" y="74" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">Bullish reversal</text>
+
+  <!-- DEATH_CROSS -->
+  <rect x="235" y="90" width="230" height="28" rx="6" ry="6" fill="#FCE4EC" stroke="#424242" stroke-width="1.5"/>
+  <text x="245" y="108" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">DEATH_CROSS (SELL)</text>
+  <text x="420" y="108" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">Bearish reversal</text>
+
+  <!-- MOMENTUM SIGNALS category -->
+  <rect x="30" y="140" width="150" height="30" rx="6" ry="6" fill="#1A73E8" stroke="#424242" stroke-width="1.5"/>
+  <text x="105" y="160" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" font-weight="bold" fill="#FFFFFF" text-anchor="middle">MOMENTUM SIGNALS</text>
+
+  <!-- Arrow lines from MOMENTUM -->
+  <line x1="180" y1="145" x2="230" y2="140" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <line x1="180" y1="152" x2="230" y2="172" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <line x1="180" y1="158" x2="230" y2="206" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <line x1="180" y1="165" x2="230" y2="240" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- RSI_OVERSOLD -->
+  <rect x="235" y="126" width="230" height="28" rx="6" ry="6" fill="#E8F5E9" stroke="#424242" stroke-width="1.5"/>
+  <text x="245" y="144" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">RSI_OVERSOLD (BUY)</text>
+  <text x="420" y="144" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">RSI &lt; 30</text>
+
+  <!-- RSI_OVERBOUGHT -->
+  <rect x="235" y="160" width="230" height="28" rx="6" ry="6" fill="#FCE4EC" stroke="#424242" stroke-width="1.5"/>
+  <text x="245" y="178" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">RSI_OVERBOUGHT (SELL)</text>
+  <text x="420" y="178" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">RSI &gt; 70</text>
+
+  <!-- MACD_BULLISH -->
+  <rect x="235" y="194" width="230" height="28" rx="6" ry="6" fill="#E8F5E9" stroke="#424242" stroke-width="1.5"/>
+  <text x="245" y="212" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">MACD_BULLISH (BUY)</text>
+  <text x="420" y="212" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">Above signal</text>
+
+  <!-- MACD_BEARISH -->
+  <rect x="235" y="228" width="230" height="28" rx="6" ry="6" fill="#FCE4EC" stroke="#424242" stroke-width="1.5"/>
+  <text x="245" y="246" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">MACD_BEARISH (SELL)</text>
+  <text x="420" y="246" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">Below signal</text>
+
+  <!-- VOLATILITY SIGNALS category -->
+  <rect x="30" y="280" width="150" height="30" rx="6" ry="6" fill="#1A73E8" stroke="#424242" stroke-width="1.5"/>
+  <text x="105" y="300" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" font-weight="bold" fill="#FFFFFF" text-anchor="middle">VOLATILITY SIGNALS</text>
+
+  <!-- Arrow lines from VOLATILITY -->
+  <line x1="180" y1="288" x2="230" y2="278" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <line x1="180" y1="295" x2="230" y2="312" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <line x1="180" y1="302" x2="230" y2="346" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- BB_SQUEEZE -->
+  <rect x="235" y="264" width="230" height="28" rx="6" ry="6" fill="#FFF3E0" stroke="#424242" stroke-width="1.5"/>
+  <text x="245" y="282" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">BB_SQUEEZE (WATCH)</text>
+  <text x="420" y="282" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">Low volatility</text>
+
+  <!-- BB_BREAKOUT_UP -->
+  <rect x="235" y="298" width="230" height="28" rx="6" ry="6" fill="#E8F5E9" stroke="#424242" stroke-width="1.5"/>
+  <text x="245" y="316" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">BB_BREAKOUT_UP (BUY)</text>
+  <text x="420" y="316" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">&gt; upper band</text>
+
+  <!-- BB_BREAKOUT_DOWN -->
+  <rect x="235" y="332" width="230" height="28" rx="6" ry="6" fill="#FCE4EC" stroke="#424242" stroke-width="1.5"/>
+  <text x="245" y="350" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">BB_BREAKOUT_DOWN (SELL)</text>
+  <text x="420" y="350" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">&lt; lower band</text>
+
+  <!-- CONFLUENCE SIGNALS category -->
+  <rect x="30" y="395" width="150" height="42" rx="6" ry="6" fill="#1A73E8" stroke="#424242" stroke-width="1.5"/>
+  <text x="105" y="413" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" font-weight="bold" fill="#FFFFFF" text-anchor="middle">CONFLUENCE</text>
+  <text x="105" y="428" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#FFFFFF" text-anchor="middle">(HIGH CONFIDENCE)</text>
+
+  <!-- Arrow lines from CONFLUENCE -->
+  <line x1="180" y1="410" x2="230" y2="400" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <line x1="180" y1="422" x2="230" y2="440" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- STRONG_BUY -->
+  <rect x="235" y="386" width="470" height="28" rx="6" ry="6" fill="#E8F5E9" stroke="#424242" stroke-width="2.5"/>
+  <text x="245" y="404" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">STRONG_BUY</text>
+  <text x="420" y="404" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">Multiple bullish indicators aligned</text>
+
+  <!-- STRONG_SELL -->
+  <rect x="235" y="426" width="470" height="28" rx="6" ry="6" fill="#FCE4EC" stroke="#424242" stroke-width="2.5"/>
+  <text x="245" y="444" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">STRONG_SELL</text>
+  <text x="420" y="444" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">Multiple bearish indicators aligned</text>
+
+  <!-- Legend -->
+  <rect x="520" y="60" width="14" height="14" rx="3" ry="3" fill="#E8F5E9" stroke="#424242" stroke-width="1"/>
+  <text x="540" y="71" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">BUY</text>
+  <rect x="580" y="60" width="14" height="14" rx="3" ry="3" fill="#FCE4EC" stroke="#424242" stroke-width="1"/>
+  <text x="600" y="71" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">SELL</text>
+  <rect x="640" y="60" width="14" height="14" rx="3" ry="3" fill="#FFF3E0" stroke="#424242" stroke-width="1"/>
+  <text x="660" y="71" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">WATCH</text>
+
+  <!-- Arrowhead marker -->
+  <defs>
+    <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#616161"/>
+    </marker>
+  </defs>
+</svg>

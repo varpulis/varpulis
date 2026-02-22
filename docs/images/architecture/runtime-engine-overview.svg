@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600">
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#616161"/>
+    </marker>
+    <marker id="arrowhead-dash" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#616161"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="800" height="600" fill="#FFFFFF"/>
+
+  <!-- Main container -->
+  <rect x="20" y="20" width="760" height="560" rx="6" ry="6" fill="none" stroke="#424242" stroke-width="1.5"/>
+
+  <!-- Container title bar -->
+  <rect x="20" y="20" width="760" height="36" rx="6" ry="6" fill="#1A73E8"/>
+  <rect x="20" y="40" width="760" height="16" fill="#1A73E8"/>
+  <text x="400" y="44" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="15" font-weight="bold" fill="#FFFFFF">Varpulis Runtime Engine</text>
+
+  <!-- Row 1: Compiler, Optimizer, Validator (y=70) -->
+  <rect x="80" y="70" width="140" height="60" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="150" y="96" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">Compiler</text>
+  <text x="150" y="112" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">(VPL Parser)</text>
+
+  <rect x="330" y="70" width="140" height="60" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="400" y="100" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">Optimizer</text>
+
+  <rect x="580" y="70" width="140" height="60" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="650" y="100" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">Validator</text>
+
+  <!-- Dashed arrows from Row 1 to Execution Graph bar -->
+  <line x1="150" y1="130" x2="150" y2="148" stroke="#616161" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arrowhead-dash)"/>
+  <line x1="400" y1="130" x2="400" y2="148" stroke="#616161" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arrowhead-dash)"/>
+  <line x1="650" y1="130" x2="650" y2="148" stroke="#616161" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arrowhead-dash)"/>
+
+  <!-- Execution Graph bar -->
+  <rect x="50" y="150" width="700" height="32" rx="6" ry="6" fill="#1A73E8" stroke="#424242" stroke-width="1.5"/>
+  <text x="400" y="171" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#FFFFFF">Execution Graph</text>
+
+  <!-- Row 2 (y=200): Ingestion, Pattern Matcher, State Mgmt -->
+  <rect x="80" y="200" width="140" height="60" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="150" y="226" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">Ingestion</text>
+  <text x="150" y="242" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">Layer</text>
+
+  <rect x="330" y="200" width="140" height="60" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="400" y="226" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">Pattern Matcher</text>
+  <text x="400" y="242" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">(SASE+)</text>
+
+  <rect x="580" y="200" width="140" height="60" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="650" y="226" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">State Mgmt</text>
+  <text x="650" y="242" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">(In-Memory)</text>
+
+  <!-- Flow arrows Row 2 left to right -->
+  <line x1="220" y1="230" x2="328" y2="230" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <line x1="470" y1="230" x2="578" y2="230" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- Row 3 (y=280): Aggregation, Hamlet, PST Forecast -->
+  <rect x="80" y="280" width="140" height="60" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="150" y="306" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">Aggregation</text>
+  <text x="150" y="322" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">Engine</text>
+
+  <rect x="330" y="280" width="140" height="60" rx="6" ry="6" fill="#FFF3E0" stroke="#424242" stroke-width="1.5"/>
+  <text x="400" y="306" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">Hamlet</text>
+  <text x="400" y="322" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">(Trend Agg)</text>
+
+  <rect x="580" y="280" width="140" height="60" rx="6" ry="6" fill="#FFF3E0" stroke="#424242" stroke-width="1.5"/>
+  <text x="650" y="300" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">PST Forecast</text>
+  <text x="650" y="318" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">(Pattern Markov</text>
+  <text x="650" y="332" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">Chain)</text>
+
+  <!-- Row 4 (y=360): Observability, Parallelism, Checkpoint -->
+  <rect x="80" y="360" width="140" height="60" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="150" y="386" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">Observability</text>
+  <text x="150" y="402" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">Layer</text>
+
+  <rect x="330" y="360" width="140" height="60" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="400" y="386" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">Parallelism</text>
+  <text x="400" y="402" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">Manager</text>
+
+  <rect x="580" y="360" width="140" height="60" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="650" y="386" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">Checkpoint</text>
+  <text x="650" y="402" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">Manager</text>
+
+  <!-- Row 5 (y=440): Context Orch, Multi-Tenant, LSP, MCP -->
+  <rect x="40" y="440" width="140" height="60" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="110" y="466" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">Context</text>
+  <text x="110" y="482" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">Orchestrator</text>
+
+  <rect x="220" y="440" width="160" height="60" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="300" y="466" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">Multi-Tenant Mgr</text>
+  <text x="300" y="482" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">(SaaS API)</text>
+
+  <rect x="420" y="440" width="140" height="60" rx="6" ry="6" fill="#E8F5E9" stroke="#424242" stroke-width="1.5"/>
+  <text x="490" y="466" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">LSP Server</text>
+
+  <rect x="600" y="440" width="140" height="60" rx="6" ry="6" fill="#E8F5E9" stroke="#424242" stroke-width="1.5"/>
+  <text x="670" y="466" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">MCP Server</text>
+
+  <!-- Bottom bar: Connectors -->
+  <rect x="40" y="520" width="720" height="44" rx="6" ry="6" fill="#1A73E8" stroke="#424242" stroke-width="1.5"/>
+  <text x="400" y="538" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" font-weight="bold" fill="#FFFFFF">Connectors</text>
+  <text x="400" y="554" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#FFFFFF">MQTT | Kafka | NATS | Redis | Database | Elasticsearch | Kinesis | S3 | HTTP | Console</text>
+</svg>

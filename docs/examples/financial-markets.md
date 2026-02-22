@@ -42,33 +42,7 @@ Real-time trading signal generation using classic technical indicators and SASE+
 
 ### Individual Signals
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    TRADING SIGNALS                          │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  TREND SIGNALS                                              │
-│  ├── GOLDEN_CROSS (BUY)   - Bullish trend reversal         │
-│  └── DEATH_CROSS (SELL)   - Bearish trend reversal         │
-│                                                             │
-│  MOMENTUM SIGNALS                                           │
-│  ├── RSI_OVERSOLD (BUY)   - RSI < 30                       │
-│  ├── RSI_OVERBOUGHT (SELL)- RSI > 70                       │
-│  ├── MACD_BULLISH (BUY)   - MACD crosses above signal      │
-│  └── MACD_BEARISH (SELL)  - MACD crosses below signal      │
-│                                                             │
-│  VOLATILITY SIGNALS                                         │
-│  ├── BB_SQUEEZE (WATCH)   - Low volatility, expect breakout│
-│  ├── BB_BREAKOUT_UP (BUY) - Price > upper band             │
-│  └── BB_BREAKOUT_DOWN (SELL) - Price < lower band          │
-│                                                             │
-│  CONFLUENCE SIGNALS (HIGH CONFIDENCE)                       │
-│  ├── STRONG_BUY           - Multiple bullish indicators    │
-│  └── STRONG_SELL          - Multiple bearish indicators    │
-│                                                             │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
-```
+![Trading signal types hierarchy](../images/examples/financial-trading-signals.svg)
 
 ### Confluence Signals
 
@@ -88,43 +62,7 @@ The most powerful signals come from **indicator confluence** - when multiple ind
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    DATA SOURCES                             │
-├─────────────────────────────────────────────────────────────┤
-│  Exchange APIs    │   Market Data Feeds   │   Historical   │
-│  (Binance, Kraken)│   (Bloomberg, Reuters)│   (Backfill)   │
-└────────┬──────────┴──────────┬────────────┴───────┬────────┘
-         │                     │                    │
-         └──────────────────┬──┴────────────────────┘
-                            │
-                    ┌───────▼───────┐
-                    │    Varpulis   │
-                    │  CEP Engine   │
-                    └───────┬───────┘
-                            │
-         ┌──────────────────┼──────────────────┐
-         │                  │                  │
-    ┌────▼────┐       ┌─────▼────┐
-    │Indicator│       │ Pattern  │
-    │ Streams │       │ Matcher  │
-    │(SMA,RSI)│       │(Crosses) │
-    └────┬────┘       └─────┬────┘
-         │                  │                  │
-         └──────────────────┼──────────────────┘
-                            │
-                    ┌───────▼───────┐
-                    │    Signals    │
-                    │   Aggregator  │
-                    └───────┬───────┘
-                            │
-         ┌──────────────────┼──────────────────┐
-         │                  │                  │
-    ┌────▼────┐       ┌─────▼────┐      ┌─────▼────┐
-    │  Kafka  │       │ Webhook  │      │Dashboard │
-    │ Topic   │       │Trading Bot│      │  Alerts │
-    └─────────┘       └──────────┘      └──────────┘
-```
+![Financial data flow architecture](../images/examples/financial-data-flow.svg)
 
 ## Example Output
 
