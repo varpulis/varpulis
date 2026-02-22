@@ -58,13 +58,15 @@ pub fn parse(source: &str) -> ParseResult<Program> {
 }
 
 /// Maximum bracket nesting depth allowed before pest parsing.
-/// Pest's recursive descent uses ~14 stack frames per nesting level,
-/// so 64 levels is a safe limit to prevent stack overflow.
-const MAX_NESTING_DEPTH: usize = 64;
+/// PEG recursive descent can cause exponential backtracking when unmatched
+/// brackets create ambiguity between array_literal, index_access, and
+/// slice_access rules.  24 levels is very generous for real VPL programs
+/// (typical nesting is 3-6 levels) while preventing pathological inputs.
+const MAX_NESTING_DEPTH: usize = 24;
 
 /// O(n) pre-scan that rejects inputs with bracket nesting deeper than
 /// `MAX_NESTING_DEPTH`. Respects string literals and comments so that
-/// brackets inside `"..."`, `'...'`, `// ...`, or `/* ... */` are ignored.
+/// brackets inside `"..."`, `# ...`, or `/* ... */` are ignored.
 fn check_nesting_depth(source: &str) -> ParseResult<()> {
     let mut depth: usize = 0;
     let mut max_depth: usize = 0;
@@ -93,26 +95,9 @@ fn check_nesting_depth(source: &str) -> ParseResult<()> {
             continue;
         }
 
-        // Skip single-quoted strings
-        if b == b'\'' {
+        // Skip VPL line comments (# to end of line)
+        if b == b'#' {
             i += 1;
-            while i < len {
-                if bytes[i] == b'\\' {
-                    i += 2;
-                    continue;
-                }
-                if bytes[i] == b'\'' {
-                    i += 1;
-                    break;
-                }
-                i += 1;
-            }
-            continue;
-        }
-
-        // Skip line comments
-        if b == b'/' && i + 1 < len && bytes[i + 1] == b'/' {
-            i += 2;
             while i < len && bytes[i] != b'\n' {
                 i += 1;
             }
@@ -3114,5 +3099,86 @@ stream S = timer(1s).process(do_work())"#,
             }
         }
         panic!("No Score op found");
+    }
+
+    // Regression tests for fuzz-discovered parser hangs (2026-02-21).
+    // Unmatched `[` brackets cause exponential backtracking in pest's PEG
+    // recursive descent through array_literal / index_access / slice_access.
+
+    #[test]
+    fn fuzz_regression_unmatched_brackets_timeout() {
+        // Simplified version of the fuzzer-discovered timeout input (28 unmatched '[')
+        let input = "c2222222s[s[22s[U2s[U6[U6[22222222s[s[22s[U2s[U6[U6[222*2222s[U6[U6[222*2222s[22s[U6[U6[22*2222s[U6[U6[222*2222s[22s[U6[U6[222*26[U6[222*2";
+        let start = std::time::Instant::now();
+        let result = parse(input);
+        let elapsed = start.elapsed();
+        assert!(
+            result.is_err(),
+            "Should reject deeply nested unmatched brackets"
+        );
+        assert!(
+            elapsed.as_millis() < 100,
+            "Parser should reject fast, took {:?}",
+            elapsed
+        );
+    }
+
+    #[test]
+    fn fuzz_regression_deeply_nested_brackets_slow_unit() {
+        // 30 unmatched '[' — must be rejected by nesting depth check
+        let input = "stream x[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[";
+        let start = std::time::Instant::now();
+        let result = parse(input);
+        let elapsed = start.elapsed();
+        assert!(result.is_err(), "Should reject deeply nested brackets");
+        assert!(
+            elapsed.as_millis() < 100,
+            "Parser should reject fast, took {:?}",
+            elapsed
+        );
+    }
+
+    #[test]
+    fn nesting_depth_allows_reasonable_programs() {
+        // 10 levels of nesting — well within the limit
+        let input = "let x = foo(bar(baz(qux(a, [1, [2, [3, [4]]]]))))";
+        let result = parse(input);
+        // May fail for other reasons (not a valid program) but should NOT
+        // fail with "Nesting depth exceeds maximum"
+        if let Err(ref e) = result {
+            let msg = format!("{}", e);
+            assert!(
+                !msg.contains("Nesting depth"),
+                "Should allow 10 levels of nesting: {}",
+                msg
+            );
+        }
+    }
+
+    #[test]
+    fn nesting_depth_ignores_brackets_in_comments() {
+        // Brackets inside # comments should not count
+        let input = "# [[[[[[[[[[[[[[[[[[[[[[[[[[\nstream x = y";
+        let result = parse(input);
+        assert!(
+            result.is_ok(),
+            "Brackets in comments should be ignored: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn nesting_depth_ignores_brackets_in_strings() {
+        // Brackets inside strings should not count
+        let input = r#"let x = "[[[[[[[[[[[[[[[[[[[[[[[[[[""#;
+        let result = parse(input);
+        if let Err(ref e) = result {
+            let msg = format!("{}", e);
+            assert!(
+                !msg.contains("Nesting depth"),
+                "Brackets in strings should be ignored: {}",
+                msg
+            );
+        }
     }
 }
