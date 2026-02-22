@@ -20,23 +20,7 @@ Industry losses continue to grow because attackers design their behavior to pass
 
 Varpulis monitors the stream of events -- logins, password changes, purchases, cancellations -- and matches them against *behavioral patterns*, not individual thresholds.
 
-```
-Timeline: Account Takeover Detection
-
-Time ──────────────────────────────────────────────►
-
-  t=0          t=5s             t=15s
-  │             │                 │
-  ▼             ▼                 ▼
-┌─────┐    ┌──────────┐    ┌──────────┐
-│Login│───►│ Password │───►│ Purchase │──► ALERT!
-│     │    │  Change  │    │ $4,999   │
-└─────┘    └──────────┘    └──────────┘
-  new                         electronics
-  device                      store
-
-  ◄──── all within 30 minutes ────►
-```
+![Account takeover detection timeline](../images/scenarios/fraud-account-takeover.svg)
 
 Three events, from three different systems (authentication, user management, payments), connected into a single fraud narrative.
 
@@ -48,14 +32,7 @@ Someone logs in from a new device, immediately changes the password, then makes 
 ### Card Testing
 A stolen card is tested with tiny $1-$3 purchases at gas stations. Once they work, a $2,500 purchase follows. Varpulis captures *every single test transaction* using Kleene closure -- competitors using greedy matching capture only the first, losing the forensic trail.
 
-```
-Card Testing Pattern:
-
-$1.00 ──► $2.00 ──► $1.50 ──► $2,500
-  │          │          │          │
-  └──── all captured ───┘          │
-       (Kleene closure)        ALERT!
-```
+![Card testing pattern timeline](../images/scenarios/fraud-card-testing.svg)
 
 ### Impossible Travel
 Same user logs in from New York, then from Lagos 45 minutes later. No plane flies that fast. Varpulis compares the two login events and flags the geographic impossibility.

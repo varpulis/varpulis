@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="200" viewBox="0 0 600 200">
+  <!-- Background -->
+  <rect width="600" height="200" fill="#FFFFFF"/>
+
+  <!-- Header -->
+  <rect x="0" y="0" width="600" height="32" rx="0" ry="0" fill="#1A73E8"/>
+  <text x="300" y="22" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="14" font-weight="bold" fill="#FFFFFF">Drug Interaction Detection Timeline</text>
+
+  <!-- Timeline arrow -->
+  <defs>
+    <marker id="arrowGrey" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#616161"/>
+    </marker>
+    <marker id="arrowGreySmall" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#616161"/>
+    </marker>
+  </defs>
+  <line x1="30" y1="52" x2="570" y2="52" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowGrey)"/>
+
+  <!-- Time ticks -->
+  <line x1="160" y1="48" x2="160" y2="56" stroke="#616161" stroke-width="1.5"/>
+  <text x="160" y="45" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">8:00 AM</text>
+
+  <line x1="440" y1="48" x2="440" y2="56" stroke="#616161" stroke-width="1.5"/>
+  <text x="440" y="45" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">2:00 PM</text>
+
+  <!-- Connector lines -->
+  <line x1="160" y1="56" x2="160" y2="66" stroke="#616161" stroke-width="1" stroke-dasharray="3,2"/>
+  <line x1="440" y1="56" x2="440" y2="66" stroke="#616161" stroke-width="1" stroke-dasharray="3,2"/>
+
+  <!-- Event 1: Warfarin -->
+  <rect x="60" y="66" width="200" height="50" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="160" y="83" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">Warfarin (Dr. A)</text>
+  <text x="160" y="98" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">Patient P-101</text>
+  <text x="160" y="111" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">anticoagulant</text>
+
+  <!-- Arrow between events -->
+  <line x1="260" y1="91" x2="338" y2="91" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowGreySmall)"/>
+
+  <!-- Event 2: Aspirin (ALERT) -->
+  <rect x="340" y="66" width="200" height="50" rx="6" ry="6" fill="#FCE4EC" stroke="#424242" stroke-width="1.5"/>
+  <text x="440" y="82" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">Aspirin (Dr. B)</text>
+  <text x="440" y="96" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">Patient P-101</text>
+  <text x="440" y="108" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#C62828">ALERT! antiplatelet</text>
+
+  <!-- Label: Same patient, interacting drug classes -->
+  <text x="300" y="140" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" font-style="italic" fill="#212121">Same patient, interacting drug classes</text>
+
+  <!-- Label: Alert latency -->
+  <text x="300" y="160" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" font-weight="bold" fill="#757575">Alert reaches nurse station in &lt; 1 ms</text>
+</svg>

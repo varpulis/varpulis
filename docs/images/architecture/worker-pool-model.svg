@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="350" viewBox="0 0 600 350">
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#616161"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="600" height="350" fill="#FFFFFF"/>
+
+  <!-- Title -->
+  <rect x="0" y="0" width="600" height="36" rx="0" ry="0" fill="#1A73E8"/>
+  <text x="300" y="24" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="15" font-weight="bold" fill="#FFFFFF" text-anchor="middle">Worker Pool Model</text>
+
+  <!-- Scheduler box -->
+  <rect x="200" y="55" width="200" height="46" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="300" y="83" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="14" font-weight="bold" fill="#212121" text-anchor="middle">Scheduler</text>
+
+  <!-- Lines from Scheduler to Workers -->
+  <line x1="250" y1="101" x2="105" y2="155" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <line x1="300" y1="101" x2="300" y2="155" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <line x1="350" y1="101" x2="495" y2="155" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- Worker 1 -->
+  <rect x="30" y="157" width="150" height="56" rx="6" ry="6" fill="#E8F5E9" stroke="#424242" stroke-width="1.5"/>
+  <text x="105" y="179" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="13" font-weight="bold" fill="#212121" text-anchor="middle">Worker 1</text>
+  <text x="105" y="200" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#757575" text-anchor="middle">Partition 1</text>
+
+  <!-- Worker 2 -->
+  <rect x="225" y="157" width="150" height="56" rx="6" ry="6" fill="#E8F5E9" stroke="#424242" stroke-width="1.5"/>
+  <text x="300" y="179" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="13" font-weight="bold" fill="#212121" text-anchor="middle">Worker 2</text>
+  <text x="300" y="200" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#757575" text-anchor="middle">Partition 2</text>
+
+  <!-- Worker N -->
+  <rect x="420" y="157" width="150" height="56" rx="6" ry="6" fill="#E8F5E9" stroke="#424242" stroke-width="1.5"/>
+  <text x="495" y="179" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="13" font-weight="bold" fill="#212121" text-anchor="middle">Worker N</text>
+  <text x="495" y="200" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#757575" text-anchor="middle">Partition N</text>
+
+  <!-- Ellipsis between Worker 2 and Worker N -->
+  <text x="390" y="190" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="18" fill="#757575" text-anchor="middle">...</text>
+
+  <!-- Lines from Workers to Collector -->
+  <line x1="105" y1="213" x2="250" y2="270" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <line x1="300" y1="213" x2="300" y2="270" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <line x1="495" y1="213" x2="350" y2="270" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- Collector box -->
+  <rect x="200" y="272" width="200" height="46" rx="6" ry="6" fill="#FFF3E0" stroke="#424242" stroke-width="1.5"/>
+  <text x="300" y="300" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="14" font-weight="bold" fill="#212121" text-anchor="middle">Collector</text>
+</svg>

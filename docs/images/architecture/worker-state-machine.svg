@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="300" viewBox="0 0 600 300">
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#616161"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="600" height="300" fill="#FFFFFF"/>
+
+  <!-- Title -->
+  <rect x="0" y="0" width="600" height="36" rx="0" ry="0" fill="#1A73E8"/>
+  <text x="300" y="24" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="15" font-weight="bold" fill="#FFFFFF" text-anchor="middle">Worker State Machine</text>
+
+  <!-- State: Registering (left) -->
+  <rect x="30" y="110" width="120" height="50" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="90" y="140" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="13" font-weight="bold" fill="#212121" text-anchor="middle">Registering</text>
+
+  <!-- Initial arrow -->
+  <line x1="10" y1="135" x2="28" y2="135" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <circle cx="10" cy="135" r="4" fill="#616161"/>
+
+  <!-- State: Ready (center-top) -->
+  <rect x="210" y="65" width="120" height="50" rx="6" ry="6" fill="#E8F5E9" stroke="#424242" stroke-width="1.5"/>
+  <text x="270" y="95" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="13" font-weight="bold" fill="#212121" text-anchor="middle">Ready</text>
+
+  <!-- State: Busy (center-right) -->
+  <rect x="410" y="65" width="120" height="50" rx="6" ry="6" fill="#FFF3E0" stroke="#424242" stroke-width="1.5"/>
+  <text x="470" y="95" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="13" font-weight="bold" fill="#212121" text-anchor="middle">Busy</text>
+
+  <!-- State: Unhealthy (center-bottom) -->
+  <rect x="270" y="185" width="120" height="50" rx="6" ry="6" fill="#FCE4EC" stroke="#424242" stroke-width="1.5"/>
+  <text x="330" y="215" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="13" font-weight="bold" fill="#212121" text-anchor="middle">Unhealthy</text>
+
+  <!-- State: Draining (bottom-right) -->
+  <rect x="450" y="185" width="120" height="50" rx="6" ry="6" fill="#FCE4EC" stroke="#424242" stroke-width="1.5"/>
+  <text x="510" y="215" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="13" font-weight="bold" fill="#212121" text-anchor="middle">Draining</text>
+
+  <!-- Transition: Registering -> Ready -->
+  <line x1="150" y1="125" x2="208" y2="100" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <text x="170" y="105" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575" text-anchor="middle">ack</text>
+
+  <!-- Transition: Ready -> Busy -->
+  <line x1="330" y1="90" x2="408" y2="90" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <text x="369" y="82" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575" text-anchor="middle">at capacity</text>
+
+  <!-- Transition: Ready -> Unhealthy -->
+  <line x1="270" y1="115" x2="300" y2="183" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <text x="268" y="155" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575" text-anchor="middle">timeout</text>
+
+  <!-- Transition: Busy -> Unhealthy -->
+  <line x1="460" y1="115" x2="370" y2="183" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <text x="428" y="155" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575" text-anchor="middle">timeout</text>
+
+  <!-- Transition: Unhealthy -> Draining -->
+  <line x1="390" y1="210" x2="448" y2="210" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <text x="419" y="202" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575" text-anchor="middle">drain</text>
+
+  <!-- Busy -> Ready (return arrow, slightly curved) -->
+  <path d="M 410,80 C 385,55 345,55 332,65" fill="none" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <text x="370" y="56" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575" text-anchor="middle">freed</text>
+</svg>

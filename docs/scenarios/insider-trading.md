@@ -18,24 +18,7 @@ Traditional surveillance checks each trade against fixed limits: "flag orders ov
 
 Varpulis watches for two key patterns across all symbols simultaneously:
 
-```
-Abnormal Position Building:
-
-Day 1        Day 1        Day 1        Day 2       Day 2
-09:15        11:30        14:00        10:00       15:30
-  │            │            │            │           │
-  ▼            ▼            ▼            ▼           ▼
-┌─────┐    ┌─────┐    ┌─────┐    ┌─────┐    ┌───────────┐
-│ 500 │───►│ 600 │───►│ 700 │───►│ 800 │    │ NEWS:     │
-│shares│   │shares│   │shares│   │shares│   │ Merger!   │
-└─────┘    └─────┘    └─────┘    └─────┘    └───────────┘
-  WIDG       WIDG       WIDG       WIDG         WIDG
-
-◄──── all captured by Kleene closure ────►    ▲
-                                               │
-                                          ALERT: trade
-                                          before news
-```
+![Abnormal position building timeline](../images/scenarios/insider-position-building.svg)
 
 ## What Varpulis Detects
 

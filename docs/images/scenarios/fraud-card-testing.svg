@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="650" height="180" viewBox="0 0 650 180">
+  <!-- Background -->
+  <rect width="650" height="180" fill="#FFFFFF"/>
+
+  <!-- Header -->
+  <rect x="0" y="0" width="650" height="32" rx="0" ry="0" fill="#1A73E8"/>
+  <text x="325" y="22" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="14" font-weight="bold" fill="#FFFFFF">Card Testing Pattern Timeline</text>
+
+  <!-- Timeline arrow -->
+  <defs>
+    <marker id="arrowGrey" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#616161"/>
+    </marker>
+    <marker id="arrowGreySmall" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#616161"/>
+    </marker>
+  </defs>
+  <line x1="30" y1="50" x2="630" y2="50" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowGrey)"/>
+
+  <!-- Connector lines -->
+  <line x1="90" y1="54" x2="90" y2="64" stroke="#616161" stroke-width="1" stroke-dasharray="3,2"/>
+  <line x1="230" y1="54" x2="230" y2="64" stroke="#616161" stroke-width="1" stroke-dasharray="3,2"/>
+  <line x1="370" y1="54" x2="370" y2="64" stroke="#616161" stroke-width="1" stroke-dasharray="3,2"/>
+  <line x1="545" y1="54" x2="545" y2="64" stroke="#616161" stroke-width="1" stroke-dasharray="3,2"/>
+
+  <!-- Event 1: $1.00 -->
+  <rect x="30" y="64" width="120" height="36" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="90" y="87" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">$1.00</text>
+
+  <!-- Arrow 1-2 -->
+  <line x1="150" y1="82" x2="168" y2="82" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowGreySmall)"/>
+
+  <!-- Event 2: $2.00 -->
+  <rect x="170" y="64" width="120" height="36" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="230" y="87" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">$2.00</text>
+
+  <!-- Arrow 2-3 -->
+  <line x1="290" y1="82" x2="308" y2="82" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowGreySmall)"/>
+
+  <!-- Event 3: $1.50 -->
+  <rect x="310" y="64" width="120" height="36" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="370" y="87" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">$1.50</text>
+
+  <!-- Arrow 3-4 -->
+  <line x1="430" y1="82" x2="483" y2="82" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowGreySmall)"/>
+
+  <!-- Event 4: $2,500 ALERT -->
+  <rect x="485" y="64" width="120" height="36" rx="6" ry="6" fill="#FCE4EC" stroke="#424242" stroke-width="1.5"/>
+  <text x="545" y="82" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">$2,500</text>
+  <text x="545" y="96" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#C62828">ALERT!</text>
+
+  <!-- Kleene bracket under first 3 boxes -->
+  <line x1="30" y1="108" x2="30" y2="118" stroke="#616161" stroke-width="1.5"/>
+  <line x1="30" y1="118" x2="430" y2="118" stroke="#616161" stroke-width="1.5"/>
+  <line x1="430" y1="108" x2="430" y2="118" stroke="#616161" stroke-width="1.5"/>
+  <text x="230" y="135" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" font-style="italic" fill="#212121">all captured (Kleene closure)</text>
+</svg>

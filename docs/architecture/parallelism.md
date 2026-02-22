@@ -4,22 +4,7 @@
 
 Contexts provide OS-level thread isolation for stream processing. Each context runs on a dedicated thread with a single-threaded Tokio runtime, eliminating lock contention within a context.
 
-```
-                    ┌─────────────────────┐
-                    │ ContextOrchestrator  │
-                    │   (event router)    │
-                    └──────────┬──────────┘
-                               │
-           ┌───────────────────┼───────────────────┐
-           │                   │                   │
-  ┌────────▼────────┐ ┌───────▼────────┐ ┌────────▼────────┐
-  │  Thread: ingest │ │ Thread: analyze│ │  Thread: alert  │
-  │  Tokio RT       │ │ Tokio RT       │ │  Tokio RT       │
-  │  Engine         │ │ Engine         │ │  Engine         │
-  │  cores: [0,1]   │ │ cores: [2,3]   │ │  cores: [4]     │
-  └────────┬────────┘ └───────┬────────┘ └────────┬────────┘
-           └────── mpsc channels ──────────────────┘
-```
+![Context-based multi-threading](../images/architecture/context-multithreading.svg)
 
 ```varpulis
 context ingest (cores: [0, 1])
@@ -47,26 +32,7 @@ See the [Contexts Guide](../guides/contexts.md) for a full tutorial.
 
 ## Worker Pool Parallelization Model
 
-```
-                    ┌─────────────┐
-                    │   Scheduler │
-                    └──────┬──────┘
-                           │
-        ┌──────────────────┼──────────────────┐
-        │                  │                  │
-   ┌────▼────┐       ┌─────▼────┐      ┌─────▼────┐
-   │ Worker 1│       │ Worker 2 │      │ Worker N │
-   │         │       │          │      │          │
-   │Partition│       │Partition │      │Partition │
-   │    1    │       │    2     │      │    N     │
-   └─────────┘       └──────────┘      └──────────┘
-        │                  │                  │
-        └──────────────────┼──────────────────┘
-                           │
-                    ┌──────▼──────┐
-                    │  Collector  │
-                    └─────────────┘
-```
+![Worker pool parallelization model](../images/architecture/worker-pool-model.svg)
 
 ## Partitioning Strategies
 

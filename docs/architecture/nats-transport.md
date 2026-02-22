@@ -4,24 +4,7 @@ Varpulis uses NATS in two distinct roles: as a **data connector** for event inge
 
 ## Overview
 
-```
-                            NATS Server (nats://host:4222)
-                       ┌─────────────────────────────────────┐
-                       │                                     │
-        Data Path      │           Cluster Transport         │
-   ┌───────────────┐   │      ┌─────────────────────────┐   │
-   │ VPL Connector │   │      │ Coordinator ↔ Workers    │   │
-   │               │   │      │                         │   │
-   │ NatsSource    │◄──┤      │ Registration (req/reply) │   │
-   │ NatsSink      │──►│      │ Heartbeats (pub/sub)     │   │
-   │               │   │      │ Commands (req/reply)     │   │
-   │ Feature: nats │   │      │ Pipeline routing (pub)   │   │
-   └───────────────┘   │      │ Raft RPCs (req/reply)    │   │
-                       │      │                         │   │
-                       │      │ Feature: nats-transport  │   │
-                       │      └─────────────────────────┘   │
-                       └─────────────────────────────────────┘
-```
+![NATS dual-role overview](../images/architecture/nats-overview-dual-role.svg)
 
 | Aspect | Data Connector | Cluster Transport |
 |--------|---------------|-------------------|
@@ -55,16 +38,7 @@ All cluster subjects use the `varpulis.cluster` prefix. NATS uses `.` as a separ
 
 When a worker starts with NATS transport enabled, it sends a registration request to the coordinator:
 
-```
-Worker                          NATS                        Coordinator
-  │                              │                              │
-  │ REQUEST varpulis.cluster.register                           │
-  │─────────────────────────────►│─────────────────────────────►│
-  │                              │                              │
-  │                              │  REPLY {worker_id, status,   │
-  │                              │         heartbeat_interval}  │
-  │◄─────────────────────────────│◄─────────────────────────────│
-```
+![Worker registration sequence](../images/architecture/nats-worker-registration.svg)
 
 Registration payload:
 ```json
@@ -89,11 +63,7 @@ Response:
 
 Workers publish heartbeats on their dedicated subject. The coordinator subscribes to the wildcard `varpulis.cluster.heartbeat.>` to receive all heartbeats:
 
-```
-Worker-0    ──publish──►  varpulis.cluster.heartbeat.worker-0  ──►  Coordinator
-Worker-1    ──publish──►  varpulis.cluster.heartbeat.worker-1  ──►  (subscribed
-Worker-N    ──publish──►  varpulis.cluster.heartbeat.worker-N  ──►   to .>)
-```
+![Heartbeat pub/sub fan-in](../images/architecture/nats-heartbeat-pubsub.svg)
 
 The coordinator extracts the `worker_id` from the subject's last segment and updates the worker's health metrics.
 
@@ -101,17 +71,7 @@ The coordinator extracts the `worker_id` from the subject's last segment and upd
 
 The coordinator sends commands to specific workers using request/reply. Each worker subscribes to `varpulis.cluster.cmd.{worker_id}.>`:
 
-```
-Coordinator                     NATS                         Worker-0
-  │                              │                              │
-  │ REQUEST varpulis.cluster.cmd.worker-0.deploy                │
-  │─────────────────────────────►│─────────────────────────────►│
-  │                              │       dispatch_command()     │
-  │                              │       handle_deploy()        │
-  │                              │                              │
-  │                              │  REPLY {id, name, status}    │
-  │◄─────────────────────────────│◄─────────────────────────────│
-```
+![Command dispatch sequence](../images/architecture/nats-command-dispatch.svg)
 
 Available commands:
 
@@ -129,40 +89,7 @@ Available commands:
 
 ## Architecture Diagram
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                         NATS Server                                  │
-│                                                                      │
-│  Subjects:                                                           │
-│                                                                      │
-│  varpulis.cluster.register           ◄── Worker registration         │
-│  varpulis.cluster.heartbeat.*        ◄── Health monitoring           │
-│  varpulis.cluster.cmd.worker-0.*     ◄── Commands to worker-0       │
-│  varpulis.cluster.cmd.worker-1.*     ◄── Commands to worker-1       │
-│  varpulis.cluster.pipeline.*.*.*     ◄── Inter-pipeline routing      │
-│  varpulis.cluster.raft.*.*           ◄── Raft consensus              │
-│                                                                      │
-│  User subjects (data connectors):                                    │
-│  trades.>                            ◄── Market data ingestion       │
-│  alerts.high-value                   ◄── Alert output                │
-│  sensors.temperature.>               ◄── IoT sensor data             │
-│                                                                      │
-└──────────────────────────────────────────────────────────────────────┘
-         │                    │                    │
-         ▼                    ▼                    ▼
-  ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-  │ Coordinator │     │  Worker 0   │     │  Worker 1   │
-  │             │     │             │     │             │
-  │ Subscribes: │     │ Subscribes: │     │ Subscribes: │
-  │  .register  │     │  .cmd.w0.>  │     │  .cmd.w1.>  │
-  │  .heartbeat │     │             │     │             │
-  │   .>        │     │ Publishes:  │     │ Publishes:  │
-  │             │     │  .heartbeat │     │  .heartbeat │
-  │ Publishes:  │     │   .w0       │     │   .w1       │
-  │  .cmd.w0.*  │     │  .register  │     │  .register  │
-  │  .cmd.w1.*  │     │             │     │             │
-  └─────────────┘     └─────────────┘     └─────────────┘
-```
+![Full NATS architecture](../images/architecture/nats-full-architecture.svg)
 
 ---
 

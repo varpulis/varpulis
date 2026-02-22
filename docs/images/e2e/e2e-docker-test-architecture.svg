@@ -1,0 +1,137 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500" viewBox="0 0 800 500">
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#616161"/>
+    </marker>
+    <marker id="arrowhead-left" markerWidth="10" markerHeight="7" refX="0" refY="3.5" orient="auto">
+      <polygon points="10 0, 0 3.5, 10 7" fill="#616161"/>
+    </marker>
+    <marker id="arrowhead-up" markerWidth="7" markerHeight="10" refX="3.5" refY="0" orient="auto">
+      <polygon points="0 10, 3.5 0, 7 10" fill="#616161"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="800" height="500" fill="#FFFFFF"/>
+
+  <!-- Docker network container -->
+  <rect x="15" y="15" width="770" height="470" rx="6" ry="6" fill="none" stroke="#424242" stroke-width="1.5"/>
+  <rect x="15" y="15" width="770" height="32" rx="6" ry="6" fill="#1A73E8"/>
+  <rect x="15" y="35" width="770" height="12" fill="#1A73E8"/>
+  <text x="400" y="37" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="14" font-weight="bold" fill="#FFFFFF">Docker Network: varpulis-e2e</text>
+
+  <!-- Mosquitto box (top-left) -->
+  <rect x="40" y="65" width="140" height="70" rx="6" ry="6" fill="#FFF3E0" stroke="#424242" stroke-width="1.5"/>
+  <text x="110" y="93" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="13" font-weight="bold" fill="#212121">mosquitto</text>
+  <text x="110" y="112" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#757575">:1883</text>
+
+  <!-- MQTT label on line from mosquitto to cluster -->
+  <line x1="180" y1="100" x2="248" y2="100" stroke="#616161" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#arrowhead)"/>
+  <text x="214" y="92" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">MQTT</text>
+
+  <!-- Raft Cluster sub-container -->
+  <rect x="255" y="55" width="510" height="190" rx="6" ry="6" fill="none" stroke="#424242" stroke-width="1.5" stroke-dasharray="6,3"/>
+  <text x="510" y="74" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">Raft Cluster</text>
+
+  <!-- Coordinator 1 (Leader) -->
+  <rect x="275" y="88" width="140" height="65" rx="6" ry="6" fill="#E8F5E9" stroke="#424242" stroke-width="1.5"/>
+  <text x="345" y="110" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" font-weight="bold" fill="#212121">coordinator-1</text>
+  <text x="345" y="126" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">:9100 (Leader)</text>
+  <rect x="310" y="135" width="70" height="14" rx="3" ry="3" fill="#E8F5E9" stroke="#424242" stroke-width="0.8"/>
+  <text x="345" y="146" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="8" font-weight="bold" fill="#212121">LEADER</text>
+
+  <!-- Coordinator 2 (Follower) -->
+  <rect x="435" y="88" width="140" height="65" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="505" y="110" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" font-weight="bold" fill="#212121">coordinator-2</text>
+  <text x="505" y="126" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">:9100 (Follower)</text>
+
+  <!-- Coordinator 3 (Follower) -->
+  <rect x="595" y="88" width="140" height="65" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="665" y="110" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" font-weight="bold" fill="#212121">coordinator-3</text>
+  <text x="665" y="126" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">:9100 (Follower)</text>
+
+  <!-- Bidirectional arrows between coordinators -->
+  <!-- C1 <-> C2 -->
+  <line x1="415" y1="114" x2="433" y2="114" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <line x1="433" y1="122" x2="415" y2="122" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead-left)"/>
+
+  <!-- C2 <-> C3 -->
+  <line x1="575" y1="114" x2="593" y2="114" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <line x1="593" y1="122" x2="575" y2="122" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead-left)"/>
+
+  <!-- C1 <-> C3 (curved underneath) -->
+  <path d="M 345 153 Q 345 180 505 180 Q 665 180 665 153" fill="none" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <path d="M 665 153 Q 665 195 505 195 Q 345 195 345 153" fill="none" stroke="#616161" stroke-width="1.5"/>
+  <polygon points="345,160 341,153 349,153" fill="#616161"/>
+
+  <!-- Raft label -->
+  <text x="510" y="215" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" font-style="italic" fill="#757575">Raft consensus</text>
+
+  <!-- MQTT lines from coordinators to mosquitto -->
+  <line x1="180" y1="115" x2="273" y2="115" stroke="#616161" stroke-width="1" stroke-dasharray="3,3"/>
+
+  <!-- WS label -->
+  <text x="400" y="268" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-style="italic" fill="#757575">WS (WebSocket)</text>
+
+  <!-- Worker row -->
+  <!-- Worker 1 -->
+  <rect x="40" y="290" width="160" height="80" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="120" y="318" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">worker-1</text>
+  <text x="120" y="338" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">:9000</text>
+  <rect x="65" y="348" width="110" height="16" rx="3" ry="3" fill="#E8F0FE" stroke="#424242" stroke-width="0.8"/>
+  <text x="120" y="360" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="8" fill="#757575">Pipeline + CtxOrch</text>
+
+  <!-- Worker 2 -->
+  <rect x="225" y="290" width="160" height="80" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="305" y="318" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">worker-2</text>
+  <text x="305" y="338" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">:9000</text>
+  <rect x="250" y="348" width="110" height="16" rx="3" ry="3" fill="#E8F0FE" stroke="#424242" stroke-width="0.8"/>
+  <text x="305" y="360" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="8" fill="#757575">Pipeline + CtxOrch</text>
+
+  <!-- Worker 3 -->
+  <rect x="410" y="290" width="160" height="80" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="490" y="318" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">worker-3</text>
+  <text x="490" y="338" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">:9000</text>
+  <rect x="435" y="348" width="110" height="16" rx="3" ry="3" fill="#E8F0FE" stroke="#424242" stroke-width="0.8"/>
+  <text x="490" y="360" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="8" fill="#757575">Pipeline + CtxOrch</text>
+
+  <!-- Worker 4 -->
+  <rect x="595" y="290" width="160" height="80" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="675" y="318" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">worker-4</text>
+  <text x="675" y="338" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">:9000</text>
+  <rect x="620" y="348" width="110" height="16" rx="3" ry="3" fill="#E8F0FE" stroke="#424242" stroke-width="0.8"/>
+  <text x="675" y="360" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="8" fill="#757575">Pipeline + CtxOrch</text>
+
+  <!-- WS lines from coordinators down to workers -->
+  <!-- C1 to workers -->
+  <line x1="310" y1="153" x2="120" y2="288" stroke="#616161" stroke-width="1" stroke-dasharray="4,3"/>
+  <line x1="345" y1="153" x2="305" y2="288" stroke="#616161" stroke-width="1" stroke-dasharray="4,3"/>
+
+  <!-- C2 to workers -->
+  <line x1="505" y1="153" x2="490" y2="288" stroke="#616161" stroke-width="1" stroke-dasharray="4,3"/>
+
+  <!-- C3 to workers -->
+  <line x1="665" y1="153" x2="675" y2="288" stroke="#616161" stroke-width="1" stroke-dasharray="4,3"/>
+
+  <!-- MQTT lines from workers to mosquitto -->
+  <line x1="110" y1="135" x2="110" y2="170" stroke="#616161" stroke-width="1" stroke-dasharray="3,3"/>
+
+  <!-- MQTT connection from mosquitto down to workers area -->
+  <path d="M 60 135 L 60 430 L 720 430" fill="none" stroke="#616161" stroke-width="1" stroke-dasharray="4,3"/>
+  <text x="400" y="448" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" font-style="italic" fill="#757575">MQTT (event ingestion and output)</text>
+
+  <!-- MQTT vertical taps from workers to bottom MQTT line -->
+  <line x1="120" y1="370" x2="120" y2="430" stroke="#616161" stroke-width="1" stroke-dasharray="3,3"/>
+  <line x1="305" y1="370" x2="305" y2="430" stroke="#616161" stroke-width="1" stroke-dasharray="3,3"/>
+  <line x1="490" y1="370" x2="490" y2="430" stroke="#616161" stroke-width="1" stroke-dasharray="3,3"/>
+  <line x1="675" y1="370" x2="675" y2="430" stroke="#616161" stroke-width="1" stroke-dasharray="3,3"/>
+
+  <!-- Legend -->
+  <rect x="40" y="460" width="180" height="20" rx="4" ry="4" fill="none" stroke="none"/>
+  <line x1="50" y1="470" x2="80" y2="470" stroke="#616161" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <text x="88" y="474" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">WS / MQTT connections</text>
+  <rect x="220" y="462" width="14" height="14" rx="3" ry="3" fill="#E8F5E9" stroke="#424242" stroke-width="1"/>
+  <text x="240" y="474" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">Leader</text>
+  <rect x="290" y="462" width="14" height="14" rx="3" ry="3" fill="#E8F0FE" stroke="#424242" stroke-width="1"/>
+  <text x="310" y="474" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">Follower / Worker</text>
+</svg>

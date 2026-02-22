@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="200" viewBox="0 0 800 200">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#616161"/>
+    </marker>
+  </defs>
+
+  <rect width="800" height="200" fill="#FFFFFF"/>
+
+  <!-- Worker-0 box -->
+  <rect x="20" y="18" width="110" height="36" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="75" y="42" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="13" font-weight="600" fill="#212121">Worker-0</text>
+
+  <!-- Worker-1 box -->
+  <rect x="20" y="82" width="110" height="36" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="75" y="106" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="13" font-weight="600" fill="#212121">Worker-1</text>
+
+  <!-- Worker-N box -->
+  <rect x="20" y="146" width="110" height="36" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="75" y="170" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="13" font-weight="600" fill="#212121">Worker-N</text>
+
+  <!-- Arrow: Worker-0 -> Subject-0 -->
+  <text x="155" y="30" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">publish</text>
+  <line x1="130" y1="36" x2="285" y2="36" stroke="#616161" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Arrow: Worker-1 -> Subject-1 -->
+  <text x="155" y="94" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">publish</text>
+  <line x1="130" y1="100" x2="285" y2="100" stroke="#616161" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Arrow: Worker-N -> Subject-N -->
+  <text x="155" y="158" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">publish</text>
+  <line x1="130" y1="164" x2="285" y2="164" stroke="#616161" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Subject boxes (center column) -->
+  <rect x="295" y="18" width="310" height="36" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="450" y="42" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" fill="#212121">varpulis.cluster.heartbeat.worker-0</text>
+
+  <rect x="295" y="82" width="310" height="36" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="450" y="106" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" fill="#212121">varpulis.cluster.heartbeat.worker-1</text>
+
+  <rect x="295" y="146" width="310" height="36" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="450" y="170" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" fill="#212121">varpulis.cluster.heartbeat.worker-N</text>
+
+  <!-- Arrows: Subject boxes -> Coordinator -->
+  <line x1="605" y1="36" x2="665" y2="82" stroke="#616161" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="605" y1="100" x2="665" y2="100" stroke="#616161" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="605" y1="164" x2="665" y2="118" stroke="#616161" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Coordinator box -->
+  <rect x="675" y="72" width="110" height="56" rx="6" ry="6" fill="#1A73E8" stroke="#424242" stroke-width="1.5"/>
+  <text x="730" y="96" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="13" font-weight="600" fill="#FFFFFF">Coordinator</text>
+  <text x="730" y="116" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#E8F0FE">(subscribed to .>)</text>
+</svg>

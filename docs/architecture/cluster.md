@@ -6,30 +6,7 @@ pipeline processing by distributing workloads across machines.
 
 ## Architecture
 
-```
-                  ┌──────────────────────┐
-                  │    Coordinator       │
-                  │  (port 9100)         │
-                  │                      │
-                  │  - Worker registry   │
-                  │  - Pipeline groups   │
-                  │  - Event routing     │
-                  │  - Health monitor    │
-                  └──────┬───────────────┘
-                         │ REST or NATS transport
-           ┌─────────────┼─────────────┐
-           │             │             │
-     ┌─────┴──┐   ┌──────┴──┐   ┌─────┴──┐
-     │Worker 0│   │Worker 1 │   │Worker N│
-     │:9000   │   │:9001    │   │:900N   │
-     │        │   │         │   │        │
-     │Pipeline│   │Pipeline │   │Pipeline│
-     │CtxOrch │   │CtxOrch  │   │CtxOrch │
-     └────────┘   └─────────┘   └────────┘
-           │             │             │
-           └─────────────┴─────────────┘
-              MQTT or NATS (inter-pipeline events)
-```
+![Cluster coordinator and workers architecture](../images/architecture/cluster-coordinator-workers.svg)
 
 ### Key Principles
 
@@ -400,13 +377,7 @@ the fewest running pipelines.
 
 ### Worker States
 
-```
-Registering → Ready → Busy
-                ↓         ↓
-            Unhealthy ← (timeout)
-                ↓
-            Draining
-```
+![Worker state machine lifecycle](../images/architecture/worker-state-machine.svg)
 
 | State | Description |
 |-------|-------------|
@@ -473,20 +444,7 @@ across 4 worker processes, each handling one row of the 4x4 tile grid.
 
 ### Architecture
 
-```
-Coordinator (port 9100)
-    │
-    ├── Worker 0 (port 9000): row0.vpl → tiles (0,0)-(3,0)
-    ├── Worker 1 (port 9001): row1.vpl → tiles (0,1)-(3,1)
-    ├── Worker 2 (port 9002): row2.vpl → tiles (0,2)-(3,2)
-    └── Worker 3 (port 9003): row3.vpl → tiles (0,3)-(3,3)
-
-Event routing:
-    ComputeTile0* → row0 (worker-0)
-    ComputeTile1* → row1 (worker-1)
-    ComputeTile2* → row2 (worker-2)
-    ComputeTile3* → row3 (worker-3)
-```
+![Mandelbrot distributed computation](../images/architecture/mandelbrot-distribution.svg)
 
 ### Running
 

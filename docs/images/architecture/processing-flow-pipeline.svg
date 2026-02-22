@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="120" viewBox="0 0 800 120">
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#616161"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="800" height="120" fill="#FFFFFF"/>
+
+  <!-- Box 1: Sources -->
+  <rect x="10" y="20" width="100" height="50" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="60" y="50" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">Sources</text>
+
+  <!-- Arrow 1 -->
+  <line x1="110" y1="45" x2="132" y2="45" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- Box 2: Connectors -->
+  <rect x="140" y="20" width="100" height="50" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="190" y="50" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">Connectors</text>
+
+  <!-- Arrow 2 -->
+  <line x1="240" y1="45" x2="262" y2="45" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- Box 3: Ingestion -->
+  <rect x="270" y="20" width="100" height="50" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="320" y="50" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">Ingestion</text>
+
+  <!-- Arrow 3 -->
+  <line x1="370" y1="45" x2="392" y2="45" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- Box 4: SASE+ NFA -->
+  <rect x="400" y="20" width="110" height="50" rx="6" ry="6" fill="#FFF3E0" stroke="#424242" stroke-width="1.5"/>
+  <text x="455" y="50" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">SASE+ NFA</text>
+  <!-- Annotation below -->
+  <text x="455" y="84" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">Pattern matching</text>
+  <text x="455" y="95" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">with Kleene closure</text>
+
+  <!-- Arrow 4 -->
+  <line x1="510" y1="45" x2="542" y2="45" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- Box 5: Aggregation / Forecast (split) -->
+  <rect x="550" y="15" width="120" height="60" rx="6" ry="6" fill="none" stroke="#424242" stroke-width="1.5"/>
+  <rect x="550" y="15" width="120" height="30" rx="6" ry="6" fill="#FFF3E0" stroke="#424242" stroke-width="1.5"/>
+  <text x="610" y="35" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" font-weight="bold" fill="#212121">Aggregation</text>
+  <rect x="550" y="45" width="120" height="30" rx="0" ry="0" fill="#FCE4EC" stroke="#424242" stroke-width="1.5"/>
+  <rect x="550" y="45" width="120" height="30" rx="0" ry="0" fill="#FCE4EC" stroke="none"/>
+  <line x1="550" y1="45" x2="670" y2="45" stroke="#424242" stroke-width="1.5"/>
+  <text x="610" y="65" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" font-weight="bold" fill="#212121">Forecast</text>
+  <!-- Bottom rounded corners patch -->
+  <rect x="550" y="55" width="120" height="20" rx="6" ry="6" fill="#FCE4EC" stroke="#424242" stroke-width="1.5"/>
+  <rect x="550" y="55" width="120" height="10" fill="#FCE4EC" stroke="none"/>
+  <line x1="550" y1="55" x2="550" y2="65" stroke="#424242" stroke-width="1.5"/>
+  <line x1="670" y1="55" x2="670" y2="65" stroke="#424242" stroke-width="1.5"/>
+
+  <!-- Arrow 5 -->
+  <line x1="670" y1="45" x2="692" y2="45" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- Box 6: Output (.to) -->
+  <rect x="700" y="20" width="90" height="50" rx="6" ry="6" fill="#E8F5E9" stroke="#424242" stroke-width="1.5"/>
+  <text x="745" y="43" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">Output</text>
+  <text x="745" y="57" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">(.to)</text>
+</svg>

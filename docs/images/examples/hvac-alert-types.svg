@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="750" height="500" viewBox="0 0 750 500">
+  <!-- Background -->
+  <rect width="750" height="500" fill="#FFFFFF"/>
+
+  <!-- Arrowhead marker -->
+  <defs>
+    <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#616161"/>
+    </marker>
+  </defs>
+
+  <!-- Main container -->
+  <rect x="10" y="10" width="730" height="480" rx="6" ry="6" fill="none" stroke="#424242" stroke-width="1.5"/>
+
+  <!-- Header -->
+  <rect x="10" y="10" width="730" height="36" rx="6" ry="6" fill="#1A73E8"/>
+  <rect x="10" y="30" width="730" height="16" fill="#1A73E8"/>
+  <text x="375" y="34" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="15" font-weight="bold" fill="#FFFFFF" text-anchor="middle">HVAC ALERTS</text>
+
+  <!-- ENVIRONMENTAL category -->
+  <rect x="30" y="62" width="150" height="30" rx="6" ry="6" fill="#1A73E8" stroke="#424242" stroke-width="1.5"/>
+  <text x="105" y="82" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" font-weight="bold" fill="#FFFFFF" text-anchor="middle">ENVIRONMENTAL</text>
+
+  <!-- Arrow lines from ENVIRONMENTAL -->
+  <line x1="180" y1="70" x2="230" y2="66" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <line x1="180" y1="77" x2="230" y2="100" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <line x1="180" y1="84" x2="230" y2="134" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- TEMPERATURE_ANOMALY -->
+  <rect x="235" y="52" width="480" height="28" rx="6" ry="6" fill="#FFF3E0" stroke="#424242" stroke-width="1.5"/>
+  <text x="245" y="70" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">TEMPERATURE_ANOMALY</text>
+  <text x="475" y="70" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">Out of range temperature</text>
+
+  <!-- SERVER_ROOM_CRITICAL -->
+  <rect x="235" y="86" width="480" height="28" rx="6" ry="6" fill="#FCE4EC" stroke="#424242" stroke-width="1.5"/>
+  <text x="245" y="104" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">SERVER_ROOM_CRITICAL</text>
+  <text x="475" y="104" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">Critical server room temperature</text>
+
+  <!-- HUMIDITY_ANOMALY -->
+  <rect x="235" y="120" width="480" height="28" rx="6" ry="6" fill="#FFF3E0" stroke="#424242" stroke-width="1.5"/>
+  <text x="245" y="138" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">HUMIDITY_ANOMALY</text>
+  <text x="475" y="138" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">Out of range humidity</text>
+
+  <!-- EQUIPMENT category -->
+  <rect x="30" y="172" width="150" height="30" rx="6" ry="6" fill="#1A73E8" stroke="#424242" stroke-width="1.5"/>
+  <text x="105" y="192" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" font-weight="bold" fill="#FFFFFF" text-anchor="middle">EQUIPMENT</text>
+
+  <!-- Arrow lines from EQUIPMENT -->
+  <line x1="180" y1="178" x2="230" y2="170" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <line x1="180" y1="184" x2="230" y2="204" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <line x1="180" y1="190" x2="230" y2="238" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <line x1="180" y1="196" x2="230" y2="272" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- HVAC_POWER_SPIKE -->
+  <rect x="235" y="156" width="480" height="28" rx="6" ry="6" fill="#FFF3E0" stroke="#424242" stroke-width="1.5"/>
+  <text x="245" y="174" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">HVAC_POWER_SPIKE</text>
+  <text x="475" y="174" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">Unusual power consumption</text>
+
+  <!-- COMPRESSOR_DEGRADATION -->
+  <rect x="235" y="190" width="480" height="28" rx="6" ry="6" fill="#FFF3E0" stroke="#424242" stroke-width="1.5"/>
+  <text x="245" y="208" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">COMPRESSOR_DEGRADATION</text>
+  <text x="475" y="208" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">Progressive compressor wear</text>
+
+  <!-- REFRIGERANT_LEAK -->
+  <rect x="235" y="224" width="480" height="28" rx="6" ry="6" fill="#FCE4EC" stroke="#424242" stroke-width="1.5"/>
+  <text x="245" y="242" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">REFRIGERANT_LEAK</text>
+  <text x="475" y="242" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">Possible refrigerant leak detected</text>
+
+  <!-- FAN_MOTOR_DEGRADATION -->
+  <rect x="235" y="258" width="480" height="28" rx="6" ry="6" fill="#FFF3E0" stroke="#424242" stroke-width="1.5"/>
+  <text x="245" y="276" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">FAN_MOTOR_DEGRADATION</text>
+  <text x="475" y="276" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">Fan motor performance issues</text>
+
+  <!-- MAINTENANCE category -->
+  <rect x="30" y="315" width="150" height="30" rx="6" ry="6" fill="#1A73E8" stroke="#424242" stroke-width="1.5"/>
+  <text x="105" y="335" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" font-weight="bold" fill="#FFFFFF" text-anchor="middle">MAINTENANCE</text>
+
+  <!-- Arrow lines from MAINTENANCE -->
+  <line x1="180" y1="324" x2="230" y2="314" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <line x1="180" y1="336" x2="230" y2="348" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- MAINTENANCE_REMINDER -->
+  <rect x="235" y="300" width="480" height="28" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="245" y="318" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">MAINTENANCE_REMINDER</text>
+  <text x="475" y="318" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">Runtime-based maintenance reminder</text>
+
+  <!-- LOW_HEALTH_SCORE -->
+  <rect x="235" y="334" width="480" height="28" rx="6" ry="6" fill="#FFF3E0" stroke="#424242" stroke-width="1.5"/>
+  <text x="245" y="352" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">LOW_HEALTH_SCORE</text>
+  <text x="475" y="352" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">Overall health score below 70%</text>
+
+  <!-- ENERGY category -->
+  <rect x="30" y="395" width="150" height="30" rx="6" ry="6" fill="#1A73E8" stroke="#424242" stroke-width="1.5"/>
+  <text x="105" y="415" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" font-weight="bold" fill="#FFFFFF" text-anchor="middle">ENERGY</text>
+
+  <!-- Arrow line from ENERGY -->
+  <line x1="180" y1="410" x2="230" y2="400" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- ENERGY_ANOMALY -->
+  <rect x="235" y="386" width="480" height="28" rx="6" ry="6" fill="#FFF3E0" stroke="#424242" stroke-width="1.5"/>
+  <text x="245" y="404" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">ENERGY_ANOMALY</text>
+  <text x="475" y="404" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">Unusual energy consumption pattern</text>
+
+  <!-- Legend -->
+  <rect x="235" y="440" width="14" height="14" rx="3" ry="3" fill="#FFF3E0" stroke="#424242" stroke-width="1"/>
+  <text x="255" y="451" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">Warning</text>
+  <rect x="310" y="440" width="14" height="14" rx="3" ry="3" fill="#FCE4EC" stroke="#424242" stroke-width="1"/>
+  <text x="330" y="451" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">Critical</text>
+  <rect x="395" y="440" width="14" height="14" rx="3" ry="3" fill="#E8F0FE" stroke="#424242" stroke-width="1"/>
+  <text x="415" y="451" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">Informational</text>
+</svg>

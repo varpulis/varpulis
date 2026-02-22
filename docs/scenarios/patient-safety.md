@@ -17,22 +17,7 @@ Three categories of preventable harm:
 
 Varpulis processes each medical event as it occurs -- prescriptions, vital sign readings, lab results -- and matches them against safety patterns in real-time:
 
-```
-Drug Interaction Detection:
-
-  8:00 AM           2:00 PM
-     │                  │
-     ▼                  ▼
-┌──────────┐     ┌──────────┐
-│ Warfarin │────►│ Aspirin  │──► ALERT!
-│ (Dr. A)  │     │ (Dr. B)  │
-│ P-101    │     │ P-101    │
-└──────────┘     └──────────┘
-anticoagulant    antiplatelet
-
-Same patient, interacting drug classes
-Alert reaches nurse station in < 1 ms
-```
+![Drug interaction detection timeline](../images/scenarios/patient-drug-interaction.svg)
 
 ## What Varpulis Detects
 

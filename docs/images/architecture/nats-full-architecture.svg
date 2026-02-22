@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500" viewBox="0 0 800 500">
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#616161"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="800" height="500" fill="#FFFFFF"/>
+
+  <!-- NATS Server container -->
+  <rect x="30" y="20" width="740" height="260" rx="6" ry="6" fill="none" stroke="#424242" stroke-width="1.5"/>
+  <rect x="30" y="20" width="740" height="32" rx="6" ry="6" fill="#1A73E8"/>
+  <rect x="30" y="40" width="740" height="12" fill="#1A73E8"/>
+  <text x="400" y="42" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="14" font-weight="bold" fill="#FFFFFF">NATS Server</text>
+
+  <!-- Cluster Subjects section -->
+  <rect x="50" y="62" width="340" height="200" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="220" y="82" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">Cluster Subjects</text>
+  <line x1="60" y1="90" x2="380" y2="90" stroke="#424242" stroke-width="0.5"/>
+
+  <text x="66" y="110" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#212121">varpulis.cluster.register</text>
+  <text x="66" y="128" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#212121">varpulis.cluster.heartbeat.*</text>
+  <text x="66" y="146" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#212121">varpulis.cluster.cmd.worker-0.*</text>
+  <text x="66" y="164" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#212121">varpulis.cluster.cmd.worker-1.*</text>
+  <text x="66" y="182" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#212121">varpulis.cluster.pipeline.*.*.*</text>
+  <text x="66" y="200" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#212121">varpulis.cluster.raft.*.*</text>
+
+  <text x="66" y="226" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" font-style="italic" fill="#757575">Internal cluster coordination</text>
+  <text x="66" y="240" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" font-style="italic" fill="#757575">and Raft consensus</text>
+
+  <!-- User Subjects section -->
+  <rect x="410" y="62" width="340" height="200" rx="6" ry="6" fill="#FFF3E0" stroke="#424242" stroke-width="1.5"/>
+  <text x="580" y="82" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">User Subjects</text>
+  <line x1="420" y1="90" x2="740" y2="90" stroke="#424242" stroke-width="0.5"/>
+
+  <text x="426" y="110" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#212121">trades.></text>
+  <text x="426" y="128" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#212121">alerts.high-value</text>
+  <text x="426" y="146" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#212121">sensors.temperature.></text>
+
+  <text x="426" y="186" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" font-style="italic" fill="#757575">VPL connector subjects</text>
+  <text x="426" y="200" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" font-style="italic" fill="#757575">(user-defined data paths)</text>
+
+  <!-- Connection lines from NATS to boxes below -->
+  <line x1="130" y1="280" x2="130" y2="320" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <line x1="400" y1="280" x2="400" y2="320" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <line x1="670" y1="280" x2="670" y2="320" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- Coordinator box -->
+  <rect x="40" y="325" width="180" height="155" rx="6" ry="6" fill="none" stroke="#424242" stroke-width="1.5"/>
+  <rect x="40" y="325" width="180" height="28" rx="6" ry="6" fill="#1A73E8"/>
+  <rect x="40" y="341" width="180" height="12" fill="#1A73E8"/>
+  <text x="130" y="345" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#FFFFFF">Coordinator</text>
+
+  <text x="56" y="370" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">Subscribes:</text>
+  <text x="56" y="386" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">cluster.register</text>
+  <text x="56" y="400" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">cluster.heartbeat.*</text>
+  <text x="56" y="414" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">cluster.raft.*.*</text>
+
+  <text x="56" y="434" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">Publishes:</text>
+  <text x="56" y="450" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">cluster.cmd.worker-*.*</text>
+  <text x="56" y="464" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">cluster.pipeline.*.*.*</text>
+
+  <!-- Worker 0 box -->
+  <rect x="310" y="325" width="180" height="155" rx="6" ry="6" fill="none" stroke="#424242" stroke-width="1.5"/>
+  <rect x="310" y="325" width="180" height="28" rx="6" ry="6" fill="#1A73E8"/>
+  <rect x="310" y="341" width="180" height="12" fill="#1A73E8"/>
+  <text x="400" y="345" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#FFFFFF">Worker 0</text>
+
+  <text x="326" y="370" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">Subscribes:</text>
+  <text x="326" y="386" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">cluster.cmd.worker-0.*</text>
+  <text x="326" y="400" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">cluster.pipeline.*.*.*</text>
+  <text x="326" y="414" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">trades.></text>
+
+  <text x="326" y="434" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">Publishes:</text>
+  <text x="326" y="450" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">cluster.heartbeat.worker-0</text>
+  <text x="326" y="464" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">alerts.high-value</text>
+
+  <!-- Worker 1 box -->
+  <rect x="580" y="325" width="180" height="155" rx="6" ry="6" fill="none" stroke="#424242" stroke-width="1.5"/>
+  <rect x="580" y="325" width="180" height="28" rx="6" ry="6" fill="#1A73E8"/>
+  <rect x="580" y="341" width="180" height="12" fill="#1A73E8"/>
+  <text x="670" y="345" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#FFFFFF">Worker 1</text>
+
+  <text x="596" y="370" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">Subscribes:</text>
+  <text x="596" y="386" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">cluster.cmd.worker-1.*</text>
+  <text x="596" y="400" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">cluster.pipeline.*.*.*</text>
+  <text x="596" y="414" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">sensors.temperature.></text>
+
+  <text x="596" y="434" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">Publishes:</text>
+  <text x="596" y="450" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">cluster.heartbeat.worker-1</text>
+  <text x="596" y="464" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">cluster.raft.*.*</text>
+</svg>
