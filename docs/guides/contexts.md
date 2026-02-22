@@ -285,31 +285,7 @@ In simulation mode (no contexts), `flush_expired_sessions()` is called once afte
 
 ### Internal Design
 
-```
-                     ┌─────────────────────┐
-                     │  ContextOrchestrator │
-                     │  (event routing)     │
-                     └──────────┬──────────┘
-                                │
-            ┌───────────────────┼───────────────────┐
-            │                   │                   │
-   ┌────────▼────────┐ ┌───────▼────────┐ ┌────────▼────────┐
-   │  OS Thread #1   │ │  OS Thread #2  │ │  OS Thread #3   │
-   │  ┌────────────┐ │ │  ┌───────────┐ │ │  ┌────────────┐ │
-   │  │ Tokio RT   │ │ │  │ Tokio RT  │ │ │  │ Tokio RT   │ │
-   │  │ (single)   │ │ │  │ (single)  │ │ │  │ (single)   │ │
-   │  ├────────────┤ │ │  ├───────────┤ │ │  ├────────────┤ │
-   │  │ Engine     │ │ │  │ Engine    │ │ │  │ Engine     │ │
-   │  │ - streams  │ │ │  │ - streams │ │ │  │ - streams  │ │
-   │  │ - state    │ │ │  │ - state   │ │ │  │ - state    │ │
-   │  └────────────┘ │ │  └───────────┘ │ │  └────────────┘ │
-   │  ctx: ingest    │ │  ctx: analyze  │ │  ctx: alert     │
-   │  cores: [1]     │ │  cores: [2]    │ │  cores: [3]     │
-   └─────────────────┘ └────────────────┘ └─────────────────┘
-            │                   │                   │
-            └────── mpsc channels ──────────────────┘
-                  (cross-context events)
-```
+![Context internal architecture](../images/guides/context-internal-architecture.svg)
 
 ### Key Components
 

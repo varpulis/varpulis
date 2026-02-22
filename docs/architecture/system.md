@@ -2,57 +2,13 @@
 
 ## Overview
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                   Varpulis Runtime Engine                   │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
-│  │   Compiler   │  │   Optimizer  │  │   Validator  │       │
-│  │ (VPL) │  │              │  │              │       │
-│  └──────┬───────┘  └──────┬───────┘  └───────┬──────┘       │
-│         │                 │                  │              │
-│         └─────────────────▼──────────────────┘              │
-│                    Execution Graph                          │
-│         ┌───────────────────────────────────┐               │
-│         │                                   │               │
-├─────────▼───────────────────────────────────▼───────────────┤
-│                                                             │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
-│  │   Ingestion  │  │    Pattern   │  │   State Mgmt │       │
-│  │    Layer     │──│    Matcher   │──│  (RocksDB*/  │       │
-│  │              │  │   (SASE+)   │  │   In-Memory) │       │
-│  └──────────────┘  └──────────────┘  └──────────────┘       │
-│                                                             │
-│  ┌──────────────┐  ┌──────────────┐                         │
-│  │ Aggregation  │  │  Hamlet     │                         │
-│  │   Engine     │  │  (Trend Agg)│                         │
-│  │              │  │             │                         │
-│  └──────────────┘  └──────────────┘                         │
-│                                                             │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
-│  │ Observability│  │ Parallelism  │  │  Checkpoint  │       │
-│  │    Layer     │  │   Manager    │  │   Manager    │       │
-│  └──────────────┘  └──────────────┘  └──────────────┘       │
-│                                                             │
-│  ┌──────────────┐  ┌──────────────┐                         │
-│  │   Context    │  │  Multi-      │                         │
-│  │ Orchestrator │  │  Tenant Mgr  │                         │
-│  │(thread isol.)│  │  (SaaS API)  │                         │
-│  └──────────────┘  └──────────────┘                         │
-└─────────────────────────────────────────────────────────────┘
-```
+![Varpulis Runtime Engine overview](../images/architecture/runtime-engine-overview.svg)
 
 *\* RocksDB requires the `persistence` feature flag: `cargo build --features persistence`*
 
 ## Processing Flow
 
-```
-Event Sources → Ingestion → Pattern Matching → Aggregation → Output (.to)
-                                   ↑
-                              SASE+ NFA
-                              Structures
-```
+![Processing flow pipeline](../images/architecture/processing-flow-pipeline.svg)
 
 ## Components
 
@@ -68,7 +24,7 @@ Event Sources → Ingestion → Pattern Matching → Aggregation → Output (.to
 
 ### Ingestion Layer
 - Source connectors (Kafka, files, HTTP, etc.)
-- Deserialization (JSON, Avro, Protobuf)
+- Deserialization (JSON)
 - Schema validation
 
 ### Pattern Matcher (SASE+ with ZDD)
@@ -83,8 +39,18 @@ Event Sources → Ingestion → Pattern Matching → Aggregation → Output (.to
 - Aggregation functions (sum, avg, count, min, max, stddev, etc.)
 - Temporal windows (tumbling, sliding, session)
 - Key-based grouping
-- **Hamlet** (`hamlet/` module): multi-query trend aggregation with graphlet-based sharing — O(1) per-event propagation, 3-100x faster than ZDD-based aggregation
+- **Hamlet** (`hamlet/` module): multi-query trend aggregation with graphlet-based sharing — O(1) per-event propagation, 3-100x faster than the experimental `zdd_unified/` aggregation module
 - See [trend-aggregation.md](trend-aggregation.md)
+
+> **Note on ZDD modules:** The `varpulis-zdd` crate (used by the Pattern Matcher above) compactly represents Kleene match combinations during *detection*. The `zdd_unified/` module is a separate experimental research module that explored ZDD-based *aggregation* — Hamlet supersedes it for production use.
+
+### Pattern Forecasting (PST)
+- **Prediction Suffix Tree** (`pst/` module): variable-order Markov model for pattern completion forecasting
+- Online learning — no pre-training required, starts predictions after a configurable warmup period
+- **Pattern Markov Chain** (PMC): maps PST predictions onto SASE NFA states to forecast which events complete active sequence patterns
+- Sub-microsecond prediction latency (51 ns single symbol, 105 ns full distribution)
+- Activated via the `.forecast()` operator in VPL
+- See [forecasting.md](forecasting.md)
 
 ### Parallelism Manager
 - See [parallelism.md](parallelism.md)
@@ -103,3 +69,12 @@ Event Sources → Ingestion → Pattern Matching → Aggregation → Output (.to
 - State snapshots
 - Crash recovery
 - S3, local filesystem support
+
+### LSP Server
+- Language Server Protocol implementation for VPL
+- Go-to-definition, find-references, completions, hover docs, semantic tokens
+- See [lsp.md](../reference/lsp.md)
+
+### MCP Server
+- Model Context Protocol server exposing VPL validation, pipeline management, and engine status to AI assistants
+- See [mcp.md](../reference/mcp.md)

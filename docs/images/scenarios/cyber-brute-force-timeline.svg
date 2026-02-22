@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="220" viewBox="0 0 800 220">
+  <!-- Background -->
+  <rect width="800" height="220" fill="#FFFFFF"/>
+
+  <!-- Header -->
+  <rect x="0" y="0" width="800" height="32" rx="0" ry="0" fill="#1A73E8"/>
+  <text x="400" y="22" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="14" font-weight="bold" fill="#FFFFFF">Brute Force + Lateral Movement Timeline</text>
+
+  <!-- Timeline arrow -->
+  <defs>
+    <marker id="arrowGrey" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#616161"/>
+    </marker>
+    <marker id="arrowGreySmall" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#616161"/>
+    </marker>
+  </defs>
+  <line x1="30" y1="52" x2="770" y2="52" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowGrey)"/>
+
+  <!-- Time ticks -->
+  <line x1="80" y1="48" x2="80" y2="56" stroke="#616161" stroke-width="1.5"/>
+  <text x="80" y="45" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">t=0</text>
+
+  <line x1="220" y1="48" x2="220" y2="56" stroke="#616161" stroke-width="1.5"/>
+  <text x="220" y="45" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">t=2s</text>
+
+  <line x1="360" y1="48" x2="360" y2="56" stroke="#616161" stroke-width="1.5"/>
+  <text x="360" y="45" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">t=4s</text>
+
+  <line x1="500" y1="48" x2="500" y2="56" stroke="#616161" stroke-width="1.5"/>
+  <text x="500" y="45" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">t=6s</text>
+
+  <line x1="680" y1="48" x2="680" y2="56" stroke="#616161" stroke-width="1.5"/>
+  <text x="680" y="45" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">t=10s</text>
+
+  <!-- Connector lines from timeline to boxes -->
+  <line x1="80" y1="56" x2="80" y2="68" stroke="#616161" stroke-width="1" stroke-dasharray="3,2"/>
+  <line x1="220" y1="56" x2="220" y2="68" stroke="#616161" stroke-width="1" stroke-dasharray="3,2"/>
+  <line x1="360" y1="56" x2="360" y2="68" stroke="#616161" stroke-width="1" stroke-dasharray="3,2"/>
+  <line x1="500" y1="56" x2="500" y2="68" stroke="#616161" stroke-width="1" stroke-dasharray="3,2"/>
+  <line x1="680" y1="56" x2="680" y2="68" stroke="#616161" stroke-width="1" stroke-dasharray="3,2"/>
+
+  <!-- Event 1: Failed Login (admin) -->
+  <rect x="20" y="68" width="120" height="42" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="80" y="85" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" font-weight="bold" fill="#212121">Failed Login</text>
+  <text x="80" y="100" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">(admin)</text>
+
+  <!-- Arrow 1-2 -->
+  <line x1="140" y1="89" x2="158" y2="89" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowGreySmall)"/>
+
+  <!-- Event 2: Failed Login (root) -->
+  <rect x="160" y="68" width="120" height="42" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="220" y="85" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" font-weight="bold" fill="#212121">Failed Login</text>
+  <text x="220" y="100" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">(root)</text>
+
+  <!-- Arrow 2-3 -->
+  <line x1="280" y1="89" x2="298" y2="89" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowGreySmall)"/>
+
+  <!-- Event 3: Failed Login (admin) -->
+  <rect x="300" y="68" width="120" height="42" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="360" y="85" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" font-weight="bold" fill="#212121">Failed Login</text>
+  <text x="360" y="100" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">(admin)</text>
+
+  <!-- Arrow 3-4 -->
+  <line x1="420" y1="89" x2="438" y2="89" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowGreySmall)"/>
+
+  <!-- Event 4: Successful Login -->
+  <rect x="440" y="68" width="120" height="42" rx="6" ry="6" fill="#E8F5E9" stroke="#424242" stroke-width="1.5"/>
+  <text x="500" y="85" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" font-weight="bold" fill="#212121">Successful Login</text>
+  <text x="500" y="100" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#757575">(admin)</text>
+
+  <!-- Arrow 4-5 -->
+  <line x1="560" y1="89" x2="618" y2="89" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowGreySmall)"/>
+
+  <!-- Event 5: Network Connect (ALERT) -->
+  <rect x="620" y="68" width="130" height="42" rx="6" ry="6" fill="#FCE4EC" stroke="#424242" stroke-width="1.5"/>
+  <text x="685" y="83" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">Network Connect:445</text>
+  <text x="685" y="96" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">web-srv -> file-srv</text>
+  <text x="685" y="108" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#C62828">ALERT!</text>
+
+  <!-- Kleene bracket under first 3 boxes -->
+  <line x1="20" y1="118" x2="20" y2="128" stroke="#616161" stroke-width="1.5"/>
+  <line x1="20" y1="128" x2="420" y2="128" stroke="#616161" stroke-width="1.5"/>
+  <line x1="420" y1="118" x2="420" y2="128" stroke="#616161" stroke-width="1.5"/>
+  <text x="220" y="145" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" font-style="italic" fill="#212121">Kleene captures ALL failed attempts</text>
+
+  <!-- Annotation under last box -->
+  <text x="685" y="145" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-style="italic" fill="#757575">Complete forensic trail</text>
+  <text x="685" y="158" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-style="italic" fill="#757575">in one alert</text>
+</svg>

@@ -16,24 +16,7 @@ The average time from initial compromise to detection is 21 days. That is 21 day
 
 Varpulis correlates events across the entire kill chain in a single pattern:
 
-```
-Brute Force + Lateral Movement:
-
-  t=0       t=2s       t=4s       t=6s       t=10s
-   │         │          │          │           │
-   ▼         ▼          ▼          ▼           ▼
-┌──────┐ ┌──────┐ ┌──────┐ ┌─────────┐ ┌───────────┐
-│Failed│►│Failed│►│Failed│►│Successful│►│ Network   │
-│Login │ │Login │ │Login │ │ Login   │ │Connect:445│
-└──────┘ └──────┘ └──────┘ └─────────┘ └───────────┘
- admin    root     admin     admin      web-server →
-                                        file-server
-
-◄── Kleene captures ALL ──►            ALERT!
-    failed attempts
-
-Complete forensic trail in one alert
-```
+![Brute force and lateral movement detection timeline](../images/scenarios/cyber-brute-force-timeline.svg)
 
 ## What Varpulis Detects
 

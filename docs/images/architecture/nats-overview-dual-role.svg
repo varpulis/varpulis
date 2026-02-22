@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="300" viewBox="0 0 700 300">
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#616161"/>
+    </marker>
+    <marker id="arrowhead-left" markerWidth="10" markerHeight="7" refX="0" refY="3.5" orient="auto">
+      <polygon points="10 0, 0 3.5, 10 7" fill="#616161"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="700" height="300" fill="#FFFFFF"/>
+
+  <!-- NATS Server outer container -->
+  <rect x="20" y="15" width="660" height="270" rx="6" ry="6" fill="none" stroke="#424242" stroke-width="1.5"/>
+  <rect x="20" y="15" width="660" height="32" rx="6" ry="6" fill="#1A73E8"/>
+  <rect x="20" y="35" width="660" height="12" fill="#1A73E8"/>
+  <text x="350" y="37" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="14" font-weight="bold" fill="#FFFFFF">NATS Server</text>
+
+  <!-- Left section: Data Path -->
+  <rect x="40" y="58" width="300" height="210" rx="6" ry="6" fill="none" stroke="#424242" stroke-width="1.5"/>
+  <rect x="40" y="58" width="300" height="26" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1"/>
+  <rect x="40" y="72" width="300" height="12" fill="#E8F0FE" stroke="none"/>
+  <line x1="40" y1="84" x2="340" y2="84" stroke="#424242" stroke-width="1"/>
+  <text x="190" y="77" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">Data Path</text>
+
+  <!-- VPL Connector box -->
+  <rect x="65" y="100" width="250" height="140" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="190" y="120" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" font-weight="bold" fill="#212121">VPL Connector</text>
+
+  <!-- NatsSource -->
+  <rect x="85" y="134" width="100" height="36" rx="6" ry="6" fill="#E8F5E9" stroke="#424242" stroke-width="1.5"/>
+  <text x="135" y="157" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#212121">NatsSource</text>
+
+  <!-- NatsSink -->
+  <rect x="200" y="134" width="100" height="36" rx="6" ry="6" fill="#FCE4EC" stroke="#424242" stroke-width="1.5"/>
+  <text x="250" y="157" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#212121">NatsSink</text>
+
+  <!-- Arrows for source/sink -->
+  <line x1="55" y1="152" x2="83" y2="152" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <text x="40" y="148" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">in</text>
+  <line x1="300" y1="152" x2="325" y2="152" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <text x="327" y="148" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">out</text>
+
+  <!-- Feature label -->
+  <rect x="130" y="190" width="120" height="22" rx="4" ry="4" fill="#FFF3E0" stroke="#424242" stroke-width="1"/>
+  <text x="190" y="205" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">Feature: nats</text>
+
+  <!-- Right section: Cluster Transport -->
+  <rect x="360" y="58" width="300" height="210" rx="6" ry="6" fill="none" stroke="#424242" stroke-width="1.5"/>
+  <rect x="360" y="58" width="300" height="26" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1"/>
+  <rect x="360" y="72" width="300" height="12" fill="#E8F0FE" stroke="none"/>
+  <line x1="360" y1="84" x2="660" y2="84" stroke="#424242" stroke-width="1"/>
+  <text x="510" y="77" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#212121">Cluster Transport</text>
+
+  <!-- Coordinator <-> Workers -->
+  <rect x="385" y="100" width="250" height="140" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+
+  <rect x="405" y="112" width="90" height="36" rx="6" ry="6" fill="#FFF3E0" stroke="#424242" stroke-width="1.5"/>
+  <text x="450" y="134" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#212121">Coordinator</text>
+
+  <!-- Bidirectional arrow -->
+  <line x1="497" y1="130" x2="525" y2="130" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <line x1="525" y1="124" x2="497" y2="124" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead-left)"/>
+
+  <rect x="527" y="112" width="90" height="36" rx="6" ry="6" fill="#FFF3E0" stroke="#424242" stroke-width="1.5"/>
+  <text x="572" y="134" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#212121">Workers</text>
+
+  <!-- Cluster transport items -->
+  <text x="510" y="168" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#212121">Registration</text>
+  <text x="510" y="182" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#212121">Heartbeats</text>
+  <text x="510" y="196" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#212121">Commands</text>
+  <text x="510" y="210" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#212121">Pipeline routing</text>
+  <text x="510" y="224" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#212121">Raft RPCs</text>
+
+  <!-- Feature label -->
+  <rect x="430" y="242" width="160" height="22" rx="4" ry="4" fill="#FFF3E0" stroke="#424242" stroke-width="1"/>
+  <text x="510" y="257" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">Feature: nats-transport</text>
+</svg>

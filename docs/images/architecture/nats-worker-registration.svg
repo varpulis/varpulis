@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="250" viewBox="0 0 700 250">
+  <defs>
+    <marker id="arrowSolid" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#616161"/>
+    </marker>
+    <marker id="arrowDashed" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#616161"/>
+    </marker>
+  </defs>
+
+  <rect width="700" height="250" fill="#FFFFFF"/>
+
+  <!-- Lifeline: Worker -->
+  <rect x="70" y="20" width="120" height="36" rx="6" ry="6" fill="#1A73E8" stroke="#424242" stroke-width="1.5"/>
+  <text x="130" y="44" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="14" font-weight="600" fill="#FFFFFF">Worker</text>
+  <line x1="130" y1="56" x2="130" y2="230" stroke="#424242" stroke-width="1.5" stroke-dasharray="6,4"/>
+
+  <!-- Lifeline: NATS -->
+  <rect x="290" y="20" width="120" height="36" rx="6" ry="6" fill="#1A73E8" stroke="#424242" stroke-width="1.5"/>
+  <text x="350" y="44" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="14" font-weight="600" fill="#FFFFFF">NATS</text>
+  <line x1="350" y1="56" x2="350" y2="230" stroke="#424242" stroke-width="1.5" stroke-dasharray="6,4"/>
+
+  <!-- Lifeline: Coordinator -->
+  <rect x="500" y="20" width="130" height="36" rx="6" ry="6" fill="#1A73E8" stroke="#424242" stroke-width="1.5"/>
+  <text x="565" y="44" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="14" font-weight="600" fill="#FFFFFF">Coordinator</text>
+  <line x1="565" y1="56" x2="565" y2="230" stroke="#424242" stroke-width="1.5" stroke-dasharray="6,4"/>
+
+  <!-- Step 1: Worker -> NATS (solid) -->
+  <text x="175" y="92" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#212121">REQUEST varpulis.cluster.register</text>
+  <line x1="130" y1="98" x2="340" y2="98" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowSolid)"/>
+
+  <!-- Step 1: NATS -> Coordinator (solid) -->
+  <text x="395" y="118" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#212121">REQUEST varpulis.cluster.register</text>
+  <line x1="350" y1="124" x2="555" y2="124" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowSolid)"/>
+
+  <!-- Step 2: Coordinator -> NATS (dashed) -->
+  <text x="370" y="162" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#757575">REPLY {worker_id, status, heartbeat_interval}</text>
+  <line x1="565" y1="168" x2="360" y2="168" stroke="#616161" stroke-width="1.5" stroke-dasharray="6,4" marker-end="url(#arrowDashed)"/>
+
+  <!-- Step 2: NATS -> Worker (dashed) -->
+  <text x="138" y="192" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" fill="#757575">REPLY {worker_id, status, heartbeat_interval}</text>
+  <line x1="350" y1="198" x2="140" y2="198" stroke="#616161" stroke-width="1.5" stroke-dasharray="6,4" marker-end="url(#arrowDashed)"/>
+</svg>

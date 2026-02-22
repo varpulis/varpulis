@@ -18,22 +18,7 @@ Current monitoring systems fall into two camps:
 
 Varpulis monitors the stream of sensor readings and detects *patterns of change over time*, not just individual thresholds.
 
-```
-Bearing Degradation Detection:
-
-Time ─────────────────────────────────────►
-
-  t=0           t=30s           t=60s
-  │              │               │
-  ▼              ▼               ▼
-┌──────┐    ┌──────┐
-│ 0.5mm│───►│ 0.8mm│───► ALERT!
-│      │    │      │    60% increase
-└──────┘    └──────┘    (threshold: 30%)
- CNC-01      CNC-01
-
-Same machine, rising amplitude → degradation
-```
+![Bearing degradation detection timeline](../images/scenarios/predictive-bearing-degradation.svg)
 
 ## What Varpulis Detects
 
