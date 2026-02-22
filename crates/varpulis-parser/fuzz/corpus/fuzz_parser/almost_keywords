@@ -1,0 +1,2 @@
+streamx A = eventx .where(truex and falsex or notx)
+stream B = C .where(letx == fnx)
