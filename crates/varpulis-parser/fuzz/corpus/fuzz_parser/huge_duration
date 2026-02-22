@@ -1,0 +1,1 @@
+stream A = B .within(999999999999d)
