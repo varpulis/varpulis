@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771796842787,
+  "lastUpdate": 1771847791112,
   "repoUrl": "https://github.com/varpulis/varpulis",
   "entries": {
     "Varpulis Performance": [
@@ -2556,6 +2556,148 @@ window.BENCHMARK_DATA = {
           {
             "name": "scalability/50k_kleene_plus",
             "value": 19236000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyril.poderà@gmail.com",
+            "name": "cpoder"
+          },
+          "committer": {
+            "email": "cyril.poderà@gmail.com",
+            "name": "cpoder"
+          },
+          "distinct": true,
+          "id": "a242a86b0d84c1cfc5101999a8b24f08309a5a97",
+          "message": "fix: resolve P1 production readiness issues (#19-#22)\n\nBounded collections (#19): Add LRU eviction for PMC prediction/forecast\ncaches (hashlink::LruCache), PST arena compaction with BFS reachability,\ngraphlet cap with oldest-inactive eviction, and snapshot cap enforcement.\nPrevents OOM in long-running streams.\n\nCircuit breaker for sources (#20): Replace ad-hoc error counters in all 6\nconnector source loops (mqtt, kafka, nats + managed variants) with the\nexisting CircuitBreaker. Adds Display/Serialize on State, health report\nfields, and consistent backoff behavior across all connectors.\n\nConnector error-path tests (#21): 23 new tests covering stub NotAvailable\nreturns, database SQL injection validation, REST API header validation,\nmanaged registry errors, and json_to_event resource limit enforcement.\n\nCLI command handler tests (#22): Move resolve_imports to lib.rs for\ntestability, add simulate_from_source helper. 20 new tests covering VPL\nvalidation, config file loading, recursive import resolution with cycle\ndetection and depth limiting, simulation pipeline, and project config\ndiscovery.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>",
+          "timestamp": "2026-02-23T12:50:33+01:00",
+          "tree_id": "ff79e296c8c3886fa2a7f2ce7ef821f70b165244",
+          "url": "https://github.com/varpulis/varpulis/commit/a242a86b0d84c1cfc5101999a8b24f08309a5a97"
+        },
+        "date": 1771847790548,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "simple_sequence/sase/100",
+            "value": 33178,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "simple_sequence/sase/1000",
+            "value": 331840,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "simple_sequence/sase/10000",
+            "value": 3314500,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_plus/sase/100",
+            "value": 39900,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_plus/sase/1000",
+            "value": 436410,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_plus/sase/5000",
+            "value": 2204700,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "with_predicates/sase/100",
+            "value": 32156,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "with_predicates/sase/1000",
+            "value": 384930,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "with_predicates/sase/5000",
+            "value": 1945100,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "long_sequence/seq_5_events_5k",
+            "value": 2132100,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "long_sequence/seq_10_events_10k",
+            "value": 3857600,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "complex_patterns/negation_5k",
+            "value": 1487600,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "complex_patterns/or_pattern_5k",
+            "value": 1674900,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "complex_patterns/nested_kleene_5k",
+            "value": 112830000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "multi_predicates/chained_predicates_5k",
+            "value": 1748000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "throughput/seq_3/10000",
+            "value": 3321700,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "throughput/seq_3/50000",
+            "value": 16654000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "throughput/seq_3/100000",
+            "value": 34267000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "scalability/100k_simple_seq",
+            "value": 33162000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "scalability/50k_kleene_plus",
+            "value": 19286000,
             "range": "± 0",
             "unit": "ns/iter"
           }
