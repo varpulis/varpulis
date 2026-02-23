@@ -17,7 +17,7 @@ export type NodeType =
 // Connector Node - External System Connection
 // ============================================
 
-export type ConnectorType = 'mqtt' | 'kafka' | 'amqp' | 'http' | 'file' | 'websocket';
+export type ConnectorType = 'mqtt' | 'kafka' | 'amqp' | 'http' | 'file' | 'websocket' | 'nats';
 
 export interface ConnectorNodeData {
   label: string;
@@ -40,6 +40,8 @@ export interface ConnectorNodeData {
   basePath?: string;
   // WebSocket settings
   wsUrl?: string;
+  // NATS settings
+  natsUrl?: string;
   [key: string]: unknown;
 }
 
@@ -89,7 +91,8 @@ export interface SourceNodeData {
 export type OperationType =
   | 'where' | 'select' | 'window' | 'aggregate'
   | 'partition_by' | 'order_by' | 'limit' | 'distinct'
-  | 'map' | 'filter' | 'join' | 'merge' | 'flatten';
+  | 'map' | 'filter' | 'join' | 'merge' | 'flatten'
+  | 'forecast' | 'trend_aggregate';
 
 export interface StreamOperation {
   type: OperationType;
@@ -113,6 +116,14 @@ export interface StreamOperation {
   joinWindow?: string;
   // Map/Filter lambda
   lambda?: string;
+  // Forecast settings
+  forecastConfidence?: string;
+  forecastHorizon?: string;
+  forecastWarmup?: string;
+  forecastMaxDepth?: string;
+  forecastMode?: string;
+  // Trend aggregate settings
+  trendAggregations?: string;
 }
 
 export interface StreamNodeData {
@@ -143,6 +154,14 @@ export interface PatternNodeData {
   within?: string;
   partitionBy?: string;
   skipTillMatch?: 'strict' | 'skip_till_next' | 'skip_till_any';
+  // Forecast config (when pattern has .forecast())
+  forecast?: {
+    confidence?: string;
+    horizon?: string;
+    warmup?: string;
+    maxDepth?: string;
+    mode?: string;
+  };
   [key: string]: unknown;
 }
 
@@ -303,6 +322,8 @@ export function createDefaultConnectorData(type: ConnectorType): ConnectorNodeDa
       return { ...base, basePath: './data' };
     case 'websocket':
       return { ...base, wsUrl: 'ws://localhost:8080' };
+    case 'nats':
+      return { ...base, natsUrl: 'nats://localhost:4222' };
     default:
       return base;
   }

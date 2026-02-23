@@ -25,6 +25,9 @@ pub fn get_completions(text: &str, position: Position) -> Vec<CompletionItem> {
         CompletionContext::InToParams(connector_type) => {
             get_connector_param_completions(connector_type.as_deref(), ParamContext::Sink)
         }
+        CompletionContext::ConnectorType => get_connector_type_completions(),
+        CompletionContext::InForecastParams => get_forecast_param_completions(),
+        CompletionContext::InEmit => get_emit_field_completions(text),
     }
 }
 
@@ -42,6 +45,12 @@ enum CompletionContext {
     InFromParams(Option<String>),
     /// Inside `.to(Connector, <cursor>)` with resolved connector type
     InToParams(Option<String>),
+    /// After `connector Name = <cursor>`
+    ConnectorType,
+    /// Inside `.forecast(<cursor>)`
+    InForecastParams,
+    /// Inside `.emit(<cursor>)` — suggest fields from upstream event/stream
+    InEmit,
 }
 
 /// Determine what kind of completion to provide based on context
@@ -56,6 +65,18 @@ fn get_completion_context(text: &str, position: Position) -> CompletionContext {
         return ctx;
     }
 
+    // Check if we're after `connector Name = ` (suggest connector types)
+    if let Some(idx) = prefix.find("connector ") {
+        let after = &prefix[idx + 10..];
+        // Skip the name, look for `= `
+        if let Some(eq_idx) = after.find('=') {
+            let after_eq = after[eq_idx + 1..].trim_start();
+            if after_eq.is_empty() || (!after_eq.contains('(') && !after_eq.contains(')')) {
+                return CompletionContext::ConnectorType;
+            }
+        }
+    }
+
     // Check if we're after a dot (stream operation)
     if prefix.trim_end().ends_with('.') {
         return CompletionContext::StreamOperation;
@@ -64,6 +85,16 @@ fn get_completion_context(text: &str, position: Position) -> CompletionContext {
     // Check if we're after @ (timestamp literal)
     if prefix.trim_end().ends_with('@') {
         return CompletionContext::AfterAt;
+    }
+
+    // Check if we're inside .forecast(...) params
+    if prefix.contains(".forecast(") && !prefix.ends_with(')') {
+        return CompletionContext::InForecastParams;
+    }
+
+    // Check if we're inside .emit(...) — suggest fields
+    if prefix.contains(".emit(") && !prefix.ends_with(')') {
+        return CompletionContext::InEmit;
     }
 
     // Check if we're inside a window() call
@@ -312,24 +343,73 @@ fn get_stream_operation_completions() -> Vec<CompletionItem> {
             "enrich(${1:Connector}, key: ${2:expr}, fields: [${3:field}], cache_ttl: ${4:5m})",
             Some(".enrich(Connector, key: e.id, fields: [name, category], cache_ttl: 5m)"),
         ),
+        completion_item(
+            "trend_aggregate",
+            CompletionItemKind::METHOD,
+            "Hamlet-based trend aggregation over patterns",
+            "trend_aggregate(${1:field}: ${2:sum(value)})",
+            Some(".trend_aggregate(total: sum(value))"),
+        ),
+        completion_item(
+            "merge",
+            CompletionItemKind::METHOD,
+            "Merge multiple streams",
+            "merge(${1:stream1}, ${2:stream2})",
+            Some(".merge(streamA, streamB)"),
+        ),
+        completion_item(
+            "from",
+            CompletionItemKind::METHOD,
+            "Bind to connector source",
+            "from(${1:Connector}, topic: \"${2:topic}\")",
+            Some(".from(Connector, topic: \"...\")"),
+        ),
+        completion_item(
+            "within",
+            CompletionItemKind::METHOD,
+            "Time constraint for sequence patterns",
+            "within(${1:5m})",
+            Some(".within(5m)"),
+        ),
     ]
 }
 
 fn get_top_level_completions() -> Vec<CompletionItem> {
     vec![
         completion_item(
-            "stream",
+            "connector",
             CompletionItemKind::KEYWORD,
-            "Declare a data stream",
-            "stream ${1:Name} = ${2:Source}\n    .where($3)\n    .emit()",
-            Some("stream Name = Source"),
+            "Declare a data source/sink connection",
+            "connector ${1:Name} = ${2:mqtt}(${3:host: \"localhost\", port: 1883})",
+            Some("connector Name = mqtt(host: \"localhost\", port: 1883)"),
         ),
         completion_item(
             "event",
             CompletionItemKind::KEYWORD,
             "Declare an event type",
-            "event ${1:Name} {\n    ${2:field}: ${3:type}\n}",
-            Some("event Name { field: type }"),
+            "event ${1:Name}:\n    ${2:field}: ${3:str}",
+            Some("event Name:\n    field: str"),
+        ),
+        completion_item(
+            "stream",
+            CompletionItemKind::KEYWORD,
+            "Declare a data stream",
+            "stream ${1:Name} = ${2:EventType}.from(${3:Connector}, topic: \"${4:topic}\")\n    .where($5)\n    .emit($6)",
+            Some("stream Name = EventType.from(Connector, topic: \"...\")"),
+        ),
+        completion_item(
+            "stream (sequence)",
+            CompletionItemKind::KEYWORD,
+            "Declare a sequence pattern stream",
+            "stream ${1:Name} = ${2:EventA} as ${3:a} -> ${4:EventB} as ${5:b}\n    .within(${6:5m})\n    .where(${7:condition})\n    .emit($8)",
+            Some("stream Name = EventA as a -> EventB as b\n    .within(5m)"),
+        ),
+        completion_item(
+            "context",
+            CompletionItemKind::KEYWORD,
+            "Declare an execution context",
+            "context ${1:name}(${2:cores: [1, 2]})",
+            Some("context name(cores: [1, 2])"),
         ),
         completion_item(
             "pattern",
@@ -365,13 +445,6 @@ fn get_top_level_completions() -> Vec<CompletionItem> {
             "Declare function",
             "fn ${1:name}(${2:params}) -> ${3:ReturnType} {\n    $4\n}",
             Some("fn name(params) -> ReturnType { ... }"),
-        ),
-        completion_item(
-            "config",
-            CompletionItemKind::KEYWORD,
-            "Configuration block",
-            "config {\n    $1\n}",
-            Some("config { ... }"),
         ),
     ]
 }
@@ -780,6 +853,207 @@ fn completion_item(
     }
 }
 
+fn get_connector_type_completions() -> Vec<CompletionItem> {
+    vec![
+        completion_item(
+            "mqtt",
+            CompletionItemKind::CLASS,
+            "MQTT message broker",
+            "mqtt(host: \"${1:localhost}\", port: ${2:1883})",
+            Some("mqtt(host: \"localhost\", port: 1883)"),
+        ),
+        completion_item(
+            "kafka",
+            CompletionItemKind::CLASS,
+            "Apache Kafka cluster",
+            "kafka(brokers: [\"${1:localhost:9092}\"])",
+            Some("kafka(brokers: [\"localhost:9092\"])"),
+        ),
+        completion_item(
+            "nats",
+            CompletionItemKind::CLASS,
+            "NATS messaging system",
+            "nats(url: \"${1:nats://localhost:4222}\")",
+            Some("nats(url: \"nats://localhost:4222\")"),
+        ),
+        completion_item(
+            "http",
+            CompletionItemKind::CLASS,
+            "HTTP API endpoint",
+            "http(url: \"${1:https://api.example.com}\")",
+            Some("http(url: \"https://api.example.com\")"),
+        ),
+        completion_item(
+            "websocket",
+            CompletionItemKind::CLASS,
+            "WebSocket connection",
+            "websocket(url: \"${1:ws://localhost:8080}\")",
+            Some("websocket(url: \"ws://localhost:8080\")"),
+        ),
+        completion_item(
+            "file",
+            CompletionItemKind::CLASS,
+            "File source/sink",
+            "file(path: \"${1:data.jsonl}\")",
+            Some("file(path: \"data.jsonl\")"),
+        ),
+    ]
+}
+
+fn get_forecast_param_completions() -> Vec<CompletionItem> {
+    vec![
+        completion_item(
+            "mode",
+            CompletionItemKind::PROPERTY,
+            "Preset mode: \"fast\", \"balanced\" (default), or \"accurate\"",
+            "mode: \"${1:balanced}\"",
+            Some("mode: \"balanced\""),
+        ),
+        completion_item(
+            "confidence",
+            CompletionItemKind::PROPERTY,
+            "Minimum probability to emit forecast (0.0-1.0, default 0.5)",
+            "confidence: ${1:0.7}",
+            Some("confidence: 0.7"),
+        ),
+        completion_item(
+            "horizon",
+            CompletionItemKind::PROPERTY,
+            "Forecast time window (default = within duration)",
+            "horizon: ${1:2m}",
+            Some("horizon: 2m"),
+        ),
+        completion_item(
+            "warmup",
+            CompletionItemKind::PROPERTY,
+            "Min events before forecasting starts (default 100)",
+            "warmup: ${1:500}",
+            Some("warmup: 500"),
+        ),
+        completion_item(
+            "max_depth",
+            CompletionItemKind::PROPERTY,
+            "PST context tree depth (default 3)",
+            "max_depth: ${1:5}",
+            Some("max_depth: 5"),
+        ),
+        completion_item(
+            "hawkes",
+            CompletionItemKind::PROPERTY,
+            "Enable Hawkes intensity modulation (default true)",
+            "hawkes: ${1:true}",
+            Some("hawkes: true"),
+        ),
+        completion_item(
+            "conformal",
+            CompletionItemKind::PROPERTY,
+            "Enable conformal prediction intervals (default true)",
+            "conformal: ${1:true}",
+            Some("conformal: true"),
+        ),
+    ]
+}
+
+/// Suggest fields available in .emit() based on upstream event fields and built-in variables
+fn get_emit_field_completions(text: &str) -> Vec<CompletionItem> {
+    let mut items = Vec::new();
+
+    // Collect fields from all event declarations in the document
+    let mut in_event = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("event ") {
+            in_event = true;
+            continue;
+        }
+        if in_event {
+            if trimmed.is_empty()
+                || (!trimmed.starts_with(char::is_whitespace)
+                    && !line.starts_with(' ')
+                    && !line.starts_with('\t'))
+            {
+                in_event = false;
+            } else if let Some(colon_idx) = trimmed.find(':') {
+                let field_name = trimmed[..colon_idx].trim();
+                if !field_name.is_empty()
+                    && field_name
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_alphabetic() || c == '_')
+                {
+                    items.push(completion_item(
+                        field_name,
+                        CompletionItemKind::FIELD,
+                        "Event field",
+                        &format!("{}: {}", field_name, field_name),
+                        Some(&format!("{}: {}", field_name, field_name)),
+                    ));
+                }
+            }
+        }
+    }
+
+    // Add forecast built-in variables if .forecast() is present
+    if text.contains(".forecast(") {
+        let forecast_vars = [
+            ("forecast_probability", "Completion probability (0.0-1.0)"),
+            ("forecast_confidence", "Prediction stability (0.0-1.0)"),
+            ("forecast_time", "Expected time to completion (ns)"),
+            ("forecast_state", "Current NFA state label"),
+            ("forecast_context_depth", "PST context depth used"),
+            ("forecast_lower", "Conformal interval lower bound"),
+            ("forecast_upper", "Conformal interval upper bound"),
+        ];
+        for (name, desc) in forecast_vars {
+            items.push(completion_item(
+                name,
+                CompletionItemKind::VARIABLE,
+                desc,
+                &format!("{}: {}", name, name),
+                Some(&format!("{}: {}", name, name)),
+            ));
+        }
+    }
+
+    // Add enrich built-in variables if .enrich() is present
+    if text.contains(".enrich(") {
+        items.push(completion_item(
+            "enrich_status",
+            CompletionItemKind::VARIABLE,
+            "Enrich lookup status (ok/error/cached/timeout)",
+            "enrich_status: enrich_status",
+            Some("enrich_status: enrich_status"),
+        ));
+        items.push(completion_item(
+            "enrich_latency_ms",
+            CompletionItemKind::VARIABLE,
+            "Enrich lookup latency in milliseconds",
+            "enrich_latency_ms: enrich_latency_ms",
+            Some("enrich_latency_ms: enrich_latency_ms"),
+        ));
+    }
+
+    // Add common emit patterns
+    if items.is_empty() {
+        items.push(completion_item(
+            "alert",
+            CompletionItemKind::FIELD,
+            "Alert type label",
+            "alert: \"${1:ALERT_TYPE}\"",
+            Some("alert: \"ALERT_TYPE\""),
+        ));
+        items.push(completion_item(
+            "severity",
+            CompletionItemKind::FIELD,
+            "Alert severity level",
+            "severity: \"${1:warning}\"",
+            Some("severity: \"warning\""),
+        ));
+    }
+
+    items
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -809,6 +1083,7 @@ mod tests {
         let labels: Vec<&str> = completions.iter().map(|c| c.label.as_str()).collect();
         assert!(labels.contains(&"stream"));
         assert!(labels.contains(&"event"));
+        assert!(labels.contains(&"connector"));
         assert!(labels.contains(&"pattern"));
         assert!(labels.contains(&"fn"));
     }

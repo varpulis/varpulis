@@ -1,30 +1,30 @@
 import { useState } from 'react';
-import type { ConnectorConfig, ConnectorType } from '../types';
+import type { ConnectorNodeData, ConnectorType } from '../types/flow';
 
 interface ConnectorPanelProps {
-    connector?: ConnectorConfig;
+    connector?: ConnectorNodeData;
     mode: 'source' | 'sink';
-    onSave: (config: ConnectorConfig) => void;
+    onSave: (config: ConnectorNodeData) => void;
     onCancel: () => void;
 }
 
 const connectorOptions: { type: ConnectorType; label: string; icon: string; modes: ('source' | 'sink')[] }[] = [
     { type: 'mqtt', label: 'MQTT', icon: '📡', modes: ['source', 'sink'] },
     { type: 'kafka', label: 'Kafka', icon: '🗄️', modes: ['source', 'sink'] },
+    { type: 'nats', label: 'NATS', icon: '⚡', modes: ['source', 'sink'] },
     { type: 'amqp', label: 'AMQP/RabbitMQ', icon: '💬', modes: ['source', 'sink'] },
     { type: 'file', label: 'File (.evt/.json)', icon: '📄', modes: ['source', 'sink'] },
     { type: 'http', label: 'HTTP/Webhook', icon: '🌐', modes: ['source', 'sink'] },
-    { type: 'console', label: 'Console', icon: '💻', modes: ['sink'] },
 ];
 
 export default function ConnectorPanel({ connector, mode, onSave, onCancel }: ConnectorPanelProps) {
-    const [config, setConfig] = useState<ConnectorConfig>(
-        connector || { type: 'mqtt', name: '' }
+    const [config, setConfig] = useState<ConnectorNodeData>(
+        connector || { label: '', connectorType: 'mqtt' }
     );
 
     const availableConnectors = connectorOptions.filter(c => c.modes.includes(mode));
 
-    const updateConfig = (updates: Partial<ConnectorConfig>) => {
+    const updateConfig = (updates: Partial<ConnectorNodeData>) => {
         setConfig(prev => ({ ...prev, ...updates }));
     };
 
@@ -46,8 +46,8 @@ export default function ConnectorPanel({ connector, mode, onSave, onCancel }: Co
                             {availableConnectors.map(opt => (
                                 <button
                                     key={opt.type}
-                                    onClick={() => updateConfig({ type: opt.type })}
-                                    className={`flex flex-col items-center gap-1 p-3 rounded border transition-colors ${config.type === opt.type
+                                    onClick={() => updateConfig({ connectorType: opt.type })}
+                                    className={`flex flex-col items-center gap-1 p-3 rounded border transition-colors ${config.connectorType === opt.type
                                             ? 'border-vscode-accent bg-vscode-accent/20'
                                             : 'border-vscode-border hover:border-gray-500'
                                         }`}
@@ -64,23 +64,23 @@ export default function ConnectorPanel({ connector, mode, onSave, onCancel }: Co
                         <label className="block text-sm text-gray-400 mb-1">Name</label>
                         <input
                             type="text"
-                            value={config.name}
-                            onChange={e => updateConfig({ name: e.target.value })}
+                            value={config.label}
+                            onChange={e => updateConfig({ label: e.target.value })}
                             placeholder="my-connector"
                             className="w-full px-3 py-2 bg-vscode-input border border-vscode-border rounded text-sm focus:border-vscode-accent outline-none"
                         />
                     </div>
 
                     {/* MQTT Configuration */}
-                    {config.type === 'mqtt' && (
+                    {config.connectorType === 'mqtt' && (
                         <>
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
                                     <label className="block text-sm text-gray-400 mb-1">Host</label>
                                     <input
                                         type="text"
-                                        value={config.host || ''}
-                                        onChange={e => updateConfig({ host: e.target.value })}
+                                        value={config.broker || ''}
+                                        onChange={e => updateConfig({ broker: e.target.value })}
                                         placeholder="localhost"
                                         className="w-full px-3 py-2 bg-vscode-input border border-vscode-border rounded text-sm focus:border-vscode-accent outline-none"
                                     />
@@ -95,75 +95,63 @@ export default function ConnectorPanel({ connector, mode, onSave, onCancel }: Co
                                     />
                                 </div>
                             </div>
-                            <div>
-                                <label className="block text-sm text-gray-400 mb-1">Topic</label>
-                                <input
-                                    type="text"
-                                    value={config.topic || ''}
-                                    onChange={e => updateConfig({ topic: e.target.value })}
-                                    placeholder="sensors/temperature"
-                                    className="w-full px-3 py-2 bg-vscode-input border border-vscode-border rounded text-sm focus:border-vscode-accent outline-none"
-                                />
-                            </div>
                         </>
                     )}
 
                     {/* Kafka Configuration */}
-                    {config.type === 'kafka' && (
-                        <>
-                            <div>
-                                <label className="block text-sm text-gray-400 mb-1">Brokers (comma-separated)</label>
-                                <input
-                                    type="text"
-                                    value={config.brokers?.join(', ') || ''}
-                                    onChange={e => updateConfig({ brokers: e.target.value.split(',').map(s => s.trim()) })}
-                                    placeholder="localhost:9092"
-                                    className="w-full px-3 py-2 bg-vscode-input border border-vscode-border rounded text-sm focus:border-vscode-accent outline-none"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-sm text-gray-400 mb-1">Topic</label>
-                                <input
-                                    type="text"
-                                    value={config.topic || ''}
-                                    onChange={e => updateConfig({ topic: e.target.value })}
-                                    placeholder="events"
-                                    className="w-full px-3 py-2 bg-vscode-input border border-vscode-border rounded text-sm focus:border-vscode-accent outline-none"
-                                />
-                            </div>
-                        </>
+                    {config.connectorType === 'kafka' && (
+                        <div>
+                            <label className="block text-sm text-gray-400 mb-1">Brokers (comma-separated)</label>
+                            <input
+                                type="text"
+                                value={config.brokers || ''}
+                                onChange={e => updateConfig({ brokers: e.target.value })}
+                                placeholder="localhost:9092"
+                                className="w-full px-3 py-2 bg-vscode-input border border-vscode-border rounded text-sm focus:border-vscode-accent outline-none"
+                            />
+                        </div>
+                    )}
+
+                    {/* NATS Configuration */}
+                    {config.connectorType === 'nats' && (
+                        <div>
+                            <label className="block text-sm text-gray-400 mb-1">URL</label>
+                            <input
+                                type="text"
+                                value={config.natsUrl || ''}
+                                onChange={e => updateConfig({ natsUrl: e.target.value })}
+                                placeholder="nats://localhost:4222"
+                                className="w-full px-3 py-2 bg-vscode-input border border-vscode-border rounded text-sm focus:border-vscode-accent outline-none"
+                            />
+                        </div>
                     )}
 
                     {/* File Configuration */}
-                    {config.type === 'file' && (
-                        <>
-                            <div>
-                                <label className="block text-sm text-gray-400 mb-1">File Path</label>
-                                <input
-                                    type="text"
-                                    value={config.path || ''}
-                                    onChange={e => updateConfig({ path: e.target.value })}
-                                    placeholder="./events/input.evt"
-                                    className="w-full px-3 py-2 bg-vscode-input border border-vscode-border rounded text-sm focus:border-vscode-accent outline-none"
-                                />
-                            </div>
-                        </>
+                    {config.connectorType === 'file' && (
+                        <div>
+                            <label className="block text-sm text-gray-400 mb-1">File Path</label>
+                            <input
+                                type="text"
+                                value={config.basePath || ''}
+                                onChange={e => updateConfig({ basePath: e.target.value })}
+                                placeholder="./events/input.evt"
+                                className="w-full px-3 py-2 bg-vscode-input border border-vscode-border rounded text-sm focus:border-vscode-accent outline-none"
+                            />
+                        </div>
                     )}
 
                     {/* HTTP Configuration */}
-                    {config.type === 'http' && (
-                        <>
-                            <div>
-                                <label className="block text-sm text-gray-400 mb-1">URL</label>
-                                <input
-                                    type="text"
-                                    value={config.url || ''}
-                                    onChange={e => updateConfig({ url: e.target.value })}
-                                    placeholder="https://api.example.com/events"
-                                    className="w-full px-3 py-2 bg-vscode-input border border-vscode-border rounded text-sm focus:border-vscode-accent outline-none"
-                                />
-                            </div>
-                        </>
+                    {config.connectorType === 'http' && (
+                        <div>
+                            <label className="block text-sm text-gray-400 mb-1">URL</label>
+                            <input
+                                type="text"
+                                value={config.baseUrl || ''}
+                                onChange={e => updateConfig({ baseUrl: e.target.value })}
+                                placeholder="https://api.example.com/events"
+                                className="w-full px-3 py-2 bg-vscode-input border border-vscode-border rounded text-sm focus:border-vscode-accent outline-none"
+                            />
+                        </div>
                     )}
                 </div>
 
@@ -176,7 +164,7 @@ export default function ConnectorPanel({ connector, mode, onSave, onCancel }: Co
                     </button>
                     <button
                         onClick={() => onSave(config)}
-                        disabled={!config.name}
+                        disabled={!config.label}
                         className="px-4 py-2 text-sm bg-vscode-button text-white rounded hover:opacity-90 disabled:opacity-50"
                     >
                         Save

@@ -597,9 +597,44 @@ fn semantic_tokens_whitespace_only() {
 #[test]
 fn semantic_tokens_all_keywords() {
     for kw in [
-        "stream", "event", "pattern", "from", "let", "var", "const", "fn", "config", "if", "elif",
-        "else", "then", "match", "for", "while", "in", "break", "continue", "return", "and", "or",
-        "not", "true", "false", "null", "within", "SEQ", "AND", "OR", "NOT",
+        "stream",
+        "event",
+        "connector",
+        "context",
+        "pattern",
+        "from",
+        "as",
+        "let",
+        "var",
+        "const",
+        "fn",
+        "import",
+        "extends",
+        "type",
+        "if",
+        "elif",
+        "else",
+        "then",
+        "match",
+        "for",
+        "while",
+        "in",
+        "is",
+        "on",
+        "break",
+        "continue",
+        "return",
+        "and",
+        "or",
+        "not",
+        "true",
+        "false",
+        "null",
+        "within",
+        "SEQ",
+        "AND",
+        "OR",
+        "NOT",
     ] {
         let text = format!("{} something", kw);
         let tokens = get_semantic_tokens(&text);
@@ -843,7 +878,7 @@ fn completion_top_level_empty() {
     assert!(labels.contains(&"var"));
     assert!(labels.contains(&"const"));
     assert!(labels.contains(&"fn"));
-    assert!(labels.contains(&"config"));
+    assert!(labels.contains(&"connector"));
 }
 
 #[test]

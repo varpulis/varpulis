@@ -85,6 +85,7 @@ pub fn get_semantic_tokens(text: &str) -> Vec<SemanticToken> {
         }
 
         // Tokenize the line using character positions
+        let mut prev_was_dot = false;
         while char_pos < char_indices.len() {
             let (byte_offset, current_char) = char_indices[char_pos];
 
@@ -94,11 +95,25 @@ pub fn get_semantic_tokens(text: &str) -> Vec<SemanticToken> {
                 continue;
             }
 
+            // Track dots for context-aware tokenization
+            if current_char == '.' {
+                // Check for .. or ..= range operators
+                let next = char_indices.get(char_pos + 1).map(|(_, c)| *c);
+                if next == Some('.') {
+                    prev_was_dot = false;
+                } else {
+                    prev_was_dot = true;
+                    char_pos += 1;
+                    continue;
+                }
+            }
+
             // Get remaining string safely from byte offset
             let remaining = &line[byte_offset..];
 
             // Try to match patterns
-            if let Some((byte_len, token_type)) = match_token(remaining) {
+            if let Some((byte_len, token_type)) = match_token_ctx(remaining, prev_was_dot) {
+                prev_was_dot = false;
                 // Calculate character length from byte length
                 let char_len = remaining[..byte_len].chars().count();
 
@@ -121,6 +136,7 @@ pub fn get_semantic_tokens(text: &str) -> Vec<SemanticToken> {
                 prev_char = char_pos as u32;
                 char_pos += char_len;
             } else {
+                prev_was_dot = false;
                 char_pos += 1;
             }
         }
@@ -129,13 +145,85 @@ pub fn get_semantic_tokens(text: &str) -> Vec<SemanticToken> {
     tokens
 }
 
-/// Match a token at the start of the string, returning (length, token_type)
-fn match_token(s: &str) -> Option<(usize, u32)> {
+/// Match a token at the start of the string, returning (length, token_type).
+/// `after_dot` indicates whether the previous non-whitespace character was `.`
+fn match_token_ctx(s: &str, after_dot: bool) -> Option<(usize, u32)> {
+    // Stream operations (after .)
+    if after_dot {
+        let operations = [
+            "where",
+            "select",
+            "aggregate",
+            "window",
+            "partition_by",
+            "order_by",
+            "limit",
+            "distinct",
+            "emit",
+            "to",
+            "tap",
+            "pattern",
+            "concurrent",
+            "process",
+            "on_error",
+            "collect",
+            "merge",
+            "join",
+            "on",
+            "forecast",
+            "trend_aggregate",
+            "enrich",
+            "from",
+        ];
+
+        for op in operations {
+            if s.starts_with(op)
+                && !s[op.len()..].starts_with(|c: char| c.is_alphanumeric() || c == '_')
+            {
+                return Some((op.len(), TOKEN_KEYWORD));
+            }
+        }
+    }
     // Keywords
     let keywords = [
-        "stream", "event", "pattern", "from", "let", "var", "const", "fn", "config", "if", "elif",
-        "else", "then", "match", "for", "while", "in", "break", "continue", "return", "and", "or",
-        "not", "true", "false", "null", "within", "SEQ", "AND", "OR", "NOT",
+        "stream",
+        "event",
+        "connector",
+        "context",
+        "pattern",
+        "from",
+        "as",
+        "let",
+        "var",
+        "const",
+        "fn",
+        "import",
+        "extends",
+        "type",
+        "if",
+        "elif",
+        "else",
+        "then",
+        "match",
+        "for",
+        "while",
+        "in",
+        "is",
+        "on",
+        "break",
+        "continue",
+        "return",
+        "and",
+        "or",
+        "not",
+        "true",
+        "false",
+        "null",
+        "within",
+        "SEQ",
+        "AND",
+        "OR",
+        "NOT",
     ];
 
     for kw in keywords {
@@ -251,35 +339,24 @@ fn match_token(s: &str) -> Option<(usize, u32)> {
         }
     }
 
-    // Stream operations (after .)
-    let operations = [
-        "where",
-        "select",
-        "aggregate",
-        "window",
-        "partition_by",
-        "order_by",
-        "limit",
-        "distinct",
-        "emit",
-        "to",
-        "tap",
-        "pattern",
-        "concurrent",
-        "process",
-        "on_error",
-        "collect",
-        "merge",
-        "join",
-        "on",
+    // Forecast/enrich built-in variables (not function calls, just identifiers)
+    let builtin_vars = [
+        "forecast_probability",
+        "forecast_confidence",
+        "forecast_time",
+        "forecast_state",
+        "forecast_context_depth",
+        "forecast_lower",
+        "forecast_upper",
+        "enrich_status",
+        "enrich_latency_ms",
     ];
 
-    for op in operations {
-        if s.starts_with(op)
-            && !s[op.len()..].starts_with(|c: char| c.is_alphanumeric() || c == '_')
+    for var in builtin_vars {
+        if s.starts_with(var)
+            && !s[var.len()..].starts_with(|c: char| c.is_alphanumeric() || c == '_')
         {
-            // This would need more context to determine if after a dot
-            // For now, just continue
+            return Some((var.len(), TOKEN_VARIABLE));
         }
     }
 
@@ -423,6 +500,58 @@ pub fn get_document_symbols(text: &str) -> Vec<SymbolInformation> {
                 symbols.push(SymbolInformation {
                     name: name.to_string(),
                     kind: SymbolKind::CLASS,
+                    tags: None,
+                    deprecated: None,
+                    location: Location {
+                        uri: uri.clone(),
+                        range: Range {
+                            start: Position {
+                                line: line_num as u32,
+                                character: 0,
+                            },
+                            end: Position {
+                                line: line_num as u32,
+                                character: line.len() as u32,
+                            },
+                        },
+                    },
+                    container_name: None,
+                });
+            }
+        }
+
+        // Connector declarations
+        if trimmed.starts_with("connector ") {
+            if let Some(name) = extract_identifier(trimmed, "connector ") {
+                symbols.push(SymbolInformation {
+                    name: name.to_string(),
+                    kind: SymbolKind::INTERFACE,
+                    tags: None,
+                    deprecated: None,
+                    location: Location {
+                        uri: uri.clone(),
+                        range: Range {
+                            start: Position {
+                                line: line_num as u32,
+                                character: 0,
+                            },
+                            end: Position {
+                                line: line_num as u32,
+                                character: line.len() as u32,
+                            },
+                        },
+                    },
+                    container_name: None,
+                });
+            }
+        }
+
+        // Context declarations
+        if trimmed.starts_with("context ") {
+            if let Some(name) = extract_identifier(trimmed, "context ") {
+                symbols.push(SymbolInformation {
+                    name: name.to_string(),
+                    kind: SymbolKind::NAMESPACE,
                     tags: None,
                     deprecated: None,
                     location: Location {

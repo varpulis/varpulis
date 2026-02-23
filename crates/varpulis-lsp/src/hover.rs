@@ -61,16 +61,57 @@ fn get_documentation(word: &str) -> Option<String> {
         // Keywords - Declarations
         "stream" => Some(format!(
             "## stream\n\n\
-            Declares a data stream from an external source.\n\n\
-            **Syntax:**\n\
+            Declares a data stream pipeline.\n\n\
+            **Syntax (simple):**\n\
             ```vpl\n\
-            stream <Name> from \"<source_uri>\"\n\
+            stream <Name> = <EventType>.from(<Connector>, topic: \"...\")\n\
+                .where(condition)\n\
+                .emit(field: value)\n\
+            ```\n\n\
+            **Syntax (sequence pattern):**\n\
+            ```vpl\n\
+            stream <Name> = EventA as a -> EventB as b\n\
+                .within(5m)\n\
+                .where(b.value > a.value)\n\
+                .emit(alert: \"pattern_detected\")\n\
             ```\n\n\
             **Example:**\n\
             ```vpl\n\
-            stream SensorData from \"mqtt://localhost:1883/sensors\"\n\
-                .where(temperature > 0)\n\
+            connector Broker = mqtt(host: \"localhost\", port: 1883)\n\n\
+            stream SensorData = TemperatureReading.from(Broker, topic: \"sensors/#\")\n\
+                .where(temperature > 25)\n\
+                .window(tumbling(5m))\n\
+                .aggregate(avg_temp: avg(temperature))\n\
                 .emit()\n\
+            ```"
+        )),
+
+        "connector" => Some(format!(
+            "## connector\n\n\
+            Declares a data source/sink connection.\n\n\
+            **Syntax:**\n\
+            ```vpl\n\
+            connector <Name> = <type>(<params>)\n\
+            ```\n\n\
+            **Connector types:** `mqtt`, `kafka`, `nats`, `http`, `websocket`, `file`\n\n\
+            **Examples:**\n\
+            ```vpl\n\
+            connector Broker = mqtt(host: \"localhost\", port: 1883)\n\
+            connector Stream = kafka(brokers: [\"kafka:9092\"])\n\
+            connector Msg = nats(url: \"nats://localhost:4222\")\n\
+            ```"
+        )),
+
+        "context" => Some(format!(
+            "## context\n\n\
+            Declares an execution context for parallel processing.\n\n\
+            **Syntax:**\n\
+            ```vpl\n\
+            context <name>(<params>)\n\
+            ```\n\n\
+            **Example:**\n\
+            ```vpl\n\
+            context cpu_bound(cores: [1, 2, 3])\n\
             ```"
         )),
 
@@ -79,18 +120,16 @@ fn get_documentation(word: &str) -> Option<String> {
             Declares an event type with typed fields.\n\n\
             **Syntax:**\n\
             ```vpl\n\
-            event <Name> {{\n\
-                field1: type1,\n\
+            event <Name>:\n\
+                field1: type1\n\
                 field2: type2\n\
-            }}\n\
             ```\n\n\
             **Example:**\n\
             ```vpl\n\
-            event TemperatureReading {{\n\
-                sensor_id: str,\n\
-                temperature: float,\n\
+            event TemperatureReading:\n\
+                sensor_id: str\n\
+                temperature: float\n\
                 timestamp: timestamp\n\
-            }}\n\
             ```"
         )),
 
@@ -796,6 +835,114 @@ fn get_documentation(word: &str) -> Option<String> {
             if not is_valid then\n\
                 handle_error()\n\
             ```"
+        )),
+
+        "as" => Some(format!(
+            "## as\n\n\
+            Binds an event to an alias in a sequence pattern.\n\n\
+            **Example:**\n\
+            ```vpl\n\
+            stream Alert = Login as login -> PasswordChange as pc\n\
+                .within(30m)\n\
+                .where(pc.user_id == login.user_id)\n\
+            ```"
+        )),
+
+        "trend_aggregate" => Some(format!(
+            "## .trend_aggregate()\n\n\
+            Hamlet-based trend aggregation over sequence patterns.\n\
+            Computes aggregates over all Kleene matches efficiently.\n\n\
+            **Parameters:**\n\
+            Named aggregation expressions (same as `.aggregate()`).\n\n\
+            **Example:**\n\
+            ```vpl\n\
+            stream TrendStats = SensorReading as r+\n\
+                .within(10m)\n\
+                .trend_aggregate(\n\
+                    total: sum(r.value),\n\
+                    avg_val: avg(r.value),\n\
+                    count: count()\n\
+                )\n\
+                .emit()\n\
+            ```\n\n\
+            **Note:** Mutually exclusive with `.forecast()`. \
+            Uses Hamlet optimizer for multi-query sharing."
+        )),
+
+        // Forecast built-in variables
+        "forecast_probability" => Some(format!(
+            "## forecast_probability\n\n\
+            **Type:** `float` (0.0 - 1.0)\n\n\
+            Probability that the current sequence pattern will complete.\n\
+            Available after `.forecast()` in the pipeline.\n\n\
+            **Example:**\n\
+            ```vpl\n\
+            .forecast(confidence: 0.7)\n\
+            .where(forecast_probability > 0.8)\n\
+            .emit(prob: forecast_probability)\n\
+            ```"
+        )),
+
+        "forecast_confidence" => Some(format!(
+            "## forecast_confidence\n\n\
+            **Type:** `float` (0.0 - 1.0)\n\n\
+            Prediction stability — how confident the PST model is in \
+            the forecast. Higher values indicate more reliable predictions.\n\
+            Available after `.forecast()`."
+        )),
+
+        "forecast_time" => Some(format!(
+            "## forecast_time\n\n\
+            **Type:** `int` (nanoseconds)\n\n\
+            Estimated time until the sequence pattern completes.\n\
+            Available after `.forecast()`.\n\n\
+            **Example:**\n\
+            ```vpl\n\
+            .emit(expected_completion: forecast_time)\n\
+            ```"
+        )),
+
+        "forecast_state" => Some(format!(
+            "## forecast_state\n\n\
+            **Type:** `str`\n\n\
+            Current NFA state label in the sequence pattern.\n\
+            Available after `.forecast()`."
+        )),
+
+        "forecast_context_depth" => Some(format!(
+            "## forecast_context_depth\n\n\
+            **Type:** `int`\n\n\
+            PST context depth used for the prediction.\n\
+            Available after `.forecast()`."
+        )),
+
+        "forecast_lower" => Some(format!(
+            "## forecast_lower\n\n\
+            **Type:** `float` (0.0 - 1.0)\n\n\
+            Conformal prediction interval lower bound.\n\
+            Available when `.forecast(conformal: true)` is set.\n\
+            Use with `forecast_upper` for confidence intervals."
+        )),
+
+        "forecast_upper" => Some(format!(
+            "## forecast_upper\n\n\
+            **Type:** `float` (0.0 - 1.0)\n\n\
+            Conformal prediction interval upper bound.\n\
+            Available when `.forecast(conformal: true)` is set."
+        )),
+
+        // Enrich built-in variables
+        "enrich_status" => Some(format!(
+            "## enrich_status\n\n\
+            **Type:** `str`\n\n\
+            Status of the last `.enrich()` lookup.\n\
+            Values: `\"ok\"`, `\"error\"`, `\"cached\"`, `\"timeout\"`"
+        )),
+
+        "enrich_latency_ms" => Some(format!(
+            "## enrich_latency_ms\n\n\
+            **Type:** `int`\n\n\
+            Lookup latency in milliseconds. Returns 0 for cache hits."
         )),
 
         "true" => Some("## true\n\nBoolean true literal.".to_string()),

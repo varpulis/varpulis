@@ -45,18 +45,35 @@ Login followed by two transfers exceeding $10K within 5 minutes — with predict
 ## Quick Start
 
 ```bash
-# Build from source
+# Install pre-built binary (Linux/macOS)
+curl -sSf https://raw.githubusercontent.com/varpulis/varpulis/main/scripts/install.sh | sh
+
+# Run a VPL file
+varpulis run --file examples/hvac_quickstart.vpl
+```
+
+Or build from source:
+
+```bash
 git clone https://github.com/varpulis/varpulis.git
 cd varpulis
 cargo build --release
-
-# Run a VPL file
 ./target/release/varpulis run --file examples/hvac_quickstart.vpl
+```
 
-# Or use Docker
+Or use Docker:
+
+```bash
 docker compose -f deploy/docker/docker-compose.saas.yml up -d
 # Varpulis API: http://localhost:9000
 # Grafana:      http://localhost:3000 (admin/varpulis)
+```
+
+Try a starter project:
+
+```bash
+cd starters/iot && docker compose up    # HVAC monitoring with MQTT
+cd starters/fraud && docker compose up  # Fraud detection with forecasting
 ```
 
 ## Example: HVAC Monitoring

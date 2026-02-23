@@ -2,7 +2,7 @@
   "name": "varpulis",
   "displayName": "Varpulis",
   "description": "VPL language support - syntax highlighting, execution, and debugging for Varpulis CEP engine",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "publisher": "varpulis",
   "license": "MIT",
   "repository": {
@@ -241,12 +241,13 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
+    "vscode:prepublish": "npm run compile && npm run build:webview",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "lint": "eslint src --ext ts",
     "test": "node ./out/test/runTest.js",
-    "package": "vsce package"
+    "build:webview": "cd webview-ui && npm install && npm run build",
+    "package": "npm run build:webview && vsce package"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
