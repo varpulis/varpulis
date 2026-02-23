@@ -2617,21 +2617,6 @@ impl SaseEngine {
         }
     }
 
-    #[allow(dead_code)]
-    fn process_partition(&mut self, partition_key: &str, event: &Event) -> Vec<MatchResult> {
-        self.process_partition_shared(partition_key, Arc::new(event.clone()))
-    }
-
-    #[allow(dead_code)]
-    fn process_runs(&mut self, event: &Event) -> Vec<MatchResult> {
-        self.process_runs_shared(Arc::new(event.clone()))
-    }
-
-    #[allow(dead_code)]
-    fn try_start_run(&self, event: &Event) -> Option<Run> {
-        self.try_start_run_shared(Arc::new(event.clone()))
-    }
-
     // =========================================================================
     // PERF-01: SharedEvent versions of internal methods
     // These avoid redundant cloning by accepting pre-wrapped Arc<Event>

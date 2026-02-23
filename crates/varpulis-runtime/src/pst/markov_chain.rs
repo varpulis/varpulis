@@ -545,21 +545,6 @@ impl PatternMarkovChain {
     pub fn events_processed(&self) -> u64 {
         self.events_processed
     }
-
-    /// Check if warmup is complete.
-    pub fn is_warmed_up(&self) -> bool {
-        self.events_processed >= self.config.warmup_events
-    }
-
-    /// Get the PST node count (for diagnostics).
-    pub fn pst_node_count(&self) -> usize {
-        self.pst.node_count()
-    }
-
-    /// Get the confidence threshold.
-    pub fn confidence_threshold(&self) -> f64 {
-        self.config.confidence_threshold
-    }
 }
 
 #[cfg(test)]

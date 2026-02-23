@@ -206,22 +206,6 @@ impl Zdd {
         &self.table
     }
 
-    /// Get mutable access to the table
-    #[inline]
-    #[allow(dead_code)]
-    pub(crate) fn table_mut(&mut self) -> &mut UniqueTable {
-        &mut self.table
-    }
-
-    /// Create a new ZDD with the given root, inheriting this table
-    #[allow(dead_code)]
-    pub(crate) fn with_root(&self, root: ZddRef) -> Self {
-        Self {
-            root,
-            table: self.table.clone(),
-        }
-    }
-
     /// Create a new ZDD with the given root and table
     pub(crate) fn from_parts(root: ZddRef, table: UniqueTable) -> Self {
         Self { root, table }

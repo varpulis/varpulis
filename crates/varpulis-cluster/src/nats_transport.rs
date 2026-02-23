@@ -74,6 +74,9 @@ pub async fn nats_request<Req: Serialize, Resp: DeserializeOwned>(
 }
 
 /// Publish a JSON payload (fire-and-forget).
+///
+/// When the `otel` feature is enabled, the current OpenTelemetry trace context
+/// is propagated as a `traceparent` NATS header for distributed tracing.
 #[cfg(feature = "nats-transport")]
 pub async fn nats_publish<T: Serialize>(
     client: &async_nats::Client,
@@ -81,6 +84,33 @@ pub async fn nats_publish<T: Serialize>(
     payload: &T,
 ) -> Result<(), NatsTransportError> {
     let bytes = serde_json::to_vec(payload).map_err(NatsTransportError::Serialize)?;
+
+    #[cfg(feature = "otel")]
+    {
+        use opentelemetry::trace::TraceContextExt;
+        use tracing_opentelemetry::OpenTelemetrySpanExt;
+
+        let span = tracing::Span::current();
+        let context = span.context();
+        let span_ref = context.span();
+        let span_context = span_ref.span_context();
+
+        if span_context.is_valid() {
+            let traceparent = format!(
+                "00-{}-{}-{:02x}",
+                span_context.trace_id(),
+                span_context.span_id(),
+                span_context.trace_flags().to_u8(),
+            );
+            let mut headers = async_nats::HeaderMap::new();
+            headers.insert("traceparent", traceparent.as_str());
+            return client
+                .publish_with_headers(subject.to_string(), headers, bytes.into())
+                .await
+                .map_err(NatsTransportError::Publish);
+        }
+    }
+
     client
         .publish(subject.to_string(), bytes.into())
         .await

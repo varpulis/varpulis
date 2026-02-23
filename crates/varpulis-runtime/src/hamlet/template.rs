@@ -151,12 +151,6 @@ impl MergedTemplate {
         self.type_indices.get(name).copied()
     }
 
-    /// Get type name
-    #[inline]
-    pub fn type_name(&self, index: u16) -> Option<&str> {
-        self.type_names.get(index as usize).map(|s| s.as_str())
-    }
-
     /// Add a transition
     pub fn add_transition(&mut self, from: TemplateState, to: TemplateState, event_type: u16) {
         let key = (from, event_type);
@@ -246,11 +240,6 @@ impl MergedTemplate {
             .get(&query)
             .map(|states| states.contains(&state))
             .unwrap_or(false)
-    }
-
-    /// Get shareable Kleene sub-patterns
-    pub fn shareable_kleene_patterns(&self) -> impl Iterator<Item = &KleeneSubPattern> {
-        self.kleene_patterns.iter().filter(|p| p.is_shareable())
     }
 
     /// Get queries sharing a Kleene sub-pattern for an event type

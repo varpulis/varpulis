@@ -16,6 +16,8 @@ pub struct Metrics {
     pub processing_latency: HistogramVec,
     pub stream_queue_size: GaugeVec,
     pub active_streams: Gauge,
+    pub dlq_events_total: prometheus::Counter,
+    pub queue_pressure_ratio: GaugeVec,
 }
 
 impl Metrics {
@@ -64,6 +66,21 @@ impl Metrics {
         let active_streams = Gauge::new("varpulis_active_streams", "Number of active streams")
             .expect("failed to create active_streams gauge");
 
+        let dlq_events_total = prometheus::Counter::new(
+            "varpulis_dlq_events_total",
+            "Total events written to dead letter queue",
+        )
+        .expect("failed to create dlq_events_total counter");
+
+        let queue_pressure_ratio = GaugeVec::new(
+            Opts::new(
+                "varpulis_queue_pressure_ratio",
+                "Queue pressure ratio (pending_events / max_queue_depth)",
+            ),
+            &["stream"],
+        )
+        .expect("failed to create queue_pressure_ratio gauge");
+
         registry
             .register(Box::new(events_total.clone()))
             .expect("failed to register events_total");
@@ -82,6 +99,12 @@ impl Metrics {
         registry
             .register(Box::new(active_streams.clone()))
             .expect("failed to register active_streams");
+        registry
+            .register(Box::new(dlq_events_total.clone()))
+            .expect("failed to register dlq_events_total");
+        registry
+            .register(Box::new(queue_pressure_ratio.clone()))
+            .expect("failed to register queue_pressure_ratio");
 
         Self {
             registry: Arc::new(registry),
@@ -91,6 +114,8 @@ impl Metrics {
             processing_latency,
             stream_queue_size,
             active_streams,
+            dlq_events_total,
+            queue_pressure_ratio,
         }
     }
 
@@ -340,5 +365,16 @@ mod tests {
         let output = metrics.gather();
         assert!(output.contains("stream_0"));
         assert!(output.contains("stream_19"));
+    }
+
+    #[test]
+    fn test_queue_pressure_ratio_gauge() {
+        let metrics = Metrics::new();
+        metrics
+            .queue_pressure_ratio
+            .with_label_values(&["_all"])
+            .set(0.75);
+        let output = metrics.gather();
+        assert!(output.contains("varpulis_queue_pressure_ratio"));
     }
 }
