@@ -10,6 +10,7 @@ use super::conformal::ConformalCalibrator;
 use super::hawkes::HawkesIntensity;
 use super::online::OnlinePSTLearner;
 use super::tree::{PSTConfig, PredictionSuffixTree, SymbolId};
+use hashlink::LruCache;
 use rustc_hash::FxHashMap;
 
 /// Configuration for the Pattern Markov Chain.
@@ -30,6 +31,10 @@ pub struct PMCConfig {
     pub conformal_enabled: bool,
     /// Enable adaptive warmup: extend warmup until predictions stabilize (default true).
     pub adaptive_warmup: bool,
+    /// Maximum entries in the prediction stability cache (LRU eviction).
+    pub max_prediction_cache: usize,
+    /// Maximum entries in the pending forecasts cache (LRU eviction).
+    pub max_pending_forecasts: usize,
 }
 
 impl Default for PMCConfig {
@@ -42,6 +47,8 @@ impl Default for PMCConfig {
             hawkes_enabled: true,
             conformal_enabled: true,
             adaptive_warmup: true,
+            max_prediction_cache: 10_000,
+            max_pending_forecasts: 10_000,
         }
     }
 }
@@ -109,9 +116,9 @@ pub struct PatternMarkovChain {
     /// Previous run states for outcome tracking: started_at_ns -> last_known_state.
     previous_run_states: FxHashMap<i64, usize>,
     /// Pending forecasts for outcome tracking: started_at_ns -> predicted_probability.
-    pending_forecasts: FxHashMap<i64, f64>,
+    pending_forecasts: LruCache<i64, f64>,
     /// Last prediction per (NFA state, context tail), for per-context stability tracking.
-    last_prediction_per_key: FxHashMap<u64, f64>,
+    last_prediction_per_key: LruCache<u64, f64>,
     /// Running count of consecutive "stable" predictions (delta < threshold).
     stable_prediction_count: usize,
     /// Whether adaptive warmup has declared the model stable.
@@ -146,6 +153,8 @@ impl PatternMarkovChain {
         }
 
         let learner = OnlinePSTLearner::new(max_depth);
+        let max_pending = pmc_config.max_pending_forecasts;
+        let max_pred_cache = pmc_config.max_prediction_cache;
 
         Self {
             pst,
@@ -161,8 +170,8 @@ impl PatternMarkovChain {
             hawkes_intensities,
             conformal: ConformalCalibrator::with_defaults(),
             previous_run_states: FxHashMap::default(),
-            pending_forecasts: FxHashMap::default(),
-            last_prediction_per_key: FxHashMap::default(),
+            pending_forecasts: LruCache::new(max_pending),
+            last_prediction_per_key: LruCache::new(max_pred_cache),
             stable_prediction_count: 0,
             adaptive_warmup_complete: false,
         }
@@ -563,6 +572,7 @@ mod tests {
         let pst_config = PSTConfig {
             max_depth: 3,
             smoothing: 0.01,
+            ..Default::default()
         };
         let pmc_config = PMCConfig {
             warmup_events: 5,
@@ -775,6 +785,7 @@ mod tests {
         let pst_config = PSTConfig {
             max_depth: 3,
             smoothing: 0.01,
+            ..Default::default()
         };
         let pmc_config = PMCConfig {
             warmup_events: 5,
@@ -839,6 +850,7 @@ mod tests {
         let pst_config = PSTConfig {
             max_depth: 3,
             smoothing: 0.01,
+            ..Default::default()
         };
         let pmc_config = PMCConfig {
             warmup_events: 5,

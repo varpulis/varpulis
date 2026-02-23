@@ -124,6 +124,7 @@ mod nats_managed_impl {
                 last_error,
                 messages_received,
                 seconds_since_last_message,
+                ..Default::default()
             }
         }
 
@@ -157,11 +158,22 @@ mod nats_managed_impl {
             let topic_str = topic.to_string();
 
             tokio::spawn(async move {
+                use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
                 let mut subscriber = subscriber;
+                let cb = CircuitBreaker::new(CircuitBreakerConfig {
+                    failure_threshold: 10,
+                    reset_timeout: Duration::from_secs(30),
+                });
 
                 while running.load(Ordering::SeqCst) {
+                    if !cb.allow_request() {
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        continue;
+                    }
+
                     match tokio::time::timeout(Duration::from_secs(30), subscriber.next()).await {
                         Ok(Some(message)) => {
+                            cb.record_success();
                             msg_counter.fetch_add(1, Ordering::Relaxed);
                             *last_msg_time.lock().await = Some(Instant::now());
                             if let Ok(payload) = std::str::from_utf8(&message.payload) {
@@ -175,9 +187,14 @@ mod nats_managed_impl {
                             }
                         }
                         Ok(None) => {
+                            cb.record_failure();
                             *last_err.lock().await = Some("subscription ended".to_string());
-                            info!("Managed NATS {} subscription ended", name);
-                            break;
+                            warn!(
+                                "Managed NATS {} subscription ended (cb_state={}), backing off",
+                                name,
+                                cb.state()
+                            );
+                            tokio::time::sleep(Duration::from_secs(1)).await;
                         }
                         Err(_) => {
                             // Timeout — loop back to check running flag

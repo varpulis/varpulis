@@ -9,7 +9,7 @@ use crate::event::Event;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 #[cfg(feature = "mqtt")]
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 use varpulis_core::security::SecretString;
 
 // =============================================================================
@@ -163,15 +163,22 @@ mod mqtt_impl {
             let name = self.name.clone();
 
             tokio::spawn(async move {
-                let mut consecutive_errors: u32 = 0;
-                const MAX_CONSECUTIVE_ERRORS: u32 = 10;
-                const MAX_BACKOFF_SECS: u64 = 30;
+                use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
+                let cb = CircuitBreaker::new(CircuitBreakerConfig {
+                    failure_threshold: 10,
+                    reset_timeout: Duration::from_secs(30),
+                });
 
                 while running.load(Ordering::SeqCst) {
+                    if !cb.allow_request() {
+                        // Circuit is open — wait before probing
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        continue;
+                    }
+
                     match eventloop.poll().await {
                         Ok(MqttEvent::Incoming(Packet::Publish(publish))) => {
-                            // Reset error counter on successful message
-                            consecutive_errors = 0;
+                            cb.record_success();
                             // Enforce payload size limit
                             if publish.payload.len() > crate::limits::MAX_EVENT_PAYLOAD_BYTES {
                                 warn!(
@@ -190,29 +197,19 @@ mod mqtt_impl {
                             }
                         }
                         Ok(_) => {
-                            // Other successful events (ConnAck, SubAck, etc.) reset error counter
-                            consecutive_errors = 0;
+                            cb.record_success();
                         }
                         Err(e) => {
-                            consecutive_errors += 1;
+                            cb.record_failure();
+                            let failures = cb.consecutive_failures();
 
-                            // Check if we've exceeded the error limit
-                            if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
-                                error!(
-                                    "MQTT source {} exceeded max consecutive errors ({}), stopping",
-                                    name, MAX_CONSECUTIVE_ERRORS
-                                );
-                                running.store(false, Ordering::SeqCst);
-                                break;
-                            }
-
-                            // Exponential backoff: 1s, 2s, 4s, 8s, ... up to MAX_BACKOFF_SECS
+                            // Exponential backoff: 1s, 2s, 4s, 8s, ... up to 30s
                             let backoff_secs =
-                                (1u64 << (consecutive_errors - 1).min(5)).min(MAX_BACKOFF_SECS);
+                                (1u64 << (failures.saturating_sub(1)).min(5)).min(30);
 
                             warn!(
-                                "MQTT source {} error (attempt {}/{}): {:?}, retrying in {}s",
-                                name, consecutive_errors, MAX_CONSECUTIVE_ERRORS, e, backoff_secs
+                                "MQTT source {} error (cb_state={}, failures={}): {:?}, retrying in {}s",
+                                name, cb.state(), failures, e, backoff_secs
                             );
 
                             tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
@@ -373,16 +370,9 @@ mod mqtt_impl {
                 )
             });
 
-        // Check for nested "data" object
-        let has_data = map
-            .get("data" as &str)
-            .and_then(|v| v.as_object())
-            .is_some();
-
         let max_fields = crate::limits::MAX_FIELDS_PER_EVENT;
 
-        if has_data {
-            let data_obj = map.get("data" as &str).unwrap().as_object().unwrap();
+        if let Some(data_obj) = map.get("data" as &str).and_then(|v| v.as_object()) {
             let cap = data_obj.len().min(max_fields);
             let mut fields: FxIndexMap<FieldKey, varpulis_core::Value> =
                 indexmap::IndexMap::with_capacity_and_hasher(cap, FxBuildHasher);

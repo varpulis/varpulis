@@ -13,6 +13,8 @@ pub struct PSTConfig {
     pub max_depth: usize,
     /// Smoothing parameter for probability estimates (Laplace smoothing).
     pub smoothing: f64,
+    /// Maximum number of nodes in the arena. When exceeded, prune + compact.
+    pub max_nodes: usize,
 }
 
 impl Default for PSTConfig {
@@ -20,6 +22,7 @@ impl Default for PSTConfig {
         Self {
             max_depth: 5,
             smoothing: 0.01,
+            max_nodes: 100_000,
         }
     }
 }
@@ -218,6 +221,75 @@ impl PredictionSuffixTree {
     pub fn smoothing(&self) -> f64 {
         self.config.smoothing
     }
+
+    /// Get the maximum nodes cap from config.
+    pub fn max_nodes(&self) -> usize {
+        self.config.max_nodes
+    }
+
+    /// Compact the arena by removing unreachable nodes and remapping indices.
+    ///
+    /// BFS from root to find all reachable nodes, then rebuild the arena
+    /// with only reachable nodes and update all parent/children indices.
+    pub fn compact(&mut self) {
+        let mut reachable = vec![false; self.nodes.len()];
+        let mut queue = std::collections::VecDeque::new();
+        queue.push_back(0usize);
+        reachable[0] = true;
+
+        while let Some(idx) = queue.pop_front() {
+            for &child_idx in self.nodes[idx].children.values() {
+                if child_idx < self.nodes.len() && !reachable[child_idx] {
+                    reachable[child_idx] = true;
+                    queue.push_back(child_idx);
+                }
+            }
+        }
+
+        // Build old→new index mapping
+        let mut old_to_new = vec![usize::MAX; self.nodes.len()];
+        let mut new_idx = 0usize;
+        for (old_idx, &is_reachable) in reachable.iter().enumerate() {
+            if is_reachable {
+                old_to_new[old_idx] = new_idx;
+                new_idx += 1;
+            }
+        }
+
+        // Nothing to compact
+        if new_idx == self.nodes.len() {
+            return;
+        }
+
+        // Build new nodes vec with remapped indices
+        let old_nodes = std::mem::take(&mut self.nodes);
+        self.nodes = Vec::with_capacity(new_idx);
+
+        for (old_idx, node) in old_nodes.into_iter().enumerate() {
+            if !reachable[old_idx] {
+                continue;
+            }
+            let mut new_node = node;
+            // Remap parent
+            new_node.parent = new_node.parent.and_then(|p| {
+                let mapped = old_to_new[p];
+                if mapped == usize::MAX {
+                    None
+                } else {
+                    Some(mapped)
+                }
+            });
+            // Remap children
+            let old_children = std::mem::take(&mut new_node.children);
+            for (sym, child_old) in old_children {
+                let mapped = old_to_new[child_old];
+                if mapped != usize::MAX {
+                    new_node.children.insert(sym, mapped);
+                }
+            }
+            self.nodes.push(new_node);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -243,6 +315,7 @@ mod tests {
         let mut pst = PredictionSuffixTree::new(PSTConfig {
             max_depth: 3,
             smoothing: 0.01,
+            ..Default::default()
         });
         let a = pst.register_symbol("A");
         let b = pst.register_symbol("B");
@@ -276,6 +349,7 @@ mod tests {
         let mut pst = PredictionSuffixTree::new(PSTConfig {
             max_depth: 3,
             smoothing: 0.01,
+            ..Default::default()
         });
         let a = pst.register_symbol("A");
         let b = pst.register_symbol("B");
@@ -299,6 +373,7 @@ mod tests {
         let mut pst = PredictionSuffixTree::new(PSTConfig {
             max_depth: 2,
             smoothing: 0.1,
+            ..Default::default()
         });
         let a = pst.register_symbol("A");
         let b = pst.register_symbol("B");

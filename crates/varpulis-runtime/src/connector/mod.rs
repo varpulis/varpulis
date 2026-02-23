@@ -230,4 +230,132 @@ mod tests {
         assert!(result.is_ok());
         assert!(!source.is_running());
     }
+
+    // ==========================================================================
+    // json_to_event / json_to_value edge cases (helpers module)
+    // ==========================================================================
+
+    #[test]
+    fn test_json_to_event_max_fields_enforced() {
+        // Build JSON with more fields than MAX_FIELDS_PER_EVENT (1024)
+        let mut obj = serde_json::Map::new();
+        obj.insert("event_type".to_string(), serde_json::json!("Test"));
+        for i in 0..1100 {
+            obj.insert(format!("field_{}", i), serde_json::json!(i));
+        }
+        let json = serde_json::Value::Object(obj);
+
+        let event = helpers::json_to_event("Test", &json);
+        // Should have at most MAX_FIELDS_PER_EVENT fields (event_type excluded from count)
+        assert!(
+            event.data.len() <= crate::limits::MAX_FIELDS_PER_EVENT,
+            "Expected at most {} fields, got {}",
+            crate::limits::MAX_FIELDS_PER_EVENT,
+            event.data.len()
+        );
+    }
+
+    #[test]
+    fn test_json_to_value_deep_nesting_returns_none() {
+        // Create JSON nested deeper than MAX_JSON_DEPTH (32)
+        let mut json = serde_json::json!(42);
+        for _ in 0..40 {
+            json = serde_json::json!({"nested": json});
+        }
+
+        // The top-level call should succeed, but deep nesting returns None for
+        // values beyond the depth limit
+        let result = helpers::json_to_value(&json);
+        assert!(result.is_some(), "Top-level should parse");
+
+        // Drill into the result — at depth 32+ the inner values become Null
+        // (since json_to_value_bounded returns None which gets skipped in maps)
+        let mut current = result.unwrap();
+        let mut depth = 0;
+        while let varpulis_core::Value::Map(map) = current {
+            if let Some(inner) = map.get("nested") {
+                current = inner.clone();
+                depth += 1;
+            } else {
+                break;
+            }
+        }
+        // Should stop before reaching the full 40 levels
+        assert!(
+            depth < 40,
+            "Depth limiting should prevent full 40-level nesting, stopped at {}",
+            depth
+        );
+    }
+
+    #[test]
+    fn test_json_to_value_long_string_truncated() {
+        // Create a string longer than MAX_STRING_VALUE_BYTES (256 KB)
+        let long_string = "a".repeat(crate::limits::MAX_STRING_VALUE_BYTES + 1000);
+        let json = serde_json::json!(long_string);
+
+        let result = helpers::json_to_value(&json);
+        assert!(result.is_some());
+        if let varpulis_core::Value::Str(s) = result.unwrap() {
+            assert!(
+                s.len() <= crate::limits::MAX_STRING_VALUE_BYTES,
+                "String should be truncated to {} bytes, got {}",
+                crate::limits::MAX_STRING_VALUE_BYTES,
+                s.len()
+            );
+        } else {
+            panic!("Expected Str value");
+        }
+    }
+
+    #[test]
+    fn test_json_to_value_large_array_capped() {
+        // Create array with more elements than MAX_ARRAY_ELEMENTS (10_000)
+        let arr: Vec<serde_json::Value> = (0..11_000).map(|i| serde_json::json!(i)).collect();
+        let json = serde_json::Value::Array(arr);
+
+        let result = helpers::json_to_value(&json);
+        assert!(result.is_some());
+        if let varpulis_core::Value::Array(values) = result.unwrap() {
+            assert!(
+                values.len() <= crate::limits::MAX_ARRAY_ELEMENTS,
+                "Array should be capped at {} elements, got {}",
+                crate::limits::MAX_ARRAY_ELEMENTS,
+                values.len()
+            );
+        } else {
+            panic!("Expected Array value");
+        }
+    }
+
+    #[test]
+    fn test_json_to_value_null_and_mixed_types() {
+        // Null
+        let result = helpers::json_to_value(&serde_json::json!(null));
+        assert!(matches!(result, Some(varpulis_core::Value::Null)));
+
+        // Bool
+        let result = helpers::json_to_value(&serde_json::json!(true));
+        assert!(matches!(result, Some(varpulis_core::Value::Bool(true))));
+
+        // Integer
+        let result = helpers::json_to_value(&serde_json::json!(42));
+        assert!(matches!(result, Some(varpulis_core::Value::Int(42))));
+
+        // Float
+        let result = helpers::json_to_value(&serde_json::json!(1.5));
+        if let Some(varpulis_core::Value::Float(f)) = result {
+            assert!((f - 1.5).abs() < f64::EPSILON);
+        } else {
+            panic!("Expected Float value");
+        }
+
+        // String
+        let result = helpers::json_to_value(&serde_json::json!("hello"));
+        if let Some(varpulis_core::Value::Str(s)) = result {
+            assert_eq!(&*s, "hello");
+        } else {
+            panic!("Expected Str value");
+        }
+    }
 }
