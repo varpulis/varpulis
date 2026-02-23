@@ -6223,7 +6223,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "varpulis-cli"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -6257,7 +6257,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-cluster"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-nats",
  "chrono",
@@ -6287,7 +6287,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "indexmap 2.12.1",
@@ -6301,7 +6301,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-lsp"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "dashmap",
  "once_cell",
@@ -6319,7 +6319,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-mcp"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -6340,7 +6340,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-parser"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "logos",
  "pest",
@@ -6352,7 +6352,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-runtime"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -6398,7 +6398,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-zdd"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "criterion",
  "rustc-hash 2.1.1",

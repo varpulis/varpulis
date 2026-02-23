@@ -1,7 +1,7 @@
 # Varpulis Project Status
 
-**Last updated**: February 17, 2026
-**Version**: 0.3.0
+**Last updated**: February 23, 2026
+**Version**: 0.4.0
 **Production readiness**: 10/10 (see [AUDIT_REPORT.md](AUDIT_REPORT.md))
 
 ---

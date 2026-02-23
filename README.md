@@ -4,39 +4,24 @@
 
 <p align="center"><strong>A modern Complex Event Processing engine.</strong> Rust performance. Pipeline syntax. SASE+ pattern matching.</p>
 
-[![Tests](https://img.shields.io/badge/tests-3776%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-3899%20passing-brightgreen)]()
 [![Coverage](https://img.shields.io/badge/coverage-%E2%89%A570%25-brightgreen)]()
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange)]()
-[![Release](https://img.shields.io/badge/release-v0.3.0-blue)]()
+[![Release](https://img.shields.io/badge/release-v0.4.0-blue)]()
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-MIT)
 
-[Live Demo](https://demo.varpulis-cep.com/) | [Documentation](docs/) | [Quick Start](#quick-start) | [Benchmarks](#benchmarks)
+[Live Demo](https://demo.varpulis-cep.com/) | [Documentation](docs/) | [Quick Start](#quick-start) | [Benchmarks](#performance)
 
 ---
 
-## Why Varpulis?
+## What is Varpulis?
 
-Existing CEP engines force a tradeoff: Apama's EPL is powerful but verbose and proprietary. Flink CEP is open but bolted onto a general-purpose streaming framework — heavy to operate for pure CEP workloads. Esper's SQL-like EPL fights against temporal pattern expression.
+Varpulis is a **Complex Event Processing (CEP)** engine — it watches streams of events in real time, detects patterns across them, and triggers actions. Think of it as a programmable radar for your event data.
 
-Varpulis takes a different approach: a **pipeline DSL** designed specifically for event patterns, backed by a Rust engine with SASE+ semantics.
+**Use cases**: fraud detection, IoT alerting, trading signals, infrastructure monitoring, supply chain tracking, predictive maintenance.
 
-**47 lines of Apama EPL:**
-```
-monitor FraudDetection {
-    action onload() {
-        on all Event(type="login") as e1 ->
-           Event(type="transfer") as e2 ->
-           Event(type="transfer") as e3
-           within(300.0)
-           where e2.amount + e3.amount > 10000.0
-        {
-            // ... 40 more lines of boilerplate
-        }
-    }
-}
-```
+You write patterns in **VPL** (Varpulis Pipeline Language), a pipeline DSL designed for temporal event logic:
 
-**8 lines of VPL:**
 ```python
 stream FraudAlert = Events
     .where(type == "login") as e1
@@ -44,8 +29,11 @@ stream FraudAlert = Events
     -> Events.where(type == "transfer") as e3
     .within(5m)
     .where(e2.amount + e3.amount > 10000)
+    .forecast(confidence: 0.8, horizon: 2m)
     .emit(user: e1.user, total: e2.amount + e3.amount, alert: "fraud")
 ```
+
+This detects a login followed by two transfers exceeding $10K within 5 minutes, with predictive forecasting — and emits a structured alert.
 
 ## Quick Start
 
@@ -95,29 +83,29 @@ stream RapidSwing = Readings as t1
     .emit(alert: "RAPID_SWING", zone: t1.zone, peak: t2.value)
 ```
 
-## Benchmarks
+## Performance
 
-Compared against Apama Community Edition on identical hardware (100K events, median of 3 runs):
+Benchmarked with 100K events on a single machine, median of 3 runs.
 
-### CPU-Bound (CLI, preloaded events)
+### Throughput (CPU-bound, preloaded events)
 
-| Scenario | Varpulis | Apama | Memory (V / A) |
-|----------|----------|-------|----------------|
-| Filter | 234K evt/s | 199K evt/s | 54 MB / 166 MB (**3x less**) |
-| Temporal Join | 268K evt/s | 208K evt/s | 66 MB / 189 MB (**3x less**) |
-| EMA Crossover | 266K evt/s | 212K evt/s | 54 MB / 187 MB (**3.5x less**) |
-| Sequence | 256K evt/s | 221K evt/s | 36 MB / 185 MB (**5x less**) |
-| Kleene (SASE+) | 97K matches/s | 39K matches/s | 58 MB / 190 MB (**3.3x less**) |
+| Scenario | Throughput | Memory |
+|----------|-----------|--------|
+| Filter | 234K evt/s | 54 MB |
+| Temporal Join | 268K evt/s | 66 MB |
+| EMA Crossover | 266K evt/s | 54 MB |
+| Sequence (SASE+) | 256K evt/s | 36 MB |
+| Kleene (SASE+) | 97K matches/s | 58 MB |
 
-Kleene note: Apama reports higher raw throughput but detects only 20K matches vs Varpulis's 99.6K — Apama uses greedy matching while Varpulis implements exhaustive SASE+ semantics, finding **5x more pattern matches**.
+Kleene uses exhaustive SASE+ semantics — finds all valid matches, not just greedy first-match.
 
-### I/O-Bound (MQTT connector)
+### Throughput (MQTT connector, I/O-bound)
 
-| Scenario | Varpulis | Apama | Memory (V / A) |
-|----------|----------|-------|----------------|
-| Filter | 6.1K evt/s | 6.1K evt/s | 10 MB / 85 MB (**8x less**) |
-| Kleene | 6.3K evt/s | 5.9K evt/s | 24 MB / 124 MB (**5x less**) |
-| Sequence | 6.8K evt/s | 6.0K evt/s | 10 MB / 153 MB (**16x less**) |
+| Scenario | Throughput | Memory |
+|----------|-----------|--------|
+| Filter | 6.1K evt/s | 10 MB |
+| Kleene | 6.3K evt/s | 24 MB |
+| Sequence | 6.8K evt/s | 10 MB |
 
 ### Multi-Query Scaling (Hamlet Algorithm)
 
@@ -126,6 +114,16 @@ Kleene note: Apama reports higher raw throughput but detects only 20K matches vs
 | 1 | 6.9M evt/s | 2.4M evt/s | 3x |
 | 10 | 2.1M evt/s | 122K evt/s | 17x |
 | 50 | 950K evt/s | 9K evt/s | **100x** |
+
+### PST Forecasting
+
+| Operation | Performance |
+|-----------|------------|
+| PST training (100K sequence) | 4.6M symbols/s |
+| Single-symbol prediction | 51 ns |
+| Full distribution prediction | 105 ns |
+| PMC forecast (1 active run) | 93K evt/s |
+| Online learning + pruning | 5.0M updates/s |
 
 ```bash
 cargo bench -p varpulis-runtime
@@ -137,6 +135,7 @@ cargo bench -p varpulis-runtime
 
 - **Pipeline syntax**: `.where()`, `.window()`, `.aggregate()`, `.emit()`, `.to()`
 - **SASE+ patterns**: Sequences (`->`), Kleene closures (`+`, `*`), negation (`AND NOT`), conjunction/disjunction
+- **Forecasting**: `.forecast()` — PST-based pattern prediction with configurable confidence and horizon
 - **Windows**: Tumbling, sliding, session, count-based
 - **Aggregations**: sum, avg, count, min, max, stddev, ema, first, last, count_distinct (SIMD-accelerated)
 - **Imperative control**: `var`, `if/else`, `while`, `for`, `return`, functions, lambdas
@@ -145,18 +144,21 @@ cargo bench -p varpulis-runtime
 
 ### Engine
 
-- **Connectors**: MQTT (production), Kafka, PostgreSQL/MySQL/SQLite, Redis, Kinesis, S3, Elasticsearch — via feature flags
+- **Connectors**: MQTT, Kafka, NATS, PostgreSQL/MySQL/SQLite, Redis, Kinesis, S3, Elasticsearch — via feature flags
 - **Context parallelism**: Named execution contexts with OS thread isolation and CPU affinity
-- **Cluster mode**: Coordinator/worker architecture with pipeline groups and routing
+- **Cluster mode**: Coordinator/worker architecture with Raft consensus and NATS transport
 - **Hot reload**: Update pipelines without restart
 - **State persistence**: RocksDB, file-based, or in-memory checkpointing
+- **Resilience**: Circuit breaker, dead letter queue, exactly-once Kafka delivery, backpressure signaling
 
 ### Operations
 
-- **REST API**: Multi-tenant SaaS mode with rate limiting and usage metering
+- **REST API**: Multi-tenant SaaS mode with rate limiting, RBAC, and usage metering
 - **Web UI**: Vue 3 + Vuetify control plane ([live demo](https://demo.varpulis-cep.com/))
-- **Monitoring**: Prometheus metrics + pre-configured Grafana dashboards
-- **VS Code extension**: LSP with diagnostics, hover docs, completion, and visual pipeline editor
+- **Monitoring**: Prometheus metrics, OpenTelemetry tracing (`otel` feature), pre-configured Grafana dashboards
+- **Backpressure**: HTTP 429 + Retry-After signaling under load
+- **VS Code extension**: LSP with diagnostics, hover docs, completion, go-to-definition, find-references
+- **MCP server**: AI-assisted pipeline development
 - **Docker/K8s**: Dockerfile, docker-compose stacks, Kubernetes manifests, Helm chart
 
 ## Connectors
@@ -164,7 +166,8 @@ cargo bench -p varpulis-runtime
 | Connector | Direction | Feature Flag | Status |
 |-----------|-----------|-------------|--------|
 | MQTT | In/Out | `mqtt` (default) | Production |
-| Kafka | In/Out | `kafka` | Available |
+| Kafka | In/Out | `kafka` | Production |
+| NATS | In/Out | `nats` | Production |
 | PostgreSQL/MySQL/SQLite | Out | `database` | Available |
 | Redis | Out | `redis` | Available |
 | AWS Kinesis | In/Out | `kinesis` | Available |
@@ -217,10 +220,11 @@ curl -X POST http://localhost:9000/api/v1/pipelines/<id>/events \
 crates/
 ├── varpulis-core/      # AST, types, values, validation
 ├── varpulis-parser/    # Pest PEG parser for VPL
-├── varpulis-runtime/   # Execution engine, SASE+, Hamlet, connectors
+├── varpulis-runtime/   # Execution engine, SASE+, Hamlet, PST, connectors
 ├── varpulis-cli/       # CLI binary + REST API server
-├── varpulis-cluster/   # Coordinator/worker cluster management
+├── varpulis-cluster/   # Coordinator/worker cluster management (Raft + NATS)
 ├── varpulis-lsp/       # Language Server Protocol implementation
+├── varpulis-mcp/       # Model Context Protocol server
 └── varpulis-zdd/       # Zero-suppressed Decision Diagrams (research)
 web-ui/                 # Vue 3 + Vuetify control plane dashboard
 deploy/                 # Docker, Kubernetes, Helm, Prometheus, Grafana
@@ -231,12 +235,14 @@ deploy/                 # Docker, Kubernetes, Helm, Prometheus, Grafana
 - [Getting Started](docs/tutorials/getting-started.md)
 - [VPL Language Tutorial](docs/tutorials/language-tutorial.md)
 - [SASE+ Patterns Guide](docs/guides/sase-patterns.md)
+- [Forecasting](docs/architecture/forecasting.md)
 - [Connectors](docs/language/connectors.md)
 - [CLI Reference](docs/reference/cli-reference.md)
 - [Context-Based Parallelism](docs/guides/contexts.md)
 - [Cluster Tutorial](docs/tutorials/cluster-tutorial.md)
 - [Performance Tuning](docs/guides/performance-tuning.md)
 - [Production Deployment](docs/PRODUCTION_DEPLOYMENT.md)
+- [Capacity Planning](docs/guides/capacity-planning.md)
 - [System Architecture](docs/architecture/system.md)
 - [Interactive Demos](demos/README.md)
 - [Security Policy](SECURITY.md)
@@ -244,7 +250,7 @@ deploy/                 # Docker, Kubernetes, Helm, Prometheus, Grafana
 ## Testing
 
 ```bash
-cargo test --workspace          # 1134 tests
+cargo test --workspace          # 3899 tests
 cargo clippy --workspace --all-targets -- -D warnings
 cargo bench -p varpulis-runtime # Criterion benchmarks
 ```
@@ -269,5 +275,6 @@ Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your 
 - SASE+ implementation: Agrawal, Diao, Gyllstrom, Immerman — [*Efficient Pattern Matching over Event Streams*](https://www.lix.polytechnique.fr/~yanlei.diao/publications/sase-sigmod08-long.pdf) (SIGMOD 2008)
 - CEP query complexity: Zhang, Diao, Immerman — [*On Complexity and Optimization of Expensive Queries in CEP*](https://people.cs.umass.edu/~immerman/pub/sigmod2014-cep.pdf) (SIGMOD 2014)
 - Hamlet framework: Poppe, Lei, Ma, Rozet, Rundensteiner — [*To Share, or not to Share: Online Event Trend Aggregation Over Bursty Event Streams*](https://arxiv.org/abs/2101.00361) (SIGMOD 2021)
+- Ron Bekkerman, Mikhail Bilenko, John Langford — [*Scaling Up Machine Learning*](https://doi.org/10.1017/CBO9781139042918) (Cambridge University Press 2012)
 - [Pest](https://pest.rs/) parser generator
 - [Tower-LSP](https://github.com/ebkalderon/tower-lsp) for Language Server Protocol

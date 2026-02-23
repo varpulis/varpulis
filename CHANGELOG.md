@@ -5,6 +5,121 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-02-23
+
+### Highlights
+
+Varpulis 0.4.0 completes the production readiness audit (18/18 tasks) and rewrites
+the README for clarity. All P0–P3 issues from the audit are resolved.
+
+### Added
+
+- **Dead Letter Queue API** — REST endpoints for DLQ inspection, replay, and purge
+- **OpenTelemetry tracing** — distributed trace export via `otel` feature flag
+- **Backpressure signaling** — HTTP 429 + Retry-After headers under queue pressure
+- **Capacity planning guide** — sizing recommendations for CPU, memory, and storage
+- **TLS documentation** — mTLS setup guide for NATS and cluster transport
+- **Grafana overview dashboard** — pre-built panels for cluster health and throughput
+- **Fuzzing infrastructure** — cargo-fuzz targets for parser and connectors
+- **OpenAPI specification** — machine-readable API docs for 40+ endpoints
+- **API pagination** — cursor-based pagination on all list endpoints
+- **Coverage enforcement** — 70% minimum threshold in CI
+- **CONTRIBUTING.md** — contributor guidelines and development setup
+- **SECURITY.md** — responsible disclosure policy
+- **Prometheus alerting rules** — 8 alert groups for production monitoring
+- **Operational runbook** — incident response procedures
+- **Checkpoint schema versioning** — forward-compatible state snapshots
+- **Property-based testing** — proptest for parser and value types
+- **Chaos test quarantine** — flaky test isolation system
+- **Architecture Decision Records** — 5 ADRs documenting key design choices
+- **Performance regression CI** — 10% threshold gate on benchmarks
+- **Binary serialization** — MessagePack option for checkpoint/wire format
+- **SLO/SLI definitions** — 9 SLOs with PromQL queries
+
+### Changed
+
+- Comprehensive dead code removal across workspace
+- Queue pressure ratio metric for backpressure decisions
+- README rewritten: removed adversarial competitor comparisons, standalone performance framing
+
+### Fixed
+
+- Parser backtracking on malformed `within` clauses
+- SVG rendering in documentation (bidirectional arrows, split box visibility)
+- STATUS.md accuracy (metrics aligned with actual codebase counts)
+- SQL table name sanitization for database connector
+
+## [0.3.0] - 2026-02-12
+
+### Highlights
+
+Varpulis 0.3.0 is a major feature release introducing **PST-based pattern forecasting**,
+**ONNX model inference**, **NATS transport**, **MCP server for AI-assisted development**,
+and extensive **security hardening**. The engine moves from HTTP/WebSocket to NATS for
+cluster communication and adds Raft-based high availability.
+
+### Added
+
+#### PST Pattern Forecasting
+- **`.forecast()` operator** — predict future pattern completions using Prediction Suffix Trees
+- **Pattern Markov Chain** — online-trained variable-order Markov model from SASE NFA structure
+- **Built-in variables** — `forecast_probability`, `forecast_time`, `forecast_state`, `forecast_context_depth`
+- **Configurable parameters** — confidence threshold, prediction horizon, warmup period, max tree depth
+- **Sub-microsecond prediction** — 51 ns single-symbol, 105 ns full distribution
+
+#### ONNX Model Inference
+- **`.score()` operator** — run ONNX models inline in VPL pipelines
+- **ort runtime integration** — CPU inference with configurable thread count
+
+#### NATS Transport
+- **NATS connector** — publish/subscribe event transport (In/Out)
+- **NATS cluster transport** — replaces HTTP/WebSocket for coordinator-worker communication
+- **JetStream support** — durable subscriptions with at-least-once delivery
+
+#### MCP Server
+- **Model Context Protocol** — AI-assisted VPL pipeline development
+- **Tools, resources, prompts** — structured API for LLM-driven pipeline authoring
+
+#### HA Cluster Hardening
+- **Leader forwarding** — workers forward writes to current Raft leader
+- **Stale reconciliation** — automatic state sync on leader change
+- **K8s Lease election** — high-availability leader election for Kubernetes deployments
+
+#### Security Hardening
+- **mTLS** — mutual TLS for NATS and cluster transport
+- **RBAC** — Admin/Operator/Viewer roles with multi-key file support
+- **Resource limits** — 1024 fields, 256 KB strings, depth 32 per event
+- **Secrets zeroization** — API keys and credentials cleared from memory on drop
+- **Rate limiting** — token bucket per-IP with configurable burst and bounded tracking
+
+#### Resilience
+- **Circuit breaker** — Open/HalfOpen/Closed state machine for connector failures
+- **Dead letter queue** — failed events captured for inspection and replay
+- **Exactly-once Kafka delivery** — transactional producer with idempotent writes
+
+#### Additional Features
+- **External connector enrichment joins** — enrich events from database/API lookups
+- **Hawkes process** — self-exciting point process for burst detection
+- **Conformal prediction** — distribution-free prediction intervals
+- **LSP go-to-definition and find-references** — code navigation in VS Code
+- **Web UI forecast visualization** — real-time forecast probability charts
+- **Web UI monitoring dashboard** — cluster health and per-pipeline metrics
+
+### Changed
+
+- SASE+ engine throughput improved 15–40% (run management, match extraction)
+- Pipeline allocation reduced 10–25% (fewer intermediate allocations)
+- Kafka batch delivery throughput improved 10x+ (batched `FutureProducer`)
+- Cluster transport migrated from HTTP/WebSocket to NATS
+- Raft consensus upgraded to openraft 0.9
+
+### Fixed
+
+- Forecast op ordering — inserted at correct VPL position instead of end of ops list
+- NFA transition mapping — use next state's event type for symbol labels
+- Early exit bypass — skip Sequence early exit when Forecast op follows
+- Parser backtracking on edge cases found by fuzzing
+
 ## [0.2.0] - 2026-02-10
 
 ### Highlights
@@ -160,5 +275,7 @@ runtime performance optimizations. A live public demo is available at
 - CLI with `run`, `simulate`, `check` commands
 - ZDD-based multi-query optimization (research baseline)
 
+[0.4.0]: https://github.com/varpulis/varpulis/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/varpulis/varpulis/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/varpulis/varpulis/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/varpulis/varpulis/releases/tag/v0.1.0
