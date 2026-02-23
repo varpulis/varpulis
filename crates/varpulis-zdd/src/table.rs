@@ -86,16 +86,25 @@ impl UniqueTable {
         self.nodes.get(id as usize)
     }
 
+    /// Try to get a node from a ZddRef
+    ///
+    /// Returns `None` if the ref is not a `Node` variant or the ID is invalid.
+    #[inline]
+    pub fn try_get_node_from_ref(&self, r: ZddRef) -> Option<&ZddNode> {
+        match r {
+            ZddRef::Node(id) => self.try_get_node(id),
+            _ => None,
+        }
+    }
+
     /// Get a node from a ZddRef
     ///
     /// # Panics
     /// Panics if the ref is not a Node or the ID is invalid
     #[inline]
     pub fn get_node_from_ref(&self, r: ZddRef) -> &ZddNode {
-        match r {
-            ZddRef::Node(id) => self.get_node(id),
-            _ => panic!("Expected Node, got {:?}", r),
-        }
+        self.try_get_node_from_ref(r)
+            .unwrap_or_else(|| panic!("Expected Node, got {:?}", r))
     }
 
     /// Number of nodes in the table

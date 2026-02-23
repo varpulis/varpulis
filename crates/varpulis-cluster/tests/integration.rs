@@ -1041,6 +1041,7 @@ async fn test_api_deploy_inject_teardown_e2e() {
         coord.clone(),
         Arc::new(RbacConfig::single_key("admin".into())),
         None,
+        None,
     )
     .recover(varpulis_cluster::api::handle_rejection);
 
