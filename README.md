@@ -14,13 +14,20 @@
 
 ---
 
-## What is Varpulis?
+## Why Varpulis?
 
-Varpulis is a **Complex Event Processing (CEP)** engine — it watches streams of events in real time, detects patterns across them, and triggers actions. Think of it as a programmable radar for your event data.
+Your events already contain the signal. A login, two fast transfers, a sudden temperature spike — the pattern is there, buried in the firehose. The question is whether you detect it in **milliseconds** or discover it in tomorrow's batch report.
+
+CEP engines solve this, but traditional options are either **proprietary and expensive**, **too heavyweight for pure pattern work**, or **fight you when patterns get temporal**. Varpulis is a different trade: an open-source, Rust-native engine with a **pipeline DSL designed for exactly this problem**.
+
+- **10 lines, not 50** — VPL expresses temporal patterns directly. No boilerplate event monitors, no framework plumbing.
+- **Sub-millisecond at scale** — 250K+ evt/s on a single core, 36 MB memory footprint for sequence detection.
+- **Patterns that predict** — `.forecast()` tells you a pattern is *about to* complete, not just that it did.
+- **Deploy anywhere** — single binary, Docker, Kubernetes. MQTT/Kafka/NATS in, webhooks/databases/S3 out.
 
 **Use cases**: fraud detection, IoT alerting, trading signals, infrastructure monitoring, supply chain tracking, predictive maintenance.
 
-You write patterns in **VPL** (Varpulis Pipeline Language), a pipeline DSL designed for temporal event logic:
+## What Does It Look Like?
 
 ```python
 stream FraudAlert = Events
@@ -33,7 +40,7 @@ stream FraudAlert = Events
     .emit(user: e1.user, total: e2.amount + e3.amount, alert: "fraud")
 ```
 
-This detects a login followed by two transfers exceeding $10K within 5 minutes, with predictive forecasting — and emits a structured alert.
+Login followed by two transfers exceeding $10K within 5 minutes — with predictive forecasting that fires *before* the pattern completes.
 
 ## Quick Start
 
