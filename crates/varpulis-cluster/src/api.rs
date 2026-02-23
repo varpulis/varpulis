@@ -35,6 +35,30 @@ pub fn shared_coordinator() -> SharedCoordinator {
     Arc::new(RwLock::new(Coordinator::new()))
 }
 
+/// Build a warp CORS filter from an optional list of allowed origins.
+///
+/// - `None` or a list containing `"*"`: allow any origin (backward-compatible default).
+/// - Otherwise: restrict to the given origins.
+fn build_cors(origins: Option<Vec<String>>) -> warp::cors::Builder {
+    let base = warp::cors()
+        .allow_methods(vec!["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+        .allow_headers(vec![
+            "content-type",
+            "x-api-key",
+            "authorization",
+            "x-request-id",
+            "traceparent",
+        ]);
+
+    match origins {
+        Some(ref list) if !list.is_empty() && !list.iter().any(|o| o == "*") => {
+            let origins: Vec<&str> = list.iter().map(|s| s.as_str()).collect();
+            base.allow_origins(origins)
+        }
+        _ => base.allow_any_origin(),
+    }
+}
+
 /// Build all Raft + cluster API routes.
 ///
 /// When the `raft` feature is enabled and a Raft handle is provided,
@@ -45,16 +69,17 @@ pub fn cluster_routes_with_raft(
     rbac: Arc<RbacConfig>,
     raft: crate::raft::routes::SharedRaft,
     rate_limiter: Option<Arc<RateLimiter>>,
+    cors_origins: Option<Vec<String>>,
 ) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
     let raft_routes = crate::raft::routes::raft_routes(raft, rbac.any_admin_key());
-    let cluster = cluster_routes(coordinator, rbac, rate_limiter);
+    let cluster = cluster_routes(coordinator, rbac, rate_limiter, cors_origins);
     raft_routes.or(cluster)
 }
 
 /// Build all coordinator API routes under `/api/v1/cluster/`.
 ///
-/// CORS is configured to allow any origin. In production, set `admin_key`
-/// and use a reverse proxy (e.g. nginx) to restrict origins.
+/// CORS origins can be restricted via the `cors_origins` parameter.
+/// When `None`, allows any origin (backward-compatible default).
 ///
 /// When `rate_limiter` is `Some`, rate limiting is applied to all mutating
 /// (POST/PUT/DELETE) routes. Read-only GET routes are exempt.
@@ -62,6 +87,7 @@ pub fn cluster_routes(
     coordinator: SharedCoordinator,
     rbac: Arc<RbacConfig>,
     rate_limiter: Option<Arc<RateLimiter>>,
+    cors_origins: Option<Vec<String>>,
 ) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
     let api = warp::path("api")
         .and(warp::path("v1"))
@@ -465,19 +491,7 @@ pub fn cluster_routes(
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_update_chat_config);
 
-    // SECURITY: allow_any_origin() is acceptable here because production
-    // deployments sit behind nginx which enforces origin restrictions.
-    // The admin_key provides the actual access-control boundary.
-    let cors = warp::cors()
-        .allow_any_origin()
-        .allow_methods(vec!["GET", "POST", "PUT", "DELETE", "OPTIONS"])
-        .allow_headers(vec![
-            "content-type",
-            "x-api-key",
-            "authorization",
-            "x-request-id",
-            "traceparent",
-        ]);
+    let cors = build_cors(cors_origins);
 
     // Group routes to avoid warp recursive type overflow
     let worker_routes = register_worker
@@ -2521,6 +2535,7 @@ mod tests {
             coord.clone(),
             Arc::new(RbacConfig::single_key("admin-key".to_string())),
             None,
+            None,
         );
         (coord, routes)
     }
@@ -2771,7 +2786,7 @@ mod tests {
         // When RBAC is disabled, no auth required
         let coord = shared_coordinator();
 
-        let routes = cluster_routes(coord.clone(), Arc::new(RbacConfig::disabled()), None);
+        let routes = cluster_routes(coord.clone(), Arc::new(RbacConfig::disabled()), None, None);
 
         // Register without API key
         let resp = warp::test::request()
@@ -3186,7 +3201,7 @@ mod tests {
     async fn test_rbac_viewer_can_read() {
         let coord = shared_coordinator();
 
-        let routes = cluster_routes(coord, rbac_viewer(), None);
+        let routes = cluster_routes(coord, rbac_viewer(), None, None);
 
         // Viewer can list workers (GET)
         let resp = warp::test::request()
@@ -3202,7 +3217,7 @@ mod tests {
     async fn test_rbac_viewer_cannot_deploy() {
         let coord = shared_coordinator();
 
-        let routes = cluster_routes(coord, rbac_viewer(), None).recover(handle_rejection);
+        let routes = cluster_routes(coord, rbac_viewer(), None, None).recover(handle_rejection);
 
         // Viewer cannot deploy (POST = Operator required)
         let resp = warp::test::request()
@@ -3229,7 +3244,7 @@ mod tests {
         let rbac = Arc::new(RbacConfig::multi_key(keys));
         let coord = shared_coordinator();
 
-        let routes = cluster_routes(coord, rbac, None).recover(handle_rejection);
+        let routes = cluster_routes(coord, rbac, None, None).recover(handle_rejection);
 
         // Operator cannot delete workers (DELETE = Admin required)
         let resp = warp::test::request()
@@ -3262,7 +3277,7 @@ mod tests {
         let rbac = Arc::new(RbacConfig::multi_key(keys));
         let coord = shared_coordinator();
 
-        let routes = cluster_routes(coord, rbac, None).recover(handle_rejection);
+        let routes = cluster_routes(coord, rbac, None, None).recover(handle_rejection);
 
         // Admin can delete (Admin required)
         let resp = warp::test::request()
@@ -3308,6 +3323,7 @@ mod tests {
             coord,
             Arc::new(RbacConfig::single_key("admin-key".to_string())),
             Some(limiter),
+            None,
         )
         .recover(handle_rejection);
 
@@ -3380,6 +3396,7 @@ mod tests {
             coord,
             Arc::new(RbacConfig::single_key("admin-key".to_string())),
             Some(limiter),
+            None,
         )
         .recover(handle_rejection);
 
@@ -3445,6 +3462,7 @@ mod tests {
             coord,
             Arc::new(RbacConfig::single_key("admin-key".to_string())),
             Some(limiter),
+            None,
         )
         .recover(handle_rejection);
 
@@ -3483,6 +3501,7 @@ mod tests {
             coord,
             Arc::new(RbacConfig::single_key("admin-key".to_string())),
             None, // No rate limiter
+            None, // Default CORS (allow any origin)
         )
         .recover(handle_rejection);
 
