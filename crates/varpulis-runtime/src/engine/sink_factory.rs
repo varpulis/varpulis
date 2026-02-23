@@ -498,13 +498,19 @@ impl SinkRegistry {
         &mut self,
         cb_config: crate::circuit_breaker::CircuitBreakerConfig,
         dlq: Option<Arc<crate::dead_letter::DeadLetterQueue>>,
+        metrics: Option<crate::metrics::Metrics>,
     ) {
         let old_cache = std::mem::take(&mut self.cache);
         for (key, sink) in old_cache {
             let cb = Arc::new(crate::circuit_breaker::CircuitBreaker::new(
                 cb_config.clone(),
             ));
-            let resilient = Arc::new(crate::sink::ResilientSink::new(sink, cb, dlq.clone()));
+            let resilient = Arc::new(crate::sink::ResilientSink::new(
+                sink,
+                cb,
+                dlq.clone(),
+                metrics.clone(),
+            ));
             self.cache.insert(key, resilient);
         }
     }

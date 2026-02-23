@@ -56,12 +56,6 @@ impl EventRouter {
     pub fn clear(&mut self) {
         self.routes.clear();
     }
-
-    /// Get all registered event types (keys)
-    #[allow(dead_code)]
-    pub fn event_types(&self) -> impl Iterator<Item = &String> {
-        self.routes.keys()
-    }
 }
 
 impl Default for EventRouter {

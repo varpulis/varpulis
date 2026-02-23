@@ -547,6 +547,7 @@ pub struct ResilientSink {
     inner: Arc<dyn Sink>,
     cb: Arc<crate::circuit_breaker::CircuitBreaker>,
     dlq: Option<Arc<crate::dead_letter::DeadLetterQueue>>,
+    metrics: Option<crate::metrics::Metrics>,
 }
 
 impl ResilientSink {
@@ -555,13 +556,22 @@ impl ResilientSink {
         inner: Arc<dyn Sink>,
         cb: Arc<crate::circuit_breaker::CircuitBreaker>,
         dlq: Option<Arc<crate::dead_letter::DeadLetterQueue>>,
+        metrics: Option<crate::metrics::Metrics>,
     ) -> Self {
-        Self { inner, cb, dlq }
+        Self {
+            inner,
+            cb,
+            dlq,
+            metrics,
+        }
     }
 
     fn send_to_dlq(&self, error_msg: &str, events: &[Arc<Event>]) {
         if let Some(ref dlq) = self.dlq {
             dlq.write_batch(self.inner.name(), error_msg, events);
+            if let Some(ref metrics) = self.metrics {
+                metrics.dlq_events_total.inc_by(events.len() as f64);
+            }
         }
     }
 }
@@ -1053,7 +1063,7 @@ mod tests {
                 reset_timeout: std::time::Duration::from_secs(60),
             },
         ));
-        let resilient = ResilientSink::new(mock.clone(), cb.clone(), None);
+        let resilient = ResilientSink::new(mock.clone(), cb.clone(), None, None);
 
         let event = Event::new("TestEvent");
         assert!(resilient.send(&event).await.is_ok());
@@ -1077,7 +1087,7 @@ mod tests {
         let _ = std::fs::remove_file(&dlq_path);
         let dlq = Arc::new(crate::dead_letter::DeadLetterQueue::open(&dlq_path).unwrap());
 
-        let resilient = ResilientSink::new(mock.clone(), cb.clone(), Some(dlq.clone()));
+        let resilient = ResilientSink::new(mock.clone(), cb.clone(), Some(dlq.clone()), None);
 
         let event = Event::new("TestEvent");
 
@@ -1110,7 +1120,7 @@ mod tests {
         let _ = std::fs::remove_file(&dlq_path);
         let dlq = Arc::new(crate::dead_letter::DeadLetterQueue::open(&dlq_path).unwrap());
 
-        let resilient = ResilientSink::new(mock, cb, Some(dlq.clone()));
+        let resilient = ResilientSink::new(mock, cb, Some(dlq.clone()), None);
 
         let events: Vec<Arc<Event>> = (0..3)
             .map(|i| Arc::new(Event::new(format!("Event{}", i))))
@@ -1134,7 +1144,7 @@ mod tests {
             },
         ));
 
-        let resilient = ResilientSink::new(mock.clone(), cb.clone(), None);
+        let resilient = ResilientSink::new(mock.clone(), cb.clone(), None, None);
 
         let event = Event::new("TestEvent");
 
@@ -1160,7 +1170,7 @@ mod tests {
         let cb = Arc::new(crate::circuit_breaker::CircuitBreaker::new(
             crate::circuit_breaker::CircuitBreakerConfig::default(),
         ));
-        let resilient = ResilientSink::new(mock, cb, None);
+        let resilient = ResilientSink::new(mock, cb, None, None);
         assert_eq!(resilient.name(), "my-kafka-sink");
     }
 }

@@ -38,12 +38,6 @@ impl OnlinePSTLearner {
         self
     }
 
-    /// Set the pruning strategy.
-    pub fn with_pruning_strategy(mut self, strategy: PruningStrategy) -> Self {
-        self.pruning_strategy = strategy;
-        self
-    }
-
     /// Process a new symbol: update the PST with all relevant suffixes.
     pub fn update(&mut self, pst: &mut PredictionSuffixTree, symbol: SymbolId) {
         // Update counts at the root (empty context) and all context suffixes
@@ -97,16 +91,6 @@ impl OnlinePSTLearner {
     /// Get the current context (most recent symbols).
     pub fn current_context(&self) -> &[SymbolId] {
         &self.context_buffer
-    }
-
-    /// Total number of updates performed.
-    pub fn total_updates(&self) -> u64 {
-        self.updates
-    }
-
-    /// Reset the context buffer (e.g., on window boundary).
-    pub fn reset_context(&mut self) {
-        self.context_buffer.clear();
     }
 }
 

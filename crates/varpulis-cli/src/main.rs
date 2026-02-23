@@ -38,6 +38,10 @@ struct Cli {
     #[arg(short, long, global = true, env = "VARPULIS_CONFIG")]
     config: Option<PathBuf>,
 
+    /// OpenTelemetry OTLP endpoint (e.g. http://localhost:4317). Requires 'otel' feature.
+    #[arg(long, global = true, env = "OTEL_EXPORTER_OTLP_ENDPOINT")]
+    otel_endpoint: Option<String>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -170,6 +174,10 @@ enum Commands {
         /// Path to client private key for mTLS authentication (PEM format)
         #[arg(long, env = "VARPULIS_TLS_CLIENT_KEY")]
         tls_client_key: Option<PathBuf>,
+
+        /// Maximum queue depth before rejecting events with HTTP 429 (0 = unlimited)
+        #[arg(long, env = "VARPULIS_MAX_QUEUE_DEPTH", default_value = "50000")]
+        max_queue_depth: u64,
     },
 
     /// Simulate events from an event file (.evt)
@@ -447,16 +455,56 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Parse CLI first so we can check otel_endpoint before initializing tracing
+    let cli = Cli::parse();
+
     // Initialize logging with RUST_LOG support
     // Default: info level, can be overridden with RUST_LOG env var
     // Examples: RUST_LOG=debug, RUST_LOG=varpulis=trace,info
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
-    let cli = Cli::parse();
+    #[cfg(feature = "otel")]
+    {
+        if let Some(ref endpoint) = cli.otel_endpoint {
+            use opentelemetry::trace::TracerProvider as _;
+            use opentelemetry_otlp::WithExportConfig;
+            use tracing_subscriber::layer::SubscriberExt;
+            use tracing_subscriber::util::SubscriberInitExt;
+
+            let exporter = opentelemetry_otlp::SpanExporter::builder()
+                .with_tonic()
+                .with_endpoint(endpoint)
+                .build()
+                .expect("Failed to create OTLP exporter");
+
+            let tracer_provider = opentelemetry_sdk::trace::TracerProvider::builder()
+                .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
+                .with_resource(opentelemetry_sdk::Resource::new(vec![
+                    opentelemetry::KeyValue::new("service.name", "varpulis"),
+                ]))
+                .build();
+
+            let tracer = tracer_provider.tracer("varpulis");
+            let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(tracing_subscriber::fmt::layer())
+                .with(otel_layer)
+                .init();
+
+            tracing::info!("OpenTelemetry tracing enabled, exporting to {}", endpoint);
+        } else {
+            tracing_subscriber::fmt().with_env_filter(env_filter).init();
+        }
+    }
+    #[cfg(not(feature = "otel"))]
+    {
+        if cli.otel_endpoint.is_some() {
+            eprintln!("Warning: --otel-endpoint requires the 'otel' feature. Rebuild with: cargo build --features otel");
+        }
+        tracing_subscriber::fmt().with_env_filter(env_filter).init();
+    }
 
     match cli.command {
         Commands::Run { file, code } => {
@@ -513,6 +561,7 @@ async fn main() -> Result<()> {
             tls_ca_cert,
             tls_client_cert,
             tls_client_key,
+            max_queue_depth,
         } => {
             // Use security module to validate workdir - NO unwrap()!
             let workdir =
@@ -566,6 +615,7 @@ async fn main() -> Result<()> {
                 advertise_address,
                 nats,
                 mtls_client_config,
+                max_queue_depth,
             )
             .await?;
         }
@@ -2152,6 +2202,7 @@ async fn run_server(
     advertise_address: Option<String>,
     nats_url: Option<String>,
     mtls_client: Option<reqwest::Client>,
+    max_queue_depth: u64,
 ) -> Result<()> {
     let tls_enabled = tls_config.is_some();
     let protocol = if tls_enabled { "wss" } else { "ws" };
@@ -2192,6 +2243,14 @@ async fn run_server(
     if enable_metrics {
         println!("Metrics:   http://{}:{}/metrics", bind, metrics_port);
     }
+    println!(
+        "Backpressure: {}",
+        if max_queue_depth > 0 {
+            format!("enabled (max queue depth: {})", max_queue_depth)
+        } else {
+            "disabled".to_string()
+        }
+    );
     println!();
 
     // Create output event channel
@@ -2327,6 +2386,18 @@ async fn run_server(
             .write()
             .await
             .set_prometheus_metrics(m.clone());
+    }
+
+    // Configure backpressure queue depth limit
+    {
+        let mut mgr = tenant_manager.write().await;
+        mgr.set_max_queue_depth(max_queue_depth);
+        if max_queue_depth > 0 {
+            info!(
+                "Backpressure enabled: max queue depth = {}",
+                max_queue_depth
+            );
+        }
     }
 
     // Auto-provision a default tenant if an API key is configured

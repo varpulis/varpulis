@@ -49,14 +49,12 @@ impl RestApiConfig {
 
 /// REST API client for calling external APIs
 pub struct RestApiClient {
-    #[allow(dead_code)]
-    name: String,
     config: RestApiConfig,
     client: reqwest::Client,
 }
 
 impl RestApiClient {
-    pub fn new(name: &str, config: RestApiConfig) -> Result<Self, ConnectorError> {
+    pub fn new(_name: &str, config: RestApiConfig) -> Result<Self, ConnectorError> {
         let mut headers = reqwest::header::HeaderMap::new();
         for (key, value) in &config.headers {
             headers.insert(
@@ -73,11 +71,7 @@ impl RestApiClient {
             .build()
             .map_err(|e| ConnectorError::ConfigError(e.to_string()))?;
 
-        Ok(Self {
-            name: name.to_string(),
-            config,
-            client,
-        })
+        Ok(Self { config, client })
     }
 
     /// GET request returning JSON as Event

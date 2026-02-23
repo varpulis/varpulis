@@ -43,8 +43,6 @@ const TOKEN_NUMBER: u32 = 5;
 const TOKEN_OPERATOR: u32 = 6;
 const TOKEN_COMMENT: u32 = 7;
 const TOKEN_CLASS: u32 = 8;
-#[allow(dead_code)]
-const TOKEN_NAMESPACE: u32 = 11;
 
 /// Get semantic tokens for a document
 pub fn get_semantic_tokens(text: &str) -> Vec<SemanticToken> {

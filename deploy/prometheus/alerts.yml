@@ -63,6 +63,21 @@ groups:
             The engine may not be keeping up with incoming event rate.
           runbook: "docs/operations/alerting.md#varpulisstreamqueuebacklog"
 
+      # -- Queue Pressure Ratio --
+      - alert: VarpulisQueuePressureHigh
+        expr: varpulis_queue_pressure_ratio > 0.8
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Queue pressure ratio exceeds 80%"
+          description: >
+            Queue pressure ratio is {{ $value | humanizePercentage }} of the
+            configured max_queue_depth. Clients will start receiving HTTP 429
+            responses when this reaches 100%. Consider scaling out workers or
+            increasing --max-queue-depth.
+          runbook: "docs/operations/alerting.md#varpulisqueuepressurehigh"
+
       # -- SASE Run Backlog --
       - alert: VarpulisSaseRunBacklog
         expr: varpulis_sase_peak_active_runs > 10000

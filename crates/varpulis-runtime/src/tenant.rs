@@ -9,6 +9,7 @@ use crate::metrics::Metrics;
 use crate::persistence::{StateStore, StoreError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{mpsc, RwLock};
@@ -184,6 +185,13 @@ pub enum TenantError {
     QuotaExceeded(String),
     /// Rate limit exceeded
     RateLimitExceeded,
+    /// Backpressure: queue depth exceeds configured maximum
+    BackpressureExceeded {
+        /// Current queue depth
+        current: u64,
+        /// Configured maximum
+        max: u64,
+    },
     /// Parse error in VPL source
     ParseError(String),
     /// Engine error
@@ -199,6 +207,9 @@ impl std::fmt::Display for TenantError {
             TenantError::PipelineNotFound(id) => write!(f, "pipeline not found: {id}"),
             TenantError::QuotaExceeded(msg) => write!(f, "quota exceeded: {msg}"),
             TenantError::RateLimitExceeded => write!(f, "rate limit exceeded"),
+            TenantError::BackpressureExceeded { current, max } => {
+                write!(f, "queue depth {current} exceeds maximum {max}")
+            }
             TenantError::ParseError(msg) => write!(f, "parse error: {msg}"),
             TenantError::EngineError(msg) => write!(f, "engine error: {msg}"),
             TenantError::AlreadyExists(id) => write!(f, "tenant already exists: {id}"),
@@ -601,6 +612,10 @@ pub struct TenantManager {
     store: Option<Arc<dyn StateStore>>,
     /// Shared Prometheus metrics (passed to engines on deploy)
     prometheus_metrics: Option<Metrics>,
+    /// Maximum queue depth before rejecting events with backpressure (0 = unlimited)
+    max_queue_depth: u64,
+    /// Atomic counter of events currently being processed across all pipelines
+    pending_events: Arc<AtomicU64>,
 }
 
 impl TenantManager {
@@ -610,6 +625,8 @@ impl TenantManager {
             api_key_index: HashMap::new(),
             store: None,
             prometheus_metrics: None,
+            max_queue_depth: 0,
+            pending_events: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -620,12 +637,57 @@ impl TenantManager {
             api_key_index: HashMap::new(),
             store: Some(store),
             prometheus_metrics: None,
+            max_queue_depth: 0,
+            pending_events: Arc::new(AtomicU64::new(0)),
         }
     }
 
     /// Set Prometheus metrics to be shared with all engines
     pub fn set_prometheus_metrics(&mut self, metrics: Metrics) {
         self.prometheus_metrics = Some(metrics);
+    }
+
+    /// Set maximum queue depth for backpressure (0 = unlimited)
+    pub fn set_max_queue_depth(&mut self, max_depth: u64) {
+        self.max_queue_depth = max_depth;
+    }
+
+    /// Get the maximum queue depth setting
+    pub fn max_queue_depth(&self) -> u64 {
+        self.max_queue_depth
+    }
+
+    /// Get the current number of pending events being processed
+    pub fn pending_event_count(&self) -> u64 {
+        self.pending_events.load(Ordering::Relaxed)
+    }
+
+    /// Get a clone of the pending events counter (for sharing with API handlers)
+    pub fn pending_events_counter(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.pending_events)
+    }
+
+    /// Check backpressure: returns Err if queue depth exceeds maximum
+    pub fn check_backpressure(&self) -> Result<(), TenantError> {
+        if self.max_queue_depth == 0 {
+            return Ok(());
+        }
+        let current = self.pending_events.load(Ordering::Relaxed);
+        if current >= self.max_queue_depth {
+            return Err(TenantError::BackpressureExceeded {
+                current,
+                max: self.max_queue_depth,
+            });
+        }
+        Ok(())
+    }
+
+    /// Compute the queue pressure ratio (0.0 to 1.0+). Returns 0.0 if max_queue_depth is 0.
+    pub fn queue_pressure_ratio(&self) -> f64 {
+        if self.max_queue_depth == 0 {
+            return 0.0;
+        }
+        self.pending_events.load(Ordering::Relaxed) as f64 / self.max_queue_depth as f64
     }
 
     /// Create a new tenant
@@ -679,6 +741,37 @@ impl TenantManager {
         tenant
             .deploy_pipeline_with_metrics(name, source, metrics)
             .await
+    }
+
+    /// Process an event through a pipeline with backpressure checking.
+    ///
+    /// Checks queue depth before processing, increments a pending counter during
+    /// processing, and decrements it afterward. Returns `BackpressureExceeded`
+    /// if the queue depth exceeds `max_queue_depth`.
+    pub async fn process_event_with_backpressure(
+        &mut self,
+        tenant_id: &TenantId,
+        pipeline_id: &str,
+        event: Event,
+    ) -> Result<Vec<Event>, TenantError> {
+        self.check_backpressure()?;
+        self.pending_events.fetch_add(1, Ordering::Relaxed);
+        let tenant = self
+            .tenants
+            .get_mut(tenant_id)
+            .ok_or_else(|| TenantError::NotFound(tenant_id.to_string()))?;
+        let result = tenant.process_event(pipeline_id, event).await;
+        self.pending_events.fetch_sub(1, Ordering::Relaxed);
+
+        // Update pressure ratio metric
+        if let Some(ref metrics) = self.prometheus_metrics {
+            metrics
+                .queue_pressure_ratio
+                .with_label_values(&["_all"])
+                .set(self.queue_pressure_ratio());
+        }
+
+        result
     }
 
     /// Remove a tenant and all its pipelines
@@ -1570,5 +1663,142 @@ mod tests {
         assert_eq!(tenant.name, "Bad Corp");
         // The invalid pipeline should have been skipped
         assert_eq!(tenant.pipelines.len(), 0);
+    }
+
+    #[test]
+    fn test_backpressure_disabled_by_default() {
+        let mgr = TenantManager::new();
+        assert_eq!(mgr.max_queue_depth(), 0);
+        assert!(mgr.check_backpressure().is_ok());
+    }
+
+    #[test]
+    fn test_backpressure_set_max_queue_depth() {
+        let mut mgr = TenantManager::new();
+        mgr.set_max_queue_depth(100);
+        assert_eq!(mgr.max_queue_depth(), 100);
+        // No pending events, should pass
+        assert!(mgr.check_backpressure().is_ok());
+    }
+
+    #[test]
+    fn test_backpressure_exceeded() {
+        let mut mgr = TenantManager::new();
+        mgr.set_max_queue_depth(10);
+
+        // Simulate 10 pending events
+        mgr.pending_events.store(10, Ordering::Relaxed);
+        let result = mgr.check_backpressure();
+        assert!(result.is_err());
+
+        if let Err(TenantError::BackpressureExceeded { current, max }) = result {
+            assert_eq!(current, 10);
+            assert_eq!(max, 10);
+        } else {
+            panic!("Expected BackpressureExceeded error");
+        }
+    }
+
+    #[test]
+    fn test_backpressure_not_exceeded() {
+        let mut mgr = TenantManager::new();
+        mgr.set_max_queue_depth(10);
+        mgr.pending_events.store(9, Ordering::Relaxed);
+        assert!(mgr.check_backpressure().is_ok());
+    }
+
+    #[test]
+    fn test_backpressure_unlimited_when_zero() {
+        let mut mgr = TenantManager::new();
+        mgr.set_max_queue_depth(0);
+        // Even with huge pending count, should not trigger
+        mgr.pending_events.store(1_000_000, Ordering::Relaxed);
+        assert!(mgr.check_backpressure().is_ok());
+    }
+
+    #[test]
+    fn test_queue_pressure_ratio() {
+        let mut mgr = TenantManager::new();
+        mgr.set_max_queue_depth(100);
+        mgr.pending_events.store(50, Ordering::Relaxed);
+        let ratio = mgr.queue_pressure_ratio();
+        assert!((ratio - 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_queue_pressure_ratio_zero_max() {
+        let mgr = TenantManager::new();
+        assert_eq!(mgr.queue_pressure_ratio(), 0.0);
+    }
+
+    #[test]
+    fn test_pending_events_counter() {
+        let mgr = TenantManager::new();
+        assert_eq!(mgr.pending_event_count(), 0);
+        let counter = mgr.pending_events_counter();
+        counter.fetch_add(5, Ordering::Relaxed);
+        assert_eq!(mgr.pending_event_count(), 5);
+    }
+
+    #[tokio::test]
+    async fn test_process_event_with_backpressure_ok() {
+        let mut mgr = TenantManager::new();
+        mgr.set_max_queue_depth(100);
+        let id = mgr
+            .create_tenant("Test".into(), "key-bp".into(), TenantQuota::default())
+            .unwrap();
+
+        let tenant = mgr.get_tenant_mut(&id).unwrap();
+        let vpl = "stream A = SensorReading .where(temperature > 100)";
+        let pid = tenant
+            .deploy_pipeline("BP Pipeline".into(), vpl.into())
+            .await
+            .unwrap();
+
+        let event = Event::new("SensorReading").with_field("temperature", 150.0);
+        let result = mgr.process_event_with_backpressure(&id, &pid, event).await;
+        assert!(result.is_ok());
+        // Pending count should be back to 0 after processing
+        assert_eq!(mgr.pending_event_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_process_event_with_backpressure_rejected() {
+        let mut mgr = TenantManager::new();
+        mgr.set_max_queue_depth(5);
+        // Simulate queue being full
+        mgr.pending_events.store(5, Ordering::Relaxed);
+
+        let id = mgr
+            .create_tenant("Test".into(), "key-bp2".into(), TenantQuota::default())
+            .unwrap();
+        let tenant = mgr.get_tenant_mut(&id).unwrap();
+        let vpl = "stream A = SensorReading .where(temperature > 100)";
+        let pid = tenant
+            .deploy_pipeline("BP Pipeline 2".into(), vpl.into())
+            .await
+            .unwrap();
+
+        let event = Event::new("SensorReading").with_field("temperature", 150.0);
+        let result = mgr.process_event_with_backpressure(&id, &pid, event).await;
+        assert!(result.is_err());
+        match result {
+            Err(TenantError::BackpressureExceeded { current, max }) => {
+                assert_eq!(current, 5);
+                assert_eq!(max, 5);
+            }
+            _ => panic!("Expected BackpressureExceeded"),
+        }
+    }
+
+    #[test]
+    fn test_backpressure_error_display() {
+        let err = TenantError::BackpressureExceeded {
+            current: 50000,
+            max: 50000,
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("50000"));
+        assert!(msg.contains("exceeds maximum"));
     }
 }

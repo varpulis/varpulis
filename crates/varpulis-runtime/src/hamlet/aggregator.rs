@@ -454,11 +454,6 @@ impl HamletAggregator {
         }
     }
 
-    /// Get current optimizer statistics
-    pub fn optimizer_stats(&self) -> impl Iterator<Item = (&u16, &super::optimizer::KleeneStats)> {
-        self.optimizer.all_stats()
-    }
-
     /// Get the number of graphlets
     pub fn num_graphlets(&self) -> usize {
         self.graph.num_graphlets()
@@ -472,13 +467,6 @@ impl HamletAggregator {
     /// Get registered queries (for sharing detection)
     pub fn registered_queries(&self) -> &[QueryRegistration] {
         &self.queries
-    }
-
-    /// Get query state (for debugging/testing)
-    pub fn query_state(&self, query_id: QueryId) -> Option<(u16, u64, bool)> {
-        self.query_states
-            .get(&query_id)
-            .map(|s| (s.current_state, s.count, s.in_trend))
     }
 }
 
