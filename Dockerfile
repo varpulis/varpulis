@@ -34,14 +34,14 @@ LABEL org.opencontainers.image.version="${VERSION}" \
 # Switch to non-root user
 USER varpulis
 
-# Health check
+# Health check (port must match the server's --port, default 9000)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+    CMD curl -f http://localhost:9000/health || exit 1
 
 # Default ports
-# 8080 - HTTP webhook input / health endpoints
+# 9000 - HTTP API / WebSocket / health endpoints (server default)
 # 9090 - Prometheus metrics
-EXPOSE 8080 9090
+EXPOSE 9000 9090
 
 # Default entrypoint
 ENTRYPOINT ["varpulis"]
