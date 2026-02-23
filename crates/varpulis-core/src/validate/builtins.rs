@@ -99,6 +99,24 @@ pub static ENRICH_BUILTIN_VARS: &[&str] = &["enrich_status", "enrich_latency_ms"
 /// Connector types that support request-response lookups for `.enrich()`.
 pub static ENRICH_COMPATIBLE_TYPES: &[&str] = &["http", "database", "redis"];
 
+/// Known connector types for validation.
+pub static KNOWN_CONNECTOR_TYPES: &[&str] = &[
+    "mqtt",
+    "kafka",
+    "nats",
+    "http",
+    "console",
+    "websocket",
+    "file",
+    "database",
+    "redis",
+];
+
+/// Check if a connector type is known.
+pub fn is_known_connector_type(name: &str) -> bool {
+    KNOWN_CONNECTOR_TYPES.contains(&name)
+}
+
 /// Check if a function name is a known builtin (scalar or aggregate).
 pub fn is_known_function(name: &str) -> bool {
     BUILTIN_FUNCTIONS.contains(&name) || AGGREGATE_FUNCTIONS.contains(&name)

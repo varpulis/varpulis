@@ -154,11 +154,11 @@
                 },
                 {
                     "name": "keyword.declaration.stream.varpulis",
-                    "match": "\\b(stream|event|from)\\b"
+                    "match": "\\b(stream|event|connector|from|as)\\b"
                 },
                 {
                     "name": "keyword.declaration.varpulis",
-                    "match": "\\b(let|var|const|fn|config)\\b"
+                    "match": "\\b(let|var|const|fn|context)\\b"
                 },
                 {
                     "name": "keyword.operator.logical.varpulis",
@@ -216,7 +216,7 @@
             "patterns": [
                 {
                     "name": "keyword.operator.stream.varpulis",
-                    "match": "\\.(where|select|aggregate|partition_by|order_by|limit|distinct|emit|to|tap|pattern|window|concurrent|process|on_error|collect|merge|join|on|forecast|enrich)\\b"
+                    "match": "\\.(where|select|aggregate|partition_by|order_by|limit|distinct|emit|to|tap|pattern|window|within|concurrent|process|on_error|collect|merge|join|on|forecast|trend_aggregate|enrich)\\b"
                 }
             ]
         },

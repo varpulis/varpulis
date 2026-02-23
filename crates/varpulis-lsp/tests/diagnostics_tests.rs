@@ -259,7 +259,7 @@ fn diagnostics_incomplete_pattern() {
 #[test]
 fn diagnostics_valid_with_connector() {
     let code = r#"
-connector mqtt_in = mqtt(host: "localhost", port: 1883)
+connector mqtt_in = mqtt(topic: "sensors/#", qos: 1)
 
 event SensorData:
     temperature: float

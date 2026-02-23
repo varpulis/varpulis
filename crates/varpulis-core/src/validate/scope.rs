@@ -156,4 +156,11 @@ impl SymbolTable {
     pub fn function_names(&self) -> Vec<&str> {
         self.functions.keys().map(|s| s.as_str()).collect()
     }
+
+    /// Resolve field names for a given event type, returns None if not declared.
+    pub fn event_field_names(&self, event_name: &str) -> Option<&[String]> {
+        self.events
+            .get(event_name)
+            .map(|e| e.field_names.as_slice())
+    }
 }

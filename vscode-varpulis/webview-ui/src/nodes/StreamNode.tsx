@@ -15,6 +15,8 @@ const operationLabels: Record<string, string> = {
   filter: '.filter',
   join: '.join',
   merge: 'merge',
+  forecast: '.forecast',
+  trend_aggregate: '.trend_aggregate',
 };
 
 const renderOperation = (op: StreamOperation, index: number) => {
@@ -50,6 +52,12 @@ const renderOperation = (op: StreamOperation, index: number) => {
       break;
     case 'join':
       value = `${op.joinType || 'inner'} on ${op.joinOn || '...'}`;
+      break;
+    case 'forecast':
+      value = [op.forecastConfidence, op.forecastHorizon].filter(Boolean).join(', ');
+      break;
+    case 'trend_aggregate':
+      value = op.trendAggregations || '';
       break;
     default:
       value = '';
