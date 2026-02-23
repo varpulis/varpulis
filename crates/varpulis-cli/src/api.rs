@@ -106,6 +106,30 @@ pub struct ApiError {
     pub code: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct DlqQueryParams {
+    #[serde(default)]
+    pub offset: Option<usize>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DlqEntriesResponse {
+    pub entries: Vec<varpulis_runtime::dead_letter::DlqEntryOwned>,
+    pub total: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DlqReplayResponse {
+    pub replayed: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DlqClearResponse {
+    pub cleared: bool,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UsageResponse {
     pub tenant_id: String,
@@ -321,6 +345,38 @@ pub fn api_routes(
         .and(with_manager(manager.clone()))
         .and_then(handle_logs);
 
+    let dlq_get = api
+        .and(warp::path("pipelines"))
+        .and(warp::path::param::<String>())
+        .and(warp::path("dlq"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(with_api_key())
+        .and(warp::query::<DlqQueryParams>())
+        .and(with_manager(manager.clone()))
+        .and_then(handle_dlq_get);
+
+    let dlq_replay = api
+        .and(warp::path("pipelines"))
+        .and(warp::path::param::<String>())
+        .and(warp::path("dlq"))
+        .and(warp::path("replay"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(with_api_key())
+        .and(with_manager(manager.clone()))
+        .and_then(handle_dlq_replay);
+
+    let dlq_clear = api
+        .and(warp::path("pipelines"))
+        .and(warp::path::param::<String>())
+        .and(warp::path("dlq"))
+        .and(warp::path::end())
+        .and(warp::delete())
+        .and(with_api_key())
+        .and(with_manager(manager.clone()))
+        .and_then(handle_dlq_clear);
+
     let cors = build_cors(cors_origins);
 
     deploy
@@ -335,6 +391,9 @@ pub fn api_routes(
         .or(reload)
         .or(usage)
         .or(logs)
+        .or(dlq_get)
+        .or(dlq_replay)
+        .or(dlq_clear)
         .or(admin_routes)
         .with(cors)
 }
@@ -567,16 +626,10 @@ async fn handle_inject(
         }
     };
 
-    let tenant = match mgr.get_tenant_mut(&tenant_id) {
-        Some(t) => t,
-        None => {
-            return Ok(error_response(
-                StatusCode::NOT_FOUND,
-                "tenant_not_found",
-                "Tenant not found",
-            ))
-        }
-    };
+    // Check backpressure before processing
+    if let Err(e) = mgr.check_backpressure() {
+        return Ok(tenant_error_response(e));
+    }
 
     let mut event = Event::new(body.event_type.clone());
     for (key, value) in &body.fields {
@@ -584,7 +637,10 @@ async fn handle_inject(
         event = event.with_field(key.as_str(), v);
     }
 
-    match tenant.process_event(&pipeline_id, event).await {
+    match mgr
+        .process_event_with_backpressure(&tenant_id, &pipeline_id, event)
+        .await
+    {
         Ok(output_events) => {
             let events_json: Vec<serde_json::Value> = output_events
                 .iter()
@@ -631,16 +687,10 @@ async fn handle_inject_batch(
         }
     };
 
-    let tenant = match mgr.get_tenant_mut(&tenant_id) {
-        Some(t) => t,
-        None => {
-            return Ok(error_response(
-                StatusCode::NOT_FOUND,
-                "tenant_not_found",
-                "Tenant not found",
-            ))
-        }
-    };
+    // Check backpressure before processing the batch
+    if let Err(e) = mgr.check_backpressure() {
+        return Ok(tenant_error_response(e));
+    }
 
     let start = std::time::Instant::now();
     let mut accepted = 0usize;
@@ -653,7 +703,10 @@ async fn handle_inject_batch(
             event = event.with_field(key.as_str(), v);
         }
 
-        match tenant.process_event(&pipeline_id, event).await {
+        match mgr
+            .process_event_with_backpressure(&tenant_id, &pipeline_id, event)
+            .await
+        {
             Ok(outputs) => {
                 accepted += 1;
                 for e in &outputs {
@@ -668,8 +721,12 @@ async fn handle_inject_batch(
                     output_events.push(serde_json::Value::Object(flat));
                 }
             }
+            Err(TenantError::BackpressureExceeded { .. }) => {
+                // Stop processing the rest of the batch on backpressure
+                break;
+            }
             Err(_) => {
-                // Skip failed events silently in batch mode
+                // Skip other failed events silently in batch mode
             }
         }
     }
@@ -1012,6 +1069,241 @@ fn json_from_value(v: &varpulis_core::Value) -> serde_json::Value {
 }
 
 // =============================================================================
+// DLQ Handlers
+// =============================================================================
+
+async fn handle_dlq_get(
+    pipeline_id: String,
+    api_key: String,
+    params: DlqQueryParams,
+    manager: SharedTenantManager,
+) -> Result<impl Reply, Infallible> {
+    let mgr = manager.read().await;
+
+    let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
+        Some(id) => id.clone(),
+        None => {
+            return Ok(error_response(
+                StatusCode::UNAUTHORIZED,
+                "invalid_api_key",
+                "Invalid API key",
+            ))
+        }
+    };
+
+    let tenant = match mgr.get_tenant(&tenant_id) {
+        Some(t) => t,
+        None => {
+            return Ok(error_response(
+                StatusCode::NOT_FOUND,
+                "tenant_not_found",
+                "Tenant not found",
+            ))
+        }
+    };
+
+    let pipeline = match tenant.pipelines.get(&pipeline_id) {
+        Some(p) => p,
+        None => {
+            return Ok(error_response(
+                StatusCode::NOT_FOUND,
+                "pipeline_not_found",
+                "Pipeline not found",
+            ))
+        }
+    };
+
+    let engine = pipeline.engine.lock().await;
+    let dlq = match engine.dlq() {
+        Some(d) => d,
+        None => {
+            let resp = DlqEntriesResponse {
+                entries: Vec::new(),
+                total: 0,
+            };
+            return Ok(
+                warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response(),
+            );
+        }
+    };
+
+    let offset = params.offset.unwrap_or(0);
+    let limit = params.limit.unwrap_or(100).min(1000);
+
+    match dlq.read_entries(offset, limit) {
+        Ok(entries) => {
+            let resp = DlqEntriesResponse {
+                total: dlq.line_count(),
+                entries,
+            };
+            Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+        }
+        Err(e) => Ok(error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "dlq_read_error",
+            &format!("Failed to read DLQ: {}", e),
+        )),
+    }
+}
+
+async fn handle_dlq_replay(
+    pipeline_id: String,
+    api_key: String,
+    manager: SharedTenantManager,
+) -> Result<impl Reply, Infallible> {
+    let mgr = manager.read().await;
+
+    let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
+        Some(id) => id.clone(),
+        None => {
+            return Ok(error_response(
+                StatusCode::UNAUTHORIZED,
+                "invalid_api_key",
+                "Invalid API key",
+            ))
+        }
+    };
+
+    let tenant = match mgr.get_tenant(&tenant_id) {
+        Some(t) => t,
+        None => {
+            return Ok(error_response(
+                StatusCode::NOT_FOUND,
+                "tenant_not_found",
+                "Tenant not found",
+            ))
+        }
+    };
+
+    let pipeline = match tenant.pipelines.get(&pipeline_id) {
+        Some(p) => p,
+        None => {
+            return Ok(error_response(
+                StatusCode::NOT_FOUND,
+                "pipeline_not_found",
+                "Pipeline not found",
+            ))
+        }
+    };
+
+    // Read all DLQ entries
+    let entries = {
+        let engine = pipeline.engine.lock().await;
+        let dlq = match engine.dlq() {
+            Some(d) => d,
+            None => {
+                let resp = DlqReplayResponse { replayed: 0 };
+                return Ok(
+                    warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK)
+                        .into_response(),
+                );
+            }
+        };
+        // Read all entries (up to a reasonable limit)
+        match dlq.read_entries(0, 100_000) {
+            Ok(entries) => entries,
+            Err(e) => {
+                return Ok(error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "dlq_read_error",
+                    &format!("Failed to read DLQ: {}", e),
+                ))
+            }
+        }
+    };
+
+    // Replay each entry as an event into the pipeline engine
+    let mut replayed = 0usize;
+    {
+        let mut engine = pipeline.engine.lock().await;
+        for entry in &entries {
+            // Reconstruct event from the DLQ entry
+            let event_type = entry
+                .event
+                .get("event_type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            let mut event = Event::new(event_type);
+            if let Some(data) = entry.event.get("data").and_then(|v| v.as_object()) {
+                for (k, v) in data {
+                    let rv = json_to_runtime_value(v);
+                    event = event.with_field(k.as_str(), rv);
+                }
+            }
+            if engine.process(event).await.is_ok() {
+                replayed += 1;
+            }
+        }
+    }
+
+    let resp = DlqReplayResponse { replayed };
+    Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+}
+
+async fn handle_dlq_clear(
+    pipeline_id: String,
+    api_key: String,
+    manager: SharedTenantManager,
+) -> Result<impl Reply, Infallible> {
+    let mgr = manager.read().await;
+
+    let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
+        Some(id) => id.clone(),
+        None => {
+            return Ok(error_response(
+                StatusCode::UNAUTHORIZED,
+                "invalid_api_key",
+                "Invalid API key",
+            ))
+        }
+    };
+
+    let tenant = match mgr.get_tenant(&tenant_id) {
+        Some(t) => t,
+        None => {
+            return Ok(error_response(
+                StatusCode::NOT_FOUND,
+                "tenant_not_found",
+                "Tenant not found",
+            ))
+        }
+    };
+
+    let pipeline = match tenant.pipelines.get(&pipeline_id) {
+        Some(p) => p,
+        None => {
+            return Ok(error_response(
+                StatusCode::NOT_FOUND,
+                "pipeline_not_found",
+                "Pipeline not found",
+            ))
+        }
+    };
+
+    let engine = pipeline.engine.lock().await;
+    match engine.dlq() {
+        Some(dlq) => match dlq.clear() {
+            Ok(()) => {
+                let resp = DlqClearResponse { cleared: true };
+                Ok(
+                    warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK)
+                        .into_response(),
+                )
+            }
+            Err(e) => Ok(error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "dlq_clear_error",
+                &format!("Failed to clear DLQ: {}", e),
+            )),
+        },
+        None => {
+            let resp = DlqClearResponse { cleared: true };
+            Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+        }
+    }
+}
+
+// =============================================================================
 // Tenant Admin Routes
 // =============================================================================
 
@@ -1261,11 +1553,28 @@ fn error_response(status: StatusCode, code: &str, message: &str) -> warp::reply:
 }
 
 fn tenant_error_response(err: TenantError) -> warp::reply::Response {
+    // BackpressureExceeded needs a Retry-After header, handle it specially
+    if let TenantError::BackpressureExceeded { current, max } = &err {
+        let body = serde_json::json!({
+            "error": format!("queue depth {current} exceeds maximum {max}"),
+            "code": "queue_depth_exceeded",
+            "retry_after": 1,
+        });
+        return warp::http::Response::builder()
+            .status(StatusCode::TOO_MANY_REQUESTS)
+            .header("Retry-After", "1")
+            .header("Content-Type", "application/json")
+            .body(serde_json::to_string(&body).unwrap_or_default())
+            .unwrap()
+            .into_response();
+    }
+
     let (status, code) = match &err {
         TenantError::NotFound(_) => (StatusCode::NOT_FOUND, "not_found"),
         TenantError::PipelineNotFound(_) => (StatusCode::NOT_FOUND, "pipeline_not_found"),
         TenantError::QuotaExceeded(_) => (StatusCode::TOO_MANY_REQUESTS, "quota_exceeded"),
         TenantError::RateLimitExceeded => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
+        TenantError::BackpressureExceeded { .. } => unreachable!(),
         TenantError::ParseError(_) => (StatusCode::BAD_REQUEST, "parse_error"),
         TenantError::EngineError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "engine_error"),
         TenantError::AlreadyExists(_) => (StatusCode::CONFLICT, "already_exists"),
@@ -2165,6 +2474,13 @@ mod tests {
 
         let resp = tenant_error_response(TenantError::AlreadyExists("t1".into()));
         assert_eq!(resp.status(), StatusCode::CONFLICT);
+
+        let resp = tenant_error_response(TenantError::BackpressureExceeded {
+            current: 50000,
+            max: 50000,
+        });
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(resp.headers().get("Retry-After").unwrap(), "1");
     }
 
     // =========================================================================
@@ -2308,5 +2624,99 @@ mod tests {
         let body: TenantListResponse = serde_json::from_slice(resp.body()).unwrap();
         assert_eq!(body.tenants.len(), 1);
         assert!(!body.pagination.unwrap().has_more);
+    }
+
+    #[tokio::test]
+    async fn test_inject_backpressure_429() {
+        use std::sync::atomic::Ordering;
+
+        let mut mgr = TenantManager::new();
+        mgr.set_max_queue_depth(5);
+        let id = mgr
+            .create_tenant(
+                "BP Corp".into(),
+                "bp-key-123".into(),
+                TenantQuota::default(),
+            )
+            .unwrap();
+
+        let tenant = mgr.get_tenant_mut(&id).unwrap();
+        let pid = tenant
+            .deploy_pipeline(
+                "BP Pipeline".into(),
+                "stream A = SensorReading .where(x > 1)".into(),
+            )
+            .await
+            .unwrap();
+
+        // Simulate queue being full
+        mgr.pending_events_counter().store(5, Ordering::Relaxed);
+
+        let shared = Arc::new(RwLock::new(mgr));
+        let routes = api_routes(shared, None, None);
+
+        let resp = warp::test::request()
+            .method("POST")
+            .path(&format!("/api/v1/pipelines/{}/events", pid))
+            .header("x-api-key", "bp-key-123")
+            .json(&InjectEventRequest {
+                event_type: "SensorReading".into(),
+                fields: serde_json::Map::new(),
+            })
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        // Check Retry-After header
+        assert_eq!(resp.headers().get("Retry-After").unwrap(), "1");
+        // Check response body
+        let body: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+        assert_eq!(body["code"], "queue_depth_exceeded");
+    }
+
+    #[tokio::test]
+    async fn test_inject_batch_backpressure_429() {
+        use std::sync::atomic::Ordering;
+
+        let mut mgr = TenantManager::new();
+        mgr.set_max_queue_depth(5);
+        let id = mgr
+            .create_tenant(
+                "BP Batch Corp".into(),
+                "bp-batch-key".into(),
+                TenantQuota::default(),
+            )
+            .unwrap();
+
+        let tenant = mgr.get_tenant_mut(&id).unwrap();
+        let pid = tenant
+            .deploy_pipeline(
+                "BP Batch Pipeline".into(),
+                "stream A = SensorReading .where(x > 1)".into(),
+            )
+            .await
+            .unwrap();
+
+        // Simulate queue being full
+        mgr.pending_events_counter().store(5, Ordering::Relaxed);
+
+        let shared = Arc::new(RwLock::new(mgr));
+        let routes = api_routes(shared, None, None);
+
+        let resp = warp::test::request()
+            .method("POST")
+            .path(&format!("/api/v1/pipelines/{}/events-batch", pid))
+            .header("x-api-key", "bp-batch-key")
+            .json(&InjectBatchRequest {
+                events: vec![InjectEventRequest {
+                    event_type: "SensorReading".into(),
+                    fields: serde_json::Map::new(),
+                }],
+            })
+            .reply(&routes)
+            .await;
+
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(resp.headers().get("Retry-After").unwrap(), "1");
     }
 }

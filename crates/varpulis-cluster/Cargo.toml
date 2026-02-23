@@ -25,6 +25,14 @@ zeroize = { workspace = true }
 version = "0.38"
 optional = true
 
+[dependencies.opentelemetry]
+workspace = true
+optional = true
+
+[dependencies.tracing-opentelemetry]
+workspace = true
+optional = true
+
 [dependencies.futures-util]
 workspace = true
 optional = true
@@ -36,6 +44,7 @@ onnx = ["varpulis-runtime/onnx"]
 raft = ["openraft"]
 persistent = ["raft", "rocksdb"]
 nats-transport = ["async-nats", "futures-util"]
+otel = ["opentelemetry", "tracing-opentelemetry"]
 
 [dependencies.kube]
 version = "0.98"

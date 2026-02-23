@@ -52,34 +52,6 @@ fn generate_trades(count: usize) -> Vec<Event> {
     events
 }
 
-/// Generate fraud detection events (Login and Transaction)
-#[allow(dead_code)]
-fn generate_fraud_events(count: usize) -> Vec<Event> {
-    let mut events = Vec::with_capacity(count);
-    let ips = ["192.168.1.1", "192.168.1.2", "10.0.0.1", "10.0.0.2"];
-    for i in 0..count {
-        let user_id = format!("user_{}", i % 100);
-        if i % 3 == 0 {
-            // Login event
-            let ip = ips[i % ips.len()];
-            let event = Event::new("Login")
-                .with_field("user_id", user_id)
-                .with_field("ip", ip);
-            events.push(event);
-        } else {
-            // Transaction event
-            let ip = ips[(i + 1) % ips.len()]; // Different IP to trigger alerts
-            let amount = (i * 1000) as f64 % 50000.0;
-            let event = Event::new("Transaction")
-                .with_field("user_id", user_id)
-                .with_field("amount", amount)
-                .with_field("ip", ip);
-            events.push(event);
-        }
-    }
-    events
-}
-
 /// Generate sensor events for anomaly detection
 fn generate_sensor_events(count: usize) -> Vec<Event> {
     let mut events = Vec::with_capacity(count);

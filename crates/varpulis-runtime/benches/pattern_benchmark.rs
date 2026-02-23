@@ -33,22 +33,6 @@ fn generate_events(count: usize, event_types: &[&str]) -> Vec<Event> {
     events
 }
 
-/// Generate events with specific user distribution for partition tests
-#[allow(dead_code)]
-fn generate_partitioned_events(count: usize, users: usize, event_types: &[&str]) -> Vec<Event> {
-    let mut events = Vec::with_capacity(count);
-    for i in 0..count {
-        let event_type = event_types[i % event_types.len()];
-        let user_id = i % users;
-        let mut event = Event::new(event_type);
-        event = event.with_field("id", i as i64);
-        event = event.with_field("user_id", format!("user_{}", user_id));
-        event = event.with_field("value", ((i + user_id * 100) % 10000) as i64);
-        events.push(event);
-    }
-    events
-}
-
 /// Benchmark SASE+ engine with simple sequence A -> B
 fn bench_sase_simple_sequence(c: &mut Criterion) {
     let mut group = c.benchmark_group("simple_sequence");

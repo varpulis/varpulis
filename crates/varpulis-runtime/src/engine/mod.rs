@@ -107,6 +107,12 @@ pub struct Engine {
         Vec<std::sync::Arc<std::sync::Mutex<crate::hamlet::HamletAggregator>>>,
     /// Auto-checkpointing manager (None = checkpointing disabled)
     checkpoint_manager: Option<crate::persistence::CheckpointManager>,
+    /// Custom DLQ file path (defaults to "varpulis-dlq.jsonl")
+    dlq_path: Option<std::path::PathBuf>,
+    /// DLQ configuration (rotation limits etc.)
+    dlq_config: crate::dead_letter::DlqConfig,
+    /// Shared DLQ instance (created during load())
+    dlq: Option<Arc<crate::dead_letter::DeadLetterQueue>>,
 }
 
 impl Engine {
@@ -133,6 +139,9 @@ impl Engine {
             context_name: None,
             shared_hamlet_aggregators: Vec::new(),
             checkpoint_manager: None,
+            dlq_path: None,
+            dlq_config: crate::dead_letter::DlqConfig::default(),
+            dlq: None,
         }
     }
 
@@ -175,6 +184,9 @@ impl Engine {
             context_name: None,
             shared_hamlet_aggregators: Vec::new(),
             checkpoint_manager: None,
+            dlq_path: None,
+            dlq_config: crate::dead_letter::DlqConfig::default(),
+            dlq: None,
         }
     }
 
@@ -242,6 +254,21 @@ impl Engine {
     /// from the VPL connector declaration is used unchanged.
     pub fn set_context_name(&mut self, name: &str) {
         self.context_name = Some(name.to_string());
+    }
+
+    /// Set a custom DLQ file path (call before `load()`).
+    pub fn set_dlq_path(&mut self, path: std::path::PathBuf) {
+        self.dlq_path = Some(path);
+    }
+
+    /// Set custom DLQ configuration (call before `load()`).
+    pub fn set_dlq_config(&mut self, config: crate::dead_letter::DlqConfig) {
+        self.dlq_config = config;
+    }
+
+    /// Access the shared DLQ instance (created during `load()`).
+    pub fn dlq(&self) -> Option<&Arc<crate::dead_letter::DeadLetterQueue>> {
+        self.dlq.as_ref()
     }
 
     /// Get a named pattern by name
@@ -557,17 +584,29 @@ impl Engine {
 
         // Wrap sinks with circuit breaker + DLQ when sink operations exist
         if !self.sinks.cache().is_empty() {
-            let dlq = crate::dead_letter::DeadLetterQueue::open("varpulis-dlq.jsonl")
-                .map(Arc::new)
-                .ok();
+            let dlq_path = self
+                .dlq_path
+                .clone()
+                .unwrap_or_else(|| std::path::PathBuf::from("varpulis-dlq.jsonl"));
+            let dlq = crate::dead_letter::DeadLetterQueue::open_with_config(
+                &dlq_path,
+                self.dlq_config.clone(),
+            )
+            .map(Arc::new)
+            .ok();
             if dlq.is_some() {
                 tracing::info!(
-                    "Dead letter queue enabled at varpulis-dlq.jsonl for {} sink(s)",
+                    "Dead letter queue enabled at {} for {} sink(s)",
+                    dlq_path.display(),
                     self.sinks.cache().len()
                 );
             }
-            self.sinks
-                .wrap_with_resilience(crate::circuit_breaker::CircuitBreakerConfig::default(), dlq);
+            self.dlq = dlq.clone();
+            self.sinks.wrap_with_resilience(
+                crate::circuit_breaker::CircuitBreakerConfig::default(),
+                dlq,
+                self.metrics.clone(),
+            );
         }
 
         // Phase 2: Detect multi-query Hamlet sharing opportunities

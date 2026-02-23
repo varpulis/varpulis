@@ -134,8 +134,8 @@ All 18 tasks from the production readiness audit are complete. See [AUDIT_REPORT
 ---
 
 ## Known Limitations
-- LSP: go-to-definition and find-references not yet implemented
-- CORS: wildcard origin (expects nginx to restrict in production)
+- LSP: go-to-definition and find-references implemented (navigation.rs)
+- CORS: configurable origins via --cors-origins (defaults to allow-any for backward compat)
 - Event ordering: watermark-based only (not strict global ordering)
 - Worker state: requires explicit checkpoint (no automatic WAL)
 

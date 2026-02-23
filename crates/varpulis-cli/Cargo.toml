@@ -38,6 +38,12 @@ uuid = { version = "1", features = ["v4"] }
 reqwest = { workspace = true }
 varpulis-cluster = { path = "../varpulis-cluster" }
 
+# OpenTelemetry (optional, behind "otel" feature)
+opentelemetry = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true }
+opentelemetry-otlp = { workspace = true, optional = true }
+tracing-opentelemetry = { workspace = true, optional = true }
+
 [features]
 default = []
 kafka = ["varpulis-runtime/kafka"]
@@ -46,6 +52,7 @@ onnx = ["varpulis-runtime/onnx"]
 k8s = ["varpulis-cluster/k8s"]
 raft = ["varpulis-cluster/raft"]
 persistent = ["raft", "varpulis-cluster/persistent"]
+otel = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "tracing-opentelemetry", "varpulis-cluster/otel"]
 
 [dev-dependencies]
 tempfile = "3.10"

@@ -62,7 +62,6 @@ impl TumblingWindow {
     }
 
     /// Add an event to the window (wraps in Arc).
-    #[allow(dead_code)]
     pub fn add(&mut self, event: Event) -> Option<Vec<Event>> {
         self.add_shared(Arc::new(event))
             .map(|events| events.into_iter().map(|e| (*e).clone()).collect())
@@ -82,7 +81,6 @@ impl TumblingWindow {
     }
 
     /// Flush all events (clones for backward compatibility).
-    #[allow(dead_code)]
     pub fn flush(&mut self) -> Vec<Event> {
         self.flush_shared()
             .into_iter()
@@ -199,7 +197,6 @@ impl SlidingWindow {
     }
 
     /// Add an event (wraps in Arc).
-    #[allow(dead_code)]
     pub fn add(&mut self, event: Event) -> Option<Vec<Event>> {
         self.add_shared(Arc::new(event))
             .map(|events| events.into_iter().map(|e| (*e).clone()).collect())
@@ -211,7 +208,6 @@ impl SlidingWindow {
     }
 
     /// Get current window contents (clones for backward compatibility).
-    #[allow(dead_code)]
     pub fn current(&self) -> Vec<Event> {
         self.events.iter().map(|e| (**e).clone()).collect()
     }
@@ -292,7 +288,6 @@ impl CountWindow {
     }
 
     /// Add an event (wraps in Arc).
-    #[allow(dead_code)]
     pub fn add(&mut self, event: Event) -> Option<Vec<Event>> {
         self.add_shared(Arc::new(event))
             .map(|events| events.into_iter().map(|e| (*e).clone()).collect())
@@ -309,7 +304,6 @@ impl CountWindow {
     }
 
     /// Flush all events (clones for backward compatibility).
-    #[allow(dead_code)]
     pub fn flush(&mut self) -> Vec<Event> {
         self.flush_shared()
             .into_iter()
@@ -397,7 +391,6 @@ impl SlidingCountWindow {
     }
 
     /// Add an event (wraps in Arc).
-    #[allow(dead_code)]
     pub fn add(&mut self, event: Event) -> Option<Vec<Event>> {
         self.add_shared(Arc::new(event))
             .map(|events| events.into_iter().map(|e| (*e).clone()).collect())
@@ -480,7 +473,6 @@ impl SessionWindow {
     }
 
     /// Add an event (wraps in Arc).
-    #[allow(dead_code)]
     pub fn add(&mut self, event: Event) -> Option<Vec<Event>> {
         self.add_shared(Arc::new(event))
             .map(|events| events.into_iter().map(|e| (*e).clone()).collect())
@@ -515,7 +507,6 @@ impl SessionWindow {
     }
 
     /// Flush all events (clones for backward compatibility).
-    #[allow(dead_code)]
     pub fn flush(&mut self) -> Vec<Event> {
         self.flush_shared()
             .into_iter()
@@ -602,7 +593,6 @@ impl PartitionedSessionWindow {
     }
 
     /// Add an event (wraps in Arc).
-    #[allow(dead_code)]
     pub fn add(&mut self, event: Event) -> Option<Vec<Event>> {
         self.add_shared(Arc::new(event))
             .map(|events| events.into_iter().map(|e| (*e).clone()).collect())
@@ -643,7 +633,6 @@ impl PartitionedSessionWindow {
     }
 
     /// Flush all partition sessions (clones for backward compatibility).
-    #[allow(dead_code)]
     pub fn flush(&mut self) -> Vec<Event> {
         self.flush_shared()
             .into_iter()
@@ -749,7 +738,6 @@ impl PartitionedTumblingWindow {
     }
 
     /// Add an event (wraps in Arc).
-    #[allow(dead_code)]
     pub fn add(&mut self, event: Event) -> Option<Vec<Event>> {
         self.add_shared(Arc::new(event))
             .map(|events| events.into_iter().map(|e| (*e).clone()).collect())
@@ -765,7 +753,6 @@ impl PartitionedTumblingWindow {
     }
 
     /// Flush all partition windows (clones for backward compatibility).
-    #[allow(dead_code)]
     pub fn flush(&mut self) -> Vec<Event> {
         self.flush_shared()
             .into_iter()
@@ -866,7 +853,6 @@ impl PartitionedSlidingWindow {
     }
 
     /// Add an event (wraps in Arc).
-    #[allow(dead_code)]
     pub fn add(&mut self, event: Event) -> Option<Vec<Event>> {
         self.add_shared(Arc::new(event))
             .map(|events| events.into_iter().map(|e| (*e).clone()).collect())
@@ -882,7 +868,6 @@ impl PartitionedSlidingWindow {
     }
 
     /// Get all current events from all partitions (clones for backward compatibility).
-    #[allow(dead_code)]
     pub fn current_all(&self) -> Vec<Event> {
         self.current_all_shared()
             .into_iter()

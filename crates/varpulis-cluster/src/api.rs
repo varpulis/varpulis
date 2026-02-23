@@ -27,6 +27,15 @@ use warp::{Filter, Rejection, Reply};
 use varpulis_core::pagination::{PaginationParams, MAX_LIMIT};
 use varpulis_core::security::{JSON_BODY_LIMIT, LARGE_BODY_LIMIT};
 
+/// Query parameters for DLQ listing.
+#[derive(Debug, Deserialize)]
+struct DlqQueryParams {
+    #[serde(default)]
+    offset: Option<usize>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
 /// Shared coordinator state.
 pub type SharedCoordinator = Arc<RwLock<Coordinator>>;
 
@@ -180,6 +189,7 @@ pub fn cluster_routes(
         .and(warp::post())
         .and(rate_limit_filter.clone())
         .and(with_rbac(rbac.clone(), Role::Operator))
+        .and(with_request_id())
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_coordinator(coordinator.clone()))
@@ -221,6 +231,7 @@ pub fn cluster_routes(
         .and(warp::post())
         .and(rate_limit_filter.clone())
         .and(with_rbac(rbac.clone(), Role::Operator))
+        .and(with_request_id())
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_coordinator(coordinator.clone()))
@@ -234,10 +245,45 @@ pub fn cluster_routes(
         .and(warp::post())
         .and(rate_limit_filter.clone())
         .and(with_rbac(rbac.clone(), Role::Operator))
+        .and(with_request_id())
         .and(warp::body::content_length_limit(LARGE_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_inject_batch);
+
+    let dlq_get = api
+        .and(warp::path("pipeline-groups"))
+        .and(warp::path::param::<String>())
+        .and(warp::path("dlq"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(with_rbac(rbac.clone(), Role::Viewer))
+        .and(warp::query::<DlqQueryParams>())
+        .and(with_coordinator(coordinator.clone()))
+        .and_then(handle_dlq_get);
+
+    let dlq_replay = api
+        .and(warp::path("pipeline-groups"))
+        .and(warp::path::param::<String>())
+        .and(warp::path("dlq"))
+        .and(warp::path("replay"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(rate_limit_filter.clone())
+        .and(with_rbac(rbac.clone(), Role::Operator))
+        .and(with_coordinator(coordinator.clone()))
+        .and_then(handle_dlq_replay);
+
+    let dlq_clear = api
+        .and(warp::path("pipeline-groups"))
+        .and(warp::path::param::<String>())
+        .and(warp::path("dlq"))
+        .and(warp::path::end())
+        .and(warp::delete())
+        .and(rate_limit_filter.clone())
+        .and(with_rbac(rbac.clone(), Role::Operator))
+        .and(with_coordinator(coordinator.clone()))
+        .and_then(handle_dlq_clear);
 
     let topology = api
         .and(warp::path("topology"))
@@ -508,6 +554,9 @@ pub fn cluster_routes(
         .or(delete_group)
         .or(inject_event)
         .or(inject_batch)
+        .or(dlq_get)
+        .or(dlq_replay)
+        .or(dlq_clear)
         .boxed();
 
     let migration_routes = rebalance
@@ -570,7 +619,6 @@ pub fn cluster_routes(
 /// Accepts an incoming `x-request-id` (or `traceparent`) header, or generates
 /// a new UUID. The ID is stored in a tracing span for log correlation and
 /// returned in the `x-request-id` response header via the `with_request_id_header` wrapper.
-#[allow(dead_code)]
 fn with_request_id() -> impl Filter<Extract = (String,), Error = Rejection> + Clone {
     warp::header::optional::<String>("x-request-id")
         .and(warp::header::optional::<String>("traceparent"))
@@ -940,9 +988,11 @@ async fn handle_delete_worker(
 
 async fn handle_deploy_group(
     _auth: (),
+    request_id: String,
     body: PipelineGroupSpec,
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    tracing::info!(request_id = %request_id, "deploy_group");
     if let Some(resp) = forward_to_leader(
         &coordinator,
         "POST",
@@ -1130,9 +1180,11 @@ async fn handle_delete_group(
 async fn handle_inject_event(
     group_id: String,
     _auth: (),
+    request_id: String,
     body: InjectEventRequest,
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    tracing::info!(request_id = %request_id, group_id = %group_id, "inject_event");
     if let Some(resp) = forward_to_leader(
         &coordinator,
         "POST",
@@ -1166,9 +1218,11 @@ async fn handle_inject_event(
 async fn handle_inject_batch(
     group_id: String,
     _auth: (),
+    request_id: String,
     body: InjectBatchRequest,
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
+    tracing::info!(request_id = %request_id, group_id = %group_id, "inject_batch");
     if let Some(resp) = forward_to_leader(
         &coordinator,
         "POST",
@@ -1185,6 +1239,172 @@ async fn handle_inject_batch(
             Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
         }
         Err(e) => Ok(cluster_error_response(e)),
+    }
+}
+
+// =============================================================================
+// DLQ proxy handlers
+// =============================================================================
+
+/// Resolve the first placement for a pipeline group, returning (worker_address, pipeline_id, api_key).
+fn resolve_first_placement(
+    coord: &Coordinator,
+    group_id: &str,
+) -> Result<(String, String, String), ClusterError> {
+    let group = coord
+        .pipeline_groups
+        .get(group_id)
+        .ok_or_else(|| ClusterError::GroupNotFound(group_id.to_string()))?;
+
+    let deployment = group.placements.values().next().ok_or_else(|| {
+        ClusterError::RoutingFailed(format!("No deployments found for group '{}'", group_id))
+    })?;
+
+    Ok((
+        deployment.worker_address.clone(),
+        deployment.pipeline_id.clone(),
+        deployment.worker_api_key.clone(),
+    ))
+}
+
+async fn handle_dlq_get(
+    group_id: String,
+    _auth: (),
+    params: DlqQueryParams,
+    coordinator: SharedCoordinator,
+) -> Result<impl Reply, Infallible> {
+    if let Some(resp) = forward_to_leader(
+        &coordinator,
+        "GET",
+        &format!("/api/v1/cluster/pipeline-groups/{group_id}/dlq"),
+        None,
+    )
+    .await
+    {
+        return Ok(resp);
+    }
+
+    let (worker_address, pipeline_id, api_key, http_client) = {
+        let coord = coordinator.read().await;
+        match resolve_first_placement(&coord, &group_id) {
+            Ok((addr, pid, key)) => (addr, pid, key, coord.http_client().clone()),
+            Err(e) => return Ok(cluster_error_response(e)),
+        }
+    };
+
+    let offset = params.offset.unwrap_or(0);
+    let limit = params.limit.unwrap_or(100);
+    let url = format!(
+        "{}/api/v1/pipelines/{}/dlq?offset={}&limit={}",
+        worker_address, pipeline_id, offset, limit
+    );
+
+    match http_client
+        .get(&url)
+        .header("x-api-key", &api_key)
+        .send()
+        .await
+    {
+        Ok(resp) => {
+            let status = warp::http::StatusCode::from_u16(resp.status().as_u16())
+                .unwrap_or(StatusCode::BAD_GATEWAY);
+            let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::json!({}));
+            Ok(warp::reply::with_status(warp::reply::json(&body), status).into_response())
+        }
+        Err(e) => Ok(cluster_error_response(ClusterError::RoutingFailed(
+            e.to_string(),
+        ))),
+    }
+}
+
+async fn handle_dlq_replay(
+    group_id: String,
+    _auth: (),
+    coordinator: SharedCoordinator,
+) -> Result<impl Reply, Infallible> {
+    if let Some(resp) = forward_to_leader(
+        &coordinator,
+        "POST",
+        &format!("/api/v1/cluster/pipeline-groups/{group_id}/dlq/replay"),
+        None,
+    )
+    .await
+    {
+        return Ok(resp);
+    }
+
+    let (worker_address, pipeline_id, api_key, http_client) = {
+        let coord = coordinator.read().await;
+        match resolve_first_placement(&coord, &group_id) {
+            Ok((addr, pid, key)) => (addr, pid, key, coord.http_client().clone()),
+            Err(e) => return Ok(cluster_error_response(e)),
+        }
+    };
+
+    let url = format!(
+        "{}/api/v1/pipelines/{}/dlq/replay",
+        worker_address, pipeline_id
+    );
+
+    match http_client
+        .post(&url)
+        .header("x-api-key", &api_key)
+        .send()
+        .await
+    {
+        Ok(resp) => {
+            let status = warp::http::StatusCode::from_u16(resp.status().as_u16())
+                .unwrap_or(StatusCode::BAD_GATEWAY);
+            let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::json!({}));
+            Ok(warp::reply::with_status(warp::reply::json(&body), status).into_response())
+        }
+        Err(e) => Ok(cluster_error_response(ClusterError::RoutingFailed(
+            e.to_string(),
+        ))),
+    }
+}
+
+async fn handle_dlq_clear(
+    group_id: String,
+    _auth: (),
+    coordinator: SharedCoordinator,
+) -> Result<impl Reply, Infallible> {
+    if let Some(resp) = forward_to_leader(
+        &coordinator,
+        "DELETE",
+        &format!("/api/v1/cluster/pipeline-groups/{group_id}/dlq"),
+        None,
+    )
+    .await
+    {
+        return Ok(resp);
+    }
+
+    let (worker_address, pipeline_id, api_key, http_client) = {
+        let coord = coordinator.read().await;
+        match resolve_first_placement(&coord, &group_id) {
+            Ok((addr, pid, key)) => (addr, pid, key, coord.http_client().clone()),
+            Err(e) => return Ok(cluster_error_response(e)),
+        }
+    };
+
+    let url = format!("{}/api/v1/pipelines/{}/dlq", worker_address, pipeline_id);
+
+    match http_client
+        .delete(&url)
+        .header("x-api-key", &api_key)
+        .send()
+        .await
+    {
+        Ok(resp) => {
+            let status = warp::http::StatusCode::from_u16(resp.status().as_u16())
+                .unwrap_or(StatusCode::BAD_GATEWAY);
+            let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::json!({}));
+            Ok(warp::reply::with_status(warp::reply::json(&body), status).into_response())
+        }
+        Err(e) => Ok(cluster_error_response(ClusterError::RoutingFailed(
+            e.to_string(),
+        ))),
     }
 }
 
