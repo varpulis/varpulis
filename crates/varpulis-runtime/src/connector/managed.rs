@@ -18,6 +18,9 @@ pub struct ConnectorHealthReport {
     pub last_error: Option<String>,
     pub messages_received: u64,
     pub seconds_since_last_message: u64,
+    pub circuit_breaker_state: String,
+    pub circuit_breaker_failures: u64,
+    pub circuit_breaker_rejections: u64,
 }
 
 impl Default for ConnectorHealthReport {
@@ -27,6 +30,9 @@ impl Default for ConnectorHealthReport {
             last_error: None,
             messages_received: 0,
             seconds_since_last_message: 0,
+            circuit_breaker_state: "closed".to_string(),
+            circuit_breaker_failures: 0,
+            circuit_breaker_rejections: 0,
         }
     }
 }

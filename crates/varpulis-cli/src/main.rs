@@ -11,7 +11,6 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 use warp::Filter;
 
-use varpulis_core::ast::{Program, Stmt};
 use varpulis_parser::parse;
 use varpulis_runtime::engine::Engine;
 use varpulis_runtime::event::Event;
@@ -128,6 +127,12 @@ enum Commands {
         /// Rate limit in requests per second per client (0 = disabled)
         #[arg(long, env = "VARPULIS_RATE_LIMIT", default_value = "0")]
         rate_limit: u32,
+
+        /// Allowed CORS origins (comma-separated). Default: allow any origin.
+        /// Use "*" to explicitly allow all origins, or specify domains like
+        /// "https://app.example.com,https://admin.example.com"
+        #[arg(long, env = "VARPULIS_CORS_ORIGINS", value_delimiter = ',')]
+        cors_origins: Option<Vec<String>>,
 
         /// Directory for persistent state (enables state recovery on restart)
         #[arg(long, env = "VARPULIS_STATE_DIR")]
@@ -431,6 +436,12 @@ enum Commands {
         /// endpoints and health/readiness probes are exempt.
         #[arg(long, env = "VARPULIS_COORDINATOR_RATE_LIMIT", default_value = "0")]
         rate_limit: u32,
+
+        /// Allowed CORS origins (comma-separated). Default: allow any origin.
+        /// Use "*" to explicitly allow all origins, or specify domains like
+        /// "https://app.example.com,https://admin.example.com"
+        #[arg(long, env = "VARPULIS_CORS_ORIGINS", value_delimiter = ',')]
+        cors_origins: Option<Vec<String>>,
     },
 }
 
@@ -493,6 +504,7 @@ async fn main() -> Result<()> {
             tls_cert,
             tls_key,
             rate_limit,
+            cors_origins,
             state_dir,
             coordinator,
             worker_id,
@@ -547,6 +559,7 @@ async fn main() -> Result<()> {
                 auth_config,
                 tls_config,
                 rate_limit_config,
+                cors_origins,
                 state_dir,
                 coordinator,
                 worker_id,
@@ -874,6 +887,7 @@ async fn main() -> Result<()> {
             tls_ca_cert,
             nats,
             rate_limit,
+            cors_origins,
         } => {
             let scaling_policy = if scaling_min_workers > 0 {
                 Some(varpulis_cluster::ScalingPolicy {
@@ -931,6 +945,7 @@ async fn main() -> Result<()> {
                 tls_ca_cert,
                 nats,
                 rate_limit,
+                cors_origins,
             )
             .await?;
         }
@@ -948,7 +963,7 @@ async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
     info!("Parsed {} statements", program.statements.len());
 
     // Resolve imports
-    resolve_imports(&mut program, base_path)?;
+    varpulis_cli::resolve_imports(&mut program, base_path)?;
 
     // Create output event channel — clone tx before giving it to the engine
     let (output_tx, mut output_rx) = mpsc::channel::<Event>(10_000);
@@ -2130,6 +2145,7 @@ async fn run_server(
     auth_config: AuthConfig,
     tls_config: Option<(PathBuf, PathBuf)>,
     rate_limit_config: rate_limit::RateLimitConfig,
+    cors_origins: Option<Vec<String>>,
     state_dir: Option<PathBuf>,
     coordinator_url: Option<String>,
     worker_id: Option<String>,
@@ -2330,7 +2346,7 @@ async fn run_server(
 
     let admin_key = auth_config.api_key().map(|s| s.to_string());
     let tenant_manager_for_heartbeat = tenant_manager.clone();
-    let api_routes = api::api_routes(tenant_manager, admin_key);
+    let api_routes = api::api_routes(tenant_manager, admin_key, cors_origins);
 
     // Combined routes
     let routes = ws_route
@@ -2493,6 +2509,7 @@ async fn run_coordinator(
     _tls_ca_cert: Option<PathBuf>,
     nats_url: Option<String>,
     rate_limit_rps: u32,
+    cors_origins: Option<Vec<String>>,
 ) -> Result<()> {
     let tls_enabled = tls_config.is_some();
     let http_protocol = if tls_enabled { "https" } else { "http" };
@@ -2949,6 +2966,7 @@ async fn run_coordinator(
                 rbac,
                 rh.raft.clone(),
                 coordinator_rate_limiter,
+                cors_origins,
             );
             let routes = health_route
                 .or(ready_route)
@@ -2957,8 +2975,12 @@ async fn run_coordinator(
                 .recover(varpulis_cluster::api::handle_rejection);
             serve_coordinator!(routes, shutdown_rx);
         } else {
-            let api_routes =
-                varpulis_cluster::cluster_routes(coordinator, rbac, coordinator_rate_limiter);
+            let api_routes = varpulis_cluster::cluster_routes(
+                coordinator,
+                rbac,
+                coordinator_rate_limiter,
+                cors_origins,
+            );
             let routes = health_route
                 .or(ready_route)
                 .or(metrics_route)
@@ -2970,8 +2992,12 @@ async fn run_coordinator(
 
     #[cfg(not(feature = "raft"))]
     {
-        let api_routes =
-            varpulis_cluster::cluster_routes(coordinator, rbac, coordinator_rate_limiter);
+        let api_routes = varpulis_cluster::cluster_routes(
+            coordinator,
+            rbac,
+            coordinator_rate_limiter,
+            cors_origins,
+        );
         let routes = health_route
             .or(ready_route)
             .or(metrics_route)
@@ -2985,100 +3011,4 @@ async fn run_coordinator(
 }
 
 // =============================================================================
-// Import Resolution
-// =============================================================================
-
-/// Maximum depth for nested imports to prevent stack overflow
-const MAX_IMPORT_DEPTH: usize = 10;
-
-/// Resolve import statements by loading and parsing imported files
-fn resolve_imports(program: &mut Program, base_path: Option<&PathBuf>) -> Result<()> {
-    use std::collections::HashSet;
-    let mut visited = HashSet::new();
-    resolve_imports_inner(program, base_path, 0, &mut visited)
-}
-
-/// Inner implementation with depth tracking and cycle detection
-fn resolve_imports_inner(
-    program: &mut Program,
-    base_path: Option<&PathBuf>,
-    depth: usize,
-    visited: &mut std::collections::HashSet<PathBuf>,
-) -> Result<()> {
-    // Check recursion depth limit
-    if depth > MAX_IMPORT_DEPTH {
-        anyhow::bail!(
-            "Import depth limit exceeded (max {}). Check for circular imports.",
-            MAX_IMPORT_DEPTH
-        );
-    }
-
-    let mut imported_statements = Vec::new();
-    let mut imports_to_process = Vec::new();
-
-    // Collect import statements
-    for stmt in &program.statements {
-        if let Stmt::Import { path, .. } = &stmt.node {
-            imports_to_process.push(path.clone());
-        }
-    }
-
-    // Process each import
-    for import_path in imports_to_process {
-        let full_path = if let Some(base) = base_path {
-            base.join(&import_path)
-        } else {
-            PathBuf::from(&import_path)
-        };
-
-        // Canonicalize to detect cycles with different relative paths
-        let canonical_path = full_path.canonicalize().map_err(|e| {
-            anyhow::anyhow!("Failed to resolve import '{}': {}", full_path.display(), e)
-        })?;
-
-        // Check for circular import
-        if visited.contains(&canonical_path) {
-            info!(
-                "Skipping already imported file: {}",
-                canonical_path.display()
-            );
-            continue;
-        }
-        visited.insert(canonical_path.clone());
-
-        info!("Loading import: {}", full_path.display());
-
-        let import_source = std::fs::read_to_string(&full_path).map_err(|e| {
-            anyhow::anyhow!("Failed to read import '{}': {}", full_path.display(), e)
-        })?;
-
-        let import_program = parse(&import_source).map_err(|e| {
-            anyhow::anyhow!("Parse error in import '{}': {}", full_path.display(), e)
-        })?;
-
-        info!(
-            "Imported {} statements from {}",
-            import_program.statements.len(),
-            full_path.display()
-        );
-
-        // Recursively resolve imports in the imported file
-        let import_base = full_path.parent().map(|p| p.to_path_buf());
-        let mut imported = import_program;
-        resolve_imports_inner(&mut imported, import_base.as_ref(), depth + 1, visited)?;
-
-        imported_statements.extend(imported.statements);
-    }
-
-    // Remove import statements and prepend imported content
-    program
-        .statements
-        .retain(|stmt| !matches!(&stmt.node, Stmt::Import { .. }));
-
-    // Insert imported statements at the beginning (before the main file's statements)
-    let mut new_statements = imported_statements;
-    new_statements.append(&mut program.statements);
-    program.statements = new_statements;
-
-    Ok(())
-}
+// Import resolution is now in lib.rs (varpulis_cli::resolve_imports)

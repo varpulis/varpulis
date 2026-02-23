@@ -49,6 +49,10 @@ pub struct HamletConfig {
     pub window_ms: u64,
     /// Enable incremental result emission
     pub incremental: bool,
+    /// Maximum number of graphlets before eviction (0 = unlimited).
+    pub max_graphlets: usize,
+    /// Maximum number of snapshots before clearing (0 = unlimited).
+    pub max_snapshots: usize,
 }
 
 impl Default for HamletConfig {
@@ -57,6 +61,8 @@ impl Default for HamletConfig {
             optimizer: OptimizerConfig::default(),
             window_ms: 60_000,
             incremental: false,
+            max_graphlets: 50_000,
+            max_snapshots: 100_000,
         }
     }
 }
@@ -114,11 +120,12 @@ pub struct HamletAggregator {
 impl HamletAggregator {
     /// Create a new Hamlet aggregator
     pub fn new(config: HamletConfig, template: MergedTemplate) -> Self {
+        let graph = HamletGraph::with_limits(config.max_graphlets, config.max_snapshots);
         Self {
             optimizer: HamletOptimizer::new(config.optimizer.clone()),
             config,
             template,
-            graph: HamletGraph::new(),
+            graph,
             queries: Vec::new(),
             query_states: FxHashMap::default(),
             last_event_type: None,

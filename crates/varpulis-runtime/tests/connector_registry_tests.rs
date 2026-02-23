@@ -1169,6 +1169,7 @@ fn test_connector_health_report_clone() {
         last_error: Some("some error".to_string()),
         messages_received: 42,
         seconds_since_last_message: 10,
+        ..Default::default()
     };
 
     let cloned = report.clone();

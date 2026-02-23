@@ -130,6 +130,7 @@ impl ManagedConnector for ManagedKafkaConnector {
         let topic_owned = topic.to_string();
 
         tokio::spawn(async move {
+            use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
             use futures::StreamExt;
             info!(
                 "Managed Kafka {} consumer started on topic {}",
@@ -138,12 +139,20 @@ impl ManagedConnector for ManagedKafkaConnector {
 
             let stream = consumer.stream();
             tokio::pin!(stream);
-            let mut consecutive_errors: u32 = 0;
+            let cb = CircuitBreaker::new(CircuitBreakerConfig {
+                failure_threshold: 10,
+                reset_timeout: Duration::from_secs(30),
+            });
 
             while running.load(Ordering::SeqCst) {
+                if !cb.allow_request() {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    continue;
+                }
+
                 match tokio::time::timeout(Duration::from_millis(100), stream.next()).await {
                     Ok(Some(Ok(msg))) => {
-                        consecutive_errors = 0;
+                        cb.record_success();
 
                         if let Some(payload) = msg.payload() {
                             if let Ok(text) = std::str::from_utf8(payload) {
@@ -166,12 +175,12 @@ impl ManagedConnector for ManagedKafkaConnector {
                         }
                     }
                     Ok(Some(Err(e))) => {
-                        consecutive_errors += 1;
-                        let backoff =
-                            Duration::from_millis(100 * 2u64.pow(consecutive_errors.min(7)));
+                        cb.record_failure();
+                        let failures = cb.consecutive_failures();
+                        let backoff = Duration::from_millis(100 * 2u64.pow(failures.min(7)));
                         error!(
-                            "Managed Kafka {} consumer error (backoff {:?}): {}",
-                            name, backoff, e
+                            "Managed Kafka {} consumer error (cb_state={}, failures={}, backoff {:?}): {}",
+                            name, cb.state(), failures, backoff, e
                         );
                         tokio::time::sleep(backoff).await;
                     }

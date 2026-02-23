@@ -11,16 +11,28 @@
 //! - HalfOpen → Closed: on successful probe
 //! - HalfOpen → Open: on failed probe
 
+use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 /// Circuit breaker state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum State {
     Closed,
     Open,
     HalfOpen,
+}
+
+impl fmt::Display for State {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            State::Closed => f.write_str("closed"),
+            State::Open => f.write_str("open"),
+            State::HalfOpen => f.write_str("half_open"),
+        }
+    }
 }
 
 /// Configuration for a circuit breaker.
@@ -130,6 +142,22 @@ impl CircuitBreaker {
     pub fn state(&self) -> State {
         self.state.lock().unwrap_or_else(|e| e.into_inner()).state
     }
+
+    /// Get the current consecutive failure count.
+    pub fn consecutive_failures(&self) -> u32 {
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .consecutive_failures
+    }
+
+    /// Get the last failure time (if any).
+    pub fn last_failure_time(&self) -> Option<Instant> {
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .last_failure_time
+    }
 }
 
 #[cfg(test)]
@@ -238,5 +266,44 @@ mod tests {
         assert_eq!(cb.successes_total.load(Ordering::Relaxed), 2);
         assert_eq!(cb.failures_total.load(Ordering::Relaxed), 2);
         assert_eq!(cb.rejections_total.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_state_display() {
+        assert_eq!(State::Closed.to_string(), "closed");
+        assert_eq!(State::Open.to_string(), "open");
+        assert_eq!(State::HalfOpen.to_string(), "half_open");
+    }
+
+    #[test]
+    fn test_state_serialize() {
+        assert_eq!(serde_json::to_string(&State::Closed).unwrap(), "\"closed\"");
+        assert_eq!(serde_json::to_string(&State::Open).unwrap(), "\"open\"");
+        assert_eq!(
+            serde_json::to_string(&State::HalfOpen).unwrap(),
+            "\"half_open\""
+        );
+    }
+
+    #[test]
+    fn test_consecutive_failures_accessor() {
+        let cb = CircuitBreaker::new(CircuitBreakerConfig {
+            failure_threshold: 5,
+            reset_timeout: Duration::from_secs(60),
+        });
+        assert_eq!(cb.consecutive_failures(), 0);
+        cb.record_failure();
+        cb.record_failure();
+        assert_eq!(cb.consecutive_failures(), 2);
+        cb.record_success();
+        assert_eq!(cb.consecutive_failures(), 0);
+    }
+
+    #[test]
+    fn test_last_failure_time_accessor() {
+        let cb = CircuitBreaker::new(CircuitBreakerConfig::default());
+        assert!(cb.last_failure_time().is_none());
+        cb.record_failure();
+        assert!(cb.last_failure_time().is_some());
     }
 }

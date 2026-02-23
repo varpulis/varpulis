@@ -27,6 +27,10 @@ pub struct HamletGraph {
     next_node_id: NodeId,
     /// Event type to graphlet mapping for fast lookup
     type_to_graphlets: FxHashMap<u16, SmallVec<[GraphletId; 16]>>,
+    /// Maximum number of graphlets (0 = unlimited).
+    max_graphlets: usize,
+    /// Maximum number of snapshots (0 = unlimited).
+    max_snapshots: usize,
 }
 
 impl HamletGraph {
@@ -39,6 +43,17 @@ impl HamletGraph {
             snapshots: SnapshotManager::new(),
             next_node_id: 0,
             type_to_graphlets: FxHashMap::default(),
+            max_graphlets: 0,
+            max_snapshots: 0,
+        }
+    }
+
+    /// Create a new Hamlet graph with capacity limits.
+    pub fn with_limits(max_graphlets: usize, max_snapshots: usize) -> Self {
+        Self {
+            max_graphlets,
+            max_snapshots,
+            ..Self::new()
         }
     }
 
@@ -46,6 +61,15 @@ impl HamletGraph {
     fn get_or_create_active_graphlet(&mut self, type_index: u16) -> GraphletId {
         if let Some(&id) = self.active_graphlets.get(&type_index) {
             return id;
+        }
+
+        // Enforce graphlet cap before creating new
+        if self.max_graphlets > 0 && self.graphlets.len() >= self.max_graphlets {
+            self.cleanup_processed();
+            // If still at limit after cleanup, evict oldest inactive graphlet
+            if self.graphlets.len() >= self.max_graphlets {
+                self.evict_oldest_inactive();
+            }
         }
 
         // Create new graphlet
@@ -134,8 +158,37 @@ impl HamletGraph {
             .and_then(|&id| self.graphlets.get(&id))
     }
 
+    /// Evict the inactive graphlet with the lowest ID (oldest).
+    fn evict_oldest_inactive(&mut self) {
+        let active_ids: std::collections::HashSet<GraphletId> =
+            self.active_graphlets.values().copied().collect();
+        let victim = self
+            .graphlets
+            .keys()
+            .copied()
+            .filter(|id| !active_ids.contains(id))
+            .min();
+        if let Some(id) = victim {
+            if let Some(graphlet) = self.graphlets.remove(&id) {
+                if let Some(ids) = self.type_to_graphlets.get_mut(&graphlet.type_index) {
+                    ids.retain(|i| *i != id);
+                }
+                self.snapshots.clear_for_graphlet(id);
+                self.graphlet_pool.release(graphlet);
+            }
+        }
+    }
+
     /// Create a snapshot between graphlets
     pub fn create_snapshot(&mut self, source: GraphletId, target: GraphletId) -> SnapshotId {
+        if self.max_snapshots > 0 && self.snapshots.len() >= self.max_snapshots {
+            tracing::warn!(
+                count = self.snapshots.len(),
+                max = self.max_snapshots,
+                "Snapshot cap reached, clearing all snapshots"
+            );
+            self.snapshots.clear();
+        }
         self.snapshots.create(source, target)
     }
 

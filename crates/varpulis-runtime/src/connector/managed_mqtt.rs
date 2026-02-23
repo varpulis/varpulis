@@ -21,7 +21,7 @@ mod mqtt_managed_impl {
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::time::{Duration, Instant};
     use tokio::sync::Mutex;
-    use tracing::{error, info, warn};
+    use tracing::{info, warn};
 
     fn qos_from_u8(qos: u8) -> QoS {
         match qos {
@@ -107,14 +107,21 @@ mod mqtt_managed_impl {
 
             // Spawn the source event loop task
             tokio::spawn(async move {
-                let mut consecutive_errors: u32 = 0;
-                const MAX_CONSECUTIVE_ERRORS: u32 = 10;
-                const MAX_BACKOFF_SECS: u64 = 30;
+                use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
+                let cb = CircuitBreaker::new(CircuitBreakerConfig {
+                    failure_threshold: 10,
+                    reset_timeout: Duration::from_secs(30),
+                });
 
                 while running.load(Ordering::SeqCst) {
+                    if !cb.allow_request() {
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        continue;
+                    }
+
                     match eventloop.poll().await {
                         Ok(rumqttc::Event::Incoming(rumqttc::Packet::Publish(publish))) => {
-                            consecutive_errors = 0;
+                            cb.record_success();
                             msg_counter.fetch_add(1, Ordering::Relaxed);
                             *last_msg_time.lock().await = Some(Instant::now());
                             if let Ok(payload) = std::str::from_utf8(&publish.payload) {
@@ -127,24 +134,17 @@ mod mqtt_managed_impl {
                             }
                         }
                         Ok(_) => {
-                            consecutive_errors = 0;
+                            cb.record_success();
                         }
                         Err(e) => {
-                            consecutive_errors += 1;
+                            cb.record_failure();
                             *last_err.lock().await = Some(format!("{:?}", e));
-                            if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
-                                error!(
-                                    "Managed MQTT {} exceeded max errors ({}), stopping",
-                                    name, MAX_CONSECUTIVE_ERRORS
-                                );
-                                running.store(false, Ordering::SeqCst);
-                                break;
-                            }
+                            let failures = cb.consecutive_failures();
                             let backoff_secs =
-                                (1u64 << (consecutive_errors - 1).min(5)).min(MAX_BACKOFF_SECS);
+                                (1u64 << (failures.saturating_sub(1)).min(5)).min(30);
                             warn!(
-                                "Managed MQTT {} error ({}/{}): {:?}, retrying in {}s",
-                                name, consecutive_errors, MAX_CONSECUTIVE_ERRORS, e, backoff_secs
+                                "Managed MQTT {} error (cb_state={}, failures={}): {:?}, retrying in {}s",
+                                name, cb.state(), failures, e, backoff_secs
                             );
                             tokio::time::sleep(Duration::from_secs(backoff_secs)).await;
                         }
@@ -334,6 +334,7 @@ mod mqtt_managed_impl {
                 last_error,
                 messages_received,
                 seconds_since_last_message,
+                ..Default::default()
             }
         }
 
