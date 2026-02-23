@@ -248,14 +248,23 @@ mod kafka_impl {
             tokio::spawn(async move {
                 info!("Kafka source {} started, consuming from topic", name);
 
+                use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
                 use futures::StreamExt;
                 let mut stream = consumer.stream();
-                let mut consecutive_errors: u32 = 0;
+                let cb = CircuitBreaker::new(CircuitBreakerConfig {
+                    failure_threshold: 10,
+                    reset_timeout: Duration::from_secs(30),
+                });
 
                 while running.load(Ordering::SeqCst) {
+                    if !cb.allow_request() {
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        continue;
+                    }
+
                     match tokio::time::timeout(Duration::from_millis(100), stream.next()).await {
                         Ok(Some(Ok(msg))) => {
-                            consecutive_errors = 0;
+                            cb.record_success();
 
                             if let Some(payload) = msg.payload() {
                                 // Enforce payload size limit
@@ -297,10 +306,13 @@ mod kafka_impl {
                             }
                         }
                         Ok(Some(Err(e))) => {
-                            consecutive_errors += 1;
-                            let backoff =
-                                Duration::from_millis(100 * 2u64.pow(consecutive_errors.min(7)));
-                            error!("Kafka source {} error (backoff {:?}): {}", name, backoff, e);
+                            cb.record_failure();
+                            let failures = cb.consecutive_failures();
+                            let backoff = Duration::from_millis(100 * 2u64.pow(failures.min(7)));
+                            error!(
+                                "Kafka source {} error (cb_state={}, failures={}, backoff {:?}): {}",
+                                name, cb.state(), failures, backoff, e
+                            );
                             tokio::time::sleep(backoff).await;
                         }
                         Ok(None) => break,

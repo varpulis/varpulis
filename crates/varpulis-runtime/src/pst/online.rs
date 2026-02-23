@@ -86,6 +86,12 @@ impl OnlinePSTLearner {
         if self.prune_interval > 0 && self.updates.is_multiple_of(self.prune_interval) {
             pst.prune(&self.pruning_strategy);
         }
+
+        // Arena cap: force prune + compact when exceeding max_nodes
+        if pst.node_count() > pst.max_nodes() {
+            pst.prune(&self.pruning_strategy);
+            pst.compact();
+        }
     }
 
     /// Get the current context (most recent symbols).
@@ -114,6 +120,7 @@ mod tests {
         let mut pst = PredictionSuffixTree::new(PSTConfig {
             max_depth: 3,
             smoothing: 0.01,
+            ..Default::default()
         });
         let a = pst.register_symbol("A");
         let b = pst.register_symbol("B");
@@ -136,6 +143,7 @@ mod tests {
         let mut pst = PredictionSuffixTree::new(PSTConfig {
             max_depth: 3,
             smoothing: 0.01,
+            ..Default::default()
         });
         let a = pst.register_symbol("A");
 

@@ -103,6 +103,7 @@ fn test_pst_two_symbol_convergence() {
     let mut pst = PredictionSuffixTree::new(PSTConfig {
         max_depth: 3,
         smoothing: 0.001,
+        ..Default::default()
     });
     let a = pst.register_symbol("A");
     let b = pst.register_symbol("B");
@@ -153,6 +154,7 @@ fn test_pst_four_symbol_convergence() {
     let mut pst = PredictionSuffixTree::new(PSTConfig {
         max_depth: 3,
         smoothing: 0.001,
+        ..Default::default()
     });
     let syms: Vec<SymbolId> = names.iter().map(|n| pst.register_symbol(n)).collect();
 
@@ -211,6 +213,7 @@ fn test_pmc_completion_two_step() {
     let pst_config = PSTConfig {
         max_depth: 3,
         smoothing: 0.001,
+        ..Default::default()
     };
     let pmc_config = PMCConfig {
         warmup_events: 200,
@@ -316,6 +319,7 @@ fn test_pmc_completion_three_step() {
     let pst_config = PSTConfig {
         max_depth: 3,
         smoothing: 0.001,
+        ..Default::default()
     };
     let pmc_config = PMCConfig {
         warmup_events: 500,
@@ -420,6 +424,7 @@ fn test_pmc_convergence_rate() {
     let pst_config = PSTConfig {
         max_depth: 3,
         smoothing: 0.001,
+        ..Default::default()
     };
     let pmc_config = PMCConfig {
         warmup_events: 50,
@@ -520,6 +525,7 @@ fn test_hawkes_burst_effect_on_probability() {
     let pst_config = PSTConfig {
         max_depth: 3,
         smoothing: 0.01,
+        ..Default::default()
     };
 
     // --- PMC without Hawkes ---
@@ -624,6 +630,7 @@ fn test_conformal_intervals_narrow_with_data() {
     let pst_config = PSTConfig {
         max_depth: 3,
         smoothing: 0.01,
+        ..Default::default()
     };
     let pmc_config = PMCConfig {
         warmup_events: 5,
@@ -887,6 +894,7 @@ fn test_online_vs_batch_convergence() {
     let mut pst_batch = PredictionSuffixTree::new(PSTConfig {
         max_depth: 3,
         smoothing: 0.001,
+        ..Default::default()
     });
     let a_batch = pst_batch.register_symbol("A");
     let b_batch = pst_batch.register_symbol("B");
@@ -897,6 +905,7 @@ fn test_online_vs_batch_convergence() {
     let mut pst_online = PredictionSuffixTree::new(PSTConfig {
         max_depth: 3,
         smoothing: 0.001,
+        ..Default::default()
     });
     let a_online = pst_online.register_symbol("A");
     let b_online = pst_online.register_symbol("B");
@@ -949,6 +958,7 @@ fn test_adaptive_warmup_delays_until_stable() {
     let pst_config = PSTConfig {
         max_depth: 3,
         smoothing: 0.01,
+        ..Default::default()
     };
 
     // Non-adaptive: fixed warmup at 5
@@ -1039,6 +1049,7 @@ fn test_forecast_confidence_increases_over_time() {
     let pst_config = PSTConfig {
         max_depth: 3,
         smoothing: 0.01,
+        ..Default::default()
     };
     let pmc_config = PMCConfig {
         warmup_events: 10,
@@ -1256,6 +1267,7 @@ fn test_hawkes_ema_adapts_to_regime_change() {
     let pst_config = PSTConfig {
         max_depth: 3,
         smoothing: 0.01,
+        ..Default::default()
     };
     let pmc_config = PMCConfig {
         warmup_events: 5,

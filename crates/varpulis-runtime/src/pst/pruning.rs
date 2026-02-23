@@ -161,6 +161,7 @@ mod tests {
         let mut pst = PredictionSuffixTree::new(PSTConfig {
             max_depth: 2,
             smoothing: 0.01,
+            ..Default::default()
         });
         let a = pst.register_symbol("A");
         let b = pst.register_symbol("B");
@@ -192,6 +193,7 @@ mod tests {
         let mut pst = PredictionSuffixTree::new(PSTConfig {
             max_depth: 2,
             smoothing: 0.001,
+            ..Default::default()
         });
         let a = pst.register_symbol("A");
         let b = pst.register_symbol("B");
@@ -221,6 +223,7 @@ mod tests {
         let mut pst = PredictionSuffixTree::new(PSTConfig {
             max_depth: 3,
             smoothing: 0.01,
+            ..Default::default()
         });
         let a = pst.register_symbol("A");
         let _b = pst.register_symbol("B");

@@ -2047,6 +2047,7 @@ impl Engine {
             let pst_config = crate::pst::PSTConfig {
                 max_depth,
                 smoothing: 0.01,
+                ..Default::default()
             };
             let pmc_config = crate::pst::PMCConfig {
                 confidence_threshold: confidence,
@@ -2056,6 +2057,7 @@ impl Engine {
                 hawkes_enabled: hawkes,
                 conformal_enabled: conformal,
                 adaptive_warmup,
+                ..Default::default()
             };
 
             // Build NFA transitions: for each state, map symbol_id -> next_state
@@ -2066,6 +2068,7 @@ impl Engine {
             let mut temp_pst = crate::pst::PredictionSuffixTree::new(crate::pst::PSTConfig {
                 max_depth,
                 smoothing: 0.01,
+                ..Default::default()
             });
             for et in &sequence_event_types {
                 temp_pst.register_symbol(et);

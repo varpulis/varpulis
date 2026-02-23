@@ -94,6 +94,7 @@ fn build_pmc(num_states: usize, alphabet_size: usize, warmup: u64) -> PatternMar
     let pst_config = PSTConfig {
         max_depth: 5,
         smoothing: 0.01,
+        ..Default::default()
     };
     let pmc_config = PMCConfig {
         warmup_events: warmup,
@@ -103,6 +104,7 @@ fn build_pmc(num_states: usize, alphabet_size: usize, warmup: u64) -> PatternMar
         hawkes_enabled: true,
         conformal_enabled: true,
         adaptive_warmup: false,
+        ..Default::default()
     };
 
     // Linear NFA: state i --(symbol i)--> state i+1; last state is accept
@@ -143,6 +145,7 @@ fn bench_pst_training(c: &mut Criterion) {
                 let config = PSTConfig {
                     max_depth: 5,
                     smoothing: 0.01,
+                    ..Default::default()
                 };
                 let mut pst = PredictionSuffixTree::new(config);
                 for i in 0..10 {
@@ -159,6 +162,7 @@ fn bench_pst_training(c: &mut Criterion) {
                 let config = PSTConfig {
                     max_depth: 5,
                     smoothing: 0.01,
+                    ..Default::default()
                 };
                 let mut pst = PredictionSuffixTree::new(config);
                 for i in 0..3 {
@@ -189,6 +193,7 @@ fn bench_pst_prediction(c: &mut Criterion) {
         let config = PSTConfig {
             max_depth: depth,
             smoothing: 0.01,
+            ..Default::default()
         };
         let pst = build_trained_pst(config, alphabet_size, &training_seq);
 
@@ -307,6 +312,7 @@ fn bench_online_learning(c: &mut Criterion) {
             let config = PSTConfig {
                 max_depth: 5,
                 smoothing: 0.01,
+                ..Default::default()
             };
             let mut pst = PredictionSuffixTree::new(config);
             for i in 0..alphabet_size {
@@ -327,6 +333,7 @@ fn bench_online_learning(c: &mut Criterion) {
             let config = PSTConfig {
                 max_depth: 5,
                 smoothing: 0.01,
+                ..Default::default()
             };
             let mut pst = PredictionSuffixTree::new(config);
             for i in 0..alphabet_size {
@@ -350,6 +357,7 @@ fn bench_online_learning(c: &mut Criterion) {
             let config = PSTConfig {
                 max_depth: 5,
                 smoothing: 0.01,
+                ..Default::default()
             };
             let mut pst = PredictionSuffixTree::new(config);
             for i in 0..alphabet_size {
@@ -393,6 +401,7 @@ fn bench_alphabet_scaling(c: &mut Criterion) {
                 let config = PSTConfig {
                     max_depth: 5,
                     smoothing: 0.01,
+                    ..Default::default()
                 };
                 let mut pst = PredictionSuffixTree::new(config);
                 for i in 0..a {
@@ -407,6 +416,7 @@ fn bench_alphabet_scaling(c: &mut Criterion) {
         let config = PSTConfig {
             max_depth: 5,
             smoothing: 0.01,
+            ..Default::default()
         };
         let pst = build_trained_pst(config, alpha, &sequence);
         let context: Vec<SymbolId> = (0..5).map(|i| (i % alpha) as SymbolId).collect();
@@ -422,6 +432,7 @@ fn bench_alphabet_scaling(c: &mut Criterion) {
                 let config = PSTConfig {
                     max_depth: 5,
                     smoothing: 0.01,
+                    ..Default::default()
                 };
                 let mut pst = PredictionSuffixTree::new(config);
                 for i in 0..a {

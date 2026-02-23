@@ -119,11 +119,22 @@ mod nats_impl {
             let name = self.name.clone();
 
             tokio::spawn(async move {
+                use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
                 let mut subscriber = subscriber;
+                let cb = CircuitBreaker::new(CircuitBreakerConfig {
+                    failure_threshold: 10,
+                    reset_timeout: Duration::from_secs(30),
+                });
 
                 while running.load(Ordering::SeqCst) {
+                    if !cb.allow_request() {
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        continue;
+                    }
+
                     match tokio::time::timeout(Duration::from_secs(30), subscriber.next()).await {
                         Ok(Some(message)) => {
+                            cb.record_success();
                             if message.payload.len() > crate::limits::MAX_EVENT_PAYLOAD_BYTES {
                                 warn!(
                                     "NATS source {}: payload too large ({} bytes, max {}), skipped",
@@ -142,9 +153,13 @@ mod nats_impl {
                             }
                         }
                         Ok(None) => {
-                            // Subscription ended
-                            info!("NATS source {} subscription ended", name);
-                            break;
+                            cb.record_failure();
+                            warn!(
+                                "NATS source {} subscription ended (cb_state={}), backing off",
+                                name,
+                                cb.state()
+                            );
+                            tokio::time::sleep(Duration::from_secs(1)).await;
                         }
                         Err(_) => {
                             // Timeout — just loop back to check running flag
