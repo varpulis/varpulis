@@ -76,6 +76,10 @@ export async function activate(context: vscode.ExtensionContext) {
         } catch (error) {
             outputChannel.appendLine(`Failed to start Language Server: ${error}`);
             outputChannel.appendLine('Falling back to basic language features');
+            vscode.window.showInformationMessage(
+                'Varpulis LSP not found. Install it with: curl -sSf https://raw.githubusercontent.com/varpulis/varpulis/main/scripts/install.sh | sh',
+                'Dismiss'
+            );
             registerFallbackProviders(context);
         }
     } else {
@@ -96,14 +100,42 @@ async function startLanguageServer(context: vscode.ExtensionContext) {
 
     // If no path specified, try to find it
     if (!serverPath) {
-        // First, check if bundled with extension
-        const bundledPath = context.asAbsolutePath(path.join('bin', 'varpulis-lsp'));
         const fs = require('fs');
-        if (fs.existsSync(bundledPath)) {
-            serverPath = bundledPath;
-        } else if (fs.existsSync(bundledPath + '.exe')) {
-            serverPath = bundledPath + '.exe';
-        } else {
+        const os = require('os');
+        const homedir = os.homedir();
+
+        // Search paths in order of priority
+        // Also check workspace cargo build output for developers building from source
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        const workspaceRoot = workspaceFolders?.[0]?.uri.fsPath;
+
+        const searchPaths = [
+            // Cargo build output first (developers building from source get latest binary)
+            ...(workspaceRoot ? [
+                path.join(workspaceRoot, 'target', 'release', 'varpulis-lsp'),
+                path.join(workspaceRoot, 'target', 'debug', 'varpulis-lsp'),
+            ] : []),
+            path.join(homedir, '.local', 'bin', 'varpulis-lsp'),
+            path.join(homedir, '.varpulis', 'bin', 'varpulis-lsp'),
+            // Bundled binary (last resort)
+            context.asAbsolutePath(path.join('bin', 'varpulis-lsp')),
+        ];
+
+        let found = false;
+        for (const candidate of searchPaths) {
+            if (fs.existsSync(candidate)) {
+                serverPath = candidate;
+                found = true;
+                break;
+            }
+            if (fs.existsSync(candidate + '.exe')) {
+                serverPath = candidate + '.exe';
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
             // Fall back to system PATH
             serverPath = 'varpulis-lsp';
         }
@@ -536,7 +568,7 @@ function provideCompletionItems(
     }
 
     // Suggest keywords
-    const keywords = ['stream', 'event', 'from', 'let', 'const', 'fn', 'config', 'if', 'else', 'for', 'while', 'match'];
+    const keywords = ['stream', 'event', 'connector', 'context', 'from', 'as', 'let', 'const', 'fn', 'if', 'else', 'for', 'while', 'match'];
     for (const kw of keywords) {
         if (linePrefix.trim() === '' || kw.startsWith(linePrefix.trim())) {
             const item = new vscode.CompletionItem(kw, vscode.CompletionItemKind.Keyword);
@@ -570,6 +602,7 @@ function provideHover(
     
     const docs: { [key: string]: string } = {
         'stream': '**stream** - Declares a new event stream\n\n```varpulis\nstream Name = EventType\nstream Name = OtherStream.where(...)\n```',
+        'connector': '**connector** - Declares a data source/sink connection\n\n```varpulis\nconnector MqttBroker = mqtt(host: \"localhost\", port: 1883)\nconnector MyKafka = kafka(brokers: [\"kafka:9092\"])\nconnector MyNats = nats(url: \"nats://localhost:4222\")\n```',
         'event': '**event** - Declares an event type\n\n```varpulis\nevent MyEvent:\n    field1: string\n    field2: float\n```',
         'where': '**.where(condition)** - Filters events based on a condition\n\n```varpulis\n.where(value > 10)\n.where(status == "active" and count > 0)\n```',
         'window': '**.window(duration)** - Creates a temporal window\n\n```varpulis\n.window(5m)              # Tumbling window\n.window(5m, sliding: 1m) # Sliding window\n```',

@@ -4,12 +4,13 @@
 [
   "stream"
   "event"
+  "connector"
+  "context"
   "type"
   "let"
   "var"
   "const"
   "fn"
-  "config"
   "if"
   "else"
   "elif"
@@ -41,7 +42,6 @@
   "as"
   "extends"
   "import"
-  "export"
   "on"
   "all"
   "within"
@@ -65,8 +65,12 @@
   "sliding"
   "policy"
   "forecast"
+  "trend_aggregate"
   "enrich"
 ] @function.method
+
+; Connector types
+(connector_type) @type.builtin
 
 ; Types
 (primitive_type) @type.builtin
@@ -115,6 +119,18 @@
 ; Named arguments
 (named_argument
   name: (identifier) @property)
+
+; Connector declarations
+(connector_declaration
+  name: (identifier) @variable)
+
+; Connector params
+(connector_param
+  name: (identifier) @property)
+
+; Context declarations
+(context_declaration
+  name: (identifier) @variable)
 
 ; Event declarations
 (event_declaration

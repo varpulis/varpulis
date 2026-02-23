@@ -1,5 +1,7 @@
 //! Semantic check implementations for Pass 1 and Pass 2.
 
+use std::collections::HashMap;
+
 use crate::ast::*;
 use crate::span::Span;
 
@@ -192,6 +194,36 @@ pub fn pass2_semantic(v: &mut Validator, program: &Program) {
                 check_stream_source(v, source, span);
                 check_stream_ops(v, ops, source, span);
             }
+            Stmt::ConnectorDecl {
+                connector_type,
+                params,
+                ..
+            } => {
+                if !builtins::is_known_connector_type(connector_type) {
+                    let known: Vec<&str> = builtins::KNOWN_CONNECTOR_TYPES.to_vec();
+                    let suggestion = did_you_mean(connector_type, &known);
+                    v.emit_with_hint(
+                        Severity::Error,
+                        span,
+                        "E008",
+                        format!("unknown connector type '{}'", connector_type),
+                        format!(
+                            "known types: {}{}",
+                            builtins::KNOWN_CONNECTOR_TYPES.join(", "),
+                            suggestion
+                        ),
+                    );
+                } else {
+                    check_connector_params(
+                        v,
+                        params,
+                        connector_type,
+                        ParamContext::Both,
+                        "connector declaration",
+                        span,
+                    );
+                }
+            }
             Stmt::PatternDecl { expr, .. } => {
                 check_sase_pattern_refs(v, expr, span);
             }
@@ -300,20 +332,19 @@ fn check_stream_source(v: &mut Validator, source: &StreamSource, span: Span) {
 }
 
 fn check_source_name(v: &mut Validator, name: &str, span: Span) {
-    // Only warn — implicit event types are valid
     if !v.symbols.events.contains_key(name)
         && !v.symbols.streams.contains_key(name)
         && !v.symbols.patterns.contains_key(name)
     {
         let suggestion = did_you_mean(name, &v.symbols.source_names());
         v.emit_with_hint(
-            Severity::Warning,
+            Severity::Error,
             span,
-            "W030",
-            format!("reference to undeclared event type or stream '{}'", name),
+            "E033",
+            format!("undefined event type or stream '{}'", name),
             format!(
-                "implicit event types are valid, but consider declaring it explicitly{}",
-                suggestion
+                "declare it with: event {} {{ ... }} or stream {} = ...{}",
+                name, name, suggestion
             ),
         );
     }
@@ -327,6 +358,47 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
     let mut seen_aggregate = false;
     let mut seen_window = false;
     let mut in_sequence = is_sequence_source(source);
+    let mut has_emit = false;
+    let mut has_to = false;
+    let mut has_print = false;
+    let mut has_tap = false;
+    let mut has_log = false;
+
+    // Build alias → event type mapping for field reference validation
+    let mut alias_to_event: HashMap<String, String> = HashMap::new();
+    match source {
+        StreamSource::Ident(name) => {
+            // Direct source: bare name can be used as qualifier
+            if v.symbols.events.contains_key(name) {
+                alias_to_event.insert(name.clone(), name.clone());
+            }
+        }
+        StreamSource::IdentWithAlias { name, alias } => {
+            alias_to_event.insert(alias.clone(), name.clone());
+        }
+        StreamSource::AllWithAlias { name, alias } => {
+            if let Some(a) = alias {
+                alias_to_event.insert(a.clone(), name.clone());
+            } else {
+                alias_to_event.insert(name.clone(), name.clone());
+            }
+        }
+        StreamSource::Sequence(seq) => {
+            for step in &seq.steps {
+                alias_to_event.insert(step.alias.clone(), step.event_type.clone());
+            }
+        }
+        _ => {}
+    }
+    for op in ops {
+        if let StreamOp::FollowedBy(clause) = op {
+            if let Some(alias) = &clause.alias {
+                alias_to_event.insert(alias.clone(), clause.event_type.clone());
+            } else {
+                alias_to_event.insert(clause.event_type.clone(), clause.event_type.clone());
+            }
+        }
+    }
 
     for op in ops {
         match op {
@@ -442,7 +514,7 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
             }
 
             // --- Operation ordering ---
-            StreamOp::Having(_) => {
+            StreamOp::Having(expr) => {
                 if !seen_aggregate {
                     v.emit_with_hint(
                         Severity::Error,
@@ -452,7 +524,8 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
                         "add .aggregate(...) before .having()".to_string(),
                     );
                 }
-                check_boolean_expr(v, having_expr(op), ".having()", span);
+                check_boolean_expr(v, expr, ".having()", span);
+                check_expr_field_refs(v, expr, &alias_to_event, span);
             }
             StreamOp::Aggregate(items) => {
                 if seen_aggregate {
@@ -513,12 +586,14 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
             }
 
             // --- Sequence tracking ---
-            StreamOp::FollowedBy(_) | StreamOp::Not(_) => {
+            StreamOp::FollowedBy(clause) | StreamOp::Not(clause) => {
+                check_source_name(v, &clause.event_type, span);
                 in_sequence = true;
             }
 
             // --- Parameter validation ---
             StreamOp::Log(args) => {
+                has_log = true;
                 check_named_params(v, args, LOG_PARAMS, ".log()", span);
             }
             StreamOp::Watermark(args) => {
@@ -530,6 +605,7 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
                 connector_name,
                 params,
             } => {
+                has_to = true;
                 if !v.symbols.connectors.contains_key(connector_name) {
                     let suggestion = did_you_mean(connector_name, &v.symbols.connector_names());
                     // Include existing connector types in hint for context
@@ -586,13 +662,22 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
             // --- Expression type checks ---
             StreamOp::Where(expr) => {
                 check_boolean_expr(v, expr, ".where()", span);
+                check_expr_field_refs(v, expr, &alias_to_event, span);
             }
             StreamOp::AllowedLateness(expr) => {
                 check_duration_expr(v, expr, ".allowed_lateness()", span);
             }
 
             // --- Emit field validation ---
-            StreamOp::Emit { output_type, .. } => {
+            StreamOp::Emit {
+                output_type,
+                fields,
+                ..
+            } => {
+                has_emit = true;
+                for field in fields {
+                    check_expr_field_refs(v, &field.value, &alias_to_event, span);
+                }
                 if let Some(type_name) = output_type {
                     if let Some(event_info) = v.symbols.events.get(type_name) {
                         // Validate that emitted type is a known event
@@ -600,12 +685,12 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
                     } else if !v.symbols.is_declared(type_name) {
                         let suggestion = did_you_mean(type_name, &v.symbols.all_names());
                         v.emit_with_hint(
-                            Severity::Warning,
+                            Severity::Error,
                             span,
-                            "W031",
+                            "E034",
                             format!(".emit as '{}' references an undeclared type", type_name),
                             format!(
-                                "consider declaring: event {} {{ ... }}{}",
+                                "declare it with: event {} {{ ... }}{}",
                                 type_name, suggestion
                             ),
                         );
@@ -658,10 +743,16 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
                 }
             }
 
+            // --- Output tracking ---
+            StreamOp::Tap(_) => {
+                has_tap = true;
+            }
+            StreamOp::Print(_) => {
+                has_print = true;
+            }
+
             // --- Operations that are fine ---
             StreamOp::Select(_)
-            | StreamOp::Tap(_)
-            | StreamOp::Print(_)
             | StreamOp::Pattern(_)
             | StreamOp::Process(_)
             | StreamOp::On(_)
@@ -670,16 +761,108 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
             | StreamOp::Forecast(_) => {}
         }
     }
+
+    // Warn if stream has no output operation
+    if !has_emit && !has_to && !has_print && !has_tap && !has_log {
+        v.emit_with_hint(
+            Severity::Warning,
+            span,
+            "W033",
+            "stream has no output operation".to_string(),
+            "add .emit(...), .to(Connector), .print(), or .log() to produce output".to_string(),
+        );
+    }
 }
 
 fn is_sequence_source(source: &StreamSource) -> bool {
     matches!(source, StreamSource::Sequence(_))
 }
 
-fn having_expr(op: &StreamOp) -> &Expr {
-    match op {
-        StreamOp::Having(e) => e,
-        _ => unreachable!(),
+// ---------------------------------------------------------------------------
+// Field reference validation
+// ---------------------------------------------------------------------------
+
+/// Walk an expression tree and warn about references to undeclared fields on known events.
+fn check_expr_field_refs(
+    v: &mut Validator,
+    expr: &Expr,
+    alias_to_event: &HashMap<String, String>,
+    span: Span,
+) {
+    match expr {
+        Expr::Member {
+            expr: inner,
+            member,
+        } => {
+            if let Expr::Ident(name) = inner.as_ref() {
+                if let Some(event_name) = alias_to_event.get(name) {
+                    if let Some(fields) = v.symbols.event_field_names(event_name) {
+                        if !fields.is_empty() && !fields.iter().any(|f| f == member) {
+                            let suggestion = did_you_mean(
+                                member,
+                                &fields.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+                            );
+                            v.emit_with_hint(
+                                Severity::Warning,
+                                span,
+                                "W034",
+                                format!(
+                                    "reference to undeclared field '{}' on event '{}'",
+                                    member, event_name
+                                ),
+                                format!("declared fields: {}{}", fields.join(", "), suggestion),
+                            );
+                        }
+                    }
+                }
+            }
+            // Also recurse into inner expression
+            check_expr_field_refs(v, inner, alias_to_event, span);
+        }
+        Expr::Binary { left, right, .. } => {
+            check_expr_field_refs(v, left, alias_to_event, span);
+            check_expr_field_refs(v, right, alias_to_event, span);
+        }
+        Expr::Unary { expr: inner, .. } => {
+            check_expr_field_refs(v, inner, alias_to_event, span);
+        }
+        Expr::Call { func, args } => {
+            check_expr_field_refs(v, func, alias_to_event, span);
+            for arg in args {
+                match arg {
+                    Arg::Positional(e) | Arg::Named(_, e) => {
+                        check_expr_field_refs(v, e, alias_to_event, span);
+                    }
+                }
+            }
+        }
+        Expr::OptionalMember { expr: inner, .. } => {
+            check_expr_field_refs(v, inner, alias_to_event, span);
+        }
+        Expr::Index { expr: e, index } => {
+            check_expr_field_refs(v, e, alias_to_event, span);
+            check_expr_field_refs(v, index, alias_to_event, span);
+        }
+        Expr::If {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            check_expr_field_refs(v, cond, alias_to_event, span);
+            check_expr_field_refs(v, then_branch, alias_to_event, span);
+            check_expr_field_refs(v, else_branch, alias_to_event, span);
+        }
+        Expr::Coalesce { expr: e, default } => {
+            check_expr_field_refs(v, e, alias_to_event, span);
+            check_expr_field_refs(v, default, alias_to_event, span);
+        }
+        Expr::Array(elems) => {
+            for e in elems {
+                check_expr_field_refs(v, e, alias_to_event, span);
+            }
+        }
+        // Leaves — no recursion needed
+        _ => {}
     }
 }
 
@@ -866,6 +1049,22 @@ fn check_connector_params(
                     );
                 }
             }
+        }
+    }
+
+    // Check for missing required parameters
+    for def in schema.iter().filter(|p| p.required && p.valid_in(ctx)) {
+        if !params.iter().any(|p| p.name == def.name) {
+            v.emit_with_hint(
+                Severity::Error,
+                span,
+                "E009",
+                format!(
+                    "missing required parameter '{}' for {} {}",
+                    def.name, connector_type, op_name
+                ),
+                def.description.to_string(),
+            );
         }
     }
 }

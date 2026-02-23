@@ -143,6 +143,9 @@ function generateConnectorDecl(node: FlowNode): string {
     case 'websocket':
       if (data.wsUrl) params.push(`url: "${data.wsUrl}"`);
       break;
+    case 'nats':
+      if (data.natsUrl) params.push(`url: "${data.natsUrl}"`);
+      break;
   }
 
   const paramsStr = params.length > 0 ? `\n    ${params.join(',\n    ')}\n` : '';
@@ -159,10 +162,10 @@ function generateEventDecl(node: FlowNode): string {
 
   const fields = data.fields
     .map(f => `    ${f.name}: ${f.type}${f.optional ? '?' : ''}`)
-    .join(',\n');
+    .join('\n');
 
   const extendsClause = data.extends ? ` extends ${data.extends}` : '';
-  return `event ${data.label}${extendsClause} {\n${fields}\n}`;
+  return `event ${data.label}${extendsClause}:\n${fields}`;
 }
 
 // ============================================
@@ -173,6 +176,7 @@ function generatePatternDecl(node: FlowNode): string {
   const data = node.data as PatternNodeData;
   if (!isPatternNodeData(data)) return `# Invalid pattern: ${node.id}`;
 
+  // VPL uses stream syntax for sequences: stream Name = EventA as a -> EventB as b
   const eventStrs = data.events.map(e => {
     let str = e.eventType;
     if (e.kleene) str += e.kleene;
@@ -181,9 +185,22 @@ function generatePatternDecl(node: FlowNode): string {
     return str;
   });
 
-  let pattern = `pattern ${data.label} = ${data.patternType}(${eventStrs.join(', ')})`;
-  if (data.within) pattern += `\n    within ${data.within}`;
-  if (data.partitionBy) pattern += `\n    partition by ${data.partitionBy}`;
+  let pattern = `stream ${data.label} = ${eventStrs.join('\n    -> ')}`;
+  if (data.within) pattern += `\n    .within(${data.within})`;
+  if (data.partitionBy) pattern += `\n    .partition_by(${data.partitionBy})`;
+
+  // Add .forecast() if configured
+  if (data.forecast) {
+    const fParams: string[] = [];
+    if (data.forecast.mode) fParams.push(`mode: "${data.forecast.mode}"`);
+    if (data.forecast.confidence) fParams.push(`confidence: ${data.forecast.confidence}`);
+    if (data.forecast.horizon) fParams.push(`horizon: ${data.forecast.horizon}`);
+    if (data.forecast.warmup) fParams.push(`warmup: ${data.forecast.warmup}`);
+    if (data.forecast.maxDepth) fParams.push(`max_depth: ${data.forecast.maxDepth}`);
+    if (fParams.length > 0) {
+      pattern += `\n    .forecast(${fParams.join(', ')})`;
+    }
+  }
 
   return pattern;
 }
@@ -223,9 +240,9 @@ function generateStreamFromSource(
 
   if (connectorName) {
     const paramsStr = fromParams.length > 0 ? `, ${fromParams.join(', ')}` : '';
-    streamExpr += `.from(${connectorName}${paramsStr})`;
+    streamExpr += `\n    .from(${connectorName}${paramsStr})`;
   } else if (sourceData.inlineUri) {
-    streamExpr += `.from(file("${sourceData.inlineUri}"))`;
+    streamExpr += `\n    .from(file("${sourceData.inlineUri}"))`;
   }
 
   // Follow the pipeline and add operations
@@ -259,8 +276,28 @@ function generateStreamFromSource(
       }
       break; // Sink is the end
     } else if (nextNode.type === 'pattern') {
-      // Pattern in stream - skip for now, patterns are declared separately
-      break;
+      // Pattern node in stream pipeline — generate sequence inline
+      const patternData = nextNode.data as PatternNodeData;
+      if (isPatternNodeData(patternData)) {
+        const eventStrs = patternData.events.map(e => {
+          let str = e.eventType;
+          if (e.kleene) str += e.kleene;
+          if (e.condition) str += ` where ${e.condition}`;
+          if (e.alias) str += ` as ${e.alias}`;
+          return str;
+        });
+        streamExpr = eventStrs.join('\n    -> ');
+        if (patternData.within) streamExpr += `\n    .within(${patternData.within})`;
+        if (patternData.forecast) {
+          const fParams: string[] = [];
+          if (patternData.forecast.mode) fParams.push(`mode: "${patternData.forecast.mode}"`);
+          if (patternData.forecast.confidence) fParams.push(`confidence: ${patternData.forecast.confidence}`);
+          if (patternData.forecast.horizon) fParams.push(`horizon: ${patternData.forecast.horizon}`);
+          if (patternData.forecast.warmup) fParams.push(`warmup: ${patternData.forecast.warmup}`);
+          if (patternData.forecast.maxDepth) fParams.push(`max_depth: ${patternData.forecast.maxDepth}`);
+          if (fParams.length > 0) streamExpr += `\n    .forecast(${fParams.join(', ')})`;
+        }
+      }
     }
 
     currentNodeId = nextNodeId;
@@ -321,6 +358,19 @@ function generateStreamOperations(data: StreamNodeData): string {
         break;
       case 'filter':
         if (op.condition) ops += `\n    .filter(${op.condition})`;
+        break;
+      case 'forecast': {
+        const fParams: string[] = [];
+        if (op.forecastMode) fParams.push(`mode: "${op.forecastMode}"`);
+        if (op.forecastConfidence) fParams.push(`confidence: ${op.forecastConfidence}`);
+        if (op.forecastHorizon) fParams.push(`horizon: ${op.forecastHorizon}`);
+        if (op.forecastWarmup) fParams.push(`warmup: ${op.forecastWarmup}`);
+        if (op.forecastMaxDepth) fParams.push(`max_depth: ${op.forecastMaxDepth}`);
+        if (fParams.length > 0) ops += `\n    .forecast(${fParams.join(', ')})`;
+        break;
+      }
+      case 'trend_aggregate':
+        if (op.trendAggregations) ops += `\n    .trend_aggregate(${op.trendAggregations})`;
         break;
     }
   }

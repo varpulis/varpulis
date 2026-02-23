@@ -15,6 +15,7 @@ const nodeCategories: { title: string; items: SidebarItem[] }[] = [
       { type: 'connector', subtype: 'mqtt', label: 'MQTT', icon: '📡', description: 'MQTT broker connection' },
       { type: 'connector', subtype: 'kafka', label: 'Kafka', icon: '📨', description: 'Kafka cluster connection' },
       { type: 'connector', subtype: 'http', label: 'HTTP', icon: '🌐', description: 'HTTP/REST endpoint' },
+      { type: 'connector', subtype: 'nats', label: 'NATS', icon: '⚡', description: 'NATS messaging' },
       { type: 'connector', subtype: 'amqp', label: 'AMQP', icon: '🐰', description: 'RabbitMQ/AMQP connection' },
       { type: 'connector', subtype: 'file', label: 'File', icon: '📁', description: 'File system' },
     ],
@@ -41,6 +42,13 @@ const nodeCategories: { title: string; items: SidebarItem[] }[] = [
     title: 'Types',
     items: [
       { type: 'event', label: 'Event Type', icon: '📋', description: 'Define event structure' },
+    ],
+  },
+  {
+    title: 'Advanced',
+    items: [
+      { type: 'stream', subtype: 'forecast', label: 'Forecast', icon: '🔮', description: 'Predictive pattern forecasting' },
+      { type: 'stream', subtype: 'trend_aggregate', label: 'Trend Agg', icon: '📈', description: 'Hamlet trend aggregation' },
     ],
   },
 ];

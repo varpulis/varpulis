@@ -964,63 +964,66 @@ fn w002_partition_before_window_ok() {
 }
 
 // =============================================================================
-// W030: Undeclared event type or stream reference
+// E033: Undefined event type or stream reference (was W030)
 // =============================================================================
 
 #[test]
-fn w030_undeclared_event_type() {
+fn e033_undeclared_event_type() {
     let diags = validate_vpl("stream S = UndeclaredEvent\n    .where(x > 0)");
-    assert!(has_warning(&diags, "W030"), "Expected W030: {:?}", diags);
+    assert!(has_error(&diags, "E033"), "Expected E033: {:?}", diags);
 }
 
 #[test]
-fn w030_declared_event_no_warning() {
+fn e033_declared_event_no_error() {
     let diags = validate_vpl(
         "event SensorReading: value: float\nstream S = SensorReading\n    .where(value > 0.0)",
     );
     assert!(
-        !has_code(&diags, "W030"),
-        "Should have no W030: {:?}",
+        !has_code(&diags, "E033"),
+        "Should have no E033: {:?}",
         diags
     );
 }
 
 #[test]
-fn w030_reference_to_declared_stream_no_warning() {
-    let diags = validate_vpl("stream Base = A\nstream Filtered = Base\n    .where(x > 0)");
-    // Base is declared, so Filtered referencing Base should not produce W030 for 'Base'
-    let w030_for_base = diags.iter().any(|(sev, c, msg)| {
-        *sev == Severity::Warning && *c == Some("W030") && msg.contains("Base")
-    });
+fn e033_reference_to_declared_stream_no_error() {
+    let diags =
+        validate_vpl("event A: x: int\nstream Base = A\nstream Filtered = Base\n    .where(x > 0)");
+    // Base is declared, so Filtered referencing Base should not produce E033 for 'Base'
+    let e033_for_base = diags
+        .iter()
+        .any(|(sev, c, msg)| *sev == Severity::Error && *c == Some("E033") && msg.contains("Base"));
     assert!(
-        !w030_for_base,
-        "Should not warn for declared stream Base: {:?}",
+        !e033_for_base,
+        "Should not error for declared stream Base: {:?}",
         diags
     );
 }
 
 // =============================================================================
-// W031: Emit as undeclared type
+// E034: Emit as undeclared type (was W031)
 // =============================================================================
 
 #[test]
-fn w031_emit_as_undeclared_type() {
+fn e034_emit_as_undeclared_type() {
     let diags = validate_vpl(
         r#"
+        event A: x: int
         stream S = A
             .emit as UnknownType (x: 1)
     "#,
     );
-    assert!(has_warning(&diags, "W031"), "Expected W031: {:?}", diags);
+    assert!(has_error(&diags, "E034"), "Expected E034: {:?}", diags);
 }
 
 #[test]
-fn w031_emit_as_declared_event_no_warning() {
-    let diags =
-        validate_vpl("event Alert: msg: str\nstream S = A\n    .emit as Alert (msg: \"hi\")");
+fn e034_emit_as_declared_event_no_error() {
+    let diags = validate_vpl(
+        "event A: x: int\nevent Alert: msg: str\nstream S = A\n    .emit as Alert (msg: \"hi\")",
+    );
     assert!(
-        !has_code(&diags, "W031"),
-        "Should have no W031: {:?}",
+        !has_code(&diags, "E034"),
+        "Should have no E034: {:?}",
         diags
     );
 }
@@ -1140,28 +1143,28 @@ fn e050_nested_unknown_function() {
 #[test]
 fn pattern_with_undeclared_event_refs() {
     let diags = validate_vpl("pattern P = SEQ(UndeclaredA, UndeclaredB)");
-    // W030 should be emitted for undeclared event types in patterns
+    // E033 should be emitted for undeclared event types in patterns
     assert!(
-        has_warning(&diags, "W030"),
-        "Expected W030 for pattern refs: {:?}",
+        has_error(&diags, "E033"),
+        "Expected E033 for pattern refs: {:?}",
         diags
     );
 }
 
 #[test]
-fn pattern_with_declared_event_refs_no_warning() {
+fn pattern_with_declared_event_refs_no_error() {
     let diags = validate_vpl(
         "event Login: user: str\nevent Purchase: user: str\npattern P = SEQ(Login, Purchase)",
     );
-    let w030_for_login = diags.iter().any(|(sev, c, msg)| {
-        *sev == Severity::Warning && *c == Some("W030") && msg.contains("Login")
+    let e033_for_login = diags.iter().any(|(sev, c, msg)| {
+        *sev == Severity::Error && *c == Some("E033") && msg.contains("Login")
     });
-    let w030_for_purchase = diags.iter().any(|(sev, c, msg)| {
-        *sev == Severity::Warning && *c == Some("W030") && msg.contains("Purchase")
+    let e033_for_purchase = diags.iter().any(|(sev, c, msg)| {
+        *sev == Severity::Error && *c == Some("E033") && msg.contains("Purchase")
     });
     assert!(
-        !w030_for_login && !w030_for_purchase,
-        "Declared events should not produce W030: {:?}",
+        !e033_for_login && !e033_for_purchase,
+        "Declared events should not produce E033: {:?}",
         diags
     );
 }
@@ -1268,7 +1271,7 @@ fn no_error_for_print() {
 
 #[test]
 fn no_error_for_emit() {
-    let diags = validate_vpl("stream S = A\n    .emit()");
+    let diags = validate_vpl("event A: x: int\nstream S = A\n    .emit()");
     assert!(
         has_no_errors(&diags),
         "emit should not produce errors: {:?}",
@@ -1329,25 +1332,25 @@ fn myFunc(a: int) -> int:
 }
 
 // =============================================================================
-// W030: Unused event/stream declarations
+// E033: Undeclared event/stream reference (was W030)
 // =============================================================================
 
 #[test]
-fn w030_undeclared_source_produces_warning() {
+fn e033_undeclared_source_produces_error() {
     let diags = validate_vpl("stream S = UndeclaredEvent\n    .emit()");
     assert!(
-        has_warning(&diags, "W030"),
-        "Expected W030 for undeclared source: {:?}",
+        has_error(&diags, "E033"),
+        "Expected E033 for undeclared source: {:?}",
         diags
     );
 }
 
 #[test]
-fn w030_no_warning_when_event_declared() {
+fn e033_no_error_when_event_declared() {
     let diags = validate_vpl("event Used:\n    x: int\nstream S = Used\n    .emit()");
     assert!(
-        !has_code(&diags, "W030"),
-        "Declared event should not produce W030: {:?}",
+        !has_code(&diags, "E033"),
+        "Declared event should not produce E033: {:?}",
         diags
     );
 }
@@ -1426,9 +1429,9 @@ fn e070_aggregate_unknown_function() {
 
 #[test]
 fn valid_mqtt_connector_with_required_params() {
-    let diags = validate_vpl("connector mqtt_in = mqtt(host: \"localhost\", port: 1883)");
+    let diags = validate_vpl("connector mqtt_in = mqtt(topic: \"sensors/#\", qos: 1)");
     assert!(
-        !has_error(&diags, "W080"),
+        !has_code(&diags, "W080"),
         "Valid MQTT should not produce W080: {:?}",
         diags
     );

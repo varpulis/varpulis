@@ -217,6 +217,14 @@ mod tests {
         }
     }
 
+    fn event_decl(name: &str) -> Stmt {
+        Stmt::EventDecl {
+            name: name.to_string(),
+            extends: None,
+            fields: vec![],
+        }
+    }
+
     #[test]
     fn test_empty_program_no_diagnostics() {
         let prog = make_program(vec![]);
@@ -247,6 +255,8 @@ mod tests {
     #[test]
     fn test_duplicate_stream_declarations() {
         let prog = make_program(vec![
+            event_decl("X"),
+            event_decl("Y"),
             Stmt::StreamDecl {
                 name: "S".to_string(),
                 type_annotation: None,
@@ -267,12 +277,15 @@ mod tests {
 
     #[test]
     fn test_unimplemented_map_op() {
-        let prog = make_program(vec![Stmt::StreamDecl {
-            name: "S".to_string(),
-            type_annotation: None,
-            source: StreamSource::Ident("X".to_string()),
-            ops: vec![StreamOp::Map(Expr::Ident("x".to_string()))],
-        }]);
+        let prog = make_program(vec![
+            event_decl("X"),
+            Stmt::StreamDecl {
+                name: "S".to_string(),
+                type_annotation: None,
+                source: StreamSource::Ident("X".to_string()),
+                ops: vec![StreamOp::Map(Expr::Ident("x".to_string()))],
+            },
+        ]);
         let result = validate("stream S = X.map(x)", &prog);
         assert!(result.has_errors());
         assert!(result.diagnostics.iter().any(|d| d.code == Some("E090")));
@@ -280,12 +293,15 @@ mod tests {
 
     #[test]
     fn test_having_without_aggregate() {
-        let prog = make_program(vec![Stmt::StreamDecl {
-            name: "S".to_string(),
-            type_annotation: None,
-            source: StreamSource::Ident("X".to_string()),
-            ops: vec![StreamOp::Having(Expr::Bool(true))],
-        }]);
+        let prog = make_program(vec![
+            event_decl("X"),
+            Stmt::StreamDecl {
+                name: "S".to_string(),
+                type_annotation: None,
+                source: StreamSource::Ident("X".to_string()),
+                ops: vec![StreamOp::Having(Expr::Bool(true))],
+            },
+        ]);
         let result = validate("stream S = X.having(true)", &prog);
         assert!(result.has_errors());
         assert!(result.diagnostics.iter().any(|d| d.code == Some("E010")));
@@ -293,18 +309,21 @@ mod tests {
 
     #[test]
     fn test_aggregate_without_window_warns() {
-        let prog = make_program(vec![Stmt::StreamDecl {
-            name: "S".to_string(),
-            type_annotation: None,
-            source: StreamSource::Ident("X".to_string()),
-            ops: vec![StreamOp::Aggregate(vec![AggItem {
-                alias: "c".to_string(),
-                expr: Expr::Call {
-                    func: Box::new(Expr::Ident("count".to_string())),
-                    args: vec![],
-                },
-            }])],
-        }]);
+        let prog = make_program(vec![
+            event_decl("X"),
+            Stmt::StreamDecl {
+                name: "S".to_string(),
+                type_annotation: None,
+                source: StreamSource::Ident("X".to_string()),
+                ops: vec![StreamOp::Aggregate(vec![AggItem {
+                    alias: "c".to_string(),
+                    expr: Expr::Call {
+                        func: Box::new(Expr::Ident("count".to_string())),
+                        args: vec![],
+                    },
+                }])],
+            },
+        ]);
         let result = validate("stream S = X.aggregate(c: count())", &prog);
         assert!(!result.has_errors()); // warning only
         assert!(result.diagnostics.iter().any(|d| d.code == Some("W001")));
@@ -312,15 +331,18 @@ mod tests {
 
     #[test]
     fn test_unknown_log_param() {
-        let prog = make_program(vec![Stmt::StreamDecl {
-            name: "S".to_string(),
-            type_annotation: None,
-            source: StreamSource::Ident("X".to_string()),
-            ops: vec![StreamOp::Log(vec![crate::ast::NamedArg {
-                name: "lvl".to_string(),
-                value: Expr::Str("info".to_string()),
-            }])],
-        }]);
+        let prog = make_program(vec![
+            event_decl("X"),
+            Stmt::StreamDecl {
+                name: "S".to_string(),
+                type_annotation: None,
+                source: StreamSource::Ident("X".to_string()),
+                ops: vec![StreamOp::Log(vec![crate::ast::NamedArg {
+                    name: "lvl".to_string(),
+                    value: Expr::Str("info".to_string()),
+                }])],
+            },
+        ]);
         let result = validate("stream S = X.log(lvl: \"info\")", &prog);
         assert!(result.has_errors());
         assert!(result.diagnostics.iter().any(|d| d.code == Some("E080")));
@@ -328,26 +350,29 @@ mod tests {
 
     #[test]
     fn test_unknown_aggregate_function() {
-        let prog = make_program(vec![Stmt::StreamDecl {
-            name: "S".to_string(),
-            type_annotation: None,
-            source: StreamSource::Ident("X".to_string()),
-            ops: vec![
-                StreamOp::Window(WindowArgs {
-                    duration: Expr::Duration(60_000_000_000),
-                    sliding: None,
-                    policy: None,
-                    session_gap: None,
-                }),
-                StreamOp::Aggregate(vec![AggItem {
-                    alias: "x".to_string(),
-                    expr: Expr::Call {
-                        func: Box::new(Expr::Ident("median".to_string())),
-                        args: vec![Arg::Positional(Expr::Ident("val".to_string()))],
-                    },
-                }]),
-            ],
-        }]);
+        let prog = make_program(vec![
+            event_decl("X"),
+            Stmt::StreamDecl {
+                name: "S".to_string(),
+                type_annotation: None,
+                source: StreamSource::Ident("X".to_string()),
+                ops: vec![
+                    StreamOp::Window(WindowArgs {
+                        duration: Expr::Duration(60_000_000_000),
+                        sliding: None,
+                        policy: None,
+                        session_gap: None,
+                    }),
+                    StreamOp::Aggregate(vec![AggItem {
+                        alias: "x".to_string(),
+                        expr: Expr::Call {
+                            func: Box::new(Expr::Ident("median".to_string())),
+                            args: vec![Arg::Positional(Expr::Ident("val".to_string()))],
+                        },
+                    }]),
+                ],
+            },
+        ]);
         let result = validate("stream S = X.window(1m).aggregate(x: median(val))", &prog);
         assert!(result.has_errors());
         assert!(result.diagnostics.iter().any(|d| d.code == Some("E070")));
@@ -355,12 +380,15 @@ mod tests {
 
     #[test]
     fn test_where_with_non_bool_literal() {
-        let prog = make_program(vec![Stmt::StreamDecl {
-            name: "S".to_string(),
-            type_annotation: None,
-            source: StreamSource::Ident("X".to_string()),
-            ops: vec![StreamOp::Where(Expr::Int(42))],
-        }]);
+        let prog = make_program(vec![
+            event_decl("X"),
+            Stmt::StreamDecl {
+                name: "S".to_string(),
+                type_annotation: None,
+                source: StreamSource::Ident("X".to_string()),
+                ops: vec![StreamOp::Where(Expr::Int(42))],
+            },
+        ]);
         let result = validate("stream S = X.where(42)", &prog);
         assert!(result.has_errors());
         assert!(result.diagnostics.iter().any(|d| d.code == Some("E060")));
@@ -368,20 +396,24 @@ mod tests {
 
     #[test]
     fn test_within_non_duration_literal() {
-        let prog = make_program(vec![Stmt::StreamDecl {
-            name: "S".to_string(),
-            type_annotation: None,
-            source: StreamSource::Ident("X".to_string()),
-            ops: vec![
-                StreamOp::FollowedBy(FollowedByClause {
-                    event_type: "A".to_string(),
-                    filter: None,
-                    alias: None,
-                    match_all: false,
-                }),
-                StreamOp::Within(Expr::Str("bad".to_string())),
-            ],
-        }]);
+        let prog = make_program(vec![
+            event_decl("X"),
+            event_decl("A"),
+            Stmt::StreamDecl {
+                name: "S".to_string(),
+                type_annotation: None,
+                source: StreamSource::Ident("X".to_string()),
+                ops: vec![
+                    StreamOp::FollowedBy(FollowedByClause {
+                        event_type: "A".to_string(),
+                        filter: None,
+                        alias: None,
+                        match_all: false,
+                    }),
+                    StreamOp::Within(Expr::Str("bad".to_string())),
+                ],
+            },
+        ]);
         let result = validate("stream S = X -> A .within(\"bad\")", &prog);
         assert!(result.has_errors());
         assert!(result.diagnostics.iter().any(|d| d.code == Some("E061")));
@@ -441,26 +473,29 @@ mod tests {
 
     #[test]
     fn test_sum_without_field_arg() {
-        let prog = make_program(vec![Stmt::StreamDecl {
-            name: "S".to_string(),
-            type_annotation: None,
-            source: StreamSource::Ident("X".to_string()),
-            ops: vec![
-                StreamOp::Window(WindowArgs {
-                    duration: Expr::Duration(60_000_000_000),
-                    sliding: None,
-                    policy: None,
-                    session_gap: None,
-                }),
-                StreamOp::Aggregate(vec![AggItem {
-                    alias: "s".to_string(),
-                    expr: Expr::Call {
-                        func: Box::new(Expr::Ident("sum".to_string())),
-                        args: vec![],
-                    },
-                }]),
-            ],
-        }]);
+        let prog = make_program(vec![
+            event_decl("X"),
+            Stmt::StreamDecl {
+                name: "S".to_string(),
+                type_annotation: None,
+                source: StreamSource::Ident("X".to_string()),
+                ops: vec![
+                    StreamOp::Window(WindowArgs {
+                        duration: Expr::Duration(60_000_000_000),
+                        sliding: None,
+                        policy: None,
+                        session_gap: None,
+                    }),
+                    StreamOp::Aggregate(vec![AggItem {
+                        alias: "s".to_string(),
+                        expr: Expr::Call {
+                            func: Box::new(Expr::Ident("sum".to_string())),
+                            args: vec![],
+                        },
+                    }]),
+                ],
+            },
+        ]);
         let result = validate("stream S = X.window(1m).aggregate(s: sum())", &prog);
         assert!(result.has_errors());
         assert!(result.diagnostics.iter().any(|d| d.code == Some("E071")));
@@ -468,15 +503,18 @@ mod tests {
 
     #[test]
     fn test_connector_reference_unknown() {
-        let prog = make_program(vec![Stmt::StreamDecl {
-            name: "S".to_string(),
-            type_annotation: None,
-            source: StreamSource::Ident("X".to_string()),
-            ops: vec![StreamOp::To {
-                connector_name: "UnknownConn".to_string(),
-                params: vec![],
-            }],
-        }]);
+        let prog = make_program(vec![
+            event_decl("X"),
+            Stmt::StreamDecl {
+                name: "S".to_string(),
+                type_annotation: None,
+                source: StreamSource::Ident("X".to_string()),
+                ops: vec![StreamOp::To {
+                    connector_name: "UnknownConn".to_string(),
+                    params: vec![],
+                }],
+            },
+        ]);
         let result = validate("stream S = X.to(UnknownConn)", &prog);
         assert!(result.has_errors());
         assert!(result.diagnostics.iter().any(|d| d.code == Some("E030")));
@@ -484,15 +522,18 @@ mod tests {
 
     #[test]
     fn test_within_outside_sequence() {
-        let prog = make_program(vec![Stmt::StreamDecl {
-            name: "S".to_string(),
-            type_annotation: None,
-            source: StreamSource::Ident("X".to_string()),
-            ops: vec![
-                StreamOp::Where(Expr::Bool(true)),
-                StreamOp::Within(Expr::Duration(60_000_000_000)),
-            ],
-        }]);
+        let prog = make_program(vec![
+            event_decl("X"),
+            Stmt::StreamDecl {
+                name: "S".to_string(),
+                type_annotation: None,
+                source: StreamSource::Ident("X".to_string()),
+                ops: vec![
+                    StreamOp::Where(Expr::Bool(true)),
+                    StreamOp::Within(Expr::Duration(60_000_000_000)),
+                ],
+            },
+        ]);
         let result = validate("stream S = X.where(true).within(1m)", &prog);
         assert!(result.has_errors());
         assert!(result.diagnostics.iter().any(|d| d.code == Some("E020")));
@@ -606,18 +647,22 @@ mod tests {
 
     #[test]
     fn test_emit_as_undeclared_type() {
-        let prog = make_program(vec![Stmt::StreamDecl {
-            name: "S".to_string(),
-            type_annotation: None,
-            source: StreamSource::Ident("X".to_string()),
-            ops: vec![StreamOp::Emit {
-                output_type: Some("UnknownAlert".to_string()),
-                fields: vec![],
-                target_context: None,
-            }],
-        }]);
+        let prog = make_program(vec![
+            event_decl("X"),
+            Stmt::StreamDecl {
+                name: "S".to_string(),
+                type_annotation: None,
+                source: StreamSource::Ident("X".to_string()),
+                ops: vec![StreamOp::Emit {
+                    output_type: Some("UnknownAlert".to_string()),
+                    fields: vec![],
+                    target_context: None,
+                }],
+            },
+        ]);
         let result = validate("stream S = X.emit as UnknownAlert ()", &prog);
-        // W031 warning — undeclared type in emit
-        assert!(result.diagnostics.iter().any(|d| d.code == Some("W031")));
+        // E034 error — undeclared type in emit
+        assert!(result.has_errors());
+        assert!(result.diagnostics.iter().any(|d| d.code == Some("E034")));
     }
 }
