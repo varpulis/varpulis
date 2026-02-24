@@ -237,6 +237,8 @@ async fn test_deploy_pipeline_group_across_workers() {
             },
         ],
         routes: vec![],
+        region_affinity: None,
+        cross_region_routes: vec![],
     };
 
     // Phase 1: Plan
@@ -548,6 +550,8 @@ async fn test_worker_drain_state_transitions() {
                 partition_key: None,
             }],
             routes: vec![],
+            region_affinity: None,
+            cross_region_routes: vec![],
         };
         let mut group =
             DeployedPipelineGroup::new(group_id.clone(), "drain-test".to_string(), spec);

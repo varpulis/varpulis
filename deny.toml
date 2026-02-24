@@ -30,6 +30,9 @@ ignore = [
     # rustls-pemfile 2.x: unmaintained. Cert parsing only, low attack surface.
     { id = "RUSTSEC-2025-0134", reason = "cert parsing only, low attack surface" },
 
+    # async-std 1.x: unmaintained. Transitive via pulsar crate (pulsar feature only).
+    { id = "RUSTSEC-2025-0052", reason = "transitive via pulsar crate, pulsar feature only" },
+
     # rsa 0.9: Marvin Attack timing side-channel. Transitive via sqlx-mysql.
     # We don't use MySQL TLS with RSA keys in production; PostgreSQL is primary.
     { id = "RUSTSEC-2023-0071", reason = "transitive via sqlx-mysql, not used in production" },

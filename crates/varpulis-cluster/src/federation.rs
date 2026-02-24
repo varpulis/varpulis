@@ -179,14 +179,12 @@ impl FederationCoordinator {
                     );
                     state.status = RegionStatus::Offline;
                 }
-            } else if elapsed > timeout_secs {
-                if state.status == RegionStatus::Online {
-                    warn!(
-                        "Federation: region '{}' marked degraded ({}s since heartbeat)",
-                        state.name, elapsed
-                    );
-                    state.status = RegionStatus::Degraded;
-                }
+            } else if elapsed > timeout_secs && state.status == RegionStatus::Online {
+                warn!(
+                    "Federation: region '{}' marked degraded ({}s since heartbeat)",
+                    state.name, elapsed
+                );
+                state.status = RegionStatus::Degraded;
             }
         }
     }
