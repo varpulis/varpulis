@@ -168,6 +168,115 @@ impl BillingState {
 pub type SharedBillingState = Arc<BillingState>;
 
 // ---------------------------------------------------------------------------
+// Usage limit enforcement
+// ---------------------------------------------------------------------------
+
+/// Error returned when usage exceeds tier limits.
+#[derive(Debug, Serialize)]
+pub struct UsageLimitExceeded {
+    pub tier: Tier,
+    pub limit: i64,
+    pub current_usage: i64,
+    pub message: String,
+}
+
+impl BillingState {
+    /// Check if the org can process `additional_events` more events this month.
+    /// Returns `Ok(())` if within limit, `Err(UsageLimitExceeded)` if over.
+    #[cfg(feature = "saas")]
+    pub async fn check_usage_limit(
+        &self,
+        org_id: Uuid,
+        additional_events: i64,
+    ) -> Result<(), UsageLimitExceeded> {
+        // 1. Get org tier from DB
+        let tier = if let Some(ref pool) = self.db_pool {
+            if let Ok(Some(org)) = varpulis_db::repo::get_organization(pool, org_id).await {
+                org.tier.parse().unwrap_or(Tier::Free)
+            } else {
+                Tier::Free
+            }
+        } else {
+            Tier::Free
+        };
+
+        // Enterprise = no limit
+        let limit = match tier.event_limit() {
+            Some(l) => l,
+            None => return Ok(()),
+        };
+
+        // 2. Get current month usage from DB
+        let db_usage = if let Some(ref pool) = self.db_pool {
+            let today = chrono::Utc::now().date_naive();
+            let start =
+                chrono::NaiveDate::from_ymd_opt(today.year(), today.month(), 1).unwrap_or(today);
+            if let Ok(rows) = varpulis_db::repo::get_usage(pool, org_id, start, today).await {
+                rows.iter().map(|r| r.events_processed).sum::<i64>()
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
+        // 3. Add in-memory buffer (not yet flushed to DB)
+        let buffered = self.usage.read().await.get(&org_id);
+        let total = db_usage + buffered + additional_events;
+
+        if total > limit {
+            Err(UsageLimitExceeded {
+                tier: tier.clone(),
+                limit,
+                current_usage: db_usage + buffered,
+                message: format!(
+                    "Usage limit exceeded for {} tier ({}/{} events this month). Upgrade to increase your limit.",
+                    tier.display_name(),
+                    db_usage + buffered,
+                    limit,
+                ),
+            })
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Look up org_id for a raw API key from the database.
+    /// Hashes the key with SHA-256 and looks up the hash.
+    #[cfg(feature = "saas")]
+    pub async fn org_id_for_api_key(&self, raw_key: &str) -> Option<Uuid> {
+        use sha2::Digest;
+        let pool = self.db_pool.as_ref()?;
+        let hash = hex::encode(sha2::Sha256::digest(raw_key.as_bytes()));
+        let api_key = varpulis_db::repo::get_api_key_by_hash(pool, &hash)
+            .await
+            .ok()??;
+        Some(api_key.org_id)
+    }
+}
+
+/// Build a 429 Too Many Requests response from a usage limit error.
+pub fn usage_limit_response(err: &UsageLimitExceeded) -> warp::reply::Response {
+    use warp::Reply;
+    warp::reply::with_header(
+        warp::reply::with_status(
+            warp::reply::json(&serde_json::json!({
+                "error": "usage_limit_exceeded",
+                "message": err.message,
+                "tier": err.tier,
+                "limit": err.limit,
+                "current_usage": err.current_usage,
+                "upgrade_url": "/billing",
+            })),
+            warp::http::StatusCode::TOO_MANY_REQUESTS,
+        ),
+        "Retry-After",
+        "3600",
+    )
+    .into_response()
+}
+
+// ---------------------------------------------------------------------------
 // Usage flush task
 // ---------------------------------------------------------------------------
 
@@ -898,5 +1007,51 @@ mod tests {
             .await;
 
         assert_eq!(res.status(), 400);
+    }
+
+    #[test]
+    fn test_usage_limit_exceeded_serialization() {
+        let err = UsageLimitExceeded {
+            tier: Tier::Free,
+            limit: 10_000,
+            current_usage: 10_500,
+            message: "Usage limit exceeded for Free tier".to_string(),
+        };
+        let json = serde_json::to_value(&err).unwrap();
+        assert_eq!(json["tier"], "free");
+        assert_eq!(json["limit"], 10_000);
+        assert_eq!(json["current_usage"], 10_500);
+    }
+
+    #[test]
+    fn test_usage_limit_response_status() {
+        let err = UsageLimitExceeded {
+            tier: Tier::Free,
+            limit: 10_000,
+            current_usage: 11_000,
+            message: "Limit exceeded".to_string(),
+        };
+        let resp = usage_limit_response(&err);
+        assert_eq!(resp.status(), warp::http::StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[test]
+    fn test_tier_enterprise_no_limit() {
+        // Enterprise has no event limit
+        assert_eq!(Tier::Enterprise.event_limit(), None);
+    }
+
+    #[test]
+    fn test_usage_tracker_tracks_independently() {
+        let mut tracker = UsageTracker::new();
+        let org = Uuid::new_v4();
+
+        // Record events in multiple increments
+        tracker.record_events(org, 5_000);
+        tracker.record_events(org, 3_000);
+        tracker.record_events(org, 2_001);
+
+        // Should be cumulative
+        assert_eq!(tracker.get(&org), 10_001);
     }
 }

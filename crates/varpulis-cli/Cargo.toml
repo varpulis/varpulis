@@ -32,7 +32,7 @@ rustc-hash = { workspace = true }
 rand = { workspace = true }
 rayon = "1.10"
 serde_yaml = "0.9"
-toml = "0.8"
+toml = "1"
 thiserror = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
 reqwest = { workspace = true }
