@@ -500,7 +500,7 @@ onUnmounted(() => {
             <template #item="{ item, props: itemProps }">
               <v-list-item v-bind="itemProps">
                 <v-list-item-subtitle>
-                  {{ item.raw.pipelines_running }} / {{ item.raw.max_pipelines }} pipelines
+                  {{ item.pipelines_running }} / {{ item.max_pipelines }} pipelines
                 </v-list-item-subtitle>
               </v-list-item>
             </template>

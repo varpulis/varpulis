@@ -140,8 +140,8 @@ function close(): void {
           >
             <template #item="{ item, props: itemProps }">
               <v-list-item v-bind="itemProps">
-                <v-list-item-subtitle v-if="item.raw.subtitle">
-                  {{ item.raw.subtitle }}
+                <v-list-item-subtitle v-if="item.subtitle">
+                  {{ item.subtitle }}
                 </v-list-item-subtitle>
               </v-list-item>
             </template>
