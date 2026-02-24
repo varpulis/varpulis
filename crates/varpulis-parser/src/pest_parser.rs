@@ -187,23 +187,34 @@ fn convert_pest_error(e: pest::error::Error<Rule>) -> ParseError {
     };
 
     // Create a human-readable message based on what was expected
-    let message = match &e.variant {
+    let (message, hint) = match &e.variant {
         pest::error::ErrorVariant::ParsingError {
             positives,
             negatives: _,
         } => {
             if positives.is_empty() {
-                "Unexpected token".to_string()
+                ("Unexpected token".to_string(), None)
+            } else if is_stream_op_error(positives) {
+                // All positives are stream operations — produce a concise error
+                (
+                    "unknown stream operation".to_string(),
+                    Some(
+                        "valid operations: .where(), .select(), .emit(), .window(), .aggregate(), \
+                         .partition_by(), .within(), .having(), .to(), .context(), .log(), .print(), \
+                         .enrich(), .forecast(), .trend_aggregate(), .watermark(), .tap()"
+                            .to_string(),
+                    ),
+                )
             } else {
                 let expected: Vec<String> = positives.iter().map(format_rule_name).collect();
                 if expected.len() == 1 {
-                    format!("Expected {}", expected[0])
+                    (format!("Expected {}", expected[0]), None)
                 } else {
-                    format!("Expected one of: {}", expected.join(", "))
+                    (format!("Expected one of: {}", expected.join(", ")), None)
                 }
             }
         }
-        pest::error::ErrorVariant::CustomError { message } => message.clone(),
+        pest::error::ErrorVariant::CustomError { message } => (message.clone(), None),
     };
 
     ParseError::Located {
@@ -211,7 +222,7 @@ fn convert_pest_error(e: pest::error::Error<Rule>) -> ParseError {
         column,
         position,
         message,
-        hint: None,
+        hint,
     }
 }
 
@@ -243,6 +254,50 @@ fn format_rule_name(rule: &Rule) -> String {
         Rule::kleene_op => "Kleene operator (+, *, ?)".to_string(),
         _ => format!("{:?}", rule).to_lowercase().replace('_', " "),
     }
+}
+
+/// Returns true when all positives look like stream operation rules.
+/// This is used to produce a concise "unknown stream operation" error
+/// instead of listing 30+ individual operation names.
+fn is_stream_op_error(positives: &[Rule]) -> bool {
+    const STREAM_OP_RULES: &[Rule] = &[
+        Rule::context_op,
+        Rule::where_op,
+        Rule::select_op,
+        Rule::window_op,
+        Rule::aggregate_op,
+        Rule::having_op,
+        Rule::partition_by_op,
+        Rule::order_by_op,
+        Rule::limit_op,
+        Rule::distinct_op,
+        Rule::map_op,
+        Rule::filter_op,
+        Rule::tap_op,
+        Rule::print_op,
+        Rule::log_op,
+        Rule::emit_op,
+        Rule::to_op,
+        Rule::pattern_op,
+        Rule::concurrent_op,
+        Rule::process_op,
+        Rule::on_error_op,
+        Rule::collect_op,
+        Rule::on_op,
+        Rule::within_op,
+        Rule::not_op,
+        Rule::fork_op,
+        Rule::any_op,
+        Rule::all_op,
+        Rule::first_op,
+        Rule::watermark_op,
+        Rule::allowed_lateness_op,
+        Rule::trend_aggregate_op,
+        Rule::score_op,
+        Rule::forecast_op,
+        Rule::enrich_op,
+    ];
+    positives.len() >= 10 && positives.iter().all(|r| STREAM_OP_RULES.contains(r))
 }
 
 fn parse_statement(pair: pest::iterators::Pair<Rule>) -> ParseResult<Spanned<Stmt>> {
@@ -359,6 +414,7 @@ fn parse_stream_decl(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
     let mut type_annotation = None;
     let mut source = StreamSource::Ident("".to_string());
     let mut ops = Vec::new();
+    let mut op_spans = Vec::new();
 
     for p in inner {
         match p.as_rule() {
@@ -366,9 +422,10 @@ fn parse_stream_decl(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
                 type_annotation = Some(parse_type(p.into_inner().expect_next("type")?)?);
             }
             Rule::stream_expr => {
-                let (s, o) = parse_stream_expr(p)?;
+                let (s, o, spans) = parse_stream_expr(p)?;
                 source = s;
                 ops = o;
+                op_spans = spans;
             }
             _ => {}
         }
@@ -379,23 +436,28 @@ fn parse_stream_decl(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
         type_annotation,
         source,
         ops,
+        op_spans,
     })
 }
 
 fn parse_stream_expr(
     pair: pest::iterators::Pair<Rule>,
-) -> ParseResult<(StreamSource, Vec<StreamOp>)> {
+) -> ParseResult<(StreamSource, Vec<StreamOp>, Vec<varpulis_core::span::Span>)> {
     let mut inner = pair.into_inner();
     let source = parse_stream_source(inner.expect_next("stream source")?)?;
     let mut ops = Vec::new();
+    let mut op_spans = Vec::new();
 
     for p in inner {
         if p.as_rule() == Rule::stream_op {
+            let pest_span = p.as_span();
+            let span = varpulis_core::span::Span::new(pest_span.start(), pest_span.end());
             ops.push(parse_stream_op(p)?);
+            op_spans.push(span);
         }
     }
 
-    Ok((source, ops))
+    Ok((source, ops, op_spans))
 }
 
 // ============================================================================
