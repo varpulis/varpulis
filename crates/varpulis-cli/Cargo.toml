@@ -37,6 +37,9 @@ thiserror = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
 reqwest = { workspace = true }
 varpulis-cluster = { path = "../varpulis-cluster" }
+varpulis-datagen = { path = "../varpulis-datagen" }
+jsonwebtoken = { workspace = true }
+urlencoding = "2"
 
 # OpenTelemetry (optional, behind "otel" feature)
 opentelemetry = { workspace = true, optional = true }
