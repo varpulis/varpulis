@@ -112,6 +112,30 @@ const router = createRouter({
       meta: { title: 'SOC at Scale Demo' },
     },
     {
+      path: '/playground',
+      name: 'playground',
+      component: () => import('@/views/PlaygroundView.vue'),
+      meta: { title: 'Playground' },
+    },
+    {
+      path: '/landing',
+      name: 'landing',
+      component: () => import('@/views/LandingView.vue'),
+      meta: { title: 'Varpulis - Pattern Detection for Event Streams' },
+    },
+    {
+      path: '/login',
+      name: 'login',
+      component: () => import('@/views/LoginView.vue'),
+      meta: { title: 'Sign In' },
+    },
+    {
+      path: '/billing',
+      name: 'billing',
+      component: () => import('@/views/BillingView.vue'),
+      meta: { title: 'Billing' },
+    },
+    {
       path: '/:pathMatch(.*)*',
       redirect: '/',
     },

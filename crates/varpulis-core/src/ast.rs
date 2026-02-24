@@ -5,7 +5,7 @@ use crate::types::Type;
 use serde::{Deserialize, Serialize};
 
 /// A complete VPL program
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Program {
     pub statements: Vec<Spanned<Stmt>>,
 }

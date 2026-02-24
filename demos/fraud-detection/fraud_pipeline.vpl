@@ -1,0 +1,74 @@
+# Fraud Detection Pipeline
+# Detects multi-pattern fraud in real-time banking transactions.
+#
+# Run: docker-compose up
+# Then open Grafana at http://localhost:3000
+
+# === Event Types ===
+
+event login:
+    user_id: str
+    city: str
+    device: str
+    success: bool
+
+event transfer:
+    user_id: str
+    amount: float
+    from_account: str
+    to_account: str
+    currency: str
+
+event card_payment:
+    user_id: str
+    amount: float
+    merchant: str
+    account_id: str
+
+# === Pattern 1: Large Transfer After Login ===
+# Login followed by transfer > $5000 within 5 minutes
+
+stream SuspiciousTransfer = login as l -> transfer as t .within(5m)
+    .where(l.user_id == t.user_id && t.amount > 5000)
+    .emit(
+        alert_type: "suspicious_transfer",
+        user: l.user_id,
+        amount: t.amount,
+        city: l.city,
+        device: l.device
+    )
+
+# === Pattern 2: Rapid Small Transfers ===
+# Multiple transfers from same user within 2 minutes (structuring)
+
+stream RapidTransfers = transfer
+    .window(5, sliding: 1)
+    .aggregate(
+        user_id: last(user_id),
+        tx_count: count(),
+        total: sum(amount)
+    )
+    .where(tx_count >= 3 && total > 2000)
+    .emit(
+        alert_type: "rapid_transfers",
+        user: user_id,
+        count: tx_count,
+        total_amount: total
+    )
+
+# === Pattern 3: High-Value Card Payment ===
+# Single card payment over $10,000
+
+stream HighValuePayment = card_payment
+    .where(amount > 10000)
+    .emit(
+        alert_type: "high_value_payment",
+        user: user_id,
+        amount: amount,
+        merchant: merchant
+    )
+
+# === Unified Alert Stream ===
+
+stream AllFraudAlerts = merge(SuspiciousTransfer, RapidTransfers, HighValuePayment)
+    .emit()

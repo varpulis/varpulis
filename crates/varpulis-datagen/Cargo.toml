@@ -1,0 +1,12 @@
+[package]
+name = "varpulis-datagen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Event generator library for Varpulis demos and testing"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+rand = { workspace = true }
+chrono = { workspace = true }
