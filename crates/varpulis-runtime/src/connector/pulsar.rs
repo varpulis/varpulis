@@ -175,47 +175,33 @@ mod pulsar_impl {
                     .await
                     {
                         Ok(Ok(Some(msg))) => {
-                            let payload = &msg.payload;
-                            match payload {
-                                Ok(json_msg) => {
-                                    if json_msg.payload.len()
-                                        > crate::limits::MAX_EVENT_PAYLOAD_BYTES
-                                    {
-                                        warn!(
-                                            "Pulsar source {}: payload too large ({} bytes), skipped",
-                                            name,
-                                            json_msg.payload.len()
-                                        );
-                                        let _ = consumer.ack(&msg).await;
-                                        continue;
-                                    }
+                            let data = &msg.payload.data;
+                            if data.len() > crate::limits::MAX_EVENT_PAYLOAD_BYTES {
+                                warn!(
+                                    "Pulsar source {}: payload too large ({} bytes), skipped",
+                                    name,
+                                    data.len()
+                                );
+                                let _ = consumer.ack(&msg).await;
+                                continue;
+                            }
 
-                                    match serde_json::from_slice::<serde_json::Value>(
-                                        &json_msg.payload,
-                                    ) {
-                                        Ok(json) => {
-                                            let event_type = json
-                                                .get("event_type")
-                                                .and_then(|v| v.as_str())
-                                                .unwrap_or("PulsarEvent")
-                                                .to_string();
+                            match serde_json::from_slice::<serde_json::Value>(data) {
+                                Ok(json) => {
+                                    let event_type = json
+                                        .get("event_type")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("PulsarEvent")
+                                        .to_string();
 
-                                            let event = json_to_event(&event_type, &json);
+                                    let event = json_to_event(&event_type, &json);
 
-                                            if tx.send(event).await.is_err() {
-                                                break;
-                                            }
-                                        }
-                                        Err(e) => {
-                                            warn!(
-                                                "Pulsar source {}: failed to parse JSON: {}",
-                                                name, e
-                                            );
-                                        }
+                                    if tx.send(event).await.is_err() {
+                                        break;
                                     }
                                 }
                                 Err(e) => {
-                                    warn!("Pulsar source {}: deserialization error: {}", name, e);
+                                    warn!("Pulsar source {}: failed to parse JSON: {}", name, e);
                                 }
                             }
 
