@@ -1,0 +1,19 @@
+[package]
+name = "varpulis-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "WASM bindings for VPL parser and validator"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+varpulis-core = { path = "../varpulis-core" }
+varpulis-parser = { path = "../varpulis-parser" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+wasm-bindgen = "0.2"
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"

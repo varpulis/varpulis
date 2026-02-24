@@ -1,0 +1,71 @@
+# IoT Sensor Monitoring Pipeline
+# Detects anomalies in temperature, humidity, and pressure sensor data.
+#
+# Run: docker-compose up
+# Then open Grafana at http://localhost:3000
+
+# === Event Types ===
+
+event sensor_reading:
+    sensor_id: str
+    zone: str
+    temperature: float
+    humidity: float
+    pressure: float
+
+event sensor_alert:
+    sensor_id: str
+    zone: str
+    temperature: float
+    humidity: float
+    pressure: float
+    alert_type: str
+
+# === Pattern 1: Temperature Spike ===
+# Single reading with temperature above safe threshold
+
+stream TempSpike = sensor_reading
+    .where(temperature > 50)
+    .emit(
+        alert_type: "temperature_spike",
+        sensor: sensor_id,
+        zone: zone,
+        temp: temperature
+    )
+
+# === Pattern 2: Temperature Drift ===
+# Average temperature in a window exceeding threshold
+
+stream TempDrift = sensor_reading
+    .window(10, sliding: 2)
+    .aggregate(
+        zone: last(zone),
+        sensor_id: last(sensor_id),
+        avg_temp: avg(temperature),
+        max_temp: max(temperature),
+        reading_count: count()
+    )
+    .where(avg_temp > 35)
+    .emit(
+        alert_type: "temperature_drift",
+        sensor: sensor_id,
+        zone: zone,
+        avg_temp: avg_temp,
+        max_temp: max_temp
+    )
+
+# === Pattern 3: High Humidity ===
+
+stream HighHumidity = sensor_reading
+    .where(humidity > 80)
+    .emit(
+        alert_type: "high_humidity",
+        sensor: sensor_id,
+        zone: zone,
+        humidity: humidity
+    )
+
+# === Unified Alert Stream ===
+
+stream AllIoTAlerts = merge(TempSpike, TempDrift, HighHumidity)
+    .emit()
