@@ -2517,7 +2517,9 @@ async fn run_server(
 
     let admin_key = auth_config.api_key().map(|s| s.to_string());
     let tenant_manager_for_heartbeat = tenant_manager.clone();
-    let api_routes = api::api_routes(tenant_manager, admin_key, cors_origins);
+    // api_routes is built later, after billing_state is created
+    let api_tenant_manager = tenant_manager;
+    let api_admin_key = admin_key;
 
     // Playground routes (no auth required)
     let playground_state =
@@ -2610,6 +2612,14 @@ async fn run_server(
         }
     };
     let audit_r = audit::audit_routes(audit_logger.clone());
+
+    // Build API routes (after billing_state so inject handlers can check usage limits)
+    let api_routes = api::api_routes(
+        api_tenant_manager,
+        api_admin_key,
+        cors_origins,
+        billing_state.clone(),
+    );
 
     // Combined routes
     let routes = ws_route
