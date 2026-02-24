@@ -22,6 +22,7 @@ pub struct Organization {
     pub name: String,
     /// One of "free", "pro", "enterprise".
     pub tier: String,
+    pub stripe_customer_id: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -84,6 +85,7 @@ mod tests {
                 owner_id: Uuid::new_v4(),
                 name: "Test Org".to_string(),
                 tier: tier.to_string(),
+                stripe_customer_id: None,
                 created_at: Utc::now(),
             };
             assert_eq!(&org.tier, tier);

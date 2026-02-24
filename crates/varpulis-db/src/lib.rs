@@ -8,6 +8,7 @@ pub mod pool;
 pub mod repo;
 
 pub use models::*;
+pub use sqlx::PgPool;
 
 /// Errors originating from the database layer.
 #[derive(Debug, thiserror::Error)]

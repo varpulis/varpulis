@@ -6282,9 +6282,12 @@ name = "varpulis-cli"
 version = "0.4.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "chrono",
  "clap",
  "futures-util",
+ "hex",
+ "hmac",
  "indexmap 2.12.1",
  "jsonwebtoken",
  "opentelemetry",
@@ -6297,6 +6300,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
@@ -6309,6 +6313,7 @@ dependencies = [
  "varpulis-cluster",
  "varpulis-core",
  "varpulis-datagen",
+ "varpulis-db",
  "varpulis-parser",
  "varpulis-runtime",
  "warp",
