@@ -2549,6 +2549,22 @@ async fn run_server(
         }
     };
 
+    // Audit log (created early so OAuth and billing can reference it)
+    let audit_logger: Option<audit::SharedAuditLogger> = {
+        let audit_path = std::path::PathBuf::from("data/audit.jsonl");
+        if let Some(parent) = audit_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match audit::AuditLogger::open(audit_path).await {
+            Ok(logger) => Some(logger),
+            Err(e) => {
+                tracing::warn!("Audit logging disabled: {}", e);
+                None
+            }
+        }
+    };
+    let audit_r = audit::audit_routes(audit_logger.clone());
+
     // OAuth routes (optional — enabled when GITHUB_CLIENT_ID is set)
     let oauth_state: Option<oauth::SharedOAuthState> =
         oauth::OAuthConfig::from_env().map(|oauth_config| {
@@ -2557,7 +2573,8 @@ async fn run_server(
                 &oauth_config.github_client_id[..8.min(oauth_config.github_client_id.len())]
             );
             #[allow(unused_mut)]
-            let mut oauth = oauth::OAuthState::new(oauth_config);
+            let mut oauth =
+                oauth::OAuthState::new(oauth_config).with_audit_logger(audit_logger.clone());
             #[cfg(feature = "saas")]
             if let Some(ref pool) = db_pool {
                 oauth = oauth.with_db_pool(pool.clone());
@@ -2573,7 +2590,8 @@ async fn run_server(
         .map(|billing_config| {
             info!("Stripe billing enabled");
             #[allow(unused_mut)]
-            let mut billing = billing::BillingState::new(billing_config);
+            let mut billing =
+                billing::BillingState::new(billing_config).with_audit_logger(audit_logger.clone());
             #[cfg(feature = "saas")]
             if let Some(ref pool) = db_pool {
                 billing = billing.with_db_pool(pool.clone());
@@ -2595,23 +2613,6 @@ async fn run_server(
     if let (Some(ref bs), Some(ref pool)) = (&billing_state, &db_pool) {
         billing::spawn_usage_flush(bs.clone(), pool.clone());
     }
-
-    // Audit log (optional — writes to data/audit.jsonl)
-    let audit_logger: Option<audit::SharedAuditLogger> = {
-        let audit_path = std::path::PathBuf::from("data/audit.jsonl");
-        // Ensure parent directory exists
-        if let Some(parent) = audit_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        match audit::AuditLogger::open(audit_path).await {
-            Ok(logger) => Some(logger),
-            Err(e) => {
-                tracing::warn!("Audit logging disabled: {}", e);
-                None
-            }
-        }
-    };
-    let audit_r = audit::audit_routes(audit_logger.clone());
 
     // Build API routes (after billing_state so inject handlers can check usage limits)
     let api_routes = api::api_routes(

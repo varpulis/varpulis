@@ -1,0 +1,162 @@
+# Varpulis CEP — Production Overlay
+#
+# Applies resource limits, security hardening, and backup configuration
+# on top of docker-compose.saas.yml.
+#
+# Usage:
+#   docker compose -f docker-compose.saas.yml -f docker-compose.prod.yml up -d
+#
+# Requires:
+#   - .env with production values (see .env.example)
+#   - SITE_ADDRESS set to your domain (e.g., demo.varpulis-cep.com)
+#   - Stripe configured in live mode
+
+services:
+  postgres:
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 1G
+        reservations:
+          cpus: "0.5"
+          memory: 256M
+    environment:
+      # Production tuning
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "work_mem=8MB"
+      - "-c"
+      - "maintenance_work_mem=128MB"
+      - "-c"
+      - "max_connections=100"
+      - "-c"
+      - "log_min_duration_statement=100"
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  varpulis:
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 2G
+        reservations:
+          cpus: "1"
+          memory: 512M
+    environment:
+      - RUST_LOG=info,varpulis=info
+      - VARPULIS_RATE_LIMIT=5000
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "10"
+
+  web-ui:
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  caddy:
+    environment:
+      - SITE_ADDRESS=${SITE_ADDRESS:?Set SITE_ADDRESS in .env (e.g., demo.varpulis-cep.com)}
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  prometheus:
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  grafana:
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          cpus: "0.1"
+          memory: 128M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ─── PostgreSQL Backup (pg_dump daily) ───────────────────────
+  pg-backup:
+    image: postgres:16-alpine
+    container_name: varpulis-pg-backup
+    environment:
+      PGHOST: postgres
+      PGUSER: varpulis
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: varpulis
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        while true; do
+          TIMESTAMP=$$(date +%Y%m%d_%H%M%S)
+          echo "Starting backup $$TIMESTAMP"
+          pg_dump --format=custom --file=/backups/varpulis_$$TIMESTAMP.dump
+          # Keep last 7 daily backups
+          ls -1t /backups/*.dump | tail -n +8 | xargs -r rm
+          echo "Backup complete. Next in 24h."
+          sleep 86400
+        done
+    volumes:
+      - pg-backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - varpulis-net
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+
+volumes:
+  pg-backups:

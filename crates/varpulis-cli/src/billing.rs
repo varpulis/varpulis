@@ -10,6 +10,8 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 use warp::Filter;
 
+use crate::audit::{AuditAction, AuditEntry, SharedAuditLogger};
+
 #[cfg(feature = "saas")]
 use chrono::Datelike;
 
@@ -145,6 +147,7 @@ pub struct BillingState {
     pub http_client: reqwest::Client,
     #[cfg(feature = "saas")]
     pub db_pool: Option<varpulis_db::PgPool>,
+    pub audit_logger: Option<SharedAuditLogger>,
 }
 
 impl BillingState {
@@ -155,7 +158,13 @@ impl BillingState {
             http_client: reqwest::Client::new(),
             #[cfg(feature = "saas")]
             db_pool: None,
+            audit_logger: None,
         }
+    }
+
+    pub fn with_audit_logger(mut self, logger: Option<SharedAuditLogger>) -> Self {
+        self.audit_logger = logger;
+        self
     }
 
     #[cfg(feature = "saas")]
@@ -552,6 +561,19 @@ async fn handle_checkout(
                 Ok(session) => {
                     let checkout_url = session["url"].as_str().unwrap_or("");
                     let session_id = session["id"].as_str().unwrap_or("");
+                    // Audit log: checkout started
+                    if let Some(ref logger) = s.audit_logger {
+                        logger
+                            .log(
+                                AuditEntry::new(
+                                    &org_id_str,
+                                    AuditAction::CheckoutStarted,
+                                    "/api/v1/billing/checkout",
+                                )
+                                .with_detail(format!("session: {}", session_id)),
+                            )
+                            .await;
+                    }
                     Ok(warp::reply::with_status(
                         warp::reply::json(&serde_json::json!({
                             "checkout_url": checkout_url,
@@ -684,6 +706,20 @@ async fn handle_webhook(
     let event_type = event["type"].as_str().unwrap_or("");
     tracing::info!("Stripe webhook: {}", event_type);
 
+    // Audit log: webhook received
+    if let Some(ref logger) = s.audit_logger {
+        logger
+            .log(
+                AuditEntry::new(
+                    "stripe",
+                    AuditAction::WebhookReceived,
+                    "/api/v1/billing/webhook",
+                )
+                .with_detail(event_type.to_string()),
+            )
+            .await;
+    }
+
     #[cfg(feature = "saas")]
     if let Some(ref pool) = s.db_pool {
         match event_type {
@@ -706,6 +742,19 @@ async fn handle_webhook(
                             tracing::error!("Failed to update tier: {}", e);
                         }
                         tracing::info!("Org {} upgraded to pro (customer: {})", org_id, customer);
+                        // Audit log: tier upgrade
+                        if let Some(ref logger) = s.audit_logger {
+                            logger
+                                .log(
+                                    AuditEntry::new(
+                                        org_id.to_string(),
+                                        AuditAction::TierChange,
+                                        "/api/v1/billing/webhook",
+                                    )
+                                    .with_detail("upgraded to pro"),
+                                )
+                                .await;
+                        }
                     }
                 }
             }
@@ -721,6 +770,19 @@ async fn handle_webhook(
                             tracing::error!("Failed to downgrade org: {}", e);
                         }
                         tracing::info!("Org {} downgraded to free", org.id);
+                        // Audit log: tier downgrade
+                        if let Some(ref logger) = s.audit_logger {
+                            logger
+                                .log(
+                                    AuditEntry::new(
+                                        org.id.to_string(),
+                                        AuditAction::TierChange,
+                                        "/api/v1/billing/webhook",
+                                    )
+                                    .with_detail("downgraded to free"),
+                                )
+                                .await;
+                        }
                     }
                 }
             }
