@@ -289,3 +289,190 @@ async fn test_score_identity_model() {
         out_y
     );
 }
+
+// =============================================================================
+// Batch inference / GPU config tests
+// =============================================================================
+
+#[tokio::test]
+async fn test_score_batch_inference() {
+    // Load model with batch_size: 4, send 4 events, verify results match per-event infer()
+    use varpulis_runtime::scoring::{GpuConfig, GpuProvider, OnnxModel};
+
+    let model_single = OnnxModel::load(
+        MODEL_PATH,
+        vec!["amount".into(), "velocity".into(), "distance".into()],
+        vec!["fraud_probability".into()],
+        None,
+    )
+    .unwrap();
+    let model_batch = OnnxModel::load(
+        MODEL_PATH,
+        vec!["amount".into(), "velocity".into(), "distance".into()],
+        vec!["fraud_probability".into()],
+        Some(GpuConfig {
+            provider: GpuProvider::Cpu,
+            batch_size: 4,
+        }),
+    )
+    .unwrap();
+
+    let events = vec![
+        Event::new("T")
+            .with_field("amount", 50.0f64)
+            .with_field("velocity", 2.0f64)
+            .with_field("distance", 10.0f64),
+        Event::new("T")
+            .with_field("amount", 5000.0f64)
+            .with_field("velocity", 20.0f64)
+            .with_field("distance", 800.0f64),
+        Event::new("T")
+            .with_field("amount", 100.0f64)
+            .with_field("velocity", 5.0f64)
+            .with_field("distance", 50.0f64),
+        Event::new("T")
+            .with_field("amount", 3000.0f64)
+            .with_field("velocity", 15.0f64)
+            .with_field("distance", 500.0f64),
+    ];
+
+    // Per-event inference
+    let single_results: Vec<Vec<(String, f64)>> = events
+        .iter()
+        .map(|e| model_single.infer(e).unwrap())
+        .collect();
+
+    // Batch inference
+    let event_refs: Vec<&Event> = events.iter().collect();
+    let batch_results = model_batch.infer_batch(&event_refs).unwrap();
+
+    assert_eq!(batch_results.len(), 4);
+    for (i, (single, batch)) in single_results.iter().zip(batch_results.iter()).enumerate() {
+        assert_eq!(
+            single.len(),
+            batch.len(),
+            "Event {}: output count mismatch",
+            i
+        );
+        for (s, b) in single.iter().zip(batch.iter()) {
+            assert_eq!(s.0, b.0, "Event {}: field name mismatch", i);
+            assert!(
+                (s.1 - b.1).abs() < 0.001,
+                "Event {}: batch result {:.6} differs from single {:.6}",
+                i,
+                b.1,
+                s.1
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_score_batch_single_event() {
+    use varpulis_runtime::scoring::{GpuConfig, GpuProvider, OnnxModel};
+
+    let model = OnnxModel::load(
+        MODEL_PATH,
+        vec!["amount".into(), "velocity".into(), "distance".into()],
+        vec!["fraud_probability".into()],
+        Some(GpuConfig {
+            provider: GpuProvider::Cpu,
+            batch_size: 4,
+        }),
+    )
+    .unwrap();
+
+    let event = Event::new("T")
+        .with_field("amount", 5000.0f64)
+        .with_field("velocity", 20.0f64)
+        .with_field("distance", 800.0f64);
+
+    // Single-event batch
+    let batch_result = model.infer_batch(&[&event]).unwrap();
+    let single_result = model.infer(&event).unwrap();
+
+    assert_eq!(batch_result.len(), 1);
+    assert!(
+        (batch_result[0][0].1 - single_result[0].1).abs() < 0.001,
+        "Single-event batch should match infer(): {:.6} vs {:.6}",
+        batch_result[0][0].1,
+        single_result[0].1
+    );
+}
+
+#[tokio::test]
+async fn test_score_batch_empty() {
+    use varpulis_runtime::scoring::{GpuConfig, GpuProvider, OnnxModel};
+
+    let model = OnnxModel::load(
+        MODEL_PATH,
+        vec!["amount".into(), "velocity".into(), "distance".into()],
+        vec!["fraud_probability".into()],
+        Some(GpuConfig {
+            provider: GpuProvider::Cpu,
+            batch_size: 4,
+        }),
+    )
+    .unwrap();
+
+    let result = model.infer_batch(&[]).unwrap();
+    assert!(result.is_empty(), "Empty batch should return empty vec");
+}
+
+#[test]
+fn test_score_gpu_config_cpu_default() {
+    use varpulis_runtime::scoring::GpuConfig;
+
+    let config = GpuConfig::default();
+    assert_eq!(config.batch_size, 1);
+    assert!(matches!(
+        config.provider,
+        varpulis_runtime::scoring::GpuProvider::Cpu
+    ));
+}
+
+#[test]
+fn test_score_vpl_with_batch_size() {
+    use varpulis_core::ast::StreamOp;
+
+    let code = format!(
+        r#"stream S = Data
+    .score(model: "{}", inputs: [amount, velocity, distance], outputs: [fraud_prob], batch_size: 4)"#,
+        MODEL_PATH
+    );
+    let program = parse(&code).expect("parse");
+    let stream = &program.streams[0];
+
+    let score_op = stream
+        .ops
+        .iter()
+        .find(|op| matches!(op, StreamOp::Score(_)));
+    assert!(score_op.is_some(), ".score() op should be in AST");
+
+    if let StreamOp::Score(spec) = score_op.unwrap() {
+        assert_eq!(spec.batch_size, 4, "batch_size should be 4");
+    }
+}
+
+#[test]
+fn test_score_vpl_with_gpu_true() {
+    use varpulis_core::ast::StreamOp;
+
+    let code = format!(
+        r#"stream S = Data
+    .score(model: "{}", inputs: [amount, velocity, distance], outputs: [fraud_prob], gpu: true)"#,
+        MODEL_PATH
+    );
+    let program = parse(&code).expect("parse");
+    let stream = &program.streams[0];
+
+    let score_op = stream
+        .ops
+        .iter()
+        .find(|op| matches!(op, StreamOp::Score(_)));
+    assert!(score_op.is_some(), ".score() op should be in AST");
+
+    if let StreamOp::Score(spec) = score_op.unwrap() {
+        assert!(spec.gpu, "gpu should be true");
+    }
+}

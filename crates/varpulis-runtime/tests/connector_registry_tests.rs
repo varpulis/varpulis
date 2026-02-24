@@ -1253,6 +1253,202 @@ fn test_redis_sink_stub_name() {
 }
 
 // ==========================================================================
+// PulsarConfig builder tests
+// ==========================================================================
+
+#[test]
+fn test_pulsar_config_builder() {
+    use varpulis_runtime::connector::PulsarConfig;
+
+    let config = PulsarConfig::new(
+        "pulsar://localhost:6650",
+        "persistent://public/default/topic",
+    )
+    .with_subscription("my-sub")
+    .with_token("secret-token")
+    .with_consumer_name("consumer-1")
+    .with_batch_size(200);
+
+    assert_eq!(config.service_url, "pulsar://localhost:6650");
+    assert_eq!(config.topic, "persistent://public/default/topic");
+    assert_eq!(config.subscription, Some("my-sub".to_string()));
+    assert_eq!(config.token, Some("secret-token".to_string()));
+    assert_eq!(config.consumer_name, Some("consumer-1".to_string()));
+    assert_eq!(config.batch_size, 200);
+}
+
+#[test]
+fn test_pulsar_config_batch_size_default() {
+    use varpulis_runtime::connector::PulsarConfig;
+
+    let config = PulsarConfig::new("pulsar://localhost:6650", "topic");
+    assert_eq!(
+        config.batch_size, 100,
+        "PulsarConfig default batch_size should be 100"
+    );
+    assert!(config.subscription.is_none());
+    assert!(config.token.is_none());
+    assert!(config.consumer_name.is_none());
+}
+
+// ==========================================================================
+// RedisStreamConfig builder tests
+// ==========================================================================
+
+#[test]
+fn test_redis_stream_config_defaults() {
+    use varpulis_runtime::connector::RedisStreamConfig;
+
+    let config = RedisStreamConfig::new("redis://localhost:6379", "my-stream");
+    assert_eq!(config.url, "redis://localhost:6379");
+    assert_eq!(config.stream_key, "my-stream");
+    assert!(
+        config.group_name.is_none(),
+        "group_name default should be None"
+    );
+    assert_eq!(config.batch_size, 100, "batch_size default should be 100");
+    assert_eq!(config.block_ms, 1000, "block_ms default should be 1000");
+    assert!(config.max_len.is_none(), "max_len default should be None");
+}
+
+#[test]
+fn test_redis_stream_config_builder_chain() {
+    use varpulis_runtime::connector::RedisStreamConfig;
+
+    let config = RedisStreamConfig::new("redis://localhost", "events")
+        .with_group("my-group")
+        .with_consumer("consumer-0")
+        .with_batch_size(500)
+        .with_block_ms(5000)
+        .with_max_len(100_000);
+
+    assert_eq!(config.group_name, Some("my-group".to_string()));
+    assert_eq!(config.consumer_name, Some("consumer-0".to_string()));
+    assert_eq!(config.batch_size, 500);
+    assert_eq!(config.block_ms, 5000);
+    assert_eq!(config.max_len, Some(100_000));
+}
+
+// ==========================================================================
+// ConnectorRegistry::create_from_config — Pulsar and Redis Streams
+// ==========================================================================
+
+#[tokio::test]
+async fn test_create_from_config_pulsar() {
+    let config = ConnectorConfig::new("pulsar", "pulsar://localhost:6650").with_topic("events");
+    let result = ConnectorRegistry::create_from_config(&config).await;
+    assert!(
+        result.is_ok(),
+        "create_from_config('pulsar') should succeed"
+    );
+    assert_eq!(result.unwrap().name(), "pulsar");
+}
+
+#[tokio::test]
+async fn test_create_from_config_redis_stream() {
+    let config =
+        ConnectorConfig::new("redis_stream", "redis://localhost:6379").with_topic("my-stream");
+    let result = ConnectorRegistry::create_from_config(&config).await;
+    assert!(
+        result.is_ok(),
+        "create_from_config('redis_stream') should succeed"
+    );
+    assert_eq!(result.unwrap().name(), "redis_stream");
+}
+
+// ==========================================================================
+// Pulsar stub connector tests (feature off)
+// ==========================================================================
+
+#[cfg(not(feature = "pulsar"))]
+#[tokio::test]
+async fn test_pulsar_source_stub_not_available() {
+    use tokio::sync::mpsc;
+    use varpulis_runtime::connector::{PulsarConfig, PulsarSource, SourceConnector};
+
+    let config = PulsarConfig::new("pulsar://localhost:6650", "topic");
+    let mut source = PulsarSource::new("pulsar-src", config);
+    assert_eq!(source.name(), "pulsar-src");
+    assert!(!source.is_running());
+
+    let (tx, _rx) = mpsc::channel(10);
+    let result = source.start(tx).await;
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, ConnectorError::NotAvailable(_)),
+        "Expected NotAvailable, got: {:?}",
+        err
+    );
+}
+
+#[cfg(not(feature = "pulsar"))]
+#[tokio::test]
+async fn test_pulsar_sink_stub_not_available() {
+    use varpulis_runtime::connector::{PulsarConfig, PulsarSink, SinkConnector};
+
+    let config = PulsarConfig::new("pulsar://localhost:6650", "topic");
+    let sink = PulsarSink::new("pulsar-sink", config);
+    assert_eq!(sink.name(), "pulsar-sink");
+
+    let event = Event::new("TestEvent").with_field("data", "hello");
+    let result = sink.send(&event).await;
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, ConnectorError::NotAvailable(_)),
+        "Expected NotAvailable, got: {:?}",
+        err
+    );
+}
+
+// ==========================================================================
+// Redis Streams stub connector tests (feature off)
+// ==========================================================================
+
+#[cfg(not(feature = "redis"))]
+#[tokio::test]
+async fn test_redis_stream_source_stub_not_available() {
+    use tokio::sync::mpsc;
+    use varpulis_runtime::connector::{RedisStreamConfig, RedisStreamSource, SourceConnector};
+
+    let config = RedisStreamConfig::new("redis://localhost:6379", "stream");
+    let mut source = RedisStreamSource::new("redis-stream-src", config);
+    assert_eq!(source.name(), "redis-stream-src");
+    assert!(!source.is_running());
+
+    let (tx, _rx) = mpsc::channel(10);
+    let result = source.start(tx).await;
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, ConnectorError::NotAvailable(_)),
+        "Expected NotAvailable, got: {:?}",
+        err
+    );
+}
+
+#[cfg(not(feature = "redis"))]
+#[tokio::test]
+async fn test_redis_stream_sink_stub_not_available() {
+    use varpulis_runtime::connector::{RedisStreamConfig, RedisStreamSinkStub, SinkConnector};
+
+    let config = RedisStreamConfig::new("redis://localhost:6379", "stream");
+    let sink = RedisStreamSinkStub::new("redis-stream-sink", config);
+    assert_eq!(sink.name(), "redis-stream-sink");
+
+    let event = Event::new("TestEvent").with_field("data", "hello");
+    let result = sink.send(&event).await;
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, ConnectorError::NotAvailable(_)),
+        "Expected NotAvailable, got: {:?}",
+        err
+    );
+}
+
+// ==========================================================================
 // Multiple connectors in ManagedConnectorRegistry
 // ==========================================================================
 

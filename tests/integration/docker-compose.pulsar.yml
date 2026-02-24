@@ -1,0 +1,58 @@
+services:
+  pulsar:
+    image: apachepulsar/pulsar:4.0
+    hostname: pulsar
+    container_name: varpulis-pulsar
+    command: bin/pulsar standalone
+    ports:
+      - "6650:6650"
+      - "8080:8080"
+    environment:
+      PULSAR_MEM: "-Xms256m -Xmx512m"
+    healthcheck:
+      test: ["CMD", "bin/pulsar-admin", "brokers", "healthcheck"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  pulsar-setup:
+    image: apachepulsar/pulsar:4.0
+    depends_on:
+      pulsar:
+        condition: service_healthy
+    entrypoint: ['/bin/sh', '-c']
+    command: |
+      "
+      echo 'Creating test topics...'
+      bin/pulsar-admin topics create persistent://public/default/varpulis-test-input
+      bin/pulsar-admin topics create persistent://public/default/varpulis-test-output
+      echo 'Topics created:'
+      bin/pulsar-admin topics list public/default
+      "
+    environment:
+      PULSAR_ADMIN_URL: "http://pulsar:8080"
+
+  test-runner:
+    build:
+      context: ../..
+      dockerfile: tests/integration/Dockerfile.pulsar-test
+    container_name: varpulis-pulsar-tests
+    depends_on:
+      pulsar-setup:
+        condition: service_completed_successfully
+    environment:
+      PULSAR_URL: "pulsar://pulsar:6650"
+      RUST_LOG: info
+      RUST_BACKTRACE: 1
+    command: >
+      sh -c "
+        export PULSAR_URL=pulsar://pulsar:6650 &&
+        cargo test -p varpulis-runtime --features pulsar pulsar_integration -- --ignored --nocapture
+      "
+    networks:
+      - default
+
+networks:
+  default:
+    driver: bridge
