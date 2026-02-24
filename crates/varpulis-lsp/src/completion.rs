@@ -226,11 +226,13 @@ fn get_connector_param_completions(
                 ParamType::Str => format!("{}: \"$1\"", p.name),
                 ParamType::Int => format!("{}: $1", p.name),
                 ParamType::Bool => format!("{}: ${{1:true}}", p.name),
+                ParamType::StrArray => format!("{}: [\"$1\"]", p.name),
             };
             let type_label = match p.param_type {
                 ParamType::Str => "string",
                 ParamType::Int => "integer",
                 ParamType::Bool => "boolean",
+                ParamType::StrArray => "string[]",
             };
             completion_item(
                 p.name,
