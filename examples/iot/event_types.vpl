@@ -1,0 +1,86 @@
+# Varpulis IoT — Standard Event Type Definitions
+# These types map to the Java device model in varpulis-iot-api
+
+# ─── Base IoT Event ───────────────────────────────────────────
+# All IoT events carry tenant context and device identification.
+
+event IoTEvent:
+    tenant_id: str
+    sub_tenant_id: str?
+    device_id: str
+    device_name: str?
+    protocol: str
+    connector_id: str?
+    ts: timestamp
+
+# ─── Device Telemetry ─────────────────────────────────────────
+# Raw telemetry from any protocol adapter. Payload is protocol-specific
+# until normalized by an ingestion pipeline.
+
+event DeviceTelemetry extends IoTEvent:
+    measurement_name: str?
+    values: {str: float}
+    units: {str: str}
+    raw_payload: str?
+
+# ─── Device Event ─────────────────────────────────────────────
+# Discrete device events (state changes, actions, errors).
+
+event DeviceEvent extends IoTEvent:
+    type: str
+    text: str
+    severity: str?
+    heartbeat: bool
+
+# ─── Device Alarm ─────────────────────────────────────────────
+# Alarms requiring attention — persisted and propagated.
+
+event DeviceAlarm extends IoTEvent:
+    type: str
+    text: str
+    severity: str
+    source_id: str
+    active: bool
+
+# ─── Device Heartbeat ─────────────────────────────────────────
+# Periodic keepalive signal — absence triggers missing-device alarms.
+
+event DeviceHeartbeat extends IoTEvent:
+    interval_sec: int
+    rssi: float?
+    battery_pct: float?
+
+# ─── Device Command ───────────────────────────────────────────
+# Downstream command to a device (downlink).
+
+event DeviceCommand:
+    tenant_id: str
+    device_id: str
+    command: str
+    payload: str?
+    status: str
+
+# ─── Measurement ──────────────────────────────────────────────
+# Normalized time-series measurement ready for storage.
+
+event Measurement:
+    tenant_id: str
+    device_id: str
+    source_id: str
+    name: str
+    value: float
+    unit: str?
+    ts: timestamp
+
+# ─── CEP Result ───────────────────────────────────────────────
+# Output from a CEP pipeline — fed back into the platform.
+
+event CepResult:
+    tenant_id: str
+    pipeline_id: str
+    pipeline_name: str
+    result_type: str
+    device_id: str?
+    severity: str?
+    payload: {str: str}
+    ts: timestamp

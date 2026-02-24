@@ -47,9 +47,26 @@ vscode-varpulis/node_modules/
 # Benchmark results (generated)
 benchmarks/flink-comparison/results/
 benchmarks/flink-comparison/test-harness/dependency-reduced-pom.xml
+benchmarks/apama-comparison/results/
+benchmarks/forecast-validation/
 apama-samples/
 benchmarks/apama-comparison/data/*.evt
 benchmarks/apama-comparison/data/*.jsonl
 
-# Fuzz artifacts (crash/timeout reproductions)
+# Fuzz artifacts and corpus (generated)
 **/fuzz/artifacts/
+**/fuzz/corpus/
+**/fuzz/target/
+**/fuzz/Cargo.lock
+
+# Test results (generated)
+test-results/
+tests/e2e-raft/results/
+tests/e2e-scaling/results/
+
+# tree-sitter generated artifacts
+tree-sitter-varpulis/node_modules/
+tree-sitter-varpulis/src/
+tree-sitter-varpulis/bindings/
+tree-sitter-varpulis/binding.gyp
+tree-sitter-varpulis/package-lock.json

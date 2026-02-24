@@ -392,6 +392,81 @@ pub(crate) fn create_sink_from_config(
                 None
             }
         }
+        "pulsar" => {
+            #[cfg(feature = "pulsar")]
+            {
+                let service_url = if config.url.is_empty() {
+                    config
+                        .properties
+                        .get("url")
+                        .cloned()
+                        .unwrap_or_else(|| "pulsar://localhost:6650".to_string())
+                } else {
+                    config.url.clone()
+                };
+                let topic = topic_override
+                    .map(|s| s.to_string())
+                    .or_else(|| config.topic.clone())
+                    .unwrap_or_else(|| format!("{}-output", name));
+
+                let mut pulsar_config = connector::PulsarConfig::new(&service_url, &topic);
+                if let Some(token) = config.properties.get("token") {
+                    pulsar_config = pulsar_config.with_token(token);
+                }
+                let sink = connector::PulsarSink::new(name, pulsar_config);
+                Some(Arc::new(SinkConnectorAdapter {
+                    name: name.to_string(),
+                    inner: tokio::sync::Mutex::new(Box::new(sink)),
+                }))
+            }
+            #[cfg(not(feature = "pulsar"))]
+            {
+                warn!("Pulsar connector '{}' requires 'pulsar' feature flag", name);
+                None
+            }
+        }
+        "redis_stream" => {
+            #[cfg(feature = "redis")]
+            {
+                let url = if config.url.is_empty() {
+                    config
+                        .properties
+                        .get("url")
+                        .cloned()
+                        .unwrap_or_else(|| "redis://localhost:6379".to_string())
+                } else {
+                    config.url.clone()
+                };
+                let stream_key = topic_override
+                    .map(|s| s.to_string())
+                    .or_else(|| config.topic.clone())
+                    .or_else(|| config.properties.get("stream_key").cloned())
+                    .unwrap_or_else(|| format!("{}-output", name));
+
+                let mut rs_config = connector::RedisStreamConfig::new(&url, &stream_key);
+                if let Some(max_len) = config
+                    .properties
+                    .get("max_len")
+                    .and_then(|v| v.parse().ok())
+                {
+                    rs_config = rs_config.with_max_len(max_len);
+                }
+                // Use deferred-connect stub: actual connection happens on first send
+                let sink = connector::RedisStreamSinkStub::new(name, rs_config);
+                Some(Arc::new(SinkConnectorAdapter {
+                    name: name.to_string(),
+                    inner: tokio::sync::Mutex::new(Box::new(sink)),
+                }))
+            }
+            #[cfg(not(feature = "redis"))]
+            {
+                warn!(
+                    "Redis Streams connector '{}' requires 'redis' feature flag",
+                    name
+                );
+                None
+            }
+        }
         other => {
             debug!(
                 "Connector '{}' (type '{}') does not support sink output",

@@ -29,6 +29,10 @@ pub mod api;
 pub mod chat;
 pub mod connector_config;
 pub mod coordinator;
+#[cfg(feature = "federation")]
+pub mod federation;
+#[cfg(feature = "federation")]
+pub mod federation_routing;
 #[cfg(feature = "k8s")]
 pub mod ha;
 pub mod health;
@@ -55,15 +59,22 @@ pub use coordinator::{
     Coordinator, HaRole, InjectEventRequest, InjectResponse, ScalingAction, ScalingPolicy,
     ScalingRecommendation,
 };
+#[cfg(feature = "federation")]
+pub use federation::{
+    CatalogEntry, FederationConfig, FederationCoordinator, FederationStatus, RegionConfig,
+    RegionState, RegionStatus, RegionSummary,
+};
+#[cfg(feature = "federation")]
+pub use federation_routing::{CrossRegionRoute, FederationRoutingTable};
 pub use health::{
     DEFAULT_HEARTBEAT_INTERVAL, DEFAULT_HEARTBEAT_TIMEOUT, HEARTBEAT_INTERVAL, HEARTBEAT_TIMEOUT,
 };
 pub use metrics::ClusterPrometheusMetrics;
 pub use migration::{MigrationReason, MigrationStatus, MigrationTask};
 pub use pipeline_group::{
-    DeployedPipelineGroup, GroupStatus, InterPipelineRoute, PartitionStrategy, PipelineDeployment,
-    PipelineDeploymentStatus, PipelineGroupInfo, PipelineGroupSpec, PipelinePlacement,
-    ReplicaGroup,
+    CrossRegionRouteSpec, DeployedPipelineGroup, GroupStatus, InterPipelineRoute,
+    PartitionStrategy, PipelineDeployment, PipelineDeploymentStatus, PipelineGroupInfo,
+    PipelineGroupSpec, PipelinePlacement, ReplicaGroup,
 };
 pub use rbac::{RbacConfig, Role};
 pub use routing::{event_type_matches, find_target_pipeline, RoutingTable};

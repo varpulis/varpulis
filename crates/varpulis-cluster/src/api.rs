@@ -593,7 +593,67 @@ pub fn cluster_routes(
         );
     });
 
-    worker_routes
+    // Federation endpoints (behind feature flag)
+    #[cfg(feature = "federation")]
+    let federation_routes = {
+        let fed_api = warp::path("api")
+            .and(warp::path("v1"))
+            .and(warp::path("federation"));
+
+        let fed_status = fed_api
+            .and(warp::path("status"))
+            .and(warp::path::end())
+            .and(warp::get())
+            .and(with_rbac(rbac.clone(), Role::Viewer))
+            .and(with_coordinator(coordinator.clone()))
+            .and_then(handle_federation_status);
+
+        let fed_regions = fed_api
+            .and(warp::path("regions"))
+            .and(warp::path::end())
+            .and(warp::get())
+            .and(with_rbac(rbac.clone(), Role::Viewer))
+            .and(with_coordinator(coordinator.clone()))
+            .and_then(handle_federation_regions);
+
+        let fed_add_region = fed_api
+            .and(warp::path("regions"))
+            .and(warp::path::end())
+            .and(warp::post())
+            .and(rate_limit_filter.clone())
+            .and(with_rbac(rbac.clone(), Role::Admin))
+            .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
+            .and(warp::body::json())
+            .and(with_coordinator(coordinator.clone()))
+            .and_then(handle_federation_add_region);
+
+        let fed_remove_region = fed_api
+            .and(warp::path("regions"))
+            .and(warp::path::param::<String>())
+            .and(warp::path::end())
+            .and(warp::delete())
+            .and(rate_limit_filter.clone())
+            .and(with_rbac(rbac.clone(), Role::Admin))
+            .and(with_coordinator(coordinator.clone()))
+            .and_then(handle_federation_remove_region);
+
+        let fed_catalog = fed_api
+            .and(warp::path("catalog"))
+            .and(warp::path::end())
+            .and(warp::get())
+            .and(with_rbac(rbac.clone(), Role::Viewer))
+            .and(with_coordinator(coordinator.clone()))
+            .and_then(handle_federation_catalog);
+
+        fed_status
+            .or(fed_regions)
+            .or(fed_add_region)
+            .or(fed_remove_region)
+            .or(fed_catalog)
+            .boxed()
+    };
+
+    let base_routes = worker_routes
         .or(pipeline_routes)
         .or(topology)
         .or(validate)
@@ -606,8 +666,12 @@ pub fn cluster_routes(
         .or(scaling)
         .or(summary)
         .or(raft_status)
-        .with(cors)
-        .with(request_log)
+        .boxed();
+
+    #[cfg(feature = "federation")]
+    let base_routes = base_routes.or(federation_routes).boxed();
+
+    base_routes.with(cors).with(request_log)
 }
 
 // =============================================================================
@@ -2740,6 +2804,149 @@ pub async fn handle_rejection(err: Rejection) -> Result<impl Reply, Infallible> 
     }
 }
 
+// =============================================================================
+// Federation Handlers
+// =============================================================================
+
+#[cfg(feature = "federation")]
+async fn handle_federation_status(
+    coordinator: SharedCoordinator,
+) -> Result<impl Reply, Infallible> {
+    let coord = coordinator.read().await;
+    match &coord.federation {
+        Some(fed) => Ok(warp::reply::with_status(
+            warp::reply::json(&fed.status()),
+            StatusCode::OK,
+        )),
+        None => Ok(warp::reply::with_status(
+            warp::reply::json(&serde_json::json!({
+                "error": "Federation not enabled"
+            })),
+            StatusCode::NOT_FOUND,
+        )),
+    }
+}
+
+#[cfg(feature = "federation")]
+async fn handle_federation_regions(
+    coordinator: SharedCoordinator,
+) -> Result<impl Reply, Infallible> {
+    let coord = coordinator.read().await;
+    match &coord.federation {
+        Some(fed) => {
+            let regions: Vec<_> = fed.get_regions().values().collect();
+            Ok(warp::reply::with_status(
+                warp::reply::json(&regions),
+                StatusCode::OK,
+            ))
+        }
+        None => Ok(warp::reply::with_status(
+            warp::reply::json(&serde_json::json!({
+                "error": "Federation not enabled"
+            })),
+            StatusCode::NOT_FOUND,
+        )),
+    }
+}
+
+#[cfg(feature = "federation")]
+async fn handle_federation_add_region(
+    config: crate::federation::RegionConfig,
+    coordinator: SharedCoordinator,
+) -> Result<impl Reply, Infallible> {
+    let mut coord = coordinator.write().await;
+    if coord.federation.is_none() {
+        coord.federation = Some(crate::federation::FederationCoordinator::new(
+            crate::federation::FederationConfig::default(),
+        ));
+    }
+    if let Some(ref mut fed) = coord.federation {
+        fed.register_region(&config);
+        Ok(warp::reply::with_status(
+            warp::reply::json(&serde_json::json!({
+                "status": "registered",
+                "region": config.name
+            })),
+            StatusCode::CREATED,
+        ))
+    } else {
+        Ok(warp::reply::with_status(
+            warp::reply::json(&serde_json::json!({
+                "error": "Federation initialization failed"
+            })),
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ))
+    }
+}
+
+#[cfg(feature = "federation")]
+async fn handle_federation_remove_region(
+    region_name: String,
+    coordinator: SharedCoordinator,
+) -> Result<impl Reply, Infallible> {
+    let mut coord = coordinator.write().await;
+    match &mut coord.federation {
+        Some(fed) => {
+            if fed.deregister_region(&region_name) {
+                Ok(warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({
+                        "status": "deregistered",
+                        "region": region_name
+                    })),
+                    StatusCode::OK,
+                ))
+            } else {
+                Ok(warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({
+                        "error": "Region not found",
+                        "region": region_name
+                    })),
+                    StatusCode::NOT_FOUND,
+                ))
+            }
+        }
+        None => Ok(warp::reply::with_status(
+            warp::reply::json(&serde_json::json!({
+                "error": "Federation not enabled"
+            })),
+            StatusCode::NOT_FOUND,
+        )),
+    }
+}
+
+#[cfg(feature = "federation")]
+async fn handle_federation_catalog(
+    coordinator: SharedCoordinator,
+) -> Result<impl Reply, Infallible> {
+    let coord = coordinator.read().await;
+    match &coord.federation {
+        Some(fed) => {
+            let catalog: Vec<serde_json::Value> = fed
+                .get_global_catalog()
+                .into_iter()
+                .map(|(region, entry)| {
+                    serde_json::json!({
+                        "region": region,
+                        "pipeline": entry.pipeline_name,
+                        "group": entry.group_name,
+                        "event_types": entry.event_types,
+                    })
+                })
+                .collect();
+            Ok(warp::reply::with_status(
+                warp::reply::json(&catalog),
+                StatusCode::OK,
+            ))
+        }
+        None => Ok(warp::reply::with_status(
+            warp::reply::json(&serde_json::json!({
+                "error": "Federation not enabled"
+            })),
+            StatusCode::NOT_FOUND,
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3161,6 +3368,8 @@ mod tests {
                     event_types: vec!["*".into()],
                     nats_subject: None,
                 }],
+                region_affinity: None,
+                cross_region_routes: vec![],
             };
 
             let mut group = DeployedPipelineGroup::new("g1".into(), "test-group".into(), spec);
@@ -3212,6 +3421,8 @@ mod tests {
                     partition_key: None,
                 }],
                 routes: vec![],
+                region_affinity: None,
+                cross_region_routes: vec![],
             };
 
             let group = DeployedPipelineGroup::new("g1".into(), "my-group".into(), spec);
@@ -3243,6 +3454,8 @@ mod tests {
                     name: format!("group-{}", i),
                     pipelines: vec![],
                     routes: vec![],
+                    region_affinity: None,
+                    cross_region_routes: vec![],
                 };
                 let group =
                     DeployedPipelineGroup::new(format!("g{}", i), format!("group-{}", i), spec);

@@ -1,0 +1,77 @@
+# Varpulis IoT — Protocol-Specific Event Types
+# Extend the base IoTEvent with protocol-specific fields.
+
+# ─── LoRa Uplink ──────────────────────────────────────────────
+# Data from LoRaWAN network servers (TTN, Chirpstack).
+
+event LoRaUplink:
+    tenant_id: str
+    device_id: str
+    dev_eui: str
+    app_eui: str?
+    f_port: int
+    f_cnt: int
+    rssi: float
+    snr: float
+    spreading_factor: int?
+    bandwidth: int?
+    frequency: float?
+    gateway_id: str?
+    gateway_lat: float?
+    gateway_lng: float?
+    codec: str?
+    raw_payload: str
+    decoded_payload: {str: float}?
+    ts: timestamp
+
+# ─── DLMS Meter Reading ──────────────────────────────────────
+# Smart meter data via DLMS/COSEM protocol.
+
+event DlmsMeterReading:
+    tenant_id: str
+    device_id: str
+    meter_serial: str
+    obis_code: str
+    value: float
+    unit: str
+    scaler: int?
+    capture_time: timestamp?
+    register_type: str
+    ts: timestamp
+
+# ─── MQTT Message ─────────────────────────────────────────────
+# Generic MQTT telemetry from devices publishing directly.
+
+event MqttMessage:
+    tenant_id: str
+    device_id: str
+    topic: str
+    qos: int
+    payload: str
+    content_type: str?
+    ts: timestamp
+
+# ─── Modbus Reading ───────────────────────────────────────────
+# Industrial Modbus TCP/RTU data.
+
+event ModbusReading:
+    tenant_id: str
+    device_id: str
+    slave_id: int
+    register_type: str
+    register_address: int
+    value: float
+    unit: str?
+    ts: timestamp
+
+# ─── CoAP Message ─────────────────────────────────────────────
+# Constrained Application Protocol data.
+
+event CoapMessage:
+    tenant_id: str
+    device_id: str
+    method: str
+    path: str
+    content_format: str?
+    payload: str
+    ts: timestamp

@@ -1,0 +1,73 @@
+# Varpulis IoT — Heartbeat Monitor Pipeline
+# Detects missing heartbeats and raises device-offline alarms.
+
+connector NatsBus = mqtt (
+    host: "localhost",
+    port: 1883,
+    client_id: "cep-heartbeat"
+)
+
+# ─── Ingest heartbeats ───────────────────────────────────────
+
+stream Heartbeats = DeviceHeartbeat
+    .from(NatsBus, topic: "varpulis/+/device/telemetry/#")
+
+# ─── Track last heartbeat per device ─────────────────────────
+# If no heartbeat within 2x the expected interval, raise alarm.
+
+stream HeartbeatWindow = Heartbeats
+    .partition_by(device_id)
+    .window(10m, sliding: 1m)
+    .aggregate(
+        tenant_id: last(tenant_id),
+        device_id: last(device_id),
+        device_name: last(device_name),
+        protocol: last(protocol),
+        expected_interval: last(interval_sec),
+        heartbeat_count: count(),
+        last_seen: max(ts),
+        avg_rssi: avg(rssi),
+        min_battery: min(battery_pct)
+    )
+
+# ─── Detect missing heartbeats ───────────────────────────────
+
+stream MissingHeartbeats = HeartbeatWindow
+    .where(heartbeat_count == 0)
+    .emit(
+        tenant_id: tenant_id,
+        device_id: device_id,
+        type: "device_offline",
+        text: "No heartbeat received in monitoring window",
+        severity: "major",
+        source_id: device_id,
+        active: true,
+        protocol: protocol,
+        connector_id: "",
+        ts: now()
+    )
+
+# ─── Detect low battery ──────────────────────────────────────
+
+stream LowBatteryAlarms = HeartbeatWindow
+    .where(min_battery < 10.0 and min_battery > 0.0)
+    .emit(
+        tenant_id: tenant_id,
+        device_id: device_id,
+        type: "low_battery",
+        text: "Battery below 10%",
+        severity: "warning",
+        source_id: device_id,
+        active: true,
+        protocol: protocol,
+        connector_id: "",
+        ts: now()
+    )
+
+# ─── Output alarms ───────────────────────────────────────────
+
+stream OfflineAlarms = MissingHeartbeats
+    .to(NatsBus, topic: "varpulis/cep/alarms")
+
+stream BatteryAlarms = LowBatteryAlarms
+    .to(NatsBus, topic: "varpulis/cep/alarms")

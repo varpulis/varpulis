@@ -1,0 +1,81 @@
+# Varpulis IoT — Per-Device Windowed Statistics
+# Computes rolling statistics at 5m, 1h, and 24h windows.
+
+connector NatsBus = mqtt (
+    host: "localhost",
+    port: 1883,
+    client_id: "cep-stats"
+)
+
+# ─── Ingest telemetry ────────────────────────────────────────
+
+stream Telemetry = DeviceTelemetry
+    .from(NatsBus, topic: "varpulis/+/device/telemetry/#")
+
+# ─── 5-minute rolling stats ──────────────────────────────────
+
+stream Stats5m = Telemetry
+    .partition_by(device_id)
+    .window(5m)
+    .aggregate(
+        tenant_id: last(tenant_id),
+        pipeline_id: "device-stats",
+        pipeline_name: "device_stats_5m",
+        result_type: "statistics",
+        device_id: last(device_id),
+        readings: count(),
+        avg_temperature: avg(values["temperature"]),
+        max_temperature: max(values["temperature"]),
+        min_temperature: min(values["temperature"]),
+        avg_humidity: avg(values["humidity"]),
+        ts: now()
+    )
+
+# ─── 1-hour rolling stats ────────────────────────────────────
+
+stream Stats1h = Telemetry
+    .partition_by(device_id)
+    .window(1h)
+    .aggregate(
+        tenant_id: last(tenant_id),
+        pipeline_id: "device-stats",
+        pipeline_name: "device_stats_1h",
+        result_type: "statistics",
+        device_id: last(device_id),
+        readings: count(),
+        avg_temperature: avg(values["temperature"]),
+        max_temperature: max(values["temperature"]),
+        min_temperature: min(values["temperature"]),
+        avg_humidity: avg(values["humidity"]),
+        ts: now()
+    )
+
+# ─── 24-hour rolling stats ───────────────────────────────────
+
+stream Stats24h = Telemetry
+    .partition_by(device_id)
+    .window(24h)
+    .aggregate(
+        tenant_id: last(tenant_id),
+        pipeline_id: "device-stats",
+        pipeline_name: "device_stats_24h",
+        result_type: "statistics",
+        device_id: last(device_id),
+        readings: count(),
+        avg_temperature: avg(values["temperature"]),
+        max_temperature: max(values["temperature"]),
+        min_temperature: min(values["temperature"]),
+        avg_humidity: avg(values["humidity"]),
+        ts: now()
+    )
+
+# ─── Output ──────────────────────────────────────────────────
+
+stream Stats5mOut = Stats5m
+    .to(NatsBus, topic: "varpulis/cep/stats")
+
+stream Stats1hOut = Stats1h
+    .to(NatsBus, topic: "varpulis/cep/stats")
+
+stream Stats24hOut = Stats24h
+    .to(NatsBus, topic: "varpulis/cep/stats")

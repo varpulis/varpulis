@@ -180,6 +180,9 @@ pub struct Coordinator {
     pub model_registry: HashMap<String, crate::model_registry::ModelRegistryEntry>,
     /// LLM configuration for AI chat assistant.
     pub llm_config: Option<crate::chat::LlmConfig>,
+    /// Multi-region federation coordinator (enabled with `federation` feature).
+    #[cfg(feature = "federation")]
+    pub federation: Option<crate::federation::FederationCoordinator>,
 }
 
 /// The HA role of this coordinator (re-exported from ha module for non-k8s builds).
@@ -228,6 +231,8 @@ impl Coordinator {
             cluster_metrics: ClusterPrometheusMetrics::new(),
             model_registry: HashMap::new(),
             llm_config: None,
+            #[cfg(feature = "federation")]
+            federation: None,
         }
     }
 
@@ -3255,6 +3260,8 @@ mod tests {
                 partition_key: None,
             }],
             routes: vec![],
+            region_affinity: None,
+            cross_region_routes: vec![],
         };
         let group = DeployedPipelineGroup::new("g1".into(), "test".into(), spec);
         coord.pipeline_groups.insert("g1".into(), group);
@@ -3435,6 +3442,8 @@ mod tests {
                 },
             ],
             routes: vec![],
+            region_affinity: None,
+            cross_region_routes: vec![],
         };
         let mut group = DeployedPipelineGroup::new("g1".into(), "test".into(), spec);
         group.placements.insert(
@@ -3483,6 +3492,8 @@ mod tests {
             name: "test".into(),
             pipelines: vec![],
             routes: vec![],
+            region_affinity: None,
+            cross_region_routes: vec![],
         };
         let mut group = DeployedPipelineGroup::new("g1".into(), "test".into(), spec);
         for i in 0..6 {
@@ -3530,6 +3541,8 @@ mod tests {
             name: "test".into(),
             pipelines: vec![],
             routes: vec![],
+            region_affinity: None,
+            cross_region_routes: vec![],
         };
         let mut group = DeployedPipelineGroup::new("g1".into(), "test".into(), spec);
         for i in 0..2 {
@@ -3603,6 +3616,8 @@ mod tests {
             name: "test".into(),
             pipelines: vec![],
             routes: vec![],
+            region_affinity: None,
+            cross_region_routes: vec![],
         };
         let mut group = DeployedPipelineGroup::new("g1".into(), "test".into(), spec);
         for i in 0..20 {
