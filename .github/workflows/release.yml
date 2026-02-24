@@ -211,7 +211,7 @@ jobs:
           fi
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           name: Varpulis v${{ steps.release_notes.outputs.version }}
           body_path: notes.md
