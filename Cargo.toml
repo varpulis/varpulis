@@ -54,7 +54,7 @@ rustc-hash = "2"
 chrono = { version = "0.4", features = ["serde"] }
 
 # Metrics
-prometheus = { version = "0.13", default-features = false }
+prometheus = { version = "0.14", default-features = false }
 
 # OpenTelemetry (opt-in via "otel" feature)
 opentelemetry = { version = "0.27", default-features = false, features = ["trace"] }
