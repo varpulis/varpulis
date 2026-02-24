@@ -5,6 +5,69 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Highlights
+
+Phase 3 & 4 of the cloud SaaS buildout: full authentication, database persistence,
+billing integration, and distribution infrastructure for Homebrew, GitHub Actions,
+and crates.io publishing.
+
+### Added
+
+#### Authentication & Authorization
+- **GitHub OAuth login** — browser-based login flow with PKCE
+- **JWT session tokens** — stateless auth with configurable expiry
+- **Auth middleware** — Warp filter for protected API routes
+- **Auth store** — in-memory session management with token refresh
+
+#### PostgreSQL Database Layer
+- **User management** — create, lookup, GitHub ID linking
+- **Organization support** — multi-tenant org membership with roles
+- **API key management** — scoped keys with usage tracking
+- **Pipeline storage** — persistent VPL pipeline CRUD
+- **Usage metering** — per-org event counts and storage tracking
+- **SQL migrations** — versioned schema with sqlx-migrate
+
+#### Stripe Billing Integration
+- **Subscription tiers** — Free, Pro, Enterprise with configurable limits
+- **Usage-based billing** — metered event processing charges
+- **Checkout sessions** — Stripe-hosted payment flow
+- **Customer portal** — self-service subscription management
+- **Webhook handling** — subscription lifecycle events
+
+#### Playground & Landing Page
+- **Ephemeral sessions** — sandboxed VPL execution with timeout
+- **Example library** — pre-built pipelines for quick exploration
+- **Landing page** — product overview with feature highlights
+- **Billing view** — subscription status and usage dashboard
+- **Login view** — OAuth flow with redirect handling
+
+#### Event Generator Library (`varpulis-datagen`)
+- **Fraud detection schema** — transactions, logins, device fingerprints
+- **IoT monitoring schema** — sensor readings, alerts, device status
+- **Trading schema** — orders, fills, market data
+- **Configurable rates** — events/sec, burst patterns, seasonal variation
+
+#### Docker Demos
+- **Fraud detection demo** — end-to-end pipeline with MQTT and generated events
+- **IoT monitoring demo** — sensor alerting with threshold patterns
+
+#### WASM Parser
+- **`varpulis-wasm` crate** — browser-compatible VPL parser via wasm-bindgen
+- **Playground integration** — client-side syntax validation
+
+#### Distribution
+- **Homebrew formula** — `brew install varpulis/tap/varpulis` for macOS and Linux
+- **GitHub Actions marketplace action** — `varpulis-check` for CI/CD VPL validation
+- **crates.io publish workflow** — automated sequential crate publishing
+
+#### Validation & LSP
+- **Strict semantic validation** — connector params, stream references, type checking
+- **Per-op diagnostic spans** — precise error locations for each VPL operator
+- **Merge/log/print support** — LSP completions and hover for new operators
+- **Unknown op error reporting** — actionable diagnostics for typos in operator names
+
 ## [0.4.0] - 2026-02-23
 
 ### Highlights
@@ -275,6 +338,7 @@ runtime performance optimizations. A live public demo is available at
 - CLI with `run`, `simulate`, `check` commands
 - ZDD-based multi-query optimization (research baseline)
 
+[Unreleased]: https://github.com/varpulis/varpulis/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/varpulis/varpulis/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/varpulis/varpulis/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/varpulis/varpulis/compare/v0.1.0...v0.2.0
