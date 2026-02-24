@@ -1,0 +1,36 @@
+services:
+  redis:
+    image: redis:7-alpine
+    hostname: redis
+    container_name: varpulis-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  test-runner:
+    build:
+      context: ../..
+      dockerfile: tests/integration/Dockerfile.redis-test
+    container_name: varpulis-redis-tests
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_URL: "redis://redis:6379"
+      RUST_LOG: info
+      RUST_BACKTRACE: 1
+    command: >
+      sh -c "
+        export REDIS_URL=redis://redis:6379 &&
+        cargo test -p varpulis-runtime --features redis redis_stream_integration -- --ignored --nocapture
+      "
+    networks:
+      - default
+
+networks:
+  default:
+    driver: bridge

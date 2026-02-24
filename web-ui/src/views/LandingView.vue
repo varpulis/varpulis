@@ -230,8 +230,8 @@ function goToDashboard() {
             <div class="d-flex mb-6">
               <v-icon size="28" color="primary" class="mr-3 mt-1">mdi-connection</v-icon>
               <div>
-                <h4 class="text-subtitle-1 font-weight-bold">9 Connectors</h4>
-                <p class="text-body-2 text-medium-emphasis">Kafka, MQTT, NATS, HTTP, WebSocket, file, stdout, and more.</p>
+                <h4 class="text-subtitle-1 font-weight-bold">11 Connectors</h4>
+                <p class="text-body-2 text-medium-emphasis">Kafka, MQTT, NATS, Pulsar, Redis Streams, HTTP, WebSocket, and more.</p>
               </div>
             </div>
           </v-col>
@@ -268,6 +268,42 @@ function goToDashboard() {
               <div>
                 <h4 class="text-subtitle-1 font-weight-bold">Web Dashboard</h4>
                 <p class="text-body-2 text-medium-emphasis">Deploy, monitor, and manage pipelines through a modern web UI.</p>
+              </div>
+            </div>
+          </v-col>
+          <v-col cols="12" sm="6" md="4">
+            <div class="d-flex mb-6">
+              <v-icon size="28" color="primary" class="mr-3 mt-1">mdi-chip</v-icon>
+              <div>
+                <h4 class="text-subtitle-1 font-weight-bold">Concurrent Processing</h4>
+                <p class="text-body-2 text-medium-emphasis">Partition events across worker threads with .concurrent() for linear throughput scaling.</p>
+              </div>
+            </div>
+          </v-col>
+          <v-col cols="12" sm="6" md="4">
+            <div class="d-flex mb-6">
+              <v-icon size="28" color="primary" class="mr-3 mt-1">mdi-brain</v-icon>
+              <div>
+                <h4 class="text-subtitle-1 font-weight-bold">GPU ML Scoring</h4>
+                <p class="text-body-2 text-medium-emphasis">Score events with ONNX models using GPU acceleration and batch inference.</p>
+              </div>
+            </div>
+          </v-col>
+          <v-col cols="12" sm="6" md="4">
+            <div class="d-flex mb-6">
+              <v-icon size="28" color="primary" class="mr-3 mt-1">mdi-earth</v-icon>
+              <div>
+                <h4 class="text-subtitle-1 font-weight-bold">Multi-Region Federation</h4>
+                <p class="text-body-2 text-medium-emphasis">Federate clusters across regions with catalog sync, health monitoring, and cross-region routing.</p>
+              </div>
+            </div>
+          </v-col>
+          <v-col cols="12" sm="6" md="4">
+            <div class="d-flex mb-6">
+              <v-icon size="28" color="primary" class="mr-3 mt-1">mdi-flash</v-icon>
+              <div>
+                <h4 class="text-subtitle-1 font-weight-bold">Pulsar &amp; Redis Streams</h4>
+                <p class="text-body-2 text-medium-emphasis">Native connectors for Apache Pulsar and Redis Streams with consumer group support.</p>
               </div>
             </div>
           </v-col>
