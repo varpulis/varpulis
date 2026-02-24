@@ -25,6 +25,9 @@ pub enum Stmt {
         type_annotation: Option<Type>,
         source: StreamSource,
         ops: Vec<StreamOp>,
+        /// Per-operation source spans (parallel to `ops`). Empty when spans unavailable.
+        #[serde(default)]
+        op_spans: Vec<crate::span::Span>,
     },
     /// Event declaration: `event X: ...`
     EventDecl {

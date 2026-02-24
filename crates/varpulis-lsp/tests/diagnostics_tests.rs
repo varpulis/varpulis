@@ -646,3 +646,159 @@ fn diagnostics_duplicate_event_produces_error() {
     );
     assert_eq!(diags[0].severity, Some(DiagnosticSeverity::ERROR));
 }
+
+// =============================================================================
+// .where() condition validation
+// =============================================================================
+
+#[test]
+fn diagnostics_where_bare_identifier_warns() {
+    // .where(temperature) is just a bare identifier, not a boolean condition
+    let code = r#"
+event SensorData:
+    temperature: float
+
+stream S = SensorData
+    .where(temperature)
+    .emit()
+"#;
+    let diags = get_diagnostics(code);
+    let w061: Vec<_> = diags
+        .iter()
+        .filter(|d| d.message.contains("bare identifier"))
+        .collect();
+    assert!(
+        !w061.is_empty(),
+        "Bare identifier in .where() should produce W061 warning: {:?}",
+        diags
+    );
+}
+
+#[test]
+fn diagnostics_where_comparison_is_valid() {
+    // .where(temperature > 30.0) is a valid boolean condition
+    let code = r#"
+event SensorData:
+    temperature: float
+
+stream S = SensorData
+    .where(temperature > 30.0)
+    .emit()
+"#;
+    let diags = get_diagnostics(code);
+    let w061: Vec<_> = diags
+        .iter()
+        .filter(|d| d.message.contains("bare identifier") || d.message.contains("field access"))
+        .collect();
+    assert!(
+        w061.is_empty(),
+        "Valid comparison should not produce W061: {:?}",
+        diags
+    );
+}
+
+#[test]
+fn diagnostics_where_member_access_warns() {
+    // .where(a.temperature) is a field access, not a boolean condition
+    let code = r#"
+event SensorData:
+    temperature: float
+
+stream S = SensorData as a
+    .where(a.temperature)
+    .emit()
+"#;
+    let diags = get_diagnostics(code);
+    let w061: Vec<_> = diags
+        .iter()
+        .filter(|d| d.message.contains("field access"))
+        .collect();
+    assert!(
+        !w061.is_empty(),
+        "Member access in .where() should produce W061 warning: {:?}",
+        diags
+    );
+}
+
+// =============================================================================
+// Merge stream validation
+// =============================================================================
+
+#[test]
+fn diagnostics_valid_merge_stream() {
+    // Valid merge with proper field references
+    let code = r#"
+event Temperature:
+    value: float
+    zone: str
+
+event Humidity:
+    level: float
+    zone: str
+
+stream Combined = merge(Temperature, Humidity)
+    .where(zone == "A")
+    .emit()
+"#;
+    let diags = get_diagnostics(code);
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.severity == Some(DiagnosticSeverity::ERROR))
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "Valid merge stream should have no errors: {:?}",
+        diags
+    );
+}
+
+#[test]
+fn diagnostics_merge_unknown_field_warns() {
+    // merge stream referencing nonexistent field
+    let code = r#"
+event Temperature:
+    value: float
+
+event Humidity:
+    level: float
+
+stream Combined = merge(Temperature, Humidity)
+    .where(nonexistent > 10)
+    .emit()
+"#;
+    let diags = get_diagnostics(code);
+    let w035: Vec<_> = diags
+        .iter()
+        .filter(|d| d.message.contains("W035") || d.message.contains("unknown field"))
+        .collect();
+    assert!(
+        !w035.is_empty(),
+        "Unknown field in merge .where() should produce W035 warning: {:?}",
+        diags
+    );
+}
+
+// =============================================================================
+// Unknown stream operation
+// =============================================================================
+
+#[test]
+fn diagnostics_unknown_stream_operation() {
+    let code = r#"
+event Source { x: Float }
+stream S = Source.foo(x > 1)
+"#;
+    let diags = get_diagnostics(code);
+    assert!(!diags.is_empty(), "Unknown op should produce a diagnostic");
+    assert_eq!(diags[0].severity, Some(DiagnosticSeverity::ERROR));
+    assert!(
+        diags[0].message.contains("unknown stream operation"),
+        "Expected 'unknown stream operation' but got: {}",
+        diags[0].message
+    );
+    assert!(
+        diags[0].message.contains("valid operations"),
+        "Expected hint with valid operations but got: {}",
+        diags[0].message
+    );
+}
