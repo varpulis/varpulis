@@ -358,6 +358,19 @@ pub struct ScoreSpec {
     pub model_path: String,
     pub inputs: Vec<String>,
     pub outputs: Vec<String>,
+    /// Enable GPU acceleration (default: false)
+    #[serde(default)]
+    pub gpu: bool,
+    /// Batch size for inference (default: 1, >1 enables batch mode)
+    #[serde(default = "default_batch_size")]
+    pub batch_size: usize,
+    /// GPU device ID (default: 0)
+    #[serde(default)]
+    pub device_id: i32,
+}
+
+fn default_batch_size() -> usize {
+    1
 }
 
 /// Specification for PST-based pattern forecasting

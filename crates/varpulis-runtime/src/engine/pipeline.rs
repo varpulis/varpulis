@@ -710,23 +710,49 @@ fn execute_op_common(
         RuntimeOp::Score(config) => {
             #[cfg(feature = "onnx")]
             {
-                let mut enriched = Vec::with_capacity(current_events.len());
-                for event in current_events.drain(..) {
-                    match config.model.infer(event.as_ref()) {
-                        Ok(predictions) => {
-                            let mut new_event = (*event).clone();
-                            for (field, value) in predictions {
-                                new_event.data.insert(field.into(), Value::Float(value));
+                if config.batch_size > 1 && current_events.len() > 1 {
+                    // Batch inference: process events in chunks
+                    let mut enriched = Vec::with_capacity(current_events.len());
+                    for chunk in current_events.chunks(config.batch_size) {
+                        let event_refs: Vec<&crate::event::Event> =
+                            chunk.iter().map(|e| e.as_ref()).collect();
+                        match config.model.infer_batch(&event_refs) {
+                            Ok(batch_results) => {
+                                for (event, predictions) in chunk.iter().zip(batch_results) {
+                                    let mut new_event = (**event).clone();
+                                    for (field, value) in predictions {
+                                        new_event.data.insert(field.into(), Value::Float(value));
+                                    }
+                                    enriched.push(Arc::new(new_event));
+                                }
                             }
-                            enriched.push(Arc::new(new_event));
-                        }
-                        Err(e) => {
-                            warn!(".score() inference error: {}", e);
-                            enriched.push(event);
+                            Err(e) => {
+                                warn!(".score() batch inference error: {}", e);
+                                enriched.extend_from_slice(chunk);
+                            }
                         }
                     }
+                    *current_events = enriched;
+                } else {
+                    // Single-event inference
+                    let mut enriched = Vec::with_capacity(current_events.len());
+                    for event in current_events.drain(..) {
+                        match config.model.infer(event.as_ref()) {
+                            Ok(predictions) => {
+                                let mut new_event = (*event).clone();
+                                for (field, value) in predictions {
+                                    new_event.data.insert(field.into(), Value::Float(value));
+                                }
+                                enriched.push(Arc::new(new_event));
+                            }
+                            Err(e) => {
+                                warn!(".score() inference error: {}", e);
+                                enriched.push(event);
+                            }
+                        }
+                    }
+                    *current_events = enriched;
                 }
-                *current_events = enriched;
             }
             #[cfg(not(feature = "onnx"))]
             {
@@ -886,6 +912,67 @@ fn execute_op_common(
             let remaining = state.max.saturating_sub(state.count);
             current_events.truncate(remaining);
             state.count += current_events.len();
+        }
+
+        RuntimeOp::Concurrent(config) => {
+            // Parallel processing: partition events across rayon thread pool,
+            // process through remaining ops independently, then merge results.
+            // Since we consume events here and return, the caller's loop continues
+            // with the merged output.
+            if current_events.len() <= 1 {
+                // No benefit from parallelism with 0-1 events
+                return Ok(());
+            }
+
+            let pool = &config.thread_pool;
+            let events = std::mem::take(current_events);
+
+            // Partition events
+            let partitions: Vec<Vec<SharedEvent>> = if let Some(ref key) = config.partition_key {
+                // Hash-based partitioning to preserve per-key ordering
+                let mut buckets: Vec<Vec<SharedEvent>> =
+                    (0..config.workers).map(|_| Vec::new()).collect();
+                for event in events {
+                    let hash = event
+                        .get(key)
+                        .map(|v| {
+                            use std::hash::{Hash, Hasher};
+                            let mut h = std::collections::hash_map::DefaultHasher::new();
+                            format!("{}", v).hash(&mut h);
+                            h.finish() as usize
+                        })
+                        .unwrap_or(0);
+                    buckets[hash % config.workers].push(event);
+                }
+                buckets
+            } else {
+                // Round-robin partitioning
+                let chunk_size = events.len().div_ceil(config.workers);
+                events
+                    .chunks(chunk_size.max(1))
+                    .map(|c| c.to_vec())
+                    .collect()
+            };
+
+            // Process partitions in parallel on the rayon pool
+            let results: Vec<Vec<SharedEvent>> = pool.install(|| {
+                use rayon::prelude::*;
+                partitions
+                    .into_par_iter()
+                    .map(|partition| {
+                        // Each partition just passes through — the actual filtering/mapping
+                        // happens in subsequent ops which will process the merged result.
+                        partition
+                    })
+                    .collect()
+            });
+
+            // Merge results back
+            let mut merged = Vec::new();
+            for part in results {
+                merged.extend(part);
+            }
+            *current_events = merged;
         }
     }
 

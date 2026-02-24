@@ -1,0 +1,106 @@
+# Varpulis IoT — Anomaly Detection Pipeline
+# SASE+ patterns for detecting anomalous device behavior sequences.
+
+connector NatsBus = mqtt (
+    host: "localhost",
+    port: 1883,
+    client_id: "cep-anomaly"
+)
+
+# ─── Ingest streams ──────────────────────────────────────────
+
+stream Telemetry = DeviceTelemetry
+    .from(NatsBus, topic: "varpulis/+/device/telemetry/#")
+
+stream Events = DeviceEvent
+    .from(NatsBus, topic: "varpulis/+/device/events/#")
+
+stream Alarms = DeviceAlarm
+    .from(NatsBus, topic: "varpulis/+/device/alarms/#")
+
+# ─── Rapid temperature spike detection ───────────────────────
+# Temperature rises by >20 degrees within 5 minutes.
+
+stream TempSpike = Telemetry as t1
+    -> Telemetry where device_id == t1.device_id
+                   and values["temperature"] - t1.values["temperature"] > 20.0 as t2
+    .within(5m)
+    .emit(
+        tenant_id: t1.tenant_id,
+        device_id: t1.device_id,
+        type: "rapid_temp_spike",
+        text: "Temperature rose >20C in 5 minutes",
+        severity: "critical",
+        source_id: t1.device_id,
+        active: true,
+        protocol: t1.protocol,
+        connector_id: t1.connector_id,
+        ts: t2.ts
+    )
+
+# ─── Repeated alarm pattern ──────────────────────────────────
+# Same device raises 3+ alarms of the same type within 1 hour.
+
+stream RepeatedAlarms = Alarms
+    .partition_by(device_id, type)
+    .window(1h)
+    .aggregate(
+        tenant_id: last(tenant_id),
+        device_id: last(device_id),
+        alarm_type: last(type),
+        alarm_count: count(),
+        protocol: last(protocol),
+        connector_id: last(connector_id)
+    )
+    .where(alarm_count >= 3)
+    .emit(
+        tenant_id: tenant_id,
+        device_id: device_id,
+        type: "repeated_alarm_pattern",
+        text: "Device raised " + str(alarm_count) + " alarms of type " + alarm_type + " in 1h",
+        severity: "major",
+        source_id: device_id,
+        active: true,
+        protocol: protocol,
+        connector_id: connector_id,
+        ts: now()
+    )
+
+# ─── Device flapping detection ────────────────────────────────
+# Device goes online/offline more than 5 times in 30 minutes.
+
+stream DeviceFlapping = Events
+    .where(type == "device_seen" or type == "device_offline")
+    .partition_by(device_id)
+    .window(30m)
+    .aggregate(
+        tenant_id: last(tenant_id),
+        device_id: last(device_id),
+        state_changes: count(),
+        protocol: last(protocol),
+        connector_id: last(connector_id)
+    )
+    .where(state_changes > 5)
+    .emit(
+        tenant_id: tenant_id,
+        device_id: device_id,
+        type: "device_flapping",
+        text: "Device connectivity unstable — " + str(state_changes) + " state changes in 30m",
+        severity: "major",
+        source_id: device_id,
+        active: true,
+        protocol: protocol,
+        connector_id: connector_id,
+        ts: now()
+    )
+
+# ─── Output ──────────────────────────────────────────────────
+
+stream SpikeAlerts = TempSpike
+    .to(NatsBus, topic: "varpulis/cep/alarms")
+
+stream RepeatedAlerts = RepeatedAlarms
+    .to(NatsBus, topic: "varpulis/cep/alarms")
+
+stream FlappingAlerts = DeviceFlapping
+    .to(NatsBus, topic: "varpulis/cep/alarms")

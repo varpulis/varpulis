@@ -1,0 +1,23 @@
+version: "3.8"
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-t", "$$SYS/#", "-C", "1", "-i", "healthcheck", "-W", "3"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  varpulis:
+    image: ghcr.io/varpulis/varpulis:latest
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    volumes:
+      - ./pipeline.vpl:/app/pipeline.vpl:ro
+    command: ["run", "--file", "/app/pipeline.vpl"]

@@ -15,6 +15,21 @@ pub struct PipelineGroupSpec {
     pub pipelines: Vec<PipelinePlacement>,
     #[serde(default)]
     pub routes: Vec<InterPipelineRoute>,
+    /// Region affinity — prefer deploying this group to a specific region.
+    #[serde(default)]
+    pub region_affinity: Option<String>,
+    /// Cross-region routing rules for federation.
+    #[serde(default)]
+    pub cross_region_routes: Vec<CrossRegionRouteSpec>,
+}
+
+/// Cross-region route specification within a pipeline group.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrossRegionRouteSpec {
+    /// Target region name.
+    pub to_region: String,
+    /// Event types to forward (supports wildcards).
+    pub event_types: Vec<String>,
 }
 
 /// A single pipeline within a group, with optional worker affinity.
@@ -322,6 +337,8 @@ mod tests {
                 },
             ],
             routes: vec![],
+            region_affinity: None,
+            cross_region_routes: vec![],
         };
 
         let mut group = DeployedPipelineGroup::new("g1".into(), "test".into(), spec);
@@ -402,6 +419,8 @@ mod tests {
                 },
             ],
             routes: vec![],
+            region_affinity: None,
+            cross_region_routes: vec![],
         };
 
         let mut group = DeployedPipelineGroup::new("g1".into(), "test".into(), spec);
@@ -437,6 +456,8 @@ mod tests {
             name: "test".into(),
             pipelines: vec![],
             routes: vec![],
+            region_affinity: None,
+            cross_region_routes: vec![],
         };
 
         let mut group = DeployedPipelineGroup::new("g1".into(), "test".into(), spec);
@@ -467,6 +488,8 @@ mod tests {
                 },
             ],
             routes: vec![],
+            region_affinity: None,
+            cross_region_routes: vec![],
         };
 
         let mut group = DeployedPipelineGroup::new("g1".into(), "test".into(), spec);
@@ -509,6 +532,8 @@ mod tests {
                 partition_key: None,
             }],
             routes: vec![],
+            region_affinity: None,
+            cross_region_routes: vec![],
         };
 
         let mut group = DeployedPipelineGroup::new("g1".into(), "test".into(), spec);
@@ -576,6 +601,8 @@ mod tests {
                 },
             ],
             routes: vec![],
+            region_affinity: None,
+            cross_region_routes: vec![],
         };
 
         let mut group = DeployedPipelineGroup::new("g1".into(), "test-group".into(), spec);
@@ -683,6 +710,8 @@ mod tests {
                 partition_key: None,
             }],
             routes: vec![],
+            region_affinity: None,
+            cross_region_routes: vec![],
         };
 
         let mut group = DeployedPipelineGroup::new("g1".into(), "singleton".into(), spec);

@@ -1,0 +1,9 @@
+version: "3.8"
+
+services:
+  varpulis:
+    image: ghcr.io/varpulis/varpulis:latest
+    volumes:
+      - ./pipeline.vpl:/app/pipeline.vpl:ro
+      - ./events.jsonl:/app/events.jsonl:ro
+    command: ["simulate", "--preload", "--file", "/app/pipeline.vpl", "--events", "/app/events.jsonl"]

@@ -23,10 +23,11 @@ pub use evaluator::eval_filter_expr;
 
 // Re-export internal types for use within the engine module
 use types::{
-    DistinctState, EmitConfig, EmitExprConfig, EnrichConfig, ForecastConfig, LimitState, LogConfig,
-    MergeSource, PartitionedAggregatorState, PartitionedSlidingCountWindowState,
-    PartitionedWindowState, PatternConfig, PrintConfig, RuntimeOp, RuntimeSource, SelectConfig,
-    StreamDefinition, StreamProcessResult, TimerConfig, ToConfig, TrendAggregateConfig, WindowType,
+    ConcurrentConfig, DistinctState, EmitConfig, EmitExprConfig, EnrichConfig, ForecastConfig,
+    LimitState, LogConfig, MergeSource, PartitionedAggregatorState,
+    PartitionedSlidingCountWindowState, PartitionedWindowState, PatternConfig, PrintConfig,
+    RuntimeOp, RuntimeSource, SelectConfig, StreamDefinition, StreamProcessResult, TimerConfig,
+    ToConfig, TrendAggregateConfig, WindowType,
 };
 
 use crate::aggregation::Aggregator;
@@ -1359,16 +1360,34 @@ impl Engine {
                 StreamOp::Score(spec) => {
                     #[cfg(feature = "onnx")]
                     {
+                        let gpu_config = if spec.gpu {
+                            Some(crate::scoring::GpuConfig {
+                                provider: crate::scoring::GpuProvider::Cuda {
+                                    device_id: spec.device_id,
+                                },
+                                batch_size: spec.batch_size.max(1),
+                            })
+                        } else if spec.batch_size > 1 {
+                            Some(crate::scoring::GpuConfig {
+                                provider: crate::scoring::GpuProvider::Cpu,
+                                batch_size: spec.batch_size,
+                            })
+                        } else {
+                            None
+                        };
+
                         let model = crate::scoring::OnnxModel::load(
                             &spec.model_path,
                             spec.inputs.clone(),
                             spec.outputs.clone(),
+                            gpu_config,
                         )
                         .map_err(|e| format!("Failed to load ONNX model: {}", e))?;
                         runtime_ops.push(RuntimeOp::Score(types::ScoreConfig {
                             model: std::sync::Arc::new(model),
                             input_fields: spec.inputs.clone(),
                             output_fields: spec.outputs.clone(),
+                            batch_size: spec.batch_size.max(1),
                         }));
                         continue;
                     }
@@ -1739,11 +1758,43 @@ impl Engine {
                             .to_string(),
                     );
                 }
-                StreamOp::Concurrent(_) => {
-                    return Err(
-                        ".concurrent() is not yet implemented — use .context() for thread-isolated parallelism"
-                            .to_string(),
+                StreamOp::Concurrent(ref args) => {
+                    let mut workers = std::thread::available_parallelism()
+                        .map(|n| n.get())
+                        .unwrap_or(4)
+                        .min(128);
+                    let mut partition_key = None;
+
+                    for arg in args {
+                        match arg.name.as_str() {
+                            "workers" => {
+                                if let varpulis_core::Expr::Int(n) = &arg.value {
+                                    workers = (*n as usize).clamp(1, 128);
+                                }
+                            }
+                            "partition_key" => {
+                                if let varpulis_core::Expr::Str(s) = &arg.value {
+                                    partition_key = Some(s.clone());
+                                } else if let varpulis_core::Expr::Ident(s) = &arg.value {
+                                    partition_key = Some(s.clone());
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    let thread_pool = std::sync::Arc::new(
+                        rayon::ThreadPoolBuilder::new()
+                            .num_threads(workers)
+                            .build()
+                            .map_err(|e| format!("Failed to create thread pool: {}", e))?,
                     );
+
+                    runtime_ops.push(RuntimeOp::Concurrent(ConcurrentConfig {
+                        workers,
+                        partition_key,
+                        thread_pool,
+                    }));
                 }
                 StreamOp::OrderBy(_) => {
                     return Err(

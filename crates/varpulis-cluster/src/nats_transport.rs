@@ -48,6 +48,32 @@ pub fn subject_raft_wildcard(node_id: u64) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Federation subjects
+// ---------------------------------------------------------------------------
+
+const FEDERATION_PREFIX: &str = "varpulis.federation";
+
+/// Subject for federation heartbeats from a region.
+pub fn subject_federation_heartbeat(region: &str) -> String {
+    format!("{FEDERATION_PREFIX}.heartbeat.{region}")
+}
+
+/// Subject for federation catalog sync from a region.
+pub fn subject_federation_catalog(region: &str) -> String {
+    format!("{FEDERATION_PREFIX}.catalog.{region}")
+}
+
+/// Subject for cross-region event routing.
+pub fn subject_federation_route(from_region: &str, to_region: &str) -> String {
+    format!("{FEDERATION_PREFIX}.route.{from_region}.{to_region}")
+}
+
+/// Wildcard subject for all federation messages.
+pub fn subject_federation_wildcard() -> String {
+    format!("{FEDERATION_PREFIX}.>")
+}
+
+// ---------------------------------------------------------------------------
 // Connection + request/reply utilities (requires nats-transport feature)
 // ---------------------------------------------------------------------------
 

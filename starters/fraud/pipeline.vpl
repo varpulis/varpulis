@@ -1,0 +1,36 @@
+# Fraud Detection Starter — Account Takeover with Forecasting
+# Detects Login -> PasswordChange -> Transaction sequences
+
+event Login:
+    user_id: str
+    ip: str
+    ts: timestamp
+
+event PasswordChange:
+    user_id: str
+    ip: str
+    ts: timestamp
+
+event Transaction:
+    user_id: str
+    amount: float
+    merchant: str
+    ts: timestamp
+
+# Account takeover pattern with predictive forecasting
+stream AccountTakeover = Login as login
+    -> PasswordChange where user_id == login.user_id as pwd
+    -> Transaction where user_id == login.user_id and amount > 500 as tx
+    .within(30m)
+    .forecast(confidence: 0.5, horizon: 15m, warmup: 50)
+    .where(forecast_probability > 0.6)
+    .emit(
+        alert_type: "ACCOUNT_TAKEOVER",
+        user: login.user_id,
+        login_ip: login.ip,
+        change_ip: pwd.ip,
+        amount: tx.amount,
+        merchant: tx.merchant,
+        probability: forecast_probability,
+        severity: if forecast_probability > 0.9 then "CRITICAL" else "HIGH"
+    )

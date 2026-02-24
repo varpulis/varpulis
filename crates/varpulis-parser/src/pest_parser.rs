@@ -1224,6 +1224,9 @@ fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
             let mut model_path = String::new();
             let mut inputs = Vec::new();
             let mut outputs = Vec::new();
+            let mut gpu = false;
+            let mut batch_size: usize = 1;
+            let mut device_id: i32 = 0;
             for p in pair.into_inner() {
                 if p.as_rule() == Rule::score_params {
                     for param_pair in p.into_inner() {
@@ -1254,6 +1257,15 @@ fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
                                         }
                                     }
                                 }
+                                "gpu" => {
+                                    gpu = value_pair.as_str() == "true";
+                                }
+                                "batch_size" => {
+                                    batch_size = value_pair.as_str().parse().unwrap_or(1);
+                                }
+                                "device" | "device_id" => {
+                                    device_id = value_pair.as_str().parse().unwrap_or(0);
+                                }
                                 _ => {}
                             }
                         }
@@ -1264,6 +1276,9 @@ fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
                 model_path,
                 inputs,
                 outputs,
+                gpu,
+                batch_size,
+                device_id,
             }))
         }
         _ => Err(ParseError::UnexpectedToken {

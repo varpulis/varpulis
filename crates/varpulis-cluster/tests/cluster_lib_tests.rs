@@ -563,6 +563,8 @@ fn find_target_pipeline_reexported() {
             partition_key: None,
         }],
         routes: vec![],
+        region_affinity: None,
+        cross_region_routes: vec![],
     };
     let group = DeployedPipelineGroup::new("g1".into(), "test".into(), spec);
     assert_eq!(find_target_pipeline(&group, "AnyEvent"), Some("default"));
@@ -679,6 +681,8 @@ fn pipeline_group_info_from_deployed_with_replicas() {
             partition_key: Some("user_id".into()),
         }],
         routes: vec![],
+        region_affinity: None,
+        cross_region_routes: vec![],
     };
     let group = DeployedPipelineGroup::new("g1".into(), "replicated".into(), spec);
     let info = PipelineGroupInfo::from(&group);
