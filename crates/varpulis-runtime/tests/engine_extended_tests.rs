@@ -1421,6 +1421,7 @@ async fn partitioned_aggregate_with_having() {
 #[tokio::test]
 async fn load_with_source_validates() {
     let code = r#"
+        event Reading: value: float
         stream S = Reading
             .emit(val: value)
     "#;

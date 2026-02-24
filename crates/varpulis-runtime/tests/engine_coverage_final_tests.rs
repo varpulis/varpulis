@@ -1218,6 +1218,7 @@ fn set_variable_immutable_fails() {
 #[test]
 fn load_with_source_valid_program() {
     let code = r#"
+        event Tick: x: int
         stream S = Tick
             .emit(x: x)
     "#;

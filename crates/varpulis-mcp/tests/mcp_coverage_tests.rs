@@ -919,7 +919,11 @@ fn error_text_creates_error_result() {
 #[tokio::test]
 async fn validate_vpl_valid_simple() {
     let client = unreachable_client();
-    let result = varpulis_mcp::tools::validate_vpl_impl("stream A = X", &client).await;
+    let result = varpulis_mcp::tools::validate_vpl_impl(
+        "event X: v: int\nstream A = X\n    .emit()",
+        &client,
+    )
+    .await;
     assert_eq!(result.is_error, Some(false));
     let text = first_text(&result);
     assert!(text.contains("valid"), "Expected 'valid' in: {}", text);
@@ -933,14 +937,14 @@ async fn validate_vpl_valid_simple() {
 #[tokio::test]
 async fn validate_vpl_valid_complex_multi_stream() {
     // A complex VPL with multiple streams — single line chaining works
-    let source = "stream Trades = TradeEvent\nstream Alerts = Trades.where(price > 1000)";
+    let source = "event TradeEvent: price: float\nstream Trades = TradeEvent\n    .emit()\nstream Alerts = Trades\n    .where(price > 1000)\n    .emit()";
     let client = unreachable_client();
     let result = varpulis_mcp::tools::validate_vpl_impl(source, &client).await;
-    // Both should parse even without event declarations (warnings only, not errors)
     let text = first_text(&result);
-    assert!(
-        result.is_error == Some(false) || text.contains("warning"),
-        "Multi-stream VPL should be valid or warning-only: {}",
+    assert_eq!(
+        result.is_error,
+        Some(false),
+        "Multi-stream VPL should be valid: {}",
         text
     );
 }
@@ -1004,7 +1008,7 @@ async fn validate_vpl_semantic_warning_only_no_errors() {
     // .aggregate() without .window() produces a Severity::Warning (W001)
     // has_errors() only checks for Severity::Error, so warnings-only → "valid"
     // This exercises the else branch at L202 (no errors path)
-    let source = "stream S = X.aggregate(c: count())";
+    let source = "event X: v: int\nstream S = X\n    .aggregate(c: count())";
     let client = unreachable_client();
     let result = varpulis_mcp::tools::validate_vpl_impl(source, &client).await;
     // Warnings only → has_errors() = false → success path

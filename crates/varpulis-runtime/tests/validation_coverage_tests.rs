@@ -312,6 +312,7 @@ fn arithmetic_in_where_warning() {
 fn valid_simple_stream() {
     let diags = validate_vpl(
         r#"
+        event Reading: value: float
         stream S = Reading
             .where(value > 0.0)
     "#,
@@ -323,6 +324,7 @@ fn valid_simple_stream() {
 fn valid_aggregate_with_window() {
     let diags = validate_vpl(
         r#"
+        event Reading: value: float
         stream S = Reading
             .window(5)
             .aggregate(c: count(), s: sum(value), a: avg(value))
@@ -335,6 +337,8 @@ fn valid_aggregate_with_window() {
 fn valid_sequence() {
     let diags = validate_vpl(
         r#"
+        event A: x: int
+        event B: x: int
         stream S = A as a
             -> B as b
             .within(10s)
@@ -402,10 +406,10 @@ fn undeclared_event_type_warning() {
             .where(value > 0)
     "#,
     );
-    // W030 warns about undeclared event types
+    // E033 errors on undeclared event types (promoted from W030)
     assert!(
-        has_warning(&diags, "W030"),
-        "Undeclared event warning: {:?}",
+        has_error(&diags, "E033"),
+        "Undeclared event error: {:?}",
         diags
     );
 }
@@ -514,6 +518,7 @@ fn duplicate_type_alias() {
 fn count_takes_no_field_arg() {
     let diags = validate_vpl(
         r#"
+        event A: x: int
         stream S = A
             .window(5)
             .aggregate(c: count())
@@ -639,6 +644,7 @@ fn within_with_bool_literal() {
 fn where_with_boolean_literal_true() {
     let diags = validate_vpl(
         r#"
+        event A: x: int
         stream S = A
             .where(true)
     "#,

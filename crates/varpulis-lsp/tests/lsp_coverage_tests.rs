@@ -1018,8 +1018,7 @@ fn completion_to_params_kafka() {
     let items = get_completions(text, pos(2, 10));
     let labels: Vec<&str> = items.iter().map(|c| c.label.as_str()).collect();
     assert!(labels.contains(&"topic"));
-    // group_id is source-only
-    assert!(!labels.contains(&"group_id"));
+    assert!(labels.contains(&"group_id"));
 }
 
 #[test]
