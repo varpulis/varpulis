@@ -1,0 +1,38 @@
+name: VPL Check (Self-Test)
+
+on:
+  push:
+    paths:
+      - 'examples/**/*.vpl'
+      - 'demos/**/*.vpl'
+      - '.github/actions/varpulis-check/**'
+  pull_request:
+    paths:
+      - 'examples/**/*.vpl'
+      - 'demos/**/*.vpl'
+      - '.github/actions/varpulis-check/**'
+
+jobs:
+  check-examples:
+    name: Validate example VPL files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check examples
+        uses: ./.github/actions/varpulis-check
+        with:
+          path: 'examples/'
+          version: '0.4.0'
+
+  check-demos:
+    name: Validate demo VPL files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check demos
+        uses: ./.github/actions/varpulis-check
+        with:
+          path: 'demos/'
+          version: '0.4.0'
