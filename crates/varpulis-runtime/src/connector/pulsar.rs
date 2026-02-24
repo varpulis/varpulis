@@ -56,7 +56,6 @@ mod pulsar_impl {
     use super::*;
     use futures::TryStreamExt;
     use pulsar::{
-        authentication::oauth2::OAuth2Authentication, consumer::InitialPosition,
         proto::command_subscribe::SubType, Authentication, Consumer, DeserializeMessage, Payload,
         Producer, Pulsar, SerializeMessage, TokioExecutor,
     };
@@ -64,18 +63,15 @@ mod pulsar_impl {
     use std::sync::Arc;
     use tracing::{info, warn};
 
-    /// Message wrapper for Pulsar deserialization
-    struct JsonMessage {
-        payload: Vec<u8>,
-    }
+    /// Message wrapper for Pulsar deserialization.
+    /// We access the raw payload bytes via `msg.payload.data` directly.
+    struct JsonMessage;
 
     impl DeserializeMessage for JsonMessage {
         type Output = Result<JsonMessage, serde_json::Error>;
 
-        fn deserialize_message(payload: &Payload) -> Self::Output {
-            Ok(JsonMessage {
-                payload: payload.data.clone(),
-            })
+        fn deserialize_message(_payload: &Payload) -> Self::Output {
+            Ok(JsonMessage)
         }
     }
 
