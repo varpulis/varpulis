@@ -262,12 +262,14 @@ mod tests {
                 type_annotation: None,
                 source: StreamSource::Ident("X".to_string()),
                 ops: vec![],
+                op_spans: vec![],
             },
             Stmt::StreamDecl {
                 name: "S".to_string(),
                 type_annotation: None,
                 source: StreamSource::Ident("Y".to_string()),
                 ops: vec![],
+                op_spans: vec![],
             },
         ]);
         let result = validate("stream S = X\nstream S = Y", &prog);
@@ -284,6 +286,7 @@ mod tests {
                 type_annotation: None,
                 source: StreamSource::Ident("X".to_string()),
                 ops: vec![StreamOp::Map(Expr::Ident("x".to_string()))],
+                op_spans: vec![],
             },
         ]);
         let result = validate("stream S = X.map(x)", &prog);
@@ -300,6 +303,7 @@ mod tests {
                 type_annotation: None,
                 source: StreamSource::Ident("X".to_string()),
                 ops: vec![StreamOp::Having(Expr::Bool(true))],
+                op_spans: vec![],
             },
         ]);
         let result = validate("stream S = X.having(true)", &prog);
@@ -322,6 +326,7 @@ mod tests {
                         args: vec![],
                     },
                 }])],
+                op_spans: vec![],
             },
         ]);
         let result = validate("stream S = X.aggregate(c: count())", &prog);
@@ -341,6 +346,7 @@ mod tests {
                     name: "lvl".to_string(),
                     value: Expr::Str("info".to_string()),
                 }])],
+                op_spans: vec![],
             },
         ]);
         let result = validate("stream S = X.log(lvl: \"info\")", &prog);
@@ -371,6 +377,7 @@ mod tests {
                         },
                     }]),
                 ],
+                op_spans: vec![],
             },
         ]);
         let result = validate("stream S = X.window(1m).aggregate(x: median(val))", &prog);
@@ -387,6 +394,7 @@ mod tests {
                 type_annotation: None,
                 source: StreamSource::Ident("X".to_string()),
                 ops: vec![StreamOp::Where(Expr::Int(42))],
+                op_spans: vec![],
             },
         ]);
         let result = validate("stream S = X.where(42)", &prog);
@@ -412,6 +420,7 @@ mod tests {
                     }),
                     StreamOp::Within(Expr::Str("bad".to_string())),
                 ],
+                op_spans: vec![],
             },
         ]);
         let result = validate("stream S = X -> A .within(\"bad\")", &prog);
@@ -465,6 +474,7 @@ mod tests {
                         params: vec![],
                     },
                 ],
+                op_spans: vec![],
             },
         ]);
         let result = validate("", &prog);
@@ -494,6 +504,7 @@ mod tests {
                         },
                     }]),
                 ],
+                op_spans: vec![],
             },
         ]);
         let result = validate("stream S = X.window(1m).aggregate(s: sum())", &prog);
@@ -513,6 +524,7 @@ mod tests {
                     connector_name: "UnknownConn".to_string(),
                     params: vec![],
                 }],
+                op_spans: vec![],
             },
         ]);
         let result = validate("stream S = X.to(UnknownConn)", &prog);
@@ -532,6 +544,7 @@ mod tests {
                     StreamOp::Where(Expr::Bool(true)),
                     StreamOp::Within(Expr::Duration(60_000_000_000)),
                 ],
+                op_spans: vec![],
             },
         ]);
         let result = validate("stream S = X.where(true).within(1m)", &prog);
@@ -658,6 +671,7 @@ mod tests {
                     fields: vec![],
                     target_context: None,
                 }],
+                op_spans: vec![],
             },
         ]);
         let result = validate("stream S = X.emit as UnknownAlert ()", &prog);

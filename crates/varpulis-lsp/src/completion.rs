@@ -27,7 +27,10 @@ pub fn get_completions(text: &str, position: Position) -> Vec<CompletionItem> {
         }
         CompletionContext::ConnectorType => get_connector_type_completions(),
         CompletionContext::InForecastParams => get_forecast_param_completions(),
-        CompletionContext::InEmit => get_emit_field_completions(text),
+        CompletionContext::InEmit => get_emit_field_completions(text, position),
+        CompletionContext::InWhere => get_where_field_completions(text, position),
+        CompletionContext::InSelect => get_select_field_completions(text, position),
+        CompletionContext::InPartitionBy => get_where_field_completions(text, position),
     }
 }
 
@@ -51,6 +54,12 @@ enum CompletionContext {
     InForecastParams,
     /// Inside `.emit(<cursor>)` — suggest fields from upstream event/stream
     InEmit,
+    /// Inside `.where(<cursor>)` — suggest fields from source event
+    InWhere,
+    /// Inside `.select(<cursor>)` — suggest fields from source event
+    InSelect,
+    /// Inside `.partition_by(<cursor>)` — suggest fields from source event
+    InPartitionBy,
 }
 
 /// Determine what kind of completion to provide based on context
@@ -95,6 +104,21 @@ fn get_completion_context(text: &str, position: Position) -> CompletionContext {
     // Check if we're inside .emit(...) — suggest fields
     if prefix.contains(".emit(") && !prefix.ends_with(')') {
         return CompletionContext::InEmit;
+    }
+
+    // Check if we're inside .where(...) — suggest fields for boolean expressions
+    if prefix.contains(".where(") && !prefix.ends_with(')') {
+        return CompletionContext::InWhere;
+    }
+
+    // Check if we're inside .select(...) — suggest fields for projection
+    if prefix.contains(".select(") && !prefix.ends_with(')') {
+        return CompletionContext::InSelect;
+    }
+
+    // Check if we're inside .partition_by(...) — suggest fields
+    if prefix.contains(".partition_by(") && !prefix.ends_with(')') {
+        return CompletionContext::InPartitionBy;
     }
 
     // Check if we're inside a window() call
@@ -358,6 +382,20 @@ fn get_stream_operation_completions() -> Vec<CompletionItem> {
             "Merge multiple streams",
             "merge(${1:stream1}, ${2:stream2})",
             Some(".merge(streamA, streamB)"),
+        ),
+        completion_item(
+            "log",
+            CompletionItemKind::METHOD,
+            "Log events for debugging",
+            "log(level: \"${1:info}\", message: \"${2:debug}\")",
+            Some(".log(level: \"info\", message: \"event received\")"),
+        ),
+        completion_item(
+            "print",
+            CompletionItemKind::METHOD,
+            "Print events to stdout",
+            "print()",
+            Some(".print()"),
         ),
         completion_item(
             "from",
@@ -882,8 +920,8 @@ fn get_connector_type_completions() -> Vec<CompletionItem> {
             "http",
             CompletionItemKind::CLASS,
             "HTTP API endpoint",
-            "http(url: \"${1:https://api.example.com}\")",
-            Some("http(url: \"https://api.example.com\")"),
+            "http(base_url: \"${1:https://api.example.com}\")",
+            Some("http(base_url: \"https://api.example.com\")"),
         ),
         completion_item(
             "websocket",
@@ -956,16 +994,174 @@ fn get_forecast_param_completions() -> Vec<CompletionItem> {
     ]
 }
 
-/// Suggest fields available in .emit() based on upstream event fields and built-in variables
-fn get_emit_field_completions(text: &str) -> Vec<CompletionItem> {
-    let mut items = Vec::new();
+/// Find the source event type(s) for the stream enclosing the given cursor position.
+///
+/// Scans backwards from `position` to find the nearest `stream ... = EventType` declaration.
+/// For sequence patterns (`EventA as a -> EventB as b`), returns all event types.
+/// Returns `None` if no enclosing stream is found.
+fn find_enclosing_stream_event_types(text: &str, position: Position) -> Option<Vec<String>> {
+    let lines: Vec<&str> = text.lines().collect();
+    // Scan backwards from cursor line to find the stream declaration
+    for i in (0..=position.line as usize).rev() {
+        let line = lines.get(i)?;
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("stream ") {
+            // Parse: stream Name = EventType... or stream Name = EventA as a -> EventB as b...
+            if let Some(eq_idx) = rest.find('=') {
+                let after_eq = rest[eq_idx + 1..].trim();
+                // For multi-line declarations (merge, join), collect continuation lines
+                let mut full_rhs = after_eq.to_string();
+                if after_eq.starts_with("merge(") || after_eq.starts_with("join(") {
+                    // Count parens to find closing paren
+                    let mut depth: i32 = 0;
+                    for c in full_rhs.chars() {
+                        match c {
+                            '(' => depth += 1,
+                            ')' => depth -= 1,
+                            _ => {}
+                        }
+                    }
+                    // If unclosed, append following lines
+                    let mut j = i + 1;
+                    while depth > 0 && j < lines.len() && j <= position.line as usize {
+                        full_rhs.push(' ');
+                        full_rhs.push_str(lines[j].trim());
+                        for c in lines[j].chars() {
+                            match c {
+                                '(' => depth += 1,
+                                ')' => depth -= 1,
+                                _ => {}
+                            }
+                        }
+                        j += 1;
+                    }
+                }
+                return Some(extract_event_types_from_stream_rhs(&full_rhs));
+            }
+        }
+        // If we hit another top-level declaration, stop searching
+        if !trimmed.is_empty()
+            && !line.starts_with(' ')
+            && !line.starts_with('\t')
+            && (trimmed.starts_with("event ")
+                || trimmed.starts_with("connector ")
+                || trimmed.starts_with("pattern ")
+                || trimmed.starts_with("fn ")
+                || trimmed.starts_with("let ")
+                || trimmed.starts_with("var ")
+                || trimmed.starts_with("const "))
+        {
+            return None;
+        }
+    }
+    None
+}
 
-    // Collect fields from all event declarations in the document
+/// Extract event type names from the RHS of a stream declaration.
+///
+/// Handles:
+/// - `EventType.from(...)` → `["EventType"]`
+/// - `EventType.where(...)` → `["EventType"]`
+/// - `EventA as a -> EventB as b` → `["EventA", "EventB"]`
+/// - `merge(stream high = Source.where(...), stream low = Source2.where(...))` → `["Source", "Source2"]`
+/// - `merge(StreamA, StreamB)` → `["StreamA", "StreamB"]`
+fn extract_event_types_from_stream_rhs(rhs: &str) -> Vec<String> {
+    let mut types = Vec::new();
+
+    // Handle merge(...) syntax
+    if let Some(rest) = rhs.strip_prefix("merge(") {
+        // Extract event types from inline stream list
+        // Formats: "stream high = Source.where(...), stream low = Source2" or "StreamA, StreamB"
+        let content = rest.trim_end_matches(')');
+        for part in split_merge_parts(content) {
+            let trimmed = part.trim();
+            if let Some(after_stream) = trimmed.strip_prefix("stream ") {
+                // "stream high = Source.where(...)" → extract Source after '='
+                if let Some(eq_idx) = after_stream.find('=') {
+                    let source_part = after_stream[eq_idx + 1..].trim();
+                    let end = source_part
+                        .find(|c: char| !c.is_alphanumeric() && c != '_')
+                        .unwrap_or(source_part.len());
+                    let name = &source_part[..end];
+                    if !name.is_empty() {
+                        types.push(name.to_string());
+                    }
+                }
+            } else {
+                // Simple identifier: "StreamA"
+                let end = trimmed
+                    .find(|c: char| !c.is_alphanumeric() && c != '_')
+                    .unwrap_or(trimmed.len());
+                let name = &trimmed[..end];
+                if !name.is_empty() {
+                    types.push(name.to_string());
+                }
+            }
+        }
+        return types;
+    }
+
+    // Split on `->` for sequence patterns, then extract the first identifier from each part
+    for part in rhs.split("->") {
+        let trimmed = part.trim();
+        // The event type is the first PascalCase identifier
+        let end = trimmed
+            .find(|c: char| !c.is_alphanumeric() && c != '_')
+            .unwrap_or(trimmed.len());
+        let name = &trimmed[..end];
+        if !name.is_empty()
+            && name
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_uppercase() || c == '_')
+        {
+            types.push(name.to_string());
+        }
+    }
+    types
+}
+
+/// Split merge content by commas, respecting parenthesized sub-expressions.
+fn split_merge_parts(content: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0;
+    let mut start = 0;
+    for (i, c) in content.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                if depth > 0 {
+                    depth -= 1;
+                }
+            }
+            ',' if depth == 0 => {
+                parts.push(&content[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    if start < content.len() {
+        parts.push(&content[start..]);
+    }
+    parts
+}
+
+/// Collect (field_name, type_name) pairs from event declarations matching the given event type names.
+/// If `event_types` is `None`, collects from all events (fallback).
+fn collect_event_fields(text: &str, event_types: Option<&[String]>) -> Vec<(String, String)> {
+    let mut fields = Vec::new();
     let mut in_event = false;
+    let mut current_event_matches = false;
     for line in text.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("event ") {
+        if let Some(rest) = trimmed.strip_prefix("event ") {
             in_event = true;
+            let event_name = rest.trim_end_matches(':').trim();
+            current_event_matches = match event_types {
+                Some(types) => types.iter().any(|t| t == event_name),
+                None => true,
+            };
             continue;
         }
         if in_event {
@@ -975,38 +1171,64 @@ fn get_emit_field_completions(text: &str) -> Vec<CompletionItem> {
                     && !line.starts_with('\t'))
             {
                 in_event = false;
-            } else if let Some(colon_idx) = trimmed.find(':') {
-                let field_name = trimmed[..colon_idx].trim();
-                if !field_name.is_empty()
-                    && field_name
-                        .chars()
-                        .next()
-                        .is_some_and(|c| c.is_alphabetic() || c == '_')
-                {
-                    items.push(completion_item(
-                        field_name,
-                        CompletionItemKind::FIELD,
-                        "Event field",
-                        &format!("{}: {}", field_name, field_name),
-                        Some(&format!("{}: {}", field_name, field_name)),
-                    ));
+                current_event_matches = false;
+            } else if current_event_matches {
+                if let Some(colon_idx) = trimmed.find(':') {
+                    let field_name = trimmed[..colon_idx].trim();
+                    let type_name = trimmed[colon_idx + 1..].trim();
+                    if !field_name.is_empty()
+                        && field_name
+                            .chars()
+                            .next()
+                            .is_some_and(|c| c.is_alphabetic() || c == '_')
+                    {
+                        fields.push((field_name.to_string(), type_name.to_string()));
+                    }
                 }
             }
         }
     }
+    fields
+}
+
+/// Forecast built-in variables (name, description).
+const FORECAST_BUILTIN_VARS: &[(&str, &str)] = &[
+    ("forecast_probability", "Completion probability (0.0-1.0)"),
+    ("forecast_confidence", "Prediction stability (0.0-1.0)"),
+    ("forecast_time", "Expected time to completion (ns)"),
+    ("forecast_state", "Current NFA state label"),
+    ("forecast_context_depth", "PST context depth used"),
+    ("forecast_lower", "Conformal interval lower bound"),
+    ("forecast_upper", "Conformal interval upper bound"),
+];
+
+/// Enrich built-in variables (name, description).
+const ENRICH_BUILTIN_VARS: &[(&str, &str)] = &[
+    (
+        "enrich_status",
+        "Enrich lookup status (ok/error/cached/timeout)",
+    ),
+    ("enrich_latency_ms", "Enrich lookup latency in milliseconds"),
+];
+
+/// Suggest fields available in .emit() based on upstream event fields and built-in variables
+fn get_emit_field_completions(text: &str, position: Position) -> Vec<CompletionItem> {
+    let mut items = Vec::new();
+    let event_types = find_enclosing_stream_event_types(text, position);
+
+    for (field_name, _type_name) in collect_event_fields(text, event_types.as_deref()) {
+        items.push(completion_item(
+            &field_name,
+            CompletionItemKind::FIELD,
+            "Event field",
+            &format!("{}: {}", field_name, field_name),
+            Some(&format!("{}: {}", field_name, field_name)),
+        ));
+    }
 
     // Add forecast built-in variables if .forecast() is present
     if text.contains(".forecast(") {
-        let forecast_vars = [
-            ("forecast_probability", "Completion probability (0.0-1.0)"),
-            ("forecast_confidence", "Prediction stability (0.0-1.0)"),
-            ("forecast_time", "Expected time to completion (ns)"),
-            ("forecast_state", "Current NFA state label"),
-            ("forecast_context_depth", "PST context depth used"),
-            ("forecast_lower", "Conformal interval lower bound"),
-            ("forecast_upper", "Conformal interval upper bound"),
-        ];
-        for (name, desc) in forecast_vars {
+        for (name, desc) in FORECAST_BUILTIN_VARS {
             items.push(completion_item(
                 name,
                 CompletionItemKind::VARIABLE,
@@ -1019,20 +1241,15 @@ fn get_emit_field_completions(text: &str) -> Vec<CompletionItem> {
 
     // Add enrich built-in variables if .enrich() is present
     if text.contains(".enrich(") {
-        items.push(completion_item(
-            "enrich_status",
-            CompletionItemKind::VARIABLE,
-            "Enrich lookup status (ok/error/cached/timeout)",
-            "enrich_status: enrich_status",
-            Some("enrich_status: enrich_status"),
-        ));
-        items.push(completion_item(
-            "enrich_latency_ms",
-            CompletionItemKind::VARIABLE,
-            "Enrich lookup latency in milliseconds",
-            "enrich_latency_ms: enrich_latency_ms",
-            Some("enrich_latency_ms: enrich_latency_ms"),
-        ));
+        for (name, desc) in ENRICH_BUILTIN_VARS {
+            items.push(completion_item(
+                name,
+                CompletionItemKind::VARIABLE,
+                desc,
+                &format!("{}: {}", name, name),
+                Some(&format!("{}: {}", name, name)),
+            ));
+        }
     }
 
     // Add common emit patterns
@@ -1051,6 +1268,94 @@ fn get_emit_field_completions(text: &str) -> Vec<CompletionItem> {
             "severity: \"${1:warning}\"",
             Some("severity: \"warning\""),
         ));
+    }
+
+    items
+}
+
+/// Suggest fields available in .where() — bare field names for boolean expressions
+fn get_where_field_completions(text: &str, position: Position) -> Vec<CompletionItem> {
+    let mut items = Vec::new();
+    let event_types = find_enclosing_stream_event_types(text, position);
+
+    for (field_name, type_name) in collect_event_fields(text, event_types.as_deref()) {
+        items.push(completion_item(
+            &field_name,
+            CompletionItemKind::FIELD,
+            &format!("Event field ({})", type_name),
+            &field_name,
+            Some(&field_name),
+        ));
+    }
+
+    // Add forecast built-in variables if .forecast() is present
+    if text.contains(".forecast(") {
+        for (name, desc) in FORECAST_BUILTIN_VARS {
+            items.push(completion_item(
+                name,
+                CompletionItemKind::VARIABLE,
+                desc,
+                name,
+                Some(name),
+            ));
+        }
+    }
+
+    // Add enrich built-in variables if .enrich() is present
+    if text.contains(".enrich(") {
+        for (name, desc) in ENRICH_BUILTIN_VARS {
+            items.push(completion_item(
+                name,
+                CompletionItemKind::VARIABLE,
+                desc,
+                name,
+                Some(name),
+            ));
+        }
+    }
+
+    items
+}
+
+/// Suggest fields available in .select() — `field: field` pattern like emit
+fn get_select_field_completions(text: &str, position: Position) -> Vec<CompletionItem> {
+    let mut items = Vec::new();
+    let event_types = find_enclosing_stream_event_types(text, position);
+
+    for (field_name, _type_name) in collect_event_fields(text, event_types.as_deref()) {
+        items.push(completion_item(
+            &field_name,
+            CompletionItemKind::FIELD,
+            "Event field",
+            &format!("{}: {}", field_name, field_name),
+            Some(&format!("{}: {}", field_name, field_name)),
+        ));
+    }
+
+    // Add forecast built-in variables if .forecast() is present
+    if text.contains(".forecast(") {
+        for (name, desc) in FORECAST_BUILTIN_VARS {
+            items.push(completion_item(
+                name,
+                CompletionItemKind::VARIABLE,
+                desc,
+                &format!("{}: {}", name, name),
+                Some(&format!("{}: {}", name, name)),
+            ));
+        }
+    }
+
+    // Add enrich built-in variables if .enrich() is present
+    if text.contains(".enrich(") {
+        for (name, desc) in ENRICH_BUILTIN_VARS {
+            items.push(completion_item(
+                name,
+                CompletionItemKind::VARIABLE,
+                desc,
+                &format!("{}: {}", name, name),
+                Some(&format!("{}: {}", name, name)),
+            ));
+        }
     }
 
     items
@@ -1192,11 +1497,190 @@ mod tests {
     }
 
     #[test]
+    fn test_where_field_completions() {
+        let text = "event Temperature:\n    value: float\n    zone: str\n\nstream X = Temperature\n    .where(";
+        let position = Position {
+            line: 5,
+            character: 11,
+        };
+        let completions = get_completions(text, position);
+        let labels: Vec<&str> = completions.iter().map(|c| c.label.as_str()).collect();
+        assert!(
+            labels.contains(&"value"),
+            "Expected 'value' in completions, got: {:?}",
+            labels
+        );
+        assert!(labels.contains(&"zone"));
+    }
+
+    #[test]
+    fn test_select_field_completions() {
+        let text =
+            "event Trade:\n    price: float\n    volume: int\n\nstream X = Trade\n    .select(";
+        let position = Position {
+            line: 5,
+            character: 12,
+        };
+        let completions = get_completions(text, position);
+        let labels: Vec<&str> = completions.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels.contains(&"price"));
+        assert!(labels.contains(&"volume"));
+    }
+
+    #[test]
+    fn test_where_with_forecast_builtins() {
+        let text = "event A:\n    x: int\n\nstream S = A as a -> A as b\n    .forecast(confidence: 0.7)\n    .where(";
+        let position = Position {
+            line: 5,
+            character: 11,
+        };
+        let completions = get_completions(text, position);
+        let labels: Vec<&str> = completions.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels.contains(&"x"));
+        assert!(labels.contains(&"forecast_probability"));
+        assert!(labels.contains(&"forecast_time"));
+    }
+
+    #[test]
+    fn test_http_connector_uses_base_url() {
+        let text = "connector C = ";
+        let position = Position {
+            line: 0,
+            character: 14,
+        };
+        let completions = get_completions(text, position);
+        let http_item = completions.iter().find(|c| c.label == "http").unwrap();
+        let insert = http_item.insert_text.as_deref().unwrap();
+        assert!(
+            insert.contains("base_url"),
+            "HTTP snippet should use base_url, got: {}",
+            insert
+        );
+        assert!(
+            !insert.contains("http(url:"),
+            "Should not contain http(url:"
+        );
+    }
+
+    #[test]
+    fn test_where_only_shows_source_event_fields() {
+        // Two event types, stream uses only Temperature — should NOT suggest 'price' or 'volume'
+        let text = "event Temperature:\n    value: float\n    zone: str\n\nevent Trade:\n    price: float\n    volume: int\n\nstream X = Temperature\n    .where(";
+        let position = Position {
+            line: 9,
+            character: 11,
+        };
+        let completions = get_completions(text, position);
+        let labels: Vec<&str> = completions.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels.contains(&"value"));
+        assert!(labels.contains(&"zone"));
+        assert!(
+            !labels.contains(&"price"),
+            "Should not suggest fields from unrelated event Trade"
+        );
+        assert!(!labels.contains(&"volume"));
+    }
+
+    #[test]
+    fn test_where_sequence_shows_all_event_fields() {
+        // Sequence pattern with two event types — should suggest fields from both
+        let text = "event Login:\n    user_id: str\n\nevent Purchase:\n    amount: float\n\nstream S = Login as l -> Purchase as p\n    .where(";
+        let position = Position {
+            line: 7,
+            character: 11,
+        };
+        let completions = get_completions(text, position);
+        let labels: Vec<&str> = completions.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels.contains(&"user_id"));
+        assert!(labels.contains(&"amount"));
+    }
+
+    #[test]
+    fn test_where_same_line_only_source_fields() {
+        // User's exact test case: A and B declared, stream uses A.where(
+        let text = "event A:\n    id: str\n\nevent B:\n    name: str\n\nstream S = A.where(";
+        let position = Position {
+            line: 6,
+            character: 19,
+        };
+        let completions = get_completions(text, position);
+        let labels: Vec<&str> = completions.iter().map(|c| c.label.as_str()).collect();
+        assert!(
+            labels.contains(&"id"),
+            "Should suggest 'id' from event A, got: {:?}",
+            labels
+        );
+        assert!(
+            !labels.contains(&"name"),
+            "Should NOT suggest 'name' from event B, got: {:?}",
+            labels
+        );
+    }
+
+    #[test]
     fn test_resolve_connector_type_from_document() {
         let text = "connector MarketData = mqtt(url: \"broker.example.com\")\n";
         assert_eq!(
             resolve_connector_type(text, "MarketData"),
             Some("mqtt".to_string())
         );
+    }
+
+    #[test]
+    fn test_merge_simple_completions() {
+        // merge(StreamA, StreamB) — both are event type names
+        let text = "event Temperature:\n    value: float\n\nevent Humidity:\n    level: float\n\nstream Combined = merge(Temperature, Humidity)\n    .where(";
+        let position = Position {
+            line: 7,
+            character: 11,
+        };
+        let completions = get_completions(text, position);
+        let labels: Vec<&str> = completions.iter().map(|c| c.label.as_str()).collect();
+        assert!(
+            labels.contains(&"value"),
+            "Should suggest 'value' from Temperature, got: {:?}",
+            labels
+        );
+        assert!(
+            labels.contains(&"level"),
+            "Should suggest 'level' from Humidity, got: {:?}",
+            labels
+        );
+    }
+
+    #[test]
+    fn test_merge_inline_stream_completions() {
+        // merge(stream high = Source.where(...), stream low = Source.where(...))
+        let text = "event Source:\n    value: float\n    zone: str\n\nstream Combined = merge(\n    stream high = Source.where(value > 100),\n    stream low = Source.where(value < 10)\n)\n    .where(";
+        let position = Position {
+            line: 8,
+            character: 11,
+        };
+        let completions = get_completions(text, position);
+        let labels: Vec<&str> = completions.iter().map(|c| c.label.as_str()).collect();
+        assert!(
+            labels.contains(&"value"),
+            "Should suggest 'value' from Source, got: {:?}",
+            labels
+        );
+        assert!(
+            labels.contains(&"zone"),
+            "Should suggest 'zone' from Source, got: {:?}",
+            labels
+        );
+    }
+
+    #[test]
+    fn test_extract_event_types_merge_simple() {
+        let types = extract_event_types_from_stream_rhs("merge(StreamA, StreamB)");
+        assert_eq!(types, vec!["StreamA", "StreamB"]);
+    }
+
+    #[test]
+    fn test_extract_event_types_merge_inline() {
+        let types = extract_event_types_from_stream_rhs(
+            "merge( stream high = Source.where(value > 100), stream low = Source.where(value < 10) )",
+        );
+        assert_eq!(types, vec!["Source", "Source"]);
     }
 }

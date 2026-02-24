@@ -190,9 +190,14 @@ pub fn pass2_semantic(v: &mut Validator, program: &Program) {
     for stmt in &program.statements {
         let span = stmt.span;
         match &stmt.node {
-            Stmt::StreamDecl { source, ops, .. } => {
+            Stmt::StreamDecl {
+                source,
+                ops,
+                op_spans,
+                ..
+            } => {
                 check_stream_source(v, source, span);
-                check_stream_ops(v, ops, source, span);
+                check_stream_ops(v, ops, op_spans, source, span);
             }
             Stmt::ConnectorDecl {
                 connector_type,
@@ -354,7 +359,13 @@ fn check_source_name(v: &mut Validator, name: &str, span: Span) {
 // Stream operations checks
 // ---------------------------------------------------------------------------
 
-fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, span: Span) {
+fn check_stream_ops(
+    v: &mut Validator,
+    ops: &[StreamOp],
+    op_spans: &[Span],
+    source: &StreamSource,
+    span: Span,
+) {
     let mut seen_aggregate = false;
     let mut seen_window = false;
     let mut in_sequence = is_sequence_source(source);
@@ -377,6 +388,24 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
                 alias_to_event.insert(name.clone(), name.clone());
             }
         }
+        StreamSource::FromConnector { event_type, .. } => {
+            alias_to_event.insert(event_type.clone(), event_type.clone());
+        }
+        StreamSource::Merge(inline_streams) => {
+            for s in inline_streams {
+                // source is the event type name; name is the inline stream alias
+                alias_to_event.insert(s.name.clone(), s.source.clone());
+                // Also add source as bare name for unaliased lookups
+                if s.name != s.source {
+                    alias_to_event.insert(s.source.clone(), s.source.clone());
+                }
+            }
+        }
+        StreamSource::Join(clauses) => {
+            for c in clauses {
+                alias_to_event.insert(c.source.clone(), c.source.clone());
+            }
+        }
         StreamSource::Sequence(seq) => {
             for step in &seq.steps {
                 alias_to_event.insert(step.alias.clone(), step.event_type.clone());
@@ -394,13 +423,31 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
         }
     }
 
-    for op in ops {
+    // Collect valid bare field names from all source event types
+    let mut bare_fields: Vec<String> = Vec::new();
+    for event_name in alias_to_event.values() {
+        if let Some(fields) = v.symbols.event_field_names(event_name) {
+            for f in fields {
+                if !bare_fields.contains(f) {
+                    bare_fields.push(f.clone());
+                }
+            }
+        }
+    }
+
+    // Track which built-in variables are available based on ops
+    let has_forecast = ops.iter().any(|op| matches!(op, StreamOp::Forecast(_)));
+    let has_enrich = ops.iter().any(|op| matches!(op, StreamOp::Enrich(_)));
+
+    for (op_idx, op) in ops.iter().enumerate() {
+        // Use per-operation op_span if available, fall back to stream declaration op_span
+        let op_span = op_spans.get(op_idx).copied().unwrap_or(span);
         match op {
             // --- Unimplemented operations (E090) ---
             StreamOp::Map(_) => {
                 v.emit_with_hint(
                     Severity::Error,
-                    span,
+                    op_span,
                     "E090",
                     ".map() is not implemented".to_string(),
                     "use .select() with expressions instead".to_string(),
@@ -409,7 +456,7 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
             StreamOp::Filter(_) => {
                 v.emit_with_hint(
                     Severity::Error,
-                    span,
+                    op_span,
                     "E090",
                     ".filter() is not implemented".to_string(),
                     "use .where() instead".to_string(),
@@ -418,7 +465,7 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
             StreamOp::Concurrent(_) => {
                 v.emit_with_hint(
                     Severity::Error,
-                    span,
+                    op_span,
                     "E090",
                     ".concurrent() is not yet implemented".to_string(),
                     "use .context() for parallel processing across cores".to_string(),
@@ -427,7 +474,7 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
             StreamOp::OnError(_) => {
                 v.emit_with_hint(
                     Severity::Error,
-                    span,
+                    op_span,
                     "E090",
                     ".on_error() is not yet implemented".to_string(),
                     "handle errors in your .where() or .select() logic".to_string(),
@@ -436,7 +483,7 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
             StreamOp::Collect => {
                 v.emit(
                     Severity::Error,
-                    span,
+                    op_span,
                     "E090",
                     ".collect() is not yet implemented".to_string(),
                 );
@@ -444,7 +491,7 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
             StreamOp::Fork(_) => {
                 v.emit(
                     Severity::Error,
-                    span,
+                    op_span,
                     "E090",
                     ".fork() is not yet implemented".to_string(),
                 );
@@ -452,7 +499,7 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
             StreamOp::Any(_) => {
                 v.emit(
                     Severity::Error,
-                    span,
+                    op_span,
                     "E090",
                     ".any() is not yet implemented".to_string(),
                 );
@@ -460,7 +507,7 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
             StreamOp::All => {
                 v.emit(
                     Severity::Error,
-                    span,
+                    op_span,
                     "E090",
                     ".all() is not yet implemented".to_string(),
                 );
@@ -468,7 +515,7 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
             StreamOp::First => {
                 v.emit(
                     Severity::Error,
-                    span,
+                    op_span,
                     "E090",
                     ".first() is not yet implemented".to_string(),
                 );
@@ -476,7 +523,7 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
             StreamOp::Distinct(_) => {
                 v.emit(
                     Severity::Error,
-                    span,
+                    op_span,
                     "E090",
                     ".distinct() is not yet implemented".to_string(),
                 );
@@ -484,7 +531,7 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
             StreamOp::OrderBy(_) => {
                 v.emit(
                     Severity::Error,
-                    span,
+                    op_span,
                     "E090",
                     ".order_by() is not yet implemented".to_string(),
                 );
@@ -492,7 +539,7 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
             StreamOp::Limit(_) => {
                 v.emit(
                     Severity::Error,
-                    span,
+                    op_span,
                     "E090",
                     ".limit() is not yet implemented".to_string(),
                 );
@@ -500,7 +547,7 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
             StreamOp::ToExpr(_) => {
                 v.emit_with_hint(
                     Severity::Error,
-                    span,
+                    op_span,
                     "E090",
                     ".to(expr) is not supported".to_string(),
                     "use .to(ConnectorName, ...) with a declared connector".to_string(),
@@ -512,20 +559,20 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
                 if !seen_aggregate {
                     v.emit_with_hint(
                         Severity::Error,
-                        span,
+                        op_span,
                         "E010",
                         ".having() used without a prior .aggregate()".to_string(),
                         "add .aggregate(...) before .having()".to_string(),
                     );
                 }
-                check_boolean_expr(v, expr, ".having()", span);
-                check_expr_field_refs(v, expr, &alias_to_event, span);
+                check_boolean_expr(v, expr, ".having()", op_span);
+                check_expr_field_refs(v, expr, &alias_to_event, op_span);
             }
             StreamOp::Aggregate(items) => {
                 if seen_aggregate {
                     v.emit(
                         Severity::Error,
-                        span,
+                        op_span,
                         "E011",
                         "duplicate .aggregate() — only one aggregation per stream is allowed"
                             .to_string(),
@@ -534,63 +581,73 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
                 if !seen_window {
                     v.emit_with_hint(
                         Severity::Warning,
-                        span,
+                        op_span,
                         "W001",
                         ".aggregate() without a prior .window()".to_string(),
                         "results will accumulate indefinitely; add .window() for bounded aggregation".to_string(),
                     );
                 }
                 seen_aggregate = true;
-                check_aggregate_items(v, items, span);
+                check_aggregate_items(v, items, op_span);
             }
             StreamOp::Window(_) => {
                 if seen_window {
                     v.emit(
                         Severity::Error,
-                        span,
+                        op_span,
                         "E012",
                         "duplicate .window() — only one window per stream is allowed".to_string(),
                     );
                 }
                 seen_window = true;
             }
-            StreamOp::PartitionBy(_) => {
+            StreamOp::PartitionBy(expr) => {
                 if seen_window {
                     v.emit_with_hint(
                         Severity::Warning,
-                        span,
+                        op_span,
                         "W002",
                         ".partition_by() after .window() — partitioning should come before windowing".to_string(),
                         "move .partition_by() before .window() for correct behavior".to_string(),
                     );
                 }
+                check_bare_ident_refs(
+                    v,
+                    expr,
+                    &bare_fields,
+                    &alias_to_event,
+                    has_forecast,
+                    has_enrich,
+                    ".partition_by()",
+                    op_span,
+                );
             }
             StreamOp::Within(expr) => {
                 if !in_sequence {
                     v.emit_with_hint(
                         Severity::Error,
-                        span,
+                        op_span,
                         "E020",
                         ".within() used outside a sequence context".to_string(),
                         ".within() requires a sequence source or -> (followed_by) operators"
                             .to_string(),
                     );
                 }
-                check_duration_expr(v, expr, ".within()", span);
+                check_duration_expr(v, expr, ".within()", op_span);
             }
 
             // --- Sequence tracking ---
             StreamOp::FollowedBy(clause) | StreamOp::Not(clause) => {
-                check_source_name(v, &clause.event_type, span);
+                check_source_name(v, &clause.event_type, op_span);
                 in_sequence = true;
             }
 
             // --- Parameter validation ---
             StreamOp::Log(args) => {
-                check_named_params(v, args, LOG_PARAMS, ".log()", span);
+                check_named_params(v, args, LOG_PARAMS, ".log()", op_span);
             }
             StreamOp::Watermark(args) => {
-                check_named_params(v, args, WATERMARK_PARAMS, ".watermark()", span);
+                check_named_params(v, args, WATERMARK_PARAMS, ".watermark()", op_span);
             }
 
             // --- Name resolution ---
@@ -614,7 +671,7 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
                     };
                     v.emit_with_hint(
                         Severity::Error,
-                        span,
+                        op_span,
                         "E030",
                         format!("undefined connector '{}'", connector_name),
                         format!(
@@ -631,7 +688,7 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
                         &connector_type,
                         ParamContext::Sink,
                         ".to()",
-                        span,
+                        op_span,
                     );
                 }
             }
@@ -640,7 +697,7 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
                     let suggestion = did_you_mean(name, &v.symbols.context_names());
                     v.emit_with_hint(
                         Severity::Error,
-                        span,
+                        op_span,
                         "E031",
                         format!("undefined context '{}'", name),
                         format!(
@@ -653,11 +710,21 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
 
             // --- Expression type checks ---
             StreamOp::Where(expr) => {
-                check_boolean_expr(v, expr, ".where()", span);
-                check_expr_field_refs(v, expr, &alias_to_event, span);
+                check_boolean_expr(v, expr, ".where()", op_span);
+                check_expr_field_refs(v, expr, &alias_to_event, op_span);
+                check_bare_ident_refs(
+                    v,
+                    expr,
+                    &bare_fields,
+                    &alias_to_event,
+                    has_forecast,
+                    has_enrich,
+                    ".where()",
+                    op_span,
+                );
             }
             StreamOp::AllowedLateness(expr) => {
-                check_duration_expr(v, expr, ".allowed_lateness()", span);
+                check_duration_expr(v, expr, ".allowed_lateness()", op_span);
             }
 
             // --- Emit field validation ---
@@ -667,7 +734,7 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
                 ..
             } => {
                 for field in fields {
-                    check_expr_field_refs(v, &field.value, &alias_to_event, span);
+                    check_expr_field_refs(v, &field.value, &alias_to_event, op_span);
                 }
                 if let Some(type_name) = output_type {
                     if let Some(event_info) = v.symbols.events.get(type_name) {
@@ -677,7 +744,7 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
                         let suggestion = did_you_mean(type_name, &v.symbols.all_names());
                         v.emit_with_hint(
                             Severity::Error,
-                            span,
+                            op_span,
                             "E034",
                             format!(".emit as '{}' references an undeclared type", type_name),
                             format!(
@@ -696,7 +763,7 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
                         did_you_mean(&spec.connector_name, &v.symbols.connector_names());
                     v.emit_with_hint(
                         Severity::Error,
-                        span,
+                        op_span,
                         "E030",
                         format!("undefined connector '{}'", spec.connector_name),
                         format!(
@@ -709,7 +776,7 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
                     if !builtins::ENRICH_COMPATIBLE_TYPES.contains(&connector_type.as_str()) {
                         v.emit_with_hint(
                             Severity::Error,
-                            span,
+                            op_span,
                             "E032",
                             format!(
                                 ".enrich() is not compatible with '{}' connector type '{}'",
@@ -725,7 +792,7 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
                 if spec.fields.is_empty() {
                     v.emit_with_hint(
                         Severity::Warning,
-                        span,
+                        op_span,
                         "W032",
                         ".enrich() has no fields specified".to_string(),
                         "add fields: [field1, field2] to extract data from the enrichment response"
@@ -841,6 +908,199 @@ fn check_expr_field_refs(
 }
 
 // ---------------------------------------------------------------------------
+// Bare identifier validation
+// ---------------------------------------------------------------------------
+
+/// Walk an expression and warn about bare identifiers that don't match any
+/// known event field, alias, variable, or built-in variable.
+///
+/// This catches typos like `.where(temprature > 30)` when the field is `temperature`.
+#[allow(clippy::too_many_arguments)]
+fn check_bare_ident_refs(
+    v: &mut Validator,
+    expr: &Expr,
+    bare_fields: &[String],
+    alias_to_event: &HashMap<String, String>,
+    has_forecast: bool,
+    has_enrich: bool,
+    context: &str,
+    span: Span,
+) {
+    // Skip validation when we have no field information (can't tell valid from invalid)
+    if bare_fields.is_empty() && !has_forecast && !has_enrich {
+        return;
+    }
+
+    match expr {
+        Expr::Ident(name) => {
+            // Skip if it's a known alias (e.g., `a` in `a.field`)
+            if alias_to_event.contains_key(name) {
+                return;
+            }
+            // Skip if it's a known bare event field
+            if bare_fields.iter().any(|f| f == name) {
+                return;
+            }
+            // Skip if it's a declared variable/constant
+            if v.symbols.variables.contains_key(name) {
+                return;
+            }
+            // Skip if it's a built-in function name
+            if builtins::is_known_function(name) {
+                return;
+            }
+            // Skip boolean literals and common constants
+            if matches!(name.as_str(), "true" | "false" | "null") {
+                return;
+            }
+            // Skip forecast built-in variables
+            if has_forecast && builtins::FORECAST_BUILTIN_VARS.contains(&name.as_str()) {
+                return;
+            }
+            // Skip enrich built-in variables
+            if has_enrich && builtins::ENRICH_BUILTIN_VARS.contains(&name.as_str()) {
+                return;
+            }
+            // Unknown identifier — likely a typo
+            let mut candidates: Vec<&str> = bare_fields.iter().map(|s| s.as_str()).collect();
+            for alias in alias_to_event.keys() {
+                candidates.push(alias);
+            }
+            if has_forecast {
+                candidates.extend(builtins::FORECAST_BUILTIN_VARS);
+            }
+            if has_enrich {
+                candidates.extend(builtins::ENRICH_BUILTIN_VARS);
+            }
+            let suggestion = did_you_mean(name, &candidates);
+            v.emit_with_hint(
+                Severity::Warning,
+                span,
+                "W035",
+                format!("unknown field '{}' in {}", name, context),
+                format!("available fields: {}{}", candidates.join(", "), suggestion),
+            );
+        }
+        // Skip member expressions — handled by check_expr_field_refs
+        Expr::Member { .. } => {}
+        // Recurse into sub-expressions
+        Expr::Binary { left, right, .. } => {
+            check_bare_ident_refs(
+                v,
+                left,
+                bare_fields,
+                alias_to_event,
+                has_forecast,
+                has_enrich,
+                context,
+                span,
+            );
+            check_bare_ident_refs(
+                v,
+                right,
+                bare_fields,
+                alias_to_event,
+                has_forecast,
+                has_enrich,
+                context,
+                span,
+            );
+        }
+        Expr::Unary { expr: inner, .. } => {
+            check_bare_ident_refs(
+                v,
+                inner,
+                bare_fields,
+                alias_to_event,
+                has_forecast,
+                has_enrich,
+                context,
+                span,
+            );
+        }
+        Expr::Call { args, .. } => {
+            // Don't recurse into func (it's a function name ident), only args
+            for arg in args {
+                match arg {
+                    Arg::Positional(e) | Arg::Named(_, e) => {
+                        check_bare_ident_refs(
+                            v,
+                            e,
+                            bare_fields,
+                            alias_to_event,
+                            has_forecast,
+                            has_enrich,
+                            context,
+                            span,
+                        );
+                    }
+                }
+            }
+        }
+        Expr::If {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            check_bare_ident_refs(
+                v,
+                cond,
+                bare_fields,
+                alias_to_event,
+                has_forecast,
+                has_enrich,
+                context,
+                span,
+            );
+            check_bare_ident_refs(
+                v,
+                then_branch,
+                bare_fields,
+                alias_to_event,
+                has_forecast,
+                has_enrich,
+                context,
+                span,
+            );
+            check_bare_ident_refs(
+                v,
+                else_branch,
+                bare_fields,
+                alias_to_event,
+                has_forecast,
+                has_enrich,
+                context,
+                span,
+            );
+        }
+        Expr::Index { expr: e, index } => {
+            check_bare_ident_refs(
+                v,
+                e,
+                bare_fields,
+                alias_to_event,
+                has_forecast,
+                has_enrich,
+                context,
+                span,
+            );
+            check_bare_ident_refs(
+                v,
+                index,
+                bare_fields,
+                alias_to_event,
+                has_forecast,
+                has_enrich,
+                context,
+                span,
+            );
+        }
+        // Leaves and other nodes — no bare ident checking needed
+        _ => {}
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Expression type checks
 // ---------------------------------------------------------------------------
 
@@ -867,6 +1127,43 @@ fn check_boolean_expr(v: &mut Validator, expr: &Expr, context: &str, span: Span)
                 "use a comparison like field > value or a boolean expression".to_string(),
             );
         }
+        // Bare identifier is not a boolean condition (except true/false)
+        Expr::Ident(name) if !matches!(name.as_str(), "true" | "false") => {
+            v.emit_with_hint(
+                Severity::Warning,
+                span,
+                "W061",
+                format!(
+                    "{} condition is a bare identifier '{}', expected a boolean expression",
+                    context, name
+                ),
+                format!(
+                    "use a comparison like {} > value or {} == value",
+                    name, name
+                ),
+            );
+        }
+        // Member access alone is not a boolean condition
+        Expr::Member {
+            expr: inner,
+            member,
+        } => {
+            if let Expr::Ident(obj) = inner.as_ref() {
+                v.emit_with_hint(
+                    Severity::Warning,
+                    span,
+                    "W061",
+                    format!(
+                        "{} condition is a field access '{}.{}', expected a boolean expression",
+                        context, obj, member
+                    ),
+                    format!(
+                        "use a comparison like {}.{} > value or {}.{} == value",
+                        obj, member, obj, member
+                    ),
+                );
+            }
+        }
         // Arithmetic expressions are suspicious
         Expr::Binary { op, .. }
             if matches!(
@@ -886,7 +1183,7 @@ fn check_boolean_expr(v: &mut Validator, expr: &Expr, context: &str, span: Span)
                 "use a comparison operator (==, !=, <, >, <=, >=)".to_string(),
             );
         }
-        _ => {} // Ident, comparison, logical, call — all ok
+        _ => {} // Bool literal, comparison, logical, call — all ok
     }
 }
 

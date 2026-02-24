@@ -93,6 +93,17 @@ pub static FORECAST_PARAMS: &[&str] = &[
 /// Valid parameter names for `.enrich()`.
 pub static ENRICH_PARAMS: &[&str] = &["key", "fields", "cache_ttl", "timeout", "fallback"];
 
+/// Built-in variables available after `.forecast()`.
+pub static FORECAST_BUILTIN_VARS: &[&str] = &[
+    "forecast_probability",
+    "forecast_confidence",
+    "forecast_time",
+    "forecast_state",
+    "forecast_context_depth",
+    "forecast_lower",
+    "forecast_upper",
+];
+
 /// Built-in variables available after `.enrich()`.
 pub static ENRICH_BUILTIN_VARS: &[&str] = &["enrich_status", "enrich_latency_ms"];
 

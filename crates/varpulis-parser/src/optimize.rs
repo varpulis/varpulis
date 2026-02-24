@@ -56,11 +56,13 @@ fn fold_stmt(stmt: Stmt) -> Stmt {
             type_annotation,
             source,
             ops,
+            op_spans,
         } => Stmt::StreamDecl {
             name,
             type_annotation,
             source,
             ops: ops.into_iter().map(fold_stream_op).collect(),
+            op_spans,
         },
         Stmt::If {
             cond,

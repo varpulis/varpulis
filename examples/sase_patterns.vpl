@@ -63,8 +63,8 @@ stream PasswordChanges = PasswordChange
 # Detect login followed by high-value transaction
 # =============================================================================
 
-stream LoginThenLargeTransaction = Login as login
-    -> Transaction where user_id == login.user_id and amount > 10000.0
+stream LoginThenLargeTransaction = Logins as login
+    -> Transactions where user_id == login.user_id and amount > 10000.0
     .emit(
         alert_type: "large_transaction_after_login",
         severity: "medium"
@@ -75,9 +75,9 @@ stream LoginThenLargeTransaction = Login as login
 # Full session tracking: Login -> Transaction -> Logout
 # =============================================================================
 
-stream FullSession = Login as login
-    -> Transaction where user_id == login.user_id as tx
-    -> Logout where user_id == login.user_id
+stream FullSession = Logins as login
+    -> Transactions where user_id == login.user_id as tx
+    -> Logouts where user_id == login.user_id
     .emit(
         alert_type: "session_complete",
         tx_amount: tx.amount
@@ -88,10 +88,10 @@ stream FullSession = Login as login
 # Complex fraud pattern detection
 # =============================================================================
 
-stream FraudChain = Login as login
-    -> PasswordChange where user_id == login.user_id
-    -> Transaction where user_id == login.user_id as tx
-    -> Logout where user_id == login.user_id
+stream FraudChain = Logins as login
+    -> PasswordChanges where user_id == login.user_id
+    -> Transactions where user_id == login.user_id as tx
+    -> Logouts where user_id == login.user_id
     .emit(
         alert_type: "potential_fraud_chain",
         amount: tx.amount,
@@ -103,7 +103,7 @@ stream FraudChain = Login as login
 # Velocity check: >5 transactions in window
 # =============================================================================
 
-stream VelocityAlert = Transaction
+stream VelocityAlert = Transactions
     .partition_by(user_id)
     .window(10m)
     .pattern(high_velocity: events => events.len() > 5)
@@ -117,8 +117,8 @@ stream VelocityAlert = Transaction
 # Impossible travel: Login from two different countries
 # =============================================================================
 
-stream ImpossibleTravel = Login as login1
-    -> Login where user_id == login1.user_id and country != login1.country as login2
+stream ImpossibleTravel = Logins as login1
+    -> Logins where user_id == login1.user_id and country != login1.country as login2
     .emit(
         alert_type: "impossible_travel",
         country1: login1.country,
@@ -131,7 +131,7 @@ stream ImpossibleTravel = Login as login1
 # Spending pattern: Total > $50K in 24h
 # =============================================================================
 
-stream HighSpending = Transaction
+stream HighSpending = Transactions
     .partition_by(user_id)
     .window(24h)
     .aggregate(
@@ -149,9 +149,9 @@ stream HighSpending = Transaction
 # Money mule: Same IP, different users
 # =============================================================================
 
-stream SameIPMultipleUsers = Login as login1
-    -> Login where ip_address == login1.ip_address and user_id != login1.user_id as login2
-    -> Transaction where user_id == login2.user_id as tx
+stream SameIPMultipleUsers = Logins as login1
+    -> Logins where ip_address == login1.ip_address and user_id != login1.user_id as login2
+    -> Transactions where user_id == login2.user_id as tx
     .emit(
         alert_type: "money_mule_suspect",
         severity: "high"
@@ -162,7 +162,7 @@ stream SameIPMultipleUsers = Login as login1
 # Alert on either high amount OR unusual category
 # =============================================================================
 
-stream RiskyTransaction = Transaction
+stream RiskyTransaction = Transactions
     .where(amount > 10000.0 or category == "gambling")
     .emit(
         alert_type: "risky_transaction",
@@ -174,7 +174,7 @@ stream RiskyTransaction = Transaction
 # Detect users with many transactions in a short window
 # =============================================================================
 
-stream HighFrequencyTrader = Transaction
+stream HighFrequencyTrader = Transactions
     .partition_by(user_id)
     .window(1h)
     .aggregate(
@@ -192,8 +192,8 @@ stream HighFrequencyTrader = Transaction
 # Match all transactions after login
 # =============================================================================
 
-stream AllTransactionsAfterLogin = Login as login
-    -> all Transaction where user_id == login.user_id as tx
+stream AllTransactionsAfterLogin = Logins as login
+    -> all Transactions where user_id == login.user_id as tx
     .emit(
         alert_type: "transaction_logged",
         amount: tx.amount
