@@ -154,7 +154,8 @@ mod tests {
         mgr.create_tenant("Test".into(), api_key.clone(), TenantQuota::default())
             .unwrap();
         let manager = Arc::new(RwLock::new(mgr));
-        let routes = api::api_routes(manager, None, None).recover(crate::auth::handle_rejection);
+        let routes =
+            api::api_routes(manager, None, None, None).recover(crate::auth::handle_rejection);
 
         let (addr, server) = warp::serve(routes).bind_ephemeral(([127, 0, 0, 1], 0));
         tokio::spawn(server);

@@ -17,6 +17,8 @@ use warp::{Filter, Rejection, Reply};
 use varpulis_core::pagination::{PaginationMeta, PaginationParams, MAX_LIMIT};
 use varpulis_core::security::{JSON_BODY_LIMIT, LARGE_BODY_LIMIT};
 
+use crate::billing::SharedBillingState;
+
 // =============================================================================
 // Request/Response types
 // =============================================================================
@@ -217,6 +219,7 @@ pub fn api_routes(
     manager: SharedTenantManager,
     admin_key: Option<String>,
     cors_origins: Option<Vec<String>>,
+    billing_state: Option<SharedBillingState>,
 ) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
     let api = warp::path("api").and(warp::path("v1"));
 
@@ -259,6 +262,9 @@ pub fn api_routes(
         .and(with_manager(manager.clone()))
         .and_then(handle_delete);
 
+    let bs1 = billing_state.clone();
+    let bs2 = billing_state;
+
     let inject = api
         .and(warp::path("pipelines"))
         .and(warp::path::param::<String>())
@@ -269,6 +275,7 @@ pub fn api_routes(
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_manager(manager.clone()))
+        .and(warp::any().map(move || bs1.clone()))
         .and_then(handle_inject);
 
     let inject_batch = api
@@ -281,6 +288,7 @@ pub fn api_routes(
         .and(warp::body::content_length_limit(LARGE_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_manager(manager.clone()))
+        .and(warp::any().map(move || bs2.clone()))
         .and_then(handle_inject_batch);
 
     let checkpoint = api
@@ -612,7 +620,22 @@ async fn handle_inject(
     api_key: String,
     body: InjectEventRequest,
     manager: SharedTenantManager,
+    billing_state: Option<SharedBillingState>,
 ) -> Result<impl Reply, Infallible> {
+    // Check usage limit (SaaS mode only)
+    #[cfg(feature = "saas")]
+    if let Some(ref bs) = billing_state {
+        if let Some(org_id) = bs.org_id_for_api_key(&api_key).await {
+            if let Err(err) = bs.check_usage_limit(org_id, 1).await {
+                return Ok(crate::billing::usage_limit_response(&err));
+            }
+            // Record the event for usage tracking
+            bs.usage.write().await.record_events(org_id, 1);
+        }
+    }
+    #[cfg(not(feature = "saas"))]
+    let _ = &billing_state;
+
     let mut mgr = manager.write().await;
 
     let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
@@ -673,7 +696,24 @@ async fn handle_inject_batch(
     api_key: String,
     body: InjectBatchRequest,
     manager: SharedTenantManager,
+    billing_state: Option<SharedBillingState>,
 ) -> Result<impl Reply, Infallible> {
+    let event_count = body.events.len() as i64;
+
+    // Check usage limit for the entire batch (SaaS mode only)
+    #[cfg(feature = "saas")]
+    if let Some(ref bs) = billing_state {
+        if let Some(org_id) = bs.org_id_for_api_key(&api_key).await {
+            if let Err(err) = bs.check_usage_limit(org_id, event_count).await {
+                return Ok(crate::billing::usage_limit_response(&err));
+            }
+            // Record the batch for usage tracking
+            bs.usage.write().await.record_events(org_id, event_count);
+        }
+    }
+    #[cfg(not(feature = "saas"))]
+    let _ = (&billing_state, event_count);
+
     let mut mgr = manager.write().await;
 
     let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
@@ -1643,7 +1683,7 @@ mod tests {
     #[tokio::test]
     async fn test_deploy_pipeline() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr, None, None);
+        let routes = api_routes(mgr, None, None, None);
 
         let resp = warp::test::request()
             .method("POST")
@@ -1665,7 +1705,7 @@ mod tests {
     #[tokio::test]
     async fn test_deploy_invalid_api_key() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr, None, None);
+        let routes = api_routes(mgr, None, None, None);
 
         let resp = warp::test::request()
             .method("POST")
@@ -1684,7 +1724,7 @@ mod tests {
     #[tokio::test]
     async fn test_deploy_invalid_vpl() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr, None, None);
+        let routes = api_routes(mgr, None, None, None);
 
         let resp = warp::test::request()
             .method("POST")
@@ -1703,7 +1743,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_pipelines() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr, None, None);
+        let routes = api_routes(mgr, None, None, None);
 
         let resp = warp::test::request()
             .method("GET")
@@ -1721,7 +1761,7 @@ mod tests {
     #[tokio::test]
     async fn test_usage_endpoint() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr, None, None);
+        let routes = api_routes(mgr, None, None, None);
 
         let resp = warp::test::request()
             .method("GET")
@@ -1747,7 +1787,7 @@ mod tests {
             tenant.pipelines.keys().next().unwrap().clone()
         };
 
-        let routes = api_routes(mgr, None, None);
+        let routes = api_routes(mgr, None, None, None);
 
         let resp = warp::test::request()
             .method("POST")
@@ -1824,7 +1864,7 @@ mod tests {
     ) {
         let mgr = Arc::new(RwLock::new(TenantManager::new()));
         let key = admin_key.map(|k| k.to_string());
-        let routes = api_routes(mgr.clone(), key, None);
+        let routes = api_routes(mgr.clone(), key, None, None);
         (mgr, routes)
     }
 
@@ -2027,7 +2067,7 @@ mod tests {
     async fn test_get_single_pipeline() {
         let mgr = setup_test_manager().await;
         let pipeline_id = get_first_pipeline_id(&mgr).await;
-        let routes = api_routes(mgr, None, None);
+        let routes = api_routes(mgr, None, None, None);
 
         let resp = warp::test::request()
             .method("GET")
@@ -2047,7 +2087,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_pipeline_not_found() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr, None, None);
+        let routes = api_routes(mgr, None, None, None);
 
         let resp = warp::test::request()
             .method("GET")
@@ -2063,7 +2103,7 @@ mod tests {
     async fn test_delete_pipeline_api() {
         let mgr = setup_test_manager().await;
         let pipeline_id = get_first_pipeline_id(&mgr).await;
-        let routes = api_routes(mgr.clone(), None, None);
+        let routes = api_routes(mgr.clone(), None, None, None);
 
         let resp = warp::test::request()
             .method("DELETE")
@@ -2090,7 +2130,7 @@ mod tests {
     #[tokio::test]
     async fn test_delete_pipeline_not_found() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr, None, None);
+        let routes = api_routes(mgr, None, None, None);
 
         let resp = warp::test::request()
             .method("DELETE")
@@ -2110,7 +2150,7 @@ mod tests {
     async fn test_inject_batch() {
         let mgr = setup_test_manager().await;
         let pipeline_id = get_first_pipeline_id(&mgr).await;
-        let routes = api_routes(mgr, None, None);
+        let routes = api_routes(mgr, None, None, None);
 
         let resp = warp::test::request()
             .method("POST")
@@ -2148,7 +2188,7 @@ mod tests {
     #[tokio::test]
     async fn test_inject_batch_invalid_pipeline() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr, None, None);
+        let routes = api_routes(mgr, None, None, None);
 
         // Batch mode silently skips failed events (including nonexistent pipeline)
         let resp = warp::test::request()
@@ -2178,7 +2218,7 @@ mod tests {
     async fn test_checkpoint_pipeline() {
         let mgr = setup_test_manager().await;
         let pipeline_id = get_first_pipeline_id(&mgr).await;
-        let routes = api_routes(mgr, None, None);
+        let routes = api_routes(mgr, None, None, None);
 
         let resp = warp::test::request()
             .method("POST")
@@ -2195,7 +2235,7 @@ mod tests {
     #[tokio::test]
     async fn test_checkpoint_not_found() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr, None, None);
+        let routes = api_routes(mgr, None, None, None);
 
         let resp = warp::test::request()
             .method("POST")
@@ -2211,7 +2251,7 @@ mod tests {
     async fn test_restore_pipeline() {
         let mgr = setup_test_manager().await;
         let pipeline_id = get_first_pipeline_id(&mgr).await;
-        let routes = api_routes(mgr, None, None);
+        let routes = api_routes(mgr, None, None, None);
 
         // First checkpoint
         let cp_resp = warp::test::request()
@@ -2242,7 +2282,7 @@ mod tests {
     #[tokio::test]
     async fn test_restore_not_found() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr, None, None);
+        let routes = api_routes(mgr, None, None, None);
 
         let checkpoint = varpulis_runtime::persistence::EngineCheckpoint {
             version: varpulis_runtime::persistence::CHECKPOINT_VERSION,
@@ -2276,7 +2316,7 @@ mod tests {
     async fn test_metrics_endpoint() {
         let mgr = setup_test_manager().await;
         let pipeline_id = get_first_pipeline_id(&mgr).await;
-        let routes = api_routes(mgr, None, None);
+        let routes = api_routes(mgr, None, None, None);
 
         let resp = warp::test::request()
             .method("GET")
@@ -2293,7 +2333,7 @@ mod tests {
     #[tokio::test]
     async fn test_metrics_not_found() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr, None, None);
+        let routes = api_routes(mgr, None, None, None);
 
         let resp = warp::test::request()
             .method("GET")
@@ -2313,7 +2353,7 @@ mod tests {
     async fn test_reload_pipeline() {
         let mgr = setup_test_manager().await;
         let pipeline_id = get_first_pipeline_id(&mgr).await;
-        let routes = api_routes(mgr, None, None);
+        let routes = api_routes(mgr, None, None, None);
 
         let resp = warp::test::request()
             .method("POST")
@@ -2334,7 +2374,7 @@ mod tests {
     async fn test_reload_invalid_vpl() {
         let mgr = setup_test_manager().await;
         let pipeline_id = get_first_pipeline_id(&mgr).await;
-        let routes = api_routes(mgr, None, None);
+        let routes = api_routes(mgr, None, None, None);
 
         let resp = warp::test::request()
             .method("POST")
@@ -2352,7 +2392,7 @@ mod tests {
     #[tokio::test]
     async fn test_reload_not_found() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr, None, None);
+        let routes = api_routes(mgr, None, None, None);
 
         let resp = warp::test::request()
             .method("POST")
@@ -2374,7 +2414,7 @@ mod tests {
     #[tokio::test]
     async fn test_logs_invalid_pipeline() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr, None, None);
+        let routes = api_routes(mgr, None, None, None);
 
         let resp = warp::test::request()
             .method("GET")
@@ -2390,7 +2430,7 @@ mod tests {
     async fn test_logs_invalid_api_key() {
         let mgr = setup_test_manager().await;
         let pipeline_id = get_first_pipeline_id(&mgr).await;
-        let routes = api_routes(mgr, None, None);
+        let routes = api_routes(mgr, None, None, None);
 
         let resp = warp::test::request()
             .method("GET")
@@ -2490,7 +2530,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_pipelines_default_pagination() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr, None, None);
+        let routes = api_routes(mgr, None, None, None);
 
         let resp = warp::test::request()
             .method("GET")
@@ -2534,7 +2574,7 @@ mod tests {
                 .unwrap();
         }
 
-        let routes = api_routes(mgr, None, None);
+        let routes = api_routes(mgr, None, None, None);
 
         // First page: limit=1, offset=0
         let resp = warp::test::request()
@@ -2569,7 +2609,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_pipelines_limit_exceeds_max() {
         let mgr = setup_test_manager().await;
-        let routes = api_routes(mgr, None, None);
+        let routes = api_routes(mgr, None, None, None);
 
         let resp = warp::test::request()
             .method("GET")
@@ -2653,7 +2693,7 @@ mod tests {
         mgr.pending_events_counter().store(5, Ordering::Relaxed);
 
         let shared = Arc::new(RwLock::new(mgr));
-        let routes = api_routes(shared, None, None);
+        let routes = api_routes(shared, None, None, None);
 
         let resp = warp::test::request()
             .method("POST")
@@ -2701,7 +2741,7 @@ mod tests {
         mgr.pending_events_counter().store(5, Ordering::Relaxed);
 
         let shared = Arc::new(RwLock::new(mgr));
-        let routes = api_routes(shared, None, None);
+        let routes = api_routes(shared, None, None, None);
 
         let resp = warp::test::request()
             .method("POST")
