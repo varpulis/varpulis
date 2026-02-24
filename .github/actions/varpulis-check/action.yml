@@ -1,0 +1,128 @@
+name: 'Varpulis VPL Check'
+description: 'Validate VPL pipeline files using the Varpulis CLI'
+branding:
+  icon: 'check-circle'
+  color: 'blue'
+
+inputs:
+  path:
+    description: 'Glob pattern for VPL files to check'
+    required: false
+    default: '**/*.vpl'
+  version:
+    description: 'Varpulis CLI version to use (e.g. "0.4.0"). Defaults to latest.'
+    required: false
+    default: 'latest'
+  strict:
+    description: 'Treat warnings as errors'
+    required: false
+    default: 'false'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Determine version
+      id: version
+      shell: bash
+      run: |
+        if [ "${{ inputs.version }}" = "latest" ]; then
+          VERSION=$(curl -fsSL https://api.github.com/repos/varpulis/varpulis/releases/latest \
+            | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/')
+          if [ -z "$VERSION" ]; then
+            echo "::error::Failed to determine latest Varpulis version"
+            exit 1
+          fi
+        else
+          VERSION="${{ inputs.version }}"
+        fi
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+    - name: Detect platform
+      id: platform
+      shell: bash
+      run: |
+        OS="$(uname -s)"
+        ARCH="$(uname -m)"
+        case "$OS" in
+          Linux)  BINARY="varpulis-linux" ;;
+          Darwin) BINARY="varpulis-macos" ;;
+          *)      echo "::error::Unsupported OS: $OS"; exit 1 ;;
+        esac
+        case "$ARCH" in
+          x86_64|amd64)   BINARY="${BINARY}-x86_64" ;;
+          aarch64|arm64)  BINARY="${BINARY}-aarch64" ;;
+          *)              echo "::error::Unsupported arch: $ARCH"; exit 1 ;;
+        esac
+        echo "binary=$BINARY" >> "$GITHUB_OUTPUT"
+
+    - name: Download Varpulis CLI
+      shell: bash
+      run: |
+        URL="https://github.com/varpulis/varpulis/releases/download/v${{ steps.version.outputs.version }}/${{ steps.platform.outputs.binary }}"
+        echo "Downloading Varpulis v${{ steps.version.outputs.version }} from $URL"
+        curl -fsSL "$URL" -o "${{ runner.temp }}/varpulis"
+        chmod +x "${{ runner.temp }}/varpulis"
+
+    - name: Validate VPL files
+      shell: bash
+      run: |
+        VARPULIS="${{ runner.temp }}/varpulis"
+        PATTERN="${{ inputs.path }}"
+        STRICT="${{ inputs.strict }}"
+        EXIT_CODE=0
+
+        # Find matching files
+        FILES=$(find . -path './.git' -prune -o -name '*.vpl' -print | sort)
+        if [ "$PATTERN" != "**/*.vpl" ]; then
+          FILES=$(find . -path './.git' -prune -o -path "./$PATTERN" -print | sort)
+        fi
+
+        if [ -z "$FILES" ]; then
+          echo "::warning::No VPL files found matching pattern: $PATTERN"
+          exit 0
+        fi
+
+        COUNT=0
+        ERRORS=0
+        WARNINGS=0
+
+        for file in $FILES; do
+          COUNT=$((COUNT + 1))
+          # Run varpulis check and capture output
+          OUTPUT=$("$VARPULIS" check -f "$file" 2>&1) || {
+            ERRORS=$((ERRORS + 1))
+            # Parse error output and emit GitHub annotations
+            echo "$OUTPUT" | while IFS= read -r line; do
+              # Match lines like "error[E001]: message at file:line:col"
+              if echo "$line" | grep -qE '^error'; then
+                echo "::error file=$file::$line"
+              elif echo "$line" | grep -qE '^warning'; then
+                echo "::warning file=$file::$line"
+              fi
+            done
+            # If no structured output, emit the raw error
+            if ! echo "$OUTPUT" | grep -qE '^(error|warning)'; then
+              echo "::error file=$file::$OUTPUT"
+            fi
+            EXIT_CODE=1
+          }
+
+          # Check for warnings in successful output
+          if echo "$OUTPUT" | grep -qE '^warning'; then
+            WARNINGS=$((WARNINGS + 1))
+            echo "$OUTPUT" | grep -E '^warning' | while IFS= read -r line; do
+              echo "::warning file=$file::$line"
+            done
+            if [ "$STRICT" = "true" ]; then
+              EXIT_CODE=1
+            fi
+          fi
+        done
+
+        echo ""
+        echo "Checked $COUNT VPL file(s): $ERRORS error(s), $WARNINGS warning(s)"
+
+        if [ $EXIT_CODE -ne 0 ]; then
+          echo "::error::VPL validation failed"
+        fi
+        exit $EXIT_CODE
