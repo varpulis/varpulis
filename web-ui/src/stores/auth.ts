@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import axios from 'axios'
+import { useOrgStore } from './org'
 
 export interface User {
   id: string
@@ -8,6 +9,8 @@ export interface User {
   login: string
   avatar: string
   email: string
+  user_id?: string
+  org_id?: string
 }
 
 const TOKEN_KEY = 'varpulis_token'
@@ -44,6 +47,9 @@ export const useAuthStore = defineStore('auth', () => {
       axios.defaults.headers.common['Authorization'] = `Bearer ${token.value}`
       const response = await axios.get('/api/v1/me')
       user.value = response.data
+      // Load organizations after user is fetched
+      const orgStore = useOrgStore()
+      orgStore.loadOrgs()
     } catch (err: unknown) {
       // Token is invalid or expired
       clearToken()

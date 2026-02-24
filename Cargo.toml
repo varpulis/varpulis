@@ -78,6 +78,11 @@ jsonwebtoken = "9"
 # Secrets
 zeroize = { version = "1.8", features = ["derive"] }
 
+# Crypto (HMAC for Stripe webhooks)
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+
 # Testing
 pretty_assertions = "1.4"
 

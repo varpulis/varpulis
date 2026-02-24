@@ -9,6 +9,8 @@ pub mod billing;
 pub mod client;
 pub mod config;
 pub mod oauth;
+#[cfg(feature = "saas")]
+pub mod org;
 pub mod playground;
 pub mod rate_limit;
 pub mod security;

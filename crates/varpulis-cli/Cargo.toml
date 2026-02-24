@@ -40,6 +40,13 @@ varpulis-cluster = { path = "../varpulis-cluster" }
 varpulis-datagen = { path = "../varpulis-datagen" }
 jsonwebtoken = { workspace = true }
 urlencoding = "2"
+bytes = "1"
+hmac = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+
+# SaaS layer (optional, behind "saas" feature)
+varpulis-db = { path = "../varpulis-db", optional = true }
 
 # OpenTelemetry (optional, behind "otel" feature)
 opentelemetry = { workspace = true, optional = true }
@@ -55,6 +62,7 @@ onnx = ["varpulis-runtime/onnx"]
 k8s = ["varpulis-cluster/k8s"]
 raft = ["varpulis-cluster/raft"]
 persistent = ["raft", "varpulis-cluster/persistent"]
+saas = ["varpulis-db"]
 otel = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "tracing-opentelemetry", "varpulis-cluster/otel"]
 
 [dev-dependencies]

@@ -258,8 +258,71 @@ async function saveLlmConfig() {
   }
 }
 
+// API Keys management
+import { useOrgStore } from '@/stores/org'
+import { useAuthStore } from '@/stores/auth'
+
+const orgStore = useOrgStore()
+const authStore = useAuthStore()
+
+interface ApiKeyEntry {
+  id: string
+  name: string
+  created_at: string
+  last_used_at: string | null
+}
+
+const apiKeys = ref<ApiKeyEntry[]>([])
+const newKeyName = ref('')
+const newKeyValue = ref('')
+const creatingKey = ref(false)
+
+async function loadApiKeys() {
+  const orgId = orgStore.currentOrg?.id || authStore.user?.org_id
+  if (!orgId) return
+  try {
+    const res = await import('axios').then(m => m.default.get(`/api/v1/orgs/${orgId}/api-keys`))
+    apiKeys.value = res.data.api_keys ?? []
+  } catch {
+    // API keys endpoint not available
+  }
+}
+
+async function createApiKey() {
+  const orgId = orgStore.currentOrg?.id || authStore.user?.org_id
+  if (!orgId || !newKeyName.value) return
+  creatingKey.value = true
+  newKeyValue.value = ''
+  try {
+    const res = await import('axios').then(m =>
+      m.default.post(`/api/v1/orgs/${orgId}/api-keys`, { name: newKeyName.value })
+    )
+    newKeyValue.value = res.data.key
+    newKeyName.value = ''
+    loadApiKeys()
+  } catch {
+    // Handle error
+  } finally {
+    creatingKey.value = false
+  }
+}
+
+async function revokeApiKey(keyId: string) {
+  const orgId = orgStore.currentOrg?.id || authStore.user?.org_id
+  if (!orgId) return
+  try {
+    await import('axios').then(m =>
+      m.default.delete(`/api/v1/orgs/${orgId}/api-keys/${keyId}`)
+    )
+    loadApiKeys()
+  } catch {
+    // Handle error
+  }
+}
+
 onMounted(() => {
   loadLlmConfig()
+  loadApiKeys()
 })
 </script>
 
@@ -555,6 +618,70 @@ onMounted(() => {
               Save
             </v-btn>
           </v-card-actions>
+        </v-card>
+
+        <!-- API Keys -->
+        <v-card class="mb-4">
+          <v-card-title>
+            <v-icon class="mr-2">mdi-key-variant</v-icon>
+            API Keys
+          </v-card-title>
+          <v-card-subtitle>Manage API keys for programmatic access</v-card-subtitle>
+          <v-card-text>
+            <v-alert v-if="newKeyValue" type="success" variant="tonal" class="mb-4">
+              <div class="font-weight-bold mb-1">New API Key Created</div>
+              <div class="text-body-2 mb-2">Copy this key now. It won't be shown again.</div>
+              <code class="d-block pa-2 bg-surface rounded">{{ newKeyValue }}</code>
+            </v-alert>
+
+            <div class="d-flex align-center gap-2 mb-4">
+              <v-text-field
+                v-model="newKeyName"
+                label="Key name"
+                density="compact"
+                hide-details
+                class="flex-grow-1"
+              />
+              <v-btn
+                color="primary"
+                :loading="creatingKey"
+                :disabled="!newKeyName"
+                @click="createApiKey"
+              >
+                Generate
+              </v-btn>
+            </div>
+
+            <v-table v-if="apiKeys.length > 0" density="compact">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Created</th>
+                  <th>Last Used</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="key in apiKeys" :key="key.id">
+                  <td>{{ key.name }}</td>
+                  <td>{{ new Date(key.created_at).toLocaleDateString() }}</td>
+                  <td>{{ key.last_used_at ? new Date(key.last_used_at).toLocaleDateString() : 'Never' }}</td>
+                  <td>
+                    <v-btn
+                      icon="mdi-delete"
+                      size="small"
+                      variant="text"
+                      color="error"
+                      @click="revokeApiKey(key.id)"
+                    />
+                  </td>
+                </tr>
+              </tbody>
+            </v-table>
+            <div v-else class="text-body-2 text-medium-emphasis">
+              No API keys yet. Generate one to get started.
+            </div>
+          </v-card-text>
         </v-card>
 
         <!-- Import/Export -->

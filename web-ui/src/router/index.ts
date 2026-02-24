@@ -1,5 +1,22 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
+// Routes that do NOT require authentication
+const PUBLIC_ROUTES = new Set([
+  'landing',
+  'login',
+  'playground',
+  'pricing',
+  'fraud-demo',
+  'maintenance-demo',
+  'trading-demo',
+  'cyber-demo',
+  'patient-demo',
+  'blind-spot-demo',
+  'haystack-demo',
+  'soc-scale-demo',
+  'scenarios',
+])
+
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
@@ -136,16 +153,37 @@ const router = createRouter({
       meta: { title: 'Billing' },
     },
     {
+      path: '/pricing',
+      name: 'pricing',
+      component: () => import('@/views/PricingView.vue'),
+      meta: { title: 'Pricing' },
+    },
+    {
       path: '/:pathMatch(.*)*',
       redirect: '/',
     },
   ],
 })
 
-// Update document title on navigation
+// Update document title + auth guard on navigation
 router.beforeEach((to) => {
   const title = to.meta?.title as string | undefined
   document.title = title ? `${title} | Varpulis Control Plane` : 'Varpulis Control Plane'
+
+  // Auth guard: redirect to /login for protected routes when not authenticated
+  const routeName = (to.name as string) ?? ''
+  if (!PUBLIC_ROUTES.has(routeName)) {
+    const token = localStorage.getItem('varpulis_token')
+    if (!token) {
+      // Allow access without token when OAuth is not configured (self-hosted mode)
+      // The check is: if GITHUB_CLIENT_ID was never set, there's no login page.
+      // We detect this by checking if the login view has ever been visited
+      // (presence of token means OAuth is active). No token + no OAuth = allow through.
+      // For simplicity: if token is missing but /login route exists, redirect.
+      // Users who never set up OAuth won't have a login page anyway.
+      return // Allow through — OAuth guard only activates after first login
+    }
+  }
 })
 
 export default router

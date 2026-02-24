@@ -61,6 +61,10 @@ pub struct Claims {
     pub email: String,  // Email (may be empty)
     pub exp: usize,     // Expiration (Unix timestamp)
     pub iat: usize,     // Issued at
+    #[serde(default)]
+    pub user_id: String, // DB user UUID (empty when saas not enabled)
+    #[serde(default)]
+    pub org_id: String, // DB organization UUID (empty when saas not enabled)
 }
 
 // ---------------------------------------------------------------------------
@@ -133,6 +137,8 @@ pub struct OAuthState {
     pub config: OAuthConfig,
     pub sessions: RwLock<SessionStore>,
     pub http_client: reqwest::Client,
+    #[cfg(feature = "saas")]
+    pub db_pool: Option<varpulis_db::PgPool>,
 }
 
 impl OAuthState {
@@ -141,7 +147,15 @@ impl OAuthState {
             config,
             sessions: RwLock::new(SessionStore::new()),
             http_client: reqwest::Client::new(),
+            #[cfg(feature = "saas")]
+            db_pool: None,
         }
+    }
+
+    #[cfg(feature = "saas")]
+    pub fn with_db_pool(mut self, pool: varpulis_db::PgPool) -> Self {
+        self.db_pool = Some(pool);
+        self
     }
 }
 
@@ -152,6 +166,8 @@ impl OAuthState {
 fn create_jwt(
     config: &OAuthConfig,
     user: &GitHubUser,
+    user_id: &str,
+    org_id: &str,
 ) -> Result<String, jsonwebtoken::errors::Error> {
     use jsonwebtoken::{encode, EncodingKey, Header};
 
@@ -164,6 +180,8 @@ fn create_jwt(
         email: user.email.clone().unwrap_or_default(),
         exp: now + 86400 * 7, // 7 days
         iat: now,
+        user_id: user_id.to_string(),
+        org_id: org_id.to_string(),
     };
 
     encode(
@@ -272,8 +290,30 @@ async fn handle_github_callback(
             warp::reject::reject()
         })?;
 
+    // DB integration: upsert user and auto-create org
+    let (db_user_id, db_org_id) = {
+        #[cfg(feature = "saas")]
+        {
+            if let Some(ref pool) = state.db_pool {
+                match upsert_user_and_org(pool, &user).await {
+                    Ok((uid, oid)) => (uid, oid),
+                    Err(e) => {
+                        tracing::error!("DB user/org upsert failed: {}", e);
+                        (String::new(), String::new())
+                    }
+                }
+            } else {
+                (String::new(), String::new())
+            }
+        }
+        #[cfg(not(feature = "saas"))]
+        {
+            (String::new(), String::new())
+        }
+    };
+
     // Create JWT
-    let jwt = create_jwt(&state.config, &user).map_err(|e| {
+    let jwt = create_jwt(&state.config, &user, &db_user_id, &db_org_id).map_err(|e| {
         tracing::error!("JWT creation failed: {}", e);
         warp::reject::reject()
     })?;
@@ -285,6 +325,45 @@ async fn handle_github_callback(
     Ok(warp::redirect::temporary(
         redirect_url.parse::<warp::http::Uri>().unwrap(),
     ))
+}
+
+/// Upsert user in DB and auto-create a default org if none exist.
+#[cfg(feature = "saas")]
+async fn upsert_user_and_org(
+    pool: &varpulis_db::PgPool,
+    github_user: &GitHubUser,
+) -> Result<(String, String), String> {
+    let db_user = varpulis_db::repo::create_or_update_user(
+        pool,
+        &github_user.id.to_string(),
+        github_user.email.as_deref().unwrap_or(""),
+        github_user.name.as_deref().unwrap_or(&github_user.login),
+        &github_user.avatar_url,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let orgs = varpulis_db::repo::get_user_organizations(pool, db_user.id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let org = if orgs.is_empty() {
+        let org_name = format!("{}'s org", github_user.login);
+        varpulis_db::repo::create_organization(pool, db_user.id, &org_name)
+            .await
+            .map_err(|e| e.to_string())?
+    } else {
+        orgs.into_iter().next().unwrap()
+    };
+
+    tracing::info!(
+        "DB upsert: user={} org={} ({})",
+        db_user.id,
+        org.id,
+        org.name
+    );
+
+    Ok((db_user.id.to_string(), org.id.to_string()))
 }
 
 /// POST /auth/logout — invalidate JWT.
@@ -342,16 +421,47 @@ async fn handle_me(
 
     // Verify JWT
     match verify_jwt(&state.config, &token) {
-        Ok(claims) => Ok(warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({
+        Ok(claims) => {
+            #[allow(unused_mut)]
+            let mut response = serde_json::json!({
                 "id": claims.sub,
                 "name": claims.name,
                 "login": claims.login,
                 "avatar": claims.avatar,
                 "email": claims.email,
-            })),
-            warp::http::StatusCode::OK,
-        )),
+                "user_id": claims.user_id,
+                "org_id": claims.org_id,
+            });
+
+            // Enrich with DB data when saas is enabled
+            #[cfg(feature = "saas")]
+            if let Some(ref pool) = state.db_pool {
+                if !claims.user_id.is_empty() {
+                    if let Ok(user_uuid) = claims.user_id.parse::<uuid::Uuid>() {
+                        if let Ok(orgs) =
+                            varpulis_db::repo::get_user_organizations(pool, user_uuid).await
+                        {
+                            let orgs_json: Vec<serde_json::Value> = orgs
+                                .iter()
+                                .map(|o| {
+                                    serde_json::json!({
+                                        "id": o.id.to_string(),
+                                        "name": o.name,
+                                        "tier": o.tier,
+                                    })
+                                })
+                                .collect();
+                            response["organizations"] = serde_json::json!(orgs_json);
+                        }
+                    }
+                }
+            }
+
+            Ok(warp::reply::with_status(
+                warp::reply::json(&response),
+                warp::http::StatusCode::OK,
+            ))
+        }
         Err(e) => {
             tracing::debug!("JWT verification failed: {}", e);
             Ok(warp::reply::with_status(
@@ -469,7 +579,7 @@ mod tests {
             email: Some("test@example.com".to_string()),
         };
 
-        let token = create_jwt(&config, &user).expect("JWT creation should succeed");
+        let token = create_jwt(&config, &user, "", "").expect("JWT creation should succeed");
         let claims = verify_jwt(&config, &token).expect("JWT verification should succeed");
 
         assert_eq!(claims.sub, "12345");
@@ -496,7 +606,7 @@ mod tests {
             email: None,
         };
 
-        let token = create_jwt(&config, &user).unwrap();
+        let token = create_jwt(&config, &user, "", "").unwrap();
 
         // Verify with different secret should fail
         let config2 = OAuthConfig {
@@ -569,7 +679,7 @@ mod tests {
             email: Some("octocat@github.com".to_string()),
         };
 
-        let token = create_jwt(&config, &user).unwrap();
+        let token = create_jwt(&config, &user, "", "").unwrap();
         let state = Arc::new(OAuthState::new(config));
         let routes = oauth_routes(Some(state));
 
@@ -604,7 +714,7 @@ mod tests {
             email: Some("octocat@github.com".to_string()),
         };
 
-        let token = create_jwt(&config, &user).unwrap();
+        let token = create_jwt(&config, &user, "", "").unwrap();
         let state = Arc::new(OAuthState::new(config));
 
         // Revoke the token
