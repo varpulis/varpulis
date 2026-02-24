@@ -6,6 +6,15 @@
       </v-col>
     </v-row>
 
+    <!-- Success banner after Stripe checkout -->
+    <v-row v-if="showSuccess">
+      <v-col cols="12">
+        <v-alert type="success" closable @click:close="showSuccess = false">
+          Your subscription is now active. Welcome to Varpulis Pro!
+        </v-alert>
+      </v-col>
+    </v-row>
+
     <v-row>
       <!-- Current Plan -->
       <v-col cols="12" md="6">
@@ -48,7 +57,7 @@
           <v-card-title>Usage This Month</v-card-title>
           <v-card-text>
             <div class="text-h5 font-weight-bold mb-2">
-              {{ formatNumber(usage.events_today) }}
+              {{ formatNumber(totalEvents) }}
             </div>
             <div class="text-body-2 text-medium-emphasis mb-4">events processed</div>
 
@@ -60,7 +69,7 @@
               rounded
             />
             <div v-if="plan.event_limit" class="text-caption text-medium-emphasis mt-1">
-              {{ formatNumber(usage.events_today) }} / {{ formatNumber(plan.event_limit) }}
+              {{ formatNumber(totalEvents) }} / {{ formatNumber(plan.event_limit) }}
               ({{ usagePercent.toFixed(1) }}%)
             </div>
           </v-card-text>
@@ -129,18 +138,15 @@ interface Plan {
   display_name: string
 }
 
-interface Usage {
-  events_today: number
-}
-
 const plan = ref<Plan>({ tier: 'free', event_limit: 10000, display_name: 'Free' })
-const usage = ref<Usage>({ events_today: 0 })
+const totalEvents = ref(0)
 const upgrading = ref(false)
 const loadingPortal = ref(false)
+const showSuccess = ref(false)
 
 const usagePercent = computed(() => {
   if (!plan.value.event_limit) return 0
-  return (usage.value.events_today / plan.value.event_limit) * 100
+  return (totalEvents.value / plan.value.event_limit) * 100
 })
 
 const tiers = [
@@ -182,8 +188,11 @@ async function fetchPlan() {
 async function fetchUsage() {
   try {
     const res = await axios.get('/api/v1/billing/usage')
-    if (res.data.usage && res.data.usage.length > 0) {
-      usage.value.events_today = res.data.usage[0].events_today
+    // Handle both new DB format and legacy in-memory format
+    if (res.data.events_this_month !== undefined) {
+      totalEvents.value = res.data.events_this_month
+    } else if (res.data.usage && res.data.usage.length > 0) {
+      totalEvents.value = res.data.usage[0].events_today
     }
   } catch {
     // Billing not configured
@@ -222,6 +231,16 @@ async function openPortal() {
 }
 
 onMounted(() => {
+  // Check for success redirect from Stripe
+  const params = new URLSearchParams(window.location.search)
+  if (params.get('success') === 'true') {
+    showSuccess.value = true
+    // Clean URL
+    const url = new URL(window.location.href)
+    url.searchParams.delete('success')
+    window.history.replaceState({}, '', url.pathname + url.search)
+  }
+
   fetchPlan()
   fetchUsage()
 })

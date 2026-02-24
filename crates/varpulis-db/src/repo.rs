@@ -67,7 +67,7 @@ pub async fn create_organization(
         r#"
         INSERT INTO organizations (owner_id, name)
         VALUES ($1, $2)
-        RETURNING id, owner_id, name, tier, created_at
+        RETURNING id, owner_id, name, tier, stripe_customer_id, created_at
         "#,
     )
     .bind(owner_id)
@@ -81,7 +81,7 @@ pub async fn create_organization(
 /// Get an organization by its ID.
 pub async fn get_organization(pool: &PgPool, id: Uuid) -> Result<Option<Organization>, DbError> {
     let org = sqlx::query_as::<_, Organization>(
-        "SELECT id, owner_id, name, tier, created_at FROM organizations WHERE id = $1",
+        "SELECT id, owner_id, name, tier, stripe_customer_id, created_at FROM organizations WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(pool)
@@ -96,13 +96,51 @@ pub async fn get_user_organizations(
     user_id: Uuid,
 ) -> Result<Vec<Organization>, DbError> {
     let orgs = sqlx::query_as::<_, Organization>(
-        "SELECT id, owner_id, name, tier, created_at FROM organizations WHERE owner_id = $1 ORDER BY created_at",
+        "SELECT id, owner_id, name, tier, stripe_customer_id, created_at FROM organizations WHERE owner_id = $1 ORDER BY created_at",
     )
     .bind(user_id)
     .fetch_all(pool)
     .await?;
 
     Ok(orgs)
+}
+
+/// Update the Stripe customer ID for an organization.
+pub async fn update_org_stripe_customer(
+    pool: &PgPool,
+    org_id: Uuid,
+    customer_id: &str,
+) -> Result<(), DbError> {
+    sqlx::query("UPDATE organizations SET stripe_customer_id = $1 WHERE id = $2")
+        .bind(customer_id)
+        .bind(org_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Update the tier of an organization.
+pub async fn update_org_tier(pool: &PgPool, org_id: Uuid, tier: &str) -> Result<(), DbError> {
+    sqlx::query("UPDATE organizations SET tier = $1 WHERE id = $2")
+        .bind(tier)
+        .bind(org_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Get an organization by its Stripe customer ID.
+pub async fn get_org_by_stripe_customer(
+    pool: &PgPool,
+    customer_id: &str,
+) -> Result<Option<Organization>, DbError> {
+    let org = sqlx::query_as::<_, Organization>(
+        "SELECT id, owner_id, name, tier, stripe_customer_id, created_at FROM organizations WHERE stripe_customer_id = $1",
+    )
+    .bind(customer_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(org)
 }
 
 // ---------------------------------------------------------------------------
@@ -142,6 +180,28 @@ pub async fn get_api_key_by_hash(pool: &PgPool, hash: &str) -> Result<Option<Api
     .await?;
 
     Ok(key)
+}
+
+/// List all API keys for an organization (without exposing the hash).
+pub async fn list_api_keys(pool: &PgPool, org_id: Uuid) -> Result<Vec<ApiKey>, DbError> {
+    let keys = sqlx::query_as::<_, ApiKey>(
+        "SELECT id, org_id, key_hash, name, created_at, last_used_at FROM api_keys WHERE org_id = $1 ORDER BY created_at",
+    )
+    .bind(org_id)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(keys)
+}
+
+/// Delete an API key by its ID.
+pub async fn delete_api_key(pool: &PgPool, id: Uuid) -> Result<(), DbError> {
+    sqlx::query("DELETE FROM api_keys WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await?;
+
+    Ok(())
 }
 
 /// Update the `last_used_at` timestamp of an API key to now.

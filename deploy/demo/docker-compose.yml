@@ -63,7 +63,7 @@ services:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
       args:
-        FEATURES: "kafka,raft,persistent"
+        FEATURES: "kafka,raft,persistent,saas"
     container_name: demo-coordinator-1
     command:
       - "coordinator"
@@ -90,6 +90,15 @@ services:
       - VARPULIS_LLM_PROVIDER=${VARPULIS_LLM_PROVIDER:-openai-compatible}
       - VARPULIS_S3_ENDPOINT=http://minio:9000
       - VARPULIS_S3_BUCKET=varpulis-models
+      - DATABASE_URL=${DATABASE_URL:-postgresql://varpulis:change-me@postgres:5432/varpulis}
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
+      - JWT_SECRET=${JWT_SECRET:-change-me-jwt-secret}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+      - STRIPE_PRO_PRICE_ID=${STRIPE_PRO_PRICE_ID:-}
+      - FRONTEND_URL=${FRONTEND_URL:-https://demo.varpulis-cep.com}
+      - SERVER_URL=${SERVER_URL:-https://demo.varpulis-cep.com}
     volumes:
       - coord1-data:/app/state
     healthcheck:
@@ -108,7 +117,7 @@ services:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
       args:
-        FEATURES: "kafka,raft,persistent"
+        FEATURES: "kafka,raft,persistent,saas"
     container_name: demo-coordinator-2
     command:
       - "coordinator"
@@ -153,7 +162,7 @@ services:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
       args:
-        FEATURES: "kafka,raft,persistent"
+        FEATURES: "kafka,raft,persistent,saas"
     container_name: demo-coordinator-3
     command:
       - "coordinator"
@@ -529,6 +538,28 @@ services:
     networks:
       - varpulis-demo
 
+  # ─── PostgreSQL (SaaS billing & user DB) ──────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: demo-postgres
+    expose:
+      - "5432"
+    environment:
+      - POSTGRES_DB=varpulis
+      - POSTGRES_USER=varpulis
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-change-me}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U varpulis"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - varpulis-demo
+
 volumes:
   caddy-data:
   caddy-config:
@@ -539,6 +570,7 @@ volumes:
   ollama-data:
   prometheus-data:
   grafana-data:
+  postgres-data:
 
 networks:
   varpulis-demo:

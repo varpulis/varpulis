@@ -26,6 +26,8 @@ use varpulis_cli::billing;
 use varpulis_cli::client::VarpulisClient;
 use varpulis_cli::config::Config;
 use varpulis_cli::oauth;
+#[cfg(feature = "saas")]
+use varpulis_cli::org;
 use varpulis_cli::playground;
 use varpulis_cli::rate_limit;
 use varpulis_cli::security;
@@ -2466,6 +2468,28 @@ async fn run_server(
     let pg_routes = playground::playground_routes(playground_state.clone());
     playground::spawn_session_reaper(playground_state);
 
+    // SaaS database pool (optional — enabled with --features saas and DATABASE_URL)
+    #[cfg(feature = "saas")]
+    let db_pool: Option<varpulis_db::PgPool> = {
+        if let Ok(database_url) = std::env::var("DATABASE_URL") {
+            match varpulis_db::pool::create_pool(&database_url).await {
+                Ok(pool) => {
+                    if let Err(e) = varpulis_db::pool::run_migrations(&pool).await {
+                        tracing::error!("Database migration failed: {}", e);
+                    }
+                    info!("SaaS database connected");
+                    Some(pool)
+                }
+                Err(e) => {
+                    tracing::error!("Failed to connect to database: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    };
+
     // OAuth routes (optional — enabled when GITHUB_CLIENT_ID is set)
     let oauth_state: Option<oauth::SharedOAuthState> =
         oauth::OAuthConfig::from_env().map(|oauth_config| {
@@ -2473,19 +2497,45 @@ async fn run_server(
                 "GitHub OAuth enabled (client_id: {}...)",
                 &oauth_config.github_client_id[..8.min(oauth_config.github_client_id.len())]
             );
-            let state = std::sync::Arc::new(oauth::OAuthState::new(oauth_config));
+            #[allow(unused_mut)]
+            let mut oauth = oauth::OAuthState::new(oauth_config);
+            #[cfg(feature = "saas")]
+            if let Some(ref pool) = db_pool {
+                oauth = oauth.with_db_pool(pool.clone());
+            }
+            let state = std::sync::Arc::new(oauth);
             oauth::spawn_session_cleanup(state.clone());
             state
         });
-    let oauth_r = oauth::oauth_routes(oauth_state);
+    let oauth_r = oauth::oauth_routes(oauth_state.clone());
 
     // Billing routes (optional — enabled when STRIPE_SECRET_KEY is set)
     let billing_state: Option<billing::SharedBillingState> = billing::BillingConfig::from_env()
         .map(|billing_config| {
             info!("Stripe billing enabled");
-            std::sync::Arc::new(billing::BillingState::new(billing_config))
+            #[allow(unused_mut)]
+            let mut billing = billing::BillingState::new(billing_config);
+            #[cfg(feature = "saas")]
+            if let Some(ref pool) = db_pool {
+                billing = billing.with_db_pool(pool.clone());
+            }
+            std::sync::Arc::new(billing)
         });
-    let billing_r = billing::billing_routes(billing_state);
+    let billing_r = billing::billing_routes(billing_state.clone());
+
+    // Org + API key routes (saas only)
+    #[cfg(feature = "saas")]
+    let org_r = {
+        let org_pool = db_pool.clone();
+        let org_oauth = oauth_state.clone();
+        org::org_routes(org_pool, org_oauth)
+    };
+
+    // Usage flush task (saas only)
+    #[cfg(feature = "saas")]
+    if let (Some(ref bs), Some(ref pool)) = (&billing_state, &db_pool) {
+        billing::spawn_usage_flush(bs.clone(), pool.clone());
+    }
 
     // Combined routes
     let routes = ws_route
@@ -2493,9 +2543,12 @@ async fn run_server(
         .or(ready_route)
         .or(pg_routes)
         .or(oauth_r)
-        .or(billing_r)
-        .or(api_routes)
-        .recover(auth::handle_rejection);
+        .or(billing_r);
+
+    #[cfg(feature = "saas")]
+    let routes = routes.or(org_r);
+
+    let routes = routes.or(api_routes).recover(auth::handle_rejection);
 
     // Parse bind address - NO unwrap()!
     let bind_addr: std::net::IpAddr = bind
