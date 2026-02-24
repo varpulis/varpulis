@@ -166,6 +166,27 @@ impl ConnectorParamDef {
 
 static MQTT_PARAMS: &[ConnectorParamDef] = &[
     ConnectorParamDef {
+        name: "host",
+        param_type: ParamType::Str,
+        required: false,
+        description: "MQTT broker hostname",
+        context: ParamContext::Both,
+    },
+    ConnectorParamDef {
+        name: "port",
+        param_type: ParamType::Int,
+        required: false,
+        description: "MQTT broker port",
+        context: ParamContext::Both,
+    },
+    ConnectorParamDef {
+        name: "url",
+        param_type: ParamType::Str,
+        required: false,
+        description: "MQTT broker URL",
+        context: ParamContext::Both,
+    },
+    ConnectorParamDef {
         name: "topic",
         param_type: ParamType::Str,
         required: false,
@@ -190,6 +211,13 @@ static MQTT_PARAMS: &[ConnectorParamDef] = &[
 
 static KAFKA_PARAMS: &[ConnectorParamDef] = &[
     ConnectorParamDef {
+        name: "brokers",
+        param_type: ParamType::Str,
+        required: false,
+        description: "Kafka broker addresses",
+        context: ParamContext::Both,
+    },
+    ConnectorParamDef {
         name: "topic",
         param_type: ParamType::Str,
         required: false,
@@ -201,7 +229,7 @@ static KAFKA_PARAMS: &[ConnectorParamDef] = &[
         param_type: ParamType::Str,
         required: false,
         description: "Consumer group ID",
-        context: ParamContext::Source,
+        context: ParamContext::Both,
     },
     ConnectorParamDef {
         name: "partition",
@@ -213,6 +241,13 @@ static KAFKA_PARAMS: &[ConnectorParamDef] = &[
 ];
 
 static HTTP_PARAMS: &[ConnectorParamDef] = &[
+    ConnectorParamDef {
+        name: "url",
+        param_type: ParamType::Str,
+        required: false,
+        description: "HTTP endpoint URL",
+        context: ParamContext::Both,
+    },
     ConnectorParamDef {
         name: "topic",
         param_type: ParamType::Str,
@@ -239,6 +274,13 @@ static CONSOLE_PARAMS: &[ConnectorParamDef] = &[ConnectorParamDef {
 
 static NATS_PARAMS: &[ConnectorParamDef] = &[
     ConnectorParamDef {
+        name: "url",
+        param_type: ParamType::Str,
+        required: false,
+        description: "NATS server URL",
+        context: ParamContext::Both,
+    },
+    ConnectorParamDef {
         name: "topic",
         param_type: ParamType::Str,
         required: false,
@@ -250,7 +292,7 @@ static NATS_PARAMS: &[ConnectorParamDef] = &[
         param_type: ParamType::Str,
         required: false,
         description: "Queue group for load-balanced consumption",
-        context: ParamContext::Source,
+        context: ParamContext::Both,
     },
 ];
 

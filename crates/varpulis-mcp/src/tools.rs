@@ -549,7 +549,10 @@ mod tests {
     fn test_validate_valid_vpl() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let client = crate::client::CoordinatorClient::new("http://localhost:99999".into(), None);
-        let result = rt.block_on(validate_vpl_impl("stream A = X", &client));
+        let result = rt.block_on(validate_vpl_impl(
+            "event X: v: int\nstream A = X\n    .emit()",
+            &client,
+        ));
         assert_eq!(result.is_error, Some(false));
         let text = result.content[0].as_text().unwrap().text.as_str();
         assert!(text.contains("valid"), "Expected 'valid' in: {}", text);

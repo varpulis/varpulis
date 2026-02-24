@@ -103,7 +103,7 @@ async fn mcp_server_e2e() -> anyhow::Result<()> {
     let result = client
         .call_tool(call_tool_params(
             "validate_vpl",
-            serde_json::json!({ "source": "stream A = X" }),
+            serde_json::json!({ "source": "event X: v: int\nstream A = X\n    .emit()" }),
         ))
         .await?;
     assert_eq!(result.is_error, Some(false), "valid VPL should succeed");

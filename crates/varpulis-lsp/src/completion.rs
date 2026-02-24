@@ -1186,8 +1186,7 @@ mod tests {
         let labels: Vec<&str> = completions.iter().map(|c| c.label.as_str()).collect();
         assert!(labels.contains(&"topic"));
         assert!(labels.contains(&"partition"));
-        // group_id is source-only, should not appear in .to() context
-        assert!(!labels.contains(&"group_id"));
+        assert!(labels.contains(&"group_id"));
     }
 
     #[test]
