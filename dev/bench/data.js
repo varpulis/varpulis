@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771943564546,
+  "lastUpdate": 1771948034064,
   "repoUrl": "https://github.com/varpulis/varpulis",
   "entries": {
     "Varpulis Performance": [
@@ -4260,6 +4260,148 @@ window.BENCHMARK_DATA = {
           {
             "name": "scalability/50k_kleene_plus",
             "value": 21394000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyril.poderà@gmail.com",
+            "name": "cpoder"
+          },
+          "committer": {
+            "email": "cyril.poderà@gmail.com",
+            "name": "cpoder"
+          },
+          "distinct": true,
+          "id": "6913dd257287218313ebc7dfb5500dc787a0b8bb",
+          "message": "feat: add Phase 6 advanced infrastructure (connectors, concurrency, GPU, federation)\n\n- Pulsar connector (source/sink, feature-gated)\n- Redis Streams connector (XREADGROUP/XADD, feature-gated)\n- .concurrent() operator with Rayon thread pool parallelization\n- GPU-accelerated .score() inference (CUDA/TensorRT, batch mode)\n- Multi-region federation (coordinator, routing, API, CLI)\n- .gitignore: fuzz corpus/target, benchmark results, test results, tree-sitter artifacts\n- GitHub community files (CODEOWNERS, PR template, issue templates, dependabot)\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>",
+          "timestamp": "2026-02-24T16:40:53+01:00",
+          "tree_id": "ff5ff4875a14d33cc54a4ca0dea9607e64a932fe",
+          "url": "https://github.com/varpulis/varpulis/commit/6913dd257287218313ebc7dfb5500dc787a0b8bb"
+        },
+        "date": 1771948033151,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "simple_sequence/sase/100",
+            "value": 35345,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "simple_sequence/sase/1000",
+            "value": 346140,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "simple_sequence/sase/10000",
+            "value": 3475100,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_plus/sase/100",
+            "value": 41474,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_plus/sase/1000",
+            "value": 460540,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_plus/sase/5000",
+            "value": 2289700,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "with_predicates/sase/100",
+            "value": 33908,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "with_predicates/sase/1000",
+            "value": 417030,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "with_predicates/sase/5000",
+            "value": 2080200,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "long_sequence/seq_5_events_5k",
+            "value": 2181700,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "long_sequence/seq_10_events_10k",
+            "value": 4109499,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "complex_patterns/negation_5k",
+            "value": 1525600,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "complex_patterns/or_pattern_5k",
+            "value": 1780900,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "complex_patterns/nested_kleene_5k",
+            "value": 113390000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "multi_predicates/chained_predicates_5k",
+            "value": 1815900,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "throughput/seq_3/10000",
+            "value": 3439800,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "throughput/seq_3/50000",
+            "value": 17622000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "throughput/seq_3/100000",
+            "value": 35070000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "scalability/100k_simple_seq",
+            "value": 35329000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "scalability/50k_kleene_plus",
+            "value": 20772000,
             "range": "± 0",
             "unit": "ns/iter"
           }
