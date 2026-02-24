@@ -51,7 +51,7 @@ async function selectExample(id: string) {
 </script>
 
 <template>
-  <v-menu offset-y>
+  <v-menu>
     <template v-slot:activator="{ props }">
       <v-btn
         v-bind="props"

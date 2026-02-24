@@ -14,6 +14,9 @@ const PUBLIC_ROUTES = new Set([
   'blind-spot-demo',
   'haystack-demo',
   'soc-scale-demo',
+  'iot-concurrent-demo',
+  'ai-fraud-scoring-demo',
+  'multi-region-demo',
   'scenarios',
 ])
 
@@ -127,6 +130,24 @@ const router = createRouter({
       name: 'soc-scale-demo',
       component: () => import('@/views/SocScaleDemoView.vue'),
       meta: { title: 'SOC at Scale Demo' },
+    },
+    {
+      path: '/scenarios/iot-concurrent',
+      name: 'iot-concurrent-demo',
+      component: () => import('@/views/IotConcurrentDemoView.vue'),
+      meta: { title: 'IoT Concurrent Processing Demo' },
+    },
+    {
+      path: '/scenarios/ai-fraud-scoring',
+      name: 'ai-fraud-scoring-demo',
+      component: () => import('@/views/AiFraudScoringDemoView.vue'),
+      meta: { title: 'AI Fraud Scoring Demo' },
+    },
+    {
+      path: '/scenarios/multi-region',
+      name: 'multi-region-demo',
+      component: () => import('@/views/MultiRegionDemoView.vue'),
+      meta: { title: 'Multi-Region Federation Demo' },
     },
     {
       path: '/playground',

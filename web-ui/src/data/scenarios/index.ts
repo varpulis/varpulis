@@ -7,6 +7,9 @@ import { predictiveMaintenanceScenario } from './predictive-maintenance'
 import { insiderTradingScenario } from './insider-trading'
 import { cyberThreatScenario } from './cyber-threat'
 import { patientSafetyScenario } from './patient-safety'
+import { iotConcurrentScenario } from './iot-concurrent'
+import { aiFraudScoringScenario } from './ai-fraud-scoring'
+import { multiRegionScenario } from './multi-region'
 
 export const scenarios: ScenarioDefinition[] = [
   blindSpotScenario,
@@ -17,6 +20,9 @@ export const scenarios: ScenarioDefinition[] = [
   insiderTradingScenario,
   cyberThreatScenario,
   patientSafetyScenario,
+  iotConcurrentScenario,
+  aiFraudScoringScenario,
+  multiRegionScenario,
 ]
 
 export {
@@ -28,4 +34,7 @@ export {
   insiderTradingScenario,
   cyberThreatScenario,
   patientSafetyScenario,
+  iotConcurrentScenario,
+  aiFraudScoringScenario,
+  multiRegionScenario,
 }
