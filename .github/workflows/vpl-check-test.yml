@@ -17,7 +17,7 @@ jobs:
     name: Validate example VPL files
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Check examples
         uses: ./.github/actions/varpulis-check
@@ -29,7 +29,7 @@ jobs:
     name: Validate demo VPL files
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Check demos
         uses: ./.github/actions/varpulis-check
