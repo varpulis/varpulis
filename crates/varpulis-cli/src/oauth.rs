@@ -9,6 +9,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use warp::Filter;
 
+use crate::audit::{AuditAction, AuditEntry, SharedAuditLogger};
+
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
@@ -139,6 +141,7 @@ pub struct OAuthState {
     pub http_client: reqwest::Client,
     #[cfg(feature = "saas")]
     pub db_pool: Option<varpulis_db::PgPool>,
+    pub audit_logger: Option<SharedAuditLogger>,
 }
 
 impl OAuthState {
@@ -149,7 +152,13 @@ impl OAuthState {
             http_client: reqwest::Client::new(),
             #[cfg(feature = "saas")]
             db_pool: None,
+            audit_logger: None,
         }
+    }
+
+    pub fn with_audit_logger(mut self, logger: Option<SharedAuditLogger>) -> Self {
+        self.audit_logger = logger;
+        self
     }
 
     #[cfg(feature = "saas")]
@@ -320,6 +329,16 @@ async fn handle_github_callback(
 
     tracing::info!("OAuth login: {} ({})", user.login, user.id);
 
+    // Audit log: successful login
+    if let Some(ref logger) = state.audit_logger {
+        logger
+            .log(
+                AuditEntry::new(&user.login, AuditAction::Login, "/auth/github/callback")
+                    .with_detail(format!("GitHub user ID: {}", user.id)),
+            )
+            .await;
+    }
+
     // Redirect to frontend with JWT as query parameter
     let redirect_url = format!("{}/?token={}", state.config.frontend_url, jwt);
     Ok(warp::redirect::temporary(
@@ -376,6 +395,17 @@ async fn handle_logout(
         if !token.is_empty() {
             let hash = token_hash(token);
             state.sessions.write().await.revoke(hash);
+
+            // Audit log: logout
+            if let Some(ref logger) = state.audit_logger {
+                logger
+                    .log(AuditEntry::new(
+                        "session",
+                        AuditAction::Logout,
+                        "/auth/logout",
+                    ))
+                    .await;
+            }
         }
     }
 
