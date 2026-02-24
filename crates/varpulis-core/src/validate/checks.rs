@@ -358,12 +358,6 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
     let mut seen_aggregate = false;
     let mut seen_window = false;
     let mut in_sequence = is_sequence_source(source);
-    let mut has_emit = false;
-    let mut has_to = false;
-    let mut has_print = false;
-    let mut has_tap = false;
-    let mut has_log = false;
-
     // Build alias → event type mapping for field reference validation
     let mut alias_to_event: HashMap<String, String> = HashMap::new();
     match source {
@@ -593,7 +587,6 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
 
             // --- Parameter validation ---
             StreamOp::Log(args) => {
-                has_log = true;
                 check_named_params(v, args, LOG_PARAMS, ".log()", span);
             }
             StreamOp::Watermark(args) => {
@@ -605,7 +598,6 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
                 connector_name,
                 params,
             } => {
-                has_to = true;
                 if !v.symbols.connectors.contains_key(connector_name) {
                     let suggestion = did_you_mean(connector_name, &v.symbols.connector_names());
                     // Include existing connector types in hint for context
@@ -674,7 +666,6 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
                 fields,
                 ..
             } => {
-                has_emit = true;
                 for field in fields {
                     check_expr_field_refs(v, &field.value, &alias_to_event, span);
                 }
@@ -743,16 +734,10 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
                 }
             }
 
-            // --- Output tracking ---
-            StreamOp::Tap(_) => {
-                has_tap = true;
-            }
-            StreamOp::Print(_) => {
-                has_print = true;
-            }
-
-            // --- Operations that are fine ---
-            StreamOp::Select(_)
+            // --- Operations that need no extra validation ---
+            StreamOp::Tap(_)
+            | StreamOp::Print(_)
+            | StreamOp::Select(_)
             | StreamOp::Pattern(_)
             | StreamOp::Process(_)
             | StreamOp::On(_)
@@ -760,17 +745,6 @@ fn check_stream_ops(v: &mut Validator, ops: &[StreamOp], source: &StreamSource, 
             | StreamOp::Score(_)
             | StreamOp::Forecast(_) => {}
         }
-    }
-
-    // Warn if stream has no output operation
-    if !has_emit && !has_to && !has_print && !has_tap && !has_log {
-        v.emit_with_hint(
-            Severity::Warning,
-            span,
-            "W033",
-            "stream has no output operation".to_string(),
-            "add .emit(...), .to(Connector), .print(), or .log() to produce output".to_string(),
-        );
     }
 }
 
