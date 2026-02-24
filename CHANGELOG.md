@@ -62,6 +62,22 @@ and crates.io publishing.
 - **GitHub Actions marketplace action** — `varpulis-check` for CI/CD VPL validation
 - **crates.io publish workflow** — automated sequential crate publishing
 
+#### Audit Logging
+- **Structured audit log** — JSON-lines format with actor, action, target, outcome
+- **In-memory recent buffer** — fast access to last 1000 entries
+- **REST endpoint** — `GET /api/v1/audit` with filtering by action and actor
+- **Auto-enabled** — writes to `data/audit.jsonl`, no configuration needed
+
+#### Advanced Connectors
+- **Redis connector** — pub/sub source and sink with key prefix support
+- **Pulsar connector** — Apache Pulsar source and sink
+- **Federation routing** — cross-cluster event routing for geo-distributed deployments
+
+#### SaaS Deployment
+- **docker-compose.saas.yml** — complete SaaS stack (PostgreSQL, Caddy, Web UI, Prometheus, Grafana)
+- **Caddyfile.saas** — reverse proxy with OAuth/API/WebSocket routing
+- **Environment configuration** — `.env.example` with all required variables documented
+
 #### Validation & LSP
 - **Strict semantic validation** — connector params, stream references, type checking
 - **Per-op diagnostic spans** — precise error locations for each VPL operator
