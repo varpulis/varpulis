@@ -21,6 +21,7 @@ use varpulis_runtime::SharedEvent; // PERF: Zero-copy event sharing
 
 // Import our new modules
 use varpulis_cli::api;
+use varpulis_cli::audit;
 use varpulis_cli::auth::{self, AuthConfig};
 use varpulis_cli::billing;
 use varpulis_cli::client::VarpulisClient;
@@ -2593,13 +2594,31 @@ async fn run_server(
         billing::spawn_usage_flush(bs.clone(), pool.clone());
     }
 
+    // Audit log (optional — writes to data/audit.jsonl)
+    let audit_logger: Option<audit::SharedAuditLogger> = {
+        let audit_path = std::path::PathBuf::from("data/audit.jsonl");
+        // Ensure parent directory exists
+        if let Some(parent) = audit_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match audit::AuditLogger::open(audit_path).await {
+            Ok(logger) => Some(logger),
+            Err(e) => {
+                tracing::warn!("Audit logging disabled: {}", e);
+                None
+            }
+        }
+    };
+    let audit_r = audit::audit_routes(audit_logger.clone());
+
     // Combined routes
     let routes = ws_route
         .or(health_route)
         .or(ready_route)
         .or(pg_routes)
         .or(oauth_r)
-        .or(billing_r);
+        .or(billing_r)
+        .or(audit_r);
 
     #[cfg(feature = "saas")]
     let routes = routes.or(org_r);

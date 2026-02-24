@@ -1,0 +1,24 @@
+{$SITE_ADDRESS:localhost} {
+    # OAuth and auth routes → Varpulis backend
+    reverse_proxy /auth/* varpulis:9000
+
+    # API requests → Varpulis backend
+    reverse_proxy /api/* varpulis:9000
+
+    # WebSocket → Varpulis backend
+    reverse_proxy /ws varpulis:9000
+
+    # Health/ready → Varpulis backend
+    reverse_proxy /health varpulis:9000
+    reverse_proxy /ready varpulis:9000
+
+    # Metrics → Varpulis backend
+    reverse_proxy /metrics varpulis:9000
+
+    # Grafana dashboard
+    @grafana path /grafana /grafana/*
+    reverse_proxy @grafana grafana:3000
+
+    # Everything else → Web UI (Vue SPA)
+    reverse_proxy /* web-ui:8080
+}
