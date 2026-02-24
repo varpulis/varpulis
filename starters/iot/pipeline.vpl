@@ -1,0 +1,50 @@
+# IoT HVAC Monitoring Starter
+# Monitors temperature sensors across zones, alerts on anomalies
+
+connector MqttSensors = mqtt (
+    host: "mosquitto",
+    port: 1883,
+    client_id: "hvac-starter"
+)
+
+event TemperatureReading:
+    sensor_id: str
+    zone: str
+    value: float
+    ts: timestamp
+
+# Ingest temperature readings from MQTT
+stream Temperatures = TemperatureReading
+    .from(MqttSensors, topic: "sensors/temp/#")
+
+# Alert when temperature exceeds threshold
+stream HighTempAlert = Temperatures
+    .where(value > 30)
+    .emit(
+        alert_type: "HIGH_TEMPERATURE",
+        zone: zone,
+        temperature: value,
+        sensor: sensor_id
+    )
+
+# 5-minute rolling stats per zone
+stream ZoneStats = Temperatures
+    .partition_by(zone)
+    .window(5m)
+    .aggregate(
+        zone: last(zone),
+        avg_temp: avg(value),
+        max_temp: max(value),
+        min_temp: min(value),
+        reading_count: count()
+    )
+
+# Alert when zone average exceeds threshold
+stream ZoneOverheating = ZoneStats
+    .where(avg_temp > 28)
+    .emit(
+        alert_type: "ZONE_OVERHEATING",
+        zone: zone,
+        average: avg_temp,
+        peak: max_temp
+    )

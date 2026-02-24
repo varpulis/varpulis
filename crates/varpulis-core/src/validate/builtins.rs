@@ -110,6 +110,9 @@ pub static ENRICH_BUILTIN_VARS: &[&str] = &["enrich_status", "enrich_latency_ms"
 /// Connector types that support request-response lookups for `.enrich()`.
 pub static ENRICH_COMPATIBLE_TYPES: &[&str] = &["http", "database", "redis"];
 
+/// Valid parameter names for `.concurrent()`.
+pub static CONCURRENT_PARAMS: &[&str] = &["workers", "partition_key"];
+
 /// Known connector types for validation.
 pub static KNOWN_CONNECTOR_TYPES: &[&str] = &[
     "mqtt",
@@ -121,6 +124,8 @@ pub static KNOWN_CONNECTOR_TYPES: &[&str] = &[
     "file",
     "database",
     "redis",
+    "redis_stream",
+    "pulsar",
 ];
 
 /// Check if a connector type is known.
@@ -292,6 +297,96 @@ static NATS_PARAMS: &[ConnectorParamDef] = &[
     },
 ];
 
+static PULSAR_PARAMS: &[ConnectorParamDef] = &[
+    ConnectorParamDef {
+        name: "url",
+        param_type: ParamType::Str,
+        required: false,
+        description: "Pulsar service URL",
+        context: ParamContext::Both,
+    },
+    ConnectorParamDef {
+        name: "topic",
+        param_type: ParamType::Str,
+        required: false,
+        description: "Pulsar topic name",
+        context: ParamContext::Both,
+    },
+    ConnectorParamDef {
+        name: "subscription",
+        param_type: ParamType::Str,
+        required: false,
+        description: "Consumer subscription name",
+        context: ParamContext::Source,
+    },
+    ConnectorParamDef {
+        name: "consumer_name",
+        param_type: ParamType::Str,
+        required: false,
+        description: "Consumer name identifier",
+        context: ParamContext::Source,
+    },
+    ConnectorParamDef {
+        name: "batch_size",
+        param_type: ParamType::Int,
+        required: false,
+        description: "Consumer batch size",
+        context: ParamContext::Source,
+    },
+    ConnectorParamDef {
+        name: "token",
+        param_type: ParamType::Str,
+        required: false,
+        description: "Authentication token",
+        context: ParamContext::Both,
+    },
+];
+
+static REDIS_STREAM_PARAMS: &[ConnectorParamDef] = &[
+    ConnectorParamDef {
+        name: "url",
+        param_type: ParamType::Str,
+        required: false,
+        description: "Redis server URL",
+        context: ParamContext::Both,
+    },
+    ConnectorParamDef {
+        name: "stream_key",
+        param_type: ParamType::Str,
+        required: false,
+        description: "Redis stream key name",
+        context: ParamContext::Both,
+    },
+    ConnectorParamDef {
+        name: "group",
+        param_type: ParamType::Str,
+        required: false,
+        description: "Consumer group name",
+        context: ParamContext::Source,
+    },
+    ConnectorParamDef {
+        name: "consumer",
+        param_type: ParamType::Str,
+        required: false,
+        description: "Consumer name within the group",
+        context: ParamContext::Source,
+    },
+    ConnectorParamDef {
+        name: "batch_size",
+        param_type: ParamType::Int,
+        required: false,
+        description: "Number of messages to read per batch",
+        context: ParamContext::Source,
+    },
+    ConnectorParamDef {
+        name: "max_len",
+        param_type: ParamType::Int,
+        required: false,
+        description: "Approximate max stream length for XADD MAXLEN ~",
+        context: ParamContext::Sink,
+    },
+];
+
 /// Look up the parameter schema for a connector type.
 ///
 /// Returns `None` for unknown connector types (forward-compatible).
@@ -302,6 +397,8 @@ pub fn connector_params_for_type(connector_type: &str) -> Option<&'static [Conne
         "http" => Some(HTTP_PARAMS),
         "nats" => Some(NATS_PARAMS),
         "console" => Some(CONSOLE_PARAMS),
+        "pulsar" => Some(PULSAR_PARAMS),
+        "redis_stream" => Some(REDIS_STREAM_PARAMS),
         _ => None,
     }
 }

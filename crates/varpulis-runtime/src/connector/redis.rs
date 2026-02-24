@@ -302,3 +302,523 @@ impl SinkConnector for RedisSink {
         Ok(())
     }
 }
+
+// ============================================================================
+// Redis Streams (XADD / XREADGROUP) support
+// ============================================================================
+
+/// Configuration for Redis Streams (XADD/XREADGROUP)
+#[derive(Debug, Clone)]
+pub struct RedisStreamConfig {
+    pub url: String,
+    pub stream_key: String,
+    pub group_name: Option<String>,
+    pub consumer_name: Option<String>,
+    pub batch_size: usize,
+    pub block_ms: usize,
+    pub max_len: Option<usize>,
+}
+
+impl RedisStreamConfig {
+    pub fn new(url: &str, stream_key: &str) -> Self {
+        Self {
+            url: url.to_string(),
+            stream_key: stream_key.to_string(),
+            group_name: None,
+            consumer_name: None,
+            batch_size: 100,
+            block_ms: 1000,
+            max_len: None,
+        }
+    }
+
+    pub fn with_group(mut self, group: &str) -> Self {
+        self.group_name = Some(group.to_string());
+        self
+    }
+
+    pub fn with_consumer(mut self, consumer: &str) -> Self {
+        self.consumer_name = Some(consumer.to_string());
+        self
+    }
+
+    pub fn with_batch_size(mut self, size: usize) -> Self {
+        self.batch_size = size;
+        self
+    }
+
+    pub fn with_block_ms(mut self, ms: usize) -> Self {
+        self.block_ms = ms;
+        self
+    }
+
+    pub fn with_max_len(mut self, max: usize) -> Self {
+        self.max_len = Some(max);
+        self
+    }
+}
+
+#[cfg(feature = "redis")]
+mod redis_stream_impl {
+    use super::*;
+    use redis::aio::ConnectionManager;
+    use redis::{AsyncCommands, Value as RedisValue};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use tracing::{debug, info, warn};
+
+    /// Redis Streams source using XREADGROUP for consumer-group processing
+    pub struct RedisStreamSource {
+        name: String,
+        config: RedisStreamConfig,
+        running: Arc<AtomicBool>,
+    }
+
+    impl RedisStreamSource {
+        pub fn new(name: &str, config: RedisStreamConfig) -> Self {
+            Self {
+                name: name.to_string(),
+                config,
+                running: Arc::new(AtomicBool::new(false)),
+            }
+        }
+
+        /// Try to create the consumer group (ignore errors if it already exists)
+        async fn ensure_group(
+            conn: &mut ConnectionManager,
+            key: &str,
+            group: &str,
+        ) -> Result<(), ConnectorError> {
+            let result: Result<(), redis::RedisError> = redis::cmd("XGROUP")
+                .arg("CREATE")
+                .arg(key)
+                .arg(group)
+                .arg("0")
+                .arg("MKSTREAM")
+                .query_async(conn)
+                .await;
+
+            match result {
+                Ok(()) => Ok(()),
+                Err(e) if e.to_string().contains("BUSYGROUP") => {
+                    // Group already exists — that's fine
+                    Ok(())
+                }
+                Err(e) => Err(ConnectorError::ConnectionFailed(format!(
+                    "XGROUP CREATE failed: {}",
+                    e
+                ))),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl SourceConnector for RedisStreamSource {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        async fn start(&mut self, tx: mpsc::Sender<Event>) -> Result<(), ConnectorError> {
+            let client = redis::Client::open(self.config.url.as_str())
+                .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
+
+            let mut conn = ConnectionManager::new(client)
+                .await
+                .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
+
+            let group = self
+                .config
+                .group_name
+                .clone()
+                .unwrap_or_else(|| "varpulis".to_string());
+            let consumer = self
+                .config
+                .consumer_name
+                .clone()
+                .unwrap_or_else(|| format!("varpulis-{}", self.name));
+
+            Self::ensure_group(&mut conn, &self.config.stream_key, &group).await?;
+
+            self.running.store(true, Ordering::SeqCst);
+            let running = self.running.clone();
+            let name = self.name.clone();
+            let stream_key = self.config.stream_key.clone();
+            let batch_size = self.config.batch_size;
+            let block_ms = self.config.block_ms;
+
+            tokio::spawn(async move {
+                info!(
+                    "Redis Streams source {} started, reading from {}",
+                    name, stream_key
+                );
+
+                while running.load(Ordering::SeqCst) {
+                    // XREADGROUP GROUP {group} {consumer} COUNT {n} BLOCK {ms} STREAMS {key} >
+                    let result: Result<RedisValue, redis::RedisError> = redis::cmd("XREADGROUP")
+                        .arg("GROUP")
+                        .arg(&group)
+                        .arg(&consumer)
+                        .arg("COUNT")
+                        .arg(batch_size)
+                        .arg("BLOCK")
+                        .arg(block_ms)
+                        .arg("STREAMS")
+                        .arg(&stream_key)
+                        .arg(">")
+                        .query_async(&mut conn)
+                        .await;
+
+                    match result {
+                        Ok(RedisValue::Array(streams)) => {
+                            for stream_entry in streams {
+                                if let RedisValue::Array(ref parts) = stream_entry {
+                                    if parts.len() < 2 {
+                                        continue;
+                                    }
+                                    // parts[1] = array of message entries
+                                    if let RedisValue::Array(ref messages) = parts[1] {
+                                        for msg in messages {
+                                            if let RedisValue::Array(ref msg_parts) = msg {
+                                                if msg_parts.len() < 2 {
+                                                    continue;
+                                                }
+                                                let msg_id = match &msg_parts[0] {
+                                                    RedisValue::BulkString(b) => {
+                                                        String::from_utf8_lossy(b).to_string()
+                                                    }
+                                                    _ => continue,
+                                                };
+
+                                                // Parse field-value pairs into JSON
+                                                let event = parse_stream_fields(&msg_parts[1]);
+                                                if let Some(event) = event {
+                                                    if tx.send(event).await.is_err() {
+                                                        return;
+                                                    }
+                                                }
+
+                                                // XACK
+                                                let _: Result<(), redis::RedisError> =
+                                                    redis::cmd("XACK")
+                                                        .arg(&stream_key)
+                                                        .arg(&group)
+                                                        .arg(&msg_id)
+                                                        .query_async(&mut conn)
+                                                        .await;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Ok(RedisValue::Nil) => {
+                            // No messages available (BLOCK timed out)
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            warn!("Redis Streams source {}: XREADGROUP error: {}", name, e);
+                            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        }
+                    }
+                }
+
+                info!("Redis Streams source {} stopped", name);
+            });
+
+            Ok(())
+        }
+
+        async fn stop(&mut self) -> Result<(), ConnectorError> {
+            self.running.store(false, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn is_running(&self) -> bool {
+            self.running.load(Ordering::SeqCst)
+        }
+    }
+
+    /// Parse Redis stream field-value pairs into an Event
+    fn parse_stream_fields(fields_value: &RedisValue) -> Option<Event> {
+        if let RedisValue::Array(ref pairs) = fields_value {
+            // Fields come as [key1, val1, key2, val2, ...]
+            let mut json_map = serde_json::Map::new();
+            let mut i = 0;
+            while i + 1 < pairs.len() {
+                let key = match &pairs[i] {
+                    RedisValue::BulkString(b) => String::from_utf8_lossy(b).to_string(),
+                    _ => {
+                        i += 2;
+                        continue;
+                    }
+                };
+                let val = match &pairs[i + 1] {
+                    RedisValue::BulkString(b) => {
+                        let s = String::from_utf8_lossy(b);
+                        // Try to parse as JSON, fall back to string
+                        serde_json::from_str::<serde_json::Value>(&s)
+                            .unwrap_or_else(|_| serde_json::Value::String(s.to_string()))
+                    }
+                    _ => serde_json::Value::Null,
+                };
+                json_map.insert(key, val);
+                i += 2;
+            }
+
+            let event_type = json_map
+                .get("event_type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("RedisStreamEvent")
+                .to_string();
+
+            let json = serde_json::Value::Object(json_map);
+            Some(json_to_event(&event_type, &json))
+        } else {
+            None
+        }
+    }
+
+    /// Redis Streams sink using XADD
+    pub struct RedisStreamSink {
+        name: String,
+        config: RedisStreamConfig,
+        conn: ConnectionManager,
+    }
+
+    impl RedisStreamSink {
+        pub async fn new(name: &str, config: RedisStreamConfig) -> Result<Self, ConnectorError> {
+            let client = redis::Client::open(config.url.as_str())
+                .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
+
+            let conn = ConnectionManager::new(client)
+                .await
+                .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
+
+            Ok(Self {
+                name: name.to_string(),
+                config,
+                conn,
+            })
+        }
+    }
+
+    #[async_trait]
+    impl SinkConnector for RedisStreamSink {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        async fn send(&self, event: &Event) -> Result<(), ConnectorError> {
+            let payload = String::from_utf8(event.to_sink_payload())
+                .map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
+
+            let mut conn = self.conn.clone();
+
+            // Build XADD command with optional MAXLEN
+            let mut cmd = redis::cmd("XADD");
+            cmd.arg(&self.config.stream_key);
+
+            if let Some(max_len) = self.config.max_len {
+                cmd.arg("MAXLEN").arg("~").arg(max_len);
+            }
+
+            // Auto-generated ID
+            cmd.arg("*");
+            // Single field: "data" -> JSON payload
+            cmd.arg("data").arg(&payload);
+            cmd.arg("event_type").arg(&event.event_type);
+
+            cmd.query_async::<String>(&mut conn)
+                .await
+                .map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
+
+            Ok(())
+        }
+
+        async fn flush(&self) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+
+        async fn close(&self) -> Result<(), ConnectorError> {
+            Ok(())
+        }
+    }
+
+    /// Deferred-connect Redis Streams sink for use in sync sink factory.
+    /// Connects lazily on first `send()`.
+    pub struct RedisStreamSinkStub {
+        name: String,
+        config: RedisStreamConfig,
+        inner: tokio::sync::Mutex<Option<RedisStreamSink>>,
+    }
+
+    impl RedisStreamSinkStub {
+        pub fn new(name: &str, config: RedisStreamConfig) -> Self {
+            Self {
+                name: name.to_string(),
+                config,
+                inner: tokio::sync::Mutex::new(None),
+            }
+        }
+
+        async fn ensure_connected(&self) -> Result<(), ConnectorError> {
+            let mut guard = self.inner.lock().await;
+            if guard.is_none() {
+                let sink = RedisStreamSink::new(&self.name, self.config.clone()).await?;
+                *guard = Some(sink);
+            }
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl SinkConnector for RedisStreamSinkStub {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        async fn send(&self, event: &Event) -> Result<(), ConnectorError> {
+            self.ensure_connected().await?;
+            let guard = self.inner.lock().await;
+            guard.as_ref().unwrap().send(event).await
+        }
+
+        async fn flush(&self) -> Result<(), ConnectorError> {
+            let guard = self.inner.lock().await;
+            if let Some(ref sink) = *guard {
+                sink.flush().await
+            } else {
+                Ok(())
+            }
+        }
+
+        async fn close(&self) -> Result<(), ConnectorError> {
+            let guard = self.inner.lock().await;
+            if let Some(ref sink) = *guard {
+                sink.close().await
+            } else {
+                Ok(())
+            }
+        }
+    }
+}
+
+#[cfg(feature = "redis")]
+pub use redis_stream_impl::{RedisStreamSink, RedisStreamSinkStub, RedisStreamSource};
+
+#[cfg(not(feature = "redis"))]
+pub struct RedisStreamSource {
+    name: String,
+    #[allow(dead_code)]
+    config: RedisStreamConfig,
+}
+
+#[cfg(not(feature = "redis"))]
+impl RedisStreamSource {
+    pub fn new(name: &str, config: RedisStreamConfig) -> Self {
+        Self {
+            name: name.to_string(),
+            config,
+        }
+    }
+}
+
+#[cfg(not(feature = "redis"))]
+#[async_trait]
+impl SourceConnector for RedisStreamSource {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    async fn start(&mut self, _tx: mpsc::Sender<Event>) -> Result<(), ConnectorError> {
+        Err(ConnectorError::NotAvailable(
+            "Redis Streams connector requires 'redis' feature".to_string(),
+        ))
+    }
+
+    async fn stop(&mut self) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+
+    fn is_running(&self) -> bool {
+        false
+    }
+}
+
+#[cfg(not(feature = "redis"))]
+pub struct RedisStreamSink {
+    name: String,
+    #[allow(dead_code)]
+    config: RedisStreamConfig,
+}
+
+#[cfg(not(feature = "redis"))]
+impl RedisStreamSink {
+    pub fn new(name: &str, config: RedisStreamConfig) -> Self {
+        Self {
+            name: name.to_string(),
+            config,
+        }
+    }
+}
+
+#[cfg(not(feature = "redis"))]
+#[async_trait]
+impl SinkConnector for RedisStreamSink {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    async fn send(&self, _event: &Event) -> Result<(), ConnectorError> {
+        Err(ConnectorError::NotAvailable(
+            "Redis Streams connector requires 'redis' feature".to_string(),
+        ))
+    }
+
+    async fn flush(&self) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+
+    async fn close(&self) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+}
+
+#[cfg(not(feature = "redis"))]
+pub struct RedisStreamSinkStub {
+    name: String,
+    #[allow(dead_code)]
+    config: RedisStreamConfig,
+}
+
+#[cfg(not(feature = "redis"))]
+impl RedisStreamSinkStub {
+    pub fn new(name: &str, config: RedisStreamConfig) -> Self {
+        Self {
+            name: name.to_string(),
+            config,
+        }
+    }
+}
+
+#[cfg(not(feature = "redis"))]
+#[async_trait]
+impl SinkConnector for RedisStreamSinkStub {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    async fn send(&self, _event: &Event) -> Result<(), ConnectorError> {
+        Err(ConnectorError::NotAvailable(
+            "Redis Streams connector requires 'redis' feature".to_string(),
+        ))
+    }
+
+    async fn flush(&self) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+
+    async fn close(&self) -> Result<(), ConnectorError> {
+        Ok(())
+    }
+}

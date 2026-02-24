@@ -1,0 +1,53 @@
+# Varpulis IoT — Telemetry Normalization Pipeline
+# Normalizes raw protocol-specific data to standard Measurement events.
+
+# ─── Connectors ───────────────────────────────────────────────
+
+connector NatsBus = mqtt (
+    host: "localhost",
+    port: 1883,
+    client_id: "cep-normalizer"
+)
+
+# ─── Ingest raw telemetry ─────────────────────────────────────
+
+stream RawTelemetry = DeviceTelemetry
+    .from(NatsBus, topic: "varpulis/+/device/telemetry/#")
+
+# ─── Flatten multi-value telemetry to individual measurements ─
+
+stream NormalizedMeasurements = RawTelemetry
+    .flat_map(values)
+    .emit(
+        tenant_id: tenant_id,
+        device_id: device_id,
+        source_id: device_id,
+        name: key,
+        value: value,
+        unit: "",
+        ts: ts
+    )
+
+# ─── Enrich with device status update ────────────────────────
+
+stream DeviceSeenEvents = RawTelemetry
+    .emit(
+        tenant_id: tenant_id,
+        device_id: device_id,
+        device_name: device_name,
+        protocol: protocol,
+        type: "device_seen",
+        text: "Device reported telemetry",
+        severity: "info",
+        heartbeat: false,
+        connector_id: connector_id,
+        ts: ts
+    )
+
+# ─── Output ──────────────────────────────────────────────────
+
+stream MeasurementsOut = NormalizedMeasurements
+    .to(NatsBus, topic: "varpulis/cep/measurements")
+
+stream DeviceSeenOut = DeviceSeenEvents
+    .to(NatsBus, topic: "varpulis/cep/device-events")

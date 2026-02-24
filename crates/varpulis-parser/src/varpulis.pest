@@ -214,7 +214,7 @@ trend_aggregate_op = { "trend_aggregate" ~ "(" ~ trend_agg_list ~ ")" }
 // .score(model: "fraud.onnx", inputs: [amount, risk_score], outputs: [fraud_prob])
 score_op = { "score" ~ "(" ~ score_params ~ ")" }
 score_params = { score_param ~ ("," ~ score_param)* }
-score_param = { identifier ~ ":" ~ (score_field_list | string) }
+score_param = { identifier ~ ":" ~ (score_field_list | string | boolean | integer) }
 score_field_list = { "[" ~ identifier ~ ("," ~ identifier)* ~ "]" }
 // .forecast(confidence: 0.7, horizon: 2m, warmup: 500, max_depth: 5)
 forecast_op = { "forecast" ~ "(" ~ forecast_params? ~ ")" }

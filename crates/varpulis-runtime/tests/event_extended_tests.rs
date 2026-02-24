@@ -417,7 +417,7 @@ Event3 { z: 3 }
 #[test]
 fn onnx_model_load_without_feature() {
     use varpulis_runtime::scoring::OnnxModel;
-    let result = OnnxModel::load("model.onnx", vec!["x".into()], vec!["y".into()]);
+    let result = OnnxModel::load("model.onnx", vec!["x".into()], vec!["y".into()], None);
     assert!(result.is_err());
     match result {
         Err(msg) => assert!(msg.contains("onnx")),

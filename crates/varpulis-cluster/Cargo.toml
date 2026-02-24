@@ -44,6 +44,7 @@ onnx = ["varpulis-runtime/onnx"]
 raft = ["openraft"]
 persistent = ["raft", "rocksdb"]
 nats-transport = ["async-nats", "futures-util"]
+federation = ["nats-transport"]
 otel = ["opentelemetry", "tracing-opentelemetry"]
 
 [dependencies.kube]

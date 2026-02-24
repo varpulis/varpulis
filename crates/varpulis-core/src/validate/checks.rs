@@ -462,14 +462,73 @@ fn check_stream_ops(
                     "use .where() instead".to_string(),
                 );
             }
-            StreamOp::Concurrent(_) => {
-                v.emit_with_hint(
-                    Severity::Error,
-                    op_span,
-                    "E090",
-                    ".concurrent() is not yet implemented".to_string(),
-                    "use .context() for parallel processing across cores".to_string(),
-                );
+            StreamOp::Concurrent(ref args) => {
+                // Validate parameters
+                for arg in args {
+                    if !crate::validate::builtins::CONCURRENT_PARAMS.contains(&arg.name.as_str()) {
+                        v.emit(
+                            Severity::Error,
+                            op_span,
+                            "E091",
+                            format!(
+                                ".concurrent() unknown parameter '{}'; expected one of: {}",
+                                arg.name,
+                                crate::validate::builtins::CONCURRENT_PARAMS.join(", ")
+                            ),
+                        );
+                    }
+                }
+
+                // Validate workers value if present
+                for arg in args {
+                    if arg.name == "workers" {
+                        if let crate::ast::Expr::Int(n) = &arg.value {
+                            if *n < 1 || *n > 128 {
+                                v.emit(
+                                    Severity::Error,
+                                    op_span,
+                                    "E091",
+                                    format!(
+                                        ".concurrent(workers: {}) out of range; must be 1–128",
+                                        n
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                }
+
+                // Check that no stateful ops follow .concurrent()
+                let mut found_concurrent = false;
+                for sop in ops.iter() {
+                    if std::ptr::eq(sop, op) {
+                        found_concurrent = true;
+                        continue;
+                    }
+                    if found_concurrent {
+                        let op_name = match sop {
+                            StreamOp::Window { .. } => Some("Window"),
+                            StreamOp::Aggregate(_) => Some("Aggregate"),
+                            StreamOp::FollowedBy(_) => Some("Sequence"),
+                            StreamOp::Forecast(_) => Some("Forecast"),
+                            StreamOp::TrendAggregate(_) => Some("TrendAggregate"),
+                            StreamOp::Distinct(_) => Some("Distinct"),
+                            _ => None,
+                        };
+                        if let Some(name) = op_name {
+                            v.emit(
+                                Severity::Error,
+                                op_span,
+                                "E091",
+                                format!(
+                                    ".concurrent() cannot be followed by stateful .{}() operator",
+                                    name.to_lowercase()
+                                ),
+                            );
+                            break;
+                        }
+                    }
+                }
             }
             StreamOp::OnError(_) => {
                 v.emit_with_hint(

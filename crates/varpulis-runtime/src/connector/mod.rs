@@ -60,6 +60,7 @@ mod kafka;
 mod kinesis;
 mod mqtt;
 mod nats;
+mod pulsar;
 mod redis;
 mod registry;
 mod rest_api;
@@ -120,6 +121,10 @@ pub use database::{DatabaseConfig, DatabaseSink, DatabaseSource};
 
 // Redis connectors
 pub use redis::{RedisConfig, RedisSink, RedisSource};
+pub use redis::{RedisStreamConfig, RedisStreamSink, RedisStreamSinkStub, RedisStreamSource};
+
+// Pulsar connectors
+pub use pulsar::{PulsarConfig, PulsarSink, PulsarSource};
 
 // Legacy ConnectorRegistry
 pub use registry::ConnectorRegistry;

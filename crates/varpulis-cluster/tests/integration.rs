@@ -185,6 +185,8 @@ async fn test_deploy_group_success() {
             },
         ],
         routes: vec![],
+        region_affinity: None,
+        cross_region_routes: vec![],
     };
 
     let group_id = coord.deploy_group(spec).await.unwrap();
@@ -242,6 +244,8 @@ async fn test_deploy_group_with_affinity() {
             },
         ],
         routes: vec![],
+        region_affinity: None,
+        cross_region_routes: vec![],
     };
 
     let group_id = coord.deploy_group(spec).await.unwrap();
@@ -285,6 +289,8 @@ async fn test_deploy_group_affinity_fallback() {
             partition_key: None,
         }],
         routes: vec![],
+        region_affinity: None,
+        cross_region_routes: vec![],
     };
 
     // Should fall back to placement strategy and succeed
@@ -308,6 +314,8 @@ async fn test_deploy_group_no_workers() {
             partition_key: None,
         }],
         routes: vec![],
+        region_affinity: None,
+        cross_region_routes: vec![],
     };
 
     let result = coord.deploy_group(spec).await;
@@ -342,6 +350,8 @@ async fn test_deploy_group_worker_deploy_fails() {
             partition_key: None,
         }],
         routes: vec![],
+        region_affinity: None,
+        cross_region_routes: vec![],
     };
 
     // Deploy should succeed at coordinator level but with Failed status
@@ -393,6 +403,8 @@ async fn test_deploy_group_partial_failure() {
             },
         ],
         routes: vec![],
+        region_affinity: None,
+        cross_region_routes: vec![],
     };
 
     let group_id = coord.deploy_group(spec).await.unwrap();
@@ -428,6 +440,8 @@ async fn test_deploy_group_worker_unreachable() {
             partition_key: None,
         }],
         routes: vec![],
+        region_affinity: None,
+        cross_region_routes: vec![],
     };
 
     let group_id = coord.deploy_group(spec).await.unwrap();
@@ -473,6 +487,8 @@ async fn test_teardown_group_success() {
             },
         ],
         routes: vec![],
+        region_affinity: None,
+        cross_region_routes: vec![],
     };
 
     let group_id = coord.deploy_group(spec).await.unwrap();
@@ -540,6 +556,8 @@ async fn test_teardown_skips_undeployed_pipelines() {
             },
         ],
         routes: vec![],
+        region_affinity: None,
+        cross_region_routes: vec![],
     };
 
     let mut group = DeployedPipelineGroup::new("g1".into(), "partial".into(), spec);
@@ -632,6 +650,8 @@ async fn test_inject_event_routed_correctly() {
                 nats_subject: None,
             },
         ],
+        region_affinity: None,
+        cross_region_routes: vec![],
     };
 
     let group_id = coord.deploy_group(spec).await.unwrap();
@@ -699,6 +719,8 @@ async fn test_inject_event_fallback_to_first_pipeline() {
             partition_key: None,
         }],
         routes: vec![], // no explicit routes
+        region_affinity: None,
+        cross_region_routes: vec![],
     };
 
     let group_id = coord.deploy_group(spec).await.unwrap();
@@ -759,6 +781,8 @@ async fn test_inject_event_pipeline_not_deployed() {
             event_types: vec!["*".into()],
             nats_subject: None,
         }],
+        region_affinity: None,
+        cross_region_routes: vec![],
     };
 
     let group = DeployedPipelineGroup::new("g1".into(), "no-placements".into(), spec);
@@ -818,6 +842,8 @@ async fn test_full_lifecycle_register_deploy_inject_teardown() {
             event_types: vec!["SensorReading".into()],
             nats_subject: None,
         }],
+        region_affinity: None,
+        cross_region_routes: vec![],
     };
 
     let group_id = coord.deploy_group(spec).await.unwrap();
@@ -922,6 +948,8 @@ async fn test_distributed_mandelbrot_style_deployment() {
                 nats_subject: None,
             })
             .collect(),
+        region_affinity: None,
+        cross_region_routes: vec![],
     };
 
     let group_id = coord.deploy_group(spec).await.unwrap();
@@ -1186,6 +1214,8 @@ async fn test_three_phase_deploy_success() {
             },
         ],
         routes: vec![],
+        region_affinity: None,
+        cross_region_routes: vec![],
     };
 
     // Phase 1: Plan
@@ -1243,6 +1273,8 @@ async fn test_three_phase_deploy_worker_unreachable() {
             partition_key: None,
         }],
         routes: vec![],
+        region_affinity: None,
+        cross_region_routes: vec![],
     };
 
     let plan = coord.plan_deploy_group(&spec).unwrap();
@@ -1297,6 +1329,8 @@ async fn test_migrate_pipeline_between_workers() {
             partition_key: None,
         }],
         routes: vec![],
+        region_affinity: None,
+        cross_region_routes: vec![],
     };
     let group_id = coord.deploy_group(spec).await.unwrap();
 
@@ -1383,6 +1417,8 @@ async fn test_handle_worker_failure_redistributes_pipelines() {
             partition_key: None,
         }],
         routes: vec![],
+        region_affinity: None,
+        cross_region_routes: vec![],
     };
     let group_id = coord.deploy_group(spec).await.unwrap();
     assert_eq!(
@@ -1447,6 +1483,8 @@ async fn test_rebalance_moves_pipelines() {
             })
             .collect(),
         routes: vec![],
+        region_affinity: None,
+        cross_region_routes: vec![],
     };
     let group_id = coord.deploy_group(spec).await.unwrap();
 

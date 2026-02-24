@@ -217,6 +217,15 @@ pub(crate) enum RuntimeOp {
     Distinct(DistinctState),
     /// Pass at most N events, then stop the stream
     Limit(LimitState),
+    /// Parallel processing: partition events across a Rayon thread pool
+    Concurrent(ConcurrentConfig),
+}
+
+/// Configuration for `.concurrent()` parallel processing
+pub(crate) struct ConcurrentConfig {
+    pub workers: usize,
+    pub partition_key: Option<String>,
+    pub thread_pool: std::sync::Arc<rayon::ThreadPool>,
 }
 
 /// Configuration for trend aggregation via Hamlet engine
@@ -267,6 +276,7 @@ pub(crate) struct ScoreConfig {
     pub model: std::sync::Arc<crate::scoring::OnnxModel>,
     pub input_fields: Vec<String>,
     pub output_fields: Vec<String>,
+    pub batch_size: usize,
 }
 
 /// Configuration for .to() connector routing

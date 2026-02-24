@@ -178,6 +178,32 @@ impl ConnectorRegistry {
                     )))
                 }
             }
+            "redis_stream" => {
+                let stream_key = config.topic.clone().unwrap_or_else(|| "events".to_string());
+                #[cfg(feature = "redis")]
+                {
+                    let sink = super::redis::RedisStreamSink::new(
+                        "redis_stream",
+                        super::redis::RedisStreamConfig::new(&config.url, &stream_key),
+                    )
+                    .await?;
+                    Ok(Box::new(sink))
+                }
+                #[cfg(not(feature = "redis"))]
+                {
+                    Ok(Box::new(super::redis::RedisStreamSink::new(
+                        "redis_stream",
+                        super::redis::RedisStreamConfig::new(&config.url, &stream_key),
+                    )))
+                }
+            }
+            "pulsar" => {
+                let topic = config.topic.clone().unwrap_or_else(|| "events".to_string());
+                Ok(Box::new(super::pulsar::PulsarSink::new(
+                    "pulsar",
+                    super::pulsar::PulsarConfig::new(&config.url, &topic),
+                )))
+            }
             _ => Err(ConnectorError::ConfigError(format!(
                 "Unknown connector type: {}",
                 config.connector_type

@@ -1,0 +1,93 @@
+# Varpulis IoT — Threshold-Based Alerting Pipeline
+# Configurable threshold monitoring for telemetry values.
+
+connector NatsBus = mqtt (
+    host: "localhost",
+    port: 1883,
+    client_id: "cep-thresholds"
+)
+
+# ─── Ingest telemetry ────────────────────────────────────────
+
+stream Telemetry = DeviceTelemetry
+    .from(NatsBus, topic: "varpulis/+/device/telemetry/#")
+
+# ─── Temperature thresholds ──────────────────────────────────
+
+stream HighTemperature = Telemetry
+    .where(values["temperature"] > 85.0)
+    .emit(
+        tenant_id: tenant_id,
+        device_id: device_id,
+        type: "high_temperature",
+        text: "Temperature exceeded 85C threshold",
+        severity: if values["temperature"] > 100.0 then "critical" else "major",
+        source_id: device_id,
+        active: true,
+        protocol: protocol,
+        connector_id: connector_id,
+        ts: ts
+    )
+
+stream LowTemperature = Telemetry
+    .where(values["temperature"] < -20.0)
+    .emit(
+        tenant_id: tenant_id,
+        device_id: device_id,
+        type: "low_temperature",
+        text: "Temperature below -20C threshold",
+        severity: "major",
+        source_id: device_id,
+        active: true,
+        protocol: protocol,
+        connector_id: connector_id,
+        ts: ts
+    )
+
+# ─── Humidity thresholds ─────────────────────────────────────
+
+stream HighHumidity = Telemetry
+    .where(values["humidity"] > 95.0)
+    .emit(
+        tenant_id: tenant_id,
+        device_id: device_id,
+        type: "high_humidity",
+        text: "Humidity exceeded 95% threshold",
+        severity: "warning",
+        source_id: device_id,
+        active: true,
+        protocol: protocol,
+        connector_id: connector_id,
+        ts: ts
+    )
+
+# ─── Energy meter thresholds (DLMS) ──────────────────────────
+
+stream HighPowerDemand = Telemetry
+    .where(protocol == "DLMS" and values["active_power"] > 10000.0)
+    .emit(
+        tenant_id: tenant_id,
+        device_id: device_id,
+        type: "high_power_demand",
+        text: "Active power exceeded 10kW threshold",
+        severity: "major",
+        source_id: device_id,
+        active: true,
+        protocol: protocol,
+        connector_id: connector_id,
+        ts: ts
+    )
+
+# ─── Output all threshold alarms ─────────────────────────────
+
+stream ThresholdAlarms = HighTemperature
+    .to(NatsBus, topic: "varpulis/cep/alarms")
+
+stream ColdAlarms = LowTemperature
+    .to(NatsBus, topic: "varpulis/cep/alarms")
+
+stream HumidityAlarms = HighHumidity
+    .to(NatsBus, topic: "varpulis/cep/alarms")
+
+stream PowerAlarms = HighPowerDemand
+    .to(NatsBus, topic: "varpulis/cep/alarms")

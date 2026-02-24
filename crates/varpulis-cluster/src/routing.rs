@@ -212,6 +212,8 @@ mod tests {
                     nats_subject: None,
                 },
             ],
+            region_affinity: None,
+            cross_region_routes: vec![],
         };
 
         let group = DeployedPipelineGroup::new("g1".into(), "mandelbrot".into(), spec);
@@ -272,6 +274,8 @@ mod tests {
                 partition_key: None,
             }],
             routes: vec![],
+            region_affinity: None,
+            cross_region_routes: vec![],
         };
 
         let group = DeployedPipelineGroup::new("g1".into(), "test".into(), spec);
@@ -287,6 +291,8 @@ mod tests {
             name: "empty".into(),
             pipelines: vec![],
             routes: vec![],
+            region_affinity: None,
+            cross_region_routes: vec![],
         };
 
         let group = DeployedPipelineGroup::new("g1".into(), "empty".into(), spec);
@@ -329,6 +335,8 @@ mod tests {
                     nats_subject: None,
                 },
             ],
+            region_affinity: None,
+            cross_region_routes: vec![],
         };
 
         let group = DeployedPipelineGroup::new("g1".into(), "overlap".into(), spec);
@@ -367,6 +375,8 @@ mod tests {
                 ],
                 nats_subject: None,
             }],
+            region_affinity: None,
+            cross_region_routes: vec![],
         };
 
         let group = DeployedPipelineGroup::new("g1".into(), "multi".into(), spec);
