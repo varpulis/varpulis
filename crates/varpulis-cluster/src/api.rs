@@ -530,8 +530,8 @@ pub fn cluster_routes(
         .and(warp::path("config"))
         .and(warp::path::end())
         .and(warp::put())
-        .and(rate_limit_filter)
-        .and(with_rbac(rbac, Role::Operator))
+        .and(rate_limit_filter.clone())
+        .and(with_rbac(rbac.clone(), Role::Operator))
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_coordinator(coordinator.clone()))
@@ -2810,6 +2810,7 @@ pub async fn handle_rejection(err: Rejection) -> Result<impl Reply, Infallible> 
 
 #[cfg(feature = "federation")]
 async fn handle_federation_status(
+    _auth: (),
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
     let coord = coordinator.read().await;
@@ -2829,6 +2830,7 @@ async fn handle_federation_status(
 
 #[cfg(feature = "federation")]
 async fn handle_federation_regions(
+    _auth: (),
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
     let coord = coordinator.read().await;
@@ -2851,6 +2853,7 @@ async fn handle_federation_regions(
 
 #[cfg(feature = "federation")]
 async fn handle_federation_add_region(
+    _auth: (),
     config: crate::federation::RegionConfig,
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
@@ -2882,6 +2885,7 @@ async fn handle_federation_add_region(
 #[cfg(feature = "federation")]
 async fn handle_federation_remove_region(
     region_name: String,
+    _auth: (),
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
     let mut coord = coordinator.write().await;
@@ -2916,6 +2920,7 @@ async fn handle_federation_remove_region(
 
 #[cfg(feature = "federation")]
 async fn handle_federation_catalog(
+    _auth: (),
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
     let coord = coordinator.read().await;
