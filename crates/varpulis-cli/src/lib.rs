@@ -4,6 +4,7 @@
 //! organized into dedicated modules for security, WebSocket handling, and more.
 
 pub mod api;
+pub mod audit;
 pub mod auth;
 pub mod billing;
 pub mod client;
