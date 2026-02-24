@@ -137,6 +137,7 @@ pub enum ParamType {
     Str,
     Int,
     Bool,
+    StrArray,
 }
 
 /// Whether a parameter is valid for source (.from()), sink (.to()), or both.
@@ -212,9 +213,9 @@ static MQTT_PARAMS: &[ConnectorParamDef] = &[
 static KAFKA_PARAMS: &[ConnectorParamDef] = &[
     ConnectorParamDef {
         name: "brokers",
-        param_type: ParamType::Str,
+        param_type: ParamType::StrArray,
         required: false,
-        description: "Kafka broker addresses",
+        description: "Kafka broker addresses (array of strings)",
         context: ParamContext::Both,
     },
     ConnectorParamDef {
@@ -240,29 +241,13 @@ static KAFKA_PARAMS: &[ConnectorParamDef] = &[
     },
 ];
 
-static HTTP_PARAMS: &[ConnectorParamDef] = &[
-    ConnectorParamDef {
-        name: "url",
-        param_type: ParamType::Str,
-        required: false,
-        description: "HTTP endpoint URL",
-        context: ParamContext::Both,
-    },
-    ConnectorParamDef {
-        name: "topic",
-        param_type: ParamType::Str,
-        required: false,
-        description: "URL path suffix",
-        context: ParamContext::Both,
-    },
-    ConnectorParamDef {
-        name: "method",
-        param_type: ParamType::Str,
-        required: false,
-        description: "HTTP method (GET, POST, PUT, DELETE)",
-        context: ParamContext::Sink,
-    },
-];
+static HTTP_PARAMS: &[ConnectorParamDef] = &[ConnectorParamDef {
+    name: "base_url",
+    param_type: ParamType::Str,
+    required: false,
+    description: "HTTP base URL for the endpoint",
+    context: ParamContext::Both,
+}];
 
 static CONSOLE_PARAMS: &[ConnectorParamDef] = &[ConnectorParamDef {
     name: "topic",

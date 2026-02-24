@@ -1007,12 +1007,16 @@ fn check_connector_params(
                     builtins::ParamType::Bool => {
                         matches!(param.value, crate::ast::ConfigValue::Bool(_))
                     }
+                    builtins::ParamType::StrArray => {
+                        matches!(param.value, crate::ast::ConfigValue::Array(_))
+                    }
                 };
                 if !type_ok {
                     let expected = match def.param_type {
                         builtins::ParamType::Str => "string",
                         builtins::ParamType::Int => "integer",
                         builtins::ParamType::Bool => "boolean",
+                        builtins::ParamType::StrArray => "array of strings",
                     };
                     v.emit_with_hint(
                         Severity::Warning,
