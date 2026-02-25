@@ -8,7 +8,19 @@ export const multiRegionScenario: ScenarioDefinition = {
   color: 'indigo',
   summary:
     'Federate Varpulis clusters across multiple regions with automatic catalog sync, health monitoring, and cross-region event routing. Detect global patterns that span data centers.',
-  vplSource: `stream GlobalFraud = Transaction as t
+  vplSource: `event Transaction:
+    account: str
+    amount: float
+    region: str
+    merchant: str
+
+event Chargeback:
+    account: str
+    amount: float
+    region: str
+    reason: str
+
+stream GlobalFraud = Transaction as t
     -> Chargeback where account == t.account as c
     .within(24h)
     .where(t.region != c.region)

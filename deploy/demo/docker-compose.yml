@@ -207,7 +207,7 @@ services:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
       args:
-        FEATURES: kafka
+        FEATURES: "kafka,onnx"
     container_name: demo-worker-0
     command:
       - "server"
@@ -247,7 +247,7 @@ services:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
       args:
-        FEATURES: kafka
+        FEATURES: "kafka,onnx"
     container_name: demo-worker-1
     command:
       - "server"
@@ -287,7 +287,7 @@ services:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
       args:
-        FEATURES: kafka
+        FEATURES: "kafka,onnx"
     container_name: demo-worker-2
     command:
       - "server"
@@ -327,7 +327,7 @@ services:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
       args:
-        FEATURES: kafka
+        FEATURES: "kafka,onnx"
     container_name: demo-worker-3
     command:
       - "server"

@@ -16,6 +16,7 @@ const form = ref({
   outputs: '',
   description: '',
 })
+const modelFile = ref<File | null>(null)
 
 const headers = [
   { title: 'Name', key: 'name' },
@@ -39,17 +40,37 @@ async function fetchModels() {
   }
 }
 
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result as string
+      // Strip data URL prefix (e.g., "data:application/octet-stream;base64,")
+      const base64 = result.includes(',') ? result.split(',')[1] : result
+      resolve(base64)
+    }
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
+
 async function handleUpload() {
   uploading.value = true
   try {
+    let data_base64: string | undefined
+    if (modelFile.value) {
+      data_base64 = await readFileAsBase64(modelFile.value)
+    }
     await uploadModel({
       name: form.value.name,
       inputs: form.value.inputs.split(',').map(s => s.trim()).filter(Boolean),
       outputs: form.value.outputs.split(',').map(s => s.trim()).filter(Boolean),
       description: form.value.description,
+      data_base64,
     })
     showUpload.value = false
     form.value = { name: '', inputs: '', outputs: '', description: '' }
+    modelFile.value = null
     await fetchModels()
   } finally {
     uploading.value = false
@@ -154,6 +175,16 @@ onMounted(fetchModels)
       <v-card>
         <v-card-title>Register Model</v-card-title>
         <v-card-text>
+          <v-file-input
+            v-model="modelFile"
+            label="ONNX Model File"
+            accept=".onnx"
+            prepend-icon="mdi-brain"
+            hint="Select an .onnx model file to upload"
+            persistent-hint
+            class="mb-3"
+            show-size
+          />
           <v-text-field v-model="form.name" label="Model Name" hint="e.g., fraud_scorer" persistent-hint class="mb-3" />
           <v-text-field v-model="form.inputs" label="Input Fields" hint="Comma-separated, e.g., amount,velocity,distance" persistent-hint class="mb-3" />
           <v-text-field v-model="form.outputs" label="Output Fields" hint="Comma-separated, e.g., fraud_prob" persistent-hint class="mb-3" />

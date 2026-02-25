@@ -20,6 +20,7 @@ uuid = { version = "1", features = ["v4"] }
 chrono = { workspace = true }
 prometheus = { workspace = true }
 zeroize = { workspace = true }
+base64 = "0.22"
 
 [dependencies.async-nats]
 version = "0.38"
