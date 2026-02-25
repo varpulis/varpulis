@@ -68,7 +68,7 @@ RUN apt-get update && apt-get install -y \
     && useradd -r -u 1000 -g users varpulis
 
 # Install ONNX Runtime shared library (required by ort crate with load-dynamic)
-ARG ONNXRUNTIME_VERSION=1.22.0
+ARG ONNXRUNTIME_VERSION=1.23.0
 RUN curl -sSL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz" \
     | tar -xz -C /tmp \
     && cp /tmp/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}/lib/libonnxruntime.so.${ONNXRUNTIME_VERSION} /usr/local/lib/ \
