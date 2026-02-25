@@ -163,7 +163,7 @@ async fn test_redis_stream_roundtrip() {
         while processed < 5 {
             if let Some(event) = source_rx.recv().await {
                 let output = Event::new("ProcessedEvent")
-                    .with_field("original", event.event_type.as_str())
+                    .with_field("original", &*event.event_type)
                     .with_field("processed", true);
                 output_sink.send(&output).await.expect("output send failed");
                 processed += 1;
@@ -198,7 +198,9 @@ async fn test_redis_pubsub_source_receives() {
     // Publish events using Redis PUBLISH (via a sink)
     use varpulis_runtime::connector::RedisSink;
     let sink_config = RedisConfig::new(&url, &channel);
-    let sink = RedisSink::new("redis-pub", sink_config);
+    let sink = RedisSink::new("redis-pub", sink_config)
+        .await
+        .expect("RedisSink creation failed");
 
     for i in 0..5 {
         let event = Event::new("PubSubEvent").with_field("seq", i as f64);
@@ -241,7 +243,9 @@ async fn test_redis_pubsub_sink_publishes() {
 
     // Publish via sink
     let pub_config = RedisConfig::new(&url, &channel);
-    let sink = RedisSink::new("redis-publisher", pub_config);
+    let sink = RedisSink::new("redis-publisher", pub_config)
+        .await
+        .expect("RedisSink creation failed");
 
     for i in 0..5 {
         let event = Event::new("PublishTest").with_field("idx", i as f64);
