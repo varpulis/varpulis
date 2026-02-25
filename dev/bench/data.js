@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1772035887442,
+  "lastUpdate": 1772041427457,
   "repoUrl": "https://github.com/varpulis/varpulis",
   "entries": {
     "Varpulis Performance": [
@@ -6390,6 +6390,148 @@ window.BENCHMARK_DATA = {
           {
             "name": "scalability/50k_kleene_plus",
             "value": 19157000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyril.poderà@gmail.com",
+            "name": "cpoder"
+          },
+          "committer": {
+            "email": "cyril.poderà@gmail.com",
+            "name": "cpoder"
+          },
+          "distinct": true,
+          "id": "b4022e8eebad3555824ee8d5f57594a4c98328be",
+          "message": "fix(docker): use ONNX Runtime 1.23.0 (required by ort 2.0.0-rc.11)\n\nort 2.0.0-rc.11 requires ONNX Runtime >= 1.23.x. Bump from 1.22.0.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>",
+          "timestamp": "2026-02-25T18:38:04+01:00",
+          "tree_id": "c0071b29dcd11535362ae35b9dabc42bd40eab08",
+          "url": "https://github.com/varpulis/varpulis/commit/b4022e8eebad3555824ee8d5f57594a4c98328be"
+        },
+        "date": 1772041426909,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "simple_sequence/sase/100",
+            "value": 33437,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "simple_sequence/sase/1000",
+            "value": 340180,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "simple_sequence/sase/10000",
+            "value": 3416700,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_plus/sase/100",
+            "value": 40444,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_plus/sase/1000",
+            "value": 442780,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_plus/sase/5000",
+            "value": 2208000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "with_predicates/sase/100",
+            "value": 32719,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "with_predicates/sase/1000",
+            "value": 394450,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "with_predicates/sase/5000",
+            "value": 1985500,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "long_sequence/seq_5_events_5k",
+            "value": 2162000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "long_sequence/seq_10_events_10k",
+            "value": 3922300,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "complex_patterns/negation_5k",
+            "value": 1471600,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "complex_patterns/or_pattern_5k",
+            "value": 1704300,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "complex_patterns/nested_kleene_5k",
+            "value": 115260000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "multi_predicates/chained_predicates_5k",
+            "value": 1767900,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "throughput/seq_3/10000",
+            "value": 3253500,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "throughput/seq_3/50000",
+            "value": 16206000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "throughput/seq_3/100000",
+            "value": 32704000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "scalability/100k_simple_seq",
+            "value": 34186000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "scalability/50k_kleene_plus",
+            "value": 19867000,
             "range": "± 0",
             "unit": "ns/iter"
           }
