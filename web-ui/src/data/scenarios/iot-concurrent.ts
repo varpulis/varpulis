@@ -10,7 +10,7 @@ export const iotConcurrentScenario: ScenarioDefinition = {
     'Process millions of IoT sensor readings in parallel using .concurrent() with partition-key routing. Each sensor\'s events stay ordered while throughput scales linearly with workers.',
   vplSource: `stream SensorAlerts = SensorReading
     .concurrent(workers: 4, partition_key: "sensor_id")
-    .where(temperature > 85 || humidity > 95 || pressure < 950)
+    .where(temperature > 85 or humidity > 95 or pressure < 950)
     .emit(
         alert_type: "sensor_anomaly",
         sensor_id: sensor_id,
@@ -25,7 +25,7 @@ export const iotConcurrentScenario: ScenarioDefinition = {
       description:
         'Sensor events are hash-partitioned by sensor_id across 4 worker threads. Events from the same sensor always land on the same worker, preserving per-sensor ordering. The .where() filter runs independently on each partition, then results merge back into a single stream.',
       vplSnippet: `.concurrent(workers: 4, partition_key: "sensor_id")
-    .where(temperature > 85 || humidity > 95 || pressure < 950)`,
+    .where(temperature > 85 or humidity > 95 or pressure < 950)`,
     },
     {
       name: 'Anomaly Detection',
