@@ -2727,9 +2727,8 @@ async fn run_server(
         shutdown_tx.send(()).ok();
     });
 
-    // Start server with or without TLS
-    // After the shutdown signal, allow up to 30s for in-flight requests to complete.
-    let shutdown_timeout = std::time::Duration::from_secs(30);
+    // Start server with or without TLS.
+    // The server runs until SIGTERM/Ctrl+C, then warp drains in-flight requests.
     if let Some((cert_path, key_path)) = tls_config {
         info!("TLS enabled with cert: {}", cert_path.display());
         let (_, server) = warp::serve(routes)
@@ -2739,23 +2738,13 @@ async fn run_server(
             .bind_with_graceful_shutdown((bind_addr, port), async {
                 shutdown_rx.await.ok();
             });
-        if tokio::time::timeout(shutdown_timeout, server)
-            .await
-            .is_err()
-        {
-            tracing::warn!("Graceful shutdown timed out after 30s, forcing exit");
-        }
+        server.await;
     } else {
         let (_, server) =
             warp::serve(routes).bind_with_graceful_shutdown((bind_addr, port), async {
                 shutdown_rx.await.ok();
             });
-        if tokio::time::timeout(shutdown_timeout, server)
-            .await
-            .is_err()
-        {
-            tracing::warn!("Graceful shutdown timed out after 30s, forcing exit");
-        }
+        server.await;
     }
 
     info!("Server shutdown complete");
@@ -3210,7 +3199,6 @@ async fn run_coordinator(
     // across the raft/non-raft cfg blocks).
     macro_rules! serve_coordinator {
         ($routes:expr, $shutdown_rx:expr) => {{
-            let shutdown_timeout = std::time::Duration::from_secs(30);
             if let Some((ref cert_path, ref key_path)) = tls_config {
                 info!("Coordinator TLS enabled with cert: {}", cert_path.display());
                 let (_, server) = warp::serve($routes)
@@ -3220,27 +3208,13 @@ async fn run_coordinator(
                     .bind_with_graceful_shutdown((bind_addr, port), async {
                         $shutdown_rx.await.ok();
                     });
-                if tokio::time::timeout(shutdown_timeout, server)
-                    .await
-                    .is_err()
-                {
-                    tracing::warn!(
-                        "Coordinator graceful shutdown timed out after 30s, forcing exit"
-                    );
-                }
+                server.await;
             } else {
                 let (_, server) =
                     warp::serve($routes).bind_with_graceful_shutdown((bind_addr, port), async {
                         $shutdown_rx.await.ok();
                     });
-                if tokio::time::timeout(shutdown_timeout, server)
-                    .await
-                    .is_err()
-                {
-                    tracing::warn!(
-                        "Coordinator graceful shutdown timed out after 30s, forcing exit"
-                    );
-                }
+                server.await;
             }
         }};
     }
