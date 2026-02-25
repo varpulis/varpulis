@@ -6870,6 +6870,7 @@ name = "varpulis-cluster"
 version = "0.4.0"
 dependencies = [
  "async-nats",
+ "base64 0.22.1",
  "chrono",
  "futures-util",
  "k8s-openapi",

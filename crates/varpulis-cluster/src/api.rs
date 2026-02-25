@@ -1866,7 +1866,43 @@ async fn handle_upload_model(
 
     let name = body.name.clone();
     let s3_key = format!("models/{}.onnx", &name);
-    let size_bytes = body.data_base64.len() as u64 * 3 / 4; // approximate
+
+    // Decode and persist model file if data_base64 is provided
+    let size_bytes = if !body.data_base64.is_empty() {
+        use base64::Engine as _;
+        match base64::engine::general_purpose::STANDARD.decode(&body.data_base64) {
+            Ok(data) => {
+                let model_dir = std::path::Path::new("/app/models");
+                if !model_dir.exists() {
+                    let _ = std::fs::create_dir_all(model_dir);
+                }
+                let model_path = model_dir.join(format!("{}.onnx", &name));
+                if let Err(e) = std::fs::write(&model_path, &data) {
+                    let resp = serde_json::json!({
+                        "error": format!("Failed to write model file: {}", e)
+                    });
+                    return Ok(warp::reply::with_status(
+                        warp::reply::json(&resp),
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                    )
+                    .into_response());
+                }
+                data.len() as u64
+            }
+            Err(e) => {
+                let resp = serde_json::json!({
+                    "error": format!("Invalid base64 data: {}", e)
+                });
+                return Ok(warp::reply::with_status(
+                    warp::reply::json(&resp),
+                    StatusCode::BAD_REQUEST,
+                )
+                .into_response());
+            }
+        }
+    } else {
+        0
+    };
 
     let entry = crate::model_registry::ModelRegistryEntry {
         name: name.clone(),
@@ -2020,11 +2056,15 @@ async fn handle_chat(
             warp::reply::with_status(warp::reply::json(&response), StatusCode::OK).into_response(),
         ),
         Err(e) => {
+            let status = if e.contains("timed out") || e.contains("timeout") {
+                StatusCode::GATEWAY_TIMEOUT
+            } else if e.contains("connect") || e.contains("Connection refused") {
+                StatusCode::SERVICE_UNAVAILABLE
+            } else {
+                StatusCode::BAD_GATEWAY
+            };
             let resp = serde_json::json!({ "error": e });
-            Ok(
-                warp::reply::with_status(warp::reply::json(&resp), StatusCode::BAD_GATEWAY)
-                    .into_response(),
-            )
+            Ok(warp::reply::with_status(warp::reply::json(&resp), status).into_response())
         }
     }
 }
