@@ -281,7 +281,10 @@ services:
     networks:
       - varpulis-demo
 
-  # ─── Worker 2 (coordinator-2) ───────────────────────────────
+  # ─── Worker 2 ──────────────────────────────────────────────
+  # All workers register with coordinator-1 so metrics are
+  # aggregated in one place. Raft replicates state across all
+  # coordinators, but heartbeat metrics are in-memory only.
   worker-2:
     build:
       context: ../..
@@ -299,7 +302,7 @@ services:
       - "${VARPULIS_WORKER_KEY}"
       - "--metrics"
       - "--coordinator"
-      - "http://coordinator-2:9100"
+      - "http://coordinator-1:9100"
       - "--worker-id"
       - "worker-2"
       - "--advertise-address"
@@ -311,7 +314,7 @@ services:
       - RUST_LOG=${RUST_LOG:-info}
       - VARPULIS_WORKER_ID=worker-2
     depends_on:
-      coordinator-2:
+      coordinator-1:
         condition: service_healthy
       mosquitto:
         condition: service_started
@@ -321,7 +324,7 @@ services:
     networks:
       - varpulis-demo
 
-  # ─── Worker 3 (coordinator-3) ───────────────────────────────
+  # ─── Worker 3 ──────────────────────────────────────────────
   worker-3:
     build:
       context: ../..
@@ -339,7 +342,7 @@ services:
       - "${VARPULIS_WORKER_KEY}"
       - "--metrics"
       - "--coordinator"
-      - "http://coordinator-3:9100"
+      - "http://coordinator-1:9100"
       - "--worker-id"
       - "worker-3"
       - "--advertise-address"
@@ -351,7 +354,7 @@ services:
       - RUST_LOG=${RUST_LOG:-info}
       - VARPULIS_WORKER_ID=worker-3
     depends_on:
-      coordinator-3:
+      coordinator-1:
         condition: service_healthy
       mosquitto:
         condition: service_started
