@@ -489,6 +489,7 @@ impl Coordinator {
         self.workers
             .remove(worker_id)
             .ok_or_else(|| ClusterError::WorkerNotFound(worker_id.0.clone()))?;
+        self.worker_metrics.remove(worker_id);
         info!(worker_id = %worker_id, "Worker deregistered");
         Ok(())
     }
@@ -2174,6 +2175,10 @@ impl Coordinator {
             w.assigned_pipelines.retain(|p| p != pipeline_name);
             w.capacity.pipelines_running = w.capacity.pipelines_running.saturating_sub(1);
         }
+        // Clear stale metrics for the migrated pipeline on the source worker.
+        if let Some(wm) = self.worker_metrics.get_mut(&source_worker_id) {
+            wm.retain(|m| m.pipeline_name != *pipeline_name);
+        }
 
         task.status = MigrationStatus::Completed;
         self.active_migrations.insert(migration_id.clone(), task);
@@ -2602,18 +2607,31 @@ impl Coordinator {
         self.worker_metrics.insert(worker_id.clone(), metrics);
     }
 
-    /// Aggregate metrics across all workers.
+    /// Aggregate metrics across all workers, filtering out stale entries.
+    ///
+    /// Only includes metrics for pipelines that are actually placed on the
+    /// reporting worker (cross-references with current placements).
     pub fn get_cluster_metrics(&self) -> ClusterMetrics {
+        // Build a set of (worker_id, pipeline_name) from current placements.
+        let mut active_placements = std::collections::HashSet::new();
+        for group in self.pipeline_groups.values() {
+            for (pipeline_name, placement) in &group.placements {
+                active_placements.insert((placement.worker_id.0.clone(), pipeline_name.clone()));
+            }
+        }
+
         let mut pipelines = Vec::new();
         for (worker_id, metrics) in &self.worker_metrics {
             for m in metrics {
-                pipelines.push(PipelineWorkerMetrics {
-                    pipeline_name: m.pipeline_name.clone(),
-                    worker_id: worker_id.0.clone(),
-                    events_in: m.events_in,
-                    events_out: m.events_out,
-                    connector_health: m.connector_health.clone(),
-                });
+                if active_placements.contains(&(worker_id.0.clone(), m.pipeline_name.clone())) {
+                    pipelines.push(PipelineWorkerMetrics {
+                        pipeline_name: m.pipeline_name.clone(),
+                        worker_id: worker_id.0.clone(),
+                        events_in: m.events_in,
+                        events_out: m.events_out,
+                        connector_health: m.connector_health.clone(),
+                    });
+                }
             }
         }
         ClusterMetrics { pipelines }
