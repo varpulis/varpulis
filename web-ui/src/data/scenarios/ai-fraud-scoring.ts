@@ -8,26 +8,32 @@ export const aiFraudScoringScenario: ScenarioDefinition = {
   color: 'deep-orange',
   summary:
     'Score every transaction in real-time with an ONNX neural network. GPU acceleration and batch inference process thousands of events per second with sub-millisecond latency.',
-  vplSource: `stream FraudAlerts = Transaction
-    .score(model: "fraud_nn.onnx", inputs: [amount, velocity, distance], outputs: [fraud_prob], gpu: true, batch_size: 32)
+  vplSource: `event Transaction:
+    transaction_id: str
+    account: str
+    amount: float
+    velocity: float
+    distance: float
+
+stream FraudAlerts = Transaction
+    .score(model: "/app/models/fraud_scorer.onnx", inputs: [amount, velocity, distance], outputs: [fraud_prob], batch_size: 4)
     .where(fraud_prob > 0.7)
     .emit(
         alert_type: "ai_fraud_alert",
         transaction_id: transaction_id,
         account: account,
         amount: amount,
-        fraud_probability: fraud_prob,
-        risk_level: "high"
+        fraud_probability: fraud_prob
     )`,
   patterns: [
     {
       name: 'Neural Network Scoring',
       description:
         'Each transaction is scored by an ONNX neural network trained on historical fraud data. The model takes three features (amount, velocity, distance) and outputs a probability between 0 and 1. GPU acceleration with batch_size: 32 processes events in parallel.',
-      vplSnippet: `.score(model: "fraud_nn.onnx",
+      vplSnippet: `.score(model: "/app/models/fraud_scorer.onnx",
     inputs: [amount, velocity, distance],
     outputs: [fraud_prob],
-    gpu: true, batch_size: 32)`,
+    batch_size: 4)`,
     },
     {
       name: 'Threshold-Based Alerting',

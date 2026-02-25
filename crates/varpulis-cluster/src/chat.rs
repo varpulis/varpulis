@@ -238,7 +238,10 @@ pub async fn chat_completion(
     messages: &[ChatMessage],
     coordinator: &crate::api::SharedCoordinator,
 ) -> Result<ChatResponse, String> {
-    let http_client = reqwest::Client::new();
+    let http_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(90))
+        .build()
+        .unwrap_or_default();
     let tools = cluster_tool_definitions();
 
     let mut conversation: Vec<serde_json::Value> = messages

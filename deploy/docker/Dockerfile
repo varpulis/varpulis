@@ -72,9 +72,12 @@ WORKDIR /app
 # Copy binary from builder
 COPY --from=builder /build/target/release/varpulis /usr/local/bin/varpulis
 
-# Create directories for queries and data
-RUN mkdir -p /app/queries /app/data /app/state && \
+# Create directories for queries, data, and models
+RUN mkdir -p /app/queries /app/data /app/state /app/models && \
     chown -R varpulis:users /app
+
+# Copy bundled ONNX models
+COPY --from=builder --chown=varpulis:users /build/crates/varpulis-runtime/tests/fixtures/*.onnx /app/models/
 
 # Switch to non-root user
 USER varpulis
