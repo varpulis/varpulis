@@ -142,7 +142,7 @@ async fn test_pulsar_roundtrip() {
             if let Some(event) = source_rx.recv().await {
                 // Transform: add a processed marker
                 let output = Event::new("OutputEvent")
-                    .with_field("original_type", event.event_type.as_str())
+                    .with_field("original_type", &*event.event_type)
                     .with_field("processed", true);
                 sink.send(&output).await.expect("output send failed");
                 processed += 1;
