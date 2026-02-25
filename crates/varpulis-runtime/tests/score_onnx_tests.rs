@@ -317,7 +317,7 @@ async fn test_score_batch_inference() {
     )
     .unwrap();
 
-    let events = vec![
+    let events = [
         Event::new("T")
             .with_field("amount", 50.0f64)
             .with_field("velocity", 2.0f64)
@@ -433,7 +433,7 @@ fn test_score_gpu_config_cpu_default() {
 
 #[test]
 fn test_score_vpl_with_batch_size() {
-    use varpulis_core::ast::StreamOp;
+    use varpulis_core::ast::{Stmt, StreamOp};
 
     let code = format!(
         r#"stream S = Data
@@ -441,12 +441,18 @@ fn test_score_vpl_with_batch_size() {
         MODEL_PATH
     );
     let program = parse(&code).expect("parse");
-    let stream = &program.streams[0];
 
-    let score_op = stream
-        .ops
+    // Extract the first StreamDecl from statements
+    let ops = program
+        .statements
         .iter()
-        .find(|op| matches!(op, StreamOp::Score(_)));
+        .find_map(|s| match &s.node {
+            Stmt::StreamDecl { ops, .. } => Some(ops),
+            _ => None,
+        })
+        .expect("should have a StreamDecl");
+
+    let score_op = ops.iter().find(|op| matches!(op, StreamOp::Score(_)));
     assert!(score_op.is_some(), ".score() op should be in AST");
 
     if let StreamOp::Score(spec) = score_op.unwrap() {
@@ -456,7 +462,7 @@ fn test_score_vpl_with_batch_size() {
 
 #[test]
 fn test_score_vpl_with_gpu_true() {
-    use varpulis_core::ast::StreamOp;
+    use varpulis_core::ast::{Stmt, StreamOp};
 
     let code = format!(
         r#"stream S = Data
@@ -464,12 +470,17 @@ fn test_score_vpl_with_gpu_true() {
         MODEL_PATH
     );
     let program = parse(&code).expect("parse");
-    let stream = &program.streams[0];
 
-    let score_op = stream
-        .ops
+    let ops = program
+        .statements
         .iter()
-        .find(|op| matches!(op, StreamOp::Score(_)));
+        .find_map(|s| match &s.node {
+            Stmt::StreamDecl { ops, .. } => Some(ops),
+            _ => None,
+        })
+        .expect("should have a StreamDecl");
+
+    let score_op = ops.iter().find(|op| matches!(op, StreamOp::Score(_)));
     assert!(score_op.is_some(), ".score() op should be in AST");
 
     if let StreamOp::Score(spec) = score_op.unwrap() {
