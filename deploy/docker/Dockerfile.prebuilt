@@ -1,0 +1,50 @@
+# Varpulis CEP Engine - Prebuilt Binary Dockerfile
+# Uses a locally compiled binary instead of building inside Docker.
+#
+# Usage:
+#   cargo build -p varpulis-cli --release --features "kafka,raft,persistent,saas"
+#   docker build -t ghcr.io/varpulis/varpulis:main -f deploy/docker/Dockerfile.prebuilt .
+#
+# Build time: ~10 seconds (vs ~15 min for full compile)
+
+FROM debian:trixie-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    curl \
+    libssl3 \
+    libcurl4 \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd -r -u 1000 -g users varpulis
+
+# Install ONNX Runtime shared library (required by ort crate with load-dynamic)
+ARG ONNXRUNTIME_VERSION=1.23.0
+RUN curl -sSL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz" \
+    | tar -xz -C /tmp \
+    && cp /tmp/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}/lib/libonnxruntime.so.${ONNXRUNTIME_VERSION} /usr/local/lib/ \
+    && ln -s libonnxruntime.so.${ONNXRUNTIME_VERSION} /usr/local/lib/libonnxruntime.so \
+    && ldconfig \
+    && rm -rf /tmp/onnxruntime-*
+
+WORKDIR /app
+
+# Copy pre-built binary
+COPY target/release/varpulis /usr/local/bin/varpulis
+
+# Copy bundled ONNX models
+COPY crates/varpulis-runtime/tests/fixtures/*.onnx /app/models/
+
+# Create directories and set permissions
+RUN mkdir -p /app/queries /app/data /app/state /app/models && \
+    chown -R varpulis:users /app
+
+USER varpulis
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:9000/health || exit 1
+
+EXPOSE 9000 9090
+
+ENTRYPOINT ["varpulis"]
+CMD ["--help"]
