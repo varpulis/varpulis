@@ -388,6 +388,7 @@ fn parse_change_text(data: &str) -> Option<Event> {
 /// - 'B': Begin transaction
 /// - 'C': Commit transaction
 #[cfg(feature = "cdc")]
+#[allow(dead_code)] // Binary pgoutput path — used in tests, will be wired for streaming replication
 fn parse_pgoutput_message(data: &[u8]) -> Option<Event> {
     if data.is_empty() {
         return None;
@@ -436,6 +437,7 @@ fn parse_pgoutput_message(data: &[u8]) -> Option<Event> {
 /// Tuple format: num_columns(2) + for each column: type(1) + data
 /// Type: 'n' = null, 't' = text, 'b' = binary
 #[cfg(feature = "cdc")]
+#[allow(dead_code)] // Binary pgoutput path — used in tests, will be wired for streaming replication
 fn parse_tuple_data(data: &[u8]) -> Vec<(String, varpulis_core::Value)> {
     let mut fields = Vec::new();
     if data.len() < 2 {
