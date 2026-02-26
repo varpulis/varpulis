@@ -1,0 +1,32 @@
+# Override: use pre-built GHCR images instead of building locally.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --pull always
+#
+# When both `build` and `image` are present, compose uses the image if
+# --no-build is passed or if the image already exists locally. The `pull`
+# policy ensures the latest GHCR image is used.
+services:
+  web-ui:
+    image: ghcr.io/varpulis/varpulis-web-ui:main
+
+  coordinator-1:
+    image: ghcr.io/varpulis/varpulis:main
+
+  coordinator-2:
+    image: ghcr.io/varpulis/varpulis:main
+
+  coordinator-3:
+    image: ghcr.io/varpulis/varpulis:main
+
+  worker-0:
+    image: ghcr.io/varpulis/varpulis:main
+
+  worker-1:
+    image: ghcr.io/varpulis/varpulis:main
+
+  worker-2:
+    image: ghcr.io/varpulis/varpulis:main
+
+  worker-3:
+    image: ghcr.io/varpulis/varpulis:main

@@ -2372,11 +2372,19 @@ async fn run_server(
     });
 
     // Broadcast channel for output events to all connected clients
-    let (broadcast_tx, _) = tokio::sync::broadcast::channel::<String>(100);
+    // 10K buffer gives ~100ms slack at 100K events/sec (~2MB memory)
+    let (broadcast_tx, _) = tokio::sync::broadcast::channel::<String>(10_000);
     let broadcast_tx = Arc::new(broadcast_tx);
 
+    // Relay metrics for monitoring the output event pipeline
+    let relay_metrics = Arc::new(websocket::RelayMetrics::new());
+
     // Spawn output event forwarder using websocket module
-    websocket::forward_output_events_to_websocket(output_rx, broadcast_tx.clone());
+    websocket::forward_output_events_to_websocket(
+        output_rx,
+        broadcast_tx.clone(),
+        relay_metrics.clone(),
+    );
 
     // Create auth config Arc for sharing
     let auth_config = Arc::new(auth_config);
@@ -2420,15 +2428,19 @@ async fn run_server(
 
     // Liveness probe: /health - is the process alive?
     let health_state = state.clone();
+    let health_relay_metrics = relay_metrics.clone();
     let health_route = warp::path("health").and(warp::get()).and_then(move || {
         let state = health_state.clone();
+        let metrics = health_relay_metrics.clone();
         async move {
             let state = state.read().await;
             let uptime = state.start_time.elapsed().as_secs_f64();
+            let relay = metrics.snapshot();
             let response = serde_json::json!({
                 "status": "healthy",
                 "uptime_seconds": uptime,
                 "version": env!("CARGO_PKG_VERSION"),
+                "relay": relay,
             });
             Ok::<_, warp::Rejection>(warp::reply::json(&response))
         }
@@ -2660,6 +2672,7 @@ async fn run_server(
             broadcast_tx.clone(),
             coordinator_url.clone(),
             worker_api_key.clone(),
+            relay_metrics.clone(),
         );
 
         // NATS transport: use NATS for registration, heartbeats, and command dispatch
@@ -3215,22 +3228,43 @@ async fn run_coordinator(
 
     // Internal endpoint: workers POST output events here for relaying to WS clients.
     // Body: JSON array of pre-serialized event strings.
+    // Authenticated via x-api-key header (workers already send this).
     let coord_output_broadcast = coord_broadcast_tx.clone();
+    let coord_expected_key = rbac.any_admin_key().unwrap_or_default();
     let coord_output_events_route = warp::path("api")
         .and(warp::path("v1"))
         .and(warp::path("internal"))
         .and(warp::path("output-events"))
         .and(warp::path::end())
         .and(warp::post())
+        .and(warp::header::<String>("x-api-key"))
         .and(warp::body::content_length_limit(1024 * 1024)) // 1 MB limit
         .and(warp::body::json::<Vec<String>>())
-        .map(move |events: Vec<String>| {
+        .map(move |key: String, events: Vec<String>| {
+            if key != coord_expected_key {
+                return warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({"error": "unauthorized"})),
+                    warp::http::StatusCode::UNAUTHORIZED,
+                );
+            }
             let tx = coord_output_broadcast.clone();
+            let mut relayed = 0u64;
+            let mut dropped = 0u64;
             for event_json in &events {
-                let _ = tx.send(event_json.clone());
+                match tx.send(event_json.clone()) {
+                    Ok(_) => relayed += 1,
+                    Err(_) => dropped += 1,
+                }
+            }
+            if dropped > 0 {
+                tracing::debug!(
+                    "Coordinator relay: {} relayed, {} dropped (no WS subscribers)",
+                    relayed,
+                    dropped
+                );
             }
             warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({"relayed": events.len()})),
+                warp::reply::json(&serde_json::json!({"relayed": relayed, "dropped": dropped})),
                 warp::http::StatusCode::OK,
             )
         });

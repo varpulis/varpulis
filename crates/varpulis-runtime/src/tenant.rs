@@ -439,7 +439,9 @@ impl Tenant {
                             "timestamp": ev.timestamp.to_rfc3339(),
                         });
                         if let Ok(json) = serde_json::to_string(&msg) {
-                            let _ = ws_tx.send(json);
+                            if ws_tx.send(json).is_err() {
+                                tracing::debug!("No WS subscribers for drain output event");
+                            }
                         }
                     }
                 }
