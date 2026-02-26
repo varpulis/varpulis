@@ -331,14 +331,18 @@ impl Coordinator {
             };
 
             if let Some(local) = self.workers.get_mut(&wid) {
-                // Existing worker: update from Raft but preserve local heartbeat
+                // Existing worker: update structural fields from Raft.
                 local.assigned_pipelines = entry.assigned_pipelines.clone();
-                local.events_processed = entry.events_processed;
-                local.capacity = crate::worker::WorkerCapacity {
-                    cpu_cores: entry.cpu_cores,
-                    pipelines_running: entry.pipelines_running,
-                    max_pipelines: entry.max_pipelines,
-                };
+                local.capacity.cpu_cores = entry.cpu_cores;
+                local.capacity.max_pipelines = entry.max_pipelines;
+                // Heartbeat metrics are replicated through Raft via
+                // WorkerMetricsUpdated, so use max(local, raft) for
+                // events_processed (monotonically increasing) and raft
+                // value for pipelines_running (latest wins).
+                if entry.events_processed > local.events_processed {
+                    local.events_processed = entry.events_processed;
+                }
+                local.capacity.pipelines_running = entry.pipelines_running;
                 // Trust Raft status for cross-coordinator transitions (e.g., unhealthy).
                 // If Raft says a worker is ready, refresh last_heartbeat — this acts
                 // as a heartbeat proxy for workers connected to other coordinators.
@@ -3741,4 +3745,87 @@ mod tests {
         let unhealthy = coord.check_connector_health();
         assert!(unhealthy.is_empty());
     }
+
+    /// Regression test: heartbeat correctly updates events_processed and pipelines_running.
+    ///
+    /// This validates the worker metrics flow that feeds the monitoring dashboard.
+    /// Previously, these values were always 0 because sync_from_raft() would
+    /// overwrite locally-maintained heartbeat data with Raft state (which never
+    /// receives heartbeat metrics).
+    #[test]
+    fn test_heartbeat_updates_worker_metrics() {
+        let mut coord = Coordinator::new();
+        let node = WorkerNode::new(WorkerId("w1".into()), "http://w1:9000".into(), "key".into());
+        coord.register_worker(node);
+
+        // Verify initial state is 0
+        let worker = coord.workers.get(&WorkerId("w1".into())).unwrap();
+        assert_eq!(worker.events_processed, 0);
+        assert_eq!(worker.capacity.pipelines_running, 0);
+
+        // Simulate heartbeat with metrics
+        let hb = crate::worker::HeartbeatRequest {
+            events_processed: 500,
+            pipelines_running: 2,
+            pipeline_metrics: vec![crate::worker::PipelineMetrics {
+                pipeline_name: "financial-cep".into(),
+                events_in: 500,
+                events_out: 30,
+                connector_health: vec![],
+            }],
+        };
+        coord.heartbeat(&WorkerId("w1".into()), &hb).unwrap();
+
+        // Verify heartbeat updated the values
+        let worker = coord.workers.get(&WorkerId("w1".into())).unwrap();
+        assert_eq!(
+            worker.events_processed, 500,
+            "heartbeat should update events_processed"
+        );
+        assert_eq!(
+            worker.capacity.pipelines_running, 2,
+            "heartbeat should update pipelines_running"
+        );
+
+        // Verify pipeline metrics are stored
+        let metrics = coord.worker_metrics.get(&WorkerId("w1".into())).unwrap();
+        assert_eq!(metrics.len(), 1);
+        assert_eq!(metrics[0].pipeline_name, "financial-cep");
+        assert_eq!(metrics[0].events_in, 500);
+    }
+
+    /// Test that subsequent heartbeats update (not accumulate) metrics.
+    #[test]
+    fn test_heartbeat_overwrites_previous_metrics() {
+        let mut coord = Coordinator::new();
+        let node = WorkerNode::new(WorkerId("w1".into()), "http://w1:9000".into(), "key".into());
+        coord.register_worker(node);
+
+        // First heartbeat
+        let hb1 = crate::worker::HeartbeatRequest {
+            events_processed: 100,
+            pipelines_running: 1,
+            pipeline_metrics: vec![],
+        };
+        coord.heartbeat(&WorkerId("w1".into()), &hb1).unwrap();
+
+        // Second heartbeat with updated values
+        let hb2 = crate::worker::HeartbeatRequest {
+            events_processed: 500,
+            pipelines_running: 2,
+            pipeline_metrics: vec![],
+        };
+        coord.heartbeat(&WorkerId("w1".into()), &hb2).unwrap();
+
+        let worker = coord.workers.get(&WorkerId("w1".into())).unwrap();
+        assert_eq!(
+            worker.events_processed, 500,
+            "second heartbeat should overwrite, not accumulate"
+        );
+        assert_eq!(worker.capacity.pipelines_running, 2);
+    }
+
+    // NOTE: sync_from_raft uses max(local, raft) for events_processed and
+    // latest raft value for pipelines_running. Heartbeat metrics are replicated
+    // through Raft via WorkerMetricsUpdated, so all coordinators see current values.
 }
