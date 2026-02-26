@@ -398,6 +398,16 @@ impl Coordinator {
             .as_ref()
             .and_then(|v| serde_json::from_value(v.clone()).ok());
 
+        // Sync per-worker pipeline metrics from Raft (heartbeat data replicated
+        // from whichever coordinator received the heartbeat).
+        for (worker_id_str, metrics) in &raft_state.worker_pipeline_metrics {
+            let wid = WorkerId(worker_id_str.clone());
+            // Only update if Raft has newer/more data than local state
+            if !metrics.is_empty() {
+                self.worker_metrics.insert(wid, metrics.clone());
+            }
+        }
+
         tracing::debug!(
             "Synced from Raft state: {} workers, {} groups, {} connectors",
             self.workers.len(),
