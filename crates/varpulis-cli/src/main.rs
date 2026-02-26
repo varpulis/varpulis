@@ -2500,6 +2500,13 @@ async fn run_server(
         }
     }
 
+    // Connect tenant manager output events to WebSocket broadcast channel
+    // so deployed pipelines' output events are relayed to WS clients.
+    {
+        let mut mgr = tenant_manager.write().await;
+        mgr.set_ws_broadcast(broadcast_tx.clone());
+    }
+
     // Auto-provision a default tenant if an API key is configured
     if auth_config.is_required() {
         if let Some(key) = auth_config.api_key() {

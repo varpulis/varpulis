@@ -68,6 +68,37 @@ and crates.io publishing.
 - **REST endpoint** — `GET /api/v1/audit` with filtering by action and actor
 - **Auto-enabled** — writes to `data/audit.jsonl`, no configuration needed
 
+#### Percentile Aggregations
+- **`median(expr)`** — 50th percentile aggregation function
+- **`percentile(expr, q)`** — generic percentile with configurable quantile (0.0–1.0)
+- **`p50(expr)` / `p95(expr)` / `p99(expr)`** — convenience aliases for common percentiles
+- Sort-based algorithm with linear interpolation for correctness on bounded windows
+
+#### Outer Joins
+- **`left_join(...)`** — emit when left source has an event, fill nulls for missing right
+- **`right_join(...)`** — emit when right source has an event, fill nulls for missing left
+- **`full_join(...)`** — emit for either side, fill nulls for missing sources
+- `JoinType` enum with `Inner`, `Left`, `Right`, `Full` variants in AST
+
+#### Encryption at Rest
+- **`EncryptedStateStore<S>`** — transparent AES-256-GCM encryption wrapper for any `StateStore`
+- Random 96-bit nonce per value, key from hex env var or Argon2id passphrase derivation
+- Feature-gated: `--features encryption` (requires `aes-gcm`, `argon2`, `hex`)
+
+#### SSO/OIDC
+- **`AuthProvider` trait** — pluggable identity provider abstraction
+- **`OidcProvider`** — generic OIDC provider with `.well-known/openid-configuration` discovery
+- Supports Okta, Auth0, Azure AD, Keycloak, Google Workspace
+- Feature-gated: `--features oidc` (requires `openidconnect` crate)
+- `GitHubOAuth` refactored to implement `AuthProvider`
+
+#### PostgreSQL CDC Connector
+- **`PostgresCdcSource`** — change data capture via PostgreSQL logical replication
+- Converts INSERT/UPDATE/DELETE WAL changes to typed Varpulis events
+- Event format: `{table}.{INSERT|UPDATE|DELETE}` with column values as fields
+- LSN tracking for replay positioning
+- Feature-gated: `--features cdc` (requires `tokio-postgres`)
+
 #### Advanced Connectors
 - **Redis connector** — pub/sub source and sink with key prefix support
 - **Pulsar connector** — Apache Pulsar source and sink

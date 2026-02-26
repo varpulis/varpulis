@@ -150,6 +150,49 @@ stream Orders = OrderEvent
 - Watermark advancement triggers window closure
 - Watermark state is included in checkpoints
 
+## Encryption at Rest
+
+Available behind the `encryption` feature flag. Wraps any `StateStore` backend with AES-256-GCM authenticated encryption.
+
+### How It Works
+
+`EncryptedStateStore<S>` transparently encrypts all data before writing and decrypts after reading:
+
+- **Algorithm**: AES-256-GCM (authenticated encryption with associated data)
+- **Nonce**: Random 96-bit nonce prepended to each ciphertext
+- **Key management**: 32-byte key from hex-encoded env var or passphrase-derived via Argon2id
+
+### Configuration
+
+```bash
+# Option 1: Hex-encoded 256-bit key
+export VARPULIS_ENCRYPTION_KEY="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+# Option 2: Passphrase (derived via Argon2id with random salt)
+# Use EncryptedStateStore::key_from_passphrase("my-passphrase", &salt)
+```
+
+### Usage
+
+```rust
+use varpulis_runtime::persistence::{EncryptedStateStore, RocksDbStore, StateStore};
+
+let store = RocksDbStore::open("/var/lib/varpulis/state")?;
+let key = EncryptedStateStore::<RocksDbStore>::key_from_hex(
+    &std::env::var("VARPULIS_ENCRYPTION_KEY")?
+)?;
+let encrypted_store = EncryptedStateStore::new(store, key);
+
+// Use encrypted_store exactly like any other StateStore
+encrypted_store.save_checkpoint("ctx", &checkpoint).await?;
+```
+
+### Building with Encryption
+
+```bash
+cargo build --release --features persistence,encryption
+```
+
 ## Planned Features
 
 - Exactly-once processing semantics (checkpoint barriers in progress)
