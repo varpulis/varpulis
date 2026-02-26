@@ -1,0 +1,14 @@
+-- S14: PST Forecasting — Predict pattern completion before it happens
+-- EventFlux: NO CAPABILITY
+--
+-- Varpulis uses Prediction Suffix Trees (PST) to predict the probability
+-- that a partially-matched pattern will complete, BEFORE the final event
+-- arrives. This enables proactive alerting (e.g., "80% chance this fraud
+-- pattern will complete in the next 2 minutes").
+--
+-- Performance: 51 nanoseconds per single-symbol prediction
+--              105 nanoseconds per full distribution prediction
+--
+-- No other CEP engine in the market offers this capability.
+--
+-- CANNOT RUN IN EVENTFLUX

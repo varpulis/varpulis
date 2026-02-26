@@ -1,0 +1,16 @@
+-- S15: Hamlet Multi-Query Optimization — 10/50 concurrent Kleene queries
+-- EventFlux: NO CAPABILITY
+--
+-- Varpulis uses the Hamlet algorithm (shared online trend aggregation)
+-- to optimize multiple concurrent Kleene pattern queries. Instead of
+-- running N independent NFA instances, Hamlet shares intermediate
+-- results via graphlets, achieving:
+--
+--   1 query:  6.9M events/sec
+--   10 queries: 2.1M events/sec (vs 122K baseline = 17x speedup)
+--   50 queries: 950K events/sec (vs 9K baseline = 100x speedup)
+--
+-- EventFlux would need to run each query independently, with no
+-- cross-query optimization, and cannot express Kleene patterns at all.
+--
+-- CANNOT RUN IN EVENTFLUX

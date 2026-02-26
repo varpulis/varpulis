@@ -1,0 +1,10 @@
+-- S5: Sequence with Predicate — A[value > 500] -> B
+-- EventFlux equivalent of Varpulis: A[value>500] -> B
+
+define stream AStream (id long, value long, user_id string);
+define stream BStream (id long, value long, user_id string);
+
+@info(name = 'S5_sequence_predicate')
+from every a = AStream[value > 500] -> b = BStream
+select a.id as a_id, b.id as b_id
+insert into MatchedStream;
