@@ -7,6 +7,7 @@ use indexmap::IndexMap;
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use warp::ws::{Message, WebSocket};
@@ -16,6 +17,48 @@ use varpulis_runtime::engine::Engine;
 use varpulis_runtime::event::Event;
 
 use crate::security;
+
+// =============================================================================
+// Relay Metrics
+// =============================================================================
+
+/// Metrics for the output event relay pipeline.
+///
+/// Thread-safe counters tracking events forwarded to WebSocket clients,
+/// events dropped (no subscribers or coordinator unreachable), forwarding
+/// errors, and coordinator health status.
+pub struct RelayMetrics {
+    pub events_forwarded: AtomicU64,
+    pub events_dropped: AtomicU64,
+    pub forwarding_errors: AtomicU64,
+    pub coordinator_healthy: AtomicBool,
+}
+
+impl RelayMetrics {
+    pub fn new() -> Self {
+        Self {
+            events_forwarded: AtomicU64::new(0),
+            events_dropped: AtomicU64::new(0),
+            forwarding_errors: AtomicU64::new(0),
+            coordinator_healthy: AtomicBool::new(true),
+        }
+    }
+
+    pub fn snapshot(&self) -> serde_json::Value {
+        serde_json::json!({
+            "relay_events_forwarded": self.events_forwarded.load(Ordering::Relaxed),
+            "relay_events_dropped": self.events_dropped.load(Ordering::Relaxed),
+            "relay_forwarding_errors": self.forwarding_errors.load(Ordering::Relaxed),
+            "relay_coordinator_healthy": self.coordinator_healthy.load(Ordering::Relaxed),
+        })
+    }
+}
+
+impl Default for RelayMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 // =============================================================================
 // Message Types
@@ -399,12 +442,21 @@ pub fn create_output_event_message(event: &Event) -> WsMessage {
 pub fn forward_output_events_to_websocket(
     mut output_rx: mpsc::Receiver<Event>,
     broadcast_tx: Arc<tokio::sync::broadcast::Sender<String>>,
+    metrics: Arc<RelayMetrics>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         while let Some(event) = output_rx.recv().await {
             let msg = create_output_event_message(&event);
             if let Ok(json) = serde_json::to_string(&msg) {
-                let _ = broadcast_tx.send(json);
+                match broadcast_tx.send(json) {
+                    Ok(_) => {
+                        metrics.events_forwarded.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Err(_) => {
+                        metrics.events_dropped.fetch_add(1, Ordering::Relaxed);
+                        tracing::debug!("No WS subscribers for output event");
+                    }
+                }
             }
         }
     })
@@ -459,21 +511,55 @@ pub async fn handle_coordinator_connection(
 ///
 /// Events are batched (up to 50 events or 200ms, whichever comes first) and
 /// sent as a JSON array of pre-serialized event strings.
+///
+/// Includes retry with exponential backoff (3 attempts: 100ms, 200ms, 400ms)
+/// and coordinator health-check gating after 5 consecutive failures.
 pub fn forward_output_events_to_coordinator(
     broadcast_tx: Arc<tokio::sync::broadcast::Sender<String>>,
     coordinator_url: String,
     api_key: String,
+    metrics: Arc<RelayMetrics>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap_or_default();
         let url = format!(
             "{}/api/v1/internal/output-events",
             coordinator_url.trim_end_matches('/')
         );
+        let health_url = format!("{}/health", coordinator_url.trim_end_matches('/'));
         let mut rx = broadcast_tx.subscribe();
         let mut batch: Vec<String> = Vec::with_capacity(50);
+        let mut consecutive_failures: u32 = 0;
 
         loop {
+            // Health-check gating: after 5 consecutive failures, probe before continuing
+            if consecutive_failures >= 5 {
+                metrics.coordinator_healthy.store(false, Ordering::Relaxed);
+                tracing::warn!(
+                    "Coordinator relay: {} consecutive failures, entering cooldown",
+                    consecutive_failures
+                );
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    match client.get(&health_url).send().await {
+                        Ok(resp) if resp.status().is_success() => {
+                            tracing::info!("Coordinator relay: health check passed, resuming");
+                            consecutive_failures = 0;
+                            metrics.coordinator_healthy.store(true, Ordering::Relaxed);
+                            break;
+                        }
+                        _ => {
+                            tracing::debug!(
+                                "Coordinator relay: health check failed, retrying in 5s"
+                            );
+                        }
+                    }
+                }
+            }
+
             // Collect first event (blocking wait)
             match rx.recv().await {
                 Ok(msg) => batch.push(msg),
@@ -504,14 +590,64 @@ pub fn forward_output_events_to_coordinator(
                 }
             }
 
-            // Send batch to coordinator
+            // Send batch to coordinator with retry
             if !batch.is_empty() {
-                let _ = client
-                    .post(&url)
-                    .header("x-api-key", &api_key)
-                    .json(&batch)
-                    .send()
-                    .await;
+                let batch_len = batch.len() as u64;
+                let mut sent = false;
+
+                for attempt in 0..3u32 {
+                    match client
+                        .post(&url)
+                        .header("x-api-key", &api_key)
+                        .json(&batch)
+                        .send()
+                        .await
+                    {
+                        Ok(resp) if resp.status().is_success() => {
+                            metrics
+                                .events_forwarded
+                                .fetch_add(batch_len, Ordering::Relaxed);
+                            metrics.coordinator_healthy.store(true, Ordering::Relaxed);
+                            consecutive_failures = 0;
+                            sent = true;
+                            break;
+                        }
+                        Ok(resp) => {
+                            metrics.forwarding_errors.fetch_add(1, Ordering::Relaxed);
+                            tracing::warn!(
+                                "Coordinator relay: attempt {}/3 got status {} for {} events",
+                                attempt + 1,
+                                resp.status(),
+                                batch_len
+                            );
+                        }
+                        Err(e) => {
+                            metrics.forwarding_errors.fetch_add(1, Ordering::Relaxed);
+                            tracing::warn!(
+                                "Coordinator relay: attempt {}/3 failed: {}",
+                                attempt + 1,
+                                e
+                            );
+                        }
+                    }
+                    // Exponential backoff: 100ms, 200ms, 400ms
+                    let backoff = std::time::Duration::from_millis(100 * 2u64.pow(attempt));
+                    tokio::time::sleep(backoff).await;
+                }
+
+                if !sent {
+                    consecutive_failures += 1;
+                    metrics
+                        .events_dropped
+                        .fetch_add(batch_len, Ordering::Relaxed);
+                    metrics.coordinator_healthy.store(false, Ordering::Relaxed);
+                    tracing::error!(
+                        "Coordinator relay: dropped {} events after 3 retries (consecutive failures: {})",
+                        batch_len,
+                        consecutive_failures
+                    );
+                }
+
                 batch.clear();
             }
         }
@@ -1084,6 +1220,126 @@ mod tests {
                 assert!(!timestamp.is_empty());
             }
             _ => panic!("Expected OutputEvent message"),
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Relay metrics tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_relay_metrics_new() {
+        let metrics = RelayMetrics::new();
+        assert_eq!(metrics.events_forwarded.load(Ordering::Relaxed), 0);
+        assert_eq!(metrics.events_dropped.load(Ordering::Relaxed), 0);
+        assert_eq!(metrics.forwarding_errors.load(Ordering::Relaxed), 0);
+        assert!(metrics.coordinator_healthy.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_relay_metrics_snapshot() {
+        let metrics = RelayMetrics::new();
+        metrics.events_forwarded.store(100, Ordering::Relaxed);
+        metrics.events_dropped.store(5, Ordering::Relaxed);
+        metrics.forwarding_errors.store(2, Ordering::Relaxed);
+        metrics.coordinator_healthy.store(false, Ordering::Relaxed);
+
+        let snap = metrics.snapshot();
+        assert_eq!(snap["relay_events_forwarded"], 100);
+        assert_eq!(snap["relay_events_dropped"], 5);
+        assert_eq!(snap["relay_forwarding_errors"], 2);
+        assert_eq!(snap["relay_coordinator_healthy"], false);
+    }
+
+    #[tokio::test]
+    async fn test_forward_to_ws_broadcasts() {
+        let (output_tx, output_rx) = mpsc::channel(100);
+        let (broadcast_tx, _) = tokio::sync::broadcast::channel::<String>(100);
+        let broadcast_tx = Arc::new(broadcast_tx);
+        let metrics = Arc::new(RelayMetrics::new());
+
+        // Subscribe before starting forwarder
+        let mut sub = broadcast_tx.subscribe();
+
+        let _handle =
+            forward_output_events_to_websocket(output_rx, broadcast_tx.clone(), metrics.clone());
+
+        // Send an event
+        let event = Event::new("TestType");
+        output_tx.send(event).await.unwrap();
+
+        // Receive on subscriber
+        let msg = tokio::time::timeout(std::time::Duration::from_secs(2), sub.recv())
+            .await
+            .expect("timeout")
+            .expect("recv error");
+
+        assert!(msg.contains("TestType"));
+        assert_eq!(metrics.events_forwarded.load(Ordering::Relaxed), 1);
+        assert_eq!(metrics.events_dropped.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn test_forward_to_ws_counts_drops() {
+        let (output_tx, output_rx) = mpsc::channel(100);
+        let (broadcast_tx, _) = tokio::sync::broadcast::channel::<String>(100);
+        let broadcast_tx = Arc::new(broadcast_tx);
+        let metrics = Arc::new(RelayMetrics::new());
+
+        // No subscribers — drops are expected
+        let _handle =
+            forward_output_events_to_websocket(output_rx, broadcast_tx.clone(), metrics.clone());
+
+        let event = Event::new("Dropped");
+        output_tx.send(event).await.unwrap();
+
+        // Give forwarder time to process
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        assert_eq!(metrics.events_dropped.load(Ordering::Relaxed), 1);
+        assert_eq!(metrics.events_forwarded.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn test_coordinator_ws_relays() {
+        use warp::Filter;
+
+        let (broadcast_tx, _) = tokio::sync::broadcast::channel::<String>(100);
+        let broadcast_tx = Arc::new(broadcast_tx);
+
+        let tx_for_route = broadcast_tx.clone();
+        let route = warp::path("ws")
+            .and(warp::ws())
+            .map(move |ws: warp::ws::Ws| {
+                let tx = tx_for_route.clone();
+                ws.on_upgrade(move |socket| handle_coordinator_connection(socket, tx))
+            });
+
+        // Use warp's test client
+        let client = warp::test::ws().path("/ws").handshake(route).await;
+        match client {
+            Ok(mut ws_client) => {
+                // Broadcast an event
+                let event_json = serde_json::json!({
+                    "type": "output_event",
+                    "event_type": "TestRelay",
+                    "data": {},
+                    "timestamp": "2026-01-01T00:00:00Z"
+                })
+                .to_string();
+
+                broadcast_tx.send(event_json.clone()).unwrap();
+
+                // Receive on WS client
+                let msg = tokio::time::timeout(std::time::Duration::from_secs(2), ws_client.recv())
+                    .await
+                    .expect("timeout")
+                    .expect("recv error");
+
+                let text = msg.to_str().unwrap();
+                assert!(text.contains("TestRelay"));
+            }
+            Err(e) => panic!("WebSocket handshake failed: {:?}", e),
         }
     }
 }

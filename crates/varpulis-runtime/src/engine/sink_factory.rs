@@ -293,6 +293,15 @@ pub(crate) fn create_sink_from_config(
                     ("linger_ms", "linger.ms"),
                     ("compression_type", "compression.type"),
                     ("message_timeout_ms", "message.timeout.ms"),
+                    // SASL/SCRAM authentication
+                    ("security_protocol", "security.protocol"),
+                    ("sasl_mechanism", "sasl.mechanism"),
+                    ("sasl_username", "sasl.username"),
+                    ("sasl_password", "sasl.password"),
+                    // TLS
+                    ("ssl_ca_location", "ssl.ca.location"),
+                    ("ssl_certificate_location", "ssl.certificate.location"),
+                    ("ssl_key_location", "ssl.key.location"),
                 ];
                 for &(vpl_name, rdkafka_name) in param_mapping {
                     if let Some(value) = properties.swap_remove(vpl_name) {
