@@ -1,0 +1,11 @@
+-- S6: Counted Sequence — A -> B{3} -> C
+-- EventFlux equivalent of Varpulis: A -> B{3} -> C
+
+define stream AStream (id long, value long);
+define stream BStream (id long, value long);
+define stream CStream (id long, value long);
+
+@info(name = 'S6_counted_sequence')
+from every a = AStream -> b = BStream{3} -> c = CStream
+select a.id as start_id
+insert into MatchedStream;

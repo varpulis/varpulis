@@ -1,0 +1,9 @@
+-- S1: Simple Filter — price > 50.0
+-- EventFlux equivalent of Varpulis: StockTick.where(price > 50.0)
+
+define stream StockStream (symbol string, price float, volume long);
+
+@info(name = 'S1_simple_filter')
+from StockStream[price > 50.0]
+select symbol, price
+insert into FilteredStream;

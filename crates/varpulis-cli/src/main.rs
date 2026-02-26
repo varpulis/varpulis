@@ -2648,6 +2648,13 @@ async fn run_server(
             advertise_address.unwrap_or_else(|| format!("{}://{}:{}", http_protocol, bind, port));
         let worker_api_key = auth_config.api_key().unwrap_or("no-key").to_string();
 
+        // Forward output events to coordinator for live WebSocket relay
+        websocket::forward_output_events_to_coordinator(
+            broadcast_tx.clone(),
+            coordinator_url.clone(),
+            worker_api_key.clone(),
+        );
+
         // NATS transport: use NATS for registration, heartbeats, and command dispatch
         #[cfg(feature = "nats-transport")]
         if let Some(ref nats_url) = nats_url {
@@ -3182,6 +3189,45 @@ async fn run_coordinator(
     let coord_pg_routes = playground::playground_routes(coord_playground_state.clone());
     playground::spawn_session_reaper(coord_playground_state);
 
+    // Broadcast channel for relaying worker output events to WebSocket clients
+    let (coord_broadcast_tx, _) = tokio::sync::broadcast::channel::<String>(1000);
+    let coord_broadcast_tx = Arc::new(coord_broadcast_tx);
+
+    // WebSocket route for coordinator — relays output events from workers
+    let coord_ws_broadcast = coord_broadcast_tx.clone();
+    let coord_ws_route = warp::path("ws")
+        .and(warp::ws())
+        .map(move |ws: warp::ws::Ws| {
+            let broadcast_tx = coord_ws_broadcast.clone();
+            ws.max_frame_size(1024 * 1024)
+                .max_message_size(1024 * 1024)
+                .on_upgrade(move |socket| {
+                    websocket::handle_coordinator_connection(socket, broadcast_tx)
+                })
+        });
+
+    // Internal endpoint: workers POST output events here for relaying to WS clients.
+    // Body: JSON array of pre-serialized event strings.
+    let coord_output_broadcast = coord_broadcast_tx.clone();
+    let coord_output_events_route = warp::path("api")
+        .and(warp::path("v1"))
+        .and(warp::path("internal"))
+        .and(warp::path("output-events"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(warp::body::content_length_limit(1024 * 1024)) // 1 MB limit
+        .and(warp::body::json::<Vec<String>>())
+        .map(move |events: Vec<String>| {
+            let tx = coord_output_broadcast.clone();
+            for event_json in &events {
+                let _ = tx.send(event_json.clone());
+            }
+            warp::reply::with_status(
+                warp::reply::json(&serde_json::json!({"relayed": events.len()})),
+                warp::http::StatusCode::OK,
+            )
+        });
+
     let bind_addr: std::net::IpAddr = bind
         .parse()
         .map_err(|e| anyhow::anyhow!("Invalid bind address '{}': {}", bind, e))?;
@@ -3229,7 +3275,9 @@ async fn run_coordinator(
                 coordinator_rate_limiter,
                 cors_origins,
             );
-            let routes = health_route
+            let routes = coord_ws_route
+                .or(coord_output_events_route)
+                .or(health_route)
                 .or(ready_route)
                 .or(metrics_route)
                 .or(coord_pg_routes)
@@ -3243,7 +3291,9 @@ async fn run_coordinator(
                 coordinator_rate_limiter,
                 cors_origins,
             );
-            let routes = health_route
+            let routes = coord_ws_route
+                .or(coord_output_events_route)
+                .or(health_route)
                 .or(ready_route)
                 .or(metrics_route)
                 .or(coord_pg_routes)
@@ -3261,7 +3311,9 @@ async fn run_coordinator(
             coordinator_rate_limiter,
             cors_origins,
         );
-        let routes = health_route
+        let routes = coord_ws_route
+            .or(coord_output_events_route)
+            .or(health_route)
             .or(ready_route)
             .or(metrics_route)
             .or(coord_pg_routes)

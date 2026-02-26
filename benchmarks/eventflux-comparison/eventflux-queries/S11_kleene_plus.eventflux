@@ -1,0 +1,12 @@
+-- S11: Kleene+ Exhaustive — A -> B+ -> C
+-- EventFlux: CANNOT EXPRESS
+-- Per ROADMAP.md: "A+, A* unbounded quantifiers (rejected by design)"
+--
+-- This file documents the capability gap. EventFlux only supports
+-- bounded quantifiers like B{3} or B{2,5}, not unbounded B+ or B*.
+--
+-- Varpulis uses ZDD (Zero-suppressed Decision Diagrams) to enumerate
+-- ALL possible Kleene combinations in polynomial memory, while naive
+-- approaches require 2^n memory for n matching events.
+--
+-- CANNOT RUN IN EVENTFLUX
