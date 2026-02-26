@@ -372,7 +372,7 @@ mod tests {
                     StreamOp::Aggregate(vec![AggItem {
                         alias: "x".to_string(),
                         expr: Expr::Call {
-                            func: Box::new(Expr::Ident("median".to_string())),
+                            func: Box::new(Expr::Ident("unknown_agg_fn".to_string())),
                             args: vec![Arg::Positional(Expr::Ident("val".to_string()))],
                         },
                     }]),
@@ -380,7 +380,10 @@ mod tests {
                 op_spans: vec![],
             },
         ]);
-        let result = validate("stream S = X.window(1m).aggregate(x: median(val))", &prog);
+        let result = validate(
+            "stream S = X.window(1m).aggregate(x: unknown_agg_fn(val))",
+            &prog,
+        );
         assert!(result.has_errors());
         assert!(result.diagnostics.iter().any(|d| d.code == Some("E070")));
     }

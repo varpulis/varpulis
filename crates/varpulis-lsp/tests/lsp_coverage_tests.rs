@@ -184,7 +184,7 @@ fn hover_stream_ops_join() {
     let text = "join other";
     let h = hover_text(text, 0, 0).unwrap();
     assert!(h.contains("join"));
-    assert!(h.contains("Joins two streams"));
+    assert!(h.contains("Inner join"));
 }
 
 #[test]
