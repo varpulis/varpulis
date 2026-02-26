@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1772106412764,
+  "lastUpdate": 1772114051158,
   "repoUrl": "https://github.com/varpulis/varpulis",
   "entries": {
     "Varpulis Performance": [
@@ -7526,6 +7526,148 @@ window.BENCHMARK_DATA = {
           {
             "name": "scalability/50k_kleene_plus",
             "value": 19138000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyril.poderà@gmail.com",
+            "name": "cpoder"
+          },
+          "committer": {
+            "email": "cyril.poderà@gmail.com",
+            "name": "cpoder"
+          },
+          "distinct": true,
+          "id": "20adff6948a4ef380cae09445b6f17d25a13a28d",
+          "message": "feat: harden output event relay, add GHCR CI, Kafka SASL, and install script\n\nRelay hardening:\n- Add RelayMetrics (forwarded/dropped/errors counters) to websocket.rs\n- Retry with exponential backoff (3 attempts) for worker→coordinator relay\n- Health-check gating after 5 consecutive failures (probe /health every 5s)\n- Increase worker broadcast buffer 100→10,000 (100ms slack at 100K events/s)\n- Add x-api-key auth to coordinator internal output-events endpoint\n- Expose relay metrics on worker /health endpoint\n- Replace all silent `let _ = broadcast.send()` with logged metrics\n\nCI & deployment:\n- Add .github/workflows/docker.yml — builds and pushes to GHCR on every main push\n- Add deploy/demo/docker-compose.prod.yml — compose override using GHCR images\n- Add deploy/demo/install.sh — curl-pipe-bash installer for any server\n- Add deploy/demo/deploy-pull.sh — quick pull-based update script\n- Add deploy/demo/README.md — comprehensive quick-start guide\n\nKafka SASL/SCRAM support:\n- Add VPL underscore→rdkafka dot-notation mappings for security_protocol,\n  sasl_mechanism, sasl_username, sasl_password, ssl_ca_location, etc.\n\nTesting & docs:\n- 5 new relay unit tests (all pass)\n- Local cluster E2E test script (tests/local-cluster/run.sh)\n- Architecture doc (docs/architecture/output-event-relay.md)\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>",
+          "timestamp": "2026-02-26T14:48:03+01:00",
+          "tree_id": "d288566c9623248348e18266202d203e5fbfaf14",
+          "url": "https://github.com/varpulis/varpulis/commit/20adff6948a4ef380cae09445b6f17d25a13a28d"
+        },
+        "date": 1772114050249,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "simple_sequence/sase/100",
+            "value": 33663,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "simple_sequence/sase/1000",
+            "value": 331210,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "simple_sequence/sase/10000",
+            "value": 3327600,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_plus/sase/100",
+            "value": 40679,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_plus/sase/1000",
+            "value": 445590,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_plus/sase/5000",
+            "value": 2245800,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "with_predicates/sase/100",
+            "value": 32542,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "with_predicates/sase/1000",
+            "value": 391700,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "with_predicates/sase/5000",
+            "value": 1961800,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "long_sequence/seq_5_events_5k",
+            "value": 2119300,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "long_sequence/seq_10_events_10k",
+            "value": 3918600,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "complex_patterns/negation_5k",
+            "value": 1500000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "complex_patterns/or_pattern_5k",
+            "value": 1773000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "complex_patterns/nested_kleene_5k",
+            "value": 119660000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "multi_predicates/chained_predicates_5k",
+            "value": 1750300,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "throughput/seq_3/10000",
+            "value": 3416700,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "throughput/seq_3/50000",
+            "value": 16880000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "throughput/seq_3/100000",
+            "value": 33587000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "scalability/100k_simple_seq",
+            "value": 32938000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "scalability/50k_kleene_plus",
+            "value": 19962000,
             "range": "± 0",
             "unit": "ns/iter"
           }
