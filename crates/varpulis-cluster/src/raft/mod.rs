@@ -87,6 +87,8 @@ pub enum ClusterCommand {
         id: String,
         events_processed: u64,
         pipelines_running: usize,
+        #[serde(default)]
+        pipeline_metrics: Vec<crate::worker::PipelineMetrics>,
     },
 
     // -- Pipeline groups --
