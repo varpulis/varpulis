@@ -160,6 +160,7 @@ module.exports = grammar({
             'file',
             'websocket',
             'grpc',
+            'postgres_cdc',
             $.identifier,
         ),
 
@@ -206,6 +207,9 @@ module.exports = grammar({
 
         stream_source: $ => choice(
             $.merge_source,
+            $.left_join_source,
+            $.right_join_source,
+            $.full_join_source,
             $.join_source,
             $.sequence_source,
             $.all_source,
@@ -222,6 +226,27 @@ module.exports = grammar({
 
         join_source: $ => seq(
             'join',
+            '(',
+            commaSep1($.join_clause),
+            ')',
+        ),
+
+        left_join_source: $ => seq(
+            'left_join',
+            '(',
+            commaSep1($.join_clause),
+            ')',
+        ),
+
+        right_join_source: $ => seq(
+            'right_join',
+            '(',
+            commaSep1($.join_clause),
+            ')',
+        ),
+
+        full_join_source: $ => seq(
+            'full_join',
             '(',
             commaSep1($.join_clause),
             ')',

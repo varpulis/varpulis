@@ -154,7 +154,7 @@
                 },
                 {
                     "name": "keyword.declaration.stream.varpulis",
-                    "match": "\\b(stream|event|connector|from|as)\\b"
+                    "match": "\\b(stream|event|connector|from|as|left_join|right_join|full_join)\\b"
                 },
                 {
                     "name": "keyword.declaration.varpulis",
@@ -196,7 +196,7 @@
             "patterns": [
                 {
                     "name": "support.function.builtin.aggregation.varpulis",
-                    "match": "\\b(sum|avg|count|min|max|stddev|variance|first|last|collect|distinct)\\b"
+                    "match": "\\b(sum|avg|count|min|max|stddev|variance|first|last|collect|distinct|median|percentile|p50|p95|p99)\\b"
                 },
                 {
                     "name": "support.function.builtin.window.varpulis",
@@ -216,7 +216,7 @@
             "patterns": [
                 {
                     "name": "keyword.operator.stream.varpulis",
-                    "match": "\\.(where|select|aggregate|partition_by|order_by|limit|distinct|emit|to|tap|pattern|window|within|concurrent|process|on_error|collect|merge|join|on|forecast|trend_aggregate|enrich)\\b"
+                    "match": "\\.(where|select|aggregate|partition_by|order_by|limit|distinct|emit|to|tap|pattern|window|within|concurrent|process|on_error|collect|merge|join|left_join|right_join|full_join|on|forecast|trend_aggregate|enrich)\\b"
                 }
             ]
         },

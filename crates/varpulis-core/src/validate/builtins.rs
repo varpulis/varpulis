@@ -65,13 +65,20 @@ pub static AGGREGATE_FUNCTIONS: &[&str] = &[
     "last",
     "count_distinct",
     "ema",
+    "median",
+    "percentile",
+    "p50",
+    "p95",
+    "p99",
 ];
 
 /// Aggregate functions that require at least one field argument.
-pub static AGGREGATE_REQUIRES_FIELD: &[&str] = &["sum", "avg", "min", "max", "stddev"];
+pub static AGGREGATE_REQUIRES_FIELD: &[&str] = &[
+    "sum", "avg", "min", "max", "stddev", "median", "p50", "p95", "p99",
+];
 
-/// Aggregate functions that require exactly two arguments (field + period).
-pub static AGGREGATE_REQUIRES_TWO_ARGS: &[&str] = &["ema"];
+/// Aggregate functions that require exactly two arguments (field + period/quantile).
+pub static AGGREGATE_REQUIRES_TWO_ARGS: &[&str] = &["ema", "percentile"];
 
 /// Valid parameter names for `.log()`.
 pub static LOG_PARAMS: &[&str] = &["level", "message", "data"];
@@ -126,6 +133,7 @@ pub static KNOWN_CONNECTOR_TYPES: &[&str] = &[
     "redis",
     "redis_stream",
     "pulsar",
+    "postgres_cdc",
 ];
 
 /// Check if a connector type is known.
@@ -399,6 +407,59 @@ pub fn connector_params_for_type(connector_type: &str) -> Option<&'static [Conne
         "console" => Some(CONSOLE_PARAMS),
         "pulsar" => Some(PULSAR_PARAMS),
         "redis_stream" => Some(REDIS_STREAM_PARAMS),
+        "postgres_cdc" => Some(POSTGRES_CDC_PARAMS),
         _ => None,
     }
 }
+
+static POSTGRES_CDC_PARAMS: &[ConnectorParamDef] = &[
+    ConnectorParamDef {
+        name: "host",
+        param_type: ParamType::Str,
+        required: true,
+        description: "PostgreSQL hostname",
+        context: ParamContext::Source,
+    },
+    ConnectorParamDef {
+        name: "port",
+        param_type: ParamType::Int,
+        required: false,
+        description: "PostgreSQL port (default 5432)",
+        context: ParamContext::Source,
+    },
+    ConnectorParamDef {
+        name: "dbname",
+        param_type: ParamType::Str,
+        required: true,
+        description: "Database name",
+        context: ParamContext::Source,
+    },
+    ConnectorParamDef {
+        name: "user",
+        param_type: ParamType::Str,
+        required: false,
+        description: "Database user (default \"postgres\")",
+        context: ParamContext::Source,
+    },
+    ConnectorParamDef {
+        name: "password",
+        param_type: ParamType::Str,
+        required: false,
+        description: "Database password",
+        context: ParamContext::Source,
+    },
+    ConnectorParamDef {
+        name: "slot_name",
+        param_type: ParamType::Str,
+        required: false,
+        description: "Logical replication slot name",
+        context: ParamContext::Source,
+    },
+    ConnectorParamDef {
+        name: "publication",
+        param_type: ParamType::Str,
+        required: false,
+        description: "PostgreSQL publication name",
+        context: ParamContext::Source,
+    },
+];
