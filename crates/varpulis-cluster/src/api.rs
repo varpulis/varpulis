@@ -958,6 +958,7 @@ async fn handle_heartbeat(
                     id: worker_id,
                     events_processed: body.events_processed,
                     pipelines_running: body.pipelines_running,
+                    pipeline_metrics: body.pipeline_metrics.clone(),
                 };
                 if coord.is_raft_leader() {
                     // Leader: write directly to Raft log

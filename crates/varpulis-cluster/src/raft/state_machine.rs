@@ -22,6 +22,10 @@ pub struct CoordinatorState {
     pub scaling_policy: Option<serde_json::Value>,
     #[serde(default)]
     pub models: HashMap<String, crate::model_registry::ModelRegistryEntry>,
+    /// Per-worker pipeline metrics from heartbeats (replicated for monitoring).
+    #[serde(default)]
+    pub worker_pipeline_metrics:
+        HashMap<String, Vec<crate::worker::PipelineMetrics>>,
 }
 
 /// Serializable worker entry (no `Instant` fields).
@@ -94,10 +98,16 @@ pub fn apply_command(state: &mut CoordinatorState, cmd: ClusterCommand) -> Clust
             id,
             events_processed,
             pipelines_running,
+            pipeline_metrics,
         } => {
             if let Some(w) = state.workers.get_mut(&id) {
                 w.events_processed = events_processed;
                 w.pipelines_running = pipelines_running;
+            }
+            if !pipeline_metrics.is_empty() {
+                state
+                    .worker_pipeline_metrics
+                    .insert(id, pipeline_metrics);
             }
             ClusterResponse::Ok
         }
@@ -289,6 +299,8 @@ mod tests {
 
     #[test]
     fn test_apply_worker_metrics_updated() {
+        use crate::worker::PipelineMetrics;
+
         let mut state = CoordinatorState::default();
         // Register a worker first
         let cmd = ClusterCommand::RegisterWorker {
@@ -305,25 +317,36 @@ mod tests {
         assert_eq!(state.workers["w1"].events_processed, 0);
         assert_eq!(state.workers["w1"].pipelines_running, 0);
 
-        // Update metrics via heartbeat replication
+        // Update metrics via heartbeat replication (with pipeline metrics)
         let cmd = ClusterCommand::WorkerMetricsUpdated {
             id: "w1".into(),
             events_processed: 5000,
             pipelines_running: 3,
+            pipeline_metrics: vec![PipelineMetrics {
+                pipeline_name: "test-pipeline".into(),
+                events_in: 5000,
+                events_out: 100,
+                connector_health: vec![],
+            }],
         };
         apply_command(&mut state, cmd);
         assert_eq!(state.workers["w1"].events_processed, 5000);
         assert_eq!(state.workers["w1"].pipelines_running, 3);
+        assert_eq!(state.worker_pipeline_metrics["w1"].len(), 1);
+        assert_eq!(state.worker_pipeline_metrics["w1"][0].events_in, 5000);
 
         // Update again — values should change
         let cmd = ClusterCommand::WorkerMetricsUpdated {
             id: "w1".into(),
             events_processed: 12000,
             pipelines_running: 2,
+            pipeline_metrics: vec![],
         };
         apply_command(&mut state, cmd);
         assert_eq!(state.workers["w1"].events_processed, 12000);
         assert_eq!(state.workers["w1"].pipelines_running, 2);
+        // Empty pipeline_metrics should not overwrite existing data
+        assert_eq!(state.worker_pipeline_metrics["w1"].len(), 1);
     }
 
     #[test]
@@ -334,6 +357,7 @@ mod tests {
             id: "unknown".into(),
             events_processed: 100,
             pipelines_running: 1,
+            pipeline_metrics: vec![],
         };
         let resp = apply_command(&mut state, cmd);
         assert!(matches!(resp, ClusterResponse::Ok));
