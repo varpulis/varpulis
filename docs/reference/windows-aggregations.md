@@ -289,18 +289,51 @@ Compute the sample standard deviation using Welford's online algorithm.
 
 ---
 
-### `percentile(field, p)`
+### `percentile(field, q)`
 
-Compute the p-th percentile (0-100).
+Compute the q-th percentile using linear interpolation. The quantile `q` is specified as a float between 0.0 and 1.0.
 
-**Signature:** `percentile(field: string, p: int) -> float | null`
+**Signature:** `percentile(field: string, q: float) -> float | null`
 
 **Example:**
 ```vpl
 .aggregate(
-    p50_latency: percentile(latency, 50),
-    p95_latency: percentile(latency, 95),
-    p99_latency: percentile(latency, 99)
+    p50_latency: percentile(latency, 0.5),
+    p95_latency: percentile(latency, 0.95),
+    p99_latency: percentile(latency, 0.99),
+    p999_latency: percentile(latency, 0.999)
+)
+```
+
+**Algorithm:** Sort-based with linear interpolation. Collects all f64 values, sorts, then interpolates at the quantile position.
+
+---
+
+### `median(field)`
+
+Shorthand for the 50th percentile.
+
+**Signature:** `median(field: string) -> float | null`
+
+**Example:**
+```vpl
+.aggregate(median_price: median(price))
+```
+
+---
+
+### `p50(field)` / `p95(field)` / `p99(field)`
+
+Convenience aliases for common percentiles.
+
+**Signature:** `p50(field) -> float | null` (equivalent to `percentile(field, 0.5)`)
+
+**Example:**
+```vpl
+.aggregate(
+    p50_latency: p50(latency),
+    p95_latency: p95(latency),
+    p99_latency: p99(latency)
 )
 ```
 

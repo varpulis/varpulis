@@ -22,6 +22,11 @@ These functions work within `.aggregate()` blocks on windowed streams.
 | `stddev(expr)` | Standard deviation | `stddev(values)` | Implemented |
 | `count_distinct(expr)` | Count of distinct values | `count_distinct(user_id)` | Implemented |
 | `ema(expr, period)` | Exponential moving average | `ema(price, 12)` | Implemented |
+| `median(expr)` | Median (50th percentile) | `median(latency)` | Implemented |
+| `percentile(expr, q)` | Percentile (0.0–1.0) | `percentile(latency, 0.99)` | Implemented |
+| `p50(expr)` | 50th percentile | `p50(latency)` | Implemented |
+| `p95(expr)` | 95th percentile | `p95(latency)` | Implemented |
+| `p99(expr)` | 99th percentile | `p99(latency)` | Implemented |
 
 ### Aggregation Example
 
@@ -56,12 +61,16 @@ Windows are specified as stream operators, not functions.
 
 | Function | Description | Example | Status |
 |----------|-------------|---------|--------|
-| `join(stream1, stream2, ...)` | Join multiple streams | `join(EMA12, EMA26)` | Implemented |
+| `join(stream1, stream2, ...)` | Inner join streams | `join(EMA12, EMA26)` | Implemented |
+| `left_join(stream1, stream2, ...)` | Left outer join | `left_join(Orders, Payments)` | Implemented |
+| `right_join(stream1, stream2, ...)` | Right outer join | `right_join(Orders, Payments)` | Implemented |
+| `full_join(stream1, stream2, ...)` | Full outer join | `full_join(Orders, Payments)` | Implemented |
 | `.on(condition)` | Join condition | `.on(A.symbol == B.symbol)` | Implemented |
 
 ### Join Example
 
 ```varpulis
+# Inner join (default)
 stream MACD = join(EMA12, EMA26)
     .on(EMA12.symbol == EMA26.symbol)
     .window(1m)
@@ -70,6 +79,12 @@ stream MACD = join(EMA12, EMA26)
         macd_line: EMA12.ema_12 - EMA26.ema_26
     )
     .emit(event_type: "MACD")
+
+# Left outer join — emits even when payments are missing
+stream Enriched = left_join(
+    stream orders = OrderStream.on(order_id),
+    stream payments = PaymentStream.on(order_id)
+)
 ```
 
 ---
@@ -82,8 +97,6 @@ The following functions are planned for future versions but are **not currently 
 | Function | Description |
 |----------|-------------|
 | `variance(expr)` | Variance |
-| `median(expr)` | Median value |
-| `percentile(expr, p)` | Percentile (e.g., p99) |
 | `collect()` | Collect all values into list |
 
 ### Planned Window Functions

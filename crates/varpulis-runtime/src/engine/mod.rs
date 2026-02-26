@@ -1108,13 +1108,16 @@ impl Engine {
             let join_sources: Vec<String> = clauses.iter().map(|c| c.source.clone()).collect();
             let join_keys = self.extract_join_keys(clauses, ops);
             let window_duration = self.extract_window_duration(ops);
+            let join_type = clauses.first().map(|c| c.join_type).unwrap_or_default();
 
             debug!(
-                "Creating JoinBuffer for stream {} with sources {:?}, keys {:?}, window {:?}",
-                name, join_sources, join_keys, window_duration
+                "Creating JoinBuffer for stream {} ({:?}) with sources {:?}, keys {:?}, window {:?}",
+                name, join_type, join_sources, join_keys, window_duration
             );
 
-            Some(JoinBuffer::new(join_sources, join_keys, window_duration))
+            Some(
+                JoinBuffer::new(join_sources, join_keys, window_duration).with_join_type(join_type),
+            )
         } else {
             None
         };

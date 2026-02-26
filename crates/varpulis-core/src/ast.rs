@@ -234,12 +234,28 @@ pub struct InlineStreamDecl {
     pub filter: Option<Expr>,
 }
 
+/// Join type for stream correlation
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum JoinType {
+    /// Inner join (default) — emit only when all sources match
+    #[default]
+    Inner,
+    /// Left join — emit when left source has an event, fill nulls for missing right
+    Left,
+    /// Right join — emit when right source has an event, fill nulls for missing left
+    Right,
+    /// Full outer join — emit for either side, fill nulls for missing sources
+    Full,
+}
+
 /// Join clause
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JoinClause {
     pub name: String,
     pub source: String,
     pub on: Option<Expr>,
+    #[serde(default)]
+    pub join_type: JoinType,
 }
 
 /// Stream operation (method call on stream)

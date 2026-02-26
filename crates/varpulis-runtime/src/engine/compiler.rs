@@ -4,7 +4,8 @@
 //! runtime structures (aggregators, SASE+ patterns, sequence filters).
 
 use crate::aggregation::{
-    AggBinOp, Avg, Count, CountDistinct, Ema, ExprAggregate, First, Last, Max, Min, StdDev, Sum,
+    AggBinOp, Avg, Count, CountDistinct, Ema, ExprAggregate, First, Last, Max, Median, Min,
+    Percentile, StdDev, Sum, P50, P95, P99,
 };
 use crate::sase::{CompareOp, Predicate, SasePattern};
 use std::time::Duration;
@@ -49,14 +50,19 @@ pub fn compile_agg_expr(
                 _ => None,
             });
 
-            // Extract period for EMA
-            let period = args
+            // Extract second argument as int (period for EMA) or float (quantile for percentile)
+            let second_int = args
                 .get(1)
                 .and_then(|a| match a {
                     Arg::Positional(Expr::Int(n)) => Some(*n as usize),
                     _ => None,
                 })
                 .unwrap_or(12);
+
+            let second_float = args.get(1).and_then(|a| match a {
+                Arg::Positional(Expr::Float(f)) => Some(*f),
+                _ => None,
+            });
 
             let agg_func: Box<dyn crate::aggregation::AggregateFunc> = match func_name.as_str() {
                 "count" => Box::new(Count),
@@ -67,8 +73,13 @@ pub fn compile_agg_expr(
                 "last" => Box::new(Last),
                 "first" => Box::new(First),
                 "stddev" => Box::new(StdDev),
-                "ema" => Box::new(Ema::new(period)),
+                "ema" => Box::new(Ema::new(second_int)),
                 "count_distinct" => Box::new(CountDistinct),
+                "median" => Box::new(Median),
+                "p50" => Box::new(P50),
+                "p95" => Box::new(P95),
+                "p99" => Box::new(P99),
+                "percentile" => Box::new(Percentile::new(second_float.unwrap_or(0.5))),
                 _ => {
                     warn!("Unknown aggregation function: {}", func_name);
                     return None;

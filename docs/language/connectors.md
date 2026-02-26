@@ -11,6 +11,7 @@ This document describes how to connect Varpulis to external systems for both eve
 | **HTTP**  | No | Yes | Output only (webhooks) | default |
 | **Kafka** | Yes | Yes | Available | `kafka` |
 | **Console** | No | Yes | Debug | default |
+| **PostgreSQL CDC** | Yes | No | Available | `cdc` |
 
 ### Feature Flags
 
@@ -29,7 +30,7 @@ docker build -f deploy/docker/Dockerfile \
   -t varpulis/varpulis:latest .
 ```
 
-Available features: `mqtt`, `kafka`, `nats`, `postgres`, `mysql`, `sqlite`, `database`, `redis`, `persistence`, `all-connectors`.
+Available features: `mqtt`, `kafka`, `nats`, `postgres`, `mysql`, `sqlite`, `database`, `redis`, `persistence`, `cdc`, `encryption`, `all-connectors`.
 
 ---
 
@@ -483,6 +484,87 @@ curl -X POST http://localhost:9000/api/v1/pipelines/<id>/events \
   -H "X-API-Key: your-key" \
   -H "Content-Type: application/json" \
   -d '{"event_type": "Login", "fields": {"user_id": "user123"}}'
+```
+
+---
+
+## PostgreSQL CDC Connector
+
+PostgreSQL Change Data Capture (CDC) streams database changes (INSERT, UPDATE, DELETE) as Varpulis events using PostgreSQL logical replication. Requires the `cdc` feature flag.
+
+### Prerequisites
+
+1. PostgreSQL 10+ with `wal_level = logical` in `postgresql.conf`
+2. A publication for the tables you want to track:
+
+```sql
+-- Create a publication for specific tables
+CREATE PUBLICATION my_pub FOR TABLE orders, payments;
+
+-- Or for all tables
+CREATE PUBLICATION my_pub FOR ALL TABLES;
+```
+
+### Declaration
+
+```varpulis
+connector pg = postgres_cdc(
+    host: "localhost",
+    dbname: "myapp",
+    publication: "my_pub",
+    slot_name: "varpulis_slot"
+)
+```
+
+### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `host` | string | Yes | - | PostgreSQL hostname |
+| `port` | int | No | 5432 | PostgreSQL port |
+| `dbname` | string | Yes | - | Database name |
+| `user` | string | No | `postgres` | Database user (must have replication privilege) |
+| `password` | string | No | - | Database password |
+| `slot_name` | string | No | `varpulis_slot` | Logical replication slot name |
+| `publication` | string | No | `varpulis_pub` | Publication name |
+| `tables` | array | No | all | Specific tables to track |
+
+### Event Format
+
+Each database change becomes a Varpulis event:
+
+- **Event type**: `{table}.{INSERT|UPDATE|DELETE}` (e.g., `orders.INSERT`)
+- **`_table` field**: Table name
+- **`_op` field**: Operation (`INSERT`, `UPDATE`, `DELETE`)
+- **Column fields**: Each column value as an event field
+- **UPDATE events**: Include both old and new column values
+
+### Usage
+
+```varpulis
+connector pg = postgres_cdc(
+    host: "localhost",
+    dbname: "myapp",
+    publication: "my_pub"
+)
+
+# Stream all order inserts
+stream NewOrders = pg.from(orders)
+    .where(_op == "INSERT")
+    .select(order_id, amount, customer_id)
+
+# Detect rapid price changes
+stream PriceChanges = pg.from(products)
+    .where(_op == "UPDATE")
+    .select(product_id, old_price, new_price)
+    .where(abs(new_price - old_price) / old_price > 0.1)
+    .emit(alert: "Large price change", product_id: product_id)
+```
+
+### Building with CDC
+
+```bash
+cargo build --release --features cdc
 ```
 
 ---

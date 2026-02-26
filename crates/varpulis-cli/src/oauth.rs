@@ -1,7 +1,7 @@
-//! GitHub OAuth authentication module for Varpulis Cloud.
+//! OAuth/OIDC authentication module for Varpulis Cloud.
 //!
 //! Provides OAuth 2.0 flow with GitHub as the identity provider,
-//! JWT session management, and warp route filters.
+//! optional generic OIDC support, JWT session management, and warp route filters.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -10,6 +10,52 @@ use tokio::sync::RwLock;
 use warp::Filter;
 
 use crate::audit::{AuditAction, AuditEntry, SharedAuditLogger};
+
+// ---------------------------------------------------------------------------
+// Auth Provider trait
+// ---------------------------------------------------------------------------
+
+/// Standardized user info returned by any auth provider.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserInfo {
+    /// Unique provider-side user identifier
+    pub provider_id: String,
+    /// Display name
+    pub name: String,
+    /// Login/username (provider-specific)
+    pub login: String,
+    /// Email address (may be empty)
+    pub email: String,
+    /// Avatar URL (may be empty)
+    pub avatar: String,
+}
+
+/// Error type for auth provider operations.
+#[derive(Debug)]
+pub struct AuthError(pub String);
+
+impl std::fmt::Display for AuthError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Auth error: {}", self.0)
+    }
+}
+
+/// Trait for pluggable authentication providers.
+///
+/// Implementations handle the OAuth/OIDC flow for a specific identity provider.
+/// The engine uses this to abstract over GitHub OAuth, generic OIDC (Okta, Auth0,
+/// Azure AD, Keycloak, etc.), and future providers.
+#[async_trait::async_trait]
+pub trait AuthProvider: Send + Sync {
+    /// Provider name (e.g., "github", "oidc")
+    fn name(&self) -> &str;
+
+    /// Generate the authorization URL to redirect the user to.
+    fn authorize_url(&self, redirect_uri: &str) -> String;
+
+    /// Exchange an authorization code for user info.
+    async fn exchange_code(&self, code: &str, redirect_uri: &str) -> Result<UserInfo, AuthError>;
+}
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -67,6 +113,88 @@ pub struct Claims {
     pub user_id: String, // DB user UUID (empty when saas not enabled)
     #[serde(default)]
     pub org_id: String, // DB organization UUID (empty when saas not enabled)
+}
+
+// ---------------------------------------------------------------------------
+// GitHub OAuth Provider
+// ---------------------------------------------------------------------------
+
+/// GitHub OAuth 2.0 auth provider.
+pub struct GitHubOAuth {
+    pub client_id: String,
+    pub client_secret: String,
+    http_client: reqwest::Client,
+}
+
+impl GitHubOAuth {
+    pub fn new(client_id: String, client_secret: String) -> Self {
+        Self {
+            client_id,
+            client_secret,
+            http_client: reqwest::Client::new(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl AuthProvider for GitHubOAuth {
+    fn name(&self) -> &str {
+        "github"
+    }
+
+    fn authorize_url(&self, redirect_uri: &str) -> String {
+        format!(
+            "https://github.com/login/oauth/authorize?client_id={}&redirect_uri={}&scope=read:user%20user:email",
+            self.client_id,
+            urlencoding::encode(redirect_uri),
+        )
+    }
+
+    async fn exchange_code(&self, code: &str, redirect_uri: &str) -> Result<UserInfo, AuthError> {
+        // Exchange authorization code for access token
+        let token_resp = self
+            .http_client
+            .post("https://github.com/login/oauth/access_token")
+            .header("Accept", "application/json")
+            .form(&[
+                ("client_id", self.client_id.as_str()),
+                ("client_secret", self.client_secret.as_str()),
+                ("code", code),
+                ("redirect_uri", redirect_uri),
+            ])
+            .send()
+            .await
+            .map_err(|e| AuthError(format!("GitHub token exchange failed: {}", e)))?;
+
+        let token_data: GitHubTokenResponse = token_resp
+            .json()
+            .await
+            .map_err(|e| AuthError(format!("Failed to parse GitHub token response: {}", e)))?;
+
+        // Fetch user profile
+        let user: GitHubUser = self
+            .http_client
+            .get("https://api.github.com/user")
+            .header(
+                "Authorization",
+                format!("Bearer {}", token_data.access_token),
+            )
+            .header("User-Agent", "Varpulis")
+            .send()
+            .await
+            .map_err(|e| AuthError(format!("GitHub user fetch failed: {}", e)))?
+            .json()
+            .await
+            .map_err(|e| AuthError(format!("Failed to parse GitHub user: {}", e)))?;
+
+        Ok(UserInfo {
+            provider_id: user.id.to_string(),
+            name: user.name.clone().unwrap_or_else(|| user.login.clone()),
+            login: user.login,
+            email: user.email.unwrap_or_default(),
+            avatar: user.avatar_url,
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -206,7 +206,7 @@ fn compile_agg_expr_binary_div() {
 
 #[test]
 fn compile_agg_expr_unknown_function_returns_none() {
-    let expr = call_expr("median", vec![ident("x")]);
+    let expr = call_expr("unknown_agg_func", vec![ident("x")]);
     assert!(compile_agg_expr(&expr).is_none());
 }
 

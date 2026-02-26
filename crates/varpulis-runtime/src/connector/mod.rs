@@ -60,6 +60,7 @@ mod kafka;
 mod kinesis;
 mod mqtt;
 mod nats;
+mod postgres_cdc;
 mod pulsar;
 mod redis;
 mod registry;
@@ -122,6 +123,9 @@ pub use database::{DatabaseConfig, DatabaseSink, DatabaseSource};
 // Redis connectors
 pub use redis::{RedisConfig, RedisSink, RedisSource};
 pub use redis::{RedisStreamConfig, RedisStreamSink, RedisStreamSinkStub, RedisStreamSource};
+
+// PostgreSQL CDC connector
+pub use postgres_cdc::{CdcOperation, PostgresCdcConfig, PostgresCdcSource};
 
 // Pulsar connectors
 pub use pulsar::{PulsarConfig, PulsarSink, PulsarSource};

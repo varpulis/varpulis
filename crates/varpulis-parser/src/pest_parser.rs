@@ -681,12 +681,21 @@ fn parse_stream_source(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamS
             }
             Ok(StreamSource::Merge(streams))
         }
-        Rule::join_source => {
+        Rule::join_source
+        | Rule::left_join_source
+        | Rule::right_join_source
+        | Rule::full_join_source => {
+            let join_type = match inner.as_rule() {
+                Rule::left_join_source => varpulis_core::ast::JoinType::Left,
+                Rule::right_join_source => varpulis_core::ast::JoinType::Right,
+                Rule::full_join_source => varpulis_core::ast::JoinType::Full,
+                _ => varpulis_core::ast::JoinType::Inner,
+            };
             let mut clauses = Vec::new();
             for p in inner.into_inner() {
                 if p.as_rule() == Rule::join_clause_list {
                     for jc in p.into_inner() {
-                        clauses.push(parse_join_clause(jc)?);
+                        clauses.push(parse_join_clause(jc, join_type)?);
                     }
                 }
             }
@@ -748,7 +757,10 @@ fn parse_inline_stream(pair: pest::iterators::Pair<Rule>) -> ParseResult<InlineS
     })
 }
 
-fn parse_join_clause(pair: pest::iterators::Pair<Rule>) -> ParseResult<JoinClause> {
+fn parse_join_clause(
+    pair: pest::iterators::Pair<Rule>,
+    join_type: varpulis_core::ast::JoinType,
+) -> ParseResult<JoinClause> {
     let mut inner = pair.into_inner();
 
     let first = inner.expect_next("join clause identifier")?;
@@ -758,6 +770,7 @@ fn parse_join_clause(pair: pest::iterators::Pair<Rule>) -> ParseResult<JoinClaus
             name: name.clone(),
             source: name,
             on: None,
+            join_type,
         });
     }
 
@@ -765,7 +778,12 @@ fn parse_join_clause(pair: pest::iterators::Pair<Rule>) -> ParseResult<JoinClaus
     let source = inner.expect_next("join source")?.as_str().to_string();
     let on = inner.next().map(|p| parse_expr(p)).transpose()?;
 
-    Ok(JoinClause { name, source, on })
+    Ok(JoinClause {
+        name,
+        source,
+        on,
+        join_type,
+    })
 }
 
 fn parse_sequence_decl(pair: pest::iterators::Pair<Rule>) -> ParseResult<SequenceDecl> {

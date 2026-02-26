@@ -235,6 +235,8 @@ pub struct Tenant {
     pub pipelines: HashMap<String, Pipeline>,
     /// When the tenant was created
     pub created_at: Instant,
+    /// Optional WebSocket broadcast for output event relay
+    pub(crate) ws_broadcast: Option<Arc<tokio::sync::broadcast::Sender<String>>>,
 }
 
 impl Tenant {
@@ -247,6 +249,7 @@ impl Tenant {
             usage: TenantUsage::default(),
             pipelines: HashMap::new(),
             created_at: Instant::now(),
+            ws_broadcast: None,
         }
     }
 
@@ -416,12 +419,42 @@ impl Tenant {
 
             let id = Uuid::new_v4().to_string();
             let (log_tx, _) = tokio::sync::broadcast::channel(256);
+
+            // Spawn output event drain task: connector-sourced pipelines produce
+            // output events via the engine's output_tx, but nobody calls
+            // process_event() to drain them. This task continuously drains
+            // output_rx → log_broadcast so WebSocket/SSE subscribers receive them.
+            let log_tx_for_drain = log_tx.clone();
+            let ws_tx_for_drain = self.ws_broadcast.clone();
+            tokio::spawn(async move {
+                let mut output_rx = output_rx;
+                while let Some(ev) = output_rx.recv().await {
+                    let _ = log_tx_for_drain.send(ev.clone());
+                    // Forward to WebSocket relay channel if configured
+                    if let Some(ref ws_tx) = ws_tx_for_drain {
+                        let msg = serde_json::json!({
+                            "type": "output_event",
+                            "event_type": ev.event_type.to_string(),
+                            "data": ev.data,
+                            "timestamp": ev.timestamp.to_rfc3339(),
+                        });
+                        if let Ok(json) = serde_json::to_string(&msg) {
+                            let _ = ws_tx.send(json);
+                        }
+                    }
+                }
+            });
+
+            // The real output_rx was moved into the drain task above;
+            // create a placeholder for the Pipeline struct.
+            let (_drain_tx, placeholder_rx) = mpsc::channel(1);
+
             let pipeline = Pipeline {
                 id: id.clone(),
                 name,
                 source,
                 engine,
-                output_rx,
+                output_rx: placeholder_rx,
                 log_broadcast: log_tx,
                 created_at: Instant::now(),
                 status: PipelineStatus::Running,
@@ -616,6 +649,9 @@ pub struct TenantManager {
     max_queue_depth: u64,
     /// Atomic counter of events currently being processed across all pipelines
     pending_events: Arc<AtomicU64>,
+    /// Optional global output event broadcast for WebSocket relay.
+    /// When set, all pipeline output events are forwarded here as JSON strings.
+    ws_broadcast: Option<Arc<tokio::sync::broadcast::Sender<String>>>,
 }
 
 impl TenantManager {
@@ -627,6 +663,7 @@ impl TenantManager {
             prometheus_metrics: None,
             max_queue_depth: 0,
             pending_events: Arc::new(AtomicU64::new(0)),
+            ws_broadcast: None,
         }
     }
 
@@ -639,6 +676,7 @@ impl TenantManager {
             prometheus_metrics: None,
             max_queue_depth: 0,
             pending_events: Arc::new(AtomicU64::new(0)),
+            ws_broadcast: None,
         }
     }
 
@@ -650,6 +688,16 @@ impl TenantManager {
     /// Set maximum queue depth for backpressure (0 = unlimited)
     pub fn set_max_queue_depth(&mut self, max_depth: u64) {
         self.max_queue_depth = max_depth;
+    }
+
+    /// Set a WebSocket broadcast channel for relaying output events.
+    /// When set, all connector-sourced pipeline output events are forwarded
+    /// to this channel as serialized JSON strings.
+    pub fn set_ws_broadcast(&mut self, tx: Arc<tokio::sync::broadcast::Sender<String>>) {
+        for tenant in self.tenants.values_mut() {
+            tenant.ws_broadcast = Some(Arc::clone(&tx));
+        }
+        self.ws_broadcast = Some(tx);
     }
 
     /// Get the maximum queue depth setting
@@ -704,7 +752,8 @@ impl TenantManager {
         }
 
         let id = TenantId::generate();
-        let tenant = Tenant::new(id.clone(), name, api_key.clone(), quota);
+        let mut tenant = Tenant::new(id.clone(), name, api_key.clone(), quota);
+        tenant.ws_broadcast = self.ws_broadcast.clone();
         self.tenants.insert(id.clone(), tenant);
         self.api_key_index.insert(api_key, id.clone());
         self.persist_if_needed(&id);
@@ -734,10 +783,15 @@ impl TenantManager {
         source: String,
     ) -> Result<String, TenantError> {
         let metrics = self.prometheus_metrics.clone();
+        let ws_broadcast = self.ws_broadcast.clone();
         let tenant = self
             .tenants
             .get_mut(tenant_id)
             .ok_or_else(|| TenantError::NotFound(tenant_id.to_string()))?;
+        // Ensure tenant has the WS broadcast channel
+        if tenant.ws_broadcast.is_none() {
+            tenant.ws_broadcast = ws_broadcast;
+        }
         tenant
             .deploy_pipeline_with_metrics(name, source, metrics)
             .await
