@@ -93,12 +93,37 @@ fn get_documentation(word: &str) -> Option<String> {
             ```vpl\n\
             connector <Name> = <type>(<params>)\n\
             ```\n\n\
-            **Connector types:** `mqtt`, `kafka`, `nats`, `http`, `websocket`, `file`\n\n\
+            **Connector types:** `mqtt`, `kafka`, `nats`, `http`, `websocket`, `file`, `postgres_cdc`\n\n\
             **Examples:**\n\
             ```vpl\n\
             connector Broker = mqtt(host: \"localhost\", port: 1883)\n\
             connector Stream = kafka(brokers: [\"kafka:9092\"])\n\
             connector Msg = nats(url: \"nats://localhost:4222\")\n\
+            connector PG = postgres_cdc(host: \"localhost\", dbname: \"mydb\")\n\
+            ```"
+        )),
+
+        "postgres_cdc" => Some(format!(
+            "## postgres_cdc\n\n\
+            PostgreSQL CDC (Change Data Capture) connector.\n\
+            Streams database changes via logical replication.\n\n\
+            **Parameters:**\n\
+            - `host` — PostgreSQL hostname (required)\n\
+            - `dbname` — Database name (required)\n\
+            - `port` — Port (default 5432)\n\
+            - `user` — Database user (default \"postgres\")\n\
+            - `password` — Database password\n\
+            - `slot_name` — Replication slot (default \"varpulis_slot\")\n\
+            - `publication` — Publication name (default \"varpulis_pub\")\n\n\
+            **Event format:** `{{table}}.{{INSERT|UPDATE|DELETE}}`\n\n\
+            **Example:**\n\
+            ```vpl\n\
+            connector pg = postgres_cdc(\n\
+                host: \"localhost\", dbname: \"myapp\",\n\
+                publication: \"my_pub\"\n\
+            )\n\
+            stream Changes = pg.from(orders)\n\
+                .where(_op == \"INSERT\")\n\
             ```"
         )),
 
@@ -394,19 +419,58 @@ fn get_documentation(word: &str) -> Option<String> {
         )),
 
         "join" => Some(format!(
-            "## .join()\n\n\
-            Joins two streams based on a condition.\n\n\
+            "## join()\n\n\
+            Inner join — emit only when all sources match.\n\n\
             **Syntax:**\n\
             ```vpl\n\
-            stream1.join(stream2).on(condition)\n\
+            stream Result = join(\n\
+                stream a = StreamA.on(key),\n\
+                stream b = StreamB.on(key)\n\
+            )\n\
             ```\n\n\
-            **Example:**\n\
+            **Variants:** `left_join`, `right_join`, `full_join`"
+        )),
+
+        "left_join" => Some(format!(
+            "## left_join()\n\n\
+            Left outer join — emit when the left source has an event,\n\
+            filling `null` for missing right-side fields.\n\n\
+            **Syntax:**\n\
             ```vpl\n\
-            temperatures\n\
-                .join(humidity)\n\
-                .on(t.sensor_id == h.sensor_id)\n\
-                .select({{ ... }})\n\
+            stream Enriched = left_join(\n\
+                stream orders = OrderStream.on(order_id),\n\
+                stream payments = PaymentStream.on(order_id)\n\
+            )\n\
+            ```\n\n\
+            Events from the left source always produce output, even\n\
+            without a matching right-side event."
+        )),
+
+        "right_join" => Some(format!(
+            "## right_join()\n\n\
+            Right outer join — emit when the right source has an event,\n\
+            filling `null` for missing left-side fields.\n\n\
+            **Syntax:**\n\
+            ```vpl\n\
+            stream Result = right_join(\n\
+                stream a = StreamA.on(key),\n\
+                stream b = StreamB.on(key)\n\
+            )\n\
             ```"
+        )),
+
+        "full_join" => Some(format!(
+            "## full_join()\n\n\
+            Full outer join — emit for either side, filling `null`\n\
+            for missing sources.\n\n\
+            **Syntax:**\n\
+            ```vpl\n\
+            stream Result = full_join(\n\
+                stream a = StreamA.on(key),\n\
+                stream b = StreamB.on(key)\n\
+            )\n\
+            ```\n\n\
+            Both sides produce output independently."
         )),
 
         // SASE+ Pattern operators
@@ -556,6 +620,54 @@ fn get_documentation(word: &str) -> Option<String> {
             **Example:**\n\
             ```vpl\n\
             .aggregate({{ all_values: collect(value) }})\n\
+            ```"
+        )),
+
+        "median" => Some(format!(
+            "## median(expr)\n\n\
+            Returns the median (50th percentile) of values in a window.\n\n\
+            **Example:**\n\
+            ```vpl\n\
+            .aggregate({{ med_price: median(price) }})\n\
+            ```"
+        )),
+
+        "percentile" => Some(format!(
+            "## percentile(expr, quantile)\n\n\
+            Returns the q-th percentile (0.0–1.0) using linear interpolation.\n\n\
+            **Example:**\n\
+            ```vpl\n\
+            .aggregate({{\n\
+                p99_latency: percentile(latency, 0.99),\n\
+                p999_latency: percentile(latency, 0.999)\n\
+            }})\n\
+            ```"
+        )),
+
+        "p50" => Some(format!(
+            "## p50(expr)\n\n\
+            50th percentile (alias for `percentile(expr, 0.5)`).\n\n\
+            **Example:**\n\
+            ```vpl\n\
+            .aggregate({{ p50_latency: p50(latency) }})\n\
+            ```"
+        )),
+
+        "p95" => Some(format!(
+            "## p95(expr)\n\n\
+            95th percentile (alias for `percentile(expr, 0.95)`).\n\n\
+            **Example:**\n\
+            ```vpl\n\
+            .aggregate({{ p95_latency: p95(latency) }})\n\
+            ```"
+        )),
+
+        "p99" => Some(format!(
+            "## p99(expr)\n\n\
+            99th percentile (alias for `percentile(expr, 0.99)`).\n\n\
+            **Example:**\n\
+            ```vpl\n\
+            .aggregate({{ p99_latency: p99(latency) }})\n\
             ```"
         )),
 

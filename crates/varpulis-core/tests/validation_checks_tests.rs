@@ -594,7 +594,7 @@ fn e070_unknown_aggregate_function() {
         r#"
         stream S = A
             .window(5)
-            .aggregate(x: percentile(value))
+            .aggregate(x: bogus_agg(value))
     "#,
     );
     assert!(has_error(&diags, "E070"), "Expected E070: {:?}", diags);
@@ -1427,7 +1427,7 @@ fn e071_aggregate_without_field_for_sum() {
 
 #[test]
 fn e070_aggregate_unknown_function() {
-    let diags = validate_vpl("stream S = A\n    .window(5)\n    .aggregate(m: median(x))");
+    let diags = validate_vpl("stream S = A\n    .window(5)\n    .aggregate(m: bogus_agg(x))");
     assert!(
         has_error(&diags, "E070"),
         "Expected E070 for unknown aggregate function: {:?}",

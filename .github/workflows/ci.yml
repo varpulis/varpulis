@@ -90,6 +90,9 @@ jobs:
           - pulsar
           - gpu
           - federation
+          - cdc
+          - encryption
+          - oidc
           - all-connectors
         include:
           - features: kafka

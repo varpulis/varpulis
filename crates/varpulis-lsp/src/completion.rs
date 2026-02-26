@@ -323,9 +323,30 @@ fn get_stream_operation_completions() -> Vec<CompletionItem> {
         completion_item(
             "join",
             CompletionItemKind::METHOD,
-            "Join with another stream",
+            "Inner join with another stream",
             "join($1).on($2)",
             Some(".join(other_stream).on(condition)"),
+        ),
+        completion_item(
+            "left_join",
+            CompletionItemKind::METHOD,
+            "Left outer join (emit even without right match)",
+            "left_join(stream ${1:name} = ${2:Source}.on(${3:key}), stream ${4:name2} = ${5:Source2}.on(${6:key}))",
+            Some("left_join(stream a = A.on(id), stream b = B.on(id))"),
+        ),
+        completion_item(
+            "right_join",
+            CompletionItemKind::METHOD,
+            "Right outer join (emit even without left match)",
+            "right_join(stream ${1:name} = ${2:Source}.on(${3:key}), stream ${4:name2} = ${5:Source2}.on(${6:key}))",
+            Some("right_join(stream a = A.on(id), stream b = B.on(id))"),
+        ),
+        completion_item(
+            "full_join",
+            CompletionItemKind::METHOD,
+            "Full outer join (emit for either side)",
+            "full_join(stream ${1:name} = ${2:Source}.on(${3:key}), stream ${4:name2} = ${5:Source2}.on(${6:key}))",
+            Some("full_join(stream a = A.on(id), stream b = B.on(id))"),
         ),
         completion_item(
             "distinct",
@@ -612,6 +633,41 @@ fn get_aggregation_completions() -> Vec<CompletionItem> {
             "Distinct values",
             "distinct(${1:field})",
             Some("distinct(field)"),
+        ),
+        completion_item(
+            "median",
+            CompletionItemKind::FUNCTION,
+            "Median (50th percentile)",
+            "median(${1:field})",
+            Some("median(field)"),
+        ),
+        completion_item(
+            "percentile",
+            CompletionItemKind::FUNCTION,
+            "Percentile (0.0–1.0 quantile)",
+            "percentile(${1:field}, ${2:0.99})",
+            Some("percentile(field, 0.99)"),
+        ),
+        completion_item(
+            "p50",
+            CompletionItemKind::FUNCTION,
+            "50th percentile",
+            "p50(${1:field})",
+            Some("p50(field)"),
+        ),
+        completion_item(
+            "p95",
+            CompletionItemKind::FUNCTION,
+            "95th percentile",
+            "p95(${1:field})",
+            Some("p95(field)"),
+        ),
+        completion_item(
+            "p99",
+            CompletionItemKind::FUNCTION,
+            "99th percentile",
+            "p99(${1:field})",
+            Some("p99(field)"),
         ),
     ]
 }
@@ -936,6 +992,13 @@ fn get_connector_type_completions() -> Vec<CompletionItem> {
             "File source/sink",
             "file(path: \"${1:data.jsonl}\")",
             Some("file(path: \"data.jsonl\")"),
+        ),
+        completion_item(
+            "postgres_cdc",
+            CompletionItemKind::CLASS,
+            "PostgreSQL CDC (change data capture via logical replication)",
+            "postgres_cdc(host: \"${1:localhost}\", dbname: \"${2:mydb}\", publication: \"${3:my_pub}\")",
+            Some("postgres_cdc(host: \"localhost\", dbname: \"mydb\", publication: \"my_pub\")"),
         ),
     ]
 }
