@@ -60,7 +60,7 @@ mod kafka;
 mod kinesis;
 mod mqtt;
 mod nats;
-mod postgres_cdc;
+pub mod postgres_cdc;
 mod pulsar;
 mod redis;
 mod registry;

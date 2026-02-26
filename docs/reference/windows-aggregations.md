@@ -535,6 +535,29 @@ stream BatchReport = Transaction
     .print("Processed batch: {batch_num} txns, ${total_value:.2} total")
 ```
 
+### Latency Percentiles
+
+```vpl
+stream ApiLatency = RequestEvent
+    .partition_by(endpoint)
+    .window(1m)
+    .aggregate(
+        endpoint: endpoint,
+        median: median(latency_ms),
+        p95: p95(latency_ms),
+        p99: p99(latency_ms),
+        p999: percentile(latency_ms, 0.999),
+        count: count()
+    )
+    .where(p99 > 500)
+    .emit(
+        alert: "high_latency",
+        endpoint: endpoint,
+        p99_ms: p99,
+        request_count: count
+    )
+```
+
 ### Multi-Level Aggregation
 
 ```vpl

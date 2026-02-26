@@ -98,6 +98,8 @@ stream BuildingMetrics = merge(
 
 ## Joins
 
+### Inner Join
+
 ```varpulis
 stream EnrichedOrders = join(
     stream Orders = OrderEvent,
@@ -113,6 +115,39 @@ stream EnrichedOrders = join(
     stock: Inventory.quantity
 )
 ```
+
+### Outer Joins
+
+```varpulis
+# LEFT JOIN — all left events, null-fill unmatched right fields
+stream WithPayments = left_join(
+    stream Orders = OrderEvent,
+    stream Payments = PaymentEvent
+        on Orders.order_id == Payments.order_id
+)
+.window(5m)
+.emit(order_id: Orders.order_id, paid: Payments.amount)
+
+# RIGHT JOIN — all right events, null-fill unmatched left fields
+stream AllPayments = right_join(
+    stream Orders = OrderEvent,
+    stream Payments = PaymentEvent
+        on Orders.order_id == Payments.order_id
+)
+.window(5m)
+.emit(order_id: Payments.order_id, order_amount: Orders.amount)
+
+# FULL JOIN — all events from both sides
+stream Reconciliation = full_join(
+    stream Orders = OrderEvent,
+    stream Payments = PaymentEvent
+        on Orders.order_id == Payments.order_id
+)
+.window(5m)
+.emit(order_id: Orders.order_id, payment_ref: Payments.order_id)
+```
+
+See the [Joins Reference](../reference/joins.md) for complete semantics and the [Outer Joins Tutorial](../tutorials/outer-joins-tutorial.md) for step-by-step examples.
 
 ## Contexts (Multi-Threaded Execution)
 
