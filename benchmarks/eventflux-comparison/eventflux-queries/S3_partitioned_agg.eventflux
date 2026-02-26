@@ -1,0 +1,12 @@
+-- S3: Partitioned Aggregation — group by symbol + windowed stats
+-- EventFlux equivalent of Varpulis: StockTick.partition_by(symbol).window(50).aggregate(...)
+-- NOTE: EventFlux PARTITION BY runtime support is listed as "needed" in ROADMAP.md
+--       Using group by as a workaround
+
+define stream StockStream (symbol string, price float, volume long);
+
+@info(name = 'S3_partitioned_aggregation')
+from StockStream#window:length(50)
+select symbol, avg(price) as avg_price, max(price) as max_price, sum(volume) as total_volume
+group by symbol
+insert into SymbolStatsStream;

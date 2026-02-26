@@ -1,0 +1,10 @@
+-- S4: Simple Sequence — A -> B
+-- EventFlux equivalent of Varpulis: A -> B pattern detection
+
+define stream AStream (id long, value long, user_id string);
+define stream BStream (id long, value long, user_id string);
+
+@info(name = 'S4_simple_sequence')
+from every a = AStream -> b = BStream
+select a.id as a_id, b.id as b_id
+insert into MatchedStream;

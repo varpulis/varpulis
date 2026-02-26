@@ -117,3 +117,7 @@ harness = false
 name = "pst_forecast_benchmark"
 harness = false
 
+[[bench]]
+name = "eventflux_comparison"
+harness = false
+

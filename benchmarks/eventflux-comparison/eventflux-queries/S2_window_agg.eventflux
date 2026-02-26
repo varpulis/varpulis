@@ -1,0 +1,9 @@
+-- S2: Tumbling Window Aggregation — count/sum/avg over 100-event windows
+-- EventFlux equivalent of Varpulis: StockTick.window(100).aggregate(...)
+
+define stream StockStream (symbol string, price float, volume long);
+
+@info(name = 'S2_window_aggregation')
+from StockStream#window:length(100)
+select count() as tick_count, avg(price) as avg_price, sum(volume) as total_volume
+insert into AggregatedStream;

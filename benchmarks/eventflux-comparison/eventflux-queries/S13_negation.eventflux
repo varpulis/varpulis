@@ -1,0 +1,9 @@
+-- S13: Negation — Login -> NOT(Error) -> Logout
+-- EventFlux: NOT IMPLEMENTED
+-- Per ROADMAP.md: "Absent patterns / NOT...FOR requires TimerWheel, deferred to M2 Phase 3"
+--
+-- Varpulis supports negation (NOT) patterns natively in the SASE+ engine,
+-- detecting sequences where a specific event type does NOT occur between
+-- two other events.
+--
+-- CANNOT RUN IN EVENTFLUX

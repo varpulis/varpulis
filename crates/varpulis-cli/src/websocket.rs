@@ -411,6 +411,114 @@ pub fn forward_output_events_to_websocket(
 }
 
 // =============================================================================
+// Coordinator WebSocket Handler (broadcast-only, no engine)
+// =============================================================================
+
+/// Handle a coordinator WebSocket connection (output events only, no engine).
+///
+/// The coordinator doesn't run pipelines — it only relays output events received
+/// from workers via the internal `/api/v1/internal/output-events` endpoint.
+pub async fn handle_coordinator_connection(
+    ws: WebSocket,
+    broadcast_tx: Arc<tokio::sync::broadcast::Sender<String>>,
+) {
+    let (ws_tx, mut ws_rx) = ws.split();
+    let ws_tx = Arc::new(tokio::sync::Mutex::new(ws_tx));
+    let mut broadcast_rx = broadcast_tx.subscribe();
+
+    // Forward broadcast messages to this WS client
+    let ws_tx_clone = ws_tx.clone();
+    let forward_task = tokio::spawn(async move {
+        while let Ok(msg) = broadcast_rx.recv().await {
+            let mut tx = ws_tx_clone.lock().await;
+            if tx.send(Message::text(msg)).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // Consume incoming messages (keep connection alive, ignore content)
+    while let Some(result) = ws_rx.next().await {
+        match result {
+            Ok(msg) if msg.is_close() => break,
+            Err(_) => break,
+            _ => {} // ignore pings/text from client
+        }
+    }
+
+    forward_task.abort();
+    tracing::info!("Coordinator WebSocket client disconnected");
+}
+
+// =============================================================================
+// Worker → Coordinator Output Event Forwarder
+// =============================================================================
+
+/// Spawn a task that forwards output events from the worker's broadcast channel
+/// to the coordinator's internal endpoint for relaying to WebSocket clients.
+///
+/// Events are batched (up to 50 events or 200ms, whichever comes first) and
+/// sent as a JSON array of pre-serialized event strings.
+pub fn forward_output_events_to_coordinator(
+    broadcast_tx: Arc<tokio::sync::broadcast::Sender<String>>,
+    coordinator_url: String,
+    api_key: String,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let client = reqwest::Client::new();
+        let url = format!(
+            "{}/api/v1/internal/output-events",
+            coordinator_url.trim_end_matches('/')
+        );
+        let mut rx = broadcast_tx.subscribe();
+        let mut batch: Vec<String> = Vec::with_capacity(50);
+
+        loop {
+            // Collect first event (blocking wait)
+            match rx.recv().await {
+                Ok(msg) => batch.push(msg),
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!("Output event forwarder lagged by {} messages", n);
+                    continue;
+                }
+            }
+
+            // Drain remaining available events up to batch limit
+            let deadline = tokio::time::sleep(std::time::Duration::from_millis(200));
+            tokio::pin!(deadline);
+
+            loop {
+                if batch.len() >= 50 {
+                    break;
+                }
+                tokio::select! {
+                    result = rx.recv() => {
+                        match result {
+                            Ok(msg) => batch.push(msg),
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        }
+                    }
+                    _ = &mut deadline => break,
+                }
+            }
+
+            // Send batch to coordinator
+            if !batch.is_empty() {
+                let _ = client
+                    .post(&url)
+                    .header("x-api-key", &api_key)
+                    .json(&batch)
+                    .send()
+                    .await;
+                batch.clear();
+            }
+        }
+    })
+}
+
+// =============================================================================
 // Utility Functions
 // =============================================================================
 
