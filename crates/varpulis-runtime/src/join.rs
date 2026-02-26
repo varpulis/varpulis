@@ -9,6 +9,8 @@ use rustc_hash::FxHashMap;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use tracing::{debug, trace};
+use varpulis_core::ast::JoinType;
+use varpulis_core::Value;
 
 /// Type alias for timestamped events stored by key value
 type KeyedEventBuffer = FxHashMap<String, Vec<(DateTime<Utc>, Event)>>;
@@ -35,6 +37,8 @@ pub struct JoinBuffer {
     last_gc: Option<DateTime<Utc>>,
     /// Minimum interval between GC runs (default: 100ms of window duration)
     gc_interval: Duration,
+    /// Join type (Inner, Left, Right, Full)
+    join_type: JoinType,
 }
 
 impl JoinBuffer {
@@ -67,7 +71,14 @@ impl JoinBuffer {
             expiry_queue: BinaryHeap::new(),
             last_gc: None,
             gc_interval,
+            join_type: JoinType::Inner,
         }
+    }
+
+    /// Set the join type (Inner, Left, Right, Full)
+    pub fn with_join_type(mut self, join_type: JoinType) -> Self {
+        self.join_type = join_type;
+        self
     }
 
     /// Set the maximum number of events to keep per source/key combination
@@ -146,20 +157,29 @@ impl JoinBuffer {
         }
 
         // Try to correlate events
-        self.try_correlate(&key_value, event.timestamp)
+        let source = source_name.to_string();
+        self.try_correlate(&key_value, event.timestamp, Some(&source))
     }
 
-    /// Try to find a matching event set for the given key
-    fn try_correlate(&mut self, key_value: &str, current_time: DateTime<Utc>) -> Option<Event> {
+    /// Try to find a matching event set for the given key.
+    ///
+    /// For inner joins: requires events from all sources.
+    /// For outer joins: emits with `Value::Null` for missing source fields.
+    fn try_correlate(
+        &mut self,
+        key_value: &str,
+        current_time: DateTime<Utc>,
+        triggering_source: Option<&str>,
+    ) -> Option<Event> {
         let cutoff = current_time - self.window_duration;
 
-        // Check if we have at least one valid event from each source
-        let mut source_events: Vec<(&str, &Event)> = Vec::new();
+        // Collect events per source (Some = found, None = missing)
+        let mut source_events: Vec<(&str, Option<&Event>)> = Vec::new();
+        let mut missing_count = 0;
 
         for source in &self.sources {
             if let Some(source_buffer) = self.buffers.get(source) {
                 if let Some(key_events) = source_buffer.get(key_value) {
-                    // Find the most recent event within the window
                     let valid_event = key_events
                         .iter()
                         .rev()
@@ -168,73 +188,117 @@ impl JoinBuffer {
 
                     match valid_event {
                         Some(event) => {
-                            source_events.push((source.as_str(), event));
+                            source_events.push((source.as_str(), Some(event)));
                         }
                         None => {
-                            // No valid event from this source, cannot correlate
                             trace!(
                                 "JoinBuffer: No valid event from '{}' for key '{}'",
                                 source,
                                 key_value
                             );
-                            return None;
+                            source_events.push((source.as_str(), None));
+                            missing_count += 1;
                         }
                     }
                 } else {
-                    // No events at all from this source for this key
                     trace!(
                         "JoinBuffer: No events from '{}' for key '{}'",
                         source,
                         key_value
                     );
-                    return None;
+                    source_events.push((source.as_str(), None));
+                    missing_count += 1;
                 }
+            } else {
+                source_events.push((source.as_str(), None));
+                missing_count += 1;
             }
         }
 
-        // We have events from all sources! Create a correlated event
-        debug!(
-            "JoinBuffer: Correlating {} events for key '{}'",
-            source_events.len(),
-            key_value
-        );
+        // For inner join: all sources must be present
+        if missing_count == 0 {
+            debug!(
+                "JoinBuffer: Correlating {} events for key '{}'",
+                source_events.len(),
+                key_value
+            );
+            return Some(self.create_correlated_event_outer(&source_events));
+        }
 
-        Some(self.create_correlated_event(&source_events))
+        // For inner join, any missing source means no emit
+        if self.join_type == JoinType::Inner {
+            return None;
+        }
+
+        // All sources missing — nothing to emit
+        if missing_count == self.sources.len() {
+            return None;
+        }
+
+        let triggering_source = triggering_source?;
+
+        // Determine if we should emit based on join type and which source triggered
+        let first_source = self.sources.first().map(|s| s.as_str()).unwrap_or("");
+        let is_left_trigger = triggering_source == first_source;
+
+        let should_emit = match self.join_type {
+            JoinType::Left => is_left_trigger,
+            JoinType::Right => !is_left_trigger,
+            JoinType::Full => true,
+            JoinType::Inner => false, // already handled above
+        };
+
+        if should_emit {
+            debug!(
+                "JoinBuffer: Outer join ({:?}) emitting for key '{}' from source '{}'",
+                self.join_type, key_value, triggering_source
+            );
+            Some(self.create_correlated_event_outer(&source_events))
+        } else {
+            None
+        }
     }
 
-    /// Create a correlated event from events from all sources
-    fn create_correlated_event(&self, source_events: &[(&str, &Event)]) -> Event {
+    /// Create a correlated event, filling `Value::Null` for missing sources (outer joins).
+    fn create_correlated_event_outer(&self, source_events: &[(&str, Option<&Event>)]) -> Event {
         let mut correlated = Event::new("JoinedEvent");
 
-        // Use the most recent timestamp
+        // Use the most recent timestamp from available events
         let max_ts = source_events
             .iter()
-            .map(|(_, e)| e.timestamp)
+            .filter_map(|(_, e)| e.map(|ev| ev.timestamp))
             .max()
             .unwrap_or_else(Utc::now);
         correlated.timestamp = max_ts;
 
         // Merge fields from all events, prefixed by source name
-        for (source, event) in source_events {
-            for (field, value) in &event.data {
-                // Add source name prefix (e.g., "Transactions.amount")
-                let prefixed_key = format!("{}.{}", source, field);
-                correlated.data.insert(prefixed_key.into(), value.clone());
+        for (source, maybe_event) in source_events {
+            match maybe_event {
+                Some(event) => {
+                    for (field, value) in &event.data {
+                        let prefixed_key = format!("{}.{}", source, field);
+                        correlated.data.insert(prefixed_key.into(), value.clone());
 
-                // Also add event type prefix if different from source name
-                // This handles the common case where .on()/.where()/.emit() use the
-                // event type name (e.g., "Transaction.amount") but the join source is
-                // a stream with a different name (e.g., "Transactions")
-                if *source != &*event.event_type {
-                    let et_prefixed_key = format!("{}.{}", event.event_type, field);
-                    correlated
-                        .data
-                        .insert(et_prefixed_key.into(), value.clone());
+                        if *source != &*event.event_type {
+                            let et_prefixed_key = format!("{}.{}", event.event_type, field);
+                            correlated
+                                .data
+                                .insert(et_prefixed_key.into(), value.clone());
+                        }
+
+                        if !correlated.data.contains_key(field) {
+                            correlated.data.insert(field.clone(), value.clone());
+                        }
+                    }
                 }
-
-                // Also add unprefixed for common fields (first source wins for conflicts)
-                if !correlated.data.contains_key(field) {
-                    correlated.data.insert(field.clone(), value.clone());
+                None => {
+                    // Outer join: source has no matching event — add null-prefixed marker
+                    // so downstream can detect missing sources via Source.field = null
+                    // The join key field gets a null value for the missing source
+                    if let Some(key_field) = self.join_keys.get(*source) {
+                        let prefixed_key = format!("{}.{}", source, key_field);
+                        correlated.data.insert(prefixed_key.into(), Value::Null);
+                    }
                 }
             }
         }
@@ -726,5 +790,150 @@ mod tests {
 
         let correlated = result.unwrap();
         assert_eq!(correlated.get("symbol"), Some(&Value::Str("BTC".into())));
+    }
+
+    // ==========================================================================
+    // Outer Join Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_left_join_emits_on_left_without_right() {
+        let sources = vec!["A".to_string(), "B".to_string()];
+        let mut join_keys = FxHashMap::default();
+        join_keys.insert("A".to_string(), "symbol".to_string());
+        join_keys.insert("B".to_string(), "symbol".to_string());
+
+        let mut buffer = JoinBuffer::new(sources, join_keys, Duration::minutes(1))
+            .with_join_type(JoinType::Left);
+
+        // Add event from left source A — should emit even without B
+        let event_a = create_event("A", "BTC", 100.0);
+        let result = buffer.add_event("A", event_a);
+        assert!(result.is_some(), "Left join should emit on left event");
+
+        let correlated = result.unwrap();
+        assert_eq!(correlated.get("A.value"), Some(&Value::Float(100.0)));
+        // B fields should be null
+        assert_eq!(correlated.get("B.symbol"), Some(&Value::Null));
+    }
+
+    #[test]
+    fn test_left_join_does_not_emit_on_right_alone() {
+        let sources = vec!["A".to_string(), "B".to_string()];
+        let mut join_keys = FxHashMap::default();
+        join_keys.insert("A".to_string(), "symbol".to_string());
+        join_keys.insert("B".to_string(), "symbol".to_string());
+
+        let mut buffer = JoinBuffer::new(sources, join_keys, Duration::minutes(1))
+            .with_join_type(JoinType::Left);
+
+        // Add event from right source B only — should NOT emit
+        let event_b = create_event("B", "BTC", 200.0);
+        let result = buffer.add_event("B", event_b);
+        assert!(
+            result.is_none(),
+            "Left join should not emit on right-only event"
+        );
+    }
+
+    #[test]
+    fn test_left_join_full_match_emits() {
+        let sources = vec!["A".to_string(), "B".to_string()];
+        let mut join_keys = FxHashMap::default();
+        join_keys.insert("A".to_string(), "symbol".to_string());
+        join_keys.insert("B".to_string(), "symbol".to_string());
+
+        let mut buffer = JoinBuffer::new(sources, join_keys, Duration::minutes(1))
+            .with_join_type(JoinType::Left);
+
+        buffer.add_event("A", create_event("A", "BTC", 100.0));
+        let result = buffer.add_event("B", create_event("B", "BTC", 200.0));
+        assert!(result.is_some(), "Left join should emit on full match");
+
+        let correlated = result.unwrap();
+        assert_eq!(correlated.get("A.value"), Some(&Value::Float(100.0)));
+        assert_eq!(correlated.get("B.value"), Some(&Value::Float(200.0)));
+    }
+
+    #[test]
+    fn test_right_join_emits_on_right_without_left() {
+        let sources = vec!["A".to_string(), "B".to_string()];
+        let mut join_keys = FxHashMap::default();
+        join_keys.insert("A".to_string(), "symbol".to_string());
+        join_keys.insert("B".to_string(), "symbol".to_string());
+
+        let mut buffer = JoinBuffer::new(sources, join_keys, Duration::minutes(1))
+            .with_join_type(JoinType::Right);
+
+        // Add event from right source B — should emit even without A
+        let event_b = create_event("B", "BTC", 200.0);
+        let result = buffer.add_event("B", event_b);
+        assert!(result.is_some(), "Right join should emit on right event");
+
+        let correlated = result.unwrap();
+        assert_eq!(correlated.get("B.value"), Some(&Value::Float(200.0)));
+        assert_eq!(correlated.get("A.symbol"), Some(&Value::Null));
+    }
+
+    #[test]
+    fn test_right_join_does_not_emit_on_left_alone() {
+        let sources = vec!["A".to_string(), "B".to_string()];
+        let mut join_keys = FxHashMap::default();
+        join_keys.insert("A".to_string(), "symbol".to_string());
+        join_keys.insert("B".to_string(), "symbol".to_string());
+
+        let mut buffer = JoinBuffer::new(sources, join_keys, Duration::minutes(1))
+            .with_join_type(JoinType::Right);
+
+        let event_a = create_event("A", "BTC", 100.0);
+        let result = buffer.add_event("A", event_a);
+        assert!(
+            result.is_none(),
+            "Right join should not emit on left-only event"
+        );
+    }
+
+    #[test]
+    fn test_full_join_emits_on_either_side() {
+        let sources = vec!["A".to_string(), "B".to_string()];
+        let mut join_keys = FxHashMap::default();
+        join_keys.insert("A".to_string(), "symbol".to_string());
+        join_keys.insert("B".to_string(), "symbol".to_string());
+
+        let mut buffer = JoinBuffer::new(sources, join_keys, Duration::minutes(1))
+            .with_join_type(JoinType::Full);
+
+        // Left source arrives — should emit
+        let result = buffer.add_event("A", create_event("A", "BTC", 100.0));
+        assert!(result.is_some(), "Full join should emit on left event");
+        let correlated = result.unwrap();
+        assert_eq!(correlated.get("A.value"), Some(&Value::Float(100.0)));
+        assert_eq!(correlated.get("B.symbol"), Some(&Value::Null));
+
+        // Right source arrives — should emit with both
+        let result = buffer.add_event("B", create_event("B", "BTC", 200.0));
+        assert!(result.is_some(), "Full join should emit on right event");
+        let correlated = result.unwrap();
+        assert_eq!(correlated.get("A.value"), Some(&Value::Float(100.0)));
+        assert_eq!(correlated.get("B.value"), Some(&Value::Float(200.0)));
+    }
+
+    #[test]
+    fn test_inner_join_unchanged_behavior() {
+        let sources = vec!["A".to_string(), "B".to_string()];
+        let mut join_keys = FxHashMap::default();
+        join_keys.insert("A".to_string(), "symbol".to_string());
+        join_keys.insert("B".to_string(), "symbol".to_string());
+
+        let mut buffer = JoinBuffer::new(sources, join_keys, Duration::minutes(1))
+            .with_join_type(JoinType::Inner);
+
+        // Left alone should NOT emit
+        let result = buffer.add_event("A", create_event("A", "BTC", 100.0));
+        assert!(result.is_none(), "Inner join should not emit with one side");
+
+        // Both sides should emit
+        let result = buffer.add_event("B", create_event("B", "BTC", 200.0));
+        assert!(result.is_some(), "Inner join should emit with both sides");
     }
 }

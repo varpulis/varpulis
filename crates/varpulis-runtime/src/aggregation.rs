@@ -17,6 +17,11 @@
 //! | [`Last`] | Last value in window | No |
 //! | [`CountDistinct`] | Count unique values | No |
 //! | [`Ema`] | Exponential moving average | No |
+//! | [`Percentile`] | Configurable percentile (0.0–1.0) | No |
+//! | [`Median`] | Median (p50) | No |
+//! | [`P50`] | 50th percentile | No |
+//! | [`P95`] | 95th percentile | No |
+//! | [`P99`] | 99th percentile | No |
 //!
 //! # Performance
 //!
@@ -722,6 +727,147 @@ impl AggregateFunc for Ema {
     }
 }
 
+/// Percentile aggregation (sort-based, exact)
+///
+/// Computes an exact percentile using sort + linear interpolation.
+/// Window sizes in CEP are bounded, so sort-based is correct and efficient.
+///
+/// # Examples
+/// - `Percentile::new(0.5)` = median
+/// - `Percentile::new(0.95)` = p95
+/// - `Percentile::new(0.99)` = p99
+pub struct Percentile {
+    pub quantile: f64,
+    label: String,
+}
+
+impl Percentile {
+    pub fn new(quantile: f64) -> Self {
+        let quantile = quantile.clamp(0.0, 1.0);
+        let label = format!("percentile({})", quantile);
+        Self { quantile, label }
+    }
+
+    /// Compute the percentile from a sorted slice using linear interpolation.
+    fn interpolate(sorted: &[f64], quantile: f64) -> f64 {
+        debug_assert!(!sorted.is_empty());
+        if sorted.len() == 1 {
+            return sorted[0];
+        }
+        let pos = quantile * (sorted.len() - 1) as f64;
+        let lower = pos.floor() as usize;
+        let upper = pos.ceil() as usize;
+        if lower == upper {
+            sorted[lower]
+        } else {
+            let frac = pos - lower as f64;
+            sorted[lower] * (1.0 - frac) + sorted[upper] * frac
+        }
+    }
+}
+
+impl AggregateFunc for Percentile {
+    fn name(&self) -> &str {
+        &self.label
+    }
+
+    fn apply(&self, events: &[Event], field: Option<&str>) -> Value {
+        let field = field.unwrap_or("value");
+        let mut values: Vec<f64> = events
+            .iter()
+            .filter_map(|e| e.get_float(field))
+            .filter(|v| !v.is_nan())
+            .collect();
+        if values.is_empty() {
+            return Value::Null;
+        }
+        values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        Value::Float(Self::interpolate(&values, self.quantile))
+    }
+
+    fn apply_refs(&self, events: &[&Event], field: Option<&str>) -> Value {
+        let field = field.unwrap_or("value");
+        let mut values: Vec<f64> = events
+            .iter()
+            .filter_map(|e| e.get_float(field))
+            .filter(|v| !v.is_nan())
+            .collect();
+        if values.is_empty() {
+            return Value::Null;
+        }
+        values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        Value::Float(Self::interpolate(&values, self.quantile))
+    }
+}
+
+/// Median aggregation (alias for Percentile(0.5))
+pub struct Median;
+
+impl AggregateFunc for Median {
+    fn name(&self) -> &str {
+        "median"
+    }
+
+    fn apply(&self, events: &[Event], field: Option<&str>) -> Value {
+        Percentile::new(0.5).apply(events, field)
+    }
+
+    fn apply_refs(&self, events: &[&Event], field: Option<&str>) -> Value {
+        Percentile::new(0.5).apply_refs(events, field)
+    }
+}
+
+/// P50 aggregation (alias for Percentile(0.5))
+pub struct P50;
+
+impl AggregateFunc for P50 {
+    fn name(&self) -> &str {
+        "p50"
+    }
+
+    fn apply(&self, events: &[Event], field: Option<&str>) -> Value {
+        Percentile::new(0.5).apply(events, field)
+    }
+
+    fn apply_refs(&self, events: &[&Event], field: Option<&str>) -> Value {
+        Percentile::new(0.5).apply_refs(events, field)
+    }
+}
+
+/// P95 aggregation (alias for Percentile(0.95))
+pub struct P95;
+
+impl AggregateFunc for P95 {
+    fn name(&self) -> &str {
+        "p95"
+    }
+
+    fn apply(&self, events: &[Event], field: Option<&str>) -> Value {
+        Percentile::new(0.95).apply(events, field)
+    }
+
+    fn apply_refs(&self, events: &[&Event], field: Option<&str>) -> Value {
+        Percentile::new(0.95).apply_refs(events, field)
+    }
+}
+
+/// P99 aggregation (alias for Percentile(0.99))
+pub struct P99;
+
+impl AggregateFunc for P99 {
+    fn name(&self) -> &str {
+        "p99"
+    }
+
+    fn apply(&self, events: &[Event], field: Option<&str>) -> Value {
+        Percentile::new(0.99).apply(events, field)
+    }
+
+    fn apply_refs(&self, events: &[&Event], field: Option<&str>) -> Value {
+        Percentile::new(0.99).apply_refs(events, field)
+    }
+}
+
 /// Aggregator that can apply multiple aggregations
 pub struct Aggregator {
     aggregations: Vec<(String, Box<dyn AggregateFunc>, Option<String>)>,
@@ -1319,5 +1465,162 @@ mod tests {
         assert_eq!(Avg.apply_columnar(&mut buffer, Some("value")), Value::Null);
         assert_eq!(Min.apply_columnar(&mut buffer, Some("value")), Value::Null);
         assert_eq!(Max.apply_columnar(&mut buffer, Some("value")), Value::Null);
+    }
+
+    // ==========================================================================
+    // Percentile Aggregation Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_percentile_median_odd() {
+        let events = vec![
+            Event::new("Test").with_field("value", 10.0),
+            Event::new("Test").with_field("value", 20.0),
+            Event::new("Test").with_field("value", 30.0),
+        ];
+        let result = Median.apply(&events, Some("value"));
+        assert_eq!(result, Value::Float(20.0));
+    }
+
+    #[test]
+    fn test_percentile_median_even() {
+        let events = vec![
+            Event::new("Test").with_field("value", 10.0),
+            Event::new("Test").with_field("value", 20.0),
+            Event::new("Test").with_field("value", 30.0),
+            Event::new("Test").with_field("value", 40.0),
+        ];
+        let result = Median.apply(&events, Some("value"));
+        assert_eq!(result, Value::Float(25.0)); // interpolation between 20 and 30
+    }
+
+    #[test]
+    fn test_percentile_p50_equals_median() {
+        let events = make_events();
+        let median_val = Median.apply(&events, Some("value"));
+        let p50_val = P50.apply(&events, Some("value"));
+        assert_eq!(median_val, p50_val);
+    }
+
+    #[test]
+    fn test_percentile_p95() {
+        // 20 events: 1.0, 2.0, ..., 20.0
+        let events: Vec<Event> = (1..=20)
+            .map(|i| Event::new("Test").with_field("value", i as f64))
+            .collect();
+        let result = P95.apply(&events, Some("value"));
+        if let Value::Float(v) = result {
+            // p95 of 1..20: position = 0.95 * 19 = 18.05, interpolate 19 and 20
+            assert!(v > 18.0 && v < 20.0, "p95 = {}, expected ~19.05", v);
+        } else {
+            panic!("Expected float");
+        }
+    }
+
+    #[test]
+    fn test_percentile_p99() {
+        // 100 events: 1.0, 2.0, ..., 100.0
+        let events: Vec<Event> = (1..=100)
+            .map(|i| Event::new("Test").with_field("value", i as f64))
+            .collect();
+        let result = P99.apply(&events, Some("value"));
+        if let Value::Float(v) = result {
+            // p99 of 1..100: position = 0.99 * 99 = 98.01
+            assert!(v > 98.0 && v < 100.0, "p99 = {}, expected ~99.01", v);
+        } else {
+            panic!("Expected float");
+        }
+    }
+
+    #[test]
+    fn test_percentile_custom_quantile() {
+        let events: Vec<Event> = (1..=100)
+            .map(|i| Event::new("Test").with_field("value", i as f64))
+            .collect();
+        let result = Percentile::new(0.75).apply(&events, Some("value"));
+        if let Value::Float(v) = result {
+            assert!(v > 74.0 && v < 76.0, "p75 = {}, expected ~75.25", v);
+        } else {
+            panic!("Expected float");
+        }
+    }
+
+    #[test]
+    fn test_percentile_empty() {
+        let events: Vec<Event> = vec![];
+        assert_eq!(Median.apply(&events, Some("value")), Value::Null);
+        assert_eq!(P50.apply(&events, Some("value")), Value::Null);
+        assert_eq!(P95.apply(&events, Some("value")), Value::Null);
+        assert_eq!(P99.apply(&events, Some("value")), Value::Null);
+        assert_eq!(
+            Percentile::new(0.5).apply(&events, Some("value")),
+            Value::Null
+        );
+    }
+
+    #[test]
+    fn test_percentile_single_value() {
+        let events = vec![Event::new("Test").with_field("value", 42.0)];
+        assert_eq!(Median.apply(&events, Some("value")), Value::Float(42.0));
+        assert_eq!(P99.apply(&events, Some("value")), Value::Float(42.0));
+    }
+
+    #[test]
+    fn test_percentile_nan_values_filtered() {
+        let events = vec![
+            Event::new("Test").with_field("value", f64::NAN),
+            Event::new("Test").with_field("value", 10.0),
+            Event::new("Test").with_field("value", 20.0),
+            Event::new("Test").with_field("value", f64::NAN),
+            Event::new("Test").with_field("value", 30.0),
+        ];
+        let result = Median.apply(&events, Some("value"));
+        assert_eq!(result, Value::Float(20.0));
+    }
+
+    #[test]
+    fn test_percentile_p0_and_p100() {
+        let events = make_events(); // 10, 20, 30
+        assert_eq!(
+            Percentile::new(0.0).apply(&events, Some("value")),
+            Value::Float(10.0)
+        );
+        assert_eq!(
+            Percentile::new(1.0).apply(&events, Some("value")),
+            Value::Float(30.0)
+        );
+    }
+
+    #[test]
+    fn test_percentile_clamps_quantile() {
+        let p = Percentile::new(1.5);
+        assert!((p.quantile - 1.0).abs() < f64::EPSILON);
+        let p = Percentile::new(-0.5);
+        assert!((p.quantile - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_percentile_apply_refs() {
+        let events = make_events();
+        let refs: Vec<&Event> = events.iter().collect();
+        let result = P95.apply_refs(&refs, Some("value"));
+        if let Value::Float(v) = result {
+            assert!(v > 20.0 && v <= 30.0);
+        } else {
+            panic!("Expected float");
+        }
+    }
+
+    #[test]
+    fn test_percentile_unsorted_input() {
+        let events = vec![
+            Event::new("Test").with_field("value", 30.0),
+            Event::new("Test").with_field("value", 10.0),
+            Event::new("Test").with_field("value", 50.0),
+            Event::new("Test").with_field("value", 20.0),
+            Event::new("Test").with_field("value", 40.0),
+        ];
+        let result = Median.apply(&events, Some("value"));
+        assert_eq!(result, Value::Float(30.0));
     }
 }

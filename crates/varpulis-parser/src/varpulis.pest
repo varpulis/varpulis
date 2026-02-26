@@ -80,6 +80,9 @@ stream_expr = { stream_source ~ stream_op* }
 stream_source = {
     from_connector_source
     | merge_source
+    | left_join_source
+    | right_join_source
+    | full_join_source
     | join_source
     | sequence_source
     | timer_source
@@ -93,6 +96,9 @@ from_connector_source = { identifier ~ "." ~ "from" ~ "(" ~ identifier ~ ("," ~ 
 
 merge_source = { "merge" ~ "(" ~ inline_stream_list ~ ")" }
 join_source = { "join" ~ "(" ~ join_clause_list ~ ")" }
+left_join_source = { "left_join" ~ "(" ~ join_clause_list ~ ")" }
+right_join_source = { "right_join" ~ "(" ~ join_clause_list ~ ")" }
+full_join_source = { "full_join" ~ "(" ~ join_clause_list ~ ")" }
 sequence_source = { "sequence" ~ "(" ~ sequence_decl ~ ")" }
 timer_source = { "timer" ~ "(" ~ timer_args ~ ")" }
 timer_args = { expr ~ ("," ~ named_arg)? }
