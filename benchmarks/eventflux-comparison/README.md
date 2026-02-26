@@ -278,7 +278,9 @@ rustup show
 
 # Clone EventFlux
 git clone https://github.com/eventflux-io/engine.git /tmp/eventflux
-cd /tmp/eventflux && cargo build --release
+cd /tmp/eventflux
+git submodule update --init --recursive
+PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig cargo build --release
 
 # Build Varpulis
 cd /home/cpo/cep && cargo build --release
@@ -289,52 +291,49 @@ cd /home/cpo/cep && cargo build --release
 ```bash
 # Criterion micro-benchmarks (automated, statistical)
 cargo bench -p varpulis-runtime --bench eventflux_comparison
-
-# CLI simulation benchmarks (end-to-end throughput)
-./benchmarks/eventflux-comparison/run_benchmark.sh varpulis
 ```
 
 ### Run EventFlux Benchmarks
 
 ```bash
-# EventFlux equivalent workloads
-./benchmarks/eventflux-comparison/run_benchmark.sh eventflux
+# Build and run the EventFlux benchmark harness
+cd /home/cpo/cep/benchmarks/eventflux-comparison/eventflux-bench
+PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig cargo build --release
+
+# Run with 100K and 500K events (default)
+RUST_LOG=error ./target/release/eventflux-bench
+
+# Run with custom event counts
+RUST_LOG=error ./target/release/eventflux-bench 100000,500000,1000000
 ```
 
-### Compare Results
+### Benchmark Results
 
-```bash
-# Generate comparison report
-./benchmarks/eventflux-comparison/compare.sh
-```
+See [BENCHMARK_RESULTS.md](BENCHMARK_RESULTS.md) for measured results from both engines.
 
 ---
 
-## Expected Outcomes
+## Measured Results Summary (2026-02-26)
 
-Based on Varpulis v0.3.0 baselines and EventFlux's published information:
+### Tier 1 (Common Ground) — 500K events
 
-### Tier 1 (Common Ground) — Predictions
+| Scenario | Varpulis | EventFlux | Winner |
+|----------|----------|-----------|--------|
+| S1 Filter | 645K evt/s | 840K evt/s | Comparable |
+| S2 Window Agg | 1.46M evt/s | 299K evt/s | **Varpulis 4.9x** |
+| S3 Partition Agg | 970K evt/s | 517K evt/s | **Varpulis 1.9x** |
+| S4 Sequence | 1.94M evt/s | 434K evt/s | **Varpulis 4.5x** |
+| S5 Seq + predicate | 2.15M evt/s | 389K evt/s | **Varpulis 5.5x** |
+| S8 Filter + Agg | 740K evt/s | 306K evt/s | **Varpulis 2.4x** |
 
-| Scenario | Varpulis (expected) | EventFlux (expected) | Notes |
-|----------|--------------------|--------------------|-------|
-| S1 Filter 100K | ~234K evt/s | ~200-500K evt/s | Both fast for simple filters |
-| S2 Window Agg | ~200K evt/s | Unknown | No published aggregation benchmarks |
-| S3 Partition Agg | ~180K evt/s | Likely slower | PARTITION BY not fully implemented |
-| S4 Sequence | ~256K evt/s | Unknown | EventFlux has sequences |
-| S7 Multi-stream | ~200K evt/s | Unknown | Architecture-dependent |
-
-### Tier 2 (Varpulis Only) — Capability Demonstration
+### Tier 2 (Varpulis Only)
 
 | Scenario | Varpulis | EventFlux |
 |----------|---------|-----------|
-| S11 Kleene+ (ZDD) | 97K matches/s | **Cannot express** |
-| S12 Kleene* | ~90K matches/s | **Cannot express** |
-| S13 Negation | ~220K evt/s | **Not implemented** |
+| S11 Kleene+ (ZDD) | 1.5M evt/s | **Cannot express** |
+| S13 Negation | 2.2M evt/s | **Not implemented** |
 | S14 PST Forecast | 51ns/prediction | **No capability** |
-| S15 Hamlet 10q | 2.1M evt/s | N/A (no optimization) |
-| S15 Hamlet 50q | 950K evt/s | N/A |
-| S16 Nested Kleene | ~100K evt/s | **Cannot express** |
+| S15 Hamlet 50q | 950K evt/s | **No capability** |
 
 ---
 
@@ -362,4 +361,4 @@ This benchmark measures **real CEP workload throughput** to provide an honest co
 
 ---
 
-*Last updated: 2026-02-25*
+*Last updated: 2026-02-26*
