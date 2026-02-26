@@ -1,2 +1,0 @@
-cargo:rerun-if-changed=proto/transport.proto
-cargo:rerun-if-changed=proto
