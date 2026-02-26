@@ -947,12 +947,48 @@ async fn handle_heartbeat(
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
     let mut coord = coordinator.write().await;
-    match coord.heartbeat(&WorkerId(worker_id), &body) {
-        Ok(()) => Ok(warp::reply::with_status(
-            warp::reply::json(&HeartbeatResponse { acknowledged: true }),
-            StatusCode::OK,
-        )
-        .into_response()),
+    match coord.heartbeat(&WorkerId(worker_id.clone()), &body) {
+        Ok(()) => {
+            // Replicate heartbeat metrics through Raft so all coordinators
+            // (including the leader that serves /api/v1/cluster/workers) see
+            // up-to-date events_processed and pipelines_running.
+            #[cfg(feature = "raft")]
+            {
+                let cmd = crate::raft::ClusterCommand::WorkerMetricsUpdated {
+                    id: worker_id,
+                    events_processed: body.events_processed,
+                    pipelines_running: body.pipelines_running,
+                };
+                if coord.is_raft_leader() {
+                    // Leader: write directly to Raft log
+                    if let Some(ref handle) = coord.raft_handle {
+                        if let Err(e) = handle.raft.client_write(cmd).await {
+                            tracing::debug!("Failed to replicate heartbeat metrics to Raft: {e}");
+                        }
+                    }
+                } else if let Some(leader_addr) = coord.raft_leader_addr() {
+                    // Follower: forward to leader's /raft/write endpoint
+                    let client = coord.http_client.clone();
+                    let admin_key =
+                        coord.raft_handle.as_ref().and_then(|h| h.admin_key.clone());
+                    // Don't hold the lock during HTTP I/O
+                    drop(coord);
+                    let url = format!("{}/raft/write", leader_addr);
+                    let mut req = client.post(&url).json(&cmd);
+                    if let Some(key) = admin_key {
+                        req = req.header("x-api-key", key);
+                    }
+                    if let Err(e) = req.send().await {
+                        tracing::debug!("Failed to forward heartbeat metrics to Raft leader: {e}");
+                    }
+                }
+            }
+            Ok(warp::reply::with_status(
+                warp::reply::json(&HeartbeatResponse { acknowledged: true }),
+                StatusCode::OK,
+            )
+            .into_response())
+        }
         Err(e) => Ok(error_response(StatusCode::NOT_FOUND, &e.to_string())),
     }
 }

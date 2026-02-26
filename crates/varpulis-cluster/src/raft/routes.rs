@@ -78,11 +78,23 @@ pub fn raft_routes(
         .and(warp::path("change-membership"))
         .and(warp::path::end())
         .and(warp::post())
-        .and(with_optional_raft_auth(admin_key))
+        .and(with_optional_raft_auth(admin_key.clone()))
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json())
         .and(with_raft(raft.clone()))
         .and_then(handle_change_membership);
+
+    // Internal write endpoint: accepts a ClusterCommand and applies via client_write.
+    // Used by follower coordinators to forward heartbeat metrics to the leader.
+    let write = raft_prefix
+        .and(warp::path("write"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(with_optional_raft_auth(admin_key))
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
+        .and(warp::body::json())
+        .and(with_raft(raft.clone()))
+        .and_then(handle_write);
 
     // Metrics stays unauthenticated (read-only, useful for monitoring)
     let metrics = raft_prefix
@@ -97,6 +109,7 @@ pub fn raft_routes(
         .or(init)
         .or(add_learner)
         .or(change_membership)
+        .or(write)
         .or(metrics)
 }
 
@@ -261,6 +274,25 @@ async fn handle_change_membership(
         )),
         Err(e) => Ok(warp::reply::json(
             &serde_json::json!({"status": "error", "message": e.to_string()}),
+        )),
+    }
+}
+
+/// Internal write endpoint: accept a [`ClusterCommand`] and apply it through Raft.
+/// Used by follower coordinators to forward heartbeat metrics to the leader.
+async fn handle_write(
+    _auth: (),
+    cmd: super::ClusterCommand,
+    raft: SharedRaft,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    match raft.client_write(cmd).await {
+        Ok(_) => Ok(warp::reply::with_status(
+            warp::reply::json(&serde_json::json!({"status": "ok"})),
+            warp::http::StatusCode::OK,
+        )),
+        Err(e) => Ok(warp::reply::with_status(
+            warp::reply::json(&serde_json::json!({"error": e.to_string()})),
+            warp::http::StatusCode::SERVICE_UNAVAILABLE,
         )),
     }
 }

@@ -90,6 +90,18 @@ pub fn apply_command(state: &mut CoordinatorState, cmd: ClusterCommand) -> Clust
             ClusterResponse::Ok
         }
 
+        ClusterCommand::WorkerMetricsUpdated {
+            id,
+            events_processed,
+            pipelines_running,
+        } => {
+            if let Some(w) = state.workers.get_mut(&id) {
+                w.events_processed = events_processed;
+                w.pipelines_running = pipelines_running;
+            }
+            ClusterResponse::Ok
+        }
+
         ClusterCommand::GroupDeployed { name, group } => {
             state.pipeline_groups.insert(name, group);
             ClusterResponse::Ok
@@ -273,6 +285,58 @@ mod tests {
             ClusterCommand::GroupRemoved { name: "g1".into() },
         );
         assert!(state.pipeline_groups.is_empty());
+    }
+
+    #[test]
+    fn test_apply_worker_metrics_updated() {
+        let mut state = CoordinatorState::default();
+        // Register a worker first
+        let cmd = ClusterCommand::RegisterWorker {
+            id: "w1".into(),
+            address: "http://localhost:9000".into(),
+            api_key: "key".into(),
+            capacity: crate::worker::WorkerCapacity {
+                cpu_cores: 4,
+                pipelines_running: 0,
+                max_pipelines: 100,
+            },
+        };
+        apply_command(&mut state, cmd);
+        assert_eq!(state.workers["w1"].events_processed, 0);
+        assert_eq!(state.workers["w1"].pipelines_running, 0);
+
+        // Update metrics via heartbeat replication
+        let cmd = ClusterCommand::WorkerMetricsUpdated {
+            id: "w1".into(),
+            events_processed: 5000,
+            pipelines_running: 3,
+        };
+        apply_command(&mut state, cmd);
+        assert_eq!(state.workers["w1"].events_processed, 5000);
+        assert_eq!(state.workers["w1"].pipelines_running, 3);
+
+        // Update again — values should change
+        let cmd = ClusterCommand::WorkerMetricsUpdated {
+            id: "w1".into(),
+            events_processed: 12000,
+            pipelines_running: 2,
+        };
+        apply_command(&mut state, cmd);
+        assert_eq!(state.workers["w1"].events_processed, 12000);
+        assert_eq!(state.workers["w1"].pipelines_running, 2);
+    }
+
+    #[test]
+    fn test_apply_worker_metrics_updated_unknown_worker() {
+        let mut state = CoordinatorState::default();
+        // Updating metrics for a non-existent worker should not panic
+        let cmd = ClusterCommand::WorkerMetricsUpdated {
+            id: "unknown".into(),
+            events_processed: 100,
+            pipelines_running: 1,
+        };
+        let resp = apply_command(&mut state, cmd);
+        assert!(matches!(resp, ClusterResponse::Ok));
     }
 
     #[test]

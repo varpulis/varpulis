@@ -282,8 +282,18 @@ async fn collect_worker_metrics(
 ) -> (usize, Vec<PipelineMetrics>) {
     if let Some(ref tm) = tenant_manager {
         let mgr = tm.read().await;
+        let tenant_count = mgr.tenant_count();
         let metrics = mgr.collect_pipeline_metrics().await;
         let count = metrics.len();
+
+        if count > 0 || tenant_count > 0 {
+            tracing::debug!(
+                tenant_count,
+                pipeline_count = count,
+                total_events = metrics.iter().map(|(_, e, _)| *e).sum::<u64>(),
+                "Heartbeat: collected worker metrics"
+            );
+        }
 
         let health_data = mgr.collect_connector_health();
 
@@ -337,13 +347,20 @@ async fn rest_heartbeat_loop(
     tenant_manager: &Option<varpulis_runtime::SharedTenantManager>,
     api_key: &str,
 ) {
-    use tracing::{error, warn};
+    use tracing::{debug, error, warn};
 
     loop {
         tokio::time::sleep(interval).await;
 
         let (pipelines_running, pipeline_metrics) = collect_worker_metrics(tenant_manager).await;
         let hb = build_heartbeat(pipelines_running, pipeline_metrics);
+
+        debug!(
+            pipelines_running = hb.pipelines_running,
+            events_processed = hb.events_processed,
+            pipeline_metrics_count = hb.pipeline_metrics.len(),
+            "Sending heartbeat"
+        );
 
         match client
             .post(heartbeat_url)
@@ -788,5 +805,114 @@ mod tests {
             placement.place(&pipeline, &workers),
             Some(WorkerId("w2".into()))
         );
+    }
+
+    #[tokio::test]
+    async fn test_collect_worker_metrics_with_shared_tenant_manager() {
+        // Simulate the exact heartbeat flow: SharedTenantManager → collect_worker_metrics
+        let tm = varpulis_runtime::shared_tenant_manager();
+
+        // Deploy a pipeline
+        {
+            let mut mgr = tm.write().await;
+            let id = mgr
+                .create_tenant(
+                    "default".into(),
+                    "test-key".into(),
+                    varpulis_runtime::TenantQuota::enterprise(),
+                )
+                .unwrap();
+            mgr.deploy_pipeline_on_tenant(
+                &id,
+                "test-pipeline".into(),
+                "stream A = SensorReading .where(temperature > 100)".into(),
+            )
+            .await
+            .unwrap();
+        }
+
+        // Collect metrics before events — should find 1 pipeline with 0 events
+        let tenant_manager = Some(tm.clone());
+        let (count, metrics) = collect_worker_metrics(&tenant_manager).await;
+        assert_eq!(count, 1, "Should find 1 pipeline");
+        assert_eq!(metrics[0].pipeline_name, "test-pipeline");
+        assert_eq!(metrics[0].events_in, 0);
+
+        // Process events
+        {
+            let mut mgr = tm.write().await;
+            let tenant_id = mgr.get_tenant_by_api_key("test-key").unwrap().clone();
+            let pid = {
+                let tenant = mgr.get_tenant(&tenant_id).unwrap();
+                tenant.pipelines.keys().next().unwrap().clone()
+            };
+            for _ in 0..10 {
+                let event =
+                    varpulis_runtime::Event::new("SensorReading").with_field("temperature", 150.0);
+                mgr.process_event_with_backpressure(&tenant_id, &pid, event)
+                    .await
+                    .unwrap();
+            }
+        }
+
+        // Collect metrics after events — should show 10 events
+        let (count, metrics) = collect_worker_metrics(&tenant_manager).await;
+        assert_eq!(count, 1);
+        assert_eq!(
+            metrics[0].events_in, 10,
+            "Heartbeat should report 10 events processed"
+        );
+
+        // Test build_heartbeat
+        let hb = build_heartbeat(count, metrics);
+        assert_eq!(hb.pipelines_running, 1);
+        assert_eq!(hb.events_processed, 10);
+        assert_eq!(hb.pipeline_metrics.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_collect_worker_metrics_none_tenant_manager() {
+        let (count, metrics) = collect_worker_metrics(&None).await;
+        assert_eq!(count, 0);
+        assert!(metrics.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_heartbeat_reflects_pipeline_deployment() {
+        // Simulate: heartbeat starts BEFORE pipeline deployed, then after
+        let tm = varpulis_runtime::shared_tenant_manager();
+        {
+            let mut mgr = tm.write().await;
+            mgr.create_tenant(
+                "default".into(),
+                "key".into(),
+                varpulis_runtime::TenantQuota::enterprise(),
+            )
+            .unwrap();
+        }
+
+        let tenant_manager = Some(tm.clone());
+
+        // Before deployment: 0 pipelines
+        let (count, _) = collect_worker_metrics(&tenant_manager).await;
+        assert_eq!(count, 0, "No pipelines before deployment");
+
+        // Deploy pipeline
+        {
+            let mut mgr = tm.write().await;
+            let tid = mgr.get_tenant_by_api_key("key").unwrap().clone();
+            mgr.deploy_pipeline_on_tenant(
+                &tid,
+                "my-pipeline".into(),
+                "stream A = SensorReading .where(x > 1)".into(),
+            )
+            .await
+            .unwrap();
+        }
+
+        // After deployment: 1 pipeline
+        let (count, metrics) = collect_worker_metrics(&tenant_manager).await;
+        assert_eq!(count, 1, "Should see pipeline after deployment");
+        assert_eq!(metrics[0].pipeline_name, "my-pipeline");
     }
 }
