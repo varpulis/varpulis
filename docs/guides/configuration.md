@@ -671,6 +671,130 @@ varpulis status --server http://localhost:9000 --api-key "key"
 
 ---
 
+## PostgreSQL CDC
+
+The PostgreSQL CDC connector streams database changes via logical replication. It requires the `cdc` feature flag.
+
+### CDC Connector Declaration
+
+```vpl
+connector PgCdc = cdc_postgres (
+    host: "localhost",
+    port: 5432,
+    dbname: "myapp",
+    user: "varpulis",
+    password: "secret",
+    publication: "varpulis_pub",
+    slot_name: "varpulis_slot"
+)
+
+stream Changes = orders.INSERT
+    .from(PgCdc)
+    .emit(customer: customer, amount: amount)
+```
+
+### CDC Configuration Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `host` | required | PostgreSQL hostname |
+| `port` | `5432` | PostgreSQL port |
+| `dbname` | required | Database name |
+| `user` | `postgres` | Database user (needs REPLICATION privilege) |
+| `password` | `""` | Database password |
+| `slot_name` | `varpulis_slot` | Logical replication slot name |
+| `publication` | `varpulis_pub` | Publication name for table selection |
+
+### PostgreSQL Requirements
+
+- `wal_level = logical` in `postgresql.conf` (requires restart)
+- `max_replication_slots >= 1`
+- User must have `REPLICATION` privilege: `ALTER USER varpulis WITH REPLICATION;`
+- Tables must be in a publication: `CREATE PUBLICATION varpulis_pub FOR TABLE t1, t2;`
+
+```bash
+# Build with CDC support
+cargo build --release --features cdc
+```
+
+See the [PostgreSQL CDC Tutorial](../tutorials/postgres-cdc-tutorial.md) for a step-by-step setup guide.
+
+---
+
+## OIDC / SSO Authentication
+
+OpenID Connect authentication is available with the `oidc` feature flag. When configured, it provides SSO login alongside GitHub OAuth.
+
+### Environment Variables
+
+```bash
+export OIDC_ISSUER_URL="https://your-provider.example.com/realms/varpulis"
+export OIDC_CLIENT_ID="varpulis-app"
+export OIDC_CLIENT_SECRET="your-client-secret"
+# Optional:
+export OIDC_REDIRECT_URI="http://localhost:9000/auth/oidc/callback"
+export OIDC_SCOPES="openid profile email"
+```
+
+### OIDC Configuration Options
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `OIDC_ISSUER_URL` | Yes | — | Must serve `.well-known/openid-configuration` |
+| `OIDC_CLIENT_ID` | Yes | — | Client ID from your OIDC provider |
+| `OIDC_CLIENT_SECRET` | Yes | — | Client secret (confidential client) |
+| `OIDC_REDIRECT_URI` | No | `{server}/auth/oidc/callback` | OAuth callback URL |
+| `OIDC_SCOPES` | No | `openid profile email` | OIDC scopes to request |
+
+### Build and Start
+
+```bash
+cargo build --release --features oidc
+# Or with SaaS mode:
+cargo build --release --features saas,oidc
+
+varpulis server --port 9000 --api-key "admin-key"
+```
+
+Login routes are automatically registered when OIDC env vars are set. See the [SSO/OIDC Tutorial](../tutorials/sso-oidc-tutorial.md) for provider-specific setup (Keycloak, Azure AD, Okta, Auth0).
+
+---
+
+## Encryption at Rest
+
+State checkpoint encryption is available with the `encryption` feature flag.
+
+### Configuration
+
+```bash
+# Option 1: Hex key (64 characters = 32 bytes)
+export VARPULIS_ENCRYPTION_KEY="$(openssl rand -hex 32)"
+
+# Option 2: Passphrase (derived via Argon2id)
+export VARPULIS_ENCRYPTION_PASSPHRASE="my-secure-passphrase"
+```
+
+| Variable | Description |
+|----------|-------------|
+| `VARPULIS_ENCRYPTION_KEY` | 64-char hex string (AES-256 key) |
+| `VARPULIS_ENCRYPTION_PASSPHRASE` | Human-readable passphrase (Argon2id KDF) |
+
+If both are set, `VARPULIS_ENCRYPTION_KEY` takes priority.
+
+### Build and Start
+
+```bash
+cargo build --release --features encryption
+# Or with persistence:
+cargo build --release --features encryption,persistence
+
+varpulis server --port 9000 --state-dir /var/lib/varpulis/state
+```
+
+All checkpoint data is encrypted with AES-256-GCM before writing. See the [Encryption at Rest Tutorial](../tutorials/encryption-at-rest-tutorial.md) for key generation, verification, and rotation.
+
+---
+
 ## See Also
 
 - [CLI Reference](../reference/cli-reference.md) - All command options
@@ -678,5 +802,8 @@ varpulis status --server http://localhost:9000 --api-key "key"
 - [NATS Transport Architecture](../architecture/nats-transport.md) - NATS cluster transport
 - [NATS Connector Tutorial](../tutorials/nats-connector.md) - Step-by-step NATS setup
 - [State Management](../architecture/state-management.md) - Persistence and checkpointing
+- [PostgreSQL CDC Tutorial](../tutorials/postgres-cdc-tutorial.md) - CDC setup guide
+- [SSO/OIDC Tutorial](../tutorials/sso-oidc-tutorial.md) - Provider setup guides
+- [Encryption at Rest Tutorial](../tutorials/encryption-at-rest-tutorial.md) - Key management
 - [Troubleshooting](troubleshooting.md) - Common issues and solutions
 - [Performance Tuning](performance-tuning.md) - Optimization guide

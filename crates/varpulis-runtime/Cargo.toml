@@ -97,6 +97,7 @@ criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1.5"
 async-nats = "0.38"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+tokio-postgres = { version = "0.7" }
 uuid = { version = "1", features = ["v4"] }
 futures = "0.3"
 
@@ -131,4 +132,9 @@ harness = false
 [[bench]]
 name = "eventflux_comparison"
 harness = false
+
+[[bench]]
+name = "cdc_benchmark"
+harness = false
+required-features = ["cdc"]
 

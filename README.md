@@ -4,7 +4,7 @@
 
 <p align="center"><strong>A modern Complex Event Processing engine.</strong> Rust performance. Pipeline syntax. SASE+ pattern matching.</p>
 
-[![Tests](https://img.shields.io/badge/tests-3899%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-4011%20passing-brightgreen)]()
 [![Coverage](https://img.shields.io/badge/coverage-%E2%89%A570%25-brightgreen)]()
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange)]()
 [![Release](https://img.shields.io/badge/release-v0.4.0-blue)]()
@@ -161,23 +161,24 @@ cargo bench -p varpulis-runtime
 - **SASE+ patterns**: Sequences (`->`), Kleene closures (`+`, `*`), negation (`AND NOT`), conjunction/disjunction
 - **Forecasting**: `.forecast()` — PST-based pattern prediction with configurable confidence and horizon
 - **Windows**: Tumbling, sliding, session, count-based
-- **Aggregations**: sum, avg, count, min, max, stddev, ema, first, last, count_distinct (SIMD-accelerated)
+- **Aggregations**: sum, avg, count, min, max, stddev, ema, percentile, median, p50/p95/p99, first, last, count_distinct (SIMD-accelerated)
+- **Joins**: Inner, LEFT, RIGHT, FULL outer joins with null-fill semantics
 - **Imperative control**: `var`, `if/else`, `while`, `for`, `return`, functions, lambdas
 - **Meta-programming**: `for row in 0..4:` generates streams at compile time
 - **Trend aggregation**: `.trend_aggregate()` via Hamlet algorithm
 
 ### Engine
 
-- **Connectors**: MQTT, Kafka, NATS, PostgreSQL/MySQL/SQLite, Redis, Kinesis, S3, Elasticsearch — via feature flags
+- **Connectors**: MQTT, Kafka, NATS, PostgreSQL CDC, PostgreSQL/MySQL/SQLite, Redis, Kinesis, S3, Elasticsearch — via feature flags
 - **Context parallelism**: Named execution contexts with OS thread isolation and CPU affinity
 - **Cluster mode**: Coordinator/worker architecture with Raft consensus and NATS transport
 - **Hot reload**: Update pipelines without restart
-- **State persistence**: RocksDB, file-based, or in-memory checkpointing
+- **State persistence**: RocksDB, file-based, or in-memory checkpointing with optional AES-256-GCM encryption at rest
 - **Resilience**: Circuit breaker, dead letter queue, exactly-once Kafka delivery, backpressure signaling
 
 ### Operations
 
-- **REST API**: Multi-tenant SaaS mode with rate limiting, RBAC, and usage metering
+- **REST API**: Multi-tenant SaaS mode with rate limiting, RBAC, usage metering, and SSO/OIDC authentication
 - **Web UI**: Vue 3 + Vuetify control plane ([live demo](https://demo.varpulis-cep.com/))
 - **Monitoring**: Prometheus metrics, OpenTelemetry tracing (`otel` feature), pre-configured Grafana dashboards
 - **Backpressure**: HTTP 429 + Retry-After signaling under load
@@ -197,6 +198,7 @@ cargo bench -p varpulis-runtime
 | AWS Kinesis | In/Out | `kinesis` | Available |
 | AWS S3 | In/Out | `s3` | Available |
 | Elasticsearch | Out | `elasticsearch` | Available |
+| PostgreSQL CDC | In | `cdc` | Available |
 | HTTP Webhooks | Out | default | Production |
 
 ```bash
@@ -269,6 +271,10 @@ deploy/                 # Docker, Kubernetes, Helm, Prometheus, Grafana
 - [Capacity Planning](docs/guides/capacity-planning.md)
 - [System Architecture](docs/architecture/system.md)
 - [Interactive Demos](demos/README.md)
+- [PostgreSQL CDC Tutorial](docs/tutorials/postgres-cdc-tutorial.md)
+- [Outer Joins Tutorial](docs/tutorials/outer-joins-tutorial.md)
+- [Encryption at Rest](docs/tutorials/encryption-at-rest-tutorial.md)
+- [SSO / OIDC](docs/tutorials/sso-oidc-tutorial.md)
 - [Security Policy](SECURITY.md)
 
 ## Testing

@@ -35,7 +35,10 @@
 | `from` | Connector source binding (`.from()`) |
 | `where` | Filtering |
 | `select` | Projection |
-| `join` | Stream join |
+| `join` | Inner stream join |
+| `left_join` | Left outer join (all left events, null-fill right) |
+| `right_join` | Right outer join (null-fill left, all right events) |
+| `full_join` | Full outer join (all events from both sides) |
 | `merge` | Stream merge |
 | `window` | Time window |
 | `aggregate` | Aggregation |

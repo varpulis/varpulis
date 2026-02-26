@@ -72,6 +72,9 @@ Varpulis includes the following security measures:
 - **Event resource limits** -- bounded Kleene closure events, bounded join buffers, bounded stream queues
 - **Circuit breakers** -- connector failures are isolated with circuit breaker patterns
 - **Dead letter queues** -- failed events are preserved rather than silently dropped
+- **Encryption at rest** -- AES-256-GCM encryption of checkpoint/state data (`encryption` feature), with Argon2id key derivation from passphrases
+- **SSO / OIDC** -- OpenID Connect authentication (`oidc` feature) with Authorization Code + PKCE flow, ID token validation, and automatic OIDC discovery
+- **CDC security** -- PostgreSQL CDC connector uses standard authentication (user/password), replication-privilege users only, slot names are UUID-isolated in tests
 - **cargo-audit in CI** -- automated dependency vulnerability scanning on every build
 - **cargo-deny in CI** -- license and advisory checks for all dependencies
 
@@ -79,6 +82,7 @@ Varpulis includes the following security measures:
 
 | Version | Supported |
 |---------|-----------|
+| 0.4.x | Yes |
 | 0.3.x | Yes |
 | < 0.3.0 | No |
 

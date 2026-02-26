@@ -247,7 +247,11 @@ stream RollingBatch = Reading
 | `min(field)` | Minimum value (SIMD-optimized) | `min(price)` |
 | `max(field)` | Maximum value (SIMD-optimized) | `max(price)` |
 | `stddev(field)` | Standard deviation | `stddev(latency)` |
-| `percentile(field, p)` | Percentile (0-100) | `percentile(latency, 95)` |
+| `percentile(field, q)` | Percentile (0.0-1.0) | `percentile(latency, 0.95)` |
+| `median(field)` | Median (50th percentile) | `median(price)` |
+| `p50(field)` | 50th percentile shorthand | `p50(latency)` |
+| `p95(field)` | 95th percentile shorthand | `p95(latency)` |
+| `p99(field)` | 99th percentile shorthand | `p99(latency)` |
 | `collect(field)` | Collect values into array | `collect(sensor_id)` |
 | `first(field)` | First value in window | `first(timestamp)` |
 | `last(field)` | Last value in window | `last(value)` |
@@ -276,6 +280,25 @@ stream CustomerTotals = Transaction
         hourly_spend: sum(amount)
     )
 ```
+
+### Percentile Aggregations
+
+Compute percentiles for latency monitoring, SLA tracking, and distribution analysis:
+
+```vpl
+// Latency monitoring with percentile aggregations
+stream LatencyStats = RequestEvent
+    .window(1m)
+    .aggregate(
+        median_ms: median(latency_ms),
+        p50: p50(latency_ms),
+        p95: p95(latency_ms),
+        p99: p99(latency_ms),
+        p999: percentile(latency_ms, 0.999)
+    )
+```
+
+The `percentile(field, q)` function takes a quantile between 0.0 and 1.0. The `median`, `p50`, `p95`, and `p99` functions are convenient shorthands.
 
 ### Filtering After Aggregation
 

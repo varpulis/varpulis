@@ -62,8 +62,17 @@
 - [x] ONNX model inference (`.score()` operator)
 - [x] MCP server for AI-assisted development
 
+## Phase 5b: CEP Gaps ✅ COMPLETED
+
+- [x] Percentile aggregations (percentile, median, p50, p95, p99) — `varpulis-runtime/src/aggregation.rs`
+- [x] Outer joins (LEFT, RIGHT, FULL) — `varpulis-core/src/ast.rs` JoinType enum
+- [x] Encryption at rest (AES-256-GCM, Argon2id KDF) — `--features encryption`
+- [x] SSO / OIDC authentication (AuthProvider trait, OidcProvider) — `--features oidc`
+- [x] PostgreSQL CDC connector (logical replication) — `--features cdc`
+
 ## Phase 6: Future
 
+- [ ] Exactly-once delivery semantics
 - [ ] Declarative parallelization (`.concurrent()`)
 - [ ] Pulsar / Redis Streams connectors
 - [ ] GPU-accelerated inference

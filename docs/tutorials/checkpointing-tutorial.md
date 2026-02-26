@@ -300,6 +300,20 @@ cargo build --release --features persistence
 
 **Key takeaway:** Configure `max_checkpoints` to bound storage usage. The latest checkpoint always wins on recovery.
 
+### Encryption at Rest
+
+Checkpoint data may contain sensitive information from your event streams. Varpulis supports AES-256-GCM encryption at rest for all checkpoint storage backends:
+
+```bash
+# Enable encryption (requires --features encryption)
+export VARPULIS_ENCRYPTION_KEY="$(openssl rand -hex 32)"
+varpulis server --port 9000 --state-dir /var/lib/varpulis/state
+```
+
+When `VARPULIS_ENCRYPTION_KEY` is set, all checkpoints are encrypted before writing to disk and decrypted on restore. Tampered data is detected and rejected by the GCM authentication tag.
+
+See the [Encryption at Rest Tutorial](encryption-at-rest-tutorial.md) for key generation, passphrase-based derivation, and key rotation procedures.
+
 ---
 
 ## Part 5: Watermark Tracking
