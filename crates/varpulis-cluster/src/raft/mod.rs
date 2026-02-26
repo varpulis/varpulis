@@ -83,6 +83,11 @@ pub enum ClusterCommand {
         id: String,
         assigned_pipelines: Vec<String>,
     },
+    WorkerMetricsUpdated {
+        id: String,
+        events_processed: u64,
+        pipelines_running: usize,
+    },
 
     // -- Pipeline groups --
     GroupDeployed {

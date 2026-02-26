@@ -1857,4 +1857,126 @@ mod tests {
         assert!(msg.contains("50000"));
         assert!(msg.contains("exceeds maximum"));
     }
+
+    #[tokio::test]
+    async fn test_collect_pipeline_metrics_returns_event_counts() {
+        let mut mgr = TenantManager::new();
+        let id = mgr
+            .create_tenant("Test".into(), "key-1".into(), TenantQuota::default())
+            .unwrap();
+
+        // Deploy a simple filter pipeline
+        let vpl = "stream A = SensorReading .where(temperature > 100)";
+        mgr.deploy_pipeline_on_tenant(&id, "test-pipeline".into(), vpl.into())
+            .await
+            .unwrap();
+
+        // Verify metrics before any events: pipeline exists with 0 events
+        let metrics = mgr.collect_pipeline_metrics().await;
+        assert_eq!(metrics.len(), 1, "Should have 1 pipeline");
+        assert_eq!(metrics[0].0, "test-pipeline");
+        assert_eq!(metrics[0].1, 0, "events_in should be 0 before processing");
+        assert_eq!(metrics[0].2, 0, "events_out should be 0 before processing");
+
+        // Process events through the pipeline
+        let tenant = mgr.get_tenant_mut(&id).unwrap();
+        let pid = tenant.pipelines.keys().next().unwrap().clone();
+        for i in 0..10 {
+            let event =
+                Event::new("SensorReading").with_field("temperature", 50.0 + (i as f64) * 20.0);
+            tenant.process_event(&pid, event).await.unwrap();
+        }
+
+        // Re-collect metrics — should reflect processed events
+        let metrics = mgr.collect_pipeline_metrics().await;
+        assert_eq!(metrics.len(), 1);
+        assert_eq!(metrics[0].0, "test-pipeline");
+        assert!(
+            metrics[0].1 > 0,
+            "events_in should be > 0 after processing, got {}",
+            metrics[0].1
+        );
+    }
+
+    #[tokio::test]
+    async fn test_collect_pipeline_metrics_multiple_tenants() {
+        let mut mgr = TenantManager::new();
+        let id1 = mgr
+            .create_tenant("Tenant1".into(), "key-1".into(), TenantQuota::default())
+            .unwrap();
+        let id2 = mgr
+            .create_tenant("Tenant2".into(), "key-2".into(), TenantQuota::default())
+            .unwrap();
+
+        let vpl = "stream A = SensorReading .where(temperature > 100)";
+        mgr.deploy_pipeline_on_tenant(&id1, "pipeline-1".into(), vpl.into())
+            .await
+            .unwrap();
+        mgr.deploy_pipeline_on_tenant(&id2, "pipeline-2".into(), vpl.into())
+            .await
+            .unwrap();
+
+        let metrics = mgr.collect_pipeline_metrics().await;
+        assert_eq!(metrics.len(), 2, "Should have 2 pipelines across 2 tenants");
+        let names: Vec<&str> = metrics.iter().map(|(n, _, _)| n.as_str()).collect();
+        assert!(names.contains(&"pipeline-1"));
+        assert!(names.contains(&"pipeline-2"));
+    }
+
+    #[tokio::test]
+    async fn test_collect_pipeline_metrics_empty_when_no_pipelines() {
+        let mut mgr = TenantManager::new();
+        let _id = mgr
+            .create_tenant("Test".into(), "key-1".into(), TenantQuota::default())
+            .unwrap();
+
+        let metrics = mgr.collect_pipeline_metrics().await;
+        assert!(
+            metrics.is_empty(),
+            "Should be empty when no pipelines deployed"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_deploy_pipeline_on_tenant_and_collect_metrics() {
+        // Test via TenantManager.deploy_pipeline_on_tenant → collect_pipeline_metrics
+        // This mirrors the exact code path used in production (coordinator deploys to worker)
+        let mut mgr = TenantManager::new();
+        let id = mgr
+            .create_tenant(
+                "default".into(),
+                "api-key-123".into(),
+                TenantQuota::enterprise(),
+            )
+            .unwrap();
+
+        let vpl = r#"
+            event MarketTick:
+                symbol: str
+                price: float
+            stream Ticks = MarketTick .where(price > 100)
+        "#;
+        let pipeline_id = mgr
+            .deploy_pipeline_on_tenant(&id, "financial-cep".into(), vpl.into())
+            .await
+            .unwrap();
+
+        // Verify the pipeline appears in metrics
+        let metrics = mgr.collect_pipeline_metrics().await;
+        assert_eq!(metrics.len(), 1);
+        assert_eq!(metrics[0].0, "financial-cep");
+
+        // Process events and verify counts update
+        for _ in 0..5 {
+            let event = Event::new("MarketTick")
+                .with_field("symbol", "AAPL")
+                .with_field("price", 150.0);
+            mgr.process_event_with_backpressure(&id, &pipeline_id, event)
+                .await
+                .unwrap();
+        }
+
+        let metrics = mgr.collect_pipeline_metrics().await;
+        assert_eq!(metrics[0].1, 5, "Should have processed 5 events");
+    }
 }
