@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use uuid::Uuid;
+use varpulis_core::security::SecretString;
 
 use varpulis_cluster::coordinator::Coordinator;
 use varpulis_cluster::nats_coordinator::run_coordinator_nats_handler;
@@ -172,7 +173,7 @@ async fn test_deploy_pipeline_group_across_workers() {
         let node0 = WorkerNode {
             id: WorkerId(w0_id.clone()),
             address: "nats://w0".to_string(),
-            api_key: w0_key.clone(),
+            api_key: SecretString::new(w0_key.clone()),
             status: WorkerStatus::Ready,
             capacity: WorkerCapacity::default(),
             last_heartbeat: std::time::Instant::now(),
@@ -184,7 +185,7 @@ async fn test_deploy_pipeline_group_across_workers() {
         let node1 = WorkerNode {
             id: WorkerId(w1_id.clone()),
             address: "nats://w1".to_string(),
-            api_key: w1_key.clone(),
+            api_key: SecretString::new(w1_key.clone()),
             status: WorkerStatus::Ready,
             capacity: WorkerCapacity::default(),
             last_heartbeat: std::time::Instant::now(),
@@ -326,7 +327,7 @@ async fn test_inject_events_to_both_workers() {
             let node = WorkerNode {
                 id: WorkerId(wid.clone()),
                 address: "nats://worker".to_string(),
-                api_key: key.clone(),
+                api_key: SecretString::new(key.clone()),
                 status: WorkerStatus::Ready,
                 capacity: WorkerCapacity::default(),
                 last_heartbeat: std::time::Instant::now(),
@@ -525,7 +526,7 @@ async fn test_worker_drain_state_transitions() {
             let node = WorkerNode {
                 id: WorkerId(wid.clone()),
                 address: addr.to_string(),
-                api_key: format!("key-{wid}"),
+                api_key: SecretString::new(format!("key-{wid}")),
                 status: WorkerStatus::Ready,
                 capacity: WorkerCapacity::default(),
                 last_heartbeat: std::time::Instant::now(),

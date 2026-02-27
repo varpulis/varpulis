@@ -216,13 +216,13 @@ jobs:
             CREATE TABLE IF NOT EXISTS orders (
               id SERIAL PRIMARY KEY,
               customer TEXT NOT NULL,
-              amount NUMERIC(10,2) NOT NULL,
+              amount DOUBLE PRECISION NOT NULL,
               status TEXT DEFAULT 'pending'
             );
             CREATE TABLE IF NOT EXISTS products (
               id SERIAL PRIMARY KEY,
               name TEXT NOT NULL,
-              price NUMERIC(10,2) NOT NULL,
+              price DOUBLE PRECISION NOT NULL,
               stock INTEGER DEFAULT 0
             );
             CREATE PUBLICATION varpulis_pub FOR TABLE orders, products;
