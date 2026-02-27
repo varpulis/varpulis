@@ -16,6 +16,8 @@ const metricsStore = useMetricsStore()
 const pipelines = ref<PipelineWorkerMetrics[]>([])
 const prevPipelineEvents = new Map<string, { events_in: number; timestamp: number }>()
 const pipelineThroughputs = ref<Map<string, number>>(new Map())
+let prevTotalEventsIn = 0
+let prevFetchTimestamp = 0
 const loading = ref(true)
 const fetchError = ref<string | null>(null)
 const autoRefresh = ref(true)
@@ -75,11 +77,13 @@ const allConnectors = computed(() => {
 async function fetchData(): Promise<void> {
   try {
     fetchError.value = null
-    const [metricsData] = await Promise.all([
-      fetchClusterMetrics(),
-      clusterStore.fetchWorkers(),
-      pipelinesStore.fetchGroups(),
-    ])
+
+    // Fetch metrics independently — don't let worker/group fetch failures block the chart
+    const metricsData = await fetchClusterMetrics()
+
+    // Fire-and-forget: these are for sidebar info, not critical for the chart
+    clusterStore.fetchWorkers().catch(() => {})
+    pipelinesStore.fetchGroups().catch(() => {})
 
     const now = Date.now()
     const newThroughputs = new Map<string, number>()
@@ -99,24 +103,27 @@ async function fetchData(): Promise<void> {
     pipelines.value = metricsData.pipelines
     pipelineThroughputs.value = newThroughputs
 
-    // Feed aggregate metrics into the metrics store so ThroughputChart updates
+    // Aggregate throughput from delta of total events (same approach as MetricsView)
     let totalEventsIn = 0
     let totalEventsOut = 0
-    let totalThroughput = 0
     for (const p of metricsData.pipelines) {
       totalEventsIn += p.events_in
       totalEventsOut += p.events_out
     }
-    for (const t of newThroughputs.values()) {
-      totalThroughput += t
-    }
+    const dtSecs = prevFetchTimestamp > 0 ? (now - prevFetchTimestamp) / 1000 : 0
+    const aggregateThroughput = dtSecs > 0 && prevTotalEventsIn > 0
+      ? Math.max(0, (totalEventsIn - prevTotalEventsIn) / dtSecs)
+      : 0
+    prevTotalEventsIn = totalEventsIn
+    prevFetchTimestamp = now
+
     metricsStore.updateMetrics({
       events_processed: totalEventsIn,
       events_emitted: totalEventsOut,
       errors: 0,
       active_streams: metricsData.pipelines.length,
       uptime_secs: 0,
-      throughput_eps: totalThroughput,
+      throughput_eps: aggregateThroughput,
       avg_latency_ms: 0,
     })
 
