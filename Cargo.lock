@@ -7051,6 +7051,7 @@ name = "varpulis-cli"
 version = "0.4.0"
 dependencies = [
  "anyhow",
+ "argon2",
  "async-trait",
  "bytes",
  "chrono",
@@ -7098,6 +7099,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "futures-util",
+ "jsonwebtoken",
  "k8s-openapi",
  "kube",
  "openraft",

@@ -718,16 +718,56 @@ fn with_rbac(
 ) -> impl Filter<Extract = ((),), Error = Rejection> + Clone {
     warp::any()
         .and(warp::header::optional::<String>("x-api-key"))
-        .and_then(move |provided: Option<String>| {
-            let rbac = rbac.clone();
-            async move {
-                match rbac.authenticate(provided.as_deref()) {
-                    Some(role) if role.has_permission(required) => Ok(()),
-                    Some(_) => Err(warp::reject::custom(Forbidden)),
-                    None => Err(warp::reject::custom(Unauthorized)),
+        .and(warp::header::optional::<String>("authorization"))
+        .and(warp::header::optional::<String>("cookie"))
+        .and_then(
+            move |api_key: Option<String>,
+                  auth_header: Option<String>,
+                  cookie_header: Option<String>| {
+                let rbac = rbac.clone();
+                async move {
+                    // 1. Try X-API-Key header (existing behavior)
+                    if let Some(role) = rbac.authenticate(api_key.as_deref()) {
+                        if role.has_permission(required) {
+                            return Ok(());
+                        } else {
+                            return Err(warp::reject::custom(Forbidden));
+                        }
+                    }
+
+                    // 2. Try Authorization: Bearer <jwt> header
+                    if let Some(ref header) = auth_header {
+                        if let Some(token) = header.strip_prefix("Bearer ") {
+                            let token = token.trim();
+                            if !token.is_empty() {
+                                if let Some(role) = rbac.authenticate_jwt(token) {
+                                    if role.has_permission(required) {
+                                        return Ok(());
+                                    } else {
+                                        return Err(warp::reject::custom(Forbidden));
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // 3. Try Cookie: varpulis_session=<jwt>
+                    if let Some(ref cookie) = cookie_header {
+                        if let Some(token) = RbacConfig::extract_jwt_from_cookie(cookie) {
+                            if let Some(role) = rbac.authenticate_jwt(&token) {
+                                if role.has_permission(required) {
+                                    return Ok(());
+                                } else {
+                                    return Err(warp::reject::custom(Forbidden));
+                                }
+                            }
+                        }
+                    }
+
+                    Err(warp::reject::custom(Unauthorized))
                 }
-            }
-        })
+            },
+        )
 }
 
 #[derive(Debug)]
@@ -970,8 +1010,7 @@ async fn handle_heartbeat(
                 } else if let Some(leader_addr) = coord.raft_leader_addr() {
                     // Follower: forward to leader's /raft/write endpoint
                     let client = coord.http_client.clone();
-                    let admin_key =
-                        coord.raft_handle.as_ref().and_then(|h| h.admin_key.clone());
+                    let admin_key = coord.raft_handle.as_ref().and_then(|h| h.admin_key.clone());
                     // Don't hold the lock during HTTP I/O
                     drop(coord);
                     let url = format!("{}/raft/write", leader_addr);

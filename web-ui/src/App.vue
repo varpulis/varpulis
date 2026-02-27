@@ -25,6 +25,14 @@ const isDark = computed(() => theme.global.current.value.dark)
 
 // Check for API key on mount and start health check
 onMounted(() => {
+  // Skip API key banner if user is authenticated via cookie/session
+  const sessionAuth = localStorage.getItem('varpulis_authenticated')
+  const hasToken = localStorage.getItem('varpulis_token')
+  if (sessionAuth || hasToken) {
+    wsStore.startHealthCheck(10000)
+    return
+  }
+
   let existingKey = getApiKey() || settingsStore.apiKey
   // Auto-populate from build-time env var (for demo deployments)
   if (!existingKey && import.meta.env.VITE_API_KEY) {

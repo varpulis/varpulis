@@ -11,9 +11,12 @@ export interface User {
   email: string
   user_id?: string
   org_id?: string
+  role?: string
+  auth_method?: string
 }
 
 const TOKEN_KEY = 'varpulis_token'
+const AUTH_FLAG_KEY = 'varpulis_authenticated'
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null)
@@ -21,7 +24,8 @@ export const useAuthStore = defineStore('auth', () => {
   const loading = ref(false)
   const error = ref<string | null>(null)
 
-  const isAuthenticated = computed(() => !!user.value && !!token.value)
+  const isAuthenticated = computed(() => !!user.value && (!!token.value || isSessionAuth.value))
+  const isSessionAuth = computed(() => localStorage.getItem(AUTH_FLAG_KEY) === 'true')
 
   function setToken(newToken: string) {
     token.value = newToken
@@ -34,18 +38,21 @@ export const useAuthStore = defineStore('auth', () => {
     token.value = null
     user.value = null
     localStorage.removeItem(TOKEN_KEY)
+    localStorage.removeItem(AUTH_FLAG_KEY)
     delete axios.defaults.headers.common['Authorization']
   }
 
   async function fetchUser() {
-    if (!token.value) return
+    if (!token.value && !isSessionAuth.value) return
 
     loading.value = true
     error.value = null
 
     try {
-      axios.defaults.headers.common['Authorization'] = `Bearer ${token.value}`
-      const response = await axios.get('/api/v1/me')
+      if (token.value) {
+        axios.defaults.headers.common['Authorization'] = `Bearer ${token.value}`
+      }
+      const response = await axios.get('/api/v1/me', { withCredentials: true })
       user.value = response.data
       // Load organizations after user is fetched
       const orgStore = useOrgStore()
@@ -61,9 +68,58 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  async function loginWithPassword(username: string, password: string) {
+    loading.value = true
+    error.value = null
+
+    try {
+      const response = await axios.post('/auth/login', { username, password }, { withCredentials: true })
+      const data = response.data
+
+      if (data.ok && data.token) {
+        // Store token for Bearer header auth (backward compat)
+        setToken(data.token)
+        // Mark session-based auth as active
+        localStorage.setItem(AUTH_FLAG_KEY, 'true')
+        user.value = data.user
+
+        // Load organizations
+        const orgStore = useOrgStore()
+        orgStore.loadOrgs()
+
+        // Navigate to dashboard
+        window.location.href = '/'
+      } else {
+        error.value = data.error || 'Login failed'
+      }
+    } catch (err: unknown) {
+      if (axios.isAxiosError(err) && err.response?.data?.error) {
+        error.value = err.response.data.error
+      } else if (err instanceof Error) {
+        error.value = err.message
+      } else {
+        error.value = 'Login failed'
+      }
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function renewSession() {
+    try {
+      const response = await axios.post('/auth/renew', {}, { withCredentials: true })
+      if (response.data.ok && response.data.token) {
+        setToken(response.data.token)
+      }
+    } catch {
+      // Session renewal failed — clear auth
+      clearToken()
+    }
+  }
+
   async function logout() {
     try {
-      await axios.post('/auth/logout')
+      await axios.post('/auth/logout', {}, { withCredentials: true })
     } catch {
       // Ignore errors during logout
     }
@@ -90,6 +146,9 @@ export const useAuthStore = defineStore('auth', () => {
     } else if (token.value) {
       // Already have a stored token — validate it
       fetchUser()
+    } else if (isSessionAuth.value) {
+      // Cookie-based session — try to fetch user
+      fetchUser()
     }
   }
 
@@ -99,9 +158,12 @@ export const useAuthStore = defineStore('auth', () => {
     loading,
     error,
     isAuthenticated,
+    isSessionAuth,
     setToken,
     clearToken,
     fetchUser,
+    loginWithPassword,
+    renewSession,
     logout,
     loginWithGitHub,
     handleOAuthCallback,

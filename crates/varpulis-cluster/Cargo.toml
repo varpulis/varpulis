@@ -21,6 +21,7 @@ chrono = { workspace = true }
 prometheus = { workspace = true }
 zeroize = { workspace = true }
 base64 = "0.22"
+jsonwebtoken = { workspace = true }
 
 [dependencies.async-nats]
 version = "0.38"

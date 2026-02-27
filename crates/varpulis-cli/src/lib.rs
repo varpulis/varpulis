@@ -16,6 +16,7 @@ pub mod org;
 pub mod playground;
 pub mod rate_limit;
 pub mod security;
+pub mod users;
 pub mod websocket;
 
 use anyhow::Result;

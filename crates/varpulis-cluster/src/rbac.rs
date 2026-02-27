@@ -86,6 +86,8 @@ pub struct RbacConfig {
     pub allow_anonymous: bool,
     /// Default role for anonymous/unauthenticated requests (when allow_anonymous is true).
     pub anonymous_role: Role,
+    /// Optional JWT secret for cookie/bearer token authentication.
+    jwt_secret: Option<String>,
 }
 
 // Manual Clone because SecretString doesn't auto-derive Clone through HashMap
@@ -95,6 +97,7 @@ impl Clone for RbacConfig {
             keys: self.keys.clone(),
             allow_anonymous: self.allow_anonymous,
             anonymous_role: self.anonymous_role,
+            jwt_secret: self.jwt_secret.clone(),
         }
     }
 }
@@ -119,6 +122,7 @@ impl RbacConfig {
             keys: HashMap::default(),
             allow_anonymous: true,
             anonymous_role: Role::Admin,
+            jwt_secret: None,
         }
     }
 
@@ -132,6 +136,7 @@ impl RbacConfig {
             keys: secret_keys,
             allow_anonymous: false,
             anonymous_role: Role::Viewer,
+            jwt_secret: None,
         }
     }
 
@@ -149,6 +154,7 @@ impl RbacConfig {
             keys,
             allow_anonymous: false,
             anonymous_role: Role::Viewer,
+            jwt_secret: None,
         }
     }
 
@@ -189,6 +195,7 @@ impl RbacConfig {
             keys,
             allow_anonymous: false,
             anonymous_role: Role::Viewer,
+            jwt_secret: None,
         })
     }
 
@@ -221,6 +228,47 @@ impl RbacConfig {
                 }
             }
         }
+    }
+
+    /// Set the JWT secret for cookie/bearer token authentication.
+    pub fn with_jwt_secret(mut self, secret: String) -> Self {
+        self.jwt_secret = Some(secret);
+        self
+    }
+
+    /// Verify a JWT and return its role. Returns None if JWT is invalid or no secret is configured.
+    pub fn authenticate_jwt(&self, token: &str) -> Option<Role> {
+        let secret = self.jwt_secret.as_ref()?;
+
+        let token_data = jsonwebtoken::decode::<serde_json::Value>(
+            token,
+            &jsonwebtoken::DecodingKey::from_secret(secret.as_bytes()),
+            &jsonwebtoken::Validation::default(),
+        )
+        .ok()?;
+
+        // Extract role from claims
+        let role_str = token_data
+            .claims
+            .get("role")
+            .and_then(|v| v.as_str())
+            .unwrap_or("viewer");
+
+        role_str.parse::<Role>().ok()
+    }
+
+    /// Extract a JWT from a Cookie header value.
+    pub fn extract_jwt_from_cookie(cookie_header: &str) -> Option<String> {
+        for cookie in cookie_header.split(';') {
+            let cookie = cookie.trim();
+            if let Some(value) = cookie.strip_prefix("varpulis_session=") {
+                let value = value.trim();
+                if !value.is_empty() {
+                    return Some(value.to_string());
+                }
+            }
+        }
+        None
     }
 
     /// Number of registered API keys.

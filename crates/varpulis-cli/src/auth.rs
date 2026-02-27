@@ -228,43 +228,95 @@ pub fn generate_api_key() -> String {
     key
 }
 
-/// Warp filter for API key authentication
+/// Warp filter for API key authentication.
+///
+/// Checks authentication in this order:
+/// 1. X-API-Key header (backward-compatible)
+/// 2. Authorization: Bearer/ApiKey header (API key validation)
+/// 3. Cookie: varpulis_session=<jwt> (JWT session cookie)
+/// 4. Query parameter: api_key or token
+///
+/// Pass `oauth_state` to enable JWT verification from cookies.
 pub fn with_auth(
     config: Arc<AuthConfig>,
 ) -> impl warp::Filter<Extract = ((),), Error = warp::Rejection> + Clone {
+    with_auth_and_jwt(config, None)
+}
+
+/// Warp filter for authentication with optional JWT cookie support.
+pub fn with_auth_and_jwt(
+    config: Arc<AuthConfig>,
+    oauth_state: Option<crate::oauth::SharedOAuthState>,
+) -> impl warp::Filter<Extract = ((),), Error = warp::Rejection> + Clone {
     warp::any()
         .and(warp::header::optional::<String>("authorization"))
+        .and(warp::header::optional::<String>("cookie"))
         .and(warp::query::raw().or(warp::any().map(String::new)).unify())
-        .and_then(move |auth_header: Option<String>, query: String| {
-            let config = config.clone();
-            async move {
-                // If auth is disabled, allow all
-                if !config.is_required() {
-                    return Ok(());
-                }
+        .and_then(
+            move |auth_header: Option<String>, cookie_header: Option<String>, query: String| {
+                let config = config.clone();
+                let oauth = oauth_state.clone();
+                async move {
+                    // If auth is disabled, allow all
+                    if !config.is_required() {
+                        return Ok(());
+                    }
 
-                // Try to extract API key from header first
-                if let Some(header) = auth_header {
-                    match extract_from_header(&header) {
-                        Ok(key) if config.validate_key(&key) => return Ok(()),
-                        Ok(_) => {
-                            return Err(warp::reject::custom(AuthRejection::InvalidCredentials))
+                    // Try to extract API key from header first
+                    if let Some(header) = &auth_header {
+                        match extract_from_header(header) {
+                            Ok(key) if config.validate_key(&key) => return Ok(()),
+                            Ok(_) => {
+                                return Err(warp::reject::custom(AuthRejection::InvalidCredentials))
+                            }
+                            Err(AuthError::MalformedHeader) => {
+                                return Err(warp::reject::custom(AuthRejection::MalformedHeader))
+                            }
+                            Err(_) => {} // Try other methods
                         }
-                        Err(AuthError::MalformedHeader) => {
-                            return Err(warp::reject::custom(AuthRejection::MalformedHeader))
+                    }
+
+                    // Try JWT from cookie
+                    if let Some(ref cookie) = cookie_header {
+                        if let Some(jwt) = crate::oauth::extract_jwt_from_cookie(cookie) {
+                            if let Some(ref state) = oauth {
+                                // Verify JWT is valid and not revoked
+                                let hash = crate::oauth::token_hash(&jwt);
+                                if !state.sessions.read().await.is_revoked(&hash)
+                                    && crate::oauth::verify_jwt(&state.config, &jwt).is_ok()
+                                {
+                                    return Ok(());
+                                }
+                            }
                         }
-                        Err(_) => {} // Try query params next
+                    }
+
+                    // Try Authorization header as Bearer JWT (when OAuth is configured)
+                    if let Some(ref header) = auth_header {
+                        if let Some(token) = header.strip_prefix("Bearer ") {
+                            let token = token.trim();
+                            if !token.is_empty() {
+                                if let Some(ref state) = oauth {
+                                    let hash = crate::oauth::token_hash(token);
+                                    if !state.sessions.read().await.is_revoked(&hash)
+                                        && crate::oauth::verify_jwt(&state.config, token).is_ok()
+                                    {
+                                        return Ok(());
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Try query params
+                    match extract_from_query(&query) {
+                        Ok(key) if config.validate_key(&key) => Ok(()),
+                        Ok(_) => Err(warp::reject::custom(AuthRejection::InvalidCredentials)),
+                        Err(_) => Err(warp::reject::custom(AuthRejection::MissingCredentials)),
                     }
                 }
-
-                // Try query params
-                match extract_from_query(&query) {
-                    Ok(key) if config.validate_key(&key) => Ok(()),
-                    Ok(_) => Err(warp::reject::custom(AuthRejection::InvalidCredentials)),
-                    Err(_) => Err(warp::reject::custom(AuthRejection::MissingCredentials)),
-                }
-            }
-        })
+            },
+        )
 }
 
 /// Warp rejection type for authentication errors

@@ -50,6 +50,13 @@ pub enum AuditAction {
     WebhookReceived,
     SettingsChange,
     AdminAccess,
+    UserCreate,
+    UserUpdate,
+    UserDelete,
+    UserDisable,
+    PasswordChange,
+    SessionRenew,
+    MaxSessionsExceeded,
 }
 
 /// Whether the action succeeded or failed.
