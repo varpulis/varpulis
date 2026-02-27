@@ -24,8 +24,7 @@ pub struct CoordinatorState {
     pub models: HashMap<String, crate::model_registry::ModelRegistryEntry>,
     /// Per-worker pipeline metrics from heartbeats (replicated for monitoring).
     #[serde(default)]
-    pub worker_pipeline_metrics:
-        HashMap<String, Vec<crate::worker::PipelineMetrics>>,
+    pub worker_pipeline_metrics: HashMap<String, Vec<crate::worker::PipelineMetrics>>,
 }
 
 /// Serializable worker entry (no `Instant` fields).
@@ -105,9 +104,7 @@ pub fn apply_command(state: &mut CoordinatorState, cmd: ClusterCommand) -> Clust
                 w.pipelines_running = pipelines_running;
             }
             if !pipeline_metrics.is_empty() {
-                state
-                    .worker_pipeline_metrics
-                    .insert(id, pipeline_metrics);
+                state.worker_pipeline_metrics.insert(id, pipeline_metrics);
             }
             ClusterResponse::Ok
         }

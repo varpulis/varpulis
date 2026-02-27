@@ -32,6 +32,7 @@ use varpulis_cli::org;
 use varpulis_cli::playground;
 use varpulis_cli::rate_limit;
 use varpulis_cli::security;
+use varpulis_cli::users;
 use varpulis_cli::websocket::{self, ServerState};
 
 #[derive(Parser)]
@@ -184,6 +185,22 @@ enum Commands {
         /// Maximum queue depth before rejecting events with HTTP 429 (0 = unlimited)
         #[arg(long, env = "VARPULIS_MAX_QUEUE_DEPTH", default_value = "50000")]
         max_queue_depth: u64,
+
+        /// Path to users JSON file for local username/password authentication
+        #[arg(long, env = "VARPULIS_USERS_FILE", default_value = "data/users.json")]
+        users_file: PathBuf,
+
+        /// Session idle timeout in minutes (default: 30)
+        #[arg(long, env = "VARPULIS_SESSION_IDLE_TIMEOUT", default_value = "30")]
+        session_idle_timeout: u64,
+
+        /// Session absolute timeout in hours (default: 24)
+        #[arg(long, env = "VARPULIS_SESSION_ABSOLUTE_TIMEOUT", default_value = "24")]
+        session_absolute_timeout: u64,
+
+        /// Maximum parallel sessions per user (default: 5)
+        #[arg(long, env = "VARPULIS_MAX_SESSIONS", default_value = "5")]
+        max_sessions: usize,
     },
 
     /// Simulate events from an event file (.evt)
@@ -643,6 +660,10 @@ async fn main() -> Result<()> {
             tls_client_cert,
             tls_client_key,
             max_queue_depth,
+            users_file,
+            session_idle_timeout,
+            session_absolute_timeout,
+            max_sessions,
         } => {
             // Use security module to validate workdir - NO unwrap()!
             let workdir =
@@ -653,6 +674,43 @@ async fn main() -> Result<()> {
                 Some(key) => AuthConfig::with_api_key(key),
                 None => AuthConfig::disabled(),
             };
+
+            // Create user store for local auth
+            let session_config = users::SessionConfig {
+                idle_timeout: std::time::Duration::from_secs(session_idle_timeout * 60),
+                absolute_timeout: std::time::Duration::from_secs(session_absolute_timeout * 3600),
+                max_parallel_sessions: max_sessions,
+                ..Default::default()
+            };
+            let mut user_store = users::UserStore::new(users_file.clone(), session_config);
+
+            // Auto-create admin user on first start if user store is empty
+            if user_store.is_empty() {
+                let admin_password = auth::generate_api_key();
+                match user_store.create_user("admin", &admin_password, "Administrator", "", "admin")
+                {
+                    Ok(_) => {
+                        info!("Created default admin user");
+                        info!("  Username: admin");
+                        info!("  Password: {}", admin_password);
+                        info!(
+                            "  Change this password immediately via POST /auth/users or the web UI"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to create default admin user: {}", e);
+                    }
+                }
+            } else {
+                info!(
+                    "User store loaded: {} users from {}",
+                    user_store.list_users().len(),
+                    users_file.display()
+                );
+            }
+
+            let shared_user_store: users::SharedUserStore =
+                std::sync::Arc::new(tokio::sync::RwLock::new(user_store));
 
             // Create rate limit config
             let rate_limit_config = if rate_limit > 0 {
@@ -697,6 +755,7 @@ async fn main() -> Result<()> {
                 nats,
                 mtls_client_config,
                 max_queue_depth,
+                Some(shared_user_store),
             )
             .await?;
         }
@@ -2303,6 +2362,7 @@ async fn run_server(
     nats_url: Option<String>,
     mtls_client: Option<reqwest::Client>,
     max_queue_depth: u64,
+    user_store: Option<users::SharedUserStore>,
 ) -> Result<()> {
     let tls_enabled = tls_config.is_some();
     let protocol = if tls_enabled { "wss" } else { "ws" };
@@ -2584,24 +2644,75 @@ async fn run_server(
     };
     let audit_r = audit::audit_routes(audit_logger.clone());
 
-    // OAuth routes (optional — enabled when GITHUB_CLIENT_ID is set)
-    let oauth_state: Option<oauth::SharedOAuthState> =
-        oauth::OAuthConfig::from_env().map(|oauth_config| {
-            info!(
-                "GitHub OAuth enabled (client_id: {}...)",
-                &oauth_config.github_client_id[..8.min(oauth_config.github_client_id.len())]
-            );
+    // OAuth routes — enabled when GITHUB_CLIENT_ID is set OR user_store is provided.
+    // Both GitHub OAuth and local auth share the same JWT infrastructure.
+    let oauth_state: Option<oauth::SharedOAuthState> = {
+        let github_config = oauth::OAuthConfig::from_env();
+        let has_github = github_config.is_some();
+        let has_local = user_store.is_some();
+
+        if has_github || has_local {
+            // If no GitHub config, create a minimal config for JWT operations only
+            let oauth_config = github_config.unwrap_or_else(|| {
+                let jwt_secret =
+                    std::env::var("JWT_SECRET").unwrap_or_else(|_| auth::generate_api_key());
+                oauth::OAuthConfig {
+                    github_client_id: String::new(),
+                    github_client_secret: String::new(),
+                    jwt_secret,
+                    frontend_url: std::env::var("FRONTEND_URL")
+                        .unwrap_or_else(|_| "http://localhost:5173".to_string()),
+                    server_url: std::env::var("SERVER_URL")
+                        .unwrap_or_else(|_| format!("http://localhost:{}", port)),
+                }
+            });
+
+            if has_github {
+                info!(
+                    "GitHub OAuth enabled (client_id: {}...)",
+                    &oauth_config.github_client_id[..8.min(oauth_config.github_client_id.len())]
+                );
+            }
+            if has_local {
+                info!("Local username/password authentication enabled");
+            }
+
             #[allow(unused_mut)]
             let mut oauth =
                 oauth::OAuthState::new(oauth_config).with_audit_logger(audit_logger.clone());
+
+            if let Some(ref store) = user_store {
+                oauth = oauth.with_user_store(store.clone());
+            }
+
             #[cfg(feature = "saas")]
             if let Some(ref pool) = db_pool {
                 oauth = oauth.with_db_pool(pool.clone());
             }
+
             let state = std::sync::Arc::new(oauth);
             oauth::spawn_session_cleanup(state.clone());
-            state
-        });
+
+            // Spawn periodic user session cleanup
+            if let Some(ref store) = user_store {
+                let store_cleanup = store.clone();
+                tokio::spawn(async move {
+                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+                    loop {
+                        interval.tick().await;
+                        let removed = store_cleanup.write().await.cleanup_expired();
+                        if removed > 0 {
+                            tracing::debug!("Cleaned up {} expired sessions", removed);
+                        }
+                    }
+                });
+            }
+
+            Some(state)
+        } else {
+            None
+        }
+    };
     let oauth_r = oauth::oauth_routes(oauth_state.clone());
 
     // Billing routes (optional — enabled when STRIPE_SECRET_KEY is set)
