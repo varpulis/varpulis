@@ -42,8 +42,9 @@ RUN cargo build --release -p varpulis-cli 2>/dev/null || true
 # Copy actual source code
 COPY crates/ crates/
 
-# Touch source files to ensure rebuild
-RUN touch crates/*/src/*.rs crates/*/src/**/*.rs 2>/dev/null || true
+# Bust cache on every commit (GHA layer cache may serve stale cargo builds)
+ARG COMMIT_SHA=""
+RUN echo "Building at commit: ${COMMIT_SHA:-unknown}"
 
 # Build release binary with optional features
 ARG FEATURES=""
