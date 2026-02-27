@@ -7,11 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-02-27
+
 ### Highlights
 
 Phase 3 & 4 of the cloud SaaS buildout: full authentication, database persistence,
 billing integration, and distribution infrastructure for Homebrew, GitHub Actions,
-and crates.io publishing.
+and crates.io publishing. First release published to crates.io.
 
 ### Added
 
