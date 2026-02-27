@@ -58,13 +58,14 @@ pub fn parse(source: &str) -> ParseResult<Program> {
 }
 
 /// Maximum bracket nesting depth allowed before pest parsing.
+///
 /// PEG recursive descent can cause exponential backtracking when unmatched
 /// brackets create ambiguity between array_literal, index_access, and
-/// slice_access rules.  Backtracking is roughly O(k^depth) where k≈2-3,
-/// so depth 20 → >1200s while depth 16 → <1s.
-/// 16 levels is very generous for real VPL programs (typical nesting is
-/// 3-6 levels) while preventing pathological inputs from the fuzzer.
-const MAX_NESTING_DEPTH: usize = 16;
+/// slice_access rules.  Measured scaling is O(2.35^depth): depth 20 takes
+/// 1200s+, depth 16 takes 39s, depth 10 takes under 0.3s.  10 levels is
+/// generous for real VPL programs (typical nesting is 3-6 levels, extreme
+/// real-world is about 8) while keeping worst-case parse time under 1 second.
+const MAX_NESTING_DEPTH: usize = 10;
 
 /// O(n) pre-scan that rejects inputs with bracket nesting deeper than
 /// `MAX_NESTING_DEPTH`. Respects string literals and comments so that
