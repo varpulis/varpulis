@@ -159,13 +159,13 @@ event Simple:
 #[test]
 fn test_deeply_nested_expression_no_overflow() {
     // Deeply nested expressions should not cause stack overflow
-    // Note: Using 15 levels (under the 16-level nesting limit) to test deep but valid parsing
+    // Note: Using 9 levels (under the 10-level nesting limit) to test deep but valid parsing
     let mut nested = "stream X = Event.where(".to_string();
-    for _ in 0..14 {
+    for _ in 0..8 {
         nested.push_str("(value + ");
     }
     nested.push('1');
-    for _ in 0..14 {
+    for _ in 0..8 {
         nested.push(')');
     }
     nested.push(')');
@@ -175,20 +175,35 @@ fn test_deeply_nested_expression_no_overflow() {
     assert!(result.is_ok(), "Parser should not overflow on nested input");
 }
 
-/// Regression test for fuzzer-discovered timeout (run 22473258567).
-/// Deeply nested unclosed brackets with `if`/`[` cause O(k^depth) backtracking
-/// in pest. The nesting depth pre-scan must reject these in O(n) time.
+/// Regression tests for fuzzer-discovered timeouts.
+/// Deeply nested unclosed brackets with `if`/`[` cause O(2.35^depth)
+/// backtracking in pest. The nesting depth pre-scan must reject these in O(n).
+///
+/// Crash inputs from fuzz runs:
+/// - run 22473258567: timeout (depth 20, >1200s)
+/// - run 22473258567: slow-unit (depth 22)
+/// - run 22485603473: timeout (depth 16, 39s with -timeout=30)
 #[test]
 fn test_fuzz_timeout_regression_nested_unclosed_brackets() {
     use std::time::Instant;
 
     // Exact input from fuzzer timeout-91f24904a035f087af20e69f70df9309c5ca6c74
+    // 20 opening brackets, 0 closers
     let timeout_input = "( ifg\n[ifg\n[if( ifq\n[ifg\n[if( ifg\n[ifg\n[ifg\n[\n[ifg\n[if( ifq\n[ifg\n[if( ifg\n[ifg\n[ifg\n[igfigfg u";
 
     // Exact input from fuzzer slow-unit-ea2c9b801d6f18edd355d087fd38055e97e4c5e7
+    // 22 opening brackets, 0 closers
     let slow_input = "conr(ififg\n(2 [ifgr(ififg\n(2 [ifga(ififg\n(2[ ifg\n [ifgr(ififg\n(2 [ifga(ififg\n(2[ ifg\nsa(ififg\n(2[ sa(ififg\n(2[ ifg\ns";
 
-    for (label, input) in [("timeout", timeout_input), ("slow-unit", slow_input)] {
+    // Exact input from fuzzer timeout-a3f48e35955b8e60d081d5b7d1185c316f142ba5
+    // 16 opening brackets, 0 closers (hit 39s timeout at depth=16 limit)
+    let timeout_input_2 = "ile&ifr0wt&0&it0wt&0%wt&tresa-we[mresa-we[m[rgKeream/w[K[d[Zjjjj[tream   .et   .et(eim[rgKeream/w[K[d[Zjjjj[tream   .et   .et(eim[i&i0wt&0%wt&ifr0wt&tjwhile&ifr0wt&1&it0fr0w&0%wt&i0wt&0%wt&ifr0wt&tjwhile&ifr0wt&1&it0wt&0%wt&ifr0w&v(stuyl andA\0ju";
+
+    for (label, input) in [
+        ("timeout-depth20", timeout_input),
+        ("slow-unit-depth22", slow_input),
+        ("timeout-depth16", timeout_input_2),
+    ] {
         let start = Instant::now();
         let result = parse(input);
         let elapsed = start.elapsed();
@@ -196,7 +211,7 @@ fn test_fuzz_timeout_regression_nested_unclosed_brackets() {
         // Must be rejected (nesting depth exceeded)
         assert!(result.is_err(), "{}: should be rejected", label);
 
-        // Must complete in <1 second (was >1200s before fix)
+        // Must complete in <1 second (was >1200s / 39s before fix)
         assert!(
             elapsed.as_secs() < 1,
             "{}: took {:?}, should be rejected instantly by nesting check",
