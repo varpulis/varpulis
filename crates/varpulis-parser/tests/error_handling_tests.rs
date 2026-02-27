@@ -159,13 +159,13 @@ event Simple:
 #[test]
 fn test_deeply_nested_expression_no_overflow() {
     // Deeply nested expressions should not cause stack overflow
-    // Note: Using 20 levels to avoid stack overflow in CI environments with limited stack
+    // Note: Using 15 levels (under the 16-level nesting limit) to test deep but valid parsing
     let mut nested = "stream X = Event.where(".to_string();
-    for _ in 0..20 {
+    for _ in 0..14 {
         nested.push_str("(value + ");
     }
     nested.push('1');
-    for _ in 0..20 {
+    for _ in 0..14 {
         nested.push(')');
     }
     nested.push(')');
@@ -173,4 +173,43 @@ fn test_deeply_nested_expression_no_overflow() {
     // Should either parse or return error, not overflow
     let result = std::panic::catch_unwind(|| parse(&nested));
     assert!(result.is_ok(), "Parser should not overflow on nested input");
+}
+
+/// Regression test for fuzzer-discovered timeout (run 22473258567).
+/// Deeply nested unclosed brackets with `if`/`[` cause O(k^depth) backtracking
+/// in pest. The nesting depth pre-scan must reject these in O(n) time.
+#[test]
+fn test_fuzz_timeout_regression_nested_unclosed_brackets() {
+    use std::time::Instant;
+
+    // Exact input from fuzzer timeout-91f24904a035f087af20e69f70df9309c5ca6c74
+    let timeout_input = "( ifg\n[ifg\n[if( ifq\n[ifg\n[if( ifg\n[ifg\n[ifg\n[\n[ifg\n[if( ifq\n[ifg\n[if( ifg\n[ifg\n[ifg\n[igfigfg u";
+
+    // Exact input from fuzzer slow-unit-ea2c9b801d6f18edd355d087fd38055e97e4c5e7
+    let slow_input = "conr(ififg\n(2 [ifgr(ififg\n(2 [ifga(ififg\n(2[ ifg\n [ifgr(ififg\n(2 [ifga(ififg\n(2[ ifg\nsa(ififg\n(2[ sa(ififg\n(2[ ifg\ns";
+
+    for (label, input) in [("timeout", timeout_input), ("slow-unit", slow_input)] {
+        let start = Instant::now();
+        let result = parse(input);
+        let elapsed = start.elapsed();
+
+        // Must be rejected (nesting depth exceeded)
+        assert!(result.is_err(), "{}: should be rejected", label);
+
+        // Must complete in <1 second (was >1200s before fix)
+        assert!(
+            elapsed.as_secs() < 1,
+            "{}: took {:?}, should be rejected instantly by nesting check",
+            label,
+            elapsed
+        );
+
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Nesting depth"),
+            "{}: error should mention nesting depth, got: {}",
+            label,
+            err_msg
+        );
+    }
 }

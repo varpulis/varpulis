@@ -24,7 +24,7 @@ jobs:
             fuzz-parser-corpus-
       - name: Fuzz VPL parser (30 minutes)
         working-directory: crates/varpulis-parser
-        run: cargo +nightly fuzz run fuzz_parser -- -max_total_time=1800
+        run: cargo +nightly fuzz run fuzz_parser -- -max_total_time=1800 -timeout=30
       - name: Upload crash artifacts
         if: failure()
         uses: actions/upload-artifact@v4
