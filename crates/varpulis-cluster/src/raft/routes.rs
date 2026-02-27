@@ -8,7 +8,7 @@ use warp::Filter;
 
 use super::{NodeId, RaftNode, TypeConfig, VarpulisRaft};
 
-use varpulis_core::security::{JSON_BODY_LIMIT, LARGE_BODY_LIMIT};
+use varpulis_core::security::{constant_time_compare, JSON_BODY_LIMIT, LARGE_BODY_LIMIT};
 
 /// Shared Raft handle type.
 pub type SharedRaft = Arc<VarpulisRaft>;
@@ -138,7 +138,7 @@ fn with_optional_raft_auth(
                 match &key {
                     None => Ok::<(), warp::Rejection>(()),
                     Some(expected) => match provided {
-                        Some(ref p) if p == expected => Ok(()),
+                        Some(ref p) if constant_time_compare(p, expected) => Ok(()),
                         _ => Err(warp::reject::custom(RaftUnauthorized)),
                     },
                 }

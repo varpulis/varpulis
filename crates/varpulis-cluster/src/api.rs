@@ -423,12 +423,13 @@ pub fn cluster_routes(
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_metrics);
 
-    // --- Prometheus metrics endpoint (unauthenticated, like /health) ---
+    // --- Prometheus metrics endpoint ---
 
     let prometheus_metrics = api
         .and(warp::path("prometheus"))
         .and(warp::path::end())
         .and(warp::get())
+        .and(with_rbac(rbac.clone(), Role::Viewer))
         .and(with_coordinator(coordinator.clone()))
         .and_then(handle_prometheus_metrics);
 
@@ -899,7 +900,7 @@ async fn handle_register_worker(
                             let node = WorkerNode {
                                 id: WorkerId(body.worker_id.clone()),
                                 address: body.address,
-                                api_key: body.api_key,
+                                api_key: varpulis_core::security::SecretString::new(body.api_key),
                                 status: crate::worker::WorkerStatus::Registering,
                                 capacity: body.capacity,
                                 last_heartbeat: std::time::Instant::now(),
@@ -964,7 +965,7 @@ async fn handle_register_worker(
     let node = WorkerNode {
         id: WorkerId(body.worker_id.clone()),
         address: body.address,
-        api_key: body.api_key,
+        api_key: varpulis_core::security::SecretString::new(body.api_key),
         status: crate::worker::WorkerStatus::Registering,
         capacity: body.capacity,
         last_heartbeat: std::time::Instant::now(),
@@ -1941,6 +1942,18 @@ async fn handle_upload_model(
     }
 
     let name = body.name.clone();
+
+    // Validate model name to prevent path traversal (e.g. "../../etc/evil")
+    if !connector_config::is_valid_connector_name(&name) {
+        let resp = serde_json::json!({
+            "error": "Invalid model name: must start with a letter or underscore and contain only ASCII alphanumeric characters or underscores"
+        });
+        return Ok(
+            warp::reply::with_status(warp::reply::json(&resp), StatusCode::BAD_REQUEST)
+                .into_response(),
+        );
+    }
+
     let s3_key = format!("models/{}.onnx", &name);
 
     // Decode and persist model file if data_base64 is provided
@@ -2654,6 +2667,7 @@ async fn handle_metrics(
 }
 
 async fn handle_prometheus_metrics(
+    _auth: (),
     coordinator: SharedCoordinator,
 ) -> Result<impl Reply, Infallible> {
     if let Some(resp) =

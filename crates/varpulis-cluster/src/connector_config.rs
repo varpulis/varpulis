@@ -33,7 +33,7 @@ impl ClusterConnector {
                 if v.parse::<i64>().is_ok() || v.parse::<f64>().is_ok() {
                     format!("{}: {}", k, v)
                 } else {
-                    format!("{}: \"{}\"", k, v)
+                    format!("{}: \"{}\"", k, escape_vpl_string(v))
                 }
             })
             .collect();
@@ -44,6 +44,22 @@ impl ClusterConnector {
             params.join(", ")
         )
     }
+}
+
+/// Escape a string value for embedding in a VPL quoted string literal.
+/// Prevents injection by escaping backslashes and double quotes.
+fn escape_vpl_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 /// Valid connector identifier: must match VPL identifier rules
