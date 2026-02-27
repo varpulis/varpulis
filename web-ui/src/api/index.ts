@@ -15,6 +15,7 @@ function getBaseUrl(): string {
 const api: AxiosInstance = axios.create({
   baseURL: getBaseUrl(),
   timeout: 30000,
+  withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -38,17 +39,46 @@ api.interceptors.request.use(
   }
 )
 
-// Response interceptor for error handling
+// Track renewal attempts to prevent infinite loops
+let isRenewing = false
+
+// Response interceptor for error handling and session renewal
 api.interceptors.response.use(
   (response) => response,
-  (error: AxiosError) => {
+  async (error: AxiosError) => {
     if (error.response) {
       const status = error.response.status
       const data = error.response.data as { error?: string; message?: string }
+      const originalRequest = error.config
+
+      // Auto-renew session on 401 (but not for login/renew endpoints)
+      if (status === 401 && originalRequest && !isRenewing) {
+        const url = originalRequest.url || ''
+        if (!url.includes('/auth/login') && !url.includes('/auth/renew') && !url.includes('/auth/logout')) {
+          isRenewing = true
+          try {
+            const renewResponse = await axios.post('/auth/renew', {}, { withCredentials: true })
+            if (renewResponse.data?.ok && renewResponse.data?.token) {
+              // Update token in localStorage
+              localStorage.setItem('varpulis_token', renewResponse.data.token)
+              axios.defaults.headers.common['Authorization'] = `Bearer ${renewResponse.data.token}`
+              // Retry original request
+              if (originalRequest.headers) {
+                originalRequest.headers['Authorization'] = `Bearer ${renewResponse.data.token}`
+              }
+              isRenewing = false
+              return axios(originalRequest)
+            }
+          } catch {
+            // Renewal failed — let the 401 propagate
+          }
+          isRenewing = false
+        }
+      }
 
       switch (status) {
         case 401:
-          console.error('Authentication failed. Please check your API key.')
+          console.error('Authentication failed. Please check your credentials.')
           break
         case 403:
           console.error('Access forbidden.')

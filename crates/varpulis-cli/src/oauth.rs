@@ -10,6 +10,7 @@ use tokio::sync::RwLock;
 use warp::Filter;
 
 use crate::audit::{AuditAction, AuditEntry, SharedAuditLogger};
+use crate::users::SharedUserStore;
 
 // ---------------------------------------------------------------------------
 // Auth Provider trait
@@ -102,9 +103,9 @@ impl OAuthConfig {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
-    pub sub: String,    // GitHub user ID
+    pub sub: String,    // GitHub user ID or local user ID
     pub name: String,   // Display name
-    pub login: String,  // GitHub username
+    pub login: String,  // GitHub username or local username
     pub avatar: String, // Avatar URL
     pub email: String,  // Email (may be empty)
     pub exp: usize,     // Expiration (Unix timestamp)
@@ -113,6 +114,12 @@ pub struct Claims {
     pub user_id: String, // DB user UUID (empty when saas not enabled)
     #[serde(default)]
     pub org_id: String, // DB organization UUID (empty when saas not enabled)
+    #[serde(default)]
+    pub role: String, // "admin" | "operator" | "viewer"
+    #[serde(default)]
+    pub session_id: String, // For session revocation
+    #[serde(default)]
+    pub auth_method: String, // "local" | "github" | "oidc" | "apikey"
 }
 
 // ---------------------------------------------------------------------------
@@ -270,6 +277,7 @@ pub struct OAuthState {
     #[cfg(feature = "saas")]
     pub db_pool: Option<varpulis_db::PgPool>,
     pub audit_logger: Option<SharedAuditLogger>,
+    pub user_store: Option<SharedUserStore>,
 }
 
 impl OAuthState {
@@ -281,11 +289,17 @@ impl OAuthState {
             #[cfg(feature = "saas")]
             db_pool: None,
             audit_logger: None,
+            user_store: None,
         }
     }
 
     pub fn with_audit_logger(mut self, logger: Option<SharedAuditLogger>) -> Self {
         self.audit_logger = logger;
+        self
+    }
+
+    pub fn with_user_store(mut self, store: SharedUserStore) -> Self {
+        self.user_store = Some(store);
         self
     }
 
@@ -319,6 +333,9 @@ fn create_jwt(
         iat: now,
         user_id: user_id.to_string(),
         org_id: org_id.to_string(),
+        role: String::new(),
+        session_id: String::new(),
+        auth_method: "github".to_string(),
     };
 
     encode(
@@ -328,7 +345,47 @@ fn create_jwt(
     )
 }
 
-fn verify_jwt(config: &OAuthConfig, token: &str) -> Result<Claims, jsonwebtoken::errors::Error> {
+/// Create a JWT for a local (username/password) user with session tracking.
+#[allow(clippy::too_many_arguments)]
+pub fn create_jwt_for_local_user(
+    config: &OAuthConfig,
+    user_id: &str,
+    username: &str,
+    display_name: &str,
+    email: &str,
+    role: &str,
+    session_id: &str,
+    ttl_secs: usize,
+) -> Result<String, jsonwebtoken::errors::Error> {
+    use jsonwebtoken::{encode, EncodingKey, Header};
+
+    let now = chrono::Utc::now().timestamp() as usize;
+    let claims = Claims {
+        sub: user_id.to_string(),
+        name: display_name.to_string(),
+        login: username.to_string(),
+        avatar: String::new(),
+        email: email.to_string(),
+        exp: now + ttl_secs,
+        iat: now,
+        user_id: user_id.to_string(),
+        org_id: String::new(),
+        role: role.to_string(),
+        session_id: session_id.to_string(),
+        auth_method: "local".to_string(),
+    };
+
+    encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(config.jwt_secret.as_bytes()),
+    )
+}
+
+pub fn verify_jwt(
+    config: &OAuthConfig,
+    token: &str,
+) -> Result<Claims, jsonwebtoken::errors::Error> {
     use jsonwebtoken::{decode, DecodingKey, Validation};
 
     let token_data = decode::<Claims>(
@@ -341,12 +398,48 @@ fn verify_jwt(config: &OAuthConfig, token: &str) -> Result<Claims, jsonwebtoken:
 }
 
 /// Simple hash for token revocation tracking (not cryptographic, just for lookup).
-fn token_hash(token: &str) -> String {
+pub fn token_hash(token: &str) -> String {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     let mut hasher = DefaultHasher::new();
     token.hash(&mut hasher);
     format!("{:016x}", hasher.finish())
+}
+
+// ---------------------------------------------------------------------------
+// Cookie helpers
+// ---------------------------------------------------------------------------
+
+const COOKIE_NAME: &str = "varpulis_session";
+
+/// Create a Set-Cookie header value for the session JWT.
+fn create_session_cookie(jwt: &str, max_age_secs: u64) -> String {
+    format!(
+        "{}={}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age={}",
+        COOKIE_NAME, jwt, max_age_secs
+    )
+}
+
+/// Create a Set-Cookie header value that clears the session cookie.
+fn clear_session_cookie() -> String {
+    format!(
+        "{}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0",
+        COOKIE_NAME
+    )
+}
+
+/// Extract the session JWT from a Cookie header value.
+pub fn extract_jwt_from_cookie(cookie_header: &str) -> Option<String> {
+    for cookie in cookie_header.split(';') {
+        let cookie = cookie.trim();
+        if let Some(value) = cookie.strip_prefix("varpulis_session=") {
+            let value = value.trim();
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -513,15 +606,34 @@ async fn upsert_user_and_org(
     Ok((db_user.id.to_string(), org.id.to_string()))
 }
 
-/// POST /auth/logout — invalidate JWT.
+/// POST /auth/logout — invalidate JWT and clear session cookie.
 async fn handle_logout(
     auth_header: Option<String>,
+    cookie_header: Option<String>,
     state: SharedOAuthState,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    if let Some(header) = auth_header {
-        let token = header.strip_prefix("Bearer ").unwrap_or(&header).trim();
+    // Extract token from cookie or Authorization header
+    let token = cookie_header
+        .as_deref()
+        .and_then(extract_jwt_from_cookie)
+        .or_else(|| {
+            auth_header
+                .as_ref()
+                .map(|h| h.strip_prefix("Bearer ").unwrap_or(h).trim().to_string())
+        });
+
+    if let Some(token) = token {
         if !token.is_empty() {
-            let hash = token_hash(token);
+            // Revoke session in user store if it's a local auth session
+            if let Ok(claims) = verify_jwt(&state.config, &token) {
+                if claims.auth_method == "local" && !claims.session_id.is_empty() {
+                    if let Some(ref user_store) = state.user_store {
+                        user_store.write().await.revoke_session(&claims.session_id);
+                    }
+                }
+            }
+
+            let hash = token_hash(&token);
             state.sessions.write().await.revoke(hash);
 
             // Audit log: logout
@@ -537,30 +649,32 @@ async fn handle_logout(
         }
     }
 
-    Ok(warp::reply::json(&serde_json::json!({ "ok": true })))
+    Ok(warp::reply::with_header(
+        warp::reply::json(&serde_json::json!({ "ok": true })),
+        "set-cookie",
+        clear_session_cookie(),
+    ))
 }
 
-/// GET /api/v1/me — return current user from JWT.
+/// GET /api/v1/me — return current user from JWT (cookie or Bearer header).
 async fn handle_me(
     auth_header: Option<String>,
+    cookie_header: Option<String>,
     state: SharedOAuthState,
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    let token = match auth_header {
-        Some(header) => {
-            let t = header
-                .strip_prefix("Bearer ")
-                .unwrap_or(&header)
-                .trim()
-                .to_string();
-            if t.is_empty() {
-                return Ok(warp::reply::with_status(
-                    warp::reply::json(&serde_json::json!({ "error": "No token provided" })),
-                    warp::http::StatusCode::UNAUTHORIZED,
-                ));
-            }
-            t
-        }
-        None => {
+    // Extract token from cookie or Authorization header
+    let token = cookie_header
+        .as_deref()
+        .and_then(extract_jwt_from_cookie)
+        .or_else(|| {
+            auth_header
+                .as_ref()
+                .map(|h| h.strip_prefix("Bearer ").unwrap_or(h).trim().to_string())
+        });
+
+    let token = match token {
+        Some(t) if !t.is_empty() => t,
+        _ => {
             return Ok(warp::reply::with_status(
                 warp::reply::json(&serde_json::json!({ "error": "No token provided" })),
                 warp::http::StatusCode::UNAUTHORIZED,
@@ -589,6 +703,8 @@ async fn handle_me(
                 "email": claims.email,
                 "user_id": claims.user_id,
                 "org_id": claims.org_id,
+                "role": claims.role,
+                "auth_method": claims.auth_method,
             });
 
             // Enrich with DB data when saas is enabled
@@ -631,6 +747,485 @@ async fn handle_me(
 }
 
 // ---------------------------------------------------------------------------
+// Local auth route handlers
+// ---------------------------------------------------------------------------
+
+/// Login request body.
+#[derive(Debug, Deserialize)]
+struct LoginRequest {
+    username: String,
+    password: String,
+}
+
+/// POST /auth/login — authenticate with username/password, return JWT in cookie.
+async fn handle_login(
+    body: LoginRequest,
+    state: SharedOAuthState,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    let user_store = match &state.user_store {
+        Some(store) => store.clone(),
+        None => {
+            return Ok(warp::reply::with_header(
+                warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({ "error": "Local auth not configured" })),
+                    warp::http::StatusCode::SERVICE_UNAVAILABLE,
+                ),
+                "content-type",
+                "application/json",
+            ));
+        }
+    };
+
+    let mut store = user_store.write().await;
+
+    let user = match store.verify_password(&body.username, &body.password) {
+        Ok(u) => u,
+        Err(e) => {
+            // Audit: failed login
+            if let Some(ref logger) = state.audit_logger {
+                logger
+                    .log(
+                        AuditEntry::new(&body.username, AuditAction::Login, "/auth/login")
+                            .with_outcome(crate::audit::AuditOutcome::Failure)
+                            .with_detail(e.clone()),
+                    )
+                    .await;
+            }
+            return Ok(warp::reply::with_header(
+                warp::reply::with_status(
+                    warp::reply::json(
+                        &serde_json::json!({ "error": "Invalid username or password" }),
+                    ),
+                    warp::http::StatusCode::UNAUTHORIZED,
+                ),
+                "content-type",
+                "application/json",
+            ));
+        }
+    };
+
+    let session = store.create_session(&user);
+    let ttl_secs = store.session_config().absolute_timeout.as_secs() as usize;
+    drop(store);
+
+    let jwt = match create_jwt_for_local_user(
+        &state.config,
+        &user.id,
+        &user.username,
+        &user.display_name,
+        &user.email,
+        &user.role,
+        &session.session_id,
+        ttl_secs,
+    ) {
+        Ok(token) => token,
+        Err(e) => {
+            tracing::error!("JWT creation failed: {}", e);
+            return Ok(warp::reply::with_header(
+                warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({ "error": "Internal server error" })),
+                    warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+                ),
+                "content-type",
+                "application/json",
+            ));
+        }
+    };
+
+    // Audit: successful login
+    if let Some(ref logger) = state.audit_logger {
+        logger
+            .log(
+                AuditEntry::new(&user.username, AuditAction::Login, "/auth/login")
+                    .with_detail(format!("session: {}", session.session_id)),
+            )
+            .await;
+    }
+
+    let cookie = create_session_cookie(&jwt, ttl_secs as u64);
+    let response = serde_json::json!({
+        "ok": true,
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "display_name": user.display_name,
+            "email": user.email,
+            "role": user.role,
+        },
+        "token": jwt,
+    });
+
+    Ok(warp::reply::with_header(
+        warp::reply::with_status(warp::reply::json(&response), warp::http::StatusCode::OK),
+        "set-cookie",
+        cookie,
+    ))
+}
+
+/// POST /auth/renew — renew session, issue new JWT in cookie.
+async fn handle_renew(
+    auth_header: Option<String>,
+    cookie_header: Option<String>,
+    state: SharedOAuthState,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    // Extract JWT from cookie or Authorization header
+    let token = cookie_header
+        .as_deref()
+        .and_then(extract_jwt_from_cookie)
+        .or_else(|| {
+            auth_header
+                .as_ref()
+                .map(|h| h.strip_prefix("Bearer ").unwrap_or(h).trim().to_string())
+        });
+
+    let token = match token {
+        Some(t) if !t.is_empty() => t,
+        _ => {
+            return Ok(warp::reply::with_header(
+                warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({ "error": "No session token" })),
+                    warp::http::StatusCode::UNAUTHORIZED,
+                ),
+                "content-type",
+                "application/json",
+            ));
+        }
+    };
+
+    // Verify existing JWT
+    let claims = match verify_jwt(&state.config, &token) {
+        Ok(c) => c,
+        Err(_) => {
+            return Ok(warp::reply::with_header(
+                warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({ "error": "Invalid or expired token" })),
+                    warp::http::StatusCode::UNAUTHORIZED,
+                ),
+                "content-type",
+                "application/json",
+            ));
+        }
+    };
+
+    // Only renew local auth sessions
+    if claims.auth_method != "local" || claims.session_id.is_empty() {
+        return Ok(warp::reply::with_header(
+            warp::reply::with_status(
+                warp::reply::json(
+                    &serde_json::json!({ "error": "Session renewal not applicable" }),
+                ),
+                warp::http::StatusCode::BAD_REQUEST,
+            ),
+            "content-type",
+            "application/json",
+        ));
+    }
+
+    let user_store = match &state.user_store {
+        Some(store) => store.clone(),
+        None => {
+            return Ok(warp::reply::with_header(
+                warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({ "error": "Local auth not configured" })),
+                    warp::http::StatusCode::SERVICE_UNAVAILABLE,
+                ),
+                "content-type",
+                "application/json",
+            ));
+        }
+    };
+
+    let mut store = user_store.write().await;
+
+    // Validate existing session
+    if store.validate_session(&claims.session_id).is_none() {
+        return Ok(warp::reply::with_header(
+            warp::reply::with_status(
+                warp::reply::json(&serde_json::json!({ "error": "Session expired or revoked" })),
+                warp::http::StatusCode::UNAUTHORIZED,
+            ),
+            "content-type",
+            "application/json",
+        ));
+    }
+
+    // Look up user to get current role (may have been updated)
+    let user = match store.get_user_by_id(&claims.sub) {
+        Some(u) => u.clone(),
+        None => {
+            return Ok(warp::reply::with_header(
+                warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({ "error": "User not found" })),
+                    warp::http::StatusCode::UNAUTHORIZED,
+                ),
+                "content-type",
+                "application/json",
+            ));
+        }
+    };
+
+    let ttl_secs = store.session_config().absolute_timeout.as_secs() as usize;
+    drop(store);
+
+    // Revoke old token and issue new one with same session
+    let hash = token_hash(&token);
+    state.sessions.write().await.revoke(hash);
+
+    let jwt = match create_jwt_for_local_user(
+        &state.config,
+        &user.id,
+        &user.username,
+        &user.display_name,
+        &user.email,
+        &user.role,
+        &claims.session_id,
+        ttl_secs,
+    ) {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!("JWT renewal failed: {}", e);
+            return Ok(warp::reply::with_header(
+                warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({ "error": "Internal server error" })),
+                    warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+                ),
+                "content-type",
+                "application/json",
+            ));
+        }
+    };
+
+    if let Some(ref logger) = state.audit_logger {
+        logger
+            .log(AuditEntry::new(
+                &user.username,
+                AuditAction::SessionRenew,
+                "/auth/renew",
+            ))
+            .await;
+    }
+
+    let cookie = create_session_cookie(&jwt, ttl_secs as u64);
+
+    Ok(warp::reply::with_header(
+        warp::reply::with_status(
+            warp::reply::json(&serde_json::json!({
+                "ok": true,
+                "token": jwt,
+            })),
+            warp::http::StatusCode::OK,
+        ),
+        "set-cookie",
+        cookie,
+    ))
+}
+
+/// Request body for creating a user.
+#[derive(Debug, Deserialize)]
+struct CreateUserRequest {
+    username: String,
+    password: String,
+    display_name: String,
+    #[serde(default)]
+    email: String,
+    #[serde(default = "default_role")]
+    role: String,
+}
+
+fn default_role() -> String {
+    "viewer".to_string()
+}
+
+/// POST /auth/users — create a new user (admin only).
+async fn handle_create_user(
+    auth_header: Option<String>,
+    cookie_header: Option<String>,
+    body: CreateUserRequest,
+    state: SharedOAuthState,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    // Verify admin access
+    let claims =
+        match extract_and_verify_claims(&state, auth_header.as_deref(), cookie_header.as_deref())
+            .await
+        {
+            Ok(c) => c,
+            Err(reply) => return Ok(reply),
+        };
+
+    if claims.role != "admin" {
+        return Ok(warp::reply::with_header(
+            warp::reply::with_status(
+                warp::reply::json(&serde_json::json!({ "error": "Admin access required" })),
+                warp::http::StatusCode::FORBIDDEN,
+            ),
+            "content-type",
+            "application/json",
+        ));
+    }
+
+    let user_store = match &state.user_store {
+        Some(s) => s.clone(),
+        None => {
+            return Ok(warp::reply::with_header(
+                warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({ "error": "Local auth not configured" })),
+                    warp::http::StatusCode::SERVICE_UNAVAILABLE,
+                ),
+                "content-type",
+                "application/json",
+            ));
+        }
+    };
+
+    let mut store = user_store.write().await;
+    match store.create_user(
+        &body.username,
+        &body.password,
+        &body.display_name,
+        &body.email,
+        &body.role,
+    ) {
+        Ok(user) => {
+            if let Some(ref logger) = state.audit_logger {
+                logger
+                    .log(
+                        AuditEntry::new(&claims.login, AuditAction::UserCreate, "/auth/users")
+                            .with_detail(format!(
+                                "Created user: {} ({})",
+                                user.username, user.role
+                            )),
+                    )
+                    .await;
+            }
+
+            Ok(warp::reply::with_header(
+                warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({
+                        "id": user.id,
+                        "username": user.username,
+                        "display_name": user.display_name,
+                        "email": user.email,
+                        "role": user.role,
+                    })),
+                    warp::http::StatusCode::CREATED,
+                ),
+                "content-type",
+                "application/json",
+            ))
+        }
+        Err(e) => Ok(warp::reply::with_header(
+            warp::reply::with_status(
+                warp::reply::json(&serde_json::json!({ "error": e })),
+                warp::http::StatusCode::BAD_REQUEST,
+            ),
+            "content-type",
+            "application/json",
+        )),
+    }
+}
+
+/// GET /auth/users — list all users (admin only).
+async fn handle_list_users(
+    auth_header: Option<String>,
+    cookie_header: Option<String>,
+    state: SharedOAuthState,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    let claims =
+        match extract_and_verify_claims(&state, auth_header.as_deref(), cookie_header.as_deref())
+            .await
+        {
+            Ok(c) => c,
+            Err(reply) => return Ok(reply),
+        };
+
+    if claims.role != "admin" {
+        return Ok(warp::reply::with_header(
+            warp::reply::with_status(
+                warp::reply::json(&serde_json::json!({ "error": "Admin access required" })),
+                warp::http::StatusCode::FORBIDDEN,
+            ),
+            "content-type",
+            "application/json",
+        ));
+    }
+
+    let user_store = match &state.user_store {
+        Some(s) => s.clone(),
+        None => {
+            return Ok(warp::reply::with_header(
+                warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({ "error": "Local auth not configured" })),
+                    warp::http::StatusCode::SERVICE_UNAVAILABLE,
+                ),
+                "content-type",
+                "application/json",
+            ));
+        }
+    };
+
+    let store = user_store.read().await;
+    let users = store.list_users();
+
+    Ok(warp::reply::with_header(
+        warp::reply::with_status(
+            warp::reply::json(&serde_json::json!({ "users": users })),
+            warp::http::StatusCode::OK,
+        ),
+        "content-type",
+        "application/json",
+    ))
+}
+
+/// Helper: extract JWT from cookie or Authorization header, verify it, check revocation.
+async fn extract_and_verify_claims(
+    state: &SharedOAuthState,
+    auth_header: Option<&str>,
+    cookie_header: Option<&str>,
+) -> Result<Claims, warp::reply::WithHeader<warp::reply::WithStatus<warp::reply::Json>>> {
+    let token = cookie_header
+        .and_then(extract_jwt_from_cookie)
+        .or_else(|| auth_header.map(|h| h.strip_prefix("Bearer ").unwrap_or(h).trim().to_string()));
+
+    let token = match token {
+        Some(t) if !t.is_empty() => t,
+        _ => {
+            return Err(warp::reply::with_header(
+                warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({ "error": "Authentication required" })),
+                    warp::http::StatusCode::UNAUTHORIZED,
+                ),
+                "content-type",
+                "application/json",
+            ));
+        }
+    };
+
+    // Check revocation
+    let hash = token_hash(&token);
+    if state.sessions.read().await.is_revoked(&hash) {
+        return Err(warp::reply::with_header(
+            warp::reply::with_status(
+                warp::reply::json(&serde_json::json!({ "error": "Token revoked" })),
+                warp::http::StatusCode::UNAUTHORIZED,
+            ),
+            "content-type",
+            "application/json",
+        ));
+    }
+
+    verify_jwt(&state.config, &token).map_err(|_| {
+        warp::reply::with_header(
+            warp::reply::with_status(
+                warp::reply::json(&serde_json::json!({ "error": "Invalid or expired token" })),
+                warp::http::StatusCode::UNAUTHORIZED,
+            ),
+            "content-type",
+            "application/json",
+        )
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Route assembly
 // ---------------------------------------------------------------------------
 
@@ -642,7 +1237,11 @@ pub fn oauth_routes(
     let state1 = state.clone();
     let state2 = state.clone();
     let state3 = state.clone();
-    let state4 = state;
+    let state4 = state.clone();
+    let state5 = state.clone();
+    let state6 = state.clone();
+    let state7 = state.clone();
+    let state8 = state;
 
     // GET /auth/github
     let github_redirect = warp::path!("auth" / "github")
@@ -669,15 +1268,49 @@ pub fn oauth_routes(
             },
         );
 
+    // POST /auth/login
+    let login = warp::path!("auth" / "login")
+        .and(warp::post())
+        .and(warp::body::json::<LoginRequest>())
+        .and(warp::any().map(move || state3.clone()))
+        .and_then(
+            |body: LoginRequest, state: Option<SharedOAuthState>| async move {
+                match state {
+                    Some(s) => handle_login(body, s).await,
+                    None => Err(warp::reject::reject()),
+                }
+            },
+        );
+
+    // POST /auth/renew
+    let renew = warp::path!("auth" / "renew")
+        .and(warp::post())
+        .and(warp::header::optional::<String>("authorization"))
+        .and(warp::header::optional::<String>("cookie"))
+        .and(warp::any().map(move || state4.clone()))
+        .and_then(
+            |auth_header: Option<String>,
+             cookie_header: Option<String>,
+             state: Option<SharedOAuthState>| async move {
+                match state {
+                    Some(s) => handle_renew(auth_header, cookie_header, s).await,
+                    None => Err(warp::reject::reject()),
+                }
+            },
+        );
+
     // POST /auth/logout
     let logout = warp::path!("auth" / "logout")
         .and(warp::post())
         .and(warp::header::optional::<String>("authorization"))
-        .and(warp::any().map(move || state3.clone()))
+        .and(warp::header::optional::<String>("cookie"))
+        .and(warp::any().map(move || state5.clone()))
         .and_then(
-            |auth_header: Option<String>, state: Option<SharedOAuthState>| async move {
+            |auth_header: Option<String>,
+             cookie_header: Option<String>,
+             state: Option<SharedOAuthState>| async move {
                 match state {
-                    Some(s) => handle_logout(auth_header, s).await,
+                    Some(s) => handle_logout(auth_header, cookie_header, s).await,
                     None => Err(warp::reject::reject()),
                 }
             },
@@ -687,17 +1320,63 @@ pub fn oauth_routes(
     let me = warp::path!("api" / "v1" / "me")
         .and(warp::get())
         .and(warp::header::optional::<String>("authorization"))
-        .and(warp::any().map(move || state4.clone()))
+        .and(warp::header::optional::<String>("cookie"))
+        .and(warp::any().map(move || state6.clone()))
         .and_then(
-            |auth_header: Option<String>, state: Option<SharedOAuthState>| async move {
+            |auth_header: Option<String>,
+             cookie_header: Option<String>,
+             state: Option<SharedOAuthState>| async move {
                 match state {
-                    Some(s) => handle_me(auth_header, s).await,
+                    Some(s) => handle_me(auth_header, cookie_header, s).await,
                     None => Err(warp::reject::reject()),
                 }
             },
         );
 
-    github_redirect.or(github_callback).or(logout).or(me)
+    // POST /auth/users (admin only)
+    let create_user = warp::path!("auth" / "users")
+        .and(warp::post())
+        .and(warp::header::optional::<String>("authorization"))
+        .and(warp::header::optional::<String>("cookie"))
+        .and(warp::body::json::<CreateUserRequest>())
+        .and(warp::any().map(move || state7.clone()))
+        .and_then(
+            |auth_header: Option<String>,
+             cookie_header: Option<String>,
+             body: CreateUserRequest,
+             state: Option<SharedOAuthState>| async move {
+                match state {
+                    Some(s) => handle_create_user(auth_header, cookie_header, body, s).await,
+                    None => Err(warp::reject::reject()),
+                }
+            },
+        );
+
+    // GET /auth/users (admin only)
+    let list_users = warp::path!("auth" / "users")
+        .and(warp::get())
+        .and(warp::header::optional::<String>("authorization"))
+        .and(warp::header::optional::<String>("cookie"))
+        .and(warp::any().map(move || state8.clone()))
+        .and_then(
+            |auth_header: Option<String>,
+             cookie_header: Option<String>,
+             state: Option<SharedOAuthState>| async move {
+                match state {
+                    Some(s) => handle_list_users(auth_header, cookie_header, s).await,
+                    None => Err(warp::reject::reject()),
+                }
+            },
+        );
+
+    github_redirect
+        .or(github_callback)
+        .or(login)
+        .or(renew)
+        .or(logout)
+        .or(me)
+        .or(create_user)
+        .or(list_users)
 }
 
 /// Spawn a background task to periodically clean up revoked tokens.
@@ -915,5 +1594,155 @@ mod tests {
         assert_eq!(res.status(), 200);
         let body: serde_json::Value = serde_json::from_slice(res.body()).unwrap();
         assert_eq!(body["ok"], true);
+        // Should have a Set-Cookie header clearing the session
+        let set_cookie = res.headers().get("set-cookie").unwrap().to_str().unwrap();
+        assert!(set_cookie.contains("Max-Age=0"));
+    }
+
+    #[test]
+    fn test_extract_jwt_from_cookie() {
+        assert_eq!(
+            extract_jwt_from_cookie("varpulis_session=abc123"),
+            Some("abc123".to_string())
+        );
+        assert_eq!(
+            extract_jwt_from_cookie("other=foo; varpulis_session=abc123; more=bar"),
+            Some("abc123".to_string())
+        );
+        assert_eq!(extract_jwt_from_cookie("other=foo"), None);
+        assert_eq!(extract_jwt_from_cookie("varpulis_session="), None);
+    }
+
+    #[test]
+    fn test_local_jwt_roundtrip() {
+        let config = OAuthConfig {
+            github_client_id: "test".to_string(),
+            github_client_secret: "test".to_string(),
+            jwt_secret: "test-secret-key-32chars-minimum!!".to_string(),
+            frontend_url: "http://localhost:5173".to_string(),
+            server_url: "http://localhost:9000".to_string(),
+        };
+
+        let token = create_jwt_for_local_user(
+            &config,
+            "user-123",
+            "alice",
+            "Alice Smith",
+            "alice@example.com",
+            "admin",
+            "session-456",
+            3600,
+        )
+        .unwrap();
+
+        let claims = verify_jwt(&config, &token).unwrap();
+        assert_eq!(claims.sub, "user-123");
+        assert_eq!(claims.login, "alice");
+        assert_eq!(claims.name, "Alice Smith");
+        assert_eq!(claims.role, "admin");
+        assert_eq!(claims.session_id, "session-456");
+        assert_eq!(claims.auth_method, "local");
+    }
+
+    #[tokio::test]
+    async fn test_login_endpoint() {
+        let config = OAuthConfig {
+            github_client_id: "test".to_string(),
+            github_client_secret: "test".to_string(),
+            jwt_secret: "test-secret".to_string(),
+            frontend_url: "http://localhost:5173".to_string(),
+            server_url: "http://localhost:9000".to_string(),
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let user_store = Arc::new(RwLock::new(crate::users::UserStore::new(
+            dir.path().join("users.json"),
+            crate::users::SessionConfig::default(),
+        )));
+
+        // Create a test user
+        user_store
+            .write()
+            .await
+            .create_user(
+                "testuser",
+                "testpass123",
+                "Test User",
+                "test@test.com",
+                "admin",
+            )
+            .unwrap();
+
+        let state = Arc::new(OAuthState::new(config).with_user_store(user_store));
+        let routes = oauth_routes(Some(state));
+
+        // Test successful login
+        let res = warp::test::request()
+            .method("POST")
+            .path("/auth/login")
+            .header("content-type", "application/json")
+            .body(r#"{"username":"testuser","password":"testpass123"}"#)
+            .reply(&routes)
+            .await;
+
+        assert_eq!(res.status(), 200);
+        let body: serde_json::Value = serde_json::from_slice(res.body()).unwrap();
+        assert_eq!(body["ok"], true);
+        assert_eq!(body["user"]["username"], "testuser");
+        assert!(body["token"].is_string());
+        // Should have Set-Cookie header
+        let set_cookie = res.headers().get("set-cookie").unwrap().to_str().unwrap();
+        assert!(set_cookie.contains("varpulis_session="));
+        assert!(set_cookie.contains("HttpOnly"));
+
+        // Test failed login
+        let res = warp::test::request()
+            .method("POST")
+            .path("/auth/login")
+            .header("content-type", "application/json")
+            .body(r#"{"username":"testuser","password":"wrongpass"}"#)
+            .reply(&routes)
+            .await;
+
+        assert_eq!(res.status(), 401);
+    }
+
+    #[tokio::test]
+    async fn test_me_endpoint_with_cookie() {
+        let config = OAuthConfig {
+            github_client_id: "test".to_string(),
+            github_client_secret: "test".to_string(),
+            jwt_secret: "test-secret".to_string(),
+            frontend_url: "http://localhost:5173".to_string(),
+            server_url: "http://localhost:9000".to_string(),
+        };
+
+        let token = create_jwt_for_local_user(
+            &config,
+            "user-1",
+            "alice",
+            "Alice",
+            "alice@test.com",
+            "admin",
+            "sess-1",
+            3600,
+        )
+        .unwrap();
+
+        let state = Arc::new(OAuthState::new(config));
+        let routes = oauth_routes(Some(state));
+
+        let res = warp::test::request()
+            .method("GET")
+            .path("/api/v1/me")
+            .header("cookie", format!("varpulis_session={}", token))
+            .reply(&routes)
+            .await;
+
+        assert_eq!(res.status(), 200);
+        let body: serde_json::Value = serde_json::from_slice(res.body()).unwrap();
+        assert_eq!(body["login"], "alice");
+        assert_eq!(body["role"], "admin");
+        assert_eq!(body["auth_method"], "local");
     }
 }

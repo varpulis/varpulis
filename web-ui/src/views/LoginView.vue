@@ -24,10 +24,52 @@
             {{ authStore.error }}
           </v-alert>
 
+          <!-- Username/Password Form -->
+          <v-form @submit.prevent="handleLogin">
+            <v-text-field
+              v-model="username"
+              label="Username"
+              variant="outlined"
+              density="comfortable"
+              class="mb-2"
+              :disabled="authStore.loading"
+              autocomplete="username"
+            />
+            <v-text-field
+              v-model="password"
+              label="Password"
+              variant="outlined"
+              density="comfortable"
+              type="password"
+              class="mb-4"
+              :disabled="authStore.loading"
+              autocomplete="current-password"
+              @keyup.enter="handleLogin"
+            />
+            <v-btn
+              color="primary"
+              size="large"
+              block
+              type="submit"
+              :loading="authStore.loading"
+              :disabled="!username || !password"
+            >
+              Sign in
+            </v-btn>
+          </v-form>
+
+          <div class="d-flex align-center my-4">
+            <v-divider />
+            <span class="mx-3 text-caption text-medium-emphasis">or</span>
+            <v-divider />
+          </div>
+
+          <!-- GitHub OAuth Button -->
           <v-btn
             color="grey-darken-4"
             size="large"
             block
+            variant="outlined"
             :loading="authStore.loading"
             @click="authStore.loginWithGitHub()"
           >
@@ -68,7 +110,16 @@
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 
 const authStore = useAuthStore()
+const username = ref('')
+const password = ref('')
+
+async function handleLogin() {
+  if (username.value && password.value) {
+    await authStore.loginWithPassword(username.value, password.value)
+  }
+}
 </script>

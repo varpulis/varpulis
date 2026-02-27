@@ -195,14 +195,11 @@ router.beforeEach((to) => {
   const routeName = (to.name as string) ?? ''
   if (!PUBLIC_ROUTES.has(routeName)) {
     const token = localStorage.getItem('varpulis_token')
-    if (!token) {
-      // Allow access without token when OAuth is not configured (self-hosted mode)
-      // The check is: if GITHUB_CLIENT_ID was never set, there's no login page.
-      // We detect this by checking if the login view has ever been visited
-      // (presence of token means OAuth is active). No token + no OAuth = allow through.
-      // For simplicity: if token is missing but /login route exists, redirect.
-      // Users who never set up OAuth won't have a login page anyway.
-      return // Allow through — OAuth guard only activates after first login
+    const sessionAuth = localStorage.getItem('varpulis_authenticated')
+    if (!token && !sessionAuth) {
+      // Allow access without token when auth is not configured (self-hosted mode)
+      // No token + no session = allow through (for self-hosted without auth)
+      return // Allow through — auth guard only activates after first login
     }
   }
 })
