@@ -228,7 +228,7 @@ jobs:
             CREATE PUBLICATION varpulis_pub FOR TABLE orders, products;
           "
       - name: Run CDC E2E tests
-        run: cargo test -p varpulis-runtime --features cdc --test cdc_e2e -- --nocapture
+        run: cargo test -p varpulis-runtime --features cdc --test cdc_e2e -- --nocapture --test-threads=1
         env:
           CDC_TEST_HOST: localhost
           CDC_TEST_PORT: 5432
