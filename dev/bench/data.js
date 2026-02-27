@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1772152005937,
+  "lastUpdate": 1772152101633,
   "repoUrl": "https://github.com/varpulis/varpulis",
   "entries": {
     "Varpulis Performance": [
@@ -8378,6 +8378,148 @@ window.BENCHMARK_DATA = {
           {
             "name": "scalability/50k_kleene_plus",
             "value": 18993000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "cyril.poderà@gmail.com",
+            "name": "cpoder"
+          },
+          "committer": {
+            "email": "cyril.poderà@gmail.com",
+            "name": "cpoder"
+          },
+          "distinct": true,
+          "id": "2a6ffed0d40296f72bd7b5b46db2115ba6faacc8",
+          "message": "fix(web-ui): update minimatch to fix high severity ReDoS vulnerability\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>",
+          "timestamp": "2026-02-27T01:22:06+01:00",
+          "tree_id": "73dac2e62bb8624dbd31209badc71e3f8aa3bb0f",
+          "url": "https://github.com/varpulis/varpulis/commit/2a6ffed0d40296f72bd7b5b46db2115ba6faacc8"
+        },
+        "date": 1772152101138,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "simple_sequence/sase/100",
+            "value": 34620,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "simple_sequence/sase/1000",
+            "value": 343510,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "simple_sequence/sase/10000",
+            "value": 3440400,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_plus/sase/100",
+            "value": 40609,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_plus/sase/1000",
+            "value": 460840,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "kleene_plus/sase/5000",
+            "value": 2236900,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "with_predicates/sase/100",
+            "value": 34450,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "with_predicates/sase/1000",
+            "value": 406810,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "with_predicates/sase/5000",
+            "value": 2073900,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "long_sequence/seq_5_events_5k",
+            "value": 2186800,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "long_sequence/seq_10_events_10k",
+            "value": 4078000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "complex_patterns/negation_5k",
+            "value": 1528900,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "complex_patterns/or_pattern_5k",
+            "value": 1784400,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "complex_patterns/nested_kleene_5k",
+            "value": 113530000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "multi_predicates/chained_predicates_5k",
+            "value": 1826600,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "throughput/seq_3/10000",
+            "value": 3459800,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "throughput/seq_3/50000",
+            "value": 17493000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "throughput/seq_3/100000",
+            "value": 35223000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "scalability/100k_simple_seq",
+            "value": 34692000,
+            "range": "± 0",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "scalability/50k_kleene_plus",
+            "value": 20620000,
             "range": "± 0",
             "unit": "ns/iter"
           }
