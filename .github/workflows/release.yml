@@ -229,3 +229,107 @@ jobs:
             artifacts/varpulis-lsp-aarch64-apple-darwin/varpulis-lsp-aarch64-apple-darwin
             artifacts/varpulis-lsp-x86_64-pc-windows-msvc.exe/varpulis-lsp-x86_64-pc-windows-msvc.exe
             artifacts/checksums.txt
+
+  homebrew:
+    name: Update Homebrew Tap
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract version
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Download release binaries and compute SHA256
+        id: sha
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          BASE="https://github.com/varpulis/varpulis/releases/download/v${VERSION}"
+
+          for asset in varpulis-macos-x86_64 varpulis-macos-aarch64 varpulis-linux-x86_64 varpulis-linux-aarch64; do
+            curl -fsSL -o "$asset" "${BASE}/${asset}"
+            HASH=$(sha256sum "$asset" | cut -d' ' -f1)
+            KEY=$(echo "$asset" | tr '-' '_')
+            echo "${KEY}=${HASH}" >> "$GITHUB_OUTPUT"
+            echo "$asset: $HASH"
+          done
+
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v6
+        with:
+          repository: varpulis/homebrew-tap
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update formula
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          cat > homebrew-tap/Formula/varpulis.rb << 'FORMULA'
+          class Varpulis < Formula
+            desc "Modern streaming analytics engine with advanced pattern detection"
+            homepage "https://github.com/varpulis/varpulis"
+            version "VERSION_PLACEHOLDER"
+            license any_of: ["MIT", "Apache-2.0"]
+
+            on_macos do
+              on_intel do
+                url "https://github.com/varpulis/varpulis/releases/download/v#{version}/varpulis-macos-x86_64"
+                sha256 "SHA_MACOS_X86_64"
+              end
+
+              on_arm do
+                url "https://github.com/varpulis/varpulis/releases/download/v#{version}/varpulis-macos-aarch64"
+                sha256 "SHA_MACOS_AARCH64"
+              end
+            end
+
+            on_linux do
+              on_intel do
+                url "https://github.com/varpulis/varpulis/releases/download/v#{version}/varpulis-linux-x86_64"
+                sha256 "SHA_LINUX_X86_64"
+              end
+
+              on_arm do
+                url "https://github.com/varpulis/varpulis/releases/download/v#{version}/varpulis-linux-aarch64"
+                sha256 "SHA_LINUX_AARCH64"
+              end
+            end
+
+            def install
+              if OS.mac? && Hardware::CPU.intel?
+                bin.install "varpulis-macos-x86_64" => "varpulis"
+              elsif OS.mac? && Hardware::CPU.arm?
+                bin.install "varpulis-macos-aarch64" => "varpulis"
+              elsif OS.linux? && Hardware::CPU.intel?
+                bin.install "varpulis-linux-x86_64" => "varpulis"
+              elsif OS.linux? && Hardware::CPU.arm?
+                bin.install "varpulis-linux-aarch64" => "varpulis"
+              end
+            end
+
+            test do
+              assert_match "varpulis #{version}", shell_output("#{bin}/varpulis --version")
+            end
+          end
+          FORMULA
+
+          # Strip leading whitespace from heredoc
+          sed -i 's/^          //' homebrew-tap/Formula/varpulis.rb
+
+          # Substitute placeholders
+          sed -i "s/VERSION_PLACEHOLDER/${VERSION}/" homebrew-tap/Formula/varpulis.rb
+          sed -i "s/SHA_MACOS_X86_64/${{ steps.sha.outputs.varpulis_macos_x86_64 }}/" homebrew-tap/Formula/varpulis.rb
+          sed -i "s/SHA_MACOS_AARCH64/${{ steps.sha.outputs.varpulis_macos_aarch64 }}/" homebrew-tap/Formula/varpulis.rb
+          sed -i "s/SHA_LINUX_X86_64/${{ steps.sha.outputs.varpulis_linux_x86_64 }}/" homebrew-tap/Formula/varpulis.rb
+          sed -i "s/SHA_LINUX_AARCH64/${{ steps.sha.outputs.varpulis_linux_aarch64 }}/" homebrew-tap/Formula/varpulis.rb
+
+          echo "Generated formula:"
+          cat homebrew-tap/Formula/varpulis.rb
+
+      - name: Commit and push
+        run: |
+          cd homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/varpulis.rb
+          git commit -m "Update varpulis to ${{ steps.version.outputs.version }}"
+          git push

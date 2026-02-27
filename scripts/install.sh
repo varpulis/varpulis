@@ -3,13 +3,13 @@
 # Usage: curl -sSf https://raw.githubusercontent.com/varpulis/varpulis/main/scripts/install.sh | sh
 #
 # Environment variables:
-#   VARPULIS_VERSION     - Version to install (default: 0.4.0)
+#   VARPULIS_VERSION     - Version to install (default: 0.4.1)
 #   VARPULIS_INSTALL_DIR - Installation directory (default: /usr/local/bin or ~/.local/bin)
 #   VARPULIS_NO_LSP      - Set to 1 to skip LSP binary installation
 
 set -e
 
-VERSION="${VARPULIS_VERSION:-0.4.0}"
+VERSION="${VARPULIS_VERSION:-0.4.1}"
 REPO="varpulis/varpulis"
 BASE_URL="https://github.com/${REPO}/releases/download/v${VERSION}"
 
