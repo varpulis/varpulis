@@ -3080,7 +3080,9 @@ async fn run_coordinator(
             coord.llm_config = Some(varpulis_cluster::chat::LlmConfig {
                 endpoint: endpoint.clone(),
                 model: llm_model.clone(),
-                api_key: llm_api_key.clone().map(varpulis_core::security::SecretString::new),
+                api_key: llm_api_key
+                    .clone()
+                    .map(varpulis_core::security::SecretString::new),
                 provider,
             });
             println!("AI Chat:   {} ({})", llm_model, llm_provider);

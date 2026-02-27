@@ -221,9 +221,11 @@ impl SourceConnector for PostgresCdcSource {
             self.name, slot_name, publication
         );
 
-        // Try to create the logical replication slot (ignore if already exists)
+        // Try to create the logical replication slot (ignore if already exists).
+        // Use test_decoding plugin which outputs human-readable text that
+        // parse_change_text() can parse (pgoutput emits binary data).
         let create_slot = format!(
-            "SELECT pg_create_logical_replication_slot('{}', 'pgoutput')",
+            "SELECT pg_create_logical_replication_slot('{}', 'test_decoding')",
             slot_name
         );
         match client.simple_query(&create_slot).await {
@@ -250,8 +252,8 @@ impl SourceConnector for PostgresCdcSource {
             );
 
             let poll_query = format!(
-                "SELECT * FROM pg_logical_slot_get_changes('{}', NULL, NULL, 'proto_version', '1', 'publication_names', '{}')",
-                slot_name, publication
+                "SELECT * FROM pg_logical_slot_get_changes('{}', NULL, NULL)",
+                slot_name
             );
 
             while running.load(Ordering::SeqCst) {
