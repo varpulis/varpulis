@@ -2523,12 +2523,15 @@ impl Engine {
                         m.record_processing(stream_name, start.elapsed().as_secs_f64());
                     }
 
-                    // Check if we need to send output_events (has .process() but no .emit())
+                    // Check if we need to send output_events to the output channel.
+                    // This is true when there are no .emit() events AND the stream has
+                    // a .process() UDF or a .to() sink (so sink events appear in the
+                    // live event stream / WebSocket relay).
                     let send_outputs = result.emitted_events.is_empty()
                         && stream
                             .operations
                             .iter()
-                            .any(|op| matches!(op, RuntimeOp::Process(_)));
+                            .any(|op| matches!(op, RuntimeOp::Process(_) | RuntimeOp::To(_)));
 
                     // Send emitted events to output channel (non-blocking)
                     // PERF: Use send_output_shared for zero-copy when using SharedEvent channel
@@ -2557,8 +2560,11 @@ impl Engine {
                         }
                     }
 
-                    // Count events sent to connector sinks via .to() operations
-                    self.output_events_emitted += result.sink_events_sent;
+                    // Count events sent to connector sinks via .to() operations.
+                    // Skip if already counted via output_events above (avoids double-counting).
+                    if !send_outputs {
+                        self.output_events_emitted += result.sink_events_sent;
+                    }
 
                     // Queue output events for processing by dependent streams
                     for output_event in result.output_events {
@@ -2649,19 +2655,22 @@ impl Engine {
                     let has_emitted = !result.emitted_events.is_empty();
                     emitted_batch.extend(result.emitted_events);
 
-                    // If .process() was used but no .emit(), send output_events too
-                    if !has_emitted
+                    // If .process() or .to() was used but no .emit(), send output_events
+                    // to the output channel so they appear in the live event stream.
+                    let forward_outputs = !has_emitted
                         && stream
                             .operations
                             .iter()
-                            .any(|op| matches!(op, RuntimeOp::Process(_)))
-                    {
+                            .any(|op| matches!(op, RuntimeOp::Process(_) | RuntimeOp::To(_)));
+                    if forward_outputs {
                         self.output_events_emitted += result.output_events.len() as u64;
                         emitted_batch.extend(result.output_events.iter().map(Arc::clone));
                     }
 
-                    // Count events sent to connector sinks via .to() operations
-                    self.output_events_emitted += result.sink_events_sent;
+                    // Count sink events only when not already counted via forwarded outputs
+                    if !forward_outputs {
+                        self.output_events_emitted += result.sink_events_sent;
+                    }
 
                     // Queue output events (push_back to maintain order)
                     for output_event in result.output_events {
@@ -2747,19 +2756,22 @@ impl Engine {
                     let has_emitted = !result.emitted_events.is_empty();
                     emitted_batch.extend(result.emitted_events);
 
-                    // If .process() was used but no .emit(), send output_events too
-                    if !has_emitted
+                    // If .process() or .to() was used but no .emit(), send output_events
+                    // to the output channel so they appear in the live event stream.
+                    let forward_outputs = !has_emitted
                         && stream
                             .operations
                             .iter()
-                            .any(|op| matches!(op, RuntimeOp::Process(_)))
-                    {
+                            .any(|op| matches!(op, RuntimeOp::Process(_) | RuntimeOp::To(_)));
+                    if forward_outputs {
                         self.output_events_emitted += result.output_events.len() as u64;
                         emitted_batch.extend(result.output_events.iter().map(Arc::clone));
                     }
 
-                    // Count events sent to connector sinks via .to() operations
-                    self.output_events_emitted += result.sink_events_sent;
+                    // Count sink events only when not already counted via forwarded outputs
+                    if !forward_outputs {
+                        self.output_events_emitted += result.sink_events_sent;
+                    }
 
                     // Queue output events (push_back to maintain order)
                     for output_event in result.output_events {
@@ -2904,18 +2916,22 @@ impl Engine {
                     let has_emitted = !result.emitted_events.is_empty();
                     emitted_batch.extend(result.emitted_events);
 
-                    if !has_emitted
+                    // If .process() or .to() was used but no .emit(), send output_events
+                    // to the output channel so they appear in the live event stream.
+                    let forward_outputs = !has_emitted
                         && stream
                             .operations
                             .iter()
-                            .any(|op| matches!(op, RuntimeOp::Process(_)))
-                    {
+                            .any(|op| matches!(op, RuntimeOp::Process(_) | RuntimeOp::To(_)));
+                    if forward_outputs {
                         self.output_events_emitted += result.output_events.len() as u64;
                         emitted_batch.extend(result.output_events.iter().map(Arc::clone));
                     }
 
-                    // Count events sent to connector sinks via .to() operations
-                    self.output_events_emitted += result.sink_events_sent;
+                    // Count sink events only when not already counted via forwarded outputs
+                    if !forward_outputs {
+                        self.output_events_emitted += result.sink_events_sent;
+                    }
 
                     for output_event in result.output_events {
                         pending_events.push_back((output_event, depth + 1));
