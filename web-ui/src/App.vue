@@ -61,11 +61,6 @@ function dismissBanner(): void {
   showApiKeyBanner.value = false
 }
 
-function useDevKey(): void {
-  apiKeyInput.value = 'dev-key'
-  saveApiKey()
-}
-
 function toggleTheme() {
   theme.global.name.value = isDark.value ? 'light' : 'dark'
 }
@@ -149,9 +144,6 @@ onMounted(() => {
             <div>
               <strong>API Key Required</strong>
               <div class="text-body-2">Enter your coordinator API key to connect to the cluster.</div>
-              <div class="text-caption text-medium-emphasis mt-1">
-                For development, use: <code class="font-weight-bold">dev-key</code>
-              </div>
             </div>
             <div class="d-flex align-center gap-2">
               <v-text-field
@@ -164,7 +156,6 @@ onMounted(() => {
                 @keyup.enter="saveApiKey"
               />
               <v-btn color="primary" @click="saveApiKey">Save</v-btn>
-              <v-btn variant="text" @click="useDevKey">Use Dev Key</v-btn>
             </div>
           </div>
         </v-alert>
