@@ -4,14 +4,17 @@
 //! and native Anthropic Messages API.
 
 use serde::{Deserialize, Serialize};
+use varpulis_core::security::SecretString;
 
 /// LLM provider configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmConfig {
     pub endpoint: String,
     pub model: String,
+    /// LLM API key — wrapped in `SecretString` so it is zeroized on drop
+    /// and redacted in Debug/Serialize output.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_key: Option<String>,
+    pub api_key: Option<SecretString>,
     pub provider: LlmProvider,
 }
 
@@ -275,7 +278,7 @@ pub async fn chat_completion(
                 });
                 let mut req = http_client.post(&url).json(&body);
                 if let Some(ref key) = config.api_key {
-                    req = req.header("Authorization", format!("Bearer {}", key));
+                    req = req.header("Authorization", format!("Bearer {}", key.expose()));
                 }
                 let resp = req
                     .send()
@@ -329,7 +332,7 @@ pub async fn chat_completion(
                     .header("anthropic-version", "2023-06-01")
                     .json(&body);
                 if let Some(ref key) = config.api_key {
-                    req = req.header("x-api-key", key);
+                    req = req.header("x-api-key", key.expose());
                 }
                 let resp = req
                     .send()
