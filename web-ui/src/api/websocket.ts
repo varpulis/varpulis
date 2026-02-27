@@ -39,7 +39,13 @@ export class WebSocketClient {
    */
   connect(): void {
     if (this.ws) {
-      return
+      // If the WebSocket is closed or closing, tear down and reconnect
+      if (this.ws.readyState === WebSocket.CLOSED || this.ws.readyState === WebSocket.CLOSING) {
+        this.ws.close()
+        this.ws = null
+      } else {
+        return
+      }
     }
 
     let wsUrl = `${this.baseUrl}/ws`
@@ -51,7 +57,7 @@ export class WebSocketClient {
     this.setConnectionState('connecting')
 
     this.ws = new ReconnectingWebSocket(wsUrl, [], {
-      maxRetries: 10,
+      maxRetries: Infinity,
       connectionTimeout: 5000,
       maxReconnectionDelay: 10000,
       minReconnectionDelay: 1000,
