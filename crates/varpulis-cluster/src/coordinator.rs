@@ -360,7 +360,7 @@ impl Coordinator {
                 let worker = WorkerNode {
                     id: wid.clone(),
                     address: entry.address.clone(),
-                    api_key: entry.api_key.clone(),
+                    api_key: varpulis_core::security::SecretString::new(entry.api_key.clone()),
                     status: raft_status,
                     capacity: crate::worker::WorkerCapacity {
                         cpu_cores: entry.cpu_cores,
@@ -591,7 +591,7 @@ impl Coordinator {
                     pipeline_name: pipeline.name.clone(),
                     worker_id,
                     worker_address: worker.address.clone(),
-                    worker_api_key: worker.api_key.clone(),
+                    worker_api_key: worker.api_key.expose().to_string(),
                     source: effective_source.clone(),
                     replica_count,
                 });
@@ -919,7 +919,7 @@ impl Coordinator {
                     .get(&worker_id)
                     .ok_or_else(|| ClusterError::WorkerNotFound(worker_id.0.clone()))?;
                 let worker_address = worker.address.clone();
-                let worker_api_key = worker.api_key.clone();
+                let worker_api_key = worker.api_key.expose().to_string();
 
                 // Deploy pipeline to the worker via its REST API
                 let deploy_url = format!("{}/api/v1/pipelines", worker_address);
@@ -1481,7 +1481,7 @@ impl Coordinator {
                         pname.clone(),
                         dep.worker_id.clone(),
                         worker.address.clone(),
-                        worker.api_key.clone(),
+                        worker.api_key.expose().to_string(),
                         src,
                     ));
                 }
@@ -1599,7 +1599,7 @@ impl Coordinator {
             .get(target_worker_id)
             .ok_or_else(|| ClusterError::WorkerNotFound(target_worker_id.0.clone()))?;
         let target_address = target_worker.address.clone();
-        let target_api_key = target_worker.api_key.clone();
+        let target_api_key = target_worker.api_key.expose().to_string();
 
         let logical_name = pipeline_name
             .rsplit_once('#')
@@ -1923,7 +1923,7 @@ impl Coordinator {
             .get(target_worker_id)
             .ok_or_else(|| ClusterError::WorkerNotFound(target_worker_id.0.clone()))?;
         let target_address = target_worker.address.clone();
-        let target_api_key = target_worker.api_key.clone();
+        let target_api_key = target_worker.api_key.expose().to_string();
 
         let migration_id = uuid::Uuid::new_v4().to_string();
 
@@ -3041,7 +3041,10 @@ mod tests {
             "key1".into(),
         );
         coord.register_worker(node1);
-        assert_eq!(coord.workers[&WorkerId("w1".into())].api_key, "key1");
+        assert_eq!(
+            coord.workers[&WorkerId("w1".into())].api_key.expose(),
+            "key1"
+        );
 
         // Re-register with different address/key
         let node2 = WorkerNode::new(
@@ -3055,7 +3058,10 @@ mod tests {
             coord.workers[&WorkerId("w1".into())].address,
             "http://localhost:9999"
         );
-        assert_eq!(coord.workers[&WorkerId("w1".into())].api_key, "key2");
+        assert_eq!(
+            coord.workers[&WorkerId("w1".into())].api_key.expose(),
+            "key2"
+        );
     }
 
     #[test]

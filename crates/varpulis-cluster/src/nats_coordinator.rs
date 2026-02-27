@@ -89,7 +89,7 @@ async fn handle_registration(payload: &[u8], coordinator: &SharedCoordinator) ->
     let node = WorkerNode {
         id: WorkerId(req.worker_id.clone()),
         address: req.address,
-        api_key: req.api_key,
+        api_key: varpulis_core::security::SecretString::new(req.api_key),
         status: WorkerStatus::Ready,
         capacity: req.capacity,
         last_heartbeat: std::time::Instant::now(),

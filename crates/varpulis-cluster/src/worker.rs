@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
+use varpulis_core::security::SecretString;
 
 /// Unique identifier for a worker node.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -62,7 +63,8 @@ fn num_cpus() -> usize {
 pub struct WorkerNode {
     pub id: WorkerId,
     pub address: String,
-    pub api_key: String,
+    /// Worker API key — stored as `SecretString` so it is zeroized on drop.
+    pub api_key: SecretString,
     pub status: WorkerStatus,
     pub capacity: WorkerCapacity,
     pub last_heartbeat: Instant,
@@ -76,7 +78,7 @@ impl WorkerNode {
         Self {
             id,
             address,
-            api_key,
+            api_key: SecretString::new(api_key),
             status: WorkerStatus::Registering,
             capacity: WorkerCapacity::default(),
             last_heartbeat: Instant::now(),

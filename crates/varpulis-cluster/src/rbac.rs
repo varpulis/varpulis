@@ -87,7 +87,8 @@ pub struct RbacConfig {
     /// Default role for anonymous/unauthenticated requests (when allow_anonymous is true).
     pub anonymous_role: Role,
     /// Optional JWT secret for cookie/bearer token authentication.
-    jwt_secret: Option<String>,
+    /// Wrapped in `SecretString` so it is zeroized on drop.
+    jwt_secret: Option<SecretString>,
 }
 
 // Manual Clone because SecretString doesn't auto-derive Clone through HashMap
@@ -232,7 +233,7 @@ impl RbacConfig {
 
     /// Set the JWT secret for cookie/bearer token authentication.
     pub fn with_jwt_secret(mut self, secret: String) -> Self {
-        self.jwt_secret = Some(secret);
+        self.jwt_secret = Some(SecretString::new(secret));
         self
     }
 
@@ -240,10 +241,14 @@ impl RbacConfig {
     pub fn authenticate_jwt(&self, token: &str) -> Option<Role> {
         let secret = self.jwt_secret.as_ref()?;
 
+        // Enforce HS256 algorithm to prevent algorithm confusion attacks
+        let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256);
+        validation.validate_exp = true;
+
         let token_data = jsonwebtoken::decode::<serde_json::Value>(
             token,
-            &jsonwebtoken::DecodingKey::from_secret(secret.as_bytes()),
-            &jsonwebtoken::Validation::default(),
+            &jsonwebtoken::DecodingKey::from_secret(secret.expose().as_bytes()),
+            &validation,
         )
         .ok()?;
 
