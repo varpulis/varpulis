@@ -99,14 +99,14 @@ async fn test_cdc_source_receives_inserts() {
     let client = raw_client().await;
     client
         .execute(
-            "INSERT INTO orders (customer, amount, status) VALUES ($1, $2::numeric, $3)",
+            "INSERT INTO orders (customer, amount, status) VALUES ($1, $2, $3)",
             &[&"alice", &99.99_f64, &"pending"],
         )
         .await
         .unwrap();
     client
         .execute(
-            "INSERT INTO orders (customer, amount, status) VALUES ($1, $2::numeric, $3)",
+            "INSERT INTO orders (customer, amount, status) VALUES ($1, $2, $3)",
             &[&"bob", &250.00_f64, &"confirmed"],
         )
         .await
@@ -162,7 +162,7 @@ async fn test_cdc_source_receives_updates() {
     // Insert a row first, then update it
     client
         .execute(
-            "INSERT INTO orders (customer, amount, status) VALUES ($1, $2::numeric, $3)",
+            "INSERT INTO orders (customer, amount, status) VALUES ($1, $2, $3)",
             &[&"charlie", &100.00_f64, &"pending"],
         )
         .await
@@ -174,7 +174,7 @@ async fn test_cdc_source_receives_updates() {
     // Update the row
     client
         .execute(
-            "UPDATE orders SET amount = $1::numeric, status = $2 WHERE customer = $3",
+            "UPDATE orders SET amount = $1, status = $2 WHERE customer = $3",
             &[&200.00_f64, &"confirmed", &"charlie"],
         )
         .await
@@ -229,7 +229,7 @@ async fn test_cdc_source_receives_deletes() {
     // Insert then delete
     client
         .execute(
-            "INSERT INTO orders (customer, amount, status) VALUES ($1, $2::numeric, $3)",
+            "INSERT INTO orders (customer, amount, status) VALUES ($1, $2, $3)",
             &[&"dave", &50.00_f64, &"pending"],
         )
         .await
@@ -288,7 +288,7 @@ async fn test_cdc_event_format() {
     let client = raw_client().await;
     client
         .execute(
-            "INSERT INTO orders (customer, amount, status) VALUES ($1, $2::numeric, $3)",
+            "INSERT INTO orders (customer, amount, status) VALUES ($1, $2, $3)",
             &[&"eve", &75.50_f64, &"pending"],
         )
         .await
@@ -348,14 +348,14 @@ async fn test_cdc_multi_table() {
     // Insert into both tables
     client
         .execute(
-            "INSERT INTO orders (customer, amount, status) VALUES ($1, $2::numeric, $3)",
+            "INSERT INTO orders (customer, amount, status) VALUES ($1, $2, $3)",
             &[&"frank", &300.00_f64, &"pending"],
         )
         .await
         .unwrap();
     client
         .execute(
-            "INSERT INTO products (name, price, stock) VALUES ($1, $2::numeric, $3)",
+            "INSERT INTO products (name, price, stock) VALUES ($1, $2, $3)",
             &[&"Widget", &19.99_f64, &100_i32],
         )
         .await
@@ -427,7 +427,7 @@ async fn test_cdc_throughput() {
     for i in 0..n {
         client
             .execute(
-                "INSERT INTO orders (customer, amount, status) VALUES ($1, $2::numeric, $3)",
+                "INSERT INTO orders (customer, amount, status) VALUES ($1, $2, $3)",
                 &[&format!("customer_{}", i), &((i as f64) * 1.5), &"pending"],
             )
             .await
