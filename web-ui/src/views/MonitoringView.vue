@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useClusterStore } from '@/stores/cluster'
 import { usePipelinesStore } from '@/stores/pipelines'
+import { useMetricsStore } from '@/stores/metrics'
 import { fetchClusterMetrics, type PipelineWorkerMetrics, type ConnectorHealthInfo } from '@/api/cluster'
 import { getWebSocketClient } from '@/api/websocket'
 import type { ServerMessage } from '@/types/websocket'
@@ -9,6 +10,7 @@ import ThroughputChart from '@/components/metrics/ThroughputChart.vue'
 
 const clusterStore = useClusterStore()
 const pipelinesStore = usePipelinesStore()
+const metricsStore = useMetricsStore()
 
 // Pipeline metrics state
 const pipelines = ref<PipelineWorkerMetrics[]>([])
@@ -96,6 +98,28 @@ async function fetchData(): Promise<void> {
 
     pipelines.value = metricsData.pipelines
     pipelineThroughputs.value = newThroughputs
+
+    // Feed aggregate metrics into the metrics store so ThroughputChart updates
+    let totalEventsIn = 0
+    let totalEventsOut = 0
+    let totalThroughput = 0
+    for (const p of metricsData.pipelines) {
+      totalEventsIn += p.events_in
+      totalEventsOut += p.events_out
+    }
+    for (const t of newThroughputs.values()) {
+      totalThroughput += t
+    }
+    metricsStore.updateMetrics({
+      events_processed: totalEventsIn,
+      events_emitted: totalEventsOut,
+      errors: 0,
+      active_streams: metricsData.pipelines.length,
+      uptime_secs: 0,
+      throughput_eps: totalThroughput,
+      avg_latency_ms: 0,
+    })
+
     loading.value = false
   } catch (e) {
     fetchError.value = e instanceof Error ? e.message : 'Failed to fetch metrics'

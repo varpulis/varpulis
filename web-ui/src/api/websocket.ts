@@ -5,6 +5,7 @@ import type {
   ConnectionState,
   EventLogEntry,
 } from '@/types/websocket'
+import { getApiKey } from '@/api/index'
 
 type MessageHandler = (message: ServerMessage) => void
 type ConnectionHandler = (state: ConnectionState) => void
@@ -19,10 +20,17 @@ export class WebSocketClient {
   private eventIdCounter = 0
 
   constructor(private baseUrl: string = '') {
-    // Use current host if no base URL provided
     if (!baseUrl) {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-      this.baseUrl = `${protocol}//${window.location.host}`
+      // Check if a custom coordinator URL is configured (same setting as REST API)
+      const coordinatorUrl = localStorage.getItem('varpulis_coordinator_url')
+      if (coordinatorUrl && coordinatorUrl.trim()) {
+        const url = coordinatorUrl.trim().replace(/\/$/, '')
+        // Convert http(s) URL to ws(s) URL
+        this.baseUrl = url.replace(/^http/, 'ws')
+      } else {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+        this.baseUrl = `${protocol}//${window.location.host}`
+      }
     }
   }
 
@@ -34,7 +42,12 @@ export class WebSocketClient {
       return
     }
 
-    const wsUrl = `${this.baseUrl}/ws`
+    let wsUrl = `${this.baseUrl}/ws`
+    // Pass API key as query param (browser WebSocket API doesn't support custom headers)
+    const apiKey = getApiKey()
+    if (apiKey) {
+      wsUrl += `?api_key=${encodeURIComponent(apiKey)}`
+    }
     this.setConnectionState('connecting')
 
     this.ws = new ReconnectingWebSocket(wsUrl, [], {
