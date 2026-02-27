@@ -240,6 +240,25 @@ impl SourceConnector for PostgresCdcSource {
             }
         }
 
+        // Drain any pre-existing WAL changes in the slot (e.g. from CI setup
+        // or previous operations) so we only see changes made AFTER start().
+        let drain_query = format!(
+            "SELECT * FROM pg_logical_slot_get_changes('{}', NULL, NULL)",
+            slot_name
+        );
+        match client.query(&*drain_query, &[]).await {
+            Ok(rows) => {
+                if !rows.is_empty() {
+                    info!(
+                        "Drained {} stale WAL entries from slot '{}'",
+                        rows.len(),
+                        slot_name
+                    );
+                }
+            }
+            Err(e) => warn!("Could not drain stale WAL: {}", e),
+        }
+
         let client = std::sync::Arc::new(client);
 
         // Use polling approach: pg_logical_slot_get_changes() to consume WAL changes.
@@ -339,21 +358,66 @@ fn parse_change_text(data: &str) -> Option<Event> {
         return None;
     };
 
-    // Parse field values: "col[type]:value col2[type]:value2"
+    // Parse field values: "col[type]:value col2[type with spaces]:value2"
+    // Type names can contain spaces (e.g. "double precision", "character varying"),
+    // so we scan for '[' and ']' boundaries instead of splitting on whitespace.
     let mut fields = Vec::new();
-    for token in field_str.split_whitespace() {
-        // Format: name[type]:value
-        let bracket_pos = token.find('[')?;
-        let colon_pos = token.find(']').and_then(|p| {
-            if p + 1 < token.len() && token.as_bytes()[p + 1] == b':' {
-                Some(p + 1)
-            } else {
-                None
-            }
-        })?;
+    let bytes = field_str.as_bytes();
+    let mut pos = 0;
 
-        let col_name = &token[..bracket_pos];
-        let col_value = &token[colon_pos + 1..];
+    while pos < bytes.len() {
+        // Skip leading whitespace
+        while pos < bytes.len() && bytes[pos] == b' ' {
+            pos += 1;
+        }
+        if pos >= bytes.len() {
+            break;
+        }
+
+        // Field name ends at '['
+        let name_start = pos;
+        while pos < bytes.len() && bytes[pos] != b'[' {
+            pos += 1;
+        }
+        if pos >= bytes.len() {
+            break;
+        }
+        let col_name = &field_str[name_start..pos];
+        pos += 1; // skip '['
+
+        // Type name ends at ']' (may contain spaces like "double precision")
+        while pos < bytes.len() && bytes[pos] != b']' {
+            pos += 1;
+        }
+        if pos >= bytes.len() {
+            break;
+        }
+        pos += 1; // skip ']'
+
+        // Expect ':'
+        if pos >= bytes.len() || bytes[pos] != b':' {
+            break;
+        }
+        pos += 1; // skip ':'
+
+        // Value: quoted strings or unquoted tokens
+        let value_start = pos;
+        if pos < bytes.len() && bytes[pos] == b'\'' {
+            // Quoted value — scan to closing quote
+            pos += 1;
+            while pos < bytes.len() && bytes[pos] != b'\'' {
+                pos += 1;
+            }
+            if pos < bytes.len() {
+                pos += 1; // skip closing quote
+            }
+        } else {
+            // Unquoted value — extends until space or end
+            while pos < bytes.len() && bytes[pos] != b' ' {
+                pos += 1;
+            }
+        }
+        let col_value = &field_str[value_start..pos];
 
         let value = if col_value == "null" {
             varpulis_core::Value::Null
@@ -710,6 +774,24 @@ mod tests {
         let event = event.unwrap();
         assert_eq!(event.event_type.as_ref(), "orders.DELETE");
         assert_eq!(event.get("id"), Some(&Value::Int(7)));
+    }
+
+    #[cfg(feature = "cdc")]
+    #[test]
+    fn test_parse_change_text_multiword_type() {
+        // test_decoding outputs "double precision" (with space) for FLOAT8/DOUBLE PRECISION columns
+        let data = "table public.orders: INSERT: id[integer]:1 customer[text]:'alice' amount[double precision]:99.99 status[text]:'pending'";
+        let event = parse_change_text(data);
+        assert!(
+            event.is_some(),
+            "should parse types with spaces like 'double precision'"
+        );
+        let event = event.unwrap();
+        assert_eq!(event.event_type.as_ref(), "orders.INSERT");
+        assert_eq!(event.get("id"), Some(&Value::Int(1)));
+        assert_eq!(event.get("customer"), Some(&Value::Str("alice".into())));
+        assert_eq!(event.get("amount"), Some(&Value::Float(99.99)));
+        assert_eq!(event.get("status"), Some(&Value::Str("pending".into())));
     }
 
     #[cfg(feature = "cdc")]
