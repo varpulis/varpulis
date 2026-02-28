@@ -15,7 +15,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
-warp = { workspace = true }
+axum = { workspace = true }
+axum-extra = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
 reqwest = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
 chrono = { workspace = true }
@@ -75,5 +78,6 @@ tokio-stream = { version = "0.1", features = ["net"] }
 async-nats = "0.38"
 futures-util = "0.3"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+tower = { version = "0.5", features = ["util"] }
 uuid = { version = "1", features = ["v4"] }
 serde_json = { workspace = true }

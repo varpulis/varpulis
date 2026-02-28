@@ -1,10 +1,10 @@
-//! Coordinator REST API routes (warp-based).
+//! Coordinator REST API routes (axum-based).
 
 use crate::connector_config::{self, ClusterConnector};
 use crate::coordinator::{Coordinator, InjectBatchRequest, InjectEventRequest};
 use crate::migration::MigrationReason;
 use crate::pipeline_group::{PipelineGroupInfo, PipelineGroupSpec};
-use crate::rate_limit::{RateLimitRejection, RateLimiter};
+use crate::rate_limit::RateLimiter;
 use crate::rbac::{RbacConfig, Role};
 use crate::routing::{
     GroupTopology, PipelineTopologyEntry, RouteTopologyEntry, TopologyInfo, TopologyRouteEntry,
@@ -16,13 +16,16 @@ use crate::worker::{
 };
 use crate::ClusterError;
 use serde::{Deserialize, Serialize};
-use std::convert::Infallible;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 #[allow(unused_imports)]
 use varpulis_parser::ParseError;
-use warp::http::StatusCode;
-use warp::{Filter, Rejection, Reply};
+
+use axum::extract::{ConnectInfo, Path, Query, State};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use axum::routing::{delete, get, post, put};
+use axum::{Json, Router};
 
 use varpulis_core::pagination::{PaginationParams, MAX_LIMIT};
 use varpulis_core::security::{JSON_BODY_LIMIT, LARGE_BODY_LIMIT};
@@ -44,44 +47,58 @@ pub fn shared_coordinator() -> SharedCoordinator {
     Arc::new(RwLock::new(Coordinator::new()))
 }
 
-/// Build a warp CORS filter from an optional list of allowed origins.
+/// Build a tower-http CORS layer from an optional list of allowed origins.
 ///
 /// - Explicit list of origins: restrict to those origins.
 /// - A list containing `"*"`: allow any origin (must be explicitly opted into).
 /// - `None` (default): allow only localhost origins for safety.
-fn build_cors(origins: Option<Vec<String>>) -> warp::cors::Builder {
-    let base = warp::cors()
-        .allow_methods(vec!["GET", "POST", "PUT", "DELETE", "OPTIONS"])
-        .allow_headers(vec![
-            "content-type",
-            "x-api-key",
-            "authorization",
-            "x-request-id",
-            "traceparent",
-        ]);
+fn build_cors(origins: Option<Vec<String>>) -> tower_http::cors::CorsLayer {
+    use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 
-    match origins {
+    let methods = AllowMethods::list([
+        axum::http::Method::GET,
+        axum::http::Method::POST,
+        axum::http::Method::PUT,
+        axum::http::Method::DELETE,
+        axum::http::Method::OPTIONS,
+    ]);
+
+    let headers = AllowHeaders::list([
+        "content-type".parse().unwrap(),
+        "x-api-key".parse().unwrap(),
+        "authorization".parse().unwrap(),
+        "x-request-id".parse().unwrap(),
+        "traceparent".parse().unwrap(),
+    ]);
+
+    let origin = match origins {
         Some(ref list) if list.iter().any(|o| o == "*") => {
             tracing::warn!(
                 "CORS configured with allow_any_origin — this is unsafe for production. \
                  Set --cors-origins to restrict to specific origins."
             );
-            base.allow_any_origin()
+            AllowOrigin::any()
         }
         Some(ref list) if !list.is_empty() => {
-            let origins: Vec<&str> = list.iter().map(|s| s.as_str()).collect();
-            base.allow_origins(origins)
+            let origins: Vec<axum::http::HeaderValue> =
+                list.iter().filter_map(|s| s.parse().ok()).collect();
+            AllowOrigin::list(origins)
         }
         _ => {
             // Default: only allow localhost origins for safety
-            base.allow_origins(vec![
-                "http://localhost:5173",
-                "http://localhost:8080",
-                "http://127.0.0.1:5173",
-                "http://127.0.0.1:8080",
+            AllowOrigin::list([
+                "http://localhost:5173".parse().unwrap(),
+                "http://localhost:8080".parse().unwrap(),
+                "http://127.0.0.1:5173".parse().unwrap(),
+                "http://127.0.0.1:8080".parse().unwrap(),
             ])
         }
-    }
+    };
+
+    CorsLayer::new()
+        .allow_methods(methods)
+        .allow_headers(headers)
+        .allow_origin(origin)
 }
 
 /// Build all Raft + cluster API routes.
@@ -95,10 +112,18 @@ pub fn cluster_routes_with_raft(
     raft: crate::raft::routes::SharedRaft,
     rate_limiter: Option<Arc<RateLimiter>>,
     cors_origins: Option<Vec<String>>,
-) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
-    let raft_routes = crate::raft::routes::raft_routes(raft, rbac.any_admin_key());
+) -> Router {
+    let raft_router = crate::raft::routes::raft_routes(raft, rbac.any_admin_key());
     let cluster = cluster_routes(coordinator, rbac, rate_limiter, cors_origins);
-    raft_routes.or(cluster)
+    cluster.merge(raft_router)
+}
+
+/// Shared application state for all cluster API routes.
+#[derive(Clone)]
+pub struct AppState {
+    pub coordinator: SharedCoordinator,
+    pub rbac: Arc<RbacConfig>,
+    pub rate_limiter: Option<Arc<RateLimiter>>,
 }
 
 /// Build all coordinator API routes under `/api/v1/cluster/`.
@@ -113,687 +138,351 @@ pub fn cluster_routes(
     rbac: Arc<RbacConfig>,
     rate_limiter: Option<Arc<RateLimiter>>,
     cors_origins: Option<Vec<String>>,
-) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
-    let api = warp::path("api")
-        .and(warp::path("v1"))
-        .and(warp::path("cluster"));
-
-    // Rate limit filter for mutating endpoints — extracts () or rejects with 429.
-    // When rate_limiter is None, this is a no-op that always allows requests.
-    let rate_limit_filter = {
-        let limiter = rate_limiter;
-        warp::addr::remote()
-            .and(warp::any().map(move || limiter.clone()))
-            .and_then(
-                |addr: Option<std::net::SocketAddr>, limiter: Option<Arc<RateLimiter>>| async move {
-                    if let Some(ref limiter) = limiter {
-                        let ip = addr
-                            .map(|a| a.ip())
-                            .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
-                        match limiter.check(ip).await {
-                            crate::rate_limit::RateLimitResult::Allowed { .. } => Ok(()),
-                            crate::rate_limit::RateLimitResult::Limited { retry_after } => {
-                                Err(warp::reject::custom(RateLimitRejection {
-                                    retry_after_secs: retry_after.as_secs().max(1),
-                                }))
-                            }
-                        }
-                    } else {
-                        Ok(())
-                    }
-                },
-            )
-            .untuple_one()
+) -> Router {
+    let state = AppState {
+        coordinator,
+        rbac,
+        rate_limiter,
     };
 
-    let register_worker = api
-        .and(warp::path("workers"))
-        .and(warp::path("register"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(rate_limit_filter.clone())
-        .and(with_rbac(rbac.clone(), Role::Operator))
-        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
-        .and(warp::body::json())
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_register_worker);
+    let json_limit = tower_http::limit::RequestBodyLimitLayer::new(JSON_BODY_LIMIT as usize);
+    let large_limit = tower_http::limit::RequestBodyLimitLayer::new(LARGE_BODY_LIMIT as usize);
 
-    let heartbeat = api
-        .and(warp::path("workers"))
-        .and(warp::path::param::<String>())
-        .and(warp::path("heartbeat"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(rate_limit_filter.clone())
-        .and(with_rbac(rbac.clone(), Role::Operator))
-        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
-        .and(warp::body::json())
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_heartbeat);
+    // Rate-limited mutating routes (POST/PUT/DELETE)
+    let rate_limited = Router::new()
+        // Workers
+        .route(
+            "/api/v1/cluster/workers/register",
+            post(handle_register_worker),
+        )
+        .route(
+            "/api/v1/cluster/workers/{worker_id}/heartbeat",
+            post(handle_heartbeat),
+        )
+        .route(
+            "/api/v1/cluster/workers/{worker_id}",
+            delete(handle_delete_worker),
+        )
+        .route(
+            "/api/v1/cluster/workers/{worker_id}/drain",
+            post(handle_drain_worker),
+        )
+        // Pipeline groups
+        .route("/api/v1/cluster/pipeline-groups", post(handle_deploy_group))
+        .route(
+            "/api/v1/cluster/pipeline-groups/{group_id}",
+            delete(handle_delete_group),
+        )
+        .route(
+            "/api/v1/cluster/pipeline-groups/{group_id}/inject",
+            post(handle_inject_event),
+        )
+        .route(
+            "/api/v1/cluster/pipeline-groups/{group_id}/inject-batch",
+            post(handle_inject_batch).layer(large_limit),
+        )
+        .route(
+            "/api/v1/cluster/pipeline-groups/{group_id}/dlq/replay",
+            post(handle_dlq_replay),
+        )
+        .route(
+            "/api/v1/cluster/pipeline-groups/{group_id}/dlq",
+            delete(handle_dlq_clear),
+        )
+        // Validate
+        .route("/api/v1/cluster/validate", post(handle_validate))
+        // Migration / Rebalance
+        .route("/api/v1/cluster/rebalance", post(handle_rebalance))
+        .route(
+            "/api/v1/cluster/pipelines/{group_id}/{pipeline_name}/migrate",
+            post(handle_manual_migrate),
+        )
+        // Connectors
+        .route("/api/v1/cluster/connectors", post(handle_create_connector))
+        .route(
+            "/api/v1/cluster/connectors/{name}",
+            put(handle_update_connector),
+        )
+        .route(
+            "/api/v1/cluster/connectors/{name}",
+            delete(handle_delete_connector),
+        )
+        // Models
+        .route(
+            "/api/v1/cluster/models",
+            post(handle_upload_model).layer(large_limit),
+        )
+        .route("/api/v1/cluster/models/{name}", delete(handle_delete_model))
+        // Chat
+        .route("/api/v1/cluster/chat", post(handle_chat))
+        .route(
+            "/api/v1/cluster/chat/config",
+            put(handle_update_chat_config),
+        )
+        .layer(json_limit)
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit_middleware_fn,
+        ));
 
-    let list_workers = api
-        .and(warp::path("workers"))
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(with_rbac(rbac.clone(), Role::Viewer))
-        .and(warp::query::<PaginationParams>())
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_list_workers);
+    // Read-only routes (no rate limiting)
+    let read_only = Router::new()
+        .route("/api/v1/cluster/workers", get(handle_list_workers))
+        .route(
+            "/api/v1/cluster/workers/{worker_id}",
+            get(handle_get_worker),
+        )
+        .route("/api/v1/cluster/pipeline-groups", get(handle_list_groups))
+        .route(
+            "/api/v1/cluster/pipeline-groups/{group_id}",
+            get(handle_get_group),
+        )
+        .route(
+            "/api/v1/cluster/pipeline-groups/{group_id}/dlq",
+            get(handle_dlq_get),
+        )
+        .route("/api/v1/cluster/topology", get(handle_topology))
+        .route("/api/v1/cluster/migrations", get(handle_list_migrations))
+        .route(
+            "/api/v1/cluster/migrations/{migration_id}",
+            get(handle_get_migration),
+        )
+        .route("/api/v1/cluster/connectors", get(handle_list_connectors))
+        .route(
+            "/api/v1/cluster/connectors/{name}",
+            get(handle_get_connector),
+        )
+        .route("/api/v1/cluster/metrics", get(handle_metrics))
+        .route("/api/v1/cluster/prometheus", get(handle_prometheus_metrics))
+        .route("/api/v1/cluster/scaling", get(handle_scaling))
+        .route("/api/v1/cluster/summary", get(handle_cluster_summary))
+        .route("/api/v1/cluster/raft", get(handle_raft_status))
+        .route("/api/v1/cluster/models", get(handle_list_models))
+        .route(
+            "/api/v1/cluster/models/{name}/download",
+            get(handle_download_model),
+        )
+        .route("/api/v1/cluster/chat/config", get(handle_get_chat_config));
 
-    let get_worker = api
-        .and(warp::path("workers"))
-        .and(warp::path::param::<String>())
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(with_rbac(rbac.clone(), Role::Viewer))
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_get_worker);
-
-    let delete_worker = api
-        .and(warp::path("workers"))
-        .and(warp::path::param::<String>())
-        .and(warp::path::end())
-        .and(warp::delete())
-        .and(rate_limit_filter.clone())
-        .and(with_rbac(rbac.clone(), Role::Admin))
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_delete_worker);
-
-    let deploy_group = api
-        .and(warp::path("pipeline-groups"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(rate_limit_filter.clone())
-        .and(with_rbac(rbac.clone(), Role::Operator))
-        .and(with_request_id())
-        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
-        .and(warp::body::json())
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_deploy_group);
-
-    let list_groups = api
-        .and(warp::path("pipeline-groups"))
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(with_rbac(rbac.clone(), Role::Viewer))
-        .and(warp::query::<PaginationParams>())
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_list_groups);
-
-    let get_group = api
-        .and(warp::path("pipeline-groups"))
-        .and(warp::path::param::<String>())
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(with_rbac(rbac.clone(), Role::Viewer))
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_get_group);
-
-    let delete_group = api
-        .and(warp::path("pipeline-groups"))
-        .and(warp::path::param::<String>())
-        .and(warp::path::end())
-        .and(warp::delete())
-        .and(rate_limit_filter.clone())
-        .and(with_rbac(rbac.clone(), Role::Admin))
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_delete_group);
-
-    let inject_event = api
-        .and(warp::path("pipeline-groups"))
-        .and(warp::path::param::<String>())
-        .and(warp::path("inject"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(rate_limit_filter.clone())
-        .and(with_rbac(rbac.clone(), Role::Operator))
-        .and(with_request_id())
-        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
-        .and(warp::body::json())
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_inject_event);
-
-    let inject_batch = api
-        .and(warp::path("pipeline-groups"))
-        .and(warp::path::param::<String>())
-        .and(warp::path("inject-batch"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(rate_limit_filter.clone())
-        .and(with_rbac(rbac.clone(), Role::Operator))
-        .and(with_request_id())
-        .and(warp::body::content_length_limit(LARGE_BODY_LIMIT))
-        .and(warp::body::json())
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_inject_batch);
-
-    let dlq_get = api
-        .and(warp::path("pipeline-groups"))
-        .and(warp::path::param::<String>())
-        .and(warp::path("dlq"))
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(with_rbac(rbac.clone(), Role::Viewer))
-        .and(warp::query::<DlqQueryParams>())
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_dlq_get);
-
-    let dlq_replay = api
-        .and(warp::path("pipeline-groups"))
-        .and(warp::path::param::<String>())
-        .and(warp::path("dlq"))
-        .and(warp::path("replay"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(rate_limit_filter.clone())
-        .and(with_rbac(rbac.clone(), Role::Operator))
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_dlq_replay);
-
-    let dlq_clear = api
-        .and(warp::path("pipeline-groups"))
-        .and(warp::path::param::<String>())
-        .and(warp::path("dlq"))
-        .and(warp::path::end())
-        .and(warp::delete())
-        .and(rate_limit_filter.clone())
-        .and(with_rbac(rbac.clone(), Role::Operator))
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_dlq_clear);
-
-    let topology = api
-        .and(warp::path("topology"))
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(with_rbac(rbac.clone(), Role::Viewer))
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_topology);
-
-    let validate = api
-        .and(warp::path("validate"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(rate_limit_filter.clone())
-        .and(with_rbac(rbac.clone(), Role::Viewer))
-        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
-        .and(warp::body::json())
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_validate);
-
-    // --- Migration / Drain / Rebalance endpoints ---
-
-    let drain_worker = api
-        .and(warp::path("workers"))
-        .and(warp::path::param::<String>())
-        .and(warp::path("drain"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(rate_limit_filter.clone())
-        .and(with_rbac(rbac.clone(), Role::Operator))
-        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
-        .and(warp::body::json())
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_drain_worker);
-
-    let rebalance = api
-        .and(warp::path("rebalance"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(rate_limit_filter.clone())
-        .and(with_rbac(rbac.clone(), Role::Operator))
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_rebalance);
-
-    let list_migrations = api
-        .and(warp::path("migrations"))
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(with_rbac(rbac.clone(), Role::Viewer))
-        .and(warp::query::<PaginationParams>())
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_list_migrations);
-
-    let get_migration = api
-        .and(warp::path("migrations"))
-        .and(warp::path::param::<String>())
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(with_rbac(rbac.clone(), Role::Viewer))
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_get_migration);
-
-    let manual_migrate = api
-        .and(warp::path("pipelines"))
-        .and(warp::path::param::<String>())
-        .and(warp::path::param::<String>())
-        .and(warp::path("migrate"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(rate_limit_filter.clone())
-        .and(with_rbac(rbac.clone(), Role::Operator))
-        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
-        .and(warp::body::json())
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_manual_migrate);
-
-    // --- Connector CRUD endpoints ---
-
-    let list_connectors = api
-        .and(warp::path("connectors"))
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(with_rbac(rbac.clone(), Role::Viewer))
-        .and(warp::query::<PaginationParams>())
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_list_connectors);
-
-    let get_connector = api
-        .and(warp::path("connectors"))
-        .and(warp::path::param::<String>())
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(with_rbac(rbac.clone(), Role::Viewer))
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_get_connector);
-
-    let create_connector = api
-        .and(warp::path("connectors"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(rate_limit_filter.clone())
-        .and(with_rbac(rbac.clone(), Role::Operator))
-        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
-        .and(warp::body::json())
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_create_connector);
-
-    let update_connector = api
-        .and(warp::path("connectors"))
-        .and(warp::path::param::<String>())
-        .and(warp::path::end())
-        .and(warp::put())
-        .and(rate_limit_filter.clone())
-        .and(with_rbac(rbac.clone(), Role::Operator))
-        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
-        .and(warp::body::json())
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_update_connector);
-
-    let delete_connector = api
-        .and(warp::path("connectors"))
-        .and(warp::path::param::<String>())
-        .and(warp::path::end())
-        .and(warp::delete())
-        .and(rate_limit_filter.clone())
-        .and(with_rbac(rbac.clone(), Role::Admin))
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_delete_connector);
-
-    // --- Metrics endpoint ---
-
-    let metrics = api
-        .and(warp::path("metrics"))
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(with_rbac(rbac.clone(), Role::Viewer))
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_metrics);
-
-    // --- Prometheus metrics endpoint ---
-
-    let prometheus_metrics = api
-        .and(warp::path("prometheus"))
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(with_rbac(rbac.clone(), Role::Viewer))
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_prometheus_metrics);
-
-    // --- Scaling endpoint ---
-
-    let scaling = api
-        .and(warp::path("scaling"))
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(with_rbac(rbac.clone(), Role::Viewer))
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_scaling);
-
-    // --- Summary endpoint ---
-
-    let summary = api
-        .and(warp::path("summary"))
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(with_rbac(rbac.clone(), Role::Viewer))
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_cluster_summary);
-
-    // --- Raft cluster status endpoint ---
-
-    let raft_status = api
-        .and(warp::path("raft"))
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_raft_status);
-
-    // --- Model Registry endpoints ---
-
-    let list_models = api
-        .and(warp::path("models"))
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(with_rbac(rbac.clone(), Role::Viewer))
-        .and(warp::query::<PaginationParams>())
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_list_models);
-
-    let upload_model = api
-        .and(warp::path("models"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(rate_limit_filter.clone())
-        .and(with_rbac(rbac.clone(), Role::Operator))
-        .and(warp::body::content_length_limit(LARGE_BODY_LIMIT))
-        .and(warp::body::json())
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_upload_model);
-
-    let delete_model = api
-        .and(warp::path("models"))
-        .and(warp::path::param::<String>())
-        .and(warp::path::end())
-        .and(warp::delete())
-        .and(rate_limit_filter.clone())
-        .and(with_rbac(rbac.clone(), Role::Admin))
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_delete_model);
-
-    let download_model = api
-        .and(warp::path("models"))
-        .and(warp::path::param::<String>())
-        .and(warp::path("download"))
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(with_rbac(rbac.clone(), Role::Viewer))
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_download_model);
-
-    // --- Chat endpoints ---
-
-    let chat = api
-        .and(warp::path("chat"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(rate_limit_filter.clone())
-        .and(with_rbac(rbac.clone(), Role::Viewer))
-        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
-        .and(warp::body::json())
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_chat);
-
-    let get_chat_config = api
-        .and(warp::path("chat"))
-        .and(warp::path("config"))
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(with_rbac(rbac.clone(), Role::Viewer))
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_get_chat_config);
-
-    let update_chat_config = api
-        .and(warp::path("chat"))
-        .and(warp::path("config"))
-        .and(warp::path::end())
-        .and(warp::put())
-        .and(rate_limit_filter.clone())
-        .and(with_rbac(rbac.clone(), Role::Operator))
-        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
-        .and(warp::body::json())
-        .and(with_coordinator(coordinator.clone()))
-        .and_then(handle_update_chat_config);
-
-    let cors = build_cors(cors_origins);
-
-    // Group routes to avoid warp recursive type overflow
-    let worker_routes = register_worker
-        .or(heartbeat)
-        .or(list_workers)
-        .or(get_worker)
-        .or(delete_worker)
-        .or(drain_worker)
-        .boxed();
-
-    let pipeline_routes = deploy_group
-        .or(list_groups)
-        .or(get_group)
-        .or(delete_group)
-        .or(inject_event)
-        .or(inject_batch)
-        .or(dlq_get)
-        .or(dlq_replay)
-        .or(dlq_clear)
-        .boxed();
-
-    let migration_routes = rebalance
-        .or(list_migrations)
-        .or(get_migration)
-        .or(manual_migrate)
-        .boxed();
-
-    let connector_routes = list_connectors
-        .or(get_connector)
-        .or(create_connector)
-        .or(update_connector)
-        .or(delete_connector)
-        .boxed();
-
-    let model_routes = list_models
-        .or(upload_model)
-        .or(delete_model)
-        .or(download_model)
-        .boxed();
-
-    let chat_routes = chat.or(get_chat_config).or(update_chat_config).boxed();
-
-    // Request logging: log method, path, status, and latency for every request
-    let request_log = warp::log::custom(|info: warp::log::Info<'_>| {
-        tracing::info!(
-            target: "varpulis::http",
-            method = %info.method(),
-            path = info.path(),
-            status = info.status().as_u16(),
-            latency_ms = info.elapsed().as_millis() as u64,
-            remote = ?info.remote_addr(),
-            "request"
-        );
-    });
+    #[allow(unused_mut)]
+    let mut router = rate_limited.merge(read_only);
 
     // Federation endpoints (behind feature flag)
     #[cfg(feature = "federation")]
-    let federation_routes = {
-        let fed_api = warp::path("api")
-            .and(warp::path("v1"))
-            .and(warp::path("federation"));
+    {
+        let fed_read = Router::new()
+            .route("/api/v1/federation/status", get(handle_federation_status))
+            .route("/api/v1/federation/regions", get(handle_federation_regions))
+            .route("/api/v1/federation/catalog", get(handle_federation_catalog));
 
-        let fed_status = fed_api
-            .and(warp::path("status"))
-            .and(warp::path::end())
-            .and(warp::get())
-            .and(with_rbac(rbac.clone(), Role::Viewer))
-            .and(with_coordinator(coordinator.clone()))
-            .and_then(handle_federation_status);
+        let fed_mutate = Router::new()
+            .route(
+                "/api/v1/federation/regions",
+                post(handle_federation_add_region),
+            )
+            .route(
+                "/api/v1/federation/regions/{region_name}",
+                delete(handle_federation_remove_region),
+            )
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                rate_limit_middleware_fn,
+            ));
 
-        let fed_regions = fed_api
-            .and(warp::path("regions"))
-            .and(warp::path::end())
-            .and(warp::get())
-            .and(with_rbac(rbac.clone(), Role::Viewer))
-            .and(with_coordinator(coordinator.clone()))
-            .and_then(handle_federation_regions);
+        router = router.merge(fed_read).merge(fed_mutate);
+    }
 
-        let fed_add_region = fed_api
-            .and(warp::path("regions"))
-            .and(warp::path::end())
-            .and(warp::post())
-            .and(rate_limit_filter.clone())
-            .and(with_rbac(rbac.clone(), Role::Admin))
-            .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
-            .and(warp::body::json())
-            .and(with_coordinator(coordinator.clone()))
-            .and_then(handle_federation_add_region);
+    let cors = build_cors(cors_origins);
 
-        let fed_remove_region = fed_api
-            .and(warp::path("regions"))
-            .and(warp::path::param::<String>())
-            .and(warp::path::end())
-            .and(warp::delete())
-            .and(rate_limit_filter.clone())
-            .and(with_rbac(rbac.clone(), Role::Admin))
-            .and(with_coordinator(coordinator.clone()))
-            .and_then(handle_federation_remove_region);
+    // Request logging via tower-http trace layer
+    let trace_layer = tower_http::trace::TraceLayer::new_for_http()
+        .on_response(tower_http::trace::DefaultOnResponse::new().level(tracing::Level::INFO));
 
-        let fed_catalog = fed_api
-            .and(warp::path("catalog"))
-            .and(warp::path::end())
-            .and(warp::get())
-            .and(with_rbac(rbac.clone(), Role::Viewer))
-            .and(with_coordinator(coordinator.clone()))
-            .and_then(handle_federation_catalog);
+    router.layer(cors).layer(trace_layer).with_state(state)
+}
 
-        fed_status
-            .or(fed_regions)
-            .or(fed_add_region)
-            .or(fed_remove_region)
-            .or(fed_catalog)
-            .boxed()
-    };
-
-    let base_routes = worker_routes
-        .or(pipeline_routes)
-        .or(topology)
-        .or(validate)
-        .or(migration_routes)
-        .or(connector_routes)
-        .or(model_routes)
-        .or(chat_routes)
-        .or(metrics)
-        .or(prometheus_metrics)
-        .or(scaling)
-        .or(summary)
-        .or(raft_status)
-        .boxed();
-
-    #[cfg(feature = "federation")]
-    let base_routes = base_routes.or(federation_routes).boxed();
-
-    base_routes.with(cors).with(request_log)
+/// Rate limiting middleware function for axum.
+async fn rate_limit_middleware_fn(
+    State(state): State<AppState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let connect_info = req
+        .extensions()
+        .get::<ConnectInfo<std::net::SocketAddr>>()
+        .cloned();
+    crate::rate_limit::rate_limit_middleware(connect_info, state.rate_limiter, req, next).await
 }
 
 // =============================================================================
-// Filters
+// Extractors
 // =============================================================================
 
-/// Generate a request ID and attach it as a response header.
+/// Extractor that resolves a request ID from headers or generates a UUID.
 ///
-/// Accepts an incoming `x-request-id` (or `traceparent`) header, or generates
-/// a new UUID. The ID is stored in a tracing span for log correlation and
-/// returned in the `x-request-id` response header via the `with_request_id_header` wrapper.
-fn with_request_id() -> impl Filter<Extract = (String,), Error = Rejection> + Clone {
-    warp::header::optional::<String>("x-request-id")
-        .and(warp::header::optional::<String>("traceparent"))
-        .map(
-            |req_id: Option<String>, traceparent: Option<String>| -> String {
-                // Prefer explicit x-request-id, then extract trace-id from W3C traceparent, else generate
-                req_id.unwrap_or_else(|| {
-                    traceparent
-                        .and_then(|tp| {
-                            // W3C traceparent format: version-trace_id-parent_id-flags
-                            let parts: Vec<&str> = tp.split('-').collect();
-                            if parts.len() >= 2 {
-                                Some(parts[1].to_string())
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+/// Prefers `x-request-id`, then extracts trace-id from W3C `traceparent`, else
+/// generates a new UUID.
+struct RequestId(String);
+
+impl<S> axum::extract::FromRequestParts<S> for RequestId
+where
+    S: Send + Sync,
+{
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        let req_id = parts
+            .headers
+            .get("x-request-id")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+
+        let traceparent = parts
+            .headers
+            .get("traceparent")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+
+        let id = req_id.unwrap_or_else(|| {
+            traceparent
+                .and_then(|tp| {
+                    let parts: Vec<&str> = tp.split('-').collect();
+                    if parts.len() >= 2 {
+                        Some(parts[1].to_string())
+                    } else {
+                        None
+                    }
                 })
-            },
-        )
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
+        });
+
+        Ok(RequestId(id))
+    }
 }
 
-fn with_coordinator(
-    coordinator: SharedCoordinator,
-) -> impl Filter<Extract = (SharedCoordinator,), Error = Infallible> + Clone {
-    warp::any().map(move || coordinator.clone())
-}
-
-fn with_rbac(
-    rbac: Arc<RbacConfig>,
+/// Verify RBAC authorization from request headers against a required role.
+#[allow(clippy::result_large_err)]
+fn check_rbac(
+    parts: &axum::http::request::Parts,
+    rbac: &RbacConfig,
     required: Role,
-) -> impl Filter<Extract = ((),), Error = Rejection> + Clone {
-    warp::any()
-        .and(warp::header::optional::<String>("x-api-key"))
-        .and(warp::header::optional::<String>("authorization"))
-        .and(warp::header::optional::<String>("cookie"))
-        .and_then(
-            move |api_key: Option<String>,
-                  auth_header: Option<String>,
-                  cookie_header: Option<String>| {
-                let rbac = rbac.clone();
-                async move {
-                    // 1. Try X-API-Key header (existing behavior)
-                    if let Some(role) = rbac.authenticate(api_key.as_deref()) {
-                        if role.has_permission(required) {
-                            return Ok(());
-                        } else {
-                            return Err(warp::reject::custom(Forbidden));
-                        }
-                    }
+) -> Result<(), Response> {
+    let api_key = parts
+        .headers
+        .get("x-api-key")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let auth_header = parts
+        .headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let cookie_header = parts
+        .headers
+        .get("cookie")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
 
-                    // 2. Try Authorization: Bearer <jwt> header
-                    if let Some(ref header) = auth_header {
-                        if let Some(token) = header.strip_prefix("Bearer ") {
-                            let token = token.trim();
-                            if !token.is_empty() {
-                                if let Some(role) = rbac.authenticate_jwt(token) {
-                                    if role.has_permission(required) {
-                                        return Ok(());
-                                    } else {
-                                        return Err(warp::reject::custom(Forbidden));
-                                    }
-                                }
-                            }
-                        }
-                    }
+    // 1. Try X-API-Key header
+    if let Some(role) = rbac.authenticate(api_key.as_deref()) {
+        if role.has_permission(required) {
+            return Ok(());
+        } else {
+            return Err(error_response(
+                StatusCode::FORBIDDEN,
+                "Insufficient permissions for this operation",
+            ));
+        }
+    }
 
-                    // 3. Try Cookie: varpulis_session=<jwt>
-                    if let Some(ref cookie) = cookie_header {
-                        if let Some(token) = RbacConfig::extract_jwt_from_cookie(cookie) {
-                            if let Some(role) = rbac.authenticate_jwt(&token) {
-                                if role.has_permission(required) {
-                                    return Ok(());
-                                } else {
-                                    return Err(warp::reject::custom(Forbidden));
-                                }
-                            }
-                        }
+    // 2. Try Authorization: Bearer <jwt> header
+    if let Some(ref header) = auth_header {
+        if let Some(token) = header.strip_prefix("Bearer ") {
+            let token = token.trim();
+            if !token.is_empty() {
+                if let Some(role) = rbac.authenticate_jwt(token) {
+                    if role.has_permission(required) {
+                        return Ok(());
+                    } else {
+                        return Err(error_response(
+                            StatusCode::FORBIDDEN,
+                            "Insufficient permissions for this operation",
+                        ));
                     }
-
-                    Err(warp::reject::custom(Unauthorized))
                 }
-            },
-        )
+            }
+        }
+    }
+
+    // 3. Try Cookie: varpulis_session=<jwt>
+    if let Some(ref cookie) = cookie_header {
+        if let Some(token) = RbacConfig::extract_jwt_from_cookie(cookie) {
+            if let Some(role) = rbac.authenticate_jwt(&token) {
+                if role.has_permission(required) {
+                    return Ok(());
+                } else {
+                    return Err(error_response(
+                        StatusCode::FORBIDDEN,
+                        "Insufficient permissions for this operation",
+                    ));
+                }
+            }
+        }
+    }
+
+    Err(error_response(
+        StatusCode::UNAUTHORIZED,
+        "Invalid or missing API key",
+    ))
 }
 
-#[derive(Debug)]
-struct Unauthorized;
-impl warp::reject::Reject for Unauthorized {}
+/// Viewer-level RBAC extractor
+struct RbacViewer;
 
-#[derive(Debug)]
-struct Forbidden;
-impl warp::reject::Reject for Forbidden {}
+impl axum::extract::FromRequestParts<AppState> for RbacViewer {
+    type Rejection = Response;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        check_rbac(parts, &state.rbac, Role::Viewer)?;
+        Ok(RbacViewer)
+    }
+}
+
+/// Operator-level RBAC extractor
+struct RbacOperator;
+
+impl axum::extract::FromRequestParts<AppState> for RbacOperator {
+    type Rejection = Response;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        check_rbac(parts, &state.rbac, Role::Operator)?;
+        Ok(RbacOperator)
+    }
+}
+
+/// Admin-level RBAC extractor
+struct RbacAdmin;
+
+impl axum::extract::FromRequestParts<AppState> for RbacAdmin {
+    type Rejection = Response;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        check_rbac(parts, &state.rbac, Role::Admin)?;
+        Ok(RbacAdmin)
+    }
+}
 
 // =============================================================================
 // Leader forwarding helper
@@ -808,7 +497,7 @@ async fn forward_to_leader(
     method: &str,
     path: &str,
     body: Option<serde_json::Value>,
-) -> Option<warp::reply::Response> {
+) -> Option<Response> {
     let coord = coordinator.read().await;
     coord.raft_handle.as_ref()?;
     if coord.is_raft_leader() {
@@ -850,15 +539,9 @@ async fn forward_to_leader(
                 .unwrap_or("application/json")
                 .to_string();
             let body_text = resp.text().await.unwrap_or_default();
-            let warp_status = warp::http::StatusCode::from_u16(status.as_u16())
-                .unwrap_or(StatusCode::BAD_GATEWAY);
-            Some(
-                warp::reply::with_status(
-                    warp::reply::with_header(body_text, "content-type", content_type),
-                    warp_status,
-                )
-                .into_response(),
-            )
+            let axum_status =
+                StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+            Some((axum_status, [("content-type", content_type)], body_text).into_response())
         }
         Err(e) => {
             tracing::warn!("Cannot reach Raft leader at {leader_addr}: {e}");
@@ -875,7 +558,7 @@ async fn forward_to_leader(
     _method: &str,
     _path: &str,
     _body: Option<serde_json::Value>,
-) -> Option<warp::reply::Response> {
+) -> Option<Response> {
     None
 }
 
@@ -884,10 +567,11 @@ async fn forward_to_leader(
 // =============================================================================
 
 async fn handle_register_worker(
-    _auth: (),
-    body: RegisterWorkerRequest,
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<AppState>,
+    _auth: RbacOperator,
+    Json(body): Json<RegisterWorkerRequest>,
+) -> Response {
+    let coordinator = state.coordinator.clone();
     // In Raft mode, forward to leader if we're a follower.
     // Workers always connect to their home coordinator, so we must transparently
     // forward the registration to the Raft leader.
@@ -929,32 +613,28 @@ async fn handle_register_worker(
                                 status: "registered".into(),
                                 heartbeat_interval_secs: None,
                             };
-                            return Ok(warp::reply::with_status(
-                                warp::reply::json(&reg_resp),
-                                StatusCode::CREATED,
-                            )
-                            .into_response());
+                            return reply_json_status(&reg_resp, StatusCode::CREATED);
                         }
                         Ok(forward_resp) => {
                             let status = forward_resp.status();
                             let text = forward_resp.text().await.unwrap_or_default();
                             tracing::warn!("Leader forwarding failed (HTTP {status}): {text}");
-                            return Ok(cluster_error_response(ClusterError::NotLeader(format!(
+                            return cluster_error_response(ClusterError::NotLeader(format!(
                                 "leader returned HTTP {status}"
-                            ))));
+                            )));
                         }
                         Err(e) => {
                             tracing::warn!("Cannot reach Raft leader at {leader_addr}: {e}");
-                            return Ok(cluster_error_response(ClusterError::NotLeader(format!(
+                            return cluster_error_response(ClusterError::NotLeader(format!(
                                 "cannot reach leader: {e}"
-                            ))));
+                            )));
                         }
                     }
                 } else {
                     drop(coord);
-                    return Ok(cluster_error_response(ClusterError::NotLeader(
+                    return cluster_error_response(ClusterError::NotLeader(
                         "no leader elected yet".into(),
-                    )));
+                    ));
                 }
             }
         }
@@ -972,9 +652,7 @@ async fn handle_register_worker(
             capacity: body.capacity.clone(),
         };
         if let Err(e) = handle.raft.client_write(cmd).await {
-            return Ok(cluster_error_response(ClusterError::NotLeader(
-                e.to_string(),
-            )));
+            return cluster_error_response(ClusterError::NotLeader(e.to_string()));
         }
     }
 
@@ -994,15 +672,16 @@ async fn handle_register_worker(
         status: "registered".into(),
         heartbeat_interval_secs: None,
     };
-    Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::CREATED).into_response())
+    reply_json_status(&resp, StatusCode::CREATED)
 }
 
 async fn handle_heartbeat(
-    worker_id: String,
-    _auth: (),
-    body: HeartbeatRequest,
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<AppState>,
+    Path(worker_id): Path<String>,
+    _auth: RbacOperator,
+    Json(body): Json<HeartbeatRequest>,
+) -> Response {
+    let coordinator = state.coordinator.clone();
     let mut coord = coordinator.write().await;
     match coord.heartbeat(&WorkerId(worker_id.clone()), &body) {
         Ok(()) => {
@@ -1040,31 +719,31 @@ async fn handle_heartbeat(
                     }
                 }
             }
-            Ok(warp::reply::with_status(
-                warp::reply::json(&HeartbeatResponse { acknowledged: true }),
+            reply_with_status(
+                Json(&HeartbeatResponse { acknowledged: true }),
                 StatusCode::OK,
             )
-            .into_response())
         }
-        Err(e) => Ok(error_response(StatusCode::NOT_FOUND, &e.to_string())),
+        Err(e) => error_response(StatusCode::NOT_FOUND, &e.to_string()),
     }
 }
 
 async fn handle_list_workers(
-    _auth: (),
-    pagination: PaginationParams,
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<AppState>,
+    _auth: RbacViewer,
+    Query(pagination): Query<PaginationParams>,
+) -> Response {
+    let coordinator = state.coordinator.clone();
     if pagination.exceeds_max() {
-        return Ok(error_response(
+        return error_response(
             StatusCode::BAD_REQUEST,
             &format!("limit must not exceed {MAX_LIMIT}"),
-        ));
+        );
     }
     if let Some(resp) =
         forward_to_leader(&coordinator, "GET", "/api/v1/cluster/workers", None).await
     {
-        return Ok(resp);
+        return resp;
     }
     let coord = coordinator.read().await;
     let all_workers: Vec<WorkerInfo> = coord.workers.values().map(WorkerInfo::from).collect();
@@ -1074,14 +753,15 @@ async fn handle_list_workers(
         "total": meta.total,
         "pagination": meta,
     });
-    Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+    reply_json_status(&resp, StatusCode::OK)
 }
 
 async fn handle_get_worker(
-    worker_id: String,
-    _auth: (),
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<AppState>,
+    Path(worker_id): Path<String>,
+    _auth: RbacViewer,
+) -> Response {
+    let coordinator = state.coordinator.clone();
     if let Some(resp) = forward_to_leader(
         &coordinator,
         "GET",
@@ -1090,23 +770,24 @@ async fn handle_get_worker(
     )
     .await
     {
-        return Ok(resp);
+        return resp;
     }
     let coord = coordinator.read().await;
     match coord.workers.get(&WorkerId(worker_id)) {
         Some(node) => {
             let info = WorkerInfo::from(node);
-            Ok(warp::reply::with_status(warp::reply::json(&info), StatusCode::OK).into_response())
+            reply_json_status(&info, StatusCode::OK)
         }
-        None => Ok(error_response(StatusCode::NOT_FOUND, "Worker not found")),
+        None => error_response(StatusCode::NOT_FOUND, "Worker not found"),
     }
 }
 
 async fn handle_delete_worker(
-    worker_id: String,
-    _auth: (),
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<AppState>,
+    Path(worker_id): Path<String>,
+    _auth: RbacAdmin,
+) -> Response {
+    let coordinator = state.coordinator.clone();
     if let Some(resp) = forward_to_leader(
         &coordinator,
         "DELETE",
@@ -1115,7 +796,7 @@ async fn handle_delete_worker(
     )
     .await
     {
-        return Ok(resp);
+        return resp;
     }
 
     let mut coord = coordinator.write().await;
@@ -1127,28 +808,23 @@ async fn handle_delete_worker(
             id: worker_id.clone(),
         };
         if let Err(e) = handle.raft.client_write(cmd).await {
-            return Ok(cluster_error_response(ClusterError::NotLeader(
-                e.to_string(),
-            )));
+            return cluster_error_response(ClusterError::NotLeader(e.to_string()));
         }
     }
 
     match coord.deregister_worker(&WorkerId(worker_id)) {
-        Ok(()) => Ok(warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({"deleted": true})),
-            StatusCode::OK,
-        )
-        .into_response()),
-        Err(e) => Ok(error_response(StatusCode::NOT_FOUND, &e.to_string())),
+        Ok(()) => reply_with_status(Json(&serde_json::json!({"deleted": true})), StatusCode::OK),
+        Err(e) => error_response(StatusCode::NOT_FOUND, &e.to_string()),
     }
 }
 
 async fn handle_deploy_group(
-    _auth: (),
-    request_id: String,
-    body: PipelineGroupSpec,
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<AppState>,
+    _auth: RbacOperator,
+    RequestId(request_id): RequestId,
+    Json(body): Json<PipelineGroupSpec>,
+) -> Response {
+    let coordinator = state.coordinator.clone();
     tracing::info!(request_id = %request_id, "deploy_group");
     if let Some(resp) = forward_to_leader(
         &coordinator,
@@ -1158,7 +834,7 @@ async fn handle_deploy_group(
     )
     .await
     {
-        return Ok(resp);
+        return resp;
     }
 
     // Phase 1: Plan (read lock — released before HTTP I/O)
@@ -1167,7 +843,7 @@ async fn handle_deploy_group(
 
         match coord.plan_deploy_group(&body) {
             Ok(plan) => (plan, coord.http_client.clone()),
-            Err(e) => return Ok(cluster_error_response(e)),
+            Err(e) => return cluster_error_response(e),
         }
     };
     // Read lock released here
@@ -1190,47 +866,42 @@ async fn handle_deploy_group(
                     };
                     if let Err(e) = handle.raft.client_write(cmd).await {
                         tracing::error!("Raft replication failed for deploy_group: {e}");
-                        return Ok(warp::reply::with_status(
-                            warp::reply::json(&serde_json::json!({
+                        return reply_with_status(
+                            Json(&serde_json::json!({
                                 "error": format!("Operation applied locally but Raft replication failed: {e}")
                             })),
                             StatusCode::INTERNAL_SERVER_ERROR,
-                        )
-                        .into_response());
+                        );
                     }
                 }
             }
 
             let Some(group) = coord.pipeline_groups.get(&group_id) else {
-                return Ok(cluster_error_response(ClusterError::GroupNotFound(
-                    group_id,
-                )));
+                return cluster_error_response(ClusterError::GroupNotFound(group_id));
             };
             let info = PipelineGroupInfo::from(group);
-            Ok(
-                warp::reply::with_status(warp::reply::json(&info), StatusCode::CREATED)
-                    .into_response(),
-            )
+            reply_json_status(&info, StatusCode::CREATED)
         }
-        Err(e) => Ok(cluster_error_response(e)),
+        Err(e) => cluster_error_response(e),
     }
 }
 
 async fn handle_list_groups(
-    _auth: (),
-    pagination: PaginationParams,
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<AppState>,
+    _auth: RbacViewer,
+    Query(pagination): Query<PaginationParams>,
+) -> Response {
+    let coordinator = state.coordinator.clone();
     if pagination.exceeds_max() {
-        return Ok(error_response(
+        return error_response(
             StatusCode::BAD_REQUEST,
             &format!("limit must not exceed {MAX_LIMIT}"),
-        ));
+        );
     }
     if let Some(resp) =
         forward_to_leader(&coordinator, "GET", "/api/v1/cluster/pipeline-groups", None).await
     {
-        return Ok(resp);
+        return resp;
     }
     let coord = coordinator.read().await;
     let all_groups: Vec<PipelineGroupInfo> = coord
@@ -1244,14 +915,15 @@ async fn handle_list_groups(
         "total": meta.total,
         "pagination": meta,
     });
-    Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+    reply_json_status(&resp, StatusCode::OK)
 }
 
 async fn handle_get_group(
-    group_id: String,
-    _auth: (),
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    _auth: RbacViewer,
+) -> Response {
+    let coordinator = state.coordinator.clone();
     if let Some(resp) = forward_to_leader(
         &coordinator,
         "GET",
@@ -1260,26 +932,24 @@ async fn handle_get_group(
     )
     .await
     {
-        return Ok(resp);
+        return resp;
     }
     let coord = coordinator.read().await;
     match coord.pipeline_groups.get(&group_id) {
         Some(group) => {
             let info = PipelineGroupInfo::from(group);
-            Ok(warp::reply::with_status(warp::reply::json(&info), StatusCode::OK).into_response())
+            reply_json_status(&info, StatusCode::OK)
         }
-        None => Ok(error_response(
-            StatusCode::NOT_FOUND,
-            "Pipeline group not found",
-        )),
+        None => error_response(StatusCode::NOT_FOUND, "Pipeline group not found"),
     }
 }
 
 async fn handle_delete_group(
-    group_id: String,
-    _auth: (),
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    _auth: RbacAdmin,
+) -> Response {
+    let coordinator = state.coordinator.clone();
     if let Some(resp) = forward_to_leader(
         &coordinator,
         "DELETE",
@@ -1288,7 +958,7 @@ async fn handle_delete_group(
     )
     .await
     {
-        return Ok(resp);
+        return resp;
     }
 
     // Phase 1: Plan teardown under read lock
@@ -1297,7 +967,7 @@ async fn handle_delete_group(
 
         match coord.plan_teardown_group(&group_id) {
             Ok(plan) => (plan, coord.http_client.clone()),
-            Err(e) => return Ok(cluster_error_response(e)),
+            Err(e) => return cluster_error_response(e),
         }
     };
     // Read lock released here
@@ -1317,30 +987,29 @@ async fn handle_delete_group(
         };
         if let Err(e) = handle.raft.client_write(cmd).await {
             tracing::error!("Raft replication failed for teardown_group: {e}");
-            return Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({
+            return reply_with_status(
+                Json(&serde_json::json!({
                     "error": format!("Operation applied locally but Raft replication failed: {e}")
                 })),
                 StatusCode::INTERNAL_SERVER_ERROR,
-            )
-            .into_response());
+            );
         }
     }
 
-    Ok(warp::reply::with_status(
-        warp::reply::json(&serde_json::json!({"torn_down": true})),
+    reply_with_status(
+        Json(&serde_json::json!({"torn_down": true})),
         StatusCode::OK,
     )
-    .into_response())
 }
 
 async fn handle_inject_event(
-    group_id: String,
-    _auth: (),
-    request_id: String,
-    body: InjectEventRequest,
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    _auth: RbacOperator,
+    RequestId(request_id): RequestId,
+    Json(body): Json<InjectEventRequest>,
+) -> Response {
+    let coordinator = state.coordinator.clone();
     tracing::info!(request_id = %request_id, group_id = %group_id, "inject_event");
     if let Some(resp) = forward_to_leader(
         &coordinator,
@@ -1350,14 +1019,14 @@ async fn handle_inject_event(
     )
     .await
     {
-        return Ok(resp);
+        return resp;
     }
     // Phase 1: Resolve target under read lock
     let (target, http_client) = {
         let coord = coordinator.read().await;
         match coord.resolve_inject_target(&group_id, &body) {
             Ok(target) => (target, coord.http_client.clone()),
-            Err(e) => return Ok(cluster_error_response(e)),
+            Err(e) => return cluster_error_response(e),
         }
     };
     // Read lock released here
@@ -1365,20 +1034,19 @@ async fn handle_inject_event(
     // Phase 2: Execute HTTP without lock
     match crate::coordinator::Coordinator::execute_inject_event(&http_client, &target, &body).await
     {
-        Ok(resp) => {
-            Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
-        }
-        Err(e) => Ok(cluster_error_response(e)),
+        Ok(resp) => reply_json_status(&resp, StatusCode::OK),
+        Err(e) => cluster_error_response(e),
     }
 }
 
 async fn handle_inject_batch(
-    group_id: String,
-    _auth: (),
-    request_id: String,
-    body: InjectBatchRequest,
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    _auth: RbacOperator,
+    RequestId(request_id): RequestId,
+    Json(body): Json<InjectBatchRequest>,
+) -> Response {
+    let coordinator = state.coordinator.clone();
     tracing::info!(request_id = %request_id, group_id = %group_id, "inject_batch");
     if let Some(resp) = forward_to_leader(
         &coordinator,
@@ -1388,14 +1056,12 @@ async fn handle_inject_batch(
     )
     .await
     {
-        return Ok(resp);
+        return resp;
     }
     let coord = coordinator.read().await;
     match coord.inject_batch(&group_id, body).await {
-        Ok(resp) => {
-            Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
-        }
-        Err(e) => Ok(cluster_error_response(e)),
+        Ok(resp) => reply_json_status(&resp, StatusCode::OK),
+        Err(e) => cluster_error_response(e),
     }
 }
 
@@ -1425,11 +1091,12 @@ fn resolve_first_placement(
 }
 
 async fn handle_dlq_get(
-    group_id: String,
-    _auth: (),
-    params: DlqQueryParams,
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    _auth: RbacViewer,
+    Query(params): Query<DlqQueryParams>,
+) -> Response {
+    let coordinator = state.coordinator.clone();
     if let Some(resp) = forward_to_leader(
         &coordinator,
         "GET",
@@ -1438,14 +1105,14 @@ async fn handle_dlq_get(
     )
     .await
     {
-        return Ok(resp);
+        return resp;
     }
 
     let (worker_address, pipeline_id, api_key, http_client) = {
         let coord = coordinator.read().await;
         match resolve_first_placement(&coord, &group_id) {
             Ok((addr, pid, key)) => (addr, pid, key, coord.http_client().clone()),
-            Err(e) => return Ok(cluster_error_response(e)),
+            Err(e) => return cluster_error_response(e),
         }
     };
 
@@ -1463,22 +1130,21 @@ async fn handle_dlq_get(
         .await
     {
         Ok(resp) => {
-            let status = warp::http::StatusCode::from_u16(resp.status().as_u16())
-                .unwrap_or(StatusCode::BAD_GATEWAY);
+            let status =
+                StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
             let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::json!({}));
-            Ok(warp::reply::with_status(warp::reply::json(&body), status).into_response())
+            reply_json_status(&body, status)
         }
-        Err(e) => Ok(cluster_error_response(ClusterError::RoutingFailed(
-            e.to_string(),
-        ))),
+        Err(e) => cluster_error_response(ClusterError::RoutingFailed(e.to_string())),
     }
 }
 
 async fn handle_dlq_replay(
-    group_id: String,
-    _auth: (),
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    _auth: RbacOperator,
+) -> Response {
+    let coordinator = state.coordinator.clone();
     if let Some(resp) = forward_to_leader(
         &coordinator,
         "POST",
@@ -1487,14 +1153,14 @@ async fn handle_dlq_replay(
     )
     .await
     {
-        return Ok(resp);
+        return resp;
     }
 
     let (worker_address, pipeline_id, api_key, http_client) = {
         let coord = coordinator.read().await;
         match resolve_first_placement(&coord, &group_id) {
             Ok((addr, pid, key)) => (addr, pid, key, coord.http_client().clone()),
-            Err(e) => return Ok(cluster_error_response(e)),
+            Err(e) => return cluster_error_response(e),
         }
     };
 
@@ -1510,22 +1176,21 @@ async fn handle_dlq_replay(
         .await
     {
         Ok(resp) => {
-            let status = warp::http::StatusCode::from_u16(resp.status().as_u16())
-                .unwrap_or(StatusCode::BAD_GATEWAY);
+            let status =
+                StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
             let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::json!({}));
-            Ok(warp::reply::with_status(warp::reply::json(&body), status).into_response())
+            reply_json_status(&body, status)
         }
-        Err(e) => Ok(cluster_error_response(ClusterError::RoutingFailed(
-            e.to_string(),
-        ))),
+        Err(e) => cluster_error_response(ClusterError::RoutingFailed(e.to_string())),
     }
 }
 
 async fn handle_dlq_clear(
-    group_id: String,
-    _auth: (),
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    _auth: RbacOperator,
+) -> Response {
+    let coordinator = state.coordinator.clone();
     if let Some(resp) = forward_to_leader(
         &coordinator,
         "DELETE",
@@ -1534,14 +1199,14 @@ async fn handle_dlq_clear(
     )
     .await
     {
-        return Ok(resp);
+        return resp;
     }
 
     let (worker_address, pipeline_id, api_key, http_client) = {
         let coord = coordinator.read().await;
         match resolve_first_placement(&coord, &group_id) {
             Ok((addr, pid, key)) => (addr, pid, key, coord.http_client().clone()),
-            Err(e) => return Ok(cluster_error_response(e)),
+            Err(e) => return cluster_error_response(e),
         }
     };
 
@@ -1554,14 +1219,12 @@ async fn handle_dlq_clear(
         .await
     {
         Ok(resp) => {
-            let status = warp::http::StatusCode::from_u16(resp.status().as_u16())
-                .unwrap_or(StatusCode::BAD_GATEWAY);
+            let status =
+                StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
             let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::json!({}));
-            Ok(warp::reply::with_status(warp::reply::json(&body), status).into_response())
+            reply_json_status(&body, status)
         }
-        Err(e) => Ok(cluster_error_response(ClusterError::RoutingFailed(
-            e.to_string(),
-        ))),
+        Err(e) => cluster_error_response(ClusterError::RoutingFailed(e.to_string())),
     }
 }
 
@@ -1634,10 +1297,11 @@ struct RebalanceResponse {
 }
 
 async fn handle_validate(
-    _auth: (),
-    body: ValidateRequest,
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<AppState>,
+    _auth: RbacViewer,
+    Json(body): Json<ValidateRequest>,
+) -> Response {
+    let coordinator = state.coordinator.clone();
     // Inject cluster connectors so .from(mqtt_market) doesn't produce "undefined connector"
     let coord = coordinator.read().await;
     let (effective_source, preamble_lines) =
@@ -1671,7 +1335,7 @@ async fn handle_validate(
                 .collect();
             let valid = !validation.has_errors();
             let resp = ValidateResponse { valid, diagnostics };
-            Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+            reply_json_status(&resp, StatusCode::OK)
         }
         Err(e) => {
             let diagnostic = match e {
@@ -1774,7 +1438,7 @@ async fn handle_validate(
                 valid: false,
                 diagnostics: vec![diagnostic],
             };
-            Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+            reply_json_status(&resp, StatusCode::OK)
         }
     }
 }
@@ -1797,14 +1461,12 @@ fn position_to_line_col(source: &str, position: usize) -> (usize, usize) {
     (line, column)
 }
 
-async fn handle_topology(
-    _auth: (),
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+async fn handle_topology(State(state): State<AppState>, _auth: RbacViewer) -> Response {
+    let coordinator = state.coordinator.clone();
     if let Some(resp) =
         forward_to_leader(&coordinator, "GET", "/api/v1/cluster/topology", None).await
     {
-        return Ok(resp);
+        return resp;
     }
     let coord = coordinator.read().await;
 
@@ -1898,7 +1560,7 @@ async fn handle_topology(
         routes,
         groups,
     };
-    Ok(warp::reply::with_status(warp::reply::json(&topology), StatusCode::OK).into_response())
+    reply_json_status(&topology, StatusCode::OK)
 }
 
 // =============================================================================
@@ -1906,26 +1568,27 @@ async fn handle_topology(
 // =============================================================================
 
 async fn handle_list_models(
-    _auth: (),
-    pagination: PaginationParams,
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<AppState>,
+    _auth: RbacViewer,
+    Query(pagination): Query<PaginationParams>,
+) -> Response {
+    let coordinator = state.coordinator.clone();
     if pagination.exceeds_max() {
-        return Ok(error_response(
+        return error_response(
             StatusCode::BAD_REQUEST,
             &format!("limit must not exceed {MAX_LIMIT}"),
-        ));
+        );
     }
     if let Some(resp) = forward_to_leader(&coordinator, "GET", "/api/v1/cluster/models", None).await
     {
-        return Ok(resp);
+        return resp;
     }
     let coord = coordinator.read().await;
     let all_models: Vec<crate::model_registry::ModelRegistryEntry> =
         coord.model_registry.values().cloned().collect();
     let (models, meta) = pagination.paginate(all_models);
     let resp = serde_json::json!({ "models": models, "total": meta.total, "pagination": meta });
-    Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+    reply_json_status(&resp, StatusCode::OK)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1942,10 +1605,11 @@ struct UploadModelRequest {
 }
 
 async fn handle_upload_model(
-    _auth: (),
-    body: UploadModelRequest,
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<AppState>,
+    _auth: RbacOperator,
+    Json(body): Json<UploadModelRequest>,
+) -> Response {
+    let coordinator = state.coordinator.clone();
     if let Some(resp) = forward_to_leader(
         &coordinator,
         "POST",
@@ -1954,7 +1618,7 @@ async fn handle_upload_model(
     )
     .await
     {
-        return Ok(resp);
+        return resp;
     }
 
     let name = body.name.clone();
@@ -1964,10 +1628,7 @@ async fn handle_upload_model(
         let resp = serde_json::json!({
             "error": "Invalid model name: must start with a letter or underscore and contain only ASCII alphanumeric characters or underscores"
         });
-        return Ok(
-            warp::reply::with_status(warp::reply::json(&resp), StatusCode::BAD_REQUEST)
-                .into_response(),
-        );
+        return reply_json_status(&resp, StatusCode::BAD_REQUEST);
     }
 
     let s3_key = format!("models/{}.onnx", &name);
@@ -1986,11 +1647,7 @@ async fn handle_upload_model(
                     let resp = serde_json::json!({
                         "error": format!("Failed to write model file: {}", e)
                     });
-                    return Ok(warp::reply::with_status(
-                        warp::reply::json(&resp),
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                    )
-                    .into_response());
+                    return reply_with_status(Json(&resp), StatusCode::INTERNAL_SERVER_ERROR);
                 }
                 data.len() as u64
             }
@@ -1998,11 +1655,7 @@ async fn handle_upload_model(
                 let resp = serde_json::json!({
                     "error": format!("Invalid base64 data: {}", e)
                 });
-                return Ok(warp::reply::with_status(
-                    warp::reply::json(&resp),
-                    StatusCode::BAD_REQUEST,
-                )
-                .into_response());
+                return reply_with_status(Json(&resp), StatusCode::BAD_REQUEST);
             }
         }
     } else {
@@ -2031,23 +1684,20 @@ async fn handle_upload_model(
         };
         if let Err(e) = handle.raft.client_write(cmd).await {
             let resp = serde_json::json!({ "error": format!("Raft replication failed: {}", e) });
-            return Ok(warp::reply::with_status(
-                warp::reply::json(&resp),
-                StatusCode::INTERNAL_SERVER_ERROR,
-            )
-            .into_response());
+            return reply_with_status(Json(&resp), StatusCode::INTERNAL_SERVER_ERROR);
         }
     }
 
     coord.model_registry.insert(name, entry.clone());
-    Ok(warp::reply::with_status(warp::reply::json(&entry), StatusCode::CREATED).into_response())
+    reply_json_status(&entry, StatusCode::CREATED)
 }
 
 async fn handle_delete_model(
-    name: String,
-    _auth: (),
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    _auth: RbacAdmin,
+) -> Response {
+    let coordinator = state.coordinator.clone();
     if let Some(resp) = forward_to_leader(
         &coordinator,
         "DELETE",
@@ -2056,17 +1706,14 @@ async fn handle_delete_model(
     )
     .await
     {
-        return Ok(resp);
+        return resp;
     }
 
     let mut coord = coordinator.write().await;
 
     if !coord.model_registry.contains_key(&name) {
         let resp = serde_json::json!({ "error": format!("Model '{}' not found", name) });
-        return Ok(
-            warp::reply::with_status(warp::reply::json(&resp), StatusCode::NOT_FOUND)
-                .into_response(),
-        );
+        return reply_json_status(&resp, StatusCode::NOT_FOUND);
     }
 
     #[cfg(feature = "raft")]
@@ -2074,24 +1721,21 @@ async fn handle_delete_model(
         let cmd = crate::raft::ClusterCommand::ModelRemoved { name: name.clone() };
         if let Err(e) = handle.raft.client_write(cmd).await {
             let resp = serde_json::json!({ "error": format!("Raft replication failed: {}", e) });
-            return Ok(warp::reply::with_status(
-                warp::reply::json(&resp),
-                StatusCode::INTERNAL_SERVER_ERROR,
-            )
-            .into_response());
+            return reply_with_status(Json(&resp), StatusCode::INTERNAL_SERVER_ERROR);
         }
     }
 
     coord.model_registry.remove(&name);
     let resp = serde_json::json!({ "deleted": name });
-    Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+    reply_json_status(&resp, StatusCode::OK)
 }
 
 async fn handle_download_model(
-    name: String,
-    _auth: (),
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    _auth: RbacViewer,
+) -> Response {
+    let coordinator = state.coordinator.clone();
     if let Some(resp) = forward_to_leader(
         &coordinator,
         "GET",
@@ -2100,20 +1744,17 @@ async fn handle_download_model(
     )
     .await
     {
-        return Ok(resp);
+        return resp;
     }
     let coord = coordinator.read().await;
     match coord.model_registry.get(&name) {
         Some(entry) => {
             let resp = serde_json::json!(entry);
-            Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+            reply_json_status(&resp, StatusCode::OK)
         }
         None => {
             let resp = serde_json::json!({ "error": format!("Model '{}' not found", name) });
-            Ok(
-                warp::reply::with_status(warp::reply::json(&resp), StatusCode::NOT_FOUND)
-                    .into_response(),
-            )
+            reply_json_status(&resp, StatusCode::NOT_FOUND)
         }
     }
 }
@@ -2123,10 +1764,11 @@ async fn handle_download_model(
 // =============================================================================
 
 async fn handle_chat(
-    _auth: (),
-    body: crate::chat::ChatRequest,
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<AppState>,
+    _auth: RbacViewer,
+    Json(body): Json<crate::chat::ChatRequest>,
+) -> Response {
+    let coordinator = state.coordinator.clone();
     if let Some(resp) = forward_to_leader(
         &coordinator,
         "POST",
@@ -2135,7 +1777,7 @@ async fn handle_chat(
     )
     .await
     {
-        return Ok(resp);
+        return resp;
     }
     let config = {
         let coord = coordinator.read().await;
@@ -2148,18 +1790,12 @@ async fn handle_chat(
             let resp = serde_json::json!({
                 "error": "No LLM provider configured. Set VARPULIS_LLM_ENDPOINT or configure in Settings."
             });
-            return Ok(warp::reply::with_status(
-                warp::reply::json(&resp),
-                StatusCode::SERVICE_UNAVAILABLE,
-            )
-            .into_response());
+            return reply_with_status(Json(&resp), StatusCode::SERVICE_UNAVAILABLE);
         }
     };
 
     match crate::chat::chat_completion(&config, &body.messages, &coordinator).await {
-        Ok(response) => Ok(
-            warp::reply::with_status(warp::reply::json(&response), StatusCode::OK).into_response(),
-        ),
+        Ok(response) => reply_json_status(&response, StatusCode::OK),
         Err(e) => {
             let status = if e.contains("timed out") || e.contains("timeout") {
                 StatusCode::GATEWAY_TIMEOUT
@@ -2169,19 +1805,17 @@ async fn handle_chat(
                 StatusCode::BAD_GATEWAY
             };
             let resp = serde_json::json!({ "error": e });
-            Ok(warp::reply::with_status(warp::reply::json(&resp), status).into_response())
+            reply_json_status(&resp, status)
         }
     }
 }
 
-async fn handle_get_chat_config(
-    _auth: (),
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+async fn handle_get_chat_config(State(state): State<AppState>, _auth: RbacViewer) -> Response {
+    let coordinator = state.coordinator.clone();
     if let Some(resp) =
         forward_to_leader(&coordinator, "GET", "/api/v1/cluster/chat/config", None).await
     {
-        return Ok(resp);
+        return resp;
     }
     let coord = coordinator.read().await;
     let resp = match &coord.llm_config {
@@ -2202,14 +1836,15 @@ async fn handle_get_chat_config(
             configured: false,
         },
     };
-    Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+    reply_json_status(&resp, StatusCode::OK)
 }
 
 async fn handle_update_chat_config(
-    _auth: (),
-    body: crate::chat::LlmConfig,
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<AppState>,
+    _auth: RbacOperator,
+    Json(body): Json<crate::chat::LlmConfig>,
+) -> Response {
+    let coordinator = state.coordinator.clone();
     if let Some(resp) = forward_to_leader(
         &coordinator,
         "PUT",
@@ -2218,13 +1853,13 @@ async fn handle_update_chat_config(
     )
     .await
     {
-        return Ok(resp);
+        return resp;
     }
 
     let mut coord = coordinator.write().await;
     coord.llm_config = Some(body);
     let resp = serde_json::json!({ "status": "ok" });
-    Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+    reply_json_status(&resp, StatusCode::OK)
 }
 
 // =============================================================================
@@ -2232,11 +1867,12 @@ async fn handle_update_chat_config(
 // =============================================================================
 
 async fn handle_drain_worker(
-    worker_id: String,
-    _auth: (),
-    body: DrainRequest,
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<AppState>,
+    Path(worker_id): Path<String>,
+    _auth: RbacOperator,
+    Json(body): Json<DrainRequest>,
+) -> Response {
+    let coordinator = state.coordinator.clone();
     if let Some(resp) = forward_to_leader(
         &coordinator,
         "POST",
@@ -2245,7 +1881,7 @@ async fn handle_drain_worker(
     )
     .await
     {
-        return Ok(resp);
+        return resp;
     }
 
     let mut coord = coordinator.write().await;
@@ -2261,20 +1897,18 @@ async fn handle_drain_worker(
                 pipelines_migrated: migration_ids.len(),
                 status: "drained".into(),
             };
-            Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+            reply_json_status(&resp, StatusCode::OK)
         }
-        Err(e) => Ok(cluster_error_response(e)),
+        Err(e) => cluster_error_response(e),
     }
 }
 
-async fn handle_rebalance(
-    _auth: (),
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+async fn handle_rebalance(State(state): State<AppState>, _auth: RbacOperator) -> Response {
+    let coordinator = state.coordinator.clone();
     if let Some(resp) =
         forward_to_leader(&coordinator, "POST", "/api/v1/cluster/rebalance", None).await
     {
-        return Ok(resp);
+        return resp;
     }
 
     let mut coord = coordinator.write().await;
@@ -2293,13 +1927,12 @@ async fn handle_rebalance(
                         };
                         if let Err(e) = handle.raft.client_write(cmd).await {
                             tracing::error!("Raft replication failed for rebalance: {e}");
-                            return Ok(warp::reply::with_status(
-                                warp::reply::json(&serde_json::json!({
+                            return reply_with_status(
+                                Json(&serde_json::json!({
                                     "error": format!("Operation applied locally but Raft replication failed: {e}")
                                 })),
                                 StatusCode::INTERNAL_SERVER_ERROR,
-                            )
-                            .into_response());
+                            );
                         }
                     }
                 }
@@ -2309,27 +1942,28 @@ async fn handle_rebalance(
                 migrations_started: migration_ids.len(),
                 migration_ids,
             };
-            Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+            reply_json_status(&resp, StatusCode::OK)
         }
-        Err(e) => Ok(cluster_error_response(e)),
+        Err(e) => cluster_error_response(e),
     }
 }
 
 async fn handle_list_migrations(
-    _auth: (),
-    pagination: PaginationParams,
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<AppState>,
+    _auth: RbacViewer,
+    Query(pagination): Query<PaginationParams>,
+) -> Response {
+    let coordinator = state.coordinator.clone();
     if pagination.exceeds_max() {
-        return Ok(error_response(
+        return error_response(
             StatusCode::BAD_REQUEST,
             &format!("limit must not exceed {MAX_LIMIT}"),
-        ));
+        );
     }
     if let Some(resp) =
         forward_to_leader(&coordinator, "GET", "/api/v1/cluster/migrations", None).await
     {
-        return Ok(resp);
+        return resp;
     }
     let coord = coordinator.read().await;
     let all_migrations: Vec<MigrationInfo> = coord
@@ -2352,14 +1986,15 @@ async fn handle_list_migrations(
         "total": meta.total,
         "pagination": meta,
     });
-    Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+    reply_json_status(&resp, StatusCode::OK)
 }
 
 async fn handle_get_migration(
-    migration_id: String,
-    _auth: (),
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<AppState>,
+    Path(migration_id): Path<String>,
+    _auth: RbacViewer,
+) -> Response {
+    let coordinator = state.coordinator.clone();
     if let Some(resp) = forward_to_leader(
         &coordinator,
         "GET",
@@ -2368,7 +2003,7 @@ async fn handle_get_migration(
     )
     .await
     {
-        return Ok(resp);
+        return resp;
     }
     let coord = coordinator.read().await;
     match coord.active_migrations.get(&migration_id) {
@@ -2383,19 +2018,19 @@ async fn handle_get_migration(
                 reason: m.reason.to_string(),
                 elapsed_ms: m.started_at.elapsed().as_millis(),
             };
-            Ok(warp::reply::with_status(warp::reply::json(&info), StatusCode::OK).into_response())
+            reply_json_status(&info, StatusCode::OK)
         }
-        None => Ok(error_response(StatusCode::NOT_FOUND, "Migration not found")),
+        None => error_response(StatusCode::NOT_FOUND, "Migration not found"),
     }
 }
 
 async fn handle_manual_migrate(
-    group_id: String,
-    pipeline_name: String,
-    _auth: (),
-    body: ManualMigrateRequest,
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<AppState>,
+    Path((group_id, pipeline_name)): Path<(String, String)>,
+    _auth: RbacOperator,
+    Json(body): Json<ManualMigrateRequest>,
+) -> Response {
+    let coordinator = state.coordinator.clone();
     if let Some(resp) = forward_to_leader(
         &coordinator,
         "POST",
@@ -2404,7 +2039,7 @@ async fn handle_manual_migrate(
     )
     .await
     {
-        return Ok(resp);
+        return resp;
     }
 
     // Phase 1: Plan (read lock — released before HTTP I/O)
@@ -2426,7 +2061,7 @@ async fn handle_manual_migrate(
                 let connectors = coord.connectors.clone();
                 (plan, coord.http_client.clone(), source_alive, connectors)
             }
-            Err(e) => return Ok(cluster_error_response(e)),
+            Err(e) => return cluster_error_response(e),
         }
     };
     // Read lock released here
@@ -2457,13 +2092,12 @@ async fn handle_manual_migrate(
                     };
                     if let Err(e) = handle.raft.client_write(cmd).await {
                         tracing::error!("Raft replication failed for migrate_pipeline: {e}");
-                        return Ok(warp::reply::with_status(
-                            warp::reply::json(&serde_json::json!({
+                        return reply_with_status(
+                            Json(&serde_json::json!({
                                 "error": format!("Operation applied locally but Raft replication failed: {e}")
                             })),
                             StatusCode::INTERNAL_SERVER_ERROR,
-                        )
-                        .into_response());
+                        );
                     }
                 }
             }
@@ -2474,16 +2108,11 @@ async fn handle_manual_migrate(
                 "group_id": group_id,
                 "status": "started",
             });
-            Ok(
-                warp::reply::with_status(warp::reply::json(&resp), StatusCode::ACCEPTED)
-                    .into_response(),
-            )
+            reply_json_status(&resp, StatusCode::ACCEPTED)
         }
         Err(reason) => {
             coord.commit_migrate_pipeline(&plan, "", false, Some(reason.clone()));
-            Ok(cluster_error_response(ClusterError::MigrationFailed(
-                reason,
-            )))
+            cluster_error_response(ClusterError::MigrationFailed(reason))
         }
     }
 }
@@ -2493,20 +2122,21 @@ async fn handle_manual_migrate(
 // =============================================================================
 
 async fn handle_list_connectors(
-    _auth: (),
-    pagination: PaginationParams,
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<AppState>,
+    _auth: RbacViewer,
+    Query(pagination): Query<PaginationParams>,
+) -> Response {
+    let coordinator = state.coordinator.clone();
     if pagination.exceeds_max() {
-        return Ok(error_response(
+        return error_response(
             StatusCode::BAD_REQUEST,
             &format!("limit must not exceed {MAX_LIMIT}"),
-        ));
+        );
     }
     if let Some(resp) =
         forward_to_leader(&coordinator, "GET", "/api/v1/cluster/connectors", None).await
     {
-        return Ok(resp);
+        return resp;
     }
     let coord = coordinator.read().await;
     let all_connectors: Vec<ClusterConnector> =
@@ -2517,14 +2147,15 @@ async fn handle_list_connectors(
         "total": meta.total,
         "pagination": meta,
     });
-    Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+    reply_json_status(&resp, StatusCode::OK)
 }
 
 async fn handle_get_connector(
-    name: String,
-    _auth: (),
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    _auth: RbacViewer,
+) -> Response {
+    let coordinator = state.coordinator.clone();
     if let Some(resp) = forward_to_leader(
         &coordinator,
         "GET",
@@ -2533,22 +2164,21 @@ async fn handle_get_connector(
     )
     .await
     {
-        return Ok(resp);
+        return resp;
     }
     let coord = coordinator.read().await;
     match coord.get_connector(&name) {
-        Ok(connector) => Ok(
-            warp::reply::with_status(warp::reply::json(connector), StatusCode::OK).into_response(),
-        ),
-        Err(e) => Ok(cluster_error_response(e)),
+        Ok(connector) => reply_json_status(connector, StatusCode::OK),
+        Err(e) => cluster_error_response(e),
     }
 }
 
 async fn handle_create_connector(
-    _auth: (),
-    body: ClusterConnector,
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<AppState>,
+    _auth: RbacOperator,
+    Json(body): Json<ClusterConnector>,
+) -> Response {
+    let coordinator = state.coordinator.clone();
     if let Some(resp) = forward_to_leader(
         &coordinator,
         "POST",
@@ -2557,7 +2187,7 @@ async fn handle_create_connector(
     )
     .await
     {
-        return Ok(resp);
+        return resp;
     }
 
     let mut coord = coordinator.write().await;
@@ -2570,28 +2200,23 @@ async fn handle_create_connector(
             connector: body.clone(),
         };
         if let Err(e) = handle.raft.client_write(cmd).await {
-            return Ok(cluster_error_response(ClusterError::NotLeader(
-                e.to_string(),
-            )));
+            return cluster_error_response(ClusterError::NotLeader(e.to_string()));
         }
     }
 
     match coord.create_connector(body) {
-        Ok(connector) => Ok(warp::reply::with_status(
-            warp::reply::json(connector),
-            StatusCode::CREATED,
-        )
-        .into_response()),
-        Err(e) => Ok(cluster_error_response(e)),
+        Ok(connector) => reply_with_status(Json(connector), StatusCode::CREATED),
+        Err(e) => cluster_error_response(e),
     }
 }
 
 async fn handle_update_connector(
-    name: String,
-    _auth: (),
-    body: ClusterConnector,
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    _auth: RbacOperator,
+    Json(body): Json<ClusterConnector>,
+) -> Response {
+    let coordinator = state.coordinator.clone();
     if let Some(resp) = forward_to_leader(
         &coordinator,
         "PUT",
@@ -2600,7 +2225,7 @@ async fn handle_update_connector(
     )
     .await
     {
-        return Ok(resp);
+        return resp;
     }
 
     let mut coord = coordinator.write().await;
@@ -2612,25 +2237,22 @@ async fn handle_update_connector(
             connector: body.clone(),
         };
         if let Err(e) = handle.raft.client_write(cmd).await {
-            return Ok(cluster_error_response(ClusterError::NotLeader(
-                e.to_string(),
-            )));
+            return cluster_error_response(ClusterError::NotLeader(e.to_string()));
         }
     }
 
     match coord.update_connector(&name, body) {
-        Ok(connector) => Ok(
-            warp::reply::with_status(warp::reply::json(connector), StatusCode::OK).into_response(),
-        ),
-        Err(e) => Ok(cluster_error_response(e)),
+        Ok(connector) => reply_json_status(connector, StatusCode::OK),
+        Err(e) => cluster_error_response(e),
     }
 }
 
 async fn handle_delete_connector(
-    name: String,
-    _auth: (),
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    _auth: RbacAdmin,
+) -> Response {
+    let coordinator = state.coordinator.clone();
     if let Some(resp) = forward_to_leader(
         &coordinator,
         "DELETE",
@@ -2639,7 +2261,7 @@ async fn handle_delete_connector(
     )
     .await
     {
-        return Ok(resp);
+        return resp;
     }
 
     let mut coord = coordinator.write().await;
@@ -2648,19 +2270,13 @@ async fn handle_delete_connector(
     if let Some(ref handle) = coord.raft_handle {
         let cmd = crate::raft::ClusterCommand::ConnectorRemoved { name: name.clone() };
         if let Err(e) = handle.raft.client_write(cmd).await {
-            return Ok(cluster_error_response(ClusterError::NotLeader(
-                e.to_string(),
-            )));
+            return cluster_error_response(ClusterError::NotLeader(e.to_string()));
         }
     }
 
     match coord.delete_connector(&name) {
-        Ok(()) => Ok(warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({"deleted": true})),
-            StatusCode::OK,
-        )
-        .into_response()),
-        Err(e) => Ok(cluster_error_response(e)),
+        Ok(()) => reply_with_status(Json(&serde_json::json!({"deleted": true})), StatusCode::OK),
+        Err(e) => cluster_error_response(e),
     }
 }
 
@@ -2668,53 +2284,45 @@ async fn handle_delete_connector(
 // Metrics handler
 // =============================================================================
 
-async fn handle_metrics(
-    _auth: (),
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+async fn handle_metrics(State(state): State<AppState>, _auth: RbacViewer) -> Response {
+    let coordinator = state.coordinator.clone();
     if let Some(resp) =
         forward_to_leader(&coordinator, "GET", "/api/v1/cluster/metrics", None).await
     {
-        return Ok(resp);
+        return resp;
     }
     let coord = coordinator.read().await;
     let metrics = coord.get_cluster_metrics();
-    Ok(warp::reply::with_status(warp::reply::json(&metrics), StatusCode::OK).into_response())
+    reply_json_status(&metrics, StatusCode::OK)
 }
 
-async fn handle_prometheus_metrics(
-    _auth: (),
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+async fn handle_prometheus_metrics(State(state): State<AppState>, _auth: RbacViewer) -> Response {
+    let coordinator = state.coordinator.clone();
     if let Some(resp) =
         forward_to_leader(&coordinator, "GET", "/api/v1/cluster/prometheus", None).await
     {
-        return Ok(resp);
+        return resp;
     }
     let coord = coordinator.read().await;
     let text = coord.cluster_metrics.gather();
-    Ok(warp::reply::with_header(
-        warp::reply::with_status(text, StatusCode::OK),
-        "content-type",
-        "text/plain; version=0.0.4; charset=utf-8",
+    (
+        StatusCode::OK,
+        [("content-type", "text/plain; version=0.0.4; charset=utf-8")],
+        text,
     )
-    .into_response())
+        .into_response()
 }
 
-async fn handle_scaling(
-    _auth: (),
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+async fn handle_scaling(State(state): State<AppState>, _auth: RbacViewer) -> Response {
+    let coordinator = state.coordinator.clone();
     if let Some(resp) =
         forward_to_leader(&coordinator, "GET", "/api/v1/cluster/scaling", None).await
     {
-        return Ok(resp);
+        return resp;
     }
     let coord = coordinator.read().await;
     match &coord.last_scaling_recommendation {
-        Some(rec) => {
-            Ok(warp::reply::with_status(warp::reply::json(rec), StatusCode::OK).into_response())
-        }
+        Some(rec) => reply_json_status(rec, StatusCode::OK),
         None => {
             let resp = serde_json::json!({
                 "action": "stable",
@@ -2725,19 +2333,17 @@ async fn handle_scaling(
                 "total_pipelines": 0,
                 "timestamp": chrono::Utc::now().to_rfc3339(),
             });
-            Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+            reply_json_status(&resp, StatusCode::OK)
         }
     }
 }
 
-async fn handle_cluster_summary(
-    _auth: (),
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+async fn handle_cluster_summary(State(state): State<AppState>, _auth: RbacViewer) -> Response {
+    let coordinator = state.coordinator.clone();
     if let Some(resp) =
         forward_to_leader(&coordinator, "GET", "/api/v1/cluster/summary", None).await
     {
-        return Ok(resp);
+        return resp;
     }
     let coord = coordinator.read().await;
 
@@ -2783,14 +2389,15 @@ async fn handle_cluster_summary(
         "events_per_second": events_per_second,
     });
 
-    Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+    reply_json_status(&resp, StatusCode::OK)
 }
 
 // =============================================================================
 // Raft cluster status handler
 // =============================================================================
 
-async fn handle_raft_status(coordinator: SharedCoordinator) -> Result<impl Reply, Infallible> {
+async fn handle_raft_status(State(state): State<AppState>) -> Response {
+    let coordinator = state.coordinator.clone();
     let _coord = coordinator.read().await;
 
     #[cfg(feature = "raft")]
@@ -2823,9 +2430,7 @@ async fn handle_raft_status(coordinator: SharedCoordinator) -> Result<impl Reply
                 "commit_index": metrics.last_applied.as_ref().map(|l| l.index).unwrap_or(0),
                 "nodes": nodes,
             });
-            return Ok(
-                warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response(),
-            );
+            return reply_json_status(&resp, StatusCode::OK);
         }
     }
 
@@ -2838,7 +2443,7 @@ async fn handle_raft_status(coordinator: SharedCoordinator) -> Result<impl Reply
         "commit_index": 0,
         "nodes": [],
     });
-    Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+    reply_json_status(&resp, StatusCode::OK)
 }
 
 // =============================================================================
@@ -2851,15 +2456,16 @@ struct ApiError {
     code: String,
 }
 
-fn error_response(status: StatusCode, message: &str) -> warp::reply::Response {
+/// Build a JSON error response with the given status code and message.
+fn error_response(status: StatusCode, message: &str) -> Response {
     let body = ApiError {
         error: message.to_string(),
         code: status.as_str().to_string(),
     };
-    warp::reply::with_status(warp::reply::json(&body), status).into_response()
+    (status, Json(body)).into_response()
 }
 
-fn cluster_error_response(err: ClusterError) -> warp::reply::Response {
+fn cluster_error_response(err: ClusterError) -> Response {
     let (status, code) = match &err {
         ClusterError::WorkerNotFound(_) => (StatusCode::NOT_FOUND, "worker_not_found"),
         ClusterError::GroupNotFound(_) => (StatusCode::NOT_FOUND, "group_not_found"),
@@ -2878,76 +2484,19 @@ fn cluster_error_response(err: ClusterError) -> warp::reply::Response {
         error: err.to_string(),
         code: code.to_string(),
     };
-    warp::reply::with_status(warp::reply::json(&body), status).into_response()
+    (status, Json(body)).into_response()
 }
 
-/// Handle warp rejections with specific HTTP status codes and messages.
-pub async fn handle_rejection(err: Rejection) -> Result<impl Reply, Infallible> {
-    if let Some(r) = err.find::<RateLimitRejection>() {
-        tracing::warn!("Rate limit exceeded (retry after {}s)", r.retry_after_secs);
-        let body = serde_json::json!({
-            "error": "rate_limited",
-            "message": "Too many requests",
-            "retry_after_seconds": r.retry_after_secs,
-        });
-        Ok(warp::reply::with_header(
-            warp::reply::with_status(warp::reply::json(&body), StatusCode::TOO_MANY_REQUESTS),
-            "retry-after",
-            r.retry_after_secs.to_string(),
-        )
-        .into_response())
-    } else if err.find::<Unauthorized>().is_some() {
-        tracing::warn!("Authentication failed: invalid or missing API key");
-        Ok(error_response(
-            StatusCode::UNAUTHORIZED,
-            "Invalid or missing API key",
-        ))
-    } else if err.find::<Forbidden>().is_some() {
-        tracing::warn!("Authorization failed: insufficient role permissions");
-        Ok(error_response(
-            StatusCode::FORBIDDEN,
-            "Insufficient permissions for this operation",
-        ))
-    } else if err.find::<warp::reject::MissingHeader>().is_some() {
-        tracing::warn!("Authentication failed: missing API key header");
-        Ok(error_response(
-            StatusCode::UNAUTHORIZED,
-            "Missing API key header",
-        ))
-    } else if let Some(e) = err.find::<warp::filters::body::BodyDeserializeError>() {
-        Ok(error_response(
-            StatusCode::BAD_REQUEST,
-            &format!("Invalid request body: {}", e),
-        ))
-    } else if err.find::<warp::reject::InvalidQuery>().is_some() {
-        Ok(error_response(
-            StatusCode::BAD_REQUEST,
-            "Invalid query parameters",
-        ))
-    } else if err.find::<warp::reject::PayloadTooLarge>().is_some() {
-        Ok(error_response(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "Request payload too large",
-        ))
-    } else if err.find::<warp::reject::UnsupportedMediaType>().is_some() {
-        Ok(error_response(
-            StatusCode::UNSUPPORTED_MEDIA_TYPE,
-            "Unsupported media type",
-        ))
-    } else if err.find::<warp::reject::MethodNotAllowed>().is_some() {
-        Ok(error_response(
-            StatusCode::METHOD_NOT_ALLOWED,
-            "Method not allowed",
-        ))
-    } else if err.is_not_found() {
-        Ok(error_response(StatusCode::NOT_FOUND, "Not found"))
-    } else {
-        tracing::error!("Unhandled rejection: {:?}", err);
-        Ok(error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Internal server error",
-        ))
-    }
+/// Helper: build a JSON response with a status code.
+/// Replaces the common `(status, Json(data)).into_response()` pattern.
+fn reply_json_status<T: Serialize>(data: &T, status: StatusCode) -> Response {
+    (status, Json(serde_json::to_value(data).unwrap_or_default())).into_response()
+}
+
+/// Helper: combine a pre-built body and status code into a Response.
+/// Accepts `(body, StatusCode)` where `body` is anything `IntoResponse`.
+fn reply_with_status<B: IntoResponse>(body: B, status: StatusCode) -> Response {
+    (status, body).into_response()
 }
 
 // =============================================================================
@@ -2955,54 +2504,45 @@ pub async fn handle_rejection(err: Rejection) -> Result<impl Reply, Infallible> 
 // =============================================================================
 
 #[cfg(feature = "federation")]
-async fn handle_federation_status(
-    _auth: (),
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+async fn handle_federation_status(State(state): State<AppState>, _auth: RbacViewer) -> Response {
+    let coordinator = state.coordinator.clone();
     let coord = coordinator.read().await;
     match &coord.federation {
-        Some(fed) => Ok(warp::reply::with_status(
-            warp::reply::json(&fed.status()),
-            StatusCode::OK,
-        )),
-        None => Ok(warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({
+        Some(fed) => reply_with_status(Json(&fed.status()), StatusCode::OK),
+        None => reply_with_status(
+            Json(&serde_json::json!({
                 "error": "Federation not enabled"
             })),
             StatusCode::NOT_FOUND,
-        )),
+        ),
     }
 }
 
 #[cfg(feature = "federation")]
-async fn handle_federation_regions(
-    _auth: (),
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+async fn handle_federation_regions(State(state): State<AppState>, _auth: RbacViewer) -> Response {
+    let coordinator = state.coordinator.clone();
     let coord = coordinator.read().await;
     match &coord.federation {
         Some(fed) => {
             let regions: Vec<_> = fed.get_regions().values().collect();
-            Ok(warp::reply::with_status(
-                warp::reply::json(&regions),
-                StatusCode::OK,
-            ))
+            reply_with_status(Json(&regions), StatusCode::OK)
         }
-        None => Ok(warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({
+        None => reply_with_status(
+            Json(&serde_json::json!({
                 "error": "Federation not enabled"
             })),
             StatusCode::NOT_FOUND,
-        )),
+        ),
     }
 }
 
 #[cfg(feature = "federation")]
 async fn handle_federation_add_region(
-    _auth: (),
-    config: crate::federation::RegionConfig,
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<AppState>,
+    _auth: RbacAdmin,
+    Json(config): Json<crate::federation::RegionConfig>,
+) -> Response {
+    let coordinator = state.coordinator.clone();
     let mut coord = coordinator.write().await;
     if coord.federation.is_none() {
         coord.federation = Some(crate::federation::FederationCoordinator::new(
@@ -3011,64 +2551,63 @@ async fn handle_federation_add_region(
     }
     if let Some(ref mut fed) = coord.federation {
         fed.register_region(&config);
-        Ok(warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({
+        reply_with_status(
+            Json(&serde_json::json!({
                 "status": "registered",
                 "region": config.name
             })),
             StatusCode::CREATED,
-        ))
+        )
     } else {
-        Ok(warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({
+        reply_with_status(
+            Json(&serde_json::json!({
                 "error": "Federation initialization failed"
             })),
             StatusCode::INTERNAL_SERVER_ERROR,
-        ))
+        )
     }
 }
 
 #[cfg(feature = "federation")]
 async fn handle_federation_remove_region(
-    region_name: String,
-    _auth: (),
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<AppState>,
+    Path(region_name): Path<String>,
+    _auth: RbacAdmin,
+) -> Response {
+    let coordinator = state.coordinator.clone();
     let mut coord = coordinator.write().await;
     match &mut coord.federation {
         Some(fed) => {
             if fed.deregister_region(&region_name) {
-                Ok(warp::reply::with_status(
-                    warp::reply::json(&serde_json::json!({
+                reply_with_status(
+                    Json(&serde_json::json!({
                         "status": "deregistered",
                         "region": region_name
                     })),
                     StatusCode::OK,
-                ))
+                )
             } else {
-                Ok(warp::reply::with_status(
-                    warp::reply::json(&serde_json::json!({
+                reply_with_status(
+                    Json(&serde_json::json!({
                         "error": "Region not found",
                         "region": region_name
                     })),
                     StatusCode::NOT_FOUND,
-                ))
+                )
             }
         }
-        None => Ok(warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({
+        None => reply_with_status(
+            Json(&serde_json::json!({
                 "error": "Federation not enabled"
             })),
             StatusCode::NOT_FOUND,
-        )),
+        ),
     }
 }
 
 #[cfg(feature = "federation")]
-async fn handle_federation_catalog(
-    _auth: (),
-    coordinator: SharedCoordinator,
-) -> Result<impl Reply, Infallible> {
+async fn handle_federation_catalog(State(state): State<AppState>, _auth: RbacViewer) -> Response {
+    let coordinator = state.coordinator.clone();
     let coord = coordinator.read().await;
     match &coord.federation {
         Some(fed) => {
@@ -3084,17 +2623,14 @@ async fn handle_federation_catalog(
                     })
                 })
                 .collect();
-            Ok(warp::reply::with_status(
-                warp::reply::json(&catalog),
-                StatusCode::OK,
-            ))
+            reply_with_status(Json(&catalog), StatusCode::OK)
         }
-        None => Ok(warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({
+        None => reply_with_status(
+            Json(&serde_json::json!({
                 "error": "Federation not enabled"
             })),
             StatusCode::NOT_FOUND,
-        )),
+        ),
     }
 }
 
@@ -3102,11 +2638,11 @@ async fn handle_federation_catalog(
 mod tests {
     use super::*;
     use crate::worker::WorkerCapacity;
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt;
 
-    fn setup_routes() -> (
-        SharedCoordinator,
-        impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone,
-    ) {
+    fn setup_routes() -> (SharedCoordinator, Router) {
         let coord = shared_coordinator();
 
         let routes = cluster_routes(
@@ -3118,31 +2654,94 @@ mod tests {
         (coord, routes)
     }
 
+    /// Helper: send a request to the router and return the response.
+    async fn send_request(router: &Router, req: Request<Body>) -> axum::response::Response {
+        router.clone().oneshot(req).await.unwrap()
+    }
+
+    /// Helper: read response body bytes.
+    async fn body_bytes(resp: axum::response::Response) -> Vec<u8> {
+        axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec()
+    }
+
+    /// Helper: build a GET request with an API key header.
+    fn get_req(path: &str, api_key: &str) -> Request<Body> {
+        Request::builder()
+            .method("GET")
+            .uri(path)
+            .header("x-api-key", api_key)
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    /// Helper: build a GET request without an API key header.
+    fn get_req_no_key(path: &str) -> Request<Body> {
+        Request::builder()
+            .method("GET")
+            .uri(path)
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    /// Helper: build a POST request with a JSON body and API key.
+    fn post_json_req(path: &str, api_key: &str, body: &impl serde::Serialize) -> Request<Body> {
+        Request::builder()
+            .method("POST")
+            .uri(path)
+            .header("x-api-key", api_key)
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(body).unwrap()))
+            .unwrap()
+    }
+
+    /// Helper: build a POST request with a JSON body and no API key.
+    fn post_json_req_no_key(path: &str, body: &impl serde::Serialize) -> Request<Body> {
+        Request::builder()
+            .method("POST")
+            .uri(path)
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(body).unwrap()))
+            .unwrap()
+    }
+
+    /// Helper: build a DELETE request with an API key.
+    fn delete_req(path: &str, api_key: &str) -> Request<Body> {
+        Request::builder()
+            .method("DELETE")
+            .uri(path)
+            .header("x-api-key", api_key)
+            .body(Body::empty())
+            .unwrap()
+    }
+
     #[tokio::test]
     async fn test_register_worker() {
-        let (_coord, routes) = setup_routes();
+        let (_coord, router) = setup_routes();
 
-        let resp = warp::test::request()
-            .method("POST")
-            .path("/api/v1/cluster/workers/register")
-            .header("x-api-key", "admin-key")
-            .json(&RegisterWorkerRequest {
+        let req = post_json_req(
+            "/api/v1/cluster/workers/register",
+            "admin-key",
+            &RegisterWorkerRequest {
                 worker_id: "w1".into(),
                 address: "http://localhost:9000".into(),
                 api_key: "worker-key".into(),
                 capacity: WorkerCapacity::default(),
-            })
-            .reply(&routes)
-            .await;
+            },
+        );
+        let resp = send_request(&router, req).await;
 
         assert_eq!(resp.status(), StatusCode::CREATED);
-        let body: RegisterWorkerResponse = serde_json::from_slice(resp.body()).unwrap();
+        let bytes = body_bytes(resp).await;
+        let body: RegisterWorkerResponse = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body.worker_id, "w1");
     }
 
     #[tokio::test]
     async fn test_list_workers() {
-        let (coord, routes) = setup_routes();
+        let (coord, router) = setup_routes();
 
         // Register a worker directly
         {
@@ -3154,21 +2753,17 @@ mod tests {
             ));
         }
 
-        let resp = warp::test::request()
-            .method("GET")
-            .path("/api/v1/cluster/workers")
-            .header("x-api-key", "admin-key")
-            .reply(&routes)
-            .await;
+        let resp = send_request(&router, get_req("/api/v1/cluster/workers", "admin-key")).await;
 
         assert_eq!(resp.status(), StatusCode::OK);
-        let body: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+        let bytes = body_bytes(resp).await;
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["total"], 1);
     }
 
     #[tokio::test]
     async fn test_heartbeat() {
-        let (coord, routes) = setup_routes();
+        let (coord, router) = setup_routes();
 
         // Register worker
         {
@@ -3180,33 +2775,28 @@ mod tests {
             ));
         }
 
-        let resp = warp::test::request()
-            .method("POST")
-            .path("/api/v1/cluster/workers/w1/heartbeat")
-            .header("x-api-key", "admin-key")
-            .json(&HeartbeatRequest {
+        let req = post_json_req(
+            "/api/v1/cluster/workers/w1/heartbeat",
+            "admin-key",
+            &HeartbeatRequest {
                 events_processed: 42,
                 pipelines_running: 1,
                 pipeline_metrics: vec![],
-            })
-            .reply(&routes)
-            .await;
+            },
+        );
+        let resp = send_request(&router, req).await;
 
         assert_eq!(resp.status(), StatusCode::OK);
-        let body: HeartbeatResponse = serde_json::from_slice(resp.body()).unwrap();
+        let bytes = body_bytes(resp).await;
+        let body: HeartbeatResponse = serde_json::from_slice(&bytes).unwrap();
         assert!(body.acknowledged);
     }
 
     #[tokio::test]
     async fn test_unauthorized_without_key() {
-        let (_coord, routes) = setup_routes();
+        let (_coord, router) = setup_routes();
 
-        let resp = warp::test::request()
-            .method("GET")
-            .path("/api/v1/cluster/workers")
-            // no x-api-key header
-            .reply(&routes)
-            .await;
+        let resp = send_request(&router, get_req_no_key("/api/v1/cluster/workers")).await;
 
         // Should reject
         assert_ne!(resp.status(), StatusCode::OK);
@@ -3214,23 +2804,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_topology() {
-        let (_coord, routes) = setup_routes();
+        let (_coord, router) = setup_routes();
 
-        let resp = warp::test::request()
-            .method("GET")
-            .path("/api/v1/cluster/topology")
-            .header("x-api-key", "admin-key")
-            .reply(&routes)
-            .await;
+        let resp = send_request(&router, get_req("/api/v1/cluster/topology", "admin-key")).await;
 
         assert_eq!(resp.status(), StatusCode::OK);
-        let body: TopologyInfo = serde_json::from_slice(resp.body()).unwrap();
+        let bytes = body_bytes(resp).await;
+        let body: TopologyInfo = serde_json::from_slice(&bytes).unwrap();
         assert!(body.groups.is_empty());
     }
 
     #[tokio::test]
     async fn test_delete_worker() {
-        let (coord, routes) = setup_routes();
+        let (coord, router) = setup_routes();
 
         {
             let mut c = coord.write().await;
@@ -3241,12 +2827,11 @@ mod tests {
             ));
         }
 
-        let resp = warp::test::request()
-            .method("DELETE")
-            .path("/api/v1/cluster/workers/w1")
-            .header("x-api-key", "admin-key")
-            .reply(&routes)
-            .await;
+        let resp = send_request(
+            &router,
+            delete_req("/api/v1/cluster/workers/w1", "admin-key"),
+        )
+        .await;
 
         assert_eq!(resp.status(), StatusCode::OK);
 
@@ -3257,23 +2842,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_pipeline_groups_empty() {
-        let (_coord, routes) = setup_routes();
+        let (_coord, router) = setup_routes();
 
-        let resp = warp::test::request()
-            .method("GET")
-            .path("/api/v1/cluster/pipeline-groups")
-            .header("x-api-key", "admin-key")
-            .reply(&routes)
-            .await;
+        let resp = send_request(
+            &router,
+            get_req("/api/v1/cluster/pipeline-groups", "admin-key"),
+        )
+        .await;
 
         assert_eq!(resp.status(), StatusCode::OK);
-        let body: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+        let bytes = body_bytes(resp).await;
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["total"], 0);
     }
 
     #[tokio::test]
     async fn test_get_worker_found() {
-        let (coord, routes) = setup_routes();
+        let (coord, router) = setup_routes();
 
         {
             let mut c = coord.write().await;
@@ -3284,15 +2869,11 @@ mod tests {
             ));
         }
 
-        let resp = warp::test::request()
-            .method("GET")
-            .path("/api/v1/cluster/workers/w1")
-            .header("x-api-key", "admin-key")
-            .reply(&routes)
-            .await;
+        let resp = send_request(&router, get_req("/api/v1/cluster/workers/w1", "admin-key")).await;
 
         assert_eq!(resp.status(), StatusCode::OK);
-        let body: WorkerInfo = serde_json::from_slice(resp.body()).unwrap();
+        let bytes = body_bytes(resp).await;
+        let body: WorkerInfo = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body.id, "w1");
         assert_eq!(body.address, "http://localhost:9000");
         assert_eq!(body.status, "ready");
@@ -3300,61 +2881,53 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_worker_not_found() {
-        let (_coord, routes) = setup_routes();
+        let (_coord, router) = setup_routes();
 
-        let resp = warp::test::request()
-            .method("GET")
-            .path("/api/v1/cluster/workers/nonexistent")
-            .header("x-api-key", "admin-key")
-            .reply(&routes)
-            .await;
+        let resp = send_request(
+            &router,
+            get_req("/api/v1/cluster/workers/nonexistent", "admin-key"),
+        )
+        .await;
 
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
     async fn test_delete_worker_not_found() {
-        let (_coord, routes) = setup_routes();
+        let (_coord, router) = setup_routes();
 
-        let resp = warp::test::request()
-            .method("DELETE")
-            .path("/api/v1/cluster/workers/nonexistent")
-            .header("x-api-key", "admin-key")
-            .reply(&routes)
-            .await;
+        let resp = send_request(
+            &router,
+            delete_req("/api/v1/cluster/workers/nonexistent", "admin-key"),
+        )
+        .await;
 
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
     async fn test_heartbeat_unknown_worker() {
-        let (_coord, routes) = setup_routes();
+        let (_coord, router) = setup_routes();
 
-        let resp = warp::test::request()
-            .method("POST")
-            .path("/api/v1/cluster/workers/nonexistent/heartbeat")
-            .header("x-api-key", "admin-key")
-            .json(&HeartbeatRequest {
+        let req = post_json_req(
+            "/api/v1/cluster/workers/nonexistent/heartbeat",
+            "admin-key",
+            &HeartbeatRequest {
                 events_processed: 0,
                 pipelines_running: 0,
                 pipeline_metrics: vec![],
-            })
-            .reply(&routes)
-            .await;
+            },
+        );
+        let resp = send_request(&router, req).await;
 
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
     async fn test_unauthorized_wrong_key() {
-        let (_coord, routes) = setup_routes();
+        let (_coord, router) = setup_routes();
 
-        let resp = warp::test::request()
-            .method("GET")
-            .path("/api/v1/cluster/workers")
-            .header("x-api-key", "wrong-key")
-            .reply(&routes)
-            .await;
+        let resp = send_request(&router, get_req("/api/v1/cluster/workers", "wrong-key")).await;
 
         assert_ne!(resp.status(), StatusCode::OK);
     }
@@ -3364,112 +2937,107 @@ mod tests {
         // When RBAC is disabled, no auth required
         let coord = shared_coordinator();
 
-        let routes = cluster_routes(coord.clone(), Arc::new(RbacConfig::disabled()), None, None);
+        let router = cluster_routes(coord.clone(), Arc::new(RbacConfig::disabled()), None, None);
 
         // Register without API key
-        let resp = warp::test::request()
-            .method("POST")
-            .path("/api/v1/cluster/workers/register")
-            .json(&RegisterWorkerRequest {
+        let req = post_json_req_no_key(
+            "/api/v1/cluster/workers/register",
+            &RegisterWorkerRequest {
                 worker_id: "w1".into(),
                 address: "http://localhost:9000".into(),
                 api_key: "key".into(),
                 capacity: WorkerCapacity::default(),
-            })
-            .reply(&routes)
-            .await;
-
+            },
+        );
+        let resp = send_request(&router, req).await;
         assert_eq!(resp.status(), StatusCode::CREATED);
 
         // List without API key
-        let resp = warp::test::request()
-            .method("GET")
-            .path("/api/v1/cluster/workers")
-            .reply(&routes)
-            .await;
+        let resp = send_request(&router, get_req_no_key("/api/v1/cluster/workers")).await;
 
         assert_eq!(resp.status(), StatusCode::OK);
-        let body: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+        let bytes = body_bytes(resp).await;
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["total"], 1);
     }
 
     #[tokio::test]
     async fn test_get_group_not_found() {
-        let (_coord, routes) = setup_routes();
+        let (_coord, router) = setup_routes();
 
-        let resp = warp::test::request()
-            .method("GET")
-            .path("/api/v1/cluster/pipeline-groups/nonexistent")
-            .header("x-api-key", "admin-key")
-            .reply(&routes)
-            .await;
+        let resp = send_request(
+            &router,
+            get_req("/api/v1/cluster/pipeline-groups/nonexistent", "admin-key"),
+        )
+        .await;
 
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
-        let body: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+        let bytes = body_bytes(resp).await;
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["code"], "404");
     }
 
     #[tokio::test]
     async fn test_delete_group_not_found() {
-        let (_coord, routes) = setup_routes();
+        let (_coord, router) = setup_routes();
 
-        let resp = warp::test::request()
-            .method("DELETE")
-            .path("/api/v1/cluster/pipeline-groups/nonexistent")
-            .header("x-api-key", "admin-key")
-            .reply(&routes)
-            .await;
+        let resp = send_request(
+            &router,
+            delete_req("/api/v1/cluster/pipeline-groups/nonexistent", "admin-key"),
+        )
+        .await;
 
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
-        let body: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+        let bytes = body_bytes(resp).await;
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["code"], "group_not_found");
     }
 
     #[tokio::test]
     async fn test_inject_event_group_not_found() {
-        let (_coord, routes) = setup_routes();
+        let (_coord, router) = setup_routes();
 
-        let resp = warp::test::request()
-            .method("POST")
-            .path("/api/v1/cluster/pipeline-groups/nonexistent/inject")
-            .header("x-api-key", "admin-key")
-            .json(&serde_json::json!({
+        let req = post_json_req(
+            "/api/v1/cluster/pipeline-groups/nonexistent/inject",
+            "admin-key",
+            &serde_json::json!({
                 "event_type": "TestEvent",
                 "fields": {}
-            }))
-            .reply(&routes)
-            .await;
+            }),
+        );
+        let resp = send_request(&router, req).await;
 
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
-        let body: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+        let bytes = body_bytes(resp).await;
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["code"], "group_not_found");
     }
 
     #[tokio::test]
     async fn test_deploy_group_no_workers() {
-        let (_coord, routes) = setup_routes();
+        let (_coord, router) = setup_routes();
 
-        let resp = warp::test::request()
-            .method("POST")
-            .path("/api/v1/cluster/pipeline-groups")
-            .header("x-api-key", "admin-key")
-            .json(&serde_json::json!({
+        let req = post_json_req(
+            "/api/v1/cluster/pipeline-groups",
+            "admin-key",
+            &serde_json::json!({
                 "name": "test-group",
                 "pipelines": [
                     {"name": "p1", "source": "stream A = X"}
                 ]
-            }))
-            .reply(&routes)
-            .await;
+            }),
+        );
+        let resp = send_request(&router, req).await;
 
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
-        let body: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+        let bytes = body_bytes(resp).await;
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["code"], "no_workers_available");
     }
 
     #[tokio::test]
     async fn test_register_multiple_workers_list() {
-        let (coord, routes) = setup_routes();
+        let (coord, router) = setup_routes();
 
         // Register 3 workers directly
         {
@@ -3483,22 +3051,18 @@ mod tests {
             }
         }
 
-        let resp = warp::test::request()
-            .method("GET")
-            .path("/api/v1/cluster/workers")
-            .header("x-api-key", "admin-key")
-            .reply(&routes)
-            .await;
+        let resp = send_request(&router, get_req("/api/v1/cluster/workers", "admin-key")).await;
 
         assert_eq!(resp.status(), StatusCode::OK);
-        let body: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+        let bytes = body_bytes(resp).await;
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["total"], 3);
         assert_eq!(body["workers"].as_array().unwrap().len(), 3);
     }
 
     #[tokio::test]
     async fn test_topology_with_groups() {
-        let (coord, routes) = setup_routes();
+        let (coord, router) = setup_routes();
 
         // Manually insert a pipeline group
         {
@@ -3538,15 +3102,11 @@ mod tests {
             c.pipeline_groups.insert("g1".into(), group);
         }
 
-        let resp = warp::test::request()
-            .method("GET")
-            .path("/api/v1/cluster/topology")
-            .header("x-api-key", "admin-key")
-            .reply(&routes)
-            .await;
+        let resp = send_request(&router, get_req("/api/v1/cluster/topology", "admin-key")).await;
 
         assert_eq!(resp.status(), StatusCode::OK);
-        let body: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+        let bytes = body_bytes(resp).await;
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         let groups = body["groups"].as_array().unwrap();
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0]["group_name"], "test-group");
@@ -3556,7 +3116,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_group_found() {
-        let (coord, routes) = setup_routes();
+        let (coord, router) = setup_routes();
 
         // Insert a pipeline group manually
         {
@@ -3580,22 +3140,22 @@ mod tests {
             c.pipeline_groups.insert("g1".into(), group);
         }
 
-        let resp = warp::test::request()
-            .method("GET")
-            .path("/api/v1/cluster/pipeline-groups/g1")
-            .header("x-api-key", "admin-key")
-            .reply(&routes)
-            .await;
+        let resp = send_request(
+            &router,
+            get_req("/api/v1/cluster/pipeline-groups/g1", "admin-key"),
+        )
+        .await;
 
         assert_eq!(resp.status(), StatusCode::OK);
-        let body: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+        let bytes = body_bytes(resp).await;
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["name"], "my-group");
         assert_eq!(body["id"], "g1");
     }
 
     #[tokio::test]
     async fn test_list_groups_with_entries() {
-        let (coord, routes) = setup_routes();
+        let (coord, router) = setup_routes();
 
         {
             let mut c = coord.write().await;
@@ -3614,28 +3174,27 @@ mod tests {
             }
         }
 
-        let resp = warp::test::request()
-            .method("GET")
-            .path("/api/v1/cluster/pipeline-groups")
-            .header("x-api-key", "admin-key")
-            .reply(&routes)
-            .await;
+        let resp = send_request(
+            &router,
+            get_req("/api/v1/cluster/pipeline-groups", "admin-key"),
+        )
+        .await;
 
         assert_eq!(resp.status(), StatusCode::OK);
-        let body: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+        let bytes = body_bytes(resp).await;
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["total"], 3);
     }
 
     #[tokio::test]
     async fn test_register_worker_via_api_then_get() {
-        let (_coord, routes) = setup_routes();
+        let (_coord, router) = setup_routes();
 
         // Register
-        let resp = warp::test::request()
-            .method("POST")
-            .path("/api/v1/cluster/workers/register")
-            .header("x-api-key", "admin-key")
-            .json(&RegisterWorkerRequest {
+        let req = post_json_req(
+            "/api/v1/cluster/workers/register",
+            "admin-key",
+            &RegisterWorkerRequest {
                 worker_id: "api-worker".into(),
                 address: "http://localhost:8000".into(),
                 api_key: "worker-secret".into(),
@@ -3644,22 +3203,21 @@ mod tests {
                     pipelines_running: 0,
                     max_pipelines: 50,
                 },
-            })
-            .reply(&routes)
-            .await;
-
+            },
+        );
+        let resp = send_request(&router, req).await;
         assert_eq!(resp.status(), StatusCode::CREATED);
 
         // Get the worker
-        let resp = warp::test::request()
-            .method("GET")
-            .path("/api/v1/cluster/workers/api-worker")
-            .header("x-api-key", "admin-key")
-            .reply(&routes)
-            .await;
+        let resp = send_request(
+            &router,
+            get_req("/api/v1/cluster/workers/api-worker", "admin-key"),
+        )
+        .await;
 
         assert_eq!(resp.status(), StatusCode::OK);
-        let body: WorkerInfo = serde_json::from_slice(resp.body()).unwrap();
+        let bytes = body_bytes(resp).await;
+        let body: WorkerInfo = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body.id, "api-worker");
         assert_eq!(body.address, "http://localhost:8000");
         assert_eq!(body.max_pipelines, 50);
@@ -3667,71 +3225,59 @@ mod tests {
 
     #[tokio::test]
     async fn test_register_delete_register_cycle() {
-        let (_coord, routes) = setup_routes();
+        let (_coord, router) = setup_routes();
 
         // Register
-        let resp = warp::test::request()
-            .method("POST")
-            .path("/api/v1/cluster/workers/register")
-            .header("x-api-key", "admin-key")
-            .json(&RegisterWorkerRequest {
+        let req = post_json_req(
+            "/api/v1/cluster/workers/register",
+            "admin-key",
+            &RegisterWorkerRequest {
                 worker_id: "w1".into(),
                 address: "http://localhost:9000".into(),
                 api_key: "key".into(),
                 capacity: WorkerCapacity::default(),
-            })
-            .reply(&routes)
-            .await;
+            },
+        );
+        let resp = send_request(&router, req).await;
         assert_eq!(resp.status(), StatusCode::CREATED);
 
         // Delete
-        let resp = warp::test::request()
-            .method("DELETE")
-            .path("/api/v1/cluster/workers/w1")
-            .header("x-api-key", "admin-key")
-            .reply(&routes)
-            .await;
+        let resp = send_request(
+            &router,
+            delete_req("/api/v1/cluster/workers/w1", "admin-key"),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::OK);
 
         // Verify gone
-        let resp = warp::test::request()
-            .method("GET")
-            .path("/api/v1/cluster/workers/w1")
-            .header("x-api-key", "admin-key")
-            .reply(&routes)
-            .await;
+        let resp = send_request(&router, get_req("/api/v1/cluster/workers/w1", "admin-key")).await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
         // Re-register
-        let resp = warp::test::request()
-            .method("POST")
-            .path("/api/v1/cluster/workers/register")
-            .header("x-api-key", "admin-key")
-            .json(&RegisterWorkerRequest {
+        let req = post_json_req(
+            "/api/v1/cluster/workers/register",
+            "admin-key",
+            &RegisterWorkerRequest {
                 worker_id: "w1".into(),
                 address: "http://localhost:9001".into(),
                 api_key: "new-key".into(),
                 capacity: WorkerCapacity::default(),
-            })
-            .reply(&routes)
-            .await;
+            },
+        );
+        let resp = send_request(&router, req).await;
         assert_eq!(resp.status(), StatusCode::CREATED);
 
         // Verify re-registered with new address
-        let resp = warp::test::request()
-            .method("GET")
-            .path("/api/v1/cluster/workers/w1")
-            .header("x-api-key", "admin-key")
-            .reply(&routes)
-            .await;
+        let resp = send_request(&router, get_req("/api/v1/cluster/workers/w1", "admin-key")).await;
         assert_eq!(resp.status(), StatusCode::OK);
-        let body: WorkerInfo = serde_json::from_slice(resp.body()).unwrap();
+        let bytes = body_bytes(resp).await;
+        let body: WorkerInfo = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body.address, "http://localhost:9001");
     }
 
     #[tokio::test]
     async fn test_heartbeat_then_get_worker_updates() {
-        let (coord, routes) = setup_routes();
+        let (coord, router) = setup_routes();
 
         {
             let mut c = coord.write().await;
@@ -3743,28 +3289,23 @@ mod tests {
         }
 
         // Send heartbeat with updated pipeline count
-        let resp = warp::test::request()
-            .method("POST")
-            .path("/api/v1/cluster/workers/w1/heartbeat")
-            .header("x-api-key", "admin-key")
-            .json(&HeartbeatRequest {
+        let req = post_json_req(
+            "/api/v1/cluster/workers/w1/heartbeat",
+            "admin-key",
+            &HeartbeatRequest {
                 events_processed: 500,
                 pipelines_running: 3,
                 pipeline_metrics: vec![],
-            })
-            .reply(&routes)
-            .await;
+            },
+        );
+        let resp = send_request(&router, req).await;
         assert_eq!(resp.status(), StatusCode::OK);
 
         // Get worker should reflect new pipeline count
-        let resp = warp::test::request()
-            .method("GET")
-            .path("/api/v1/cluster/workers/w1")
-            .header("x-api-key", "admin-key")
-            .reply(&routes)
-            .await;
+        let resp = send_request(&router, get_req("/api/v1/cluster/workers/w1", "admin-key")).await;
         assert_eq!(resp.status(), StatusCode::OK);
-        let body: WorkerInfo = serde_json::from_slice(resp.body()).unwrap();
+        let bytes = body_bytes(resp).await;
+        let body: WorkerInfo = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body.pipelines_running, 3);
     }
 
@@ -3785,15 +3326,10 @@ mod tests {
     async fn test_rbac_viewer_can_read() {
         let coord = shared_coordinator();
 
-        let routes = cluster_routes(coord, rbac_viewer(), None, None);
+        let router = cluster_routes(coord, rbac_viewer(), None, None);
 
         // Viewer can list workers (GET)
-        let resp = warp::test::request()
-            .method("GET")
-            .path("/api/v1/cluster/workers")
-            .header("x-api-key", "viewer-key")
-            .reply(&routes)
-            .await;
+        let resp = send_request(&router, get_req("/api/v1/cluster/workers", "viewer-key")).await;
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
@@ -3801,16 +3337,15 @@ mod tests {
     async fn test_rbac_viewer_cannot_deploy() {
         let coord = shared_coordinator();
 
-        let routes = cluster_routes(coord, rbac_viewer(), None, None).recover(handle_rejection);
+        let router = cluster_routes(coord, rbac_viewer(), None, None);
 
         // Viewer cannot deploy (POST = Operator required)
-        let resp = warp::test::request()
-            .method("POST")
-            .path("/api/v1/cluster/pipeline-groups")
-            .header("x-api-key", "viewer-key")
-            .json(&serde_json::json!({"name": "g1", "pipelines": []}))
-            .reply(&routes)
-            .await;
+        let req = post_json_req(
+            "/api/v1/cluster/pipeline-groups",
+            "viewer-key",
+            &serde_json::json!({"name": "g1", "pipelines": []}),
+        );
+        let resp = send_request(&router, req).await;
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 
@@ -3828,15 +3363,10 @@ mod tests {
         let rbac = Arc::new(RbacConfig::multi_key(keys));
         let coord = shared_coordinator();
 
-        let routes = cluster_routes(coord, rbac, None, None).recover(handle_rejection);
+        let router = cluster_routes(coord, rbac, None, None);
 
         // Operator cannot delete workers (DELETE = Admin required)
-        let resp = warp::test::request()
-            .method("DELETE")
-            .path("/api/v1/cluster/workers/w1")
-            .header("x-api-key", "op-key")
-            .reply(&routes)
-            .await;
+        let resp = send_request(&router, delete_req("/api/v1/cluster/workers/w1", "op-key")).await;
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 
@@ -3861,33 +3391,27 @@ mod tests {
         let rbac = Arc::new(RbacConfig::multi_key(keys));
         let coord = shared_coordinator();
 
-        let routes = cluster_routes(coord, rbac, None, None).recover(handle_rejection);
+        let router = cluster_routes(coord, rbac, None, None);
 
         // Admin can delete (Admin required)
-        let resp = warp::test::request()
-            .method("DELETE")
-            .path("/api/v1/cluster/workers/w1")
-            .header("x-api-key", "admin-key")
-            .reply(&routes)
-            .await;
-        // 404 because w1 doesn't exist, but NOT 403 — auth passed
+        let resp = send_request(
+            &router,
+            delete_req("/api/v1/cluster/workers/w1", "admin-key"),
+        )
+        .await;
+        // 404 because w1 doesn't exist, but NOT 403 -- auth passed
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
         // Viewer gets 403 on delete
-        let resp = warp::test::request()
-            .method("DELETE")
-            .path("/api/v1/cluster/workers/w1")
-            .header("x-api-key", "viewer-key")
-            .reply(&routes)
-            .await;
+        let resp = send_request(
+            &router,
+            delete_req("/api/v1/cluster/workers/w1", "viewer-key"),
+        )
+        .await;
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
         // No key gets 401
-        let resp = warp::test::request()
-            .method("GET")
-            .path("/api/v1/cluster/workers")
-            .reply(&routes)
-            .await;
+        let resp = send_request(&router, get_req_no_key("/api/v1/cluster/workers")).await;
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
@@ -3903,21 +3427,19 @@ mod tests {
         let limiter = Arc::new(RateLimiter::new(RateLimitConfig::with_burst(10, 2)));
 
         let coord = shared_coordinator();
-        let routes = cluster_routes(
+        let router = cluster_routes(
             coord,
             Arc::new(RbacConfig::single_key("admin-key".to_string())),
             Some(limiter),
             None,
-        )
-        .recover(handle_rejection);
+        );
 
         // First 2 requests should succeed (burst)
         for _ in 0..2 {
-            let resp = warp::test::request()
-                .method("POST")
-                .path("/api/v1/cluster/workers/register")
-                .header("x-api-key", "admin-key")
-                .json(&serde_json::json!({
+            let req = post_json_req(
+                "/api/v1/cluster/workers/register",
+                "admin-key",
+                &serde_json::json!({
                     "worker_id": "w1",
                     "address": "http://localhost:9000",
                     "api_key": "key",
@@ -3927,9 +3449,9 @@ mod tests {
                         "max_pipelines": 10,
                         "pipelines_running": 0
                     }
-                }))
-                .reply(&routes)
-                .await;
+                }),
+            );
+            let resp = send_request(&router, req).await;
             assert!(
                 resp.status().is_success() || resp.status() == StatusCode::CREATED,
                 "Expected success, got {}",
@@ -3938,11 +3460,10 @@ mod tests {
         }
 
         // 3rd request should get 429 Too Many Requests
-        let resp = warp::test::request()
-            .method("POST")
-            .path("/api/v1/cluster/workers/register")
-            .header("x-api-key", "admin-key")
-            .json(&serde_json::json!({
+        let req = post_json_req(
+            "/api/v1/cluster/workers/register",
+            "admin-key",
+            &serde_json::json!({
                 "worker_id": "w2",
                 "address": "http://localhost:9001",
                 "api_key": "key",
@@ -3952,20 +3473,17 @@ mod tests {
                     "max_pipelines": 10,
                     "pipelines_running": 0
                 }
-            }))
-            .reply(&routes)
-            .await;
+            }),
+        );
+        let resp = send_request(&router, req).await;
         assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
 
         // Verify JSON body
-        let body: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+        let bytes = body_bytes(resp).await;
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["error"], "rate_limited");
         assert_eq!(body["message"], "Too many requests");
         assert!(body["retry_after_seconds"].is_number());
-
-        // Verify Retry-After header
-        let retry_after = resp.headers().get("retry-after");
-        assert!(retry_after.is_some(), "Expected Retry-After header");
     }
 
     #[tokio::test]
@@ -3976,20 +3494,18 @@ mod tests {
         let limiter = Arc::new(RateLimiter::new(RateLimitConfig::with_burst(1, 1)));
 
         let coord = shared_coordinator();
-        let routes = cluster_routes(
+        let router = cluster_routes(
             coord,
             Arc::new(RbacConfig::single_key("admin-key".to_string())),
             Some(limiter),
             None,
-        )
-        .recover(handle_rejection);
+        );
 
         // Exhaust the rate limit with a POST
-        let resp = warp::test::request()
-            .method("POST")
-            .path("/api/v1/cluster/workers/register")
-            .header("x-api-key", "admin-key")
-            .json(&serde_json::json!({
+        let req = post_json_req(
+            "/api/v1/cluster/workers/register",
+            "admin-key",
+            &serde_json::json!({
                 "worker_id": "w1",
                 "address": "http://localhost:9000",
                 "api_key": "key",
@@ -3999,17 +3515,16 @@ mod tests {
                     "max_pipelines": 10,
                     "pipelines_running": 0
                 }
-            }))
-            .reply(&routes)
-            .await;
+            }),
+        );
+        let resp = send_request(&router, req).await;
         assert!(resp.status().is_success() || resp.status() == StatusCode::CREATED);
 
         // Verify POST is now rate limited
-        let resp = warp::test::request()
-            .method("POST")
-            .path("/api/v1/cluster/workers/register")
-            .header("x-api-key", "admin-key")
-            .json(&serde_json::json!({
+        let req = post_json_req(
+            "/api/v1/cluster/workers/register",
+            "admin-key",
+            &serde_json::json!({
                 "worker_id": "w2",
                 "address": "http://localhost:9001",
                 "api_key": "key",
@@ -4019,18 +3534,13 @@ mod tests {
                     "max_pipelines": 10,
                     "pipelines_running": 0
                 }
-            }))
-            .reply(&routes)
-            .await;
+            }),
+        );
+        let resp = send_request(&router, req).await;
         assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
 
         // GET requests should still work (they are exempt from rate limiting)
-        let resp = warp::test::request()
-            .method("GET")
-            .path("/api/v1/cluster/workers")
-            .header("x-api-key", "admin-key")
-            .reply(&routes)
-            .await;
+        let resp = send_request(&router, get_req("/api/v1/cluster/workers", "admin-key")).await;
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
@@ -4042,21 +3552,19 @@ mod tests {
         let limiter = Arc::new(RateLimiter::new(RateLimitConfig::disabled()));
 
         let coord = shared_coordinator();
-        let routes = cluster_routes(
+        let router = cluster_routes(
             coord,
             Arc::new(RbacConfig::single_key("admin-key".to_string())),
             Some(limiter),
             None,
-        )
-        .recover(handle_rejection);
+        );
 
         // Many POST requests should all succeed
         for i in 0..10 {
-            let resp = warp::test::request()
-                .method("POST")
-                .path("/api/v1/cluster/workers/register")
-                .header("x-api-key", "admin-key")
-                .json(&serde_json::json!({
+            let req = post_json_req(
+                "/api/v1/cluster/workers/register",
+                "admin-key",
+                &serde_json::json!({
                     "worker_id": format!("w{}", i),
                     "address": format!("http://localhost:{}", 9000 + i),
                     "api_key": "key",
@@ -4066,9 +3574,9 @@ mod tests {
                         "max_pipelines": 10,
                         "pipelines_running": 0
                     }
-                }))
-                .reply(&routes)
-                .await;
+                }),
+            );
+            let resp = send_request(&router, req).await;
             assert!(
                 resp.status().is_success() || resp.status() == StatusCode::CREATED,
                 "Request {} failed with {}",
@@ -4081,21 +3589,19 @@ mod tests {
     #[tokio::test]
     async fn test_rate_limit_none_allows_all() {
         let coord = shared_coordinator();
-        let routes = cluster_routes(
+        let router = cluster_routes(
             coord,
             Arc::new(RbacConfig::single_key("admin-key".to_string())),
             None, // No rate limiter
-            None, // Default CORS (allow any origin)
-        )
-        .recover(handle_rejection);
+            None, // Default CORS
+        );
 
         // Many POST requests should all succeed
         for i in 0..10 {
-            let resp = warp::test::request()
-                .method("POST")
-                .path("/api/v1/cluster/workers/register")
-                .header("x-api-key", "admin-key")
-                .json(&serde_json::json!({
+            let req = post_json_req(
+                "/api/v1/cluster/workers/register",
+                "admin-key",
+                &serde_json::json!({
                     "worker_id": format!("w{}", i),
                     "address": format!("http://localhost:{}", 9000 + i),
                     "api_key": "key",
@@ -4105,9 +3611,9 @@ mod tests {
                         "max_pipelines": 10,
                         "pipelines_running": 0
                     }
-                }))
-                .reply(&routes)
-                .await;
+                }),
+            );
+            let resp = send_request(&router, req).await;
             assert!(
                 resp.status().is_success() || resp.status() == StatusCode::CREATED,
                 "Request {} failed with {}",

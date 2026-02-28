@@ -8,7 +8,10 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use warp::Filter;
+
+use axum::extract::ConnectInfo;
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 
 // =============================================================================
 // Configuration
@@ -224,71 +227,49 @@ pub enum RateLimitResult {
 }
 
 // =============================================================================
-// Warp Filter
+// Axum Middleware
 // =============================================================================
 
-/// Warp rejection type for rate limiting
-#[derive(Debug)]
-pub struct RateLimitRejection {
-    pub retry_after_secs: u64,
-}
+/// Check rate limiting for a request, returning an error response if limited.
+///
+/// This is used as an axum middleware function via `axum::middleware::from_fn_with_state`.
+/// It extracts the client IP from [`ConnectInfo`] and checks the rate limiter.
+pub async fn rate_limit_middleware(
+    connect_info: Option<ConnectInfo<std::net::SocketAddr>>,
+    limiter: Option<Arc<RateLimiter>>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    if let Some(ref limiter) = limiter {
+        let ip = connect_info
+            .map(|ci| ci.0.ip())
+            .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
 
-impl warp::reject::Reject for RateLimitRejection {}
-
-/// Create a warp filter that applies rate limiting
-pub fn with_rate_limit(
-    limiter: Arc<RateLimiter>,
-) -> impl warp::Filter<Extract = (RateLimitHeaders,), Error = warp::Rejection> + Clone {
-    warp::addr::remote().and_then(move |addr: Option<std::net::SocketAddr>| {
-        let limiter = limiter.clone();
-        async move {
-            // Get client IP (use localhost if not available)
-            let ip = addr
-                .map(|a| a.ip())
-                .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
-
-            match limiter.check(ip).await {
-                RateLimitResult::Allowed {
-                    remaining,
-                    reset_after,
-                } => Ok(RateLimitHeaders {
-                    remaining,
-                    reset_after_secs: reset_after.as_secs(),
-                }),
-                RateLimitResult::Limited { retry_after } => {
-                    Err(warp::reject::custom(RateLimitRejection {
-                        retry_after_secs: retry_after.as_secs().max(1),
-                    }))
-                }
+        match limiter.check(ip).await {
+            RateLimitResult::Allowed { .. } => {}
+            RateLimitResult::Limited { retry_after } => {
+                let retry_after_secs = retry_after.as_secs().max(1);
+                return rate_limit_error_response(retry_after_secs);
             }
         }
-    })
-}
-
-/// Headers to include in response
-#[derive(Debug, Clone)]
-pub struct RateLimitHeaders {
-    pub remaining: u32,
-    pub reset_after_secs: u64,
-}
-
-/// Handle rate limit rejection in recovery
-pub fn handle_rate_limit_rejection(
-    rejection: &warp::Rejection,
-) -> Option<warp::reply::WithStatus<warp::reply::Json>> {
-    if let Some(r) = rejection.find::<RateLimitRejection>() {
-        let json = warp::reply::json(&serde_json::json!({
-            "error": "rate_limited",
-            "message": "Too many requests",
-            "retry_after_seconds": r.retry_after_secs,
-        }));
-        Some(warp::reply::with_status(
-            json,
-            warp::http::StatusCode::TOO_MANY_REQUESTS,
-        ))
-    } else {
-        None
     }
+
+    next.run(req).await
+}
+
+/// Build a 429 Too Many Requests response with JSON body and Retry-After header.
+pub fn rate_limit_error_response(retry_after_secs: u64) -> Response {
+    let body = serde_json::json!({
+        "error": "rate_limited",
+        "message": "Too many requests",
+        "retry_after_seconds": retry_after_secs,
+    });
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        [("retry-after", retry_after_secs.to_string())],
+        axum::Json(body),
+    )
+        .into_response()
 }
 
 // =============================================================================

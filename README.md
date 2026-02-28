@@ -244,17 +244,21 @@ curl -X POST http://localhost:9000/api/v1/pipelines/<id>/events \
 
 ```
 crates/
+├── varpulis-actors/    # Actor framework with supervision and health observation
 ├── varpulis-core/      # AST, types, values, validation
 ├── varpulis-parser/    # Pest PEG parser for VPL
 ├── varpulis-runtime/   # Execution engine, SASE+, Hamlet, PST, connectors
-├── varpulis-cli/       # CLI binary + REST API server
+├── varpulis-cli/       # CLI binary + REST API server (Axum)
 ├── varpulis-cluster/   # Coordinator/worker cluster management (Raft + NATS)
 ├── varpulis-lsp/       # Language Server Protocol implementation
 ├── varpulis-mcp/       # Model Context Protocol server
 └── varpulis-zdd/       # Zero-suppressed Decision Diagrams (research)
 web-ui/                 # Vue 3 + Vuetify control plane dashboard
+design/decisions/       # Architecture Decision Records (ADRs)
 deploy/                 # Docker, Kubernetes, Helm, Prometheus, Grafana
 ```
+
+For architecture decisions and rationale, see the [Architecture Decision Records](design/decisions/README.md).
 
 ## Documentation
 

@@ -9,7 +9,6 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
-use warp::Filter;
 
 use varpulis_parser::parse;
 use varpulis_runtime::engine::Engine;
@@ -2452,99 +2451,16 @@ async fn run_server(
     // Create rate limiter
     let rate_limiter = Arc::new(rate_limit::RateLimiter::new(rate_limit_config));
 
-    // WebSocket route
-    let state_filter = warp::any().map({
-        let state = state.clone();
-        move || state.clone()
+    // WebSocket route state (shared across handlers via axum State)
+    let ws_state = Arc::new(WsRouteState {
+        server_state: state.clone(),
+        broadcast_tx: broadcast_tx.clone(),
     });
 
-    let broadcast_filter = warp::any().map({
-        let broadcast_tx = broadcast_tx.clone();
-        move || broadcast_tx.clone()
-    });
-
-    // WebSocket route with authentication and rate limiting.
-    // Auth can come via Sec-WebSocket-Protocol: varpulis-auth.<key> header
-    // (preferred over query params to avoid logging API keys in URLs).
-    let ws_route = warp::path("ws")
-        .and(auth::with_auth(auth_config.clone()))
-        .and(rate_limit::with_rate_limit(rate_limiter.clone()))
-        .and(warp::ws())
-        .and(state_filter)
-        .and(broadcast_filter)
-        .map(
-            |_auth: (),
-             _rate_limit: rate_limit::RateLimitHeaders,
-             ws: warp::ws::Ws,
-             state: Arc<RwLock<ServerState>>,
-             broadcast_tx: Arc<tokio::sync::broadcast::Sender<String>>| {
-                let reply = ws
-                    .max_frame_size(1024 * 1024)
-                    .max_message_size(1024 * 1024)
-                    .on_upgrade(move |socket| {
-                        websocket::handle_connection(socket, state, broadcast_tx)
-                    });
-                // Echo the varpulis-v1 subprotocol so the browser accepts the upgrade
-                // when auth was provided via Sec-WebSocket-Protocol header.
-                warp::reply::with_header(reply, "sec-websocket-protocol", "varpulis-v1")
-            },
-        );
-
-    // Health check routes (no auth required) - for Kubernetes probes
-
-    // Liveness probe: /health - is the process alive?
-    let health_state = state.clone();
-    let health_relay_metrics = relay_metrics.clone();
-    let health_route = warp::path("health").and(warp::get()).and_then(move || {
-        let state = health_state.clone();
-        let metrics = health_relay_metrics.clone();
-        async move {
-            let state = state.read().await;
-            let uptime = state.start_time.elapsed().as_secs_f64();
-            let relay = metrics.snapshot();
-            let response = serde_json::json!({
-                "status": "healthy",
-                "uptime_seconds": uptime,
-                "version": env!("CARGO_PKG_VERSION"),
-                "relay": relay,
-            });
-            Ok::<_, warp::Rejection>(warp::reply::json(&response))
-        }
-    });
-
-    // Readiness probe: /ready - is the engine ready to process events?
-    let ready_state = state.clone();
-    let ready_route = warp::path("ready").and(warp::get()).and_then(move || {
-        let state = ready_state.clone();
-        async move {
-            let state = state.read().await;
-            let streams_count = state.streams.len();
-
-            if let Some(engine) = state.engine.as_ref() {
-                let metrics = engine.metrics();
-                let response = serde_json::json!({
-                    "status": "ready",
-                    "engine_loaded": true,
-                    "streams_count": streams_count,
-                    "events_processed": metrics.events_processed,
-                    "output_events_emitted": metrics.output_events_emitted,
-                });
-                Ok::<_, warp::Rejection>(warp::reply::with_status(
-                    warp::reply::json(&response),
-                    warp::http::StatusCode::OK,
-                ))
-            } else {
-                let response = serde_json::json!({
-                    "status": "not_ready",
-                    "engine_loaded": false,
-                    "reason": "No VPL program loaded",
-                });
-                Ok::<_, warp::Rejection>(warp::reply::with_status(
-                    warp::reply::json(&response),
-                    warp::http::StatusCode::SERVICE_UNAVAILABLE,
-                ))
-            }
-        }
+    // Health/ready check state (shared via axum State)
+    let health_ready_state = Arc::new(HealthReadyState {
+        server_state: state.clone(),
+        relay_metrics: relay_metrics.clone(),
     });
 
     // REST API routes (multi-tenant pipeline management)
@@ -2759,19 +2675,35 @@ async fn run_server(
         billing_state.clone(),
     );
 
-    // Combined routes
-    let routes = ws_route
-        .or(health_route)
-        .or(ready_route)
-        .or(pg_routes)
-        .or(oauth_r)
-        .or(billing_r)
-        .or(audit_r);
+    // Combined routes using axum Router
+    //
+    // Build the stateful routes first (ws, health, ready use ServerAppState),
+    // then apply `.with_state()` to produce Router<()>, and finally merge the
+    // sub-module routers that are already Router<()>.
+    let server_state = ServerAppState {
+        ws: ws_state,
+        health: health_ready_state,
+        auth_config: auth_config.clone(),
+        rate_limiter,
+    };
+
+    let stateful_app: axum::Router<ServerAppState> = axum::Router::new()
+        .route("/ws", axum::routing::get(ws_upgrade_handler))
+        .route("/health", axum::routing::get(server_health_handler))
+        .route("/ready", axum::routing::get(server_ready_handler));
+
+    let app: axum::Router = stateful_app
+        .with_state(server_state)
+        // Sub-module routes (already Router<()>)
+        .merge(pg_routes)
+        .merge(oauth_r)
+        .merge(billing_r)
+        .merge(audit_r);
 
     #[cfg(feature = "saas")]
-    let routes = routes.or(org_r);
+    let app = app.merge(org_r);
 
-    let routes = routes.or(api_routes).recover(auth::handle_rejection);
+    let app = app.merge(api_routes);
 
     // Parse bind address - NO unwrap()!
     let bind_addr: std::net::IpAddr = bind
@@ -2864,32 +2796,29 @@ async fn run_server(
 
     info!("Server listening on {}:{}", bind, port);
 
-    // Graceful shutdown: listen for SIGTERM/Ctrl+C
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    tokio::spawn(async move {
+    // Graceful shutdown signal
+    let shutdown_signal = async {
         tokio::signal::ctrl_c().await.ok();
         info!("Received shutdown signal, draining connections...");
-        shutdown_tx.send(()).ok();
-    });
+    };
 
     // Start server with or without TLS.
-    // The server runs until SIGTERM/Ctrl+C, then warp drains in-flight requests.
+    let addr = std::net::SocketAddr::new(bind_addr, port);
     if let Some((cert_path, key_path)) = tls_config {
         info!("TLS enabled with cert: {}", cert_path.display());
-        let (_, server) = warp::serve(routes)
-            .tls()
-            .cert_path(&cert_path)
-            .key_path(&key_path)
-            .bind_with_graceful_shutdown((bind_addr, port), async {
-                shutdown_rx.await.ok();
-            });
-        server.await;
+        let tls_config =
+            axum_server::tls_rustls::RustlsConfig::from_pem_file(&cert_path, &key_path).await?;
+        axum_server::bind_rustls(addr, tls_config)
+            .serve(app.into_make_service_with_connect_info::<std::net::SocketAddr>())
+            .await?;
     } else {
-        let (_, server) =
-            warp::serve(routes).bind_with_graceful_shutdown((bind_addr, port), async {
-                shutdown_rx.await.ok();
-            });
-        server.await;
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .with_graceful_shutdown(shutdown_signal)
+        .await?;
     }
 
     info!("Server shutdown complete");
@@ -3226,103 +3155,6 @@ async fn run_coordinator(
         }
     });
 
-    // Health endpoint (no auth) — includes operational data
-    let health_coordinator = coordinator.clone();
-    let health_route = warp::path("health").and(warp::get()).and_then(move || {
-        let coord = health_coordinator.clone();
-        async move {
-            let coord = coord.read().await;
-            let total_workers = coord.workers.len();
-            let healthy_workers = coord
-                .workers
-                .values()
-                .filter(|w| w.status == varpulis_cluster::WorkerStatus::Ready)
-                .count();
-            let unhealthy_workers = coord
-                .workers
-                .values()
-                .filter(|w| w.status == varpulis_cluster::WorkerStatus::Unhealthy)
-                .count();
-            let draining_workers = coord
-                .workers
-                .values()
-                .filter(|w| w.status == varpulis_cluster::WorkerStatus::Draining)
-                .count();
-            let active_migrations = coord
-                .active_migrations
-                .values()
-                .filter(|m| {
-                    !matches!(
-                        m.status,
-                        varpulis_cluster::MigrationStatus::Completed
-                            | varpulis_cluster::MigrationStatus::Failed(_)
-                    )
-                })
-                .count();
-            let total_events: u64 = coord.workers.values().map(|w| w.events_processed).sum();
-            let last_sweep = coord.last_health_sweep.as_ref().map(|s| {
-                serde_json::json!({
-                    "workers_checked": s.workers_checked,
-                    "workers_marked_unhealthy": s.workers_marked_unhealthy.len(),
-                })
-            });
-
-            let status = if unhealthy_workers == 0 && total_workers > 0 {
-                "healthy"
-            } else if unhealthy_workers > 0 && healthy_workers > 0 {
-                "degraded"
-            } else if total_workers == 0 {
-                "no_workers"
-            } else {
-                "critical"
-            };
-
-            let response = serde_json::json!({
-                "status": status,
-                "role": "coordinator",
-                "version": env!("CARGO_PKG_VERSION"),
-                "workers": {
-                    "total": total_workers,
-                    "healthy": healthy_workers,
-                    "unhealthy": unhealthy_workers,
-                    "draining": draining_workers,
-                },
-                "pipeline_groups": coord.pipeline_groups.len(),
-                "active_migrations": active_migrations,
-                "total_events_processed": total_events,
-                "last_health_sweep": last_sweep,
-            });
-            Ok::<_, warp::Rejection>(warp::reply::json(&response))
-        }
-    });
-
-    // Readiness probe — returns 200 only for standalone/leader coordinators
-    let ready_route = warp::path("ready").and(warp::get()).and_then(|| async {
-        let response = serde_json::json!({
-            "status": "ready",
-            "role": "coordinator",
-        });
-        Ok::<_, warp::Rejection>(warp::reply::json(&response))
-    });
-
-    // Prometheus /metrics endpoint (unauthenticated, standard scrape path)
-    let metrics_coordinator = coordinator.clone();
-    let metrics_route = warp::path("metrics")
-        .and(warp::path::end())
-        .and(warp::get())
-        .and_then(move || {
-            let coord = metrics_coordinator.clone();
-            async move {
-                let coord = coord.read().await;
-                let text = coord.cluster_metrics.gather();
-                Ok::<_, warp::Rejection>(warp::reply::with_header(
-                    text,
-                    "content-type",
-                    "text/plain; version=0.0.4; charset=utf-8",
-                ))
-            }
-        });
-
     // Playground routes for coordinator (no auth required)
     let coord_playground_state =
         std::sync::Arc::new(tokio::sync::RwLock::new(playground::PlaygroundState::new()));
@@ -3333,95 +3165,55 @@ async fn run_coordinator(
     let (coord_broadcast_tx, _) = tokio::sync::broadcast::channel::<String>(1000);
     let coord_broadcast_tx = Arc::new(coord_broadcast_tx);
 
-    // WebSocket route for coordinator — relays output events from workers
-    let coord_ws_broadcast = coord_broadcast_tx.clone();
-    let coord_ws_route = warp::path("ws")
-        .and(warp::ws())
-        .map(move |ws: warp::ws::Ws| {
-            let broadcast_tx = coord_ws_broadcast.clone();
-            ws.max_frame_size(1024 * 1024)
-                .max_message_size(1024 * 1024)
-                .on_upgrade(move |socket| {
-                    websocket::handle_coordinator_connection(socket, broadcast_tx)
-                })
-        });
+    // Coordinator app state for axum handlers
+    let coord_state = Arc::new(CoordinatorAppState {
+        coordinator: coordinator.clone(),
+        broadcast_tx: coord_broadcast_tx.clone(),
+        expected_api_key: rbac.any_admin_key().unwrap_or_default(),
+    });
 
-    // Internal endpoint: workers POST output events here for relaying to WS clients.
-    // Body: JSON array of pre-serialized event strings.
-    // Authenticated via x-api-key header (workers already send this).
-    let coord_output_broadcast = coord_broadcast_tx.clone();
-    let coord_expected_key = rbac.any_admin_key().unwrap_or_default();
-    let coord_output_events_route = warp::path("api")
-        .and(warp::path("v1"))
-        .and(warp::path("internal"))
-        .and(warp::path("output-events"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(warp::header::<String>("x-api-key"))
-        .and(warp::body::content_length_limit(1024 * 1024)) // 1 MB limit
-        .and(warp::body::json::<Vec<String>>())
-        .map(move |key: String, events: Vec<String>| {
-            if key != coord_expected_key {
-                return warp::reply::with_status(
-                    warp::reply::json(&serde_json::json!({"error": "unauthorized"})),
-                    warp::http::StatusCode::UNAUTHORIZED,
-                );
-            }
-            let tx = coord_output_broadcast.clone();
-            let mut relayed = 0u64;
-            let mut dropped = 0u64;
-            for event_json in &events {
-                match tx.send(event_json.clone()) {
-                    Ok(_) => relayed += 1,
-                    Err(_) => dropped += 1,
-                }
-            }
-            if dropped > 0 {
-                tracing::debug!(
-                    "Coordinator relay: {} relayed, {} dropped (no WS subscribers)",
-                    relayed,
-                    dropped
-                );
-            }
-            warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({"relayed": relayed, "dropped": dropped})),
-                warp::http::StatusCode::OK,
-            )
-        });
+    // Build coordinator-local routes (health, ready, metrics, ws, internal output-events)
+    let coord_local_routes = axum::Router::new()
+        .route("/health", axum::routing::get(coordinator_health_handler))
+        .route("/ready", axum::routing::get(coordinator_ready_handler))
+        .route("/metrics", axum::routing::get(coordinator_metrics_handler))
+        .route("/ws", axum::routing::get(coordinator_ws_handler))
+        .route(
+            "/api/v1/internal/output-events",
+            axum::routing::post(coordinator_output_events_handler),
+        )
+        .with_state(coord_state);
 
     let bind_addr: std::net::IpAddr = bind
         .parse()
         .map_err(|e| anyhow::anyhow!("Invalid bind address '{}': {}", bind, e))?;
     info!("Coordinator listening on {}:{}", bind, port);
 
-    // Graceful shutdown: listen for SIGTERM/Ctrl+C
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    tokio::spawn(async move {
-        tokio::signal::ctrl_c().await.ok();
-        info!("Received shutdown signal, draining coordinator connections...");
-        shutdown_tx.send(()).ok();
-    });
-
-    // Macro to start warp with or without TLS (avoids duplicating the TLS branching
+    // Macro to start axum with or without TLS (avoids duplicating the TLS branching
     // across the raft/non-raft cfg blocks).
     macro_rules! serve_coordinator {
-        ($routes:expr, $shutdown_rx:expr) => {{
+        ($app:expr) => {{
+            let addr = std::net::SocketAddr::new(bind_addr, port);
             if let Some((ref cert_path, ref key_path)) = tls_config {
                 info!("Coordinator TLS enabled with cert: {}", cert_path.display());
-                let (_, server) = warp::serve($routes)
-                    .tls()
-                    .cert_path(cert_path)
-                    .key_path(key_path)
-                    .bind_with_graceful_shutdown((bind_addr, port), async {
-                        $shutdown_rx.await.ok();
-                    });
-                server.await;
+                let tls_config =
+                    axum_server::tls_rustls::RustlsConfig::from_pem_file(cert_path, key_path)
+                        .await?;
+                axum_server::bind_rustls(addr, tls_config)
+                    .serve($app.into_make_service_with_connect_info::<std::net::SocketAddr>())
+                    .await?;
             } else {
-                let (_, server) =
-                    warp::serve($routes).bind_with_graceful_shutdown((bind_addr, port), async {
-                        $shutdown_rx.await.ok();
-                    });
-                server.await;
+                let shutdown_signal = async {
+                    tokio::signal::ctrl_c().await.ok();
+                    info!("Received shutdown signal, draining coordinator connections...");
+                };
+                let listener = tokio::net::TcpListener::bind(addr).await?;
+                axum::serve(
+                    listener,
+                    $app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+                )
+                .with_graceful_shutdown(shutdown_signal)
+                .await?;
             }
         }};
     }
@@ -3436,15 +3228,8 @@ async fn run_coordinator(
                 coordinator_rate_limiter,
                 cors_origins,
             );
-            let routes = coord_ws_route
-                .or(coord_output_events_route)
-                .or(health_route)
-                .or(ready_route)
-                .or(metrics_route)
-                .or(coord_pg_routes)
-                .or(api_routes)
-                .recover(varpulis_cluster::api::handle_rejection);
-            serve_coordinator!(routes, shutdown_rx);
+            let app = coord_local_routes.merge(coord_pg_routes).merge(api_routes);
+            serve_coordinator!(app);
         } else {
             let api_routes = varpulis_cluster::cluster_routes(
                 coordinator,
@@ -3452,15 +3237,8 @@ async fn run_coordinator(
                 coordinator_rate_limiter,
                 cors_origins,
             );
-            let routes = coord_ws_route
-                .or(coord_output_events_route)
-                .or(health_route)
-                .or(ready_route)
-                .or(metrics_route)
-                .or(coord_pg_routes)
-                .or(api_routes)
-                .recover(varpulis_cluster::api::handle_rejection);
-            serve_coordinator!(routes, shutdown_rx);
+            let app = coord_local_routes.merge(coord_pg_routes).merge(api_routes);
+            serve_coordinator!(app);
         }
     }
 
@@ -3472,19 +3250,267 @@ async fn run_coordinator(
             coordinator_rate_limiter,
             cors_origins,
         );
-        let routes = coord_ws_route
-            .or(coord_output_events_route)
-            .or(health_route)
-            .or(ready_route)
-            .or(metrics_route)
-            .or(coord_pg_routes)
-            .or(api_routes)
-            .recover(varpulis_cluster::api::handle_rejection);
-        serve_coordinator!(routes, shutdown_rx);
+        let app = coord_local_routes.merge(coord_pg_routes).merge(api_routes);
+        serve_coordinator!(app);
     }
 
     info!("Coordinator shutdown complete");
     Ok(())
+}
+
+// =============================================================================
+// Axum handler state types and handler functions
+// =============================================================================
+
+/// Shared state for the server WebSocket route.
+#[derive(Clone)]
+struct WsRouteState {
+    server_state: Arc<RwLock<ServerState>>,
+    broadcast_tx: Arc<tokio::sync::broadcast::Sender<String>>,
+}
+
+/// Shared state for server health/ready endpoints.
+#[derive(Clone)]
+struct HealthReadyState {
+    server_state: Arc<RwLock<ServerState>>,
+    relay_metrics: Arc<websocket::RelayMetrics>,
+}
+
+/// Combined application state for the server axum Router.
+#[derive(Clone)]
+#[allow(dead_code)]
+struct ServerAppState {
+    ws: Arc<WsRouteState>,
+    health: Arc<HealthReadyState>,
+    auth_config: Arc<auth::AuthConfig>,
+    rate_limiter: Arc<rate_limit::RateLimiter>,
+}
+
+/// WebSocket upgrade handler for the server.
+///
+/// Performs auth check inline (via headers) before upgrading the WebSocket connection.
+async fn ws_upgrade_handler(
+    axum::extract::State(app): axum::extract::State<ServerAppState>,
+    headers: axum::http::HeaderMap,
+    uri: axum::http::Uri,
+    ws: axum::extract::ws::WebSocketUpgrade,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    // Auth check using headers + URI (avoids holding Request<Body> across awaits)
+    let auth_state = auth::AuthState {
+        config: app.auth_config.clone(),
+        oauth_state: None,
+    };
+    if let Err(rejection) = auth::check_auth_from_parts(&auth_state, &headers, &uri).await {
+        return rejection.into_response();
+    }
+
+    let state = app.ws.server_state.clone();
+    let broadcast_tx = app.ws.broadcast_tx.clone();
+    let response = ws
+        .max_frame_size(1024 * 1024)
+        .max_message_size(1024 * 1024)
+        .on_upgrade(move |socket| websocket::handle_connection(socket, state, broadcast_tx));
+    // Echo the varpulis-v1 subprotocol so the browser accepts the upgrade
+    // when auth was provided via Sec-WebSocket-Protocol header.
+    (
+        [(axum::http::header::SEC_WEBSOCKET_PROTOCOL, "varpulis-v1")],
+        response,
+    )
+        .into_response()
+}
+
+/// Liveness probe: /health - is the process alive?
+async fn server_health_handler(
+    axum::extract::State(app): axum::extract::State<ServerAppState>,
+) -> axum::Json<serde_json::Value> {
+    let state = app.health.server_state.read().await;
+    let uptime = state.start_time.elapsed().as_secs_f64();
+    let relay = app.health.relay_metrics.snapshot();
+    axum::Json(serde_json::json!({
+        "status": "healthy",
+        "uptime_seconds": uptime,
+        "version": env!("CARGO_PKG_VERSION"),
+        "relay": relay,
+    }))
+}
+
+/// Readiness probe: /ready - is the engine ready to process events?
+async fn server_ready_handler(
+    axum::extract::State(app): axum::extract::State<ServerAppState>,
+) -> impl axum::response::IntoResponse {
+    let state = app.health.server_state.read().await;
+    let streams_count = state.streams.len();
+
+    if let Some(engine) = state.engine.as_ref() {
+        let metrics = engine.metrics();
+        let response = serde_json::json!({
+            "status": "ready",
+            "engine_loaded": true,
+            "streams_count": streams_count,
+            "events_processed": metrics.events_processed,
+            "output_events_emitted": metrics.output_events_emitted,
+        });
+        (axum::http::StatusCode::OK, axum::Json(response))
+    } else {
+        let response = serde_json::json!({
+            "status": "not_ready",
+            "engine_loaded": false,
+            "reason": "No VPL program loaded",
+        });
+        (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            axum::Json(response),
+        )
+    }
+}
+
+/// Combined application state for the coordinator axum Router.
+#[derive(Clone)]
+struct CoordinatorAppState {
+    coordinator: varpulis_cluster::SharedCoordinator,
+    broadcast_tx: Arc<tokio::sync::broadcast::Sender<String>>,
+    expected_api_key: String,
+}
+
+/// Coordinator health endpoint — includes operational data.
+async fn coordinator_health_handler(
+    axum::extract::State(state): axum::extract::State<Arc<CoordinatorAppState>>,
+) -> axum::Json<serde_json::Value> {
+    let coord = state.coordinator.read().await;
+    let total_workers = coord.workers.len();
+    let healthy_workers = coord
+        .workers
+        .values()
+        .filter(|w| w.status == varpulis_cluster::WorkerStatus::Ready)
+        .count();
+    let unhealthy_workers = coord
+        .workers
+        .values()
+        .filter(|w| w.status == varpulis_cluster::WorkerStatus::Unhealthy)
+        .count();
+    let draining_workers = coord
+        .workers
+        .values()
+        .filter(|w| w.status == varpulis_cluster::WorkerStatus::Draining)
+        .count();
+    let active_migrations = coord
+        .active_migrations
+        .values()
+        .filter(|m| {
+            !matches!(
+                m.status,
+                varpulis_cluster::MigrationStatus::Completed
+                    | varpulis_cluster::MigrationStatus::Failed(_)
+            )
+        })
+        .count();
+    let total_events: u64 = coord.workers.values().map(|w| w.events_processed).sum();
+    let last_sweep = coord.last_health_sweep.as_ref().map(|s| {
+        serde_json::json!({
+            "workers_checked": s.workers_checked,
+            "workers_marked_unhealthy": s.workers_marked_unhealthy.len(),
+        })
+    });
+
+    let status = if unhealthy_workers == 0 && total_workers > 0 {
+        "healthy"
+    } else if unhealthy_workers > 0 && healthy_workers > 0 {
+        "degraded"
+    } else if total_workers == 0 {
+        "no_workers"
+    } else {
+        "critical"
+    };
+
+    axum::Json(serde_json::json!({
+        "status": status,
+        "role": "coordinator",
+        "version": env!("CARGO_PKG_VERSION"),
+        "workers": {
+            "total": total_workers,
+            "healthy": healthy_workers,
+            "unhealthy": unhealthy_workers,
+            "draining": draining_workers,
+        },
+        "pipeline_groups": coord.pipeline_groups.len(),
+        "active_migrations": active_migrations,
+        "total_events_processed": total_events,
+        "last_health_sweep": last_sweep,
+    }))
+}
+
+/// Coordinator readiness probe — returns 200 for standalone/leader coordinators.
+async fn coordinator_ready_handler() -> axum::Json<serde_json::Value> {
+    axum::Json(serde_json::json!({
+        "status": "ready",
+        "role": "coordinator",
+    }))
+}
+
+/// Prometheus /metrics endpoint for the coordinator.
+async fn coordinator_metrics_handler(
+    axum::extract::State(state): axum::extract::State<Arc<CoordinatorAppState>>,
+) -> impl axum::response::IntoResponse {
+    let coord = state.coordinator.read().await;
+    let text = coord.cluster_metrics.gather();
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        text,
+    )
+}
+
+/// WebSocket route for coordinator — relays output events from workers.
+async fn coordinator_ws_handler(
+    axum::extract::State(state): axum::extract::State<Arc<CoordinatorAppState>>,
+    ws: axum::extract::ws::WebSocketUpgrade,
+) -> impl axum::response::IntoResponse {
+    let broadcast_tx = state.broadcast_tx.clone();
+    ws.max_frame_size(1024 * 1024)
+        .max_message_size(1024 * 1024)
+        .on_upgrade(move |socket| websocket::handle_coordinator_connection(socket, broadcast_tx))
+}
+
+/// Internal endpoint: workers POST output events here for relaying to WS clients.
+async fn coordinator_output_events_handler(
+    axum::extract::State(state): axum::extract::State<Arc<CoordinatorAppState>>,
+    headers: axum::http::HeaderMap,
+    axum::Json(events): axum::Json<Vec<String>>,
+) -> impl axum::response::IntoResponse {
+    let key = headers
+        .get("x-api-key")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if key != state.expected_api_key {
+        return (
+            axum::http::StatusCode::UNAUTHORIZED,
+            axum::Json(serde_json::json!({"error": "unauthorized"})),
+        );
+    }
+    let tx = &state.broadcast_tx;
+    let mut relayed = 0u64;
+    let mut dropped = 0u64;
+    for event_json in &events {
+        match tx.send(event_json.clone()) {
+            Ok(_) => relayed += 1,
+            Err(_) => dropped += 1,
+        }
+    }
+    if dropped > 0 {
+        tracing::debug!(
+            "Coordinator relay: {} relayed, {} dropped (no WS subscribers)",
+            relayed,
+            dropped
+        );
+    }
+    (
+        axum::http::StatusCode::OK,
+        axum::Json(serde_json::json!({"relayed": relayed, "dropped": dropped})),
+    )
 }
 
 // =============================================================================

@@ -1,6 +1,9 @@
 //! Managed connector registry — owns one connection per declared connector
+//!
+//! The registry wraps each connector with the actor framework's supervision
+//! infrastructure, providing automatic health observation and restart policies.
 
-use super::managed::ManagedConnector;
+use super::managed::{ConnectorHealthReport, ManagedConnector};
 use super::managed_mqtt::ManagedMqttConnector;
 use super::managed_nats::ManagedNatsConnector;
 use super::mqtt::MqttConfig;
@@ -77,7 +80,10 @@ impl ManagedConnectorRegistry {
     }
 
     /// Collect health reports from all managed connectors.
-    pub fn health_reports(&self) -> Vec<(&str, &str, super::managed::ConnectorHealthReport)> {
+    ///
+    /// Returns a vector of (name, type, health) tuples suitable for
+    /// aggregation into a system health response or actor observable state.
+    pub fn health_reports(&self) -> Vec<(&str, &str, ConnectorHealthReport)> {
         self.connectors
             .iter()
             .map(|(name, conn)| (name.as_str(), conn.connector_type(), conn.health()))

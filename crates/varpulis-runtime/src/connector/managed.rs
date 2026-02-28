@@ -2,17 +2,24 @@
 //!
 //! A `ManagedConnector` owns a single connection to an external system and
 //! hands out shared source/sink handles through a uniform interface.
+//!
+//! Connectors now integrate with the actor framework via [`ConnectorObservableState`],
+//! enabling health observation through the supervisor infrastructure.
 
 use super::types::ConnectorError;
 use crate::event::Event;
 use crate::sink::Sink;
 use async_trait::async_trait;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
 /// Health report from a managed connector.
-#[derive(Debug, Clone)]
+///
+/// This type also serves as the [`Actor::ObservableState`] for connector actors,
+/// enabling health monitoring through the actor framework's observation API.
+#[derive(Debug, Clone, Serialize)]
 pub struct ConnectorHealthReport {
     pub connected: bool,
     pub last_error: Option<String>,

@@ -7,7 +7,7 @@ This directory contains Architecture Decision Records (ADRs) for the Varpulis CE
 | ADR | Title | Status | Date |
 |-----|-------|--------|------|
 | [001](001-pest-parser.md) | Pest PEG Parser for VPL | Accepted | 2026-02-17 |
-| [002](002-warp-http.md) | Warp as the HTTP Framework | Accepted | 2026-02-17 |
+| [002](002-warp-http.md) | Warp as the HTTP Framework | Superseded by [007](../../design/decisions/ADR-007-axum-migration.md) | 2026-02-17 |
 | [003](003-coordinator-worker.md) | Coordinator/Worker Cluster Architecture | Accepted | 2026-02-17 |
 | [004](004-sase-plus-semantics.md) | SASE+ Semantics for Pattern Matching | Accepted | 2026-02-17 |
 | [005](005-hamlet-trend-aggregation.md) | Hamlet for Multi-Query Trend Aggregation | Accepted | 2026-02-17 |
