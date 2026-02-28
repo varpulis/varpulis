@@ -964,13 +964,16 @@ impl<S: StateStore> EncryptedStateStore<S> {
         }
 
         let (nonce_bytes, ciphertext) = data.split_at(12);
-        let nonce = Nonce::from_slice(nonce_bytes);
+        let nonce_arr: [u8; 12] = nonce_bytes
+            .try_into()
+            .map_err(|_| StoreError::IoError("Invalid nonce length".to_string()))?;
+        let nonce = Nonce::from(nonce_arr);
 
         let cipher = Aes256Gcm::new_from_slice(&self.key)
             .map_err(|e| StoreError::IoError(format!("AES key error: {}", e)))?;
 
         cipher
-            .decrypt(nonce, ciphertext)
+            .decrypt(&nonce, ciphertext)
             .map_err(|e| StoreError::IoError(format!("Decryption failed: {}", e)))
     }
 }
