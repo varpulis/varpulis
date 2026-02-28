@@ -3,12 +3,13 @@ name = "varpulis-cluster"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Distributed execution cluster for Varpulis streaming analytics"
 
 [dependencies]
-varpulis-core = { path = "../varpulis-core" }
-varpulis-runtime = { path = "../varpulis-runtime", features = ["mqtt"] }
-varpulis-parser = { path = "../varpulis-parser" }
+varpulis-core = { version = "0.4.1", path = "../varpulis-core" }
+varpulis-runtime = { version = "0.4.1", path = "../varpulis-runtime", features = ["mqtt"] }
+varpulis-parser = { version = "0.4.1", path = "../varpulis-parser" }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

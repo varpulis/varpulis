@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Language Server Protocol implementation for VPL"
 
 [lib]
@@ -22,8 +23,8 @@ tower-lsp = "0.20"
 tokio = { workspace = true }
 
 # Varpulis crates
-varpulis-parser = { path = "../varpulis-parser" }
-varpulis-core = { path = "../varpulis-core" }
+varpulis-parser = { version = "0.4.1", path = "../varpulis-parser" }
+varpulis-core = { version = "0.4.1", path = "../varpulis-core" }
 
 # Serialization
 serde = { workspace = true }
