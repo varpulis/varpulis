@@ -125,6 +125,9 @@ pub(crate) struct StreamDefinition {
         Arc<dyn crate::enrichment::EnrichmentProvider>,
         Arc<crate::enrichment::EnrichmentCache>,
     )>,
+    /// Optional backpressure buffer configuration for this stream's input channel
+    #[allow(dead_code)]
+    pub buffer_config: Option<crate::backpressure::StageBufferConfig>,
 }
 
 /// Source of events for a stream

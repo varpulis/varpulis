@@ -1,0 +1,3 @@
+stream HighTemp = SensorReading
+    .where(temperature > 100)
+    .emit(temp: temperature)

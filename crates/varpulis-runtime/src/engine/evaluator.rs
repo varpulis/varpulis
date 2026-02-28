@@ -801,6 +801,44 @@ fn eval_builtin_function(func_name: &str, args: &[Value]) -> Option<Value> {
 // Expression Evaluation
 // =============================================================================
 
+/// Evaluate expression with access to user-defined functions and optional UDF registry.
+///
+/// When `udf_registry` contains a matching scalar UDF, it is called directly
+/// (bypassing the VPL interpreter) for maximum performance.
+pub fn eval_expr_with_udfs(
+    expr: &varpulis_core::ast::Expr,
+    event: &Event,
+    ctx: &SequenceContext,
+    functions: &FxHashMap<String, UserFunction>,
+    bindings: &FxHashMap<String, Value>,
+    udf_registry: &crate::udf::UdfRegistry,
+) -> Option<Value> {
+    use varpulis_core::ast::Expr as E;
+
+    // For Call expressions, check UDF registry first
+    if let E::Call { func, args } = expr {
+        if let E::Ident(func_name) = func.as_ref() {
+            if let Some(udf) = udf_registry.get_scalar(func_name) {
+                let arg_values: Vec<Value> = args
+                    .iter()
+                    .filter_map(|arg| match arg {
+                        varpulis_core::ast::Arg::Positional(e) => {
+                            eval_expr_with_functions(e, event, ctx, functions, bindings)
+                        }
+                        varpulis_core::ast::Arg::Named(_, e) => {
+                            eval_expr_with_functions(e, event, ctx, functions, bindings)
+                        }
+                    })
+                    .collect();
+                return udf.evaluate(&arg_values);
+            }
+        }
+    }
+
+    // Fall through to standard evaluation
+    eval_expr_with_functions(expr, event, ctx, functions, bindings)
+}
+
 /// Evaluate expression with access to user-defined functions
 pub fn eval_expr_with_functions(
     expr: &varpulis_core::ast::Expr,

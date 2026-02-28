@@ -104,11 +104,13 @@
 //! - [`varpulis_cli`](../varpulis_cli): Command-line interface
 
 pub mod aggregation;
+pub mod backpressure;
 pub mod circuit_breaker;
 pub mod codec;
 pub mod columnar;
 pub mod connector;
 pub mod context;
+pub mod converter;
 pub mod dead_letter;
 pub mod engine;
 pub mod enrichment;
@@ -116,6 +118,7 @@ pub mod event;
 pub mod event_file;
 pub mod greta;
 pub mod hamlet;
+pub mod health;
 pub mod join;
 pub mod limits;
 pub mod metrics;
@@ -129,7 +132,9 @@ pub mod simulator;
 pub mod sink;
 pub mod stream;
 pub mod tenant;
+pub mod testing;
 pub mod timer;
+pub mod udf;
 pub mod watermark;
 pub mod window;
 pub mod worker_pool;

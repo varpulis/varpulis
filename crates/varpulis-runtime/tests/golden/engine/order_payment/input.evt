@@ -1,0 +1,3 @@
+OrderEvent { order_id: "ORD-001", amount: 99, currency: "USD" }
+OrderEvent { order_id: "ORD-002", amount: 0, currency: "EUR" }
+OrderEvent { order_id: "ORD-003", amount: 250, currency: "GBP" }

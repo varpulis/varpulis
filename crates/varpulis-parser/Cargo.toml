@@ -16,6 +16,8 @@ pest_derive = "2.8.5"
 
 [dev-dependencies]
 proptest = "1.5"
+insta = { workspace = true }
+serde_json = { workspace = true }
 
 [build-dependencies]
 # Tree-sitter will be added here

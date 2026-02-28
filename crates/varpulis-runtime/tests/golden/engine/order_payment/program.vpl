@@ -1,0 +1,3 @@
+stream OrderTotal = OrderEvent
+    .where(amount > 0)
+    .emit(order_id: order_id, total: amount, currency: currency)

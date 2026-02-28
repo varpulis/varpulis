@@ -1,0 +1,4 @@
+stream AvgTemp = SensorReading
+    .window(3)
+    .aggregate(avg_temp: avg(temperature), count: count())
+    .emit(avg_temp: avg_temp, count: count)

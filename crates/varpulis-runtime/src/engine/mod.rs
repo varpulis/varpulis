@@ -39,6 +39,7 @@ use crate::join::JoinBuffer;
 use crate::metrics::Metrics;
 use crate::sase::SaseEngine;
 use crate::sequence::SequenceContext;
+use crate::udf::UdfRegistry;
 use crate::watermark::PerSourceWatermarkTracker;
 use crate::window::{
     CountWindow, PartitionedSessionWindow, PartitionedSlidingWindow, PartitionedTumblingWindow,
@@ -117,6 +118,8 @@ pub struct Engine {
     dlq: Option<Arc<crate::dead_letter::DeadLetterQueue>>,
     /// Physical plan snapshot for introspection (built during load_program)
     physical_plan: Option<physical_plan::PhysicalPlan>,
+    /// Registry for native Rust UDFs (scalar + aggregate)
+    udf_registry: UdfRegistry,
 }
 
 impl Engine {
@@ -147,6 +150,7 @@ impl Engine {
             dlq_config: crate::dead_letter::DlqConfig::default(),
             dlq: None,
             physical_plan: None,
+            udf_registry: UdfRegistry::new(),
         }
     }
 
@@ -193,6 +197,7 @@ impl Engine {
             dlq_config: crate::dead_letter::DlqConfig::default(),
             dlq: None,
             physical_plan: None,
+            udf_registry: UdfRegistry::new(),
         }
     }
 
@@ -1210,6 +1215,7 @@ impl Engine {
                 pst_forecaster,
                 last_raw_event: None,
                 enrichment,
+                buffer_config: None,
             },
         );
 
@@ -3403,6 +3409,21 @@ impl Engine {
             }
         }
         timers
+    }
+
+    /// Register a native scalar UDF.
+    pub fn register_scalar_udf(&mut self, udf: std::sync::Arc<dyn crate::udf::ScalarUDF>) {
+        self.udf_registry.register_scalar(udf);
+    }
+
+    /// Register a native aggregate UDF.
+    pub fn register_aggregate_udf(&mut self, udf: std::sync::Arc<dyn crate::udf::AggregateUDF>) {
+        self.udf_registry.register_aggregate(udf);
+    }
+
+    /// Get a reference to the UDF registry.
+    pub fn udf_registry(&self) -> &UdfRegistry {
+        &self.udf_registry
     }
 
     // =========================================================================

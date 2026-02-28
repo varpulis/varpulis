@@ -1,0 +1,5 @@
+fn double(x: int) -> int:
+    x * 2
+
+stream Doubled = EventA
+    .emit(result: double(value))
