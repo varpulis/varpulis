@@ -1,7 +1,10 @@
-//! Unit tests for the Varpulis engine
+//! Integration tests for the Varpulis engine
 
-use super::*;
 use tokio::sync::mpsc;
+use varpulis_core::ast::Program;
+use varpulis_core::Value;
+use varpulis_runtime::engine::Engine;
+use varpulis_runtime::event::Event;
 
 fn parse_program(source: &str) -> Program {
     varpulis_parser::parse(source).expect("Failed to parse")
@@ -181,7 +184,7 @@ async fn test_engine_sequence_with_timeout() {
 
 #[tokio::test]
 async fn test_engine_with_event_file() {
-    use crate::event_file::EventFileParser;
+    use varpulis_runtime::event_file::EventFileParser;
 
     let source = r#"
         # Order-Payment sequence test
@@ -316,9 +319,10 @@ async fn test_engine_match_all_sequence() {
 #[tokio::test]
 async fn test_engine_with_metrics() {
     let (tx, _rx) = mpsc::channel(100);
-    let metrics = crate::metrics::Metrics::new();
+    let metrics = varpulis_runtime::metrics::Metrics::new();
     let engine = Engine::new(tx).with_metrics(metrics);
-    assert!(engine.metrics.is_some());
+    let m = engine.metrics();
+    assert_eq!(m.events_processed, 0);
 }
 
 #[tokio::test]
