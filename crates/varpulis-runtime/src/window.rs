@@ -949,7 +949,8 @@ impl PartitionedSlidingWindow {
 /// - Implement "previous" reference in expressions
 ///
 /// # Example
-/// ```ignore
+/// ```
+/// # use varpulis_runtime::window::DelayBuffer;
 /// let mut delay = DelayBuffer::new(1);
 ///
 /// // First item: nothing output (buffer filling)
@@ -1040,7 +1041,7 @@ impl<T: Clone> DelayBuffer<T> {
 /// A specialized delay buffer for comparing current vs previous values.
 ///
 /// This is optimized for the common pattern:
-/// ```ignore
+/// ```text
 /// // Apama:
 /// // from a in averages from p in (from a in averages retain 1 select rstream a)
 /// // where a > p + threshold

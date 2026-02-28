@@ -48,15 +48,17 @@ export class WebSocketClient {
       }
     }
 
-    let wsUrl = `${this.baseUrl}/ws`
-    // Pass API key as query param (browser WebSocket API doesn't support custom headers)
+    const wsUrl = `${this.baseUrl}/ws`
+    // Pass API key via Sec-WebSocket-Protocol header (subprotocol) instead of URL
+    // query params. This avoids leaking the key in server access logs, browser
+    // history, and proxy logs.
     const apiKey = getApiKey()
-    if (apiKey) {
-      wsUrl += `?api_key=${encodeURIComponent(apiKey)}`
-    }
+    const protocols = apiKey
+      ? ['varpulis-v1', `varpulis-auth.${apiKey}`]
+      : ['varpulis-v1']
     this.setConnectionState('connecting')
 
-    this.ws = new ReconnectingWebSocket(wsUrl, [], {
+    this.ws = new ReconnectingWebSocket(wsUrl, protocols, {
       maxRetries: Infinity,
       connectionTimeout: 5000,
       maxReconnectionDelay: 10000,

@@ -3358,7 +3358,7 @@ impl Engine {
     /// - Removed streams: dropped
     ///
     /// # Example
-    /// ```ignore
+    /// ```text
     /// let new_program = varpulis_parser::parse(&new_source)?;
     /// let report = engine.reload(&new_program)?;
     /// println!("Reload complete: {:?}", report);

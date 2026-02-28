@@ -7,7 +7,7 @@
 //! - Checkpointing and recovery
 //!
 //! # Example
-//! ```ignore
+//! ```text
 //! use varpulis_runtime::persistence::{StateStore, RocksDbStore, CheckpointConfig};
 //!
 //! let store = RocksDbStore::open("/tmp/varpulis-state")?;
@@ -884,7 +884,7 @@ pub(crate) fn ser_to_value(sv: SerializableValue) -> varpulis_core::Value {
 ///
 /// # Usage
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use varpulis_runtime::persistence::{EncryptedStateStore, MemoryStore};
 ///
 /// let key = EncryptedStateStore::key_from_hex(

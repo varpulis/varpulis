@@ -127,17 +127,17 @@ mod watermark_tests {
 }
 
 // ===========================================================================
-// Module 2: worker_pool.rs — BackpressureError, WorkerPoolConfig
+// Module 2: worker_pool.rs — PoolBackpressureError, WorkerPoolConfig
 // ===========================================================================
 
 mod worker_pool_tests {
     use varpulis_runtime::worker_pool::{
-        BackpressureError, BackpressureStrategy, WorkerPoolConfig, WorkerState,
+        BackpressureStrategy, PoolBackpressureError, WorkerPoolConfig, WorkerState,
     };
 
     #[test]
     fn test_backpressure_error_display() {
-        let err = BackpressureError {
+        let err = PoolBackpressureError {
             pool_name: "mypool".to_string(),
             queue_depth: 42,
         };
@@ -148,7 +148,7 @@ mod worker_pool_tests {
 
     #[test]
     fn test_backpressure_error_is_std_error() {
-        let err = BackpressureError {
+        let err = PoolBackpressureError {
             pool_name: "test".to_string(),
             queue_depth: 10,
         };
@@ -202,7 +202,7 @@ mod worker_pool_tests {
 
     #[test]
     fn test_backpressure_error_clone() {
-        let err = BackpressureError {
+        let err = PoolBackpressureError {
             pool_name: "pool1".to_string(),
             queue_depth: 100,
         };

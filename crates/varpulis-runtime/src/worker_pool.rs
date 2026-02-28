@@ -4,7 +4,7 @@
 //! parallel workers with monitoring, backpressure, and dynamic resizing.
 //!
 //! # Example
-//! ```ignore
+//! ```text
 //! let config = WorkerPoolConfig {
 //!     name: "OrderProcessors".to_string(),
 //!     workers: 4,
@@ -62,14 +62,16 @@ pub enum BackpressureStrategy {
     Error,
 }
 
-/// Error returned when backpressure strategy is Error
+/// Error returned when backpressure strategy is Error and the worker pool queue is full.
+///
+/// Distinct from [`crate::sase::BackpressureError`] which covers SASE run-level backpressure.
 #[derive(Debug, Clone)]
-pub struct BackpressureError {
+pub struct PoolBackpressureError {
     pub pool_name: String,
     pub queue_depth: usize,
 }
 
-impl std::fmt::Display for BackpressureError {
+impl std::fmt::Display for PoolBackpressureError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -79,7 +81,7 @@ impl std::fmt::Display for BackpressureError {
     }
 }
 
-impl std::error::Error for BackpressureError {}
+impl std::error::Error for PoolBackpressureError {}
 
 /// Metrics for a worker pool
 #[derive(Debug, Clone, Default)]
@@ -317,7 +319,11 @@ impl WorkerPool {
     }
 
     /// Submit an event to the pool with a partition key
-    pub async fn submit(&self, event: Event, partition_key: &str) -> Result<(), BackpressureError> {
+    pub async fn submit(
+        &self,
+        event: Event,
+        partition_key: &str,
+    ) -> Result<(), PoolBackpressureError> {
         let partitioned = PartitionedEvent {
             event,
             partition_key: partition_key.to_string(),
@@ -368,7 +374,7 @@ impl WorkerPool {
                 }
                 Err(_) => {
                     self.events_dropped.fetch_add(1, Ordering::Relaxed);
-                    Err(BackpressureError {
+                    Err(PoolBackpressureError {
                         pool_name: self.config.name.clone(),
                         queue_depth: self.queue_depth(),
                     })
