@@ -4,7 +4,6 @@ import type {
   ActorHealth,
   ConnectorHealth,
   SystemHealth,
-  ActorHealthStatus,
 } from '@/types/health'
 import api from '@/api/index'
 
