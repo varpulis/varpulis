@@ -1,9 +1,54 @@
 //! AWS S3 sink connector
 
-use super::types::{ConnectorError, SinkConnector};
+use super::component::{ConnectorComponentInfo, ConnectorFactory};
+use super::types::{ConnectorConfig, ConnectorError, SinkConnector};
 use crate::event::Event;
 use async_trait::async_trait;
 use tracing::warn;
+
+// ---------------------------------------------------------------------------
+// Declarative registration
+// ---------------------------------------------------------------------------
+
+static S3_INFO: ConnectorComponentInfo = ConnectorComponentInfo {
+    connector_type: "s3",
+    display_name: "AWS S3",
+    description: "Amazon S3 object storage sink",
+    feature_flag: "s3",
+    supports_source: false,
+    supports_sink: true,
+    supports_managed: false,
+    config_params: &[],
+};
+
+struct S3Factory;
+
+impl ConnectorFactory for S3Factory {
+    fn info(&self) -> &ConnectorComponentInfo {
+        &S3_INFO
+    }
+
+    fn create_sink_connector(
+        &self,
+        config: &ConnectorConfig,
+    ) -> Result<Box<dyn SinkConnector>, ConnectorError> {
+        let prefix = config
+            .topic
+            .clone()
+            .unwrap_or_else(|| "events/".to_string());
+        let region = config
+            .properties
+            .get("region")
+            .cloned()
+            .unwrap_or_else(|| "us-east-1".to_string());
+        Ok(Box::new(S3Sink::new(
+            "s3",
+            S3Config::new(&config.url, &prefix, &region),
+        )))
+    }
+}
+
+inventory::submit! { &S3Factory as &dyn ConnectorFactory }
 
 /// S3 output format
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

@@ -111,3 +111,90 @@ interface TestConnectorResult {
   message: string
   details?: Record<string, unknown>
 }
+
+// === Topology ===
+
+export interface TopologyNode {
+  id: number
+  name: string
+  node_type: string
+  operation_count: number
+  operation_summary: string
+  metrics: {
+    events_received: number
+    events_emitted: number
+    events_filtered: number
+    processing_time_ns: number
+  }
+}
+
+export interface TopologyEdge {
+  from: number
+  to: number
+  edge_type: string
+  label: string
+}
+
+export interface PipelineTopology {
+  nodes: TopologyNode[]
+  edges: TopologyEdge[]
+  sources: number[]
+  sinks: number[]
+}
+
+/**
+ * Get pipeline topology for visualization
+ */
+export async function getPipelineTopology(
+  workerAddress: string,
+  pipelineId: string
+): Promise<PipelineTopology> {
+  const response = await api.get<PipelineTopology>(
+    `/pipelines/${pipelineId}/topology`,
+    { baseURL: `http://${workerAddress}/api/v1` }
+  )
+  return response.data
+}
+
+// === EXPLAIN ===
+
+export interface ExplainResult {
+  logical_plan: string
+  optimized_plan?: string
+}
+
+/**
+ * Get EXPLAIN plan for VPL source
+ */
+export async function explainVpl(vplSource: string): Promise<ExplainResult> {
+  const response = await api.post<ExplainResult>('/explain', { source: vplSource })
+  return response.data
+}
+
+// === Available Connectors (Component Registry) ===
+
+export interface AvailableConnector {
+  connector_type: string
+  display_name: string
+  description: string
+  feature_flag: string | null
+  supports_source: boolean
+  supports_sink: boolean
+  supports_managed: boolean
+  config_params: ConfigParam[]
+}
+
+export interface ConfigParam {
+  name: string
+  description: string
+  required: boolean
+  default_value: string | null
+}
+
+/**
+ * List available connector types from the component registry
+ */
+export async function listAvailableConnectors(): Promise<AvailableConnector[]> {
+  const response = await api.get<AvailableConnector[]>('/connectors/available')
+  return response.data
+}

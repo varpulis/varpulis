@@ -101,10 +101,21 @@ impl ManagedConnectorRegistry {
 }
 
 /// Factory: create the right `ManagedConnector` for a given config.
+///
+/// Tries the inventory-based `find_factory()` first, then falls back to the
+/// match-arm dispatch for connectors that haven't been migrated yet.
 fn create_managed(
     name: &str,
     config: &ConnectorConfig,
 ) -> Result<Box<dyn ManagedConnector>, ConnectorError> {
+    // Try inventory-based factory first
+    if let Some(factory) = super::component::find_factory(&config.connector_type) {
+        if factory.info().supports_managed {
+            return factory.create_managed(name, config);
+        }
+    }
+
+    // Fallback to match-arm dispatch
     match config.connector_type.as_str() {
         "mqtt" => {
             let mut mqtt_config =

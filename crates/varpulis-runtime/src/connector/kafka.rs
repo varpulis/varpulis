@@ -3,12 +3,109 @@
 //! Provides both stub implementations (always available) and full implementations
 //! (requires the `kafka` feature flag with rdkafka).
 
-use super::types::{ConnectorError, SinkConnector, SourceConnector};
+use super::component::{ConfigParamInfo, ConnectorComponentInfo, ConnectorFactory};
+use super::types::{ConnectorConfig, ConnectorError, SinkConnector, SourceConnector};
 use crate::event::Event;
 use async_trait::async_trait;
 use indexmap::IndexMap;
 use tokio::sync::mpsc;
 use tracing::warn;
+
+// ---------------------------------------------------------------------------
+// Declarative registration
+// ---------------------------------------------------------------------------
+
+static KAFKA_PARAMS: &[ConfigParamInfo] = &[
+    ConfigParamInfo {
+        name: "brokers",
+        description: "Kafka broker addresses",
+        required: true,
+        default_value: None,
+    },
+    ConfigParamInfo {
+        name: "topic",
+        description: "Kafka topic",
+        required: true,
+        default_value: None,
+    },
+    ConfigParamInfo {
+        name: "group_id",
+        description: "Consumer group ID",
+        required: false,
+        default_value: None,
+    },
+    ConfigParamInfo {
+        name: "exactly_once",
+        description: "Enable exactly-once semantics",
+        required: false,
+        default_value: Some("false"),
+    },
+    ConfigParamInfo {
+        name: "transactional_id",
+        description: "Transactional producer ID",
+        required: false,
+        default_value: None,
+    },
+];
+
+static KAFKA_INFO: ConnectorComponentInfo = ConnectorComponentInfo {
+    connector_type: "kafka",
+    display_name: "Apache Kafka",
+    description: "High-throughput distributed event streaming platform",
+    feature_flag: "kafka",
+    supports_source: true,
+    supports_sink: true,
+    supports_managed: true,
+    config_params: KAFKA_PARAMS,
+};
+
+struct KafkaFactory;
+
+impl ConnectorFactory for KafkaFactory {
+    fn info(&self) -> &ConnectorComponentInfo {
+        &KAFKA_INFO
+    }
+
+    fn create_sink_connector(
+        &self,
+        config: &ConnectorConfig,
+    ) -> Result<Box<dyn SinkConnector>, ConnectorError> {
+        let topic = config.topic.clone().unwrap_or_else(|| "events".to_string());
+        Ok(Box::new(KafkaSink::new(
+            "kafka",
+            KafkaConfig::new(&config.url, &topic),
+        )))
+    }
+
+    #[cfg(feature = "kafka")]
+    fn create_managed(
+        &self,
+        name: &str,
+        config: &ConnectorConfig,
+    ) -> Result<Box<dyn super::managed::ManagedConnector>, ConnectorError> {
+        let topic = config.topic.as_deref().unwrap_or("events");
+        let brokers = if config.url.is_empty() {
+            config
+                .properties
+                .get("brokers")
+                .cloned()
+                .unwrap_or_default()
+        } else {
+            config.url.clone()
+        };
+        let mut kafka_config =
+            KafkaConfig::new(&brokers, topic).with_properties(config.properties.clone());
+        if let Some(group_id) = config.properties.get("group_id") {
+            kafka_config = kafka_config.with_group_id(group_id);
+        }
+        Ok(Box::new(super::managed_kafka::ManagedKafkaConnector::new(
+            name,
+            kafka_config,
+        )))
+    }
+}
+
+inventory::submit! { &KafkaFactory as &dyn ConnectorFactory }
 
 // =============================================================================
 // Kafka Configuration

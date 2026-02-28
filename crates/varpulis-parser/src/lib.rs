@@ -80,8 +80,10 @@ pub mod helpers;
 pub mod indent;
 pub mod lexer;
 pub mod optimize;
+pub mod optimizer;
 pub mod pest_parser;
 
 pub use error::ParseError;
 pub use lexer::Token;
+pub use optimizer::optimize_plan;
 pub use pest_parser::parse;

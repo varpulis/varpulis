@@ -51,6 +51,7 @@
 //! ```
 
 // Sub-modules
+pub mod component;
 mod console;
 mod database;
 mod elasticsearch;

@@ -1,12 +1,54 @@
 //! AWS Kinesis connector
 
-use super::types::{ConnectorError, SinkConnector, SourceConnector};
+use super::component::{ConnectorComponentInfo, ConnectorFactory};
+use super::types::{ConnectorConfig, ConnectorError, SinkConnector, SourceConnector};
 use crate::event::Event;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 use tracing::warn;
 #[cfg(feature = "kinesis")]
 use tracing::{error, info};
+
+// ---------------------------------------------------------------------------
+// Declarative registration
+// ---------------------------------------------------------------------------
+
+static KINESIS_INFO: ConnectorComponentInfo = ConnectorComponentInfo {
+    connector_type: "kinesis",
+    display_name: "AWS Kinesis",
+    description: "Amazon Kinesis Data Streams connector",
+    feature_flag: "kinesis",
+    supports_source: true,
+    supports_sink: true,
+    supports_managed: false,
+    config_params: &[],
+};
+
+struct KinesisFactory;
+
+impl ConnectorFactory for KinesisFactory {
+    fn info(&self) -> &ConnectorComponentInfo {
+        &KINESIS_INFO
+    }
+
+    fn create_sink_connector(
+        &self,
+        config: &ConnectorConfig,
+    ) -> Result<Box<dyn SinkConnector>, ConnectorError> {
+        let stream = config.topic.clone().unwrap_or_else(|| "events".to_string());
+        let region = config
+            .properties
+            .get("region")
+            .cloned()
+            .unwrap_or_else(|| "us-east-1".to_string());
+        Ok(Box::new(KinesisSink::new(
+            "kinesis",
+            KinesisConfig::new(&stream, &region),
+        )))
+    }
+}
+
+inventory::submit! { &KinesisFactory as &dyn ConnectorFactory }
 
 /// AWS Kinesis configuration
 ///
