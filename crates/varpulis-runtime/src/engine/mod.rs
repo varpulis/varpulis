@@ -115,6 +115,8 @@ pub struct Engine {
     dlq_config: crate::dead_letter::DlqConfig,
     /// Shared DLQ instance (created during load())
     dlq: Option<Arc<crate::dead_letter::DeadLetterQueue>>,
+    /// Physical plan snapshot for introspection (built during load_program)
+    physical_plan: Option<physical_plan::PhysicalPlan>,
 }
 
 impl Engine {
@@ -144,6 +146,7 @@ impl Engine {
             dlq_path: None,
             dlq_config: crate::dead_letter::DlqConfig::default(),
             dlq: None,
+            physical_plan: None,
         }
     }
 
@@ -189,6 +192,7 @@ impl Engine {
             dlq_path: None,
             dlq_config: crate::dead_letter::DlqConfig::default(),
             dlq: None,
+            physical_plan: None,
         }
     }
 
@@ -613,6 +617,37 @@ impl Engine {
 
         // Phase 2: Detect multi-query Hamlet sharing opportunities
         self.setup_hamlet_sharing();
+
+        // Build physical plan snapshot for introspection
+        let mut plan = physical_plan::PhysicalPlan::new();
+        // Build reverse index: stream_name → event types that route to it
+        let mut stream_event_types: FxHashMap<String, Vec<String>> = FxHashMap::default();
+        for (event_type, targets) in self.router.all_routes() {
+            for target in targets.iter() {
+                stream_event_types
+                    .entry(target.clone())
+                    .or_default()
+                    .push(event_type.clone());
+            }
+        }
+        for (name, stream_def) in &self.streams {
+            let op_summary = stream_def
+                .operations
+                .iter()
+                .map(|op| op.summary_name())
+                .collect::<Vec<_>>()
+                .join(" → ");
+            plan.add_stream(physical_plan::PhysicalStream {
+                name: name.clone(),
+                operation_count: stream_def.operations.len(),
+                operation_summary: op_summary,
+                logical_id: plan.stream_count() as u32,
+                registered_event_types: stream_event_types
+                    .remove(name.as_str())
+                    .unwrap_or_default(),
+            });
+        }
+        self.physical_plan = Some(plan);
 
         Ok(())
     }
@@ -3323,6 +3358,11 @@ impl Engine {
     ///
     /// Returns a human-readable plan if a program has been loaded via
     /// [`load`](Self::load), or `None` if no program is loaded.
+    /// Get the physical plan summary (available after `load()`).
+    pub fn physical_plan_summary(&self) -> Option<String> {
+        self.physical_plan.as_ref().map(|p| p.summary())
+    }
+
     pub fn explain(&self, program: &Program) -> Result<String, String> {
         let logical = planner::logical_plan(program)?;
         let optimized = varpulis_parser::optimize_plan(logical);
