@@ -138,7 +138,7 @@ fn values_compare(left: &Value, right: &Value) -> Option<std::cmp::Ordering> {
 ///   `a[i].price > a[i-1].price`), which cannot be evaluated until all Kleene
 ///   events are known.  Must be postponed to the enumeration phase.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PredicateClass {
+pub enum PredicateClass {
     Consistent,
     Inconsistent,
 }
@@ -147,7 +147,7 @@ pub(crate) enum PredicateClass {
 ///
 /// A predicate is *inconsistent* if it contains `CompareRef` nodes that
 /// reference the same alias as the Kleene variable (cross-event comparison).
-pub(crate) fn classify_predicate(pred: &Predicate, alias: Option<&str>) -> PredicateClass {
+pub fn classify_predicate(pred: &Predicate, alias: Option<&str>) -> PredicateClass {
     match pred {
         Predicate::Compare { .. } => PredicateClass::Consistent,
         Predicate::CompareRef { ref_alias, .. } => {

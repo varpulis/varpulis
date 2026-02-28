@@ -11,9 +11,6 @@ mod router;
 mod sink_factory;
 mod types;
 
-#[cfg(test)]
-mod tests;
-
 // Re-export public types
 pub use sink_factory::SinkConnectorAdapter;
 pub use types::{EngineConfig, EngineMetrics, ReloadReport, SourceBinding, UserFunction};
