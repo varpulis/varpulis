@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/varpulis-actors",
     "crates/varpulis-core",
     "crates/varpulis-parser",
     "crates/varpulis-runtime",
@@ -68,9 +69,17 @@ rand = "0.8"
 # HTTP client
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 
-# Web
+# Web (warp kept only for varpulis-runtime HTTP connector; CLI + cluster use axum)
 warp = { version = "0.3", features = ["tls"] }
+axum = { version = "0.8", features = ["ws", "json", "macros"] }
+axum-extra = "0.10"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "limit", "trace"] }
+axum-server = { version = "0.7", features = ["tls-rustls"] }
 futures-util = "0.3"
+
+# Actor framework
+varpulis-actors = { version = "0.4.1", path = "crates/varpulis-actors" }
 
 # OAuth & JWT
 jsonwebtoken = "9"
@@ -91,9 +100,9 @@ pretty_assertions = "1.4"
 # ---------------------------------------------------------------------------
 # `cargo deny check bans` reports ~64 duplicate entries. Root causes:
 #
-# 1. warp 0.3.7 pins hyper 0.14 / http 0.2 / h2 0.3 / rustls 0.22 / base64 0.21
-#    (all other crates use the 1.x / 0.23+ versions). This single dependency
-#    accounts for ~15 duplicates. Migration path: warp → axum.
+# 1. warp 0.3.7 (now only in varpulis-runtime HTTP connector) pins hyper 0.14 /
+#    http 0.2 / h2 0.3 / rustls 0.22 / base64 0.21. CLI + cluster migrated to
+#    axum 0.8, reducing duplicates. Remaining: migrate runtime HTTP connector.
 #
 # 2. lsp-types 0.94 pins bitflags 1.x (everything else uses 2.x).
 #

@@ -3,15 +3,17 @@
 //! Records security-relevant events as JSON-lines to a dedicated audit log file
 //! and exposes a read-only API endpoint for Admin users.
 
+use axum::extract::{Json, Query, State};
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
+use axum::routing::get;
+use axum::Router;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::convert::Infallible;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, RwLock};
-use warp::http::StatusCode;
-use warp::{Filter, Reply};
 
 // ---------------------------------------------------------------------------
 // Audit entry
@@ -180,16 +182,17 @@ fn default_limit() -> usize {
 
 /// GET /api/v1/audit — returns recent audit entries (Admin only).
 async fn handle_audit_list(
-    query: AuditQuery,
-    logger: Option<SharedAuditLogger>,
-) -> Result<impl Reply, Infallible> {
+    Query(query): Query<AuditQuery>,
+    State(logger): State<Option<SharedAuditLogger>>,
+) -> impl IntoResponse {
     let logger = match logger {
         Some(l) => l,
         None => {
-            return Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({"error": "Audit logging not enabled"})),
+            return (
                 StatusCode::SERVICE_UNAVAILABLE,
-            ));
+                Json(serde_json::json!({"error": "Audit logging not enabled"})),
+            )
+                .into_response();
         }
     };
 
@@ -207,26 +210,21 @@ async fn handle_audit_list(
         entries.retain(|e| e.actor.contains(actor_filter.as_str()));
     }
 
-    Ok(warp::reply::with_status(
-        warp::reply::json(&serde_json::json!({
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
             "entries": entries,
             "count": entries.len(),
         })),
-        StatusCode::OK,
-    ))
+    )
+        .into_response()
 }
 
 /// Build audit log routes.
-pub fn audit_routes(
-    logger: Option<SharedAuditLogger>,
-) -> impl Filter<Extract = (impl Reply,), Error = warp::Rejection> + Clone {
-    let logger_clone = logger.clone();
-
-    warp::path!("api" / "v1" / "audit")
-        .and(warp::get())
-        .and(warp::query::<AuditQuery>())
-        .and(warp::any().map(move || logger_clone.clone()))
-        .and_then(handle_audit_list)
+pub fn audit_routes(logger: Option<SharedAuditLogger>) -> Router {
+    Router::new()
+        .route("/api/v1/audit", get(handle_audit_list))
+        .with_state(logger)
 }
 
 // ---------------------------------------------------------------------------
@@ -236,6 +234,9 @@ pub fn audit_routes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt;
 
     #[test]
     fn test_audit_entry_serialization() {
@@ -288,13 +289,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_audit_routes_not_configured() {
-        let routes = audit_routes(None);
+        let app = audit_routes(None);
 
-        let res = warp::test::request()
+        let req: Request<Body> = Request::builder()
             .method("GET")
-            .path("/api/v1/audit")
-            .reply(&routes)
-            .await;
+            .uri("/api/v1/audit")
+            .body(Body::empty())
+            .unwrap();
+        let res = app.oneshot(req).await.unwrap();
 
         assert_eq!(res.status(), 503);
     }
@@ -309,15 +311,19 @@ mod tests {
             .log(AuditEntry::new("admin", AuditAction::Login, "/auth"))
             .await;
 
-        let routes = audit_routes(Some(logger));
-        let res = warp::test::request()
+        let app = audit_routes(Some(logger));
+        let req: Request<Body> = Request::builder()
             .method("GET")
-            .path("/api/v1/audit?limit=10")
-            .reply(&routes)
-            .await;
+            .uri("/api/v1/audit?limit=10")
+            .body(Body::empty())
+            .unwrap();
+        let res = app.oneshot(req).await.unwrap();
 
         assert_eq!(res.status(), 200);
-        let body: serde_json::Value = serde_json::from_slice(res.body()).unwrap();
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(body["count"], 1);
     }
 }

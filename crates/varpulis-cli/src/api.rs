@@ -4,18 +4,21 @@
 //! in a multi-tenant environment.
 
 use crate::auth::constant_time_compare;
+use axum::extract::{Json, Path, Query, State};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use axum::routing::{get, post};
+use axum::Router;
 use futures_util::stream;
 use indexmap::IndexMap;
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
+use tower_http::cors::{Any, CorsLayer};
 use varpulis_runtime::tenant::{SharedTenantManager, TenantError, TenantQuota};
 use varpulis_runtime::Event;
-use warp::http::StatusCode;
-use warp::{Filter, Rejection, Reply};
 
 use varpulis_core::pagination::{PaginationMeta, PaginationParams, MAX_LIMIT};
-use varpulis_core::security::{JSON_BODY_LIMIT, LARGE_BODY_LIMIT};
 
 use crate::billing::SharedBillingState;
 
@@ -196,21 +199,91 @@ pub struct TenantUsageInfo {
 // API Routes
 // =============================================================================
 
-/// Build a warp CORS filter from an optional list of allowed origins.
+/// Build a tower-http CORS layer from an optional list of allowed origins.
 ///
 /// - `None` or a list containing `"*"`: allow any origin (backward-compatible default).
 /// - Otherwise: restrict to the given origins.
-fn build_cors(origins: Option<Vec<String>>) -> warp::cors::Builder {
-    let base = warp::cors()
-        .allow_methods(vec!["GET", "POST", "DELETE", "OPTIONS"])
-        .allow_headers(vec!["content-type", "x-api-key", "authorization"]);
+fn build_cors(origins: Option<Vec<String>>) -> CorsLayer {
+    use axum::http::{HeaderValue, Method};
+
+    let base = CorsLayer::new()
+        .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
+        .allow_headers([
+            "content-type".parse().unwrap(),
+            "x-api-key".parse().unwrap(),
+            "authorization".parse().unwrap(),
+        ]);
 
     match origins {
         Some(ref list) if !list.is_empty() && !list.iter().any(|o| o == "*") => {
-            let origins: Vec<&str> = list.iter().map(|s| s.as_str()).collect();
-            base.allow_origins(origins)
+            let origins: Vec<HeaderValue> = list.iter().filter_map(|s| s.parse().ok()).collect();
+            base.allow_origin(origins)
         }
-        _ => base.allow_any_origin(),
+        _ => base.allow_origin(Any),
+    }
+}
+
+/// Shared state for the API router.
+#[derive(Clone)]
+pub struct ApiState {
+    pub manager: SharedTenantManager,
+    pub admin_key: Option<String>,
+    pub billing_state: Option<SharedBillingState>,
+}
+
+/// Axum extractor for X-API-Key header.
+pub struct ApiKey(pub String);
+
+impl<S> axum::extract::FromRequestParts<S> for ApiKey
+where
+    S: Send + Sync,
+{
+    type Rejection = Response;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        parts
+            .headers
+            .get("x-api-key")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| ApiKey(s.to_string()))
+            .ok_or_else(|| {
+                (
+                    StatusCode::UNAUTHORIZED,
+                    axum::Json(serde_json::json!({"error": "Missing X-API-Key header"})),
+                )
+                    .into_response()
+            })
+    }
+}
+
+/// Axum extractor for X-Admin-Key header.
+pub struct AdminKey(pub String);
+
+impl<S> axum::extract::FromRequestParts<S> for AdminKey
+where
+    S: Send + Sync,
+{
+    type Rejection = Response;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        parts
+            .headers
+            .get("x-admin-key")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| AdminKey(s.to_string()))
+            .ok_or_else(|| {
+                (
+                    StatusCode::UNAUTHORIZED,
+                    axum::Json(serde_json::json!({"error": "Missing X-Admin-Key header"})),
+                )
+                    .into_response()
+            })
     }
 }
 
@@ -220,204 +293,69 @@ pub fn api_routes(
     admin_key: Option<String>,
     cors_origins: Option<Vec<String>>,
     billing_state: Option<SharedBillingState>,
-) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
-    let api = warp::path("api").and(warp::path("v1"));
-
-    let admin_routes = tenant_admin_routes(manager.clone(), admin_key);
-
-    let deploy = api
-        .and(warp::path("pipelines"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(with_api_key())
-        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
-        .and(warp::body::json())
-        .and(with_manager(manager.clone()))
-        .and_then(handle_deploy);
-
-    let list = api
-        .and(warp::path("pipelines"))
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(with_api_key())
-        .and(warp::query::<PaginationParams>())
-        .and(with_manager(manager.clone()))
-        .and_then(handle_list);
-
-    let get_pipeline = api
-        .and(warp::path("pipelines"))
-        .and(warp::path::param::<String>())
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(with_api_key())
-        .and(with_manager(manager.clone()))
-        .and_then(handle_get);
-
-    let delete = api
-        .and(warp::path("pipelines"))
-        .and(warp::path::param::<String>())
-        .and(warp::path::end())
-        .and(warp::delete())
-        .and(with_api_key())
-        .and(with_manager(manager.clone()))
-        .and_then(handle_delete);
-
-    let bs1 = billing_state.clone();
-    let bs2 = billing_state;
-
-    let inject = api
-        .and(warp::path("pipelines"))
-        .and(warp::path::param::<String>())
-        .and(warp::path("events"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(with_api_key())
-        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
-        .and(warp::body::json())
-        .and(with_manager(manager.clone()))
-        .and(warp::any().map(move || bs1.clone()))
-        .and_then(handle_inject);
-
-    let inject_batch = api
-        .and(warp::path("pipelines"))
-        .and(warp::path::param::<String>())
-        .and(warp::path("events-batch"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(with_api_key())
-        .and(warp::body::content_length_limit(LARGE_BODY_LIMIT))
-        .and(warp::body::json())
-        .and(with_manager(manager.clone()))
-        .and(warp::any().map(move || bs2.clone()))
-        .and_then(handle_inject_batch);
-
-    let checkpoint = api
-        .and(warp::path("pipelines"))
-        .and(warp::path::param::<String>())
-        .and(warp::path("checkpoint"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(with_api_key())
-        .and(with_manager(manager.clone()))
-        .and_then(handle_checkpoint);
-
-    let restore = api
-        .and(warp::path("pipelines"))
-        .and(warp::path::param::<String>())
-        .and(warp::path("restore"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(with_api_key())
-        .and(warp::body::content_length_limit(LARGE_BODY_LIMIT))
-        .and(warp::body::json())
-        .and(with_manager(manager.clone()))
-        .and_then(handle_restore);
-
-    let metrics = api
-        .and(warp::path("pipelines"))
-        .and(warp::path::param::<String>())
-        .and(warp::path("metrics"))
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(with_api_key())
-        .and(with_manager(manager.clone()))
-        .and_then(handle_metrics);
-
-    let reload = api
-        .and(warp::path("pipelines"))
-        .and(warp::path::param::<String>())
-        .and(warp::path("reload"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(with_api_key())
-        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
-        .and(warp::body::json())
-        .and(with_manager(manager.clone()))
-        .and_then(handle_reload);
-
-    let usage = api
-        .and(warp::path("usage"))
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(with_api_key())
-        .and(with_manager(manager.clone()))
-        .and_then(handle_usage);
-
-    let logs = api
-        .and(warp::path("pipelines"))
-        .and(warp::path::param::<String>())
-        .and(warp::path("logs"))
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(with_api_key())
-        .and(with_manager(manager.clone()))
-        .and_then(handle_logs);
-
-    let dlq_get = api
-        .and(warp::path("pipelines"))
-        .and(warp::path::param::<String>())
-        .and(warp::path("dlq"))
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(with_api_key())
-        .and(warp::query::<DlqQueryParams>())
-        .and(with_manager(manager.clone()))
-        .and_then(handle_dlq_get);
-
-    let dlq_replay = api
-        .and(warp::path("pipelines"))
-        .and(warp::path::param::<String>())
-        .and(warp::path("dlq"))
-        .and(warp::path("replay"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(with_api_key())
-        .and(with_manager(manager.clone()))
-        .and_then(handle_dlq_replay);
-
-    let dlq_clear = api
-        .and(warp::path("pipelines"))
-        .and(warp::path::param::<String>())
-        .and(warp::path("dlq"))
-        .and(warp::path::end())
-        .and(warp::delete())
-        .and(with_api_key())
-        .and(with_manager(manager.clone()))
-        .and_then(handle_dlq_clear);
+) -> Router {
+    let state = ApiState {
+        manager,
+        admin_key,
+        billing_state,
+    };
 
     let cors = build_cors(cors_origins);
 
-    deploy
-        .or(list)
-        .or(get_pipeline)
-        .or(delete)
-        .or(inject)
-        .or(inject_batch)
-        .or(checkpoint)
-        .or(restore)
-        .or(metrics)
-        .or(reload)
-        .or(usage)
-        .or(logs)
-        .or(dlq_get)
-        .or(dlq_replay)
-        .or(dlq_clear)
-        .or(admin_routes)
-        .with(cors)
-}
-
-// =============================================================================
-// Filters
-// =============================================================================
-
-fn with_manager(
-    manager: SharedTenantManager,
-) -> impl Filter<Extract = (SharedTenantManager,), Error = Infallible> + Clone {
-    warp::any().map(move || manager.clone())
-}
-
-fn with_api_key() -> impl Filter<Extract = (String,), Error = Rejection> + Clone {
-    warp::header::<String>("x-api-key")
+    Router::new()
+        // Pipeline CRUD
+        .route("/api/v1/pipelines", post(handle_deploy).get(handle_list))
+        .route(
+            "/api/v1/pipelines/{pipeline_id}",
+            get(handle_get).delete(handle_delete),
+        )
+        // Pipeline actions
+        .route(
+            "/api/v1/pipelines/{pipeline_id}/events",
+            post(handle_inject),
+        )
+        .route(
+            "/api/v1/pipelines/{pipeline_id}/events-batch",
+            post(handle_inject_batch),
+        )
+        .route(
+            "/api/v1/pipelines/{pipeline_id}/checkpoint",
+            post(handle_checkpoint),
+        )
+        .route(
+            "/api/v1/pipelines/{pipeline_id}/restore",
+            post(handle_restore),
+        )
+        .route(
+            "/api/v1/pipelines/{pipeline_id}/metrics",
+            get(handle_metrics),
+        )
+        .route(
+            "/api/v1/pipelines/{pipeline_id}/reload",
+            post(handle_reload),
+        )
+        .route("/api/v1/usage", get(handle_usage))
+        .route("/api/v1/pipelines/{pipeline_id}/logs", get(handle_logs))
+        // DLQ routes
+        .route(
+            "/api/v1/pipelines/{pipeline_id}/dlq",
+            get(handle_dlq_get).delete(handle_dlq_clear),
+        )
+        .route(
+            "/api/v1/pipelines/{pipeline_id}/dlq/replay",
+            post(handle_dlq_replay),
+        )
+        // Tenant admin routes
+        .route(
+            "/api/v1/tenants",
+            post(handle_create_tenant).get(handle_list_tenants),
+        )
+        .route(
+            "/api/v1/tenants/{tenant_id}",
+            get(handle_get_tenant).delete(handle_delete_tenant),
+        )
+        .layer(cors)
+        .with_state(state)
 }
 
 // =============================================================================
@@ -425,20 +363,21 @@ fn with_api_key() -> impl Filter<Extract = (String,), Error = Rejection> + Clone
 // =============================================================================
 
 async fn handle_deploy(
-    api_key: String,
-    body: DeployPipelineRequest,
-    manager: SharedTenantManager,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<ApiState>,
+    ApiKey(api_key): ApiKey,
+    Json(body): Json<DeployPipelineRequest>,
+) -> Response {
+    let manager = &state.manager;
     let mut mgr = manager.write().await;
 
     let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
         Some(id) => id.clone(),
         None => {
-            return Ok(error_response(
+            return error_response(
                 StatusCode::UNAUTHORIZED,
                 "invalid_api_key",
                 "Invalid API key",
-            ))
+            )
         }
     };
 
@@ -454,26 +393,24 @@ async fn handle_deploy(
                 name: body.name,
                 status: "running".to_string(),
             };
-            Ok(
-                warp::reply::with_status(warp::reply::json(&resp), StatusCode::CREATED)
-                    .into_response(),
-            )
+            (StatusCode::CREATED, axum::Json(&resp)).into_response()
         }
-        Err(e) => Ok(tenant_error_response(e)),
+        Err(e) => tenant_error_response(e),
     }
 }
 
 async fn handle_list(
-    api_key: String,
-    pagination: PaginationParams,
-    manager: SharedTenantManager,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<ApiState>,
+    ApiKey(api_key): ApiKey,
+    Query(pagination): Query<PaginationParams>,
+) -> Response {
+    let manager = &state.manager;
     if pagination.exceeds_max() {
-        return Ok(error_response(
+        return error_response(
             StatusCode::BAD_REQUEST,
             "invalid_limit",
             &format!("limit must not exceed {MAX_LIMIT}"),
-        ));
+        );
     }
 
     let mgr = manager.read().await;
@@ -481,22 +418,22 @@ async fn handle_list(
     let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
         Some(id) => id.clone(),
         None => {
-            return Ok(error_response(
+            return error_response(
                 StatusCode::UNAUTHORIZED,
                 "invalid_api_key",
                 "Invalid API key",
-            ))
+            )
         }
     };
 
     let tenant = match mgr.get_tenant(&tenant_id) {
         Some(t) => t,
         None => {
-            return Ok(error_response(
+            return error_response(
                 StatusCode::NOT_FOUND,
                 "tenant_not_found",
                 "Tenant not found",
-            ))
+            )
         }
     };
 
@@ -519,35 +456,36 @@ async fn handle_list(
         total,
         pagination: Some(meta),
     };
-    Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+    axum::Json(&resp).into_response()
 }
 
 async fn handle_get(
-    pipeline_id: String,
-    api_key: String,
-    manager: SharedTenantManager,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<ApiState>,
+    Path(pipeline_id): Path<String>,
+    ApiKey(api_key): ApiKey,
+) -> Response {
+    let manager = &state.manager;
     let mgr = manager.read().await;
 
     let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
         Some(id) => id.clone(),
         None => {
-            return Ok(error_response(
+            return error_response(
                 StatusCode::UNAUTHORIZED,
                 "invalid_api_key",
                 "Invalid API key",
-            ))
+            )
         }
     };
 
     let tenant = match mgr.get_tenant(&tenant_id) {
         Some(t) => t,
         None => {
-            return Ok(error_response(
+            return error_response(
                 StatusCode::NOT_FOUND,
                 "tenant_not_found",
                 "Tenant not found",
-            ))
+            )
         }
     };
 
@@ -560,31 +498,32 @@ async fn handle_get(
                 source: p.source.clone(),
                 uptime_secs: p.created_at.elapsed().as_secs(),
             };
-            Ok(warp::reply::with_status(warp::reply::json(&info), StatusCode::OK).into_response())
+            axum::Json(&info).into_response()
         }
-        None => Ok(error_response(
+        None => error_response(
             StatusCode::NOT_FOUND,
             "pipeline_not_found",
             "Pipeline not found",
-        )),
+        ),
     }
 }
 
 async fn handle_delete(
-    pipeline_id: String,
-    api_key: String,
-    manager: SharedTenantManager,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<ApiState>,
+    Path(pipeline_id): Path<String>,
+    ApiKey(api_key): ApiKey,
+) -> Response {
+    let manager = &state.manager;
     let mut mgr = manager.write().await;
 
     let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
         Some(id) => id.clone(),
         None => {
-            return Ok(error_response(
+            return error_response(
                 StatusCode::UNAUTHORIZED,
                 "invalid_api_key",
                 "Invalid API key",
-            ))
+            )
         }
     };
 
@@ -592,11 +531,11 @@ async fn handle_delete(
         let tenant = match mgr.get_tenant_mut(&tenant_id) {
             Some(t) => t,
             None => {
-                return Ok(error_response(
+                return error_response(
                     StatusCode::NOT_FOUND,
                     "tenant_not_found",
                     "Tenant not found",
-                ))
+                )
             }
         };
         tenant.remove_pipeline(&pipeline_id)
@@ -605,29 +544,26 @@ async fn handle_delete(
     match result {
         Ok(()) => {
             mgr.persist_if_needed(&tenant_id);
-            Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({"deleted": true})),
-                StatusCode::OK,
-            )
-            .into_response())
+            axum::Json(serde_json::json!({"deleted": true})).into_response()
         }
-        Err(e) => Ok(tenant_error_response(e)),
+        Err(e) => tenant_error_response(e),
     }
 }
 
 async fn handle_inject(
-    pipeline_id: String,
-    api_key: String,
-    body: InjectEventRequest,
-    manager: SharedTenantManager,
-    billing_state: Option<SharedBillingState>,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<ApiState>,
+    Path(pipeline_id): Path<String>,
+    ApiKey(api_key): ApiKey,
+    Json(body): Json<InjectEventRequest>,
+) -> Response {
+    let manager = &state.manager;
+    let billing_state = &state.billing_state;
     // Check usage limit (SaaS mode only)
     #[cfg(feature = "saas")]
     if let Some(ref bs) = billing_state {
         if let Some(org_id) = bs.org_id_for_api_key(&api_key).await {
             if let Err(err) = bs.check_usage_limit(org_id, 1).await {
-                return Ok(crate::billing::usage_limit_response(&err));
+                return crate::billing::usage_limit_response(&err);
             }
             // Record the event for usage tracking
             bs.usage.write().await.record_events(org_id, 1);
@@ -641,17 +577,17 @@ async fn handle_inject(
     let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
         Some(id) => id.clone(),
         None => {
-            return Ok(error_response(
+            return error_response(
                 StatusCode::UNAUTHORIZED,
                 "invalid_api_key",
                 "Invalid API key",
-            ))
+            )
         }
     };
 
     // Check backpressure before processing
     if let Err(e) = mgr.check_backpressure() {
-        return Ok(tenant_error_response(e));
+        return tenant_error_response(e);
     }
 
     let mut event = Event::new(body.event_type.clone());
@@ -682,22 +618,20 @@ async fn handle_inject(
                 "accepted": true,
                 "output_events": events_json,
             });
-            Ok(
-                warp::reply::with_status(warp::reply::json(&response), StatusCode::OK)
-                    .into_response(),
-            )
+            axum::Json(response).into_response()
         }
-        Err(e) => Ok(tenant_error_response(e)),
+        Err(e) => tenant_error_response(e),
     }
 }
 
 async fn handle_inject_batch(
-    pipeline_id: String,
-    api_key: String,
-    body: InjectBatchRequest,
-    manager: SharedTenantManager,
-    billing_state: Option<SharedBillingState>,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<ApiState>,
+    Path(pipeline_id): Path<String>,
+    ApiKey(api_key): ApiKey,
+    Json(body): Json<InjectBatchRequest>,
+) -> Response {
+    let manager = &state.manager;
+    let billing_state = &state.billing_state;
     let event_count = body.events.len() as i64;
 
     // Check usage limit for the entire batch (SaaS mode only)
@@ -705,7 +639,7 @@ async fn handle_inject_batch(
     if let Some(ref bs) = billing_state {
         if let Some(org_id) = bs.org_id_for_api_key(&api_key).await {
             if let Err(err) = bs.check_usage_limit(org_id, event_count).await {
-                return Ok(crate::billing::usage_limit_response(&err));
+                return crate::billing::usage_limit_response(&err);
             }
             // Record the batch for usage tracking
             bs.usage.write().await.record_events(org_id, event_count);
@@ -719,17 +653,17 @@ async fn handle_inject_batch(
     let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
         Some(id) => id.clone(),
         None => {
-            return Ok(error_response(
+            return error_response(
                 StatusCode::UNAUTHORIZED,
                 "invalid_api_key",
                 "Invalid API key",
-            ))
+            )
         }
     };
 
     // Check backpressure before processing the batch
     if let Err(e) = mgr.check_backpressure() {
-        return Ok(tenant_error_response(e));
+        return tenant_error_response(e);
     }
 
     let start = std::time::Instant::now();
@@ -778,35 +712,36 @@ async fn handle_inject_batch(
         output_events,
         processing_time_us,
     };
-    Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+    axum::Json(&resp).into_response()
 }
 
 async fn handle_checkpoint(
-    pipeline_id: String,
-    api_key: String,
-    manager: SharedTenantManager,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<ApiState>,
+    Path(pipeline_id): Path<String>,
+    ApiKey(api_key): ApiKey,
+) -> Response {
+    let manager = &state.manager;
     let mgr = manager.read().await;
 
     let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
         Some(id) => id.clone(),
         None => {
-            return Ok(error_response(
+            return error_response(
                 StatusCode::UNAUTHORIZED,
                 "invalid_api_key",
                 "Invalid API key",
-            ))
+            )
         }
     };
 
     let tenant = match mgr.get_tenant(&tenant_id) {
         Some(t) => t,
         None => {
-            return Ok(error_response(
+            return error_response(
                 StatusCode::NOT_FOUND,
                 "tenant_not_found",
                 "Tenant not found",
-            ))
+            )
         }
     };
 
@@ -817,39 +752,40 @@ async fn handle_checkpoint(
                 events_processed: checkpoint.events_processed,
                 checkpoint,
             };
-            Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+            axum::Json(&resp).into_response()
         }
-        Err(e) => Ok(tenant_error_response(e)),
+        Err(e) => tenant_error_response(e),
     }
 }
 
 async fn handle_restore(
-    pipeline_id: String,
-    api_key: String,
-    body: RestoreRequest,
-    manager: SharedTenantManager,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<ApiState>,
+    Path(pipeline_id): Path<String>,
+    ApiKey(api_key): ApiKey,
+    Json(body): Json<RestoreRequest>,
+) -> Response {
+    let manager = &state.manager;
     let mut mgr = manager.write().await;
 
     let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
         Some(id) => id.clone(),
         None => {
-            return Ok(error_response(
+            return error_response(
                 StatusCode::UNAUTHORIZED,
                 "invalid_api_key",
                 "Invalid API key",
-            ))
+            )
         }
     };
 
     let tenant = match mgr.get_tenant_mut(&tenant_id) {
         Some(t) => t,
         None => {
-            return Ok(error_response(
+            return error_response(
                 StatusCode::NOT_FOUND,
                 "tenant_not_found",
                 "Tenant not found",
-            ))
+            )
         }
     };
 
@@ -863,47 +799,48 @@ async fn handle_restore(
                 restored: true,
                 events_restored: body.checkpoint.events_processed,
             };
-            Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+            axum::Json(&resp).into_response()
         }
-        Err(e) => Ok(tenant_error_response(e)),
+        Err(e) => tenant_error_response(e),
     }
 }
 
 async fn handle_metrics(
-    pipeline_id: String,
-    api_key: String,
-    manager: SharedTenantManager,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<ApiState>,
+    Path(pipeline_id): Path<String>,
+    ApiKey(api_key): ApiKey,
+) -> Response {
+    let manager = &state.manager;
     let mgr = manager.read().await;
 
     let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
         Some(id) => id.clone(),
         None => {
-            return Ok(error_response(
+            return error_response(
                 StatusCode::UNAUTHORIZED,
                 "invalid_api_key",
                 "Invalid API key",
-            ))
+            )
         }
     };
 
     let tenant = match mgr.get_tenant(&tenant_id) {
         Some(t) => t,
         None => {
-            return Ok(error_response(
+            return error_response(
                 StatusCode::NOT_FOUND,
                 "tenant_not_found",
                 "Tenant not found",
-            ))
+            )
         }
     };
 
     if !tenant.pipelines.contains_key(&pipeline_id) {
-        return Ok(error_response(
+        return error_response(
             StatusCode::NOT_FOUND,
             "pipeline_not_found",
             "Pipeline not found",
-        ));
+        );
     }
 
     let resp = PipelineMetricsResponse {
@@ -911,25 +848,26 @@ async fn handle_metrics(
         events_processed: tenant.usage.events_processed,
         output_events_emitted: tenant.usage.output_events_emitted,
     };
-    Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+    axum::Json(&resp).into_response()
 }
 
 async fn handle_reload(
-    pipeline_id: String,
-    api_key: String,
-    body: ReloadPipelineRequest,
-    manager: SharedTenantManager,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<ApiState>,
+    Path(pipeline_id): Path<String>,
+    ApiKey(api_key): ApiKey,
+    Json(body): Json<ReloadPipelineRequest>,
+) -> Response {
+    let manager = &state.manager;
     let mut mgr = manager.write().await;
 
     let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
         Some(id) => id.clone(),
         None => {
-            return Ok(error_response(
+            return error_response(
                 StatusCode::UNAUTHORIZED,
                 "invalid_api_key",
                 "Invalid API key",
-            ))
+            )
         }
     };
 
@@ -937,11 +875,11 @@ async fn handle_reload(
         let tenant = match mgr.get_tenant_mut(&tenant_id) {
             Some(t) => t,
             None => {
-                return Ok(error_response(
+                return error_response(
                     StatusCode::NOT_FOUND,
                     "tenant_not_found",
                     "Tenant not found",
-                ))
+                )
             }
         };
         tenant.reload_pipeline(&pipeline_id, body.source).await
@@ -950,41 +888,35 @@ async fn handle_reload(
     match result {
         Ok(()) => {
             mgr.persist_if_needed(&tenant_id);
-            Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({"reloaded": true})),
-                StatusCode::OK,
-            )
-            .into_response())
+            axum::Json(serde_json::json!({"reloaded": true})).into_response()
         }
-        Err(e) => Ok(tenant_error_response(e)),
+        Err(e) => tenant_error_response(e),
     }
 }
 
-async fn handle_usage(
-    api_key: String,
-    manager: SharedTenantManager,
-) -> Result<impl Reply, Infallible> {
+async fn handle_usage(State(state): State<ApiState>, ApiKey(api_key): ApiKey) -> Response {
+    let manager = &state.manager;
     let mgr = manager.read().await;
 
     let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
         Some(id) => id.clone(),
         None => {
-            return Ok(error_response(
+            return error_response(
                 StatusCode::UNAUTHORIZED,
                 "invalid_api_key",
                 "Invalid API key",
-            ))
+            )
         }
     };
 
     let tenant = match mgr.get_tenant(&tenant_id) {
         Some(t) => t,
         None => {
-            return Ok(error_response(
+            return error_response(
                 StatusCode::NOT_FOUND,
                 "tenant_not_found",
                 "Tenant not found",
-            ))
+            )
         }
     };
 
@@ -999,37 +931,32 @@ async fn handle_usage(
             max_streams_per_pipeline: tenant.quota.max_streams_per_pipeline,
         },
     };
-    Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+    axum::Json(&resp).into_response()
 }
 
 /// Handle SSE log streaming for a pipeline
 async fn handle_logs(
-    pipeline_id: String,
-    api_key: String,
-    manager: SharedTenantManager,
-) -> Result<warp::reply::Response, Rejection> {
+    State(state): State<ApiState>,
+    Path(pipeline_id): Path<String>,
+    ApiKey(api_key): ApiKey,
+) -> Response {
+    let manager = &state.manager;
     let mgr = manager.read().await;
 
     let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
         Some(id) => id.clone(),
-        None => {
-            return Ok(error_response(
-                StatusCode::UNAUTHORIZED,
-                "invalid_key",
-                "Invalid API key",
-            ))
-        }
+        None => return error_response(StatusCode::UNAUTHORIZED, "invalid_key", "Invalid API key"),
     };
 
     // Verify tenant owns this pipeline
     let tenant = match mgr.get_tenant(&tenant_id) {
         Some(t) => t,
         None => {
-            return Ok(error_response(
+            return error_response(
                 StatusCode::NOT_FOUND,
                 "tenant_not_found",
                 "Tenant not found",
-            ))
+            )
         }
     };
 
@@ -1037,11 +964,11 @@ async fn handle_logs(
         match tenant.subscribe_pipeline_logs(&pipeline_id) {
             Ok(rx) => rx,
             Err(_) => {
-                return Ok(error_response(
+                return error_response(
                     StatusCode::NOT_FOUND,
                     "pipeline_not_found",
                     &format!("Pipeline {} not found", pipeline_id),
-                ))
+                )
             }
         };
 
@@ -1064,19 +991,23 @@ async fn handle_logs(
                     data,
                 })
                 .unwrap_or_default();
-                let sse = warp::sse::Event::default().data(json);
+                let sse = axum::response::sse::Event::default().data(json);
                 Some((Ok::<_, Infallible>(sse), rx))
             }
             Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                 let msg = format!("{{\"warning\":\"skipped {} events\"}}", n);
-                let sse = warp::sse::Event::default().event("warning").data(msg);
+                let sse = axum::response::sse::Event::default()
+                    .event("warning")
+                    .data(msg);
                 Some((Ok(sse), rx))
             }
             Err(tokio::sync::broadcast::error::RecvError::Closed) => None,
         }
     });
 
-    Ok(warp::sse::reply(warp::sse::keep_alive().stream(stream)).into_response())
+    axum::response::sse::Sse::new(stream)
+        .keep_alive(axum::response::sse::KeepAlive::default())
+        .into_response()
 }
 
 #[derive(Serialize)]
@@ -1113,43 +1044,44 @@ fn json_from_value(v: &varpulis_core::Value) -> serde_json::Value {
 // =============================================================================
 
 async fn handle_dlq_get(
-    pipeline_id: String,
-    api_key: String,
-    params: DlqQueryParams,
-    manager: SharedTenantManager,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<ApiState>,
+    Path(pipeline_id): Path<String>,
+    ApiKey(api_key): ApiKey,
+    Query(params): Query<DlqQueryParams>,
+) -> Response {
+    let manager = &state.manager;
     let mgr = manager.read().await;
 
     let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
         Some(id) => id.clone(),
         None => {
-            return Ok(error_response(
+            return error_response(
                 StatusCode::UNAUTHORIZED,
                 "invalid_api_key",
                 "Invalid API key",
-            ))
+            )
         }
     };
 
     let tenant = match mgr.get_tenant(&tenant_id) {
         Some(t) => t,
         None => {
-            return Ok(error_response(
+            return error_response(
                 StatusCode::NOT_FOUND,
                 "tenant_not_found",
                 "Tenant not found",
-            ))
+            )
         }
     };
 
     let pipeline = match tenant.pipelines.get(&pipeline_id) {
         Some(p) => p,
         None => {
-            return Ok(error_response(
+            return error_response(
                 StatusCode::NOT_FOUND,
                 "pipeline_not_found",
                 "Pipeline not found",
-            ))
+            )
         }
     };
 
@@ -1161,9 +1093,7 @@ async fn handle_dlq_get(
                 entries: Vec::new(),
                 total: 0,
             };
-            return Ok(
-                warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response(),
-            );
+            return axum::Json(&resp).into_response();
         }
     };
 
@@ -1176,53 +1106,54 @@ async fn handle_dlq_get(
                 total: dlq.line_count(),
                 entries,
             };
-            Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+            axum::Json(&resp).into_response()
         }
-        Err(e) => Ok(error_response(
+        Err(e) => error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "dlq_read_error",
             &format!("Failed to read DLQ: {}", e),
-        )),
+        ),
     }
 }
 
 async fn handle_dlq_replay(
-    pipeline_id: String,
-    api_key: String,
-    manager: SharedTenantManager,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<ApiState>,
+    Path(pipeline_id): Path<String>,
+    ApiKey(api_key): ApiKey,
+) -> Response {
+    let manager = &state.manager;
     let mgr = manager.read().await;
 
     let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
         Some(id) => id.clone(),
         None => {
-            return Ok(error_response(
+            return error_response(
                 StatusCode::UNAUTHORIZED,
                 "invalid_api_key",
                 "Invalid API key",
-            ))
+            )
         }
     };
 
     let tenant = match mgr.get_tenant(&tenant_id) {
         Some(t) => t,
         None => {
-            return Ok(error_response(
+            return error_response(
                 StatusCode::NOT_FOUND,
                 "tenant_not_found",
                 "Tenant not found",
-            ))
+            )
         }
     };
 
     let pipeline = match tenant.pipelines.get(&pipeline_id) {
         Some(p) => p,
         None => {
-            return Ok(error_response(
+            return error_response(
                 StatusCode::NOT_FOUND,
                 "pipeline_not_found",
                 "Pipeline not found",
-            ))
+            )
         }
     };
 
@@ -1233,21 +1164,18 @@ async fn handle_dlq_replay(
             Some(d) => d,
             None => {
                 let resp = DlqReplayResponse { replayed: 0 };
-                return Ok(
-                    warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK)
-                        .into_response(),
-                );
+                return axum::Json(&resp).into_response();
             }
         };
         // Read all entries (up to a reasonable limit)
         match dlq.read_entries(0, 100_000) {
             Ok(entries) => entries,
             Err(e) => {
-                return Ok(error_response(
+                return error_response(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "dlq_read_error",
                     &format!("Failed to read DLQ: {}", e),
-                ))
+                )
             }
         }
     };
@@ -1277,46 +1205,47 @@ async fn handle_dlq_replay(
     }
 
     let resp = DlqReplayResponse { replayed };
-    Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+    axum::Json(&resp).into_response()
 }
 
 async fn handle_dlq_clear(
-    pipeline_id: String,
-    api_key: String,
-    manager: SharedTenantManager,
-) -> Result<impl Reply, Infallible> {
+    State(state): State<ApiState>,
+    Path(pipeline_id): Path<String>,
+    ApiKey(api_key): ApiKey,
+) -> Response {
+    let manager = &state.manager;
     let mgr = manager.read().await;
 
     let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
         Some(id) => id.clone(),
         None => {
-            return Ok(error_response(
+            return error_response(
                 StatusCode::UNAUTHORIZED,
                 "invalid_api_key",
                 "Invalid API key",
-            ))
+            )
         }
     };
 
     let tenant = match mgr.get_tenant(&tenant_id) {
         Some(t) => t,
         None => {
-            return Ok(error_response(
+            return error_response(
                 StatusCode::NOT_FOUND,
                 "tenant_not_found",
                 "Tenant not found",
-            ))
+            )
         }
     };
 
     let pipeline = match tenant.pipelines.get(&pipeline_id) {
         Some(p) => p,
         None => {
-            return Ok(error_response(
+            return error_response(
                 StatusCode::NOT_FOUND,
                 "pipeline_not_found",
                 "Pipeline not found",
-            ))
+            )
         }
     };
 
@@ -1325,20 +1254,17 @@ async fn handle_dlq_clear(
         Some(dlq) => match dlq.clear() {
             Ok(()) => {
                 let resp = DlqClearResponse { cleared: true };
-                Ok(
-                    warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK)
-                        .into_response(),
-                )
+                axum::Json(&resp).into_response()
             }
-            Err(e) => Ok(error_response(
+            Err(e) => error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "dlq_clear_error",
                 &format!("Failed to clear DLQ: {}", e),
-            )),
+            ),
         },
         None => {
             let resp = DlqClearResponse { cleared: true };
-            Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+            axum::Json(&resp).into_response()
         }
     }
 }
@@ -1347,70 +1273,10 @@ async fn handle_dlq_clear(
 // Tenant Admin Routes
 // =============================================================================
 
-fn with_admin_key() -> impl Filter<Extract = (String,), Error = Rejection> + Clone {
-    warp::header::<String>("x-admin-key")
-}
-
-fn with_admin_key_config(
-    admin_key: Option<String>,
-) -> impl Filter<Extract = (Option<String>,), Error = Infallible> + Clone {
-    warp::any().map(move || admin_key.clone())
-}
-
-/// Build tenant admin route tree (CRUD for tenants)
-pub fn tenant_admin_routes(
-    manager: SharedTenantManager,
-    admin_key: Option<String>,
-) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
-    let api = warp::path("api")
-        .and(warp::path("v1"))
-        .and(warp::path("tenants"));
-
-    let create = api
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(with_admin_key())
-        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
-        .and(warp::body::json())
-        .and(with_manager(manager.clone()))
-        .and(with_admin_key_config(admin_key.clone()))
-        .and_then(handle_create_tenant);
-
-    let list_tenants = api
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(with_admin_key())
-        .and(warp::query::<PaginationParams>())
-        .and(with_manager(manager.clone()))
-        .and(with_admin_key_config(admin_key.clone()))
-        .and_then(handle_list_tenants);
-
-    let get_tenant = api
-        .and(warp::path::param::<String>())
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(with_admin_key())
-        .and(with_manager(manager.clone()))
-        .and(with_admin_key_config(admin_key.clone()))
-        .and_then(handle_get_tenant);
-
-    let delete_tenant = api
-        .and(warp::path::param::<String>())
-        .and(warp::path::end())
-        .and(warp::delete())
-        .and(with_admin_key())
-        .and(with_manager(manager.clone()))
-        .and(with_admin_key_config(admin_key))
-        .and_then(handle_delete_tenant);
-
-    create.or(list_tenants).or(get_tenant).or(delete_tenant)
-}
+// Tenant admin routes are now part of the main Router in api_routes()
 
 #[allow(clippy::result_large_err)]
-fn validate_admin_key(
-    provided: &str,
-    configured: &Option<String>,
-) -> Result<(), warp::reply::Response> {
+fn validate_admin_key(provided: &str, configured: &Option<String>) -> Result<(), Response> {
     match configured {
         None => Err(error_response(
             StatusCode::FORBIDDEN,
@@ -1441,13 +1307,14 @@ fn quota_from_tier(tier: Option<&str>) -> TenantQuota {
 }
 
 async fn handle_create_tenant(
-    admin_key: String,
-    body: CreateTenantRequest,
-    manager: SharedTenantManager,
-    configured_key: Option<String>,
-) -> Result<impl Reply, Infallible> {
-    if let Err(resp) = validate_admin_key(&admin_key, &configured_key) {
-        return Ok(resp);
+    State(state): State<ApiState>,
+    AdminKey(admin_key): AdminKey,
+    Json(body): Json<CreateTenantRequest>,
+) -> Response {
+    let manager = &state.manager;
+    let configured_key = &state.admin_key;
+    if let Err(resp) = validate_admin_key(&admin_key, configured_key) {
+        return resp;
     }
 
     let api_key = uuid::Uuid::new_v4().to_string();
@@ -1466,31 +1333,29 @@ async fn handle_create_tenant(
                     max_streams_per_pipeline: quota.max_streams_per_pipeline,
                 },
             };
-            Ok(
-                warp::reply::with_status(warp::reply::json(&resp), StatusCode::CREATED)
-                    .into_response(),
-            )
+            (StatusCode::CREATED, axum::Json(&resp)).into_response()
         }
-        Err(e) => Ok(tenant_error_response(e)),
+        Err(e) => tenant_error_response(e),
     }
 }
 
 async fn handle_list_tenants(
-    admin_key: String,
-    pagination: PaginationParams,
-    manager: SharedTenantManager,
-    configured_key: Option<String>,
-) -> Result<impl Reply, Infallible> {
-    if let Err(resp) = validate_admin_key(&admin_key, &configured_key) {
-        return Ok(resp);
+    State(state): State<ApiState>,
+    AdminKey(admin_key): AdminKey,
+    Query(pagination): Query<PaginationParams>,
+) -> Response {
+    let manager = &state.manager;
+    let configured_key = &state.admin_key;
+    if let Err(resp) = validate_admin_key(&admin_key, configured_key) {
+        return resp;
     }
 
     if pagination.exceeds_max() {
-        return Ok(error_response(
+        return error_response(
             StatusCode::BAD_REQUEST,
             "invalid_limit",
             &format!("limit must not exceed {MAX_LIMIT}"),
-        ));
+        );
     }
 
     let mgr = manager.read().await;
@@ -1515,17 +1380,18 @@ async fn handle_list_tenants(
         total,
         pagination: Some(meta),
     };
-    Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+    axum::Json(&resp).into_response()
 }
 
 async fn handle_get_tenant(
-    tenant_id_str: String,
-    admin_key: String,
-    manager: SharedTenantManager,
-    configured_key: Option<String>,
-) -> Result<impl Reply, Infallible> {
-    if let Err(resp) = validate_admin_key(&admin_key, &configured_key) {
-        return Ok(resp);
+    State(state): State<ApiState>,
+    Path(tenant_id_str): Path<String>,
+    AdminKey(admin_key): AdminKey,
+) -> Response {
+    let manager = &state.manager;
+    let configured_key = &state.admin_key;
+    if let Err(resp) = validate_admin_key(&admin_key, configured_key) {
+        return resp;
     }
 
     let mgr = manager.read().await;
@@ -1548,35 +1414,32 @@ async fn handle_get_tenant(
                 },
                 pipeline_count: t.pipelines.len(),
             };
-            Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+            axum::Json(&resp).into_response()
         }
-        None => Ok(error_response(
+        None => error_response(
             StatusCode::NOT_FOUND,
             "tenant_not_found",
             "Tenant not found",
-        )),
+        ),
     }
 }
 
 async fn handle_delete_tenant(
-    tenant_id_str: String,
-    admin_key: String,
-    manager: SharedTenantManager,
-    configured_key: Option<String>,
-) -> Result<impl Reply, Infallible> {
-    if let Err(resp) = validate_admin_key(&admin_key, &configured_key) {
-        return Ok(resp);
+    State(state): State<ApiState>,
+    Path(tenant_id_str): Path<String>,
+    AdminKey(admin_key): AdminKey,
+) -> Response {
+    let manager = &state.manager;
+    let configured_key = &state.admin_key;
+    if let Err(resp) = validate_admin_key(&admin_key, configured_key) {
+        return resp;
     }
 
     let mut mgr = manager.write().await;
     let tenant_id = varpulis_runtime::TenantId::new(&tenant_id_str);
     match mgr.remove_tenant(&tenant_id) {
-        Ok(()) => Ok(warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({"deleted": true})),
-            StatusCode::OK,
-        )
-        .into_response()),
-        Err(e) => Ok(tenant_error_response(e)),
+        Ok(()) => axum::Json(serde_json::json!({"deleted": true})).into_response(),
+        Err(e) => tenant_error_response(e),
     }
 }
 
@@ -1584,15 +1447,15 @@ async fn handle_delete_tenant(
 // Helpers
 // =============================================================================
 
-fn error_response(status: StatusCode, code: &str, message: &str) -> warp::reply::Response {
+fn error_response(status: StatusCode, code: &str, message: &str) -> Response {
     let body = ApiError {
         error: message.to_string(),
         code: code.to_string(),
     };
-    warp::reply::with_status(warp::reply::json(&body), status).into_response()
+    (status, axum::Json(body)).into_response()
 }
 
-fn tenant_error_response(err: TenantError) -> warp::reply::Response {
+fn tenant_error_response(err: TenantError) -> Response {
     // BackpressureExceeded needs a Retry-After header, handle it specially
     if let TenantError::BackpressureExceeded { current, max } = &err {
         let body = serde_json::json!({
@@ -1600,12 +1463,11 @@ fn tenant_error_response(err: TenantError) -> warp::reply::Response {
             "code": "queue_depth_exceeded",
             "retry_after": 1,
         });
-        return warp::http::Response::builder()
-            .status(StatusCode::TOO_MANY_REQUESTS)
-            .header("Retry-After", "1")
-            .header("Content-Type", "application/json")
-            .body(serde_json::to_string(&body).unwrap_or_default())
-            .unwrap()
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            [("Retry-After", "1"), ("Content-Type", "application/json")],
+            serde_json::to_string(&body).unwrap_or_default(),
+        )
             .into_response();
     }
 
@@ -1653,9 +1515,97 @@ fn json_to_runtime_value(v: &serde_json::Value) -> varpulis_core::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
     use std::sync::Arc;
     use tokio::sync::RwLock;
+    use tower::ServiceExt;
     use varpulis_runtime::tenant::{TenantManager, TenantQuota};
+
+    /// Test response wrapper for axum integration tests.
+    struct TestResponse {
+        status: StatusCode,
+        body: bytes::Bytes,
+        headers: axum::http::HeaderMap,
+    }
+
+    impl TestResponse {
+        fn status(&self) -> StatusCode {
+            self.status
+        }
+        fn body(&self) -> &[u8] {
+            &self.body
+        }
+        fn headers(&self) -> &axum::http::HeaderMap {
+            &self.headers
+        }
+    }
+
+    /// Test request builder for axum integration tests.
+    struct TestRequestBuilder {
+        method: String,
+        path: String,
+        headers: Vec<(String, String)>,
+        body: Option<String>,
+    }
+
+    impl TestRequestBuilder {
+        fn new() -> Self {
+            Self {
+                method: "GET".to_string(),
+                path: "/".to_string(),
+                headers: Vec::new(),
+                body: None,
+            }
+        }
+        fn method(mut self, m: &str) -> Self {
+            self.method = m.to_string();
+            self
+        }
+        fn path(mut self, p: &str) -> Self {
+            self.path = p.to_string();
+            self
+        }
+        fn header(mut self, k: &str, v: &str) -> Self {
+            self.headers.push((k.to_string(), v.to_string()));
+            self
+        }
+        fn json<T: serde::Serialize>(mut self, body: &T) -> Self {
+            self.body = Some(serde_json::to_string(body).unwrap());
+            self.headers
+                .push(("content-type".to_string(), "application/json".to_string()));
+            self
+        }
+        async fn reply(self, app: &Router) -> TestResponse {
+            let mut builder = Request::builder()
+                .method(self.method.as_str())
+                .uri(&self.path);
+            for (k, v) in &self.headers {
+                builder = builder.header(k.as_str(), v.as_str());
+            }
+            let body = match self.body {
+                Some(b) => Body::from(b),
+                None => Body::empty(),
+            };
+            let req = builder.body(body).unwrap();
+            let resp = app.clone().oneshot(req).await.unwrap();
+            let status = resp.status();
+            let headers = resp.headers().clone();
+            let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            TestResponse {
+                status,
+                body,
+                headers,
+            }
+        }
+    }
+
+    /// Mimics `test_request()`.
+    fn test_request() -> TestRequestBuilder {
+        TestRequestBuilder::new()
+    }
 
     async fn setup_test_manager() -> SharedTenantManager {
         let mut mgr = TenantManager::new();
@@ -1685,7 +1635,7 @@ mod tests {
         let mgr = setup_test_manager().await;
         let routes = api_routes(mgr, None, None, None);
 
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("POST")
             .path("/api/v1/pipelines")
             .header("x-api-key", "test-key-123")
@@ -1707,7 +1657,7 @@ mod tests {
         let mgr = setup_test_manager().await;
         let routes = api_routes(mgr, None, None, None);
 
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("POST")
             .path("/api/v1/pipelines")
             .header("x-api-key", "wrong-key")
@@ -1726,7 +1676,7 @@ mod tests {
         let mgr = setup_test_manager().await;
         let routes = api_routes(mgr, None, None, None);
 
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("POST")
             .path("/api/v1/pipelines")
             .header("x-api-key", "test-key-123")
@@ -1745,7 +1695,7 @@ mod tests {
         let mgr = setup_test_manager().await;
         let routes = api_routes(mgr, None, None, None);
 
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("GET")
             .path("/api/v1/pipelines")
             .header("x-api-key", "test-key-123")
@@ -1763,7 +1713,7 @@ mod tests {
         let mgr = setup_test_manager().await;
         let routes = api_routes(mgr, None, None, None);
 
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("GET")
             .path("/api/v1/usage")
             .header("x-api-key", "test-key-123")
@@ -1789,7 +1739,7 @@ mod tests {
 
         let routes = api_routes(mgr, None, None, None);
 
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("POST")
             .path(&format!("/api/v1/pipelines/{}/events", pipeline_id))
             .header("x-api-key", "test-key-123")
@@ -1856,12 +1806,7 @@ mod tests {
     // Tenant Admin API tests
     // =========================================================================
 
-    fn setup_admin_routes(
-        admin_key: Option<&str>,
-    ) -> (
-        SharedTenantManager,
-        impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone,
-    ) {
+    fn setup_admin_routes(admin_key: Option<&str>) -> (SharedTenantManager, Router) {
         let mgr = Arc::new(RwLock::new(TenantManager::new()));
         let key = admin_key.map(|k| k.to_string());
         let routes = api_routes(mgr.clone(), key, None, None);
@@ -1872,7 +1817,7 @@ mod tests {
     async fn test_create_tenant() {
         let (_mgr, routes) = setup_admin_routes(Some("admin-secret"));
 
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("POST")
             .path("/api/v1/tenants")
             .header("x-admin-key", "admin-secret")
@@ -1896,7 +1841,7 @@ mod tests {
 
         // Create two tenants
         for name in &["Tenant A", "Tenant B"] {
-            warp::test::request()
+            test_request()
                 .method("POST")
                 .path("/api/v1/tenants")
                 .header("x-admin-key", "admin-secret")
@@ -1908,7 +1853,7 @@ mod tests {
                 .await;
         }
 
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("GET")
             .path("/api/v1/tenants")
             .header("x-admin-key", "admin-secret")
@@ -1925,7 +1870,7 @@ mod tests {
         let (_mgr, routes) = setup_admin_routes(Some("admin-secret"));
 
         // Create a tenant
-        let create_resp = warp::test::request()
+        let create_resp = test_request()
             .method("POST")
             .path("/api/v1/tenants")
             .header("x-admin-key", "admin-secret")
@@ -1938,7 +1883,7 @@ mod tests {
 
         let created: TenantResponse = serde_json::from_slice(create_resp.body()).unwrap();
 
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("GET")
             .path(&format!("/api/v1/tenants/{}", created.id))
             .header("x-admin-key", "admin-secret")
@@ -1958,7 +1903,7 @@ mod tests {
         let (_mgr, routes) = setup_admin_routes(Some("admin-secret"));
 
         // Create then delete
-        let create_resp = warp::test::request()
+        let create_resp = test_request()
             .method("POST")
             .path("/api/v1/tenants")
             .header("x-admin-key", "admin-secret")
@@ -1970,7 +1915,7 @@ mod tests {
             .await;
         let created: TenantResponse = serde_json::from_slice(create_resp.body()).unwrap();
 
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("DELETE")
             .path(&format!("/api/v1/tenants/{}", created.id))
             .header("x-admin-key", "admin-secret")
@@ -1980,7 +1925,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
 
         // Verify tenant is gone
-        let list_resp = warp::test::request()
+        let list_resp = test_request()
             .method("GET")
             .path("/api/v1/tenants")
             .header("x-admin-key", "admin-secret")
@@ -1994,7 +1939,7 @@ mod tests {
     async fn test_invalid_admin_key() {
         let (_mgr, routes) = setup_admin_routes(Some("admin-secret"));
 
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("GET")
             .path("/api/v1/tenants")
             .header("x-admin-key", "wrong-key")
@@ -2008,7 +1953,7 @@ mod tests {
     async fn test_no_admin_key_configured() {
         let (_mgr, routes) = setup_admin_routes(None);
 
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("GET")
             .path("/api/v1/tenants")
             .header("x-admin-key", "anything")
@@ -2023,7 +1968,7 @@ mod tests {
         let (_mgr, routes) = setup_admin_routes(Some("admin-secret"));
 
         // Free tier
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("POST")
             .path("/api/v1/tenants")
             .header("x-admin-key", "admin-secret")
@@ -2037,7 +1982,7 @@ mod tests {
         assert_eq!(body.quota.max_pipelines, 2); // free tier
 
         // Enterprise tier
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("POST")
             .path("/api/v1/tenants")
             .header("x-admin-key", "admin-secret")
@@ -2069,7 +2014,7 @@ mod tests {
         let pipeline_id = get_first_pipeline_id(&mgr).await;
         let routes = api_routes(mgr, None, None, None);
 
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("GET")
             .path(&format!("/api/v1/pipelines/{}", pipeline_id))
             .header("x-api-key", "test-key-123")
@@ -2089,7 +2034,7 @@ mod tests {
         let mgr = setup_test_manager().await;
         let routes = api_routes(mgr, None, None, None);
 
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("GET")
             .path("/api/v1/pipelines/nonexistent-id")
             .header("x-api-key", "test-key-123")
@@ -2105,7 +2050,7 @@ mod tests {
         let pipeline_id = get_first_pipeline_id(&mgr).await;
         let routes = api_routes(mgr.clone(), None, None, None);
 
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("DELETE")
             .path(&format!("/api/v1/pipelines/{}", pipeline_id))
             .header("x-api-key", "test-key-123")
@@ -2117,7 +2062,7 @@ mod tests {
         assert_eq!(body["deleted"], true);
 
         // Verify it's gone
-        let list_resp = warp::test::request()
+        let list_resp = test_request()
             .method("GET")
             .path("/api/v1/pipelines")
             .header("x-api-key", "test-key-123")
@@ -2132,7 +2077,7 @@ mod tests {
         let mgr = setup_test_manager().await;
         let routes = api_routes(mgr, None, None, None);
 
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("DELETE")
             .path("/api/v1/pipelines/nonexistent-id")
             .header("x-api-key", "test-key-123")
@@ -2152,7 +2097,7 @@ mod tests {
         let pipeline_id = get_first_pipeline_id(&mgr).await;
         let routes = api_routes(mgr, None, None, None);
 
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("POST")
             .path(&format!("/api/v1/pipelines/{}/events-batch", pipeline_id))
             .header("x-api-key", "test-key-123")
@@ -2191,7 +2136,7 @@ mod tests {
         let routes = api_routes(mgr, None, None, None);
 
         // Batch mode silently skips failed events (including nonexistent pipeline)
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("POST")
             .path("/api/v1/pipelines/nonexistent/events-batch")
             .header("x-api-key", "test-key-123")
@@ -2220,7 +2165,7 @@ mod tests {
         let pipeline_id = get_first_pipeline_id(&mgr).await;
         let routes = api_routes(mgr, None, None, None);
 
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("POST")
             .path(&format!("/api/v1/pipelines/{}/checkpoint", pipeline_id))
             .header("x-api-key", "test-key-123")
@@ -2237,7 +2182,7 @@ mod tests {
         let mgr = setup_test_manager().await;
         let routes = api_routes(mgr, None, None, None);
 
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("POST")
             .path("/api/v1/pipelines/nonexistent/checkpoint")
             .header("x-api-key", "test-key-123")
@@ -2254,7 +2199,7 @@ mod tests {
         let routes = api_routes(mgr, None, None, None);
 
         // First checkpoint
-        let cp_resp = warp::test::request()
+        let cp_resp = test_request()
             .method("POST")
             .path(&format!("/api/v1/pipelines/{}/checkpoint", pipeline_id))
             .header("x-api-key", "test-key-123")
@@ -2263,7 +2208,7 @@ mod tests {
         let cp: CheckpointResponse = serde_json::from_slice(cp_resp.body()).unwrap();
 
         // Then restore
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("POST")
             .path(&format!("/api/v1/pipelines/{}/restore", pipeline_id))
             .header("x-api-key", "test-key-123")
@@ -2297,7 +2242,7 @@ mod tests {
             limit_states: std::collections::HashMap::new(),
         };
 
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("POST")
             .path("/api/v1/pipelines/nonexistent/restore")
             .header("x-api-key", "test-key-123")
@@ -2318,7 +2263,7 @@ mod tests {
         let pipeline_id = get_first_pipeline_id(&mgr).await;
         let routes = api_routes(mgr, None, None, None);
 
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("GET")
             .path(&format!("/api/v1/pipelines/{}/metrics", pipeline_id))
             .header("x-api-key", "test-key-123")
@@ -2335,7 +2280,7 @@ mod tests {
         let mgr = setup_test_manager().await;
         let routes = api_routes(mgr, None, None, None);
 
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("GET")
             .path("/api/v1/pipelines/nonexistent/metrics")
             .header("x-api-key", "test-key-123")
@@ -2355,7 +2300,7 @@ mod tests {
         let pipeline_id = get_first_pipeline_id(&mgr).await;
         let routes = api_routes(mgr, None, None, None);
 
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("POST")
             .path(&format!("/api/v1/pipelines/{}/reload", pipeline_id))
             .header("x-api-key", "test-key-123")
@@ -2376,7 +2321,7 @@ mod tests {
         let pipeline_id = get_first_pipeline_id(&mgr).await;
         let routes = api_routes(mgr, None, None, None);
 
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("POST")
             .path(&format!("/api/v1/pipelines/{}/reload", pipeline_id))
             .header("x-api-key", "test-key-123")
@@ -2394,7 +2339,7 @@ mod tests {
         let mgr = setup_test_manager().await;
         let routes = api_routes(mgr, None, None, None);
 
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("POST")
             .path("/api/v1/pipelines/nonexistent/reload")
             .header("x-api-key", "test-key-123")
@@ -2416,7 +2361,7 @@ mod tests {
         let mgr = setup_test_manager().await;
         let routes = api_routes(mgr, None, None, None);
 
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("GET")
             .path("/api/v1/pipelines/nonexistent/logs")
             .header("x-api-key", "test-key-123")
@@ -2432,7 +2377,7 @@ mod tests {
         let pipeline_id = get_first_pipeline_id(&mgr).await;
         let routes = api_routes(mgr, None, None, None);
 
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("GET")
             .path(&format!("/api/v1/pipelines/{}/logs", pipeline_id))
             .header("x-api-key", "wrong-key")
@@ -2532,7 +2477,7 @@ mod tests {
         let mgr = setup_test_manager().await;
         let routes = api_routes(mgr, None, None, None);
 
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("GET")
             .path("/api/v1/pipelines")
             .header("x-api-key", "test-key-123")
@@ -2577,7 +2522,7 @@ mod tests {
         let routes = api_routes(mgr, None, None, None);
 
         // First page: limit=1, offset=0
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("GET")
             .path("/api/v1/pipelines?limit=1&offset=0")
             .header("x-api-key", "test-key-123")
@@ -2593,7 +2538,7 @@ mod tests {
         assert_eq!(pagination.limit, 1);
 
         // Second page: limit=1, offset=2
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("GET")
             .path("/api/v1/pipelines?limit=1&offset=2")
             .header("x-api-key", "test-key-123")
@@ -2611,7 +2556,7 @@ mod tests {
         let mgr = setup_test_manager().await;
         let routes = api_routes(mgr, None, None, None);
 
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("GET")
             .path("/api/v1/pipelines?limit=1001")
             .header("x-api-key", "test-key-123")
@@ -2627,7 +2572,7 @@ mod tests {
 
         // Create 3 tenants
         for name in &["T1", "T2", "T3"] {
-            warp::test::request()
+            test_request()
                 .method("POST")
                 .path("/api/v1/tenants")
                 .header("x-admin-key", "admin-secret")
@@ -2640,7 +2585,7 @@ mod tests {
         }
 
         // Page through with limit=2
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("GET")
             .path("/api/v1/tenants?limit=2&offset=0")
             .header("x-admin-key", "admin-secret")
@@ -2654,7 +2599,7 @@ mod tests {
         assert!(body.pagination.unwrap().has_more);
 
         // Last page
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("GET")
             .path("/api/v1/tenants?limit=2&offset=2")
             .header("x-admin-key", "admin-secret")
@@ -2695,7 +2640,7 @@ mod tests {
         let shared = Arc::new(RwLock::new(mgr));
         let routes = api_routes(shared, None, None, None);
 
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("POST")
             .path(&format!("/api/v1/pipelines/{}/events", pid))
             .header("x-api-key", "bp-key-123")
@@ -2743,7 +2688,7 @@ mod tests {
         let shared = Arc::new(RwLock::new(mgr));
         let routes = api_routes(shared, None, None, None);
 
-        let resp = warp::test::request()
+        let resp = test_request()
             .method("POST")
             .path(&format!("/api/v1/pipelines/{}/events-batch", pid))
             .header("x-api-key", "bp-batch-key")

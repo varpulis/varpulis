@@ -1,10 +1,14 @@
-//! Warp routes for Raft inter-coordinator RPCs and management.
+//! Axum routes for Raft inter-coordinator RPCs and management.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use axum::extract::State;
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use axum::routing::{get, post};
+use axum::{Json, Router};
 use openraft::raft::{AppendEntriesRequest, InstallSnapshotRequest, VoteRequest};
-use warp::Filter;
 
 use super::{NodeId, RaftNode, TypeConfig, VarpulisRaft};
 
@@ -13,195 +17,150 @@ use varpulis_core::security::{constant_time_compare, JSON_BODY_LIMIT, LARGE_BODY
 /// Shared Raft handle type.
 pub type SharedRaft = Arc<VarpulisRaft>;
 
-/// Build all `/raft/*` warp routes.
+/// Shared state for raft routes (Raft handle + optional admin key).
+#[derive(Clone)]
+pub struct RaftState {
+    pub raft: SharedRaft,
+    pub admin_key: Option<String>,
+}
+
+/// Build all `/raft/*` axum routes.
 ///
 /// When `admin_key` is Some, all mutating Raft endpoints require the
 /// `x-api-key` header. The `/raft/metrics` endpoint stays unauthenticated
 /// (read-only, useful for monitoring).
-pub fn raft_routes(
-    raft: SharedRaft,
-    admin_key: Option<String>,
-) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
-    let raft_prefix = warp::path("raft");
+pub fn raft_routes(raft: SharedRaft, admin_key: Option<String>) -> Router {
+    let state = RaftState { raft, admin_key };
 
-    let vote = raft_prefix
-        .and(warp::path("vote"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(with_optional_raft_auth(admin_key.clone()))
-        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
-        .and(warp::body::json())
-        .and(with_raft(raft.clone()))
-        .and_then(handle_vote);
-
-    let append = raft_prefix
-        .and(warp::path("append"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(with_optional_raft_auth(admin_key.clone()))
-        .and(warp::body::content_length_limit(LARGE_BODY_LIMIT))
-        .and(warp::body::json())
-        .and(with_raft(raft.clone()))
-        .and_then(handle_append_entries);
-
-    let snapshot = raft_prefix
-        .and(warp::path("snapshot"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(with_optional_raft_auth(admin_key.clone()))
-        .and(warp::body::content_length_limit(LARGE_BODY_LIMIT))
-        .and(warp::body::json())
-        .and(with_raft(raft.clone()))
-        .and_then(handle_snapshot);
-
-    let init = raft_prefix
-        .and(warp::path("init"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(with_optional_raft_auth(admin_key.clone()))
-        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
-        .and(warp::body::json())
-        .and(with_raft(raft.clone()))
-        .and_then(handle_init);
-
-    let add_learner = raft_prefix
-        .and(warp::path("add-learner"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(with_optional_raft_auth(admin_key.clone()))
-        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
-        .and(warp::body::json())
-        .and(with_raft(raft.clone()))
-        .and_then(handle_add_learner);
-
-    let change_membership = raft_prefix
-        .and(warp::path("change-membership"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(with_optional_raft_auth(admin_key.clone()))
-        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
-        .and(warp::body::json())
-        .and(with_raft(raft.clone()))
-        .and_then(handle_change_membership);
-
-    // Internal write endpoint: accepts a ClusterCommand and applies via client_write.
-    // Used by follower coordinators to forward heartbeat metrics to the leader.
-    let write = raft_prefix
-        .and(warp::path("write"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(with_optional_raft_auth(admin_key))
-        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
-        .and(warp::body::json())
-        .and(with_raft(raft.clone()))
-        .and_then(handle_write);
-
-    // Metrics stays unauthenticated (read-only, useful for monitoring)
-    let metrics = raft_prefix
-        .and(warp::path("metrics"))
-        .and(warp::path::end())
-        .and(warp::get())
-        .and(with_raft(raft))
-        .and_then(handle_metrics);
-
-    vote.or(append)
-        .or(snapshot)
-        .or(init)
-        .or(add_learner)
-        .or(change_membership)
-        .or(write)
-        .or(metrics)
+    Router::new()
+        .route(
+            "/raft/vote",
+            post(handle_vote).layer(tower_http::limit::RequestBodyLimitLayer::new(
+                JSON_BODY_LIMIT as usize,
+            )),
+        )
+        .route(
+            "/raft/append",
+            post(handle_append_entries).layer(tower_http::limit::RequestBodyLimitLayer::new(
+                LARGE_BODY_LIMIT as usize,
+            )),
+        )
+        .route(
+            "/raft/snapshot",
+            post(handle_snapshot).layer(tower_http::limit::RequestBodyLimitLayer::new(
+                LARGE_BODY_LIMIT as usize,
+            )),
+        )
+        .route(
+            "/raft/init",
+            post(handle_init).layer(tower_http::limit::RequestBodyLimitLayer::new(
+                JSON_BODY_LIMIT as usize,
+            )),
+        )
+        .route(
+            "/raft/add-learner",
+            post(handle_add_learner).layer(tower_http::limit::RequestBodyLimitLayer::new(
+                JSON_BODY_LIMIT as usize,
+            )),
+        )
+        .route(
+            "/raft/change-membership",
+            post(handle_change_membership).layer(tower_http::limit::RequestBodyLimitLayer::new(
+                JSON_BODY_LIMIT as usize,
+            )),
+        )
+        .route(
+            "/raft/write",
+            post(handle_write).layer(tower_http::limit::RequestBodyLimitLayer::new(
+                JSON_BODY_LIMIT as usize,
+            )),
+        )
+        .route("/raft/metrics", get(handle_metrics))
+        .with_state(state)
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Auth middleware extractor
 // ---------------------------------------------------------------------------
 
-fn with_raft(
-    raft: SharedRaft,
-) -> impl Filter<Extract = (SharedRaft,), Error = std::convert::Infallible> + Clone {
-    warp::any().map(move || raft.clone())
-}
+/// Extractor that validates the optional raft auth key.
+/// Used on mutating endpoints. Metrics stays unauthenticated.
+struct RaftAuth;
 
-/// Optional authentication filter for Raft RPC endpoints.
-/// Reuses the same `x-api-key` header and `Unauthorized` rejection as the
-/// cluster API routes.
-fn with_optional_raft_auth(
-    admin_key: Option<String>,
-) -> impl Filter<Extract = ((),), Error = warp::Rejection> + Clone {
-    let key = admin_key.clone();
-    warp::any()
-        .and(warp::header::optional::<String>("x-api-key"))
-        .and_then(move |provided: Option<String>| {
-            let key = key.clone();
-            async move {
-                match &key {
-                    None => Ok::<(), warp::Rejection>(()),
-                    Some(expected) => match provided {
-                        Some(ref p) if constant_time_compare(p, expected) => Ok(()),
-                        _ => Err(warp::reject::custom(RaftUnauthorized)),
-                    },
+impl axum::extract::FromRequestParts<RaftState> for RaftAuth {
+    type Rejection = Response;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &RaftState,
+    ) -> Result<Self, Self::Rejection> {
+        match &state.admin_key {
+            None => Ok(RaftAuth),
+            Some(expected) => {
+                let provided = parts
+                    .headers
+                    .get("x-api-key")
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| s.to_string());
+                match provided {
+                    Some(ref p) if constant_time_compare(p, expected) => Ok(RaftAuth),
+                    _ => Err((
+                        StatusCode::UNAUTHORIZED,
+                        Json(serde_json::json!({"error": "Unauthorized"})),
+                    )
+                        .into_response()),
                 }
             }
-        })
+        }
+    }
 }
-
-#[derive(Debug)]
-struct RaftUnauthorized;
-impl warp::reject::Reject for RaftUnauthorized {}
 
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
 
 async fn handle_vote(
-    _auth: (),
-    req: VoteRequest<NodeId>,
-    raft: SharedRaft,
-) -> Result<impl warp::Reply, warp::Rejection> {
-    match raft.vote(req).await {
-        Ok(resp) => Ok(warp::reply::with_status(
-            warp::reply::json(&resp),
-            warp::http::StatusCode::OK,
-        )),
-        Err(e) => Ok(warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({"error": e.to_string()})),
-            warp::http::StatusCode::INTERNAL_SERVER_ERROR,
-        )),
+    State(state): State<RaftState>,
+    _auth: RaftAuth,
+    Json(req): Json<VoteRequest<NodeId>>,
+) -> Response {
+    match state.raft.vote(req).await {
+        Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
     }
 }
 
 async fn handle_append_entries(
-    _auth: (),
-    req: AppendEntriesRequest<TypeConfig>,
-    raft: SharedRaft,
-) -> Result<impl warp::Reply, warp::Rejection> {
-    match raft.append_entries(req).await {
-        Ok(resp) => Ok(warp::reply::with_status(
-            warp::reply::json(&resp),
-            warp::http::StatusCode::OK,
-        )),
-        Err(e) => Ok(warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({"error": e.to_string()})),
-            warp::http::StatusCode::INTERNAL_SERVER_ERROR,
-        )),
+    State(state): State<RaftState>,
+    _auth: RaftAuth,
+    Json(req): Json<AppendEntriesRequest<TypeConfig>>,
+) -> Response {
+    match state.raft.append_entries(req).await {
+        Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
     }
 }
 
 async fn handle_snapshot(
-    _auth: (),
-    req: InstallSnapshotRequest<TypeConfig>,
-    raft: SharedRaft,
-) -> Result<impl warp::Reply, warp::Rejection> {
-    match raft.install_snapshot(req).await {
-        Ok(resp) => Ok(warp::reply::with_status(
-            warp::reply::json(&resp),
-            warp::http::StatusCode::OK,
-        )),
-        Err(e) => Ok(warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({"error": e.to_string()})),
-            warp::http::StatusCode::INTERNAL_SERVER_ERROR,
-        )),
+    State(state): State<RaftState>,
+    _auth: RaftAuth,
+    Json(req): Json<InstallSnapshotRequest<TypeConfig>>,
+) -> Response {
+    match state.raft.install_snapshot(req).await {
+        Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
     }
 }
 
@@ -212,22 +171,21 @@ struct InitRequest {
 }
 
 async fn handle_init(
-    _auth: (),
-    req: InitRequest,
-    raft: SharedRaft,
-) -> Result<impl warp::Reply, warp::Rejection> {
+    State(state): State<RaftState>,
+    _auth: RaftAuth,
+    Json(req): Json<InitRequest>,
+) -> Response {
     let members: BTreeMap<NodeId, RaftNode> = req
         .members
         .into_iter()
         .map(|(id, addr)| (id, RaftNode { addr }))
         .collect();
 
-    let resp = raft.initialize(members).await;
-    match resp {
-        Ok(_) => Ok(warp::reply::json(&serde_json::json!({"status": "ok"}))),
-        Err(e) => Ok(warp::reply::json(
-            &serde_json::json!({"status": "error", "message": e.to_string()}),
-        )),
+    match state.raft.initialize(members).await {
+        Ok(_) => Json(serde_json::json!({"status": "ok"})).into_response(),
+        Err(e) => {
+            Json(serde_json::json!({"status": "error", "message": e.to_string()})).into_response()
+        }
     }
 }
 
@@ -239,19 +197,17 @@ struct AddLearnerRequest {
 }
 
 async fn handle_add_learner(
-    _auth: (),
-    req: AddLearnerRequest,
-    raft: SharedRaft,
-) -> Result<impl warp::Reply, warp::Rejection> {
+    State(state): State<RaftState>,
+    _auth: RaftAuth,
+    Json(req): Json<AddLearnerRequest>,
+) -> Response {
     let node = RaftNode { addr: req.addr };
-    let resp = raft.add_learner(req.node_id, node, true).await;
-    match resp {
-        Ok(r) => Ok(warp::reply::json(
-            &serde_json::json!({"status": "ok", "response": format!("{:?}", r)}),
-        )),
-        Err(e) => Ok(warp::reply::json(
-            &serde_json::json!({"status": "error", "message": e.to_string()}),
-        )),
+    match state.raft.add_learner(req.node_id, node, true).await {
+        Ok(r) => Json(serde_json::json!({"status": "ok", "response": format!("{:?}", r)}))
+            .into_response(),
+        Err(e) => {
+            Json(serde_json::json!({"status": "error", "message": e.to_string()})).into_response()
+        }
     }
 }
 
@@ -262,44 +218,40 @@ struct ChangeMembershipRequest {
 }
 
 async fn handle_change_membership(
-    _auth: (),
-    req: ChangeMembershipRequest,
-    raft: SharedRaft,
-) -> Result<impl warp::Reply, warp::Rejection> {
+    State(state): State<RaftState>,
+    _auth: RaftAuth,
+    Json(req): Json<ChangeMembershipRequest>,
+) -> Response {
     let members: std::collections::BTreeSet<NodeId> = req.members.into_iter().collect();
-    let resp = raft.change_membership(members, false).await;
-    match resp {
-        Ok(r) => Ok(warp::reply::json(
-            &serde_json::json!({"status": "ok", "response": format!("{:?}", r)}),
-        )),
-        Err(e) => Ok(warp::reply::json(
-            &serde_json::json!({"status": "error", "message": e.to_string()}),
-        )),
+    match state.raft.change_membership(members, false).await {
+        Ok(r) => Json(serde_json::json!({"status": "ok", "response": format!("{:?}", r)}))
+            .into_response(),
+        Err(e) => {
+            Json(serde_json::json!({"status": "error", "message": e.to_string()})).into_response()
+        }
     }
 }
 
 /// Internal write endpoint: accept a [`ClusterCommand`] and apply it through Raft.
 /// Used by follower coordinators to forward heartbeat metrics to the leader.
 async fn handle_write(
-    _auth: (),
-    cmd: super::ClusterCommand,
-    raft: SharedRaft,
-) -> Result<impl warp::Reply, warp::Rejection> {
-    match raft.client_write(cmd).await {
-        Ok(_) => Ok(warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({"status": "ok"})),
-            warp::http::StatusCode::OK,
-        )),
-        Err(e) => Ok(warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({"error": e.to_string()})),
-            warp::http::StatusCode::SERVICE_UNAVAILABLE,
-        )),
+    State(state): State<RaftState>,
+    _auth: RaftAuth,
+    Json(cmd): Json<super::ClusterCommand>,
+) -> Response {
+    match state.raft.client_write(cmd).await {
+        Ok(_) => (StatusCode::OK, Json(serde_json::json!({"status": "ok"}))).into_response(),
+        Err(e) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
     }
 }
 
-async fn handle_metrics(raft: SharedRaft) -> Result<impl warp::Reply, warp::Rejection> {
-    let metrics = raft.metrics().borrow().clone();
-    Ok(warp::reply::json(&serde_json::json!({
+async fn handle_metrics(State(state): State<RaftState>) -> Response {
+    let metrics = state.raft.metrics().borrow().clone();
+    Json(serde_json::json!({
         "id": metrics.id,
         "state": format!("{:?}", metrics.state),
         "current_term": metrics.current_term,
@@ -307,5 +259,6 @@ async fn handle_metrics(raft: SharedRaft) -> Result<impl warp::Reply, warp::Reje
         "last_applied": metrics.last_applied,
         "last_log_index": metrics.last_log_index,
         "membership": format!("{:?}", metrics.membership_config),
-    })))
+    }))
+    .into_response()
 }

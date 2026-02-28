@@ -110,6 +110,30 @@ export interface AlertMessage {
   source: string
 }
 
+export interface ActorHealthMessage {
+  type: 'actor_health'
+  actors: Array<{
+    name: string
+    status: 'healthy' | 'degraded' | 'down'
+    restarts: number
+    uptime_secs: number
+    observable_state: Record<string, unknown>
+    reason?: string
+  }>
+  connectors: Array<{
+    name: string
+    connector_type: string
+    connected: boolean
+    last_error?: string
+    messages_received: number
+    seconds_since_last_message: number
+    circuit_breaker_state: string
+    circuit_breaker_failures: number
+    circuit_breaker_rejections: number
+  }>
+  timestamp: string
+}
+
 export type ServerMessage =
   | LoadResultMessage
   | StreamsMessage
@@ -119,6 +143,7 @@ export type ServerMessage =
   | ErrorMessage
   | WorkerStatusMessage
   | AlertMessage
+  | ActorHealthMessage
 
 // === Connection State ===
 

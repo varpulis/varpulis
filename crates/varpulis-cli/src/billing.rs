@@ -3,12 +3,16 @@
 //! Provides usage tracking, tier management, and Stripe Checkout/Portal
 //! integration via REST endpoints.
 
+use axum::extract::{Json, State};
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{get, post};
+use axum::Router;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
-use warp::Filter;
 
 use crate::audit::{AuditAction, AuditEntry, SharedAuditLogger};
 
@@ -265,24 +269,22 @@ impl BillingState {
 }
 
 /// Build a 429 Too Many Requests response from a usage limit error.
-pub fn usage_limit_response(err: &UsageLimitExceeded) -> warp::reply::Response {
-    use warp::Reply;
-    warp::reply::with_header(
-        warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({
-                "error": "usage_limit_exceeded",
-                "message": err.message,
-                "tier": err.tier,
-                "limit": err.limit,
-                "current_usage": err.current_usage,
-                "upgrade_url": "/billing",
-            })),
-            warp::http::StatusCode::TOO_MANY_REQUESTS,
-        ),
-        "Retry-After",
-        "3600",
+pub fn usage_limit_response(err: &UsageLimitExceeded) -> Response {
+    let body = Json(serde_json::json!({
+        "error": "usage_limit_exceeded",
+        "message": err.message,
+        "tier": err.tier,
+        "limit": err.limit,
+        "current_usage": err.current_usage,
+        "upgrade_url": "/billing",
+    }));
+
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        [("Retry-After", "3600")],
+        body,
     )
-    .into_response()
+        .into_response()
 }
 
 // ---------------------------------------------------------------------------
@@ -389,9 +391,14 @@ fn verify_stripe_signature(payload: &[u8], sig_header: &str, secret: &str) -> bo
 
 /// GET /api/v1/billing/usage — get usage summary.
 async fn handle_usage(
-    auth_header: Option<String>,
-    state: Option<SharedBillingState>,
-) -> Result<impl warp::Reply, warp::Rejection> {
+    State(state): State<Option<SharedBillingState>>,
+    headers: HeaderMap,
+) -> Response {
+    let auth_header = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
     match state {
         Some(s) => {
             // Try DB first when saas is enabled
@@ -404,16 +411,17 @@ async fn handle_usage(
                     if let Ok(rows) = varpulis_db::repo::get_usage(pool, org_id, start, today).await
                     {
                         let total: i64 = rows.iter().map(|r| r.events_processed).sum();
-                        return Ok(warp::reply::with_status(
-                            warp::reply::json(&serde_json::json!({
+                        return (
+                            StatusCode::OK,
+                            Json(serde_json::json!({
                                 "events_this_month": total,
                                 "daily": rows.iter().map(|r| serde_json::json!({
                                     "date": r.date.to_string(),
                                     "events_processed": r.events_processed,
                                 })).collect::<Vec<_>>(),
                             })),
-                            warp::http::StatusCode::OK,
-                        ));
+                        )
+                            .into_response();
                     }
                 }
             }
@@ -431,23 +439,26 @@ async fn handle_usage(
                     })
                 })
                 .collect();
-            Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({ "usage": orgs })),
-                warp::http::StatusCode::OK,
-            ))
+            (StatusCode::OK, Json(serde_json::json!({ "usage": orgs }))).into_response()
         }
-        None => Ok(warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({ "error": "Billing not configured" })),
-            warp::http::StatusCode::SERVICE_UNAVAILABLE,
-        )),
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": "Billing not configured" })),
+        )
+            .into_response(),
     }
 }
 
 /// GET /api/v1/billing/plan — get current plan.
 async fn handle_plan(
-    auth_header: Option<String>,
-    state: Option<SharedBillingState>,
-) -> Result<impl warp::Reply, warp::Rejection> {
+    State(state): State<Option<SharedBillingState>>,
+    headers: HeaderMap,
+) -> Response {
+    let auth_header = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
     match state {
         Some(_s) => {
             // Try DB for real plan when saas enabled
@@ -456,33 +467,36 @@ async fn handle_plan(
                 if let Some(org_id) = extract_org_id_from_header(&auth_header, &_s) {
                     if let Ok(Some(org)) = varpulis_db::repo::get_organization(pool, org_id).await {
                         let tier: Tier = org.tier.parse().unwrap_or(Tier::Free);
-                        return Ok(warp::reply::with_status(
-                            warp::reply::json(&serde_json::json!({
+                        return (
+                            StatusCode::OK,
+                            Json(serde_json::json!({
                                 "tier": org.tier,
                                 "event_limit": tier.event_limit(),
                                 "display_name": tier.display_name(),
                             })),
-                            warp::http::StatusCode::OK,
-                        ));
+                        )
+                            .into_response();
                     }
                 }
             }
 
             // Fallback: hardcoded free
             let _ = auth_header;
-            Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
                     "tier": "free",
                     "event_limit": 10_000,
                     "display_name": "Free",
                 })),
-                warp::http::StatusCode::OK,
-            ))
+            )
+                .into_response()
         }
-        None => Ok(warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({ "error": "Billing not configured" })),
-            warp::http::StatusCode::SERVICE_UNAVAILABLE,
-        )),
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": "Billing not configured" })),
+        )
+            .into_response(),
     }
 }
 
@@ -494,19 +508,25 @@ struct CheckoutRequest {
 
 /// POST /api/v1/billing/checkout — create Stripe Checkout session.
 async fn handle_checkout(
-    body: CheckoutRequest,
-    auth_header: Option<String>,
-    state: Option<SharedBillingState>,
-) -> Result<impl warp::Reply, warp::Rejection> {
+    State(state): State<Option<SharedBillingState>>,
+    headers: HeaderMap,
+    Json(body): Json<CheckoutRequest>,
+) -> Response {
+    let auth_header = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
     match state {
         Some(s) => {
             if s.config.pro_price_id.is_empty() {
-                return Ok(warp::reply::with_status(
-                    warp::reply::json(&serde_json::json!({
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
                         "error": "Stripe Price ID not configured"
                     })),
-                    warp::http::StatusCode::BAD_REQUEST,
-                ));
+                )
+                    .into_response();
             }
 
             let success_url = body
@@ -574,35 +594,43 @@ async fn handle_checkout(
                             )
                             .await;
                     }
-                    Ok(warp::reply::with_status(
-                        warp::reply::json(&serde_json::json!({
+                    (
+                        StatusCode::OK,
+                        Json(serde_json::json!({
                             "checkout_url": checkout_url,
                             "session_id": session_id,
                         })),
-                        warp::http::StatusCode::OK,
-                    ))
+                    )
+                        .into_response()
                 }
                 Err(e) => {
                     tracing::error!("Stripe checkout failed: {}", e);
-                    Ok(warp::reply::with_status(
-                        warp::reply::json(&serde_json::json!({"error": e})),
-                        warp::http::StatusCode::BAD_GATEWAY,
-                    ))
+                    (
+                        StatusCode::BAD_GATEWAY,
+                        Json(serde_json::json!({"error": e})),
+                    )
+                        .into_response()
                 }
             }
         }
-        None => Ok(warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({ "error": "Billing not configured" })),
-            warp::http::StatusCode::SERVICE_UNAVAILABLE,
-        )),
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": "Billing not configured" })),
+        )
+            .into_response(),
     }
 }
 
 /// POST /api/v1/billing/portal — create Stripe Customer Portal session.
 async fn handle_portal(
-    auth_header: Option<String>,
-    state: Option<SharedBillingState>,
-) -> Result<impl warp::Reply, warp::Rejection> {
+    State(state): State<Option<SharedBillingState>>,
+    headers: HeaderMap,
+) -> Response {
+    let auth_header = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
     match state {
         Some(s) => {
             #[allow(unused_mut)]
@@ -622,12 +650,13 @@ async fn handle_portal(
             let _ = auth_header;
 
             if customer_id.is_empty() {
-                return Ok(warp::reply::with_status(
-                    warp::reply::json(&serde_json::json!({
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
                         "error": "No Stripe customer found. Upgrade first."
                     })),
-                    warp::http::StatusCode::BAD_REQUEST,
-                ));
+                )
+                    .into_response();
             }
 
             let return_url = format!("{}/billing", s.config.frontend_url);
@@ -641,42 +670,51 @@ async fn handle_portal(
             {
                 Ok(session) => {
                     let portal_url = session["url"].as_str().unwrap_or("");
-                    Ok(warp::reply::with_status(
-                        warp::reply::json(&serde_json::json!({
+                    (
+                        StatusCode::OK,
+                        Json(serde_json::json!({
                             "portal_url": portal_url,
                         })),
-                        warp::http::StatusCode::OK,
-                    ))
+                    )
+                        .into_response()
                 }
                 Err(e) => {
                     tracing::error!("Stripe portal failed: {}", e);
-                    Ok(warp::reply::with_status(
-                        warp::reply::json(&serde_json::json!({"error": e})),
-                        warp::http::StatusCode::BAD_GATEWAY,
-                    ))
+                    (
+                        StatusCode::BAD_GATEWAY,
+                        Json(serde_json::json!({"error": e})),
+                    )
+                        .into_response()
                 }
             }
         }
-        None => Ok(warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({ "error": "Billing not configured" })),
-            warp::http::StatusCode::SERVICE_UNAVAILABLE,
-        )),
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": "Billing not configured" })),
+        )
+            .into_response(),
     }
 }
 
 /// POST /api/v1/billing/webhook — handle Stripe webhook events.
 async fn handle_webhook(
-    sig_header: Option<String>,
+    State(state): State<Option<SharedBillingState>>,
+    headers: HeaderMap,
     body: bytes::Bytes,
-    state: Option<SharedBillingState>,
-) -> Result<impl warp::Reply, warp::Rejection> {
+) -> Response {
+    let sig_header = headers
+        .get("stripe-signature")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
     let s = match state {
         Some(s) => s,
         None => {
-            return Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({"error": "Billing not configured"})),
-                warp::http::StatusCode::SERVICE_UNAVAILABLE,
-            ));
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": "Billing not configured"})),
+            )
+                .into_response();
         }
     };
 
@@ -684,10 +722,11 @@ async fn handle_webhook(
     if !s.config.stripe_webhook_secret.is_empty() {
         let sig = sig_header.unwrap_or_default();
         if !verify_stripe_signature(&body, &sig, &s.config.stripe_webhook_secret) {
-            return Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({"error": "Invalid signature"})),
-                warp::http::StatusCode::BAD_REQUEST,
-            ));
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Invalid signature"})),
+            )
+                .into_response();
         }
     }
 
@@ -696,10 +735,11 @@ async fn handle_webhook(
         Ok(v) => v,
         Err(e) => {
             tracing::error!("Webhook parse error: {}", e);
-            return Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({"error": "Invalid JSON"})),
-                warp::http::StatusCode::BAD_REQUEST,
-            ));
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Invalid JSON"})),
+            )
+                .into_response();
         }
     };
 
@@ -806,10 +846,7 @@ async fn handle_webhook(
         tracing::debug!("Webhook received but saas feature not enabled");
     }
 
-    Ok(warp::reply::with_status(
-        warp::reply::json(&serde_json::json!({"received": true})),
-        warp::http::StatusCode::OK,
-    ))
+    (StatusCode::OK, Json(serde_json::json!({"received": true}))).into_response()
 }
 
 // ---------------------------------------------------------------------------
@@ -859,48 +896,14 @@ fn extract_org_id_str_from_header(
 // ---------------------------------------------------------------------------
 
 /// Build billing routes. When `state` is None, endpoints return 503.
-pub fn billing_routes(
-    state: Option<SharedBillingState>,
-) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
-    let state1 = state.clone();
-    let state2 = state.clone();
-    let state3 = state.clone();
-    let state4 = state.clone();
-    let state5 = state;
-
-    let usage = warp::path!("api" / "v1" / "billing" / "usage")
-        .and(warp::get())
-        .and(warp::header::optional::<String>("authorization"))
-        .and(warp::any().map(move || state1.clone()))
-        .and_then(handle_usage);
-
-    let plan = warp::path!("api" / "v1" / "billing" / "plan")
-        .and(warp::get())
-        .and(warp::header::optional::<String>("authorization"))
-        .and(warp::any().map(move || state2.clone()))
-        .and_then(handle_plan);
-
-    let checkout = warp::path!("api" / "v1" / "billing" / "checkout")
-        .and(warp::post())
-        .and(warp::body::json())
-        .and(warp::header::optional::<String>("authorization"))
-        .and(warp::any().map(move || state3.clone()))
-        .and_then(handle_checkout);
-
-    let portal = warp::path!("api" / "v1" / "billing" / "portal")
-        .and(warp::post())
-        .and(warp::header::optional::<String>("authorization"))
-        .and(warp::any().map(move || state4.clone()))
-        .and_then(handle_portal);
-
-    let webhook = warp::path!("api" / "v1" / "billing" / "webhook")
-        .and(warp::post())
-        .and(warp::header::optional::<String>("stripe-signature"))
-        .and(warp::body::bytes())
-        .and(warp::any().map(move || state5.clone()))
-        .and_then(handle_webhook);
-
-    usage.or(plan).or(checkout).or(portal).or(webhook)
+pub fn billing_routes(state: Option<SharedBillingState>) -> Router {
+    Router::new()
+        .route("/api/v1/billing/usage", get(handle_usage))
+        .route("/api/v1/billing/plan", get(handle_plan))
+        .route("/api/v1/billing/checkout", post(handle_checkout))
+        .route("/api/v1/billing/portal", post(handle_portal))
+        .route("/api/v1/billing/webhook", post(handle_webhook))
+        .with_state(state)
 }
 
 // ---------------------------------------------------------------------------
@@ -910,6 +913,17 @@ pub fn billing_routes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    fn get_req(uri: &str) -> Request<Body> {
+        Request::builder()
+            .method("GET")
+            .uri(uri)
+            .body(Body::empty())
+            .unwrap()
+    }
 
     #[test]
     fn test_tier_event_limits() {
@@ -996,13 +1010,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_billing_routes_not_configured() {
-        let routes = billing_routes(None);
+        let app = billing_routes(None);
 
-        let res = warp::test::request()
-            .method("GET")
-            .path("/api/v1/billing/plan")
-            .reply(&routes)
-            .await;
+        let res = app.oneshot(get_req("/api/v1/billing/plan")).await.unwrap();
 
         assert_eq!(res.status(), 503);
     }
@@ -1016,13 +1026,9 @@ mod tests {
             frontend_url: "http://localhost:5173".to_string(),
         };
         let state = Arc::new(BillingState::new(config));
-        let routes = billing_routes(Some(state));
+        let app = billing_routes(Some(state));
 
-        let res = warp::test::request()
-            .method("GET")
-            .path("/api/v1/billing/usage")
-            .reply(&routes)
-            .await;
+        let res = app.oneshot(get_req("/api/v1/billing/usage")).await.unwrap();
 
         assert_eq!(res.status(), 200);
     }
@@ -1036,16 +1042,15 @@ mod tests {
             frontend_url: "http://localhost:5173".to_string(),
         };
         let state = Arc::new(BillingState::new(config));
-        let routes = billing_routes(Some(state));
+        let app = billing_routes(Some(state));
 
-        let res = warp::test::request()
-            .method("GET")
-            .path("/api/v1/billing/plan")
-            .reply(&routes)
-            .await;
+        let res = app.oneshot(get_req("/api/v1/billing/plan")).await.unwrap();
 
         assert_eq!(res.status(), 200);
-        let body: serde_json::Value = serde_json::from_slice(res.body()).unwrap();
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(body["tier"], "free");
     }
 
@@ -1058,15 +1063,16 @@ mod tests {
             frontend_url: "http://localhost:5173".to_string(),
         };
         let state = Arc::new(BillingState::new(config));
-        let routes = billing_routes(Some(state));
+        let app = billing_routes(Some(state));
 
-        let res = warp::test::request()
+        let req: Request<Body> = Request::builder()
             .method("POST")
-            .path("/api/v1/billing/webhook")
+            .uri("/api/v1/billing/webhook")
             .header("stripe-signature", "t=123,v1=bad")
-            .body("{\"type\":\"test\"}")
-            .reply(&routes)
-            .await;
+            .header("content-type", "application/octet-stream")
+            .body(Body::from("{\"type\":\"test\"}"))
+            .unwrap();
+        let res = app.oneshot(req).await.unwrap();
 
         assert_eq!(res.status(), 400);
     }
@@ -1094,7 +1100,7 @@ mod tests {
             message: "Limit exceeded".to_string(),
         };
         let resp = usage_limit_response(&err);
-        assert_eq!(resp.status(), warp::http::StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
     }
 
     #[test]

@@ -146,7 +146,6 @@ mod tests {
     use std::sync::Arc;
     use tokio::sync::RwLock;
     use varpulis_runtime::tenant::{TenantManager, TenantQuota};
-    use warp::Filter;
 
     async fn start_test_server() -> (String, String) {
         let mut mgr = TenantManager::new();
@@ -154,11 +153,15 @@ mod tests {
         mgr.create_tenant("Test".into(), api_key.clone(), TenantQuota::default())
             .unwrap();
         let manager = Arc::new(RwLock::new(mgr));
-        let routes =
-            api::api_routes(manager, None, None, None).recover(crate::auth::handle_rejection);
+        let app = api::api_routes(manager, None, None, None);
 
-        let (addr, server) = warp::serve(routes).bind_ephemeral(([127, 0, 0, 1], 0));
-        tokio::spawn(server);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app.into_make_service())
+                .await
+                .unwrap();
+        });
 
         let base_url = format!("http://{}", addr);
         (base_url, api_key)

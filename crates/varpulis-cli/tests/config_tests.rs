@@ -818,25 +818,6 @@ async fn rate_limiter_ipv6() {
     }
 }
 
-// =============================================================================
-// Rate limiter: handle_rate_limit_rejection
-// =============================================================================
-
-#[test]
-fn handle_rate_limit_rejection_with_matching_rejection() {
-    let rejection = warp::reject::custom(RateLimitRejection {
-        retry_after_secs: 5,
-    });
-    let result = handle_rate_limit_rejection(&rejection);
-    assert!(result.is_some(), "Should handle RateLimitRejection");
-}
-
-#[test]
-fn handle_rate_limit_rejection_with_non_matching() {
-    let rejection = warp::reject::not_found();
-    let result = handle_rate_limit_rejection(&rejection);
-    assert!(
-        result.is_none(),
-        "Should return None for non-rate-limit rejections"
-    );
-}
+// Note: warp-specific handle_rate_limit_rejection tests were removed
+// during the Warp-to-Axum migration. Rate limiting is now implemented
+// as axum middleware (see varpulis_cluster::rate_limit).

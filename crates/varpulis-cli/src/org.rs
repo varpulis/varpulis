@@ -1,9 +1,24 @@
 //! Organization and API key management endpoints for Varpulis Cloud (saas feature).
 
+use axum::extract::{Json, Path, State};
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{delete, get, post};
+use axum::Router;
 use serde::Deserialize;
-use warp::Filter;
+use std::sync::Arc;
 
 use crate::oauth::{self, SharedOAuthState};
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+#[derive(Clone)]
+pub struct OrgState {
+    pub db_pool: Option<varpulis_db::PgPool>,
+    pub oauth_state: Option<SharedOAuthState>,
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -11,19 +26,19 @@ use crate::oauth::{self, SharedOAuthState};
 
 /// Extract and verify JWT claims from the Authorization header using the OAuth state.
 async fn extract_claims(
-    auth_header: Option<String>,
+    auth_header: Option<&str>,
     oauth_state: &Option<SharedOAuthState>,
-) -> Result<oauth::Claims, warp::http::StatusCode> {
+) -> Result<oauth::Claims, StatusCode> {
     let state = oauth_state
         .as_ref()
-        .ok_or(warp::http::StatusCode::SERVICE_UNAVAILABLE)?;
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
 
     let token = auth_header
         .and_then(|h| h.strip_prefix("Bearer ").map(|t| t.trim().to_string()))
-        .ok_or(warp::http::StatusCode::UNAUTHORIZED)?;
+        .ok_or(StatusCode::UNAUTHORIZED)?;
 
     if token.is_empty() {
-        return Err(warp::http::StatusCode::UNAUTHORIZED);
+        return Err(StatusCode::UNAUTHORIZED);
     }
 
     // Check revocation
@@ -35,7 +50,7 @@ async fn extract_claims(
         format!("{:016x}", hasher.finish())
     };
     if state.sessions.read().await.is_revoked(&hash) {
-        return Err(warp::http::StatusCode::UNAUTHORIZED);
+        return Err(StatusCode::UNAUTHORIZED);
     }
 
     use jsonwebtoken::{decode, DecodingKey, Validation};
@@ -44,7 +59,7 @@ async fn extract_claims(
         &DecodingKey::from_secret(state.config.jwt_secret.as_bytes()),
         &Validation::default(),
     )
-    .map_err(|_| warp::http::StatusCode::UNAUTHORIZED)?;
+    .map_err(|_| StatusCode::UNAUTHORIZED)?;
 
     Ok(token_data.claims)
 }
@@ -54,38 +69,35 @@ async fn extract_claims(
 // ---------------------------------------------------------------------------
 
 /// GET /api/v1/orgs — list user's organizations.
-async fn handle_list_orgs(
-    auth_header: Option<String>,
-    db_pool: Option<varpulis_db::PgPool>,
-    oauth_state: Option<SharedOAuthState>,
-) -> Result<impl warp::Reply, warp::Rejection> {
-    let claims = match extract_claims(auth_header, &oauth_state).await {
+async fn handle_list_orgs(State(state): State<OrgState>, headers: HeaderMap) -> Response {
+    let auth_header = headers.get("authorization").and_then(|v| v.to_str().ok());
+
+    let claims = match extract_claims(auth_header, &state.oauth_state).await {
         Ok(c) => c,
         Err(status) => {
-            return Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({"error": "Unauthorized"})),
-                status,
-            ));
+            return (status, Json(serde_json::json!({"error": "Unauthorized"}))).into_response();
         }
     };
 
-    let pool = match db_pool {
+    let pool = match state.db_pool {
         Some(p) => p,
         None => {
-            return Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({"error": "Database not configured"})),
-                warp::http::StatusCode::SERVICE_UNAVAILABLE,
-            ));
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": "Database not configured"})),
+            )
+                .into_response();
         }
     };
 
     let user_id: uuid::Uuid = match claims.user_id.parse() {
         Ok(id) => id,
         Err(_) => {
-            return Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({"error": "Invalid user_id in token"})),
-                warp::http::StatusCode::BAD_REQUEST,
-            ));
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Invalid user_id in token"})),
+            )
+                .into_response();
         }
     };
 
@@ -102,17 +114,19 @@ async fn handle_list_orgs(
                     })
                 })
                 .collect();
-            Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({"organizations": orgs_json})),
-                warp::http::StatusCode::OK,
-            ))
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({"organizations": orgs_json})),
+            )
+                .into_response()
         }
         Err(e) => {
             tracing::error!("Failed to list orgs: {}", e);
-            Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({"error": "Internal error"})),
-                warp::http::StatusCode::INTERNAL_SERVER_ERROR,
-            ))
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Internal error"})),
+            )
+                .into_response()
         }
     }
 }
@@ -124,29 +138,28 @@ struct CreateApiKeyRequest {
 
 /// POST /api/v1/orgs/{org_id}/api-keys — generate a new API key.
 async fn handle_create_api_key(
-    org_id: String,
-    body: CreateApiKeyRequest,
-    auth_header: Option<String>,
-    db_pool: Option<varpulis_db::PgPool>,
-    oauth_state: Option<SharedOAuthState>,
-) -> Result<impl warp::Reply, warp::Rejection> {
-    let claims = match extract_claims(auth_header, &oauth_state).await {
+    State(state): State<OrgState>,
+    Path(org_id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<CreateApiKeyRequest>,
+) -> Response {
+    let auth_header = headers.get("authorization").and_then(|v| v.to_str().ok());
+
+    let claims = match extract_claims(auth_header, &state.oauth_state).await {
         Ok(c) => c,
         Err(status) => {
-            return Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({"error": "Unauthorized"})),
-                status,
-            ));
+            return (status, Json(serde_json::json!({"error": "Unauthorized"}))).into_response();
         }
     };
 
-    let pool = match db_pool {
-        Some(p) => p,
+    let pool = match state.db_pool {
+        Some(ref p) => p.clone(),
         None => {
-            return Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({"error": "Database not configured"})),
-                warp::http::StatusCode::SERVICE_UNAVAILABLE,
-            ));
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": "Database not configured"})),
+            )
+                .into_response();
         }
     };
 
@@ -154,10 +167,11 @@ async fn handle_create_api_key(
     let org_uuid: uuid::Uuid = match org_id.parse() {
         Ok(id) => id,
         Err(_) => {
-            return Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({"error": "Invalid org_id"})),
-                warp::http::StatusCode::BAD_REQUEST,
-            ));
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Invalid org_id"})),
+            )
+                .into_response();
         }
     };
 
@@ -167,17 +181,19 @@ async fn handle_create_api_key(
             let user_uuid: uuid::Uuid = match claims.user_id.parse() {
                 Ok(id) => id,
                 Err(_) => {
-                    return Ok(warp::reply::with_status(
-                        warp::reply::json(&serde_json::json!({"error": "Invalid user_id"})),
-                        warp::http::StatusCode::BAD_REQUEST,
-                    ));
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({"error": "Invalid user_id"})),
+                    )
+                        .into_response();
                 }
             };
             if org.owner_id != user_uuid {
-                return Ok(warp::reply::with_status(
-                    warp::reply::json(&serde_json::json!({"error": "Forbidden"})),
-                    warp::http::StatusCode::FORBIDDEN,
-                ));
+                return (
+                    StatusCode::FORBIDDEN,
+                    Json(serde_json::json!({"error": "Forbidden"})),
+                )
+                    .into_response();
             }
         }
     }
@@ -192,59 +208,61 @@ async fn handle_create_api_key(
 
     let key_name = body.name.unwrap_or_else(|| "default".to_string());
     match varpulis_db::repo::create_api_key(&pool, org_uuid, &hash, &key_name).await {
-        Ok(api_key) => Ok(warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({
+        Ok(api_key) => (
+            StatusCode::CREATED,
+            Json(serde_json::json!({
                 "id": api_key.id.to_string(),
                 "key": raw_key,
                 "name": api_key.name,
                 "created_at": api_key.created_at.to_rfc3339(),
             })),
-            warp::http::StatusCode::CREATED,
-        )),
+        )
+            .into_response(),
         Err(e) => {
             tracing::error!("Failed to create API key: {}", e);
-            Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({"error": "Internal error"})),
-                warp::http::StatusCode::INTERNAL_SERVER_ERROR,
-            ))
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Internal error"})),
+            )
+                .into_response()
         }
     }
 }
 
 /// GET /api/v1/orgs/{org_id}/api-keys — list API keys (no secrets).
 async fn handle_list_api_keys(
-    org_id: String,
-    auth_header: Option<String>,
-    db_pool: Option<varpulis_db::PgPool>,
-    oauth_state: Option<SharedOAuthState>,
-) -> Result<impl warp::Reply, warp::Rejection> {
-    let _claims = match extract_claims(auth_header, &oauth_state).await {
+    State(state): State<OrgState>,
+    Path(org_id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let auth_header = headers.get("authorization").and_then(|v| v.to_str().ok());
+
+    let _claims = match extract_claims(auth_header, &state.oauth_state).await {
         Ok(c) => c,
         Err(status) => {
-            return Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({"error": "Unauthorized"})),
-                status,
-            ));
+            return (status, Json(serde_json::json!({"error": "Unauthorized"}))).into_response();
         }
     };
 
-    let pool = match db_pool {
-        Some(p) => p,
+    let pool = match state.db_pool {
+        Some(ref p) => p.clone(),
         None => {
-            return Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({"error": "Database not configured"})),
-                warp::http::StatusCode::SERVICE_UNAVAILABLE,
-            ));
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": "Database not configured"})),
+            )
+                .into_response();
         }
     };
 
     let org_uuid: uuid::Uuid = match org_id.parse() {
         Ok(id) => id,
         Err(_) => {
-            return Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({"error": "Invalid org_id"})),
-                warp::http::StatusCode::BAD_REQUEST,
-            ));
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Invalid org_id"})),
+            )
+                .into_response();
         }
     };
 
@@ -261,80 +279,80 @@ async fn handle_list_api_keys(
                     })
                 })
                 .collect();
-            Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({"api_keys": keys_json})),
-                warp::http::StatusCode::OK,
-            ))
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({"api_keys": keys_json})),
+            )
+                .into_response()
         }
         Err(e) => {
             tracing::error!("Failed to list API keys: {}", e);
-            Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({"error": "Internal error"})),
-                warp::http::StatusCode::INTERNAL_SERVER_ERROR,
-            ))
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Internal error"})),
+            )
+                .into_response()
         }
     }
 }
 
 /// DELETE /api/v1/orgs/{org_id}/api-keys/{key_id} — revoke an API key.
 async fn handle_delete_api_key(
-    org_id: String,
-    key_id: String,
-    auth_header: Option<String>,
-    db_pool: Option<varpulis_db::PgPool>,
-    oauth_state: Option<SharedOAuthState>,
-) -> Result<impl warp::Reply, warp::Rejection> {
-    let _claims = match extract_claims(auth_header, &oauth_state).await {
+    State(state): State<OrgState>,
+    Path((org_id, key_id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let auth_header = headers.get("authorization").and_then(|v| v.to_str().ok());
+
+    let _claims = match extract_claims(auth_header, &state.oauth_state).await {
         Ok(c) => c,
         Err(status) => {
-            return Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({"error": "Unauthorized"})),
-                status,
-            ));
+            return (status, Json(serde_json::json!({"error": "Unauthorized"}))).into_response();
         }
     };
 
-    let pool = match db_pool {
-        Some(p) => p,
+    let pool = match state.db_pool {
+        Some(ref p) => p.clone(),
         None => {
-            return Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({"error": "Database not configured"})),
-                warp::http::StatusCode::SERVICE_UNAVAILABLE,
-            ));
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": "Database not configured"})),
+            )
+                .into_response();
         }
     };
 
     let _org_uuid: uuid::Uuid = match org_id.parse() {
         Ok(id) => id,
         Err(_) => {
-            return Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({"error": "Invalid org_id"})),
-                warp::http::StatusCode::BAD_REQUEST,
-            ));
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Invalid org_id"})),
+            )
+                .into_response();
         }
     };
 
     let key_uuid: uuid::Uuid = match key_id.parse() {
         Ok(id) => id,
         Err(_) => {
-            return Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({"error": "Invalid key_id"})),
-                warp::http::StatusCode::BAD_REQUEST,
-            ));
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Invalid key_id"})),
+            )
+                .into_response();
         }
     };
 
     match varpulis_db::repo::delete_api_key(&pool, key_uuid).await {
-        Ok(()) => Ok(warp::reply::with_status(
-            warp::reply::json(&serde_json::json!({"ok": true})),
-            warp::http::StatusCode::OK,
-        )),
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({"ok": true}))).into_response(),
         Err(e) => {
             tracing::error!("Failed to delete API key: {}", e);
-            Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({"error": "Internal error"})),
-                warp::http::StatusCode::INTERNAL_SERVER_ERROR,
-            ))
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Internal error"})),
+            )
+                .into_response()
         }
     }
 }
@@ -346,48 +364,24 @@ async fn handle_delete_api_key(
 pub fn org_routes(
     db_pool: Option<varpulis_db::PgPool>,
     oauth_state: Option<SharedOAuthState>,
-) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
-    let pool1 = db_pool.clone();
-    let pool2 = db_pool.clone();
-    let pool3 = db_pool.clone();
-    let pool4 = db_pool;
-    let oauth1 = oauth_state.clone();
-    let oauth2 = oauth_state.clone();
-    let oauth3 = oauth_state.clone();
-    let oauth4 = oauth_state;
+) -> Router {
+    let state = OrgState {
+        db_pool,
+        oauth_state,
+    };
 
-    // GET /api/v1/orgs
-    let list_orgs = warp::path!("api" / "v1" / "orgs")
-        .and(warp::get())
-        .and(warp::header::optional::<String>("authorization"))
-        .and(warp::any().map(move || pool1.clone()))
-        .and(warp::any().map(move || oauth1.clone()))
-        .and_then(handle_list_orgs);
-
-    // POST /api/v1/orgs/{org_id}/api-keys
-    let create_key = warp::path!("api" / "v1" / "orgs" / String / "api-keys")
-        .and(warp::post())
-        .and(warp::body::json())
-        .and(warp::header::optional::<String>("authorization"))
-        .and(warp::any().map(move || pool2.clone()))
-        .and(warp::any().map(move || oauth2.clone()))
-        .and_then(handle_create_api_key);
-
-    // GET /api/v1/orgs/{org_id}/api-keys
-    let list_keys = warp::path!("api" / "v1" / "orgs" / String / "api-keys")
-        .and(warp::get())
-        .and(warp::header::optional::<String>("authorization"))
-        .and(warp::any().map(move || pool3.clone()))
-        .and(warp::any().map(move || oauth3.clone()))
-        .and_then(handle_list_api_keys);
-
-    // DELETE /api/v1/orgs/{org_id}/api-keys/{key_id}
-    let delete_key = warp::path!("api" / "v1" / "orgs" / String / "api-keys" / String)
-        .and(warp::delete())
-        .and(warp::header::optional::<String>("authorization"))
-        .and(warp::any().map(move || pool4.clone()))
-        .and(warp::any().map(move || oauth4.clone()))
-        .and_then(handle_delete_api_key);
-
-    list_orgs.or(create_key).or(list_keys).or(delete_key)
+    Router::new()
+        // GET /api/v1/orgs
+        .route("/api/v1/orgs", get(handle_list_orgs))
+        // POST /api/v1/orgs/{org_id}/api-keys
+        .route(
+            "/api/v1/orgs/{org_id}/api-keys",
+            post(handle_create_api_key).get(handle_list_api_keys),
+        )
+        // DELETE /api/v1/orgs/{org_id}/api-keys/{key_id}
+        .route(
+            "/api/v1/orgs/{org_id}/api-keys/{key_id}",
+            delete(handle_delete_api_key),
+        )
+        .with_state(state)
 }

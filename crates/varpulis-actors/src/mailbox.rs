@@ -1,0 +1,150 @@
+//! Typed mailbox backed by a bounded `tokio::sync::mpsc` channel.
+
+use crate::actor::Actor;
+use std::fmt;
+use tokio::sync::{mpsc, oneshot};
+use tracing::warn;
+
+/// A command sent through the mailbox, wrapping either a plain message
+/// or a request-reply pair.
+pub enum Envelope<A: Actor> {
+    /// A one-way message with no reply expected.
+    Message(Box<dyn std::any::Any + Send>),
+    /// A request that expects a reply via the oneshot sender.
+    Ask {
+        message: Box<dyn std::any::Any + Send>,
+        reply_tx: oneshot::Sender<Box<dyn std::any::Any + Send>>,
+    },
+    /// Internal: observe the actor's current state.
+    Observe(oneshot::Sender<A::ObservableState>),
+}
+
+impl<A: Actor> fmt::Debug for Envelope<A> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Message(_) => write!(f, "Envelope::Message(..)"),
+            Self::Ask { .. } => write!(f, "Envelope::Ask(..)"),
+            Self::Observe(_) => write!(f, "Envelope::Observe(..)"),
+        }
+    }
+}
+
+/// The receiving half of a mailbox, held by the actor.
+pub struct Mailbox<A: Actor> {
+    rx: mpsc::Receiver<Envelope<A>>,
+}
+
+impl<A: Actor> Mailbox<A> {
+    /// Receive the next envelope, blocking until one is available.
+    ///
+    /// Returns `None` when all senders have been dropped.
+    pub async fn recv(&mut self) -> Option<Envelope<A>> {
+        self.rx.recv().await
+    }
+
+    /// Try to receive without blocking.
+    pub fn try_recv(&mut self) -> Option<Envelope<A>> {
+        self.rx.try_recv().ok()
+    }
+}
+
+/// The sending half of a mailbox, cheaply cloneable.
+pub struct MailboxSender<A: Actor> {
+    tx: mpsc::Sender<Envelope<A>>,
+}
+
+impl<A: Actor> Clone for MailboxSender<A> {
+    fn clone(&self) -> Self {
+        Self {
+            tx: self.tx.clone(),
+        }
+    }
+}
+
+impl<A: Actor> MailboxSender<A> {
+    /// Send a message to the actor's mailbox.
+    ///
+    /// Returns an error if the actor has stopped (channel closed).
+    pub async fn send<M: Send + 'static>(&self, message: M) -> Result<(), MailboxError> {
+        self.tx
+            .send(Envelope::Message(Box::new(message)))
+            .await
+            .map_err(|_| MailboxError::ActorStopped)
+    }
+
+    /// Try to send a message without blocking.
+    pub fn try_send<M: Send + 'static>(&self, message: M) -> Result<(), MailboxError> {
+        self.tx
+            .try_send(Envelope::Message(Box::new(message)))
+            .map_err(|e| match e {
+                mpsc::error::TrySendError::Full(_) => MailboxError::Full,
+                mpsc::error::TrySendError::Closed(_) => MailboxError::ActorStopped,
+            })
+    }
+
+    /// Send a message and wait for a reply (request/reply pattern).
+    ///
+    /// Returns `Err` if the actor has stopped or fails to reply.
+    pub async fn ask<M: Send + 'static, R: Send + 'static>(
+        &self,
+        message: M,
+    ) -> Result<R, MailboxError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.tx
+            .send(Envelope::Ask {
+                message: Box::new(message),
+                reply_tx,
+            })
+            .await
+            .map_err(|_| MailboxError::ActorStopped)?;
+
+        let reply = reply_rx.await.map_err(|_| MailboxError::ReplyDropped)?;
+        reply
+            .downcast::<R>()
+            .map(|r| *r)
+            .map_err(|_| MailboxError::TypeMismatch)
+    }
+
+    /// Request the actor's observable state.
+    pub async fn observe(&self) -> Result<A::ObservableState, MailboxError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(Envelope::Observe(tx))
+            .await
+            .map_err(|_| MailboxError::ActorStopped)?;
+        rx.await.map_err(|_| MailboxError::ReplyDropped)
+    }
+
+    /// Check if the actor is still running (channel is open).
+    pub fn is_connected(&self) -> bool {
+        !self.tx.is_closed()
+    }
+}
+
+/// Errors that can occur when interacting with a mailbox.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum MailboxError {
+    #[error("actor has stopped")]
+    ActorStopped,
+    #[error("mailbox is full (backpressure)")]
+    Full,
+    #[error("reply was dropped before being sent")]
+    ReplyDropped,
+    #[error("reply type mismatch")]
+    TypeMismatch,
+}
+
+/// Create a new mailbox pair with the given capacity.
+///
+/// The capacity controls backpressure: senders will block when the
+/// mailbox is full.
+pub fn create_mailbox<A: Actor>(capacity: usize) -> (MailboxSender<A>, Mailbox<A>) {
+    let cap = if capacity == 0 {
+        warn!("Mailbox capacity of 0 is not allowed, using 1");
+        1
+    } else {
+        capacity
+    };
+    let (tx, rx) = mpsc::channel(cap);
+    (MailboxSender { tx }, Mailbox { rx })
+}

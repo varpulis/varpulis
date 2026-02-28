@@ -2,8 +2,11 @@
 //!
 //! Provides API key authentication for WebSocket connections.
 
+use axum::extract::Request;
+use axum::http::StatusCode;
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Response};
 use std::sync::Arc;
-use warp::Filter;
 
 /// Authentication configuration
 #[derive(Debug, Clone)]
@@ -245,7 +248,7 @@ pub fn generate_api_key() -> String {
     key
 }
 
-/// Warp filter for API key authentication.
+/// Axum middleware for API key authentication.
 ///
 /// Checks authentication in this order:
 /// 1. X-API-Key header (backward-compatible)
@@ -255,104 +258,149 @@ pub fn generate_api_key() -> String {
 /// 5. Query parameter: api_key or token (last resort, kept for backward compatibility)
 ///
 /// Pass `oauth_state` to enable JWT verification from cookies.
-pub fn with_auth(
-    config: Arc<AuthConfig>,
-) -> impl warp::Filter<Extract = ((),), Error = warp::Rejection> + Clone {
-    with_auth_and_jwt(config, None)
+pub fn auth_middleware(config: Arc<AuthConfig>) -> impl tower::Layer<axum::routing::Route> + Clone {
+    axum::middleware::from_fn_with_state::<_, _, ()>(config, auth_middleware_fn)
 }
 
-/// Warp filter for authentication with optional JWT cookie support.
-pub fn with_auth_and_jwt(
+/// Authentication state that can carry optional OAuth state.
+#[derive(Clone)]
+pub struct AuthState {
+    pub config: Arc<AuthConfig>,
+    pub oauth_state: Option<crate::oauth::SharedOAuthState>,
+}
+
+/// Create an axum middleware layer for authentication with optional JWT cookie support.
+pub fn auth_middleware_with_jwt(
     config: Arc<AuthConfig>,
     oauth_state: Option<crate::oauth::SharedOAuthState>,
-) -> impl warp::Filter<Extract = ((),), Error = warp::Rejection> + Clone {
-    warp::any()
-        .and(warp::header::optional::<String>("authorization"))
-        .and(warp::header::optional::<String>("cookie"))
-        .and(warp::header::optional::<String>("sec-websocket-protocol"))
-        .and(warp::query::raw().or(warp::any().map(String::new)).unify())
-        .and_then(
-            move |auth_header: Option<String>,
-                  cookie_header: Option<String>,
-                  ws_protocol: Option<String>,
-                  query: String| {
-                let config = config.clone();
-                let oauth = oauth_state.clone();
-                async move {
-                    // If auth is disabled, allow all
-                    if !config.is_required() {
-                        return Ok(());
-                    }
-
-                    // Try to extract API key from header first
-                    if let Some(header) = &auth_header {
-                        match extract_from_header(header) {
-                            Ok(key) if config.validate_key(&key) => return Ok(()),
-                            Ok(_) => {
-                                return Err(warp::reject::custom(AuthRejection::InvalidCredentials))
-                            }
-                            Err(AuthError::MalformedHeader) => {
-                                return Err(warp::reject::custom(AuthRejection::MalformedHeader))
-                            }
-                            Err(_) => {} // Try other methods
-                        }
-                    }
-
-                    // Try JWT from cookie
-                    if let Some(ref cookie) = cookie_header {
-                        if let Some(jwt) = crate::oauth::extract_jwt_from_cookie(cookie) {
-                            if let Some(ref state) = oauth {
-                                // Verify JWT is valid and not revoked
-                                let hash = crate::oauth::token_hash(&jwt);
-                                if !state.sessions.read().await.is_revoked(&hash)
-                                    && crate::oauth::verify_jwt(&state.config, &jwt).is_ok()
-                                {
-                                    return Ok(());
-                                }
-                            }
-                        }
-                    }
-
-                    // Try Authorization header as Bearer JWT (when OAuth is configured)
-                    if let Some(ref header) = auth_header {
-                        if let Some(token) = header.strip_prefix("Bearer ") {
-                            let token = token.trim();
-                            if !token.is_empty() {
-                                if let Some(ref state) = oauth {
-                                    let hash = crate::oauth::token_hash(token);
-                                    if !state.sessions.read().await.is_revoked(&hash)
-                                        && crate::oauth::verify_jwt(&state.config, token).is_ok()
-                                    {
-                                        return Ok(());
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Try Sec-WebSocket-Protocol header (avoids API key in URL query params)
-                    if let Some(ref protocol) = ws_protocol {
-                        match extract_from_ws_protocol(protocol) {
-                            Ok(key) if config.validate_key(&key) => return Ok(()),
-                            Ok(_) => {
-                                return Err(warp::reject::custom(AuthRejection::InvalidCredentials))
-                            }
-                            Err(_) => {} // Try query params as last resort
-                        }
-                    }
-
-                    // Try query params (last resort, kept for backward compatibility)
-                    match extract_from_query(&query) {
-                        Ok(key) if config.validate_key(&key) => Ok(()),
-                        Ok(_) => Err(warp::reject::custom(AuthRejection::InvalidCredentials)),
-                        Err(_) => Err(warp::reject::custom(AuthRejection::MissingCredentials)),
-                    }
-                }
-            },
-        )
+) -> impl tower::Layer<axum::routing::Route> + Clone {
+    let state = AuthState {
+        config,
+        oauth_state,
+    };
+    axum::middleware::from_fn_with_state::<_, _, ()>(state, auth_middleware_jwt_fn)
 }
 
-/// Warp rejection type for authentication errors
+/// Axum middleware function for API key auth (no JWT).
+pub async fn auth_middleware_fn(
+    axum::extract::State(config): axum::extract::State<Arc<AuthConfig>>,
+    req: Request,
+    next: Next,
+) -> Result<Response, AuthRejection> {
+    let state = AuthState {
+        config,
+        oauth_state: None,
+    };
+    check_auth(&state, &req).await?;
+    Ok(next.run(req).await)
+}
+
+/// Axum middleware function for auth with JWT cookie support.
+async fn auth_middleware_jwt_fn(
+    axum::extract::State(state): axum::extract::State<AuthState>,
+    req: Request,
+    next: Next,
+) -> Result<Response, AuthRejection> {
+    check_auth(&state, &req).await?;
+    Ok(next.run(req).await)
+}
+
+/// Core authentication check, shared by both middleware variants.
+pub async fn check_auth(state: &AuthState, req: &Request) -> Result<(), AuthRejection> {
+    check_auth_from_parts(state, req.headers(), req.uri()).await
+}
+
+/// Authentication check from raw parts (headers + URI).
+///
+/// This avoids the need to hold a `Request<Body>` across await points,
+/// which would require `Body: Sync` (it isn't).
+pub async fn check_auth_from_parts(
+    state: &AuthState,
+    headers: &axum::http::HeaderMap,
+    uri: &axum::http::Uri,
+) -> Result<(), AuthRejection> {
+    let config = &state.config;
+    let oauth = &state.oauth_state;
+
+    // If auth is disabled, allow all
+    if !config.is_required() {
+        return Ok(());
+    }
+
+    let auth_header = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let cookie_header = headers
+        .get("cookie")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let ws_protocol = headers
+        .get("sec-websocket-protocol")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let query = uri.query().unwrap_or("").to_string();
+
+    // Try to extract API key from header first
+    if let Some(header) = &auth_header {
+        match extract_from_header(header) {
+            Ok(key) if config.validate_key(&key) => return Ok(()),
+            Ok(_) => return Err(AuthRejection::InvalidCredentials),
+            Err(AuthError::MalformedHeader) => return Err(AuthRejection::MalformedHeader),
+            Err(_) => {} // Try other methods
+        }
+    }
+
+    // Try JWT from cookie
+    if let Some(ref cookie) = cookie_header {
+        if let Some(jwt) = crate::oauth::extract_jwt_from_cookie(cookie) {
+            if let Some(ref state) = oauth {
+                // Verify JWT is valid and not revoked
+                let hash = crate::oauth::token_hash(&jwt);
+                if !state.sessions.read().await.is_revoked(&hash)
+                    && crate::oauth::verify_jwt(&state.config, &jwt).is_ok()
+                {
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    // Try Authorization header as Bearer JWT (when OAuth is configured)
+    if let Some(ref header) = auth_header {
+        if let Some(token) = header.strip_prefix("Bearer ") {
+            let token = token.trim();
+            if !token.is_empty() {
+                if let Some(ref state) = oauth {
+                    let hash = crate::oauth::token_hash(token);
+                    if !state.sessions.read().await.is_revoked(&hash)
+                        && crate::oauth::verify_jwt(&state.config, token).is_ok()
+                    {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    }
+
+    // Try Sec-WebSocket-Protocol header (avoids API key in URL query params)
+    if let Some(ref protocol) = ws_protocol {
+        match extract_from_ws_protocol(protocol) {
+            Ok(key) if config.validate_key(&key) => return Ok(()),
+            Ok(_) => return Err(AuthRejection::InvalidCredentials),
+            Err(_) => {} // Try query params as last resort
+        }
+    }
+
+    // Try query params (last resort, kept for backward compatibility)
+    match extract_from_query(&query) {
+        Ok(key) if config.validate_key(&key) => Ok(()),
+        Ok(_) => Err(AuthRejection::InvalidCredentials),
+        Err(_) => Err(AuthRejection::MissingCredentials),
+    }
+}
+
+/// Authentication rejection type (implements IntoResponse for axum)
 #[derive(Debug)]
 pub enum AuthRejection {
     MissingCredentials,
@@ -360,74 +408,19 @@ pub enum AuthRejection {
     MalformedHeader,
 }
 
-impl warp::reject::Reject for AuthRejection {}
-
-/// Handle authentication and rate limit rejections
-pub async fn handle_rejection(
-    err: warp::Rejection,
-) -> Result<impl warp::Reply, std::convert::Infallible> {
-    // Check for rate limit rejection first
-    if let Some(reply) = crate::rate_limit::handle_rate_limit_rejection(&err) {
-        return Ok(reply);
-    }
-
-    let (code, message): (warp::http::StatusCode, String) =
-        if let Some(auth_err) = err.find::<AuthRejection>() {
-            match auth_err {
-                AuthRejection::MissingCredentials => (
-                    warp::http::StatusCode::UNAUTHORIZED,
-                    "Authentication required".into(),
-                ),
-                AuthRejection::InvalidCredentials => (
-                    warp::http::StatusCode::UNAUTHORIZED,
-                    "Invalid API key".into(),
-                ),
-                AuthRejection::MalformedHeader => (
-                    warp::http::StatusCode::BAD_REQUEST,
-                    "Malformed authorization header".into(),
-                ),
+impl IntoResponse for AuthRejection {
+    fn into_response(self) -> Response {
+        let (code, message) = match self {
+            AuthRejection::MissingCredentials => {
+                (StatusCode::UNAUTHORIZED, "Authentication required")
             }
-        } else if let Some(e) = err.find::<warp::filters::body::BodyDeserializeError>() {
-            (
-                warp::http::StatusCode::BAD_REQUEST,
-                format!("Invalid request body: {}", e),
-            )
-        } else if err.find::<warp::reject::InvalidQuery>().is_some() {
-            (
-                warp::http::StatusCode::BAD_REQUEST,
-                "Invalid query parameters".into(),
-            )
-        } else if err.find::<warp::reject::PayloadTooLarge>().is_some() {
-            (
-                warp::http::StatusCode::PAYLOAD_TOO_LARGE,
-                "Request payload too large".into(),
-            )
-        } else if err.find::<warp::reject::UnsupportedMediaType>().is_some() {
-            (
-                warp::http::StatusCode::UNSUPPORTED_MEDIA_TYPE,
-                "Unsupported media type".into(),
-            )
-        } else if err.find::<warp::reject::MethodNotAllowed>().is_some() {
-            (
-                warp::http::StatusCode::METHOD_NOT_ALLOWED,
-                "Method not allowed".into(),
-            )
-        } else if err.is_not_found() {
-            (warp::http::StatusCode::NOT_FOUND, "Not found".into())
-        } else {
-            tracing::error!("Unhandled rejection: {:?}", err);
-            (
-                warp::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Internal server error".into(),
-            )
+            AuthRejection::InvalidCredentials => (StatusCode::UNAUTHORIZED, "Invalid API key"),
+            AuthRejection::MalformedHeader => {
+                (StatusCode::BAD_REQUEST, "Malformed authorization header")
+            }
         };
-
-    Ok(warp::reply::with_status(
-        warp::reply::json(&serde_json::json!({
-            "error": message
-        })),
-        code,
-    ))
+        (code, axum::Json(serde_json::json!({ "error": message }))).into_response()
+    }
 }
 
 // =============================================================================
@@ -437,7 +430,6 @@ pub async fn handle_rejection(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use warp::Filter;
 
     // -------------------------------------------------------------------------
     // AuthConfig tests
@@ -711,76 +703,84 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
-    // Integration tests with warp
+    // Integration tests with axum
     // -------------------------------------------------------------------------
 
     #[tokio::test]
     async fn test_with_auth_disabled() {
         let config = Arc::new(AuthConfig::disabled());
-        let filter = with_auth(config)
-            .untuple_one()
-            .map(|| warp::reply::html("ok"));
-
-        let res = warp::test::request().path("/").reply(&filter).await;
-        assert_eq!(res.status(), 200);
+        let state = AuthState {
+            config,
+            oauth_state: None,
+        };
+        // Build a fake request with no auth
+        let req = Request::builder()
+            .uri("/")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let result = check_auth(&state, &req).await;
+        assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_with_auth_valid_header() {
         let config = Arc::new(AuthConfig::with_api_key("secret".to_string()));
-        let filter = with_auth(config)
-            .untuple_one()
-            .map(|| warp::reply::html("ok"))
-            .recover(handle_rejection);
-
-        let res = warp::test::request()
-            .path("/")
+        let state = AuthState {
+            config,
+            oauth_state: None,
+        };
+        let req = Request::builder()
+            .uri("/")
             .header("authorization", "Bearer secret")
-            .reply(&filter)
-            .await;
-        assert_eq!(res.status(), 200);
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let result = check_auth(&state, &req).await;
+        assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_with_auth_valid_query() {
         let config = Arc::new(AuthConfig::with_api_key("secret".to_string()));
-        let filter = with_auth(config)
-            .untuple_one()
-            .map(|| warp::reply::html("ok"))
-            .recover(handle_rejection);
-
-        let res = warp::test::request()
-            .path("/?api_key=secret")
-            .reply(&filter)
-            .await;
-        assert_eq!(res.status(), 200);
+        let state = AuthState {
+            config,
+            oauth_state: None,
+        };
+        let req = Request::builder()
+            .uri("/?api_key=secret")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let result = check_auth(&state, &req).await;
+        assert!(result.is_ok());
     }
 
     #[tokio::test]
     async fn test_with_auth_invalid_key() {
         let config = Arc::new(AuthConfig::with_api_key("secret".to_string()));
-        let filter = with_auth(config)
-            .untuple_one()
-            .map(|| warp::reply::html("ok"))
-            .recover(handle_rejection);
-
-        let res = warp::test::request()
-            .path("/")
+        let state = AuthState {
+            config,
+            oauth_state: None,
+        };
+        let req = Request::builder()
+            .uri("/")
             .header("authorization", "Bearer wrong")
-            .reply(&filter)
-            .await;
-        assert_eq!(res.status(), 401);
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let result = check_auth(&state, &req).await;
+        assert!(matches!(result, Err(AuthRejection::InvalidCredentials)));
     }
 
     #[tokio::test]
     async fn test_with_auth_missing_credentials() {
         let config = Arc::new(AuthConfig::with_api_key("secret".to_string()));
-        let filter = with_auth(config)
-            .untuple_one()
-            .map(|| warp::reply::html("ok"))
-            .recover(handle_rejection);
-
-        let res = warp::test::request().path("/").reply(&filter).await;
-        assert_eq!(res.status(), 401);
+        let state = AuthState {
+            config,
+            oauth_state: None,
+        };
+        let req = Request::builder()
+            .uri("/")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let result = check_auth(&state, &req).await;
+        assert!(matches!(result, Err(AuthRejection::MissingCredentials)));
     }
 }

@@ -3,19 +3,21 @@
 //! Provides ephemeral sessions with no authentication required.
 //! Sessions auto-expire after inactivity and have conservative resource quotas.
 
+use axum::extract::{Json, Path, State};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use axum::routing::{get, post};
+use axum::Router;
 use indexmap::IndexMap;
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 use varpulis_core::Value;
 use varpulis_runtime::event::Event;
-use warp::http::StatusCode;
-use warp::{Filter, Reply};
 
 // =============================================================================
 // Constants
@@ -331,99 +333,58 @@ stream AllAlerts = merge(TempAlerts, HumidAlerts)
 // Route construction
 // =============================================================================
 
-pub fn playground_routes(
-    playground: SharedPlayground,
-) -> impl Filter<Extract = (impl Reply,), Error = warp::Rejection> + Clone {
-    let api = warp::path("api")
-        .and(warp::path("v1"))
-        .and(warp::path("playground"));
-
-    let with_pg = {
-        let pg = playground.clone();
-        warp::any().map(move || pg.clone())
-    };
-
-    let create_session = api
-        .and(warp::path("session"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(with_pg.clone())
-        .and_then(handle_create_session);
-
-    let run = api
-        .and(warp::path("run"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(warp::body::content_length_limit(1024 * 1024)) // 1 MB
-        .and(warp::body::json())
-        .and(with_pg.clone())
-        .and_then(handle_run);
-
-    let validate = api
-        .and(warp::path("validate"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(warp::body::content_length_limit(256 * 1024)) // 256 KB
-        .and(warp::body::json())
-        .and(with_pg.clone())
-        .and_then(handle_validate);
-
-    let list_examples = api
-        .and(warp::path("examples"))
-        .and(warp::path::end())
-        .and(warp::get())
-        .and_then(handle_list_examples);
-
-    let get_example = api
-        .and(warp::path("examples"))
-        .and(warp::path::param::<String>())
-        .and(warp::path::end())
-        .and(warp::get())
-        .and_then(handle_get_example);
-
-    create_session
-        .or(run)
-        .or(validate)
-        .or(list_examples)
-        .or(get_example)
+pub fn playground_routes(playground: SharedPlayground) -> Router {
+    Router::new()
+        .route("/api/v1/playground/session", post(handle_create_session))
+        .route(
+            "/api/v1/playground/run",
+            post(handle_run).layer(tower_http::limit::RequestBodyLimitLayer::new(1024 * 1024)),
+        )
+        .route(
+            "/api/v1/playground/validate",
+            post(handle_validate).layer(tower_http::limit::RequestBodyLimitLayer::new(256 * 1024)),
+        )
+        .route("/api/v1/playground/examples", get(handle_list_examples))
+        .route("/api/v1/playground/examples/{id}", get(handle_get_example))
+        .with_state(playground)
 }
 
 // =============================================================================
 // Handlers
 // =============================================================================
 
-async fn handle_create_session(playground: SharedPlayground) -> Result<impl Reply, Infallible> {
+async fn handle_create_session(State(playground): State<SharedPlayground>) -> impl IntoResponse {
     let session_id = Uuid::new_v4().to_string();
     {
         let mut pg = playground.write().await;
         pg.get_or_create_session(&session_id);
     }
     let resp = SessionResponse { session_id };
-    Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::CREATED).into_response())
+    (StatusCode::CREATED, Json(resp))
 }
 
 async fn handle_run(
-    body: PlaygroundRunRequest,
-    playground: SharedPlayground,
-) -> Result<impl Reply, Infallible> {
+    State(playground): State<SharedPlayground>,
+    Json(body): Json<PlaygroundRunRequest>,
+) -> Response {
     // Validate input size
     if body.vpl.len() > MAX_VPL_LENGTH {
-        return Ok(pg_error_response(
+        return pg_error_response(
             StatusCode::BAD_REQUEST,
             "vpl_too_large",
             &format!(
                 "VPL source exceeds maximum size of {} bytes",
                 MAX_VPL_LENGTH
             ),
-        ));
+        );
     }
 
     if body.events.len() > MAX_EVENTS_PER_RUN {
-        return Ok(pg_error_response(
+        return pg_error_response(
             StatusCode::BAD_REQUEST,
             "too_many_events",
             &format!("Maximum {} events per run", MAX_EVENTS_PER_RUN),
-        ));
+        );
     }
 
     // Track session (auto-create if needed)
@@ -484,7 +445,7 @@ async fn handle_run(
                 diagnostics: vec![],
                 error: None,
             };
-            Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+            (StatusCode::OK, Json(resp)).into_response()
         }
         Ok(Err(e)) => {
             let resp = PlaygroundRunResponse {
@@ -495,7 +456,7 @@ async fn handle_run(
                 diagnostics: vec![],
                 error: Some(e.to_string()),
             };
-            Ok(warp::reply::with_status(warp::reply::json(&resp), StatusCode::OK).into_response())
+            (StatusCode::OK, Json(resp)).into_response()
         }
         Err(_timeout) => {
             let resp = PlaygroundRunResponse {
@@ -506,27 +467,24 @@ async fn handle_run(
                 diagnostics: vec![],
                 error: Some(format!("Execution timed out after {}s", MAX_EXECUTION_SECS)),
             };
-            Ok(
-                warp::reply::with_status(warp::reply::json(&resp), StatusCode::REQUEST_TIMEOUT)
-                    .into_response(),
-            )
+            (StatusCode::REQUEST_TIMEOUT, Json(resp)).into_response()
         }
     }
 }
 
 async fn handle_validate(
-    body: PlaygroundValidateRequest,
-    _playground: SharedPlayground,
-) -> Result<impl Reply, Infallible> {
+    State(_playground): State<SharedPlayground>,
+    Json(body): Json<PlaygroundValidateRequest>,
+) -> Response {
     if body.vpl.len() > MAX_VPL_LENGTH {
-        return Ok(pg_error_response(
+        return pg_error_response(
             StatusCode::BAD_REQUEST,
             "vpl_too_large",
             &format!(
                 "VPL source exceeds maximum size of {} bytes",
                 MAX_VPL_LENGTH
             ),
-        ));
+        );
     }
 
     let result = match varpulis_parser::parse(&body.vpl) {
@@ -571,10 +529,10 @@ async fn handle_validate(
         }
     };
 
-    Ok(warp::reply::with_status(warp::reply::json(&result), StatusCode::OK).into_response())
+    (StatusCode::OK, Json(result)).into_response()
 }
 
-async fn handle_list_examples() -> Result<impl Reply, Infallible> {
+async fn handle_list_examples() -> impl IntoResponse {
     let examples: Vec<PlaygroundExample> = builtin_examples()
         .into_iter()
         .map(|e| PlaygroundExample {
@@ -584,20 +542,18 @@ async fn handle_list_examples() -> Result<impl Reply, Infallible> {
             category: e.category,
         })
         .collect();
-    Ok(warp::reply::with_status(warp::reply::json(&examples), StatusCode::OK).into_response())
+    (StatusCode::OK, Json(examples))
 }
 
-async fn handle_get_example(id: String) -> Result<impl Reply, Infallible> {
+async fn handle_get_example(Path(id): Path<String>) -> Response {
     let examples = builtin_examples();
     match examples.into_iter().find(|e| e.id == id) {
-        Some(example) => Ok(
-            warp::reply::with_status(warp::reply::json(&example), StatusCode::OK).into_response(),
-        ),
-        None => Ok(pg_error_response(
+        Some(example) => (StatusCode::OK, Json(example)).into_response(),
+        None => pg_error_response(
             StatusCode::NOT_FOUND,
             "example_not_found",
             &format!("Example '{}' not found", id),
-        )),
+        ),
     }
 }
 
@@ -623,12 +579,12 @@ pub fn spawn_session_reaper(playground: SharedPlayground) {
 // Helpers
 // =============================================================================
 
-fn pg_error_response(status: StatusCode, code: &str, message: &str) -> warp::reply::Response {
+fn pg_error_response(status: StatusCode, code: &str, message: &str) -> Response {
     let body = PlaygroundError {
         error: message.to_string(),
         code: code.to_string(),
     };
-    warp::reply::with_status(warp::reply::json(&body), status).into_response()
+    (status, Json(body)).into_response()
 }
 
 fn json_to_runtime_value(v: &serde_json::Value) -> Value {

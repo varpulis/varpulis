@@ -220,6 +220,14 @@ export class WebSocketClient {
       })
     }
 
+    // Forward actor health updates to the health store (lazy import to avoid circular deps)
+    if (message.type === 'actor_health') {
+      import('@/stores/health').then(({ useHealthStore }) => {
+        const healthStore = useHealthStore()
+        healthStore.handleActorHealthMessage(message)
+      })
+    }
+
     // Notify all handlers
     this.messageHandlers.forEach((handler) => {
       try {

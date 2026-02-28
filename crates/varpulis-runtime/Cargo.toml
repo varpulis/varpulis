@@ -7,6 +7,7 @@ repository.workspace = true
 description = "Runtime execution engine for Varpulis"
 
 [dependencies]
+varpulis-actors = { workspace = true }
 varpulis-core = { version = "0.4.1", path = "../varpulis-core" }
 varpulis-parser = { version = "0.4.1", path = "../varpulis-parser" }
 varpulis-zdd = { version = "0.4.1", path = "../varpulis-zdd" }
