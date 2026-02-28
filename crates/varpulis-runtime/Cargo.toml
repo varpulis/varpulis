@@ -92,6 +92,7 @@ gpu = ["onnx"]
 binary-codec = ["rmp-serde"]
 encryption = ["aes-gcm", "argon2", "hex"]
 cdc = ["tokio-postgres", "bytes"]
+csv-converter = []
 all-connectors = ["mqtt", "kafka", "nats", "database", "redis", "kinesis", "s3", "elasticsearch", "pulsar"]
 
 [dev-dependencies]
@@ -103,6 +104,7 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 tokio-postgres = { version = "0.7" }
 uuid = { version = "1", features = ["v4"] }
 futures = "0.3"
+insta = { workspace = true }
 
 [[bench]]
 name = "pattern_benchmark"

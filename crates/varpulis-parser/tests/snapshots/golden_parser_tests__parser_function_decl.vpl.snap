@@ -1,0 +1,9 @@
+---
+source: crates/varpulis-parser/tests/golden_parser_tests.rs
+expression: summary
+---
+functions:
+  - double
+statement_count: 2
+streams:
+  - Doubled

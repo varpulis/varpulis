@@ -1,0 +1,12 @@
+---
+source: crates/varpulis-runtime/tests/golden_tests.rs
+expression: outputs
+---
+- event_type: HighTemp
+  fields:
+    sensor: S1
+    temp: 105
+- event_type: HighTemp
+  fields:
+    sensor: S3
+    temp: 200

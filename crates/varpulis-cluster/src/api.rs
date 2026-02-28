@@ -264,8 +264,15 @@ pub fn cluster_routes(
         )
         .route("/api/v1/cluster/chat/config", get(handle_get_chat_config));
 
+    // Health probe routes (no auth, no rate limiting)
+    let health_routes = Router::new()
+        .route("/health/live", get(handle_health_live))
+        .route("/health/ready", get(handle_health_ready))
+        .route("/health/started", get(handle_health_started))
+        .route("/health", get(handle_health_detailed));
+
     #[allow(unused_mut)]
-    let mut router = rate_limited.merge(read_only);
+    let mut router = rate_limited.merge(read_only).merge(health_routes);
 
     // Federation endpoints (behind feature flag)
     #[cfg(feature = "federation")]
@@ -2632,6 +2639,84 @@ async fn handle_federation_catalog(State(state): State<AppState>, _auth: RbacVie
             StatusCode::NOT_FOUND,
         ),
     }
+}
+
+// =============================================================================
+// Health Probe Handlers
+// =============================================================================
+
+/// Liveness probe — always returns 200.
+async fn handle_health_live() -> Response {
+    reply_json_status(&serde_json::json!({"status": "ok"}), StatusCode::OK)
+}
+
+/// Readiness probe — returns 200 when the coordinator has at least one ready worker.
+async fn handle_health_ready(State(state): State<AppState>) -> Response {
+    let coordinator = state.coordinator.read().await;
+    let has_ready = coordinator
+        .workers
+        .values()
+        .any(|w| w.status == crate::worker::WorkerStatus::Ready);
+    if has_ready {
+        reply_json_status(&serde_json::json!({"status": "ready"}), StatusCode::OK)
+    } else {
+        reply_json_status(
+            &serde_json::json!({"status": "not_ready", "reason": "no ready workers"}),
+            StatusCode::SERVICE_UNAVAILABLE,
+        )
+    }
+}
+
+/// Startup probe — returns 200 once the coordinator exists (server is up).
+async fn handle_health_started() -> Response {
+    reply_json_status(&serde_json::json!({"status": "started"}), StatusCode::OK)
+}
+
+/// Detailed health endpoint — returns per-component health as JSON.
+async fn handle_health_detailed(State(state): State<AppState>) -> Response {
+    let coordinator = state.coordinator.read().await;
+
+    let worker_health: Vec<serde_json::Value> = coordinator
+        .workers
+        .values()
+        .map(|w| {
+            serde_json::json!({
+                "id": w.id.0,
+                "status": format!("{:?}", w.status),
+                "address": w.address,
+                "seconds_since_heartbeat": w.last_heartbeat.elapsed().as_secs(),
+            })
+        })
+        .collect();
+
+    let all_ready = coordinator
+        .workers
+        .values()
+        .all(|w| w.status == crate::worker::WorkerStatus::Ready);
+    let overall = if coordinator.workers.is_empty() {
+        "down"
+    } else if all_ready {
+        "up"
+    } else {
+        "degraded"
+    };
+
+    let pipeline_count: usize = coordinator
+        .pipeline_groups
+        .values()
+        .map(|g| g.placements.len())
+        .sum();
+
+    reply_json_status(
+        &serde_json::json!({
+            "status": overall,
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+            "workers": worker_health,
+            "worker_count": coordinator.workers.len(),
+            "pipeline_count": pipeline_count,
+        }),
+        StatusCode::OK,
+    )
 }
 
 #[cfg(test)]

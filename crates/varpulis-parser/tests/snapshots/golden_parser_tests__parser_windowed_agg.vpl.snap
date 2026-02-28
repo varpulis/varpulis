@@ -1,0 +1,8 @@
+---
+source: crates/varpulis-parser/tests/golden_parser_tests.rs
+expression: summary
+---
+functions: []
+statement_count: 1
+streams:
+  - AvgTemp

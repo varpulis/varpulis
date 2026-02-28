@@ -80,8 +80,10 @@ pub fn compile_agg_expr(
                 "p95" => Box::new(P95),
                 "p99" => Box::new(P99),
                 "percentile" => Box::new(Percentile::new(second_float.unwrap_or(0.5))),
-                _ => {
-                    warn!("Unknown aggregation function: {}", func_name);
+                other => {
+                    // Fallback: check UdfRegistry for custom aggregate UDFs
+                    // (checked by compile_agg_expr_with_udfs; standard path logs warning)
+                    warn!("Unknown aggregation function: {}", other);
                     return None;
                 }
             };
@@ -115,6 +117,63 @@ pub fn compile_agg_expr(
             warn!("Unsupported aggregate expression: {:?}", expr);
             None
         }
+    }
+}
+
+/// Compile an aggregate expression, checking the UDF registry for custom aggregates.
+///
+/// Falls through to [`compile_agg_expr`] for built-in functions. When a name
+/// is not recognized as a built-in but exists in the UDF registry as an aggregate,
+/// it is wrapped in an adapter that delegates to the [`Accumulator`](crate::udf::Accumulator).
+pub fn compile_agg_expr_with_udfs(
+    expr: &varpulis_core::ast::Expr,
+    udf_registry: &crate::udf::UdfRegistry,
+) -> Option<(Box<dyn crate::aggregation::AggregateFunc>, Option<String>)> {
+    // Try built-in first
+    if let Some(result) = compile_agg_expr(expr) {
+        return Some(result);
+    }
+
+    // Fallback: check UDF registry for custom aggregate
+    use varpulis_core::ast::{Arg, Expr};
+    if let Expr::Call { func, args } = expr {
+        if let Expr::Ident(func_name) = func.as_ref() {
+            if let Some(agg_udf) = udf_registry.get_aggregate(func_name) {
+                let field = args.first().and_then(|a| match a {
+                    Arg::Positional(Expr::Ident(s)) => Some(s.clone()),
+                    _ => None,
+                });
+
+                let adapter = UdfAggregateAdapter {
+                    udf: agg_udf.clone(),
+                };
+                return Some((Box::new(adapter), field));
+            }
+        }
+    }
+
+    None
+}
+
+/// Adapter that wraps a UDF [`Accumulator`](crate::udf::Accumulator) as an [`AggregateFunc`](crate::aggregation::AggregateFunc).
+struct UdfAggregateAdapter {
+    udf: std::sync::Arc<dyn crate::udf::AggregateUDF>,
+}
+
+impl crate::aggregation::AggregateFunc for UdfAggregateAdapter {
+    fn name(&self) -> &str {
+        "udf_aggregate"
+    }
+
+    fn apply(&self, events: &[crate::event::Event], field: Option<&str>) -> varpulis_core::Value {
+        let mut acc = self.udf.init();
+        let field_name = field.unwrap_or("value");
+        for event in events {
+            if let Some(val) = event.get(field_name) {
+                acc.update(val);
+            }
+        }
+        acc.finish()
     }
 }
 

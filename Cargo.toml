@@ -95,6 +95,7 @@ hex = "0.4"
 
 # Testing
 pretty_assertions = "1.4"
+insta = { version = "1", features = ["yaml"] }
 
 # ---------------------------------------------------------------------------
 # Duplicate dependency note
