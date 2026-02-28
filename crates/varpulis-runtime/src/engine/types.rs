@@ -221,6 +221,40 @@ pub(crate) enum RuntimeOp {
     Concurrent(ConcurrentConfig),
 }
 
+impl RuntimeOp {
+    /// Return a short human-readable name for this operation.
+    ///
+    /// Used by the topology builder to create operation summaries.
+    pub fn summary_name(&self) -> &'static str {
+        match self {
+            RuntimeOp::WhereClosure(_) => "Filter",
+            RuntimeOp::WhereExpr(_) => "Filter",
+            RuntimeOp::Window(_) => "Window",
+            RuntimeOp::PartitionedWindow(_) => "PartitionedWindow",
+            RuntimeOp::PartitionedSlidingCountWindow(_) => "PartitionedSlidingCountWindow",
+            RuntimeOp::Aggregate(_) => "Aggregate",
+            RuntimeOp::PartitionedAggregate(_) => "PartitionedAggregate",
+            RuntimeOp::Having(_) => "Having",
+            RuntimeOp::Select(_) => "Select",
+            RuntimeOp::Emit(_) => "Emit",
+            RuntimeOp::EmitExpr(_) => "EmitExpr",
+            RuntimeOp::Print(_) => "Print",
+            RuntimeOp::Log(_) => "Log",
+            RuntimeOp::Sequence => "Sequence",
+            RuntimeOp::Pattern(_) => "Pattern",
+            RuntimeOp::Process(_) => "Process",
+            RuntimeOp::To(_) => "Sink",
+            RuntimeOp::TrendAggregate(_) => "TrendAggregate",
+            RuntimeOp::Score(_) => "Score",
+            RuntimeOp::Forecast(_) => "Forecast",
+            RuntimeOp::Enrich(_) => "Enrich",
+            RuntimeOp::Distinct(_) => "Distinct",
+            RuntimeOp::Limit(_) => "Limit",
+            RuntimeOp::Concurrent(_) => "Concurrent",
+        }
+    }
+}
+
 /// Configuration for `.concurrent()` parallel processing
 pub(crate) struct ConcurrentConfig {
     pub workers: usize,

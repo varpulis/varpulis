@@ -1,5 +1,6 @@
 //! Database connector (PostgreSQL/MySQL/SQLite with sqlx)
 
+use super::component::{ConnectorComponentInfo, ConnectorFactory};
 #[cfg(feature = "database")]
 use super::helpers::json_to_value;
 use super::types::{ConnectorError, SinkConnector, SourceConnector};
@@ -7,6 +8,31 @@ use crate::event::Event;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 use varpulis_core::security::SecretString;
+
+// ---------------------------------------------------------------------------
+// Declarative registration
+// ---------------------------------------------------------------------------
+
+static DATABASE_INFO: ConnectorComponentInfo = ConnectorComponentInfo {
+    connector_type: "database",
+    display_name: "Database",
+    description: "SQL database connector (PostgreSQL, MySQL, SQLite)",
+    feature_flag: "database",
+    supports_source: true,
+    supports_sink: true,
+    supports_managed: false,
+    config_params: &[],
+};
+
+struct DatabaseFactory;
+
+impl ConnectorFactory for DatabaseFactory {
+    fn info(&self) -> &ConnectorComponentInfo {
+        &DATABASE_INFO
+    }
+}
+
+inventory::submit! { &DatabaseFactory as &dyn ConnectorFactory }
 
 /// Validate that a table name is safe for interpolation into SQL.
 ///

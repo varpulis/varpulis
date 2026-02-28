@@ -1,11 +1,48 @@
 //! Apache Pulsar connector
 
+use super::component::{ConnectorComponentInfo, ConnectorFactory};
 #[cfg(feature = "pulsar")]
 use super::helpers::json_to_event;
-use super::types::{ConnectorError, SinkConnector, SourceConnector};
+use super::types::{ConnectorConfig, ConnectorError, SinkConnector, SourceConnector};
 use crate::event::Event;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
+
+// ---------------------------------------------------------------------------
+// Declarative registration
+// ---------------------------------------------------------------------------
+
+static PULSAR_INFO: ConnectorComponentInfo = ConnectorComponentInfo {
+    connector_type: "pulsar",
+    display_name: "Apache Pulsar",
+    description: "Apache Pulsar messaging connector",
+    feature_flag: "pulsar",
+    supports_source: true,
+    supports_sink: true,
+    supports_managed: false,
+    config_params: &[],
+};
+
+struct PulsarFactory;
+
+impl ConnectorFactory for PulsarFactory {
+    fn info(&self) -> &ConnectorComponentInfo {
+        &PULSAR_INFO
+    }
+
+    fn create_sink_connector(
+        &self,
+        config: &ConnectorConfig,
+    ) -> Result<Box<dyn SinkConnector>, ConnectorError> {
+        let topic = config.topic.clone().unwrap_or_else(|| "events".to_string());
+        Ok(Box::new(PulsarSink::new(
+            "pulsar",
+            PulsarConfig::new(&config.url, &topic),
+        )))
+    }
+}
+
+inventory::submit! { &PulsarFactory as &dyn ConnectorFactory }
 
 /// Pulsar configuration
 #[derive(Debug, Clone)]

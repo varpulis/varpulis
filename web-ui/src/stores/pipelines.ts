@@ -10,6 +10,8 @@ import type {
   RouteFormEntry,
 } from '@/types/pipeline'
 import * as clusterApi from '@/api/cluster'
+import * as pipelinesApi from '@/api/pipelines'
+import type { PipelineTopology, ExplainResult, AvailableConnector } from '@/api/pipelines'
 
 // Default form state
 function createDefaultFormState(): DeployFormState {
@@ -47,6 +49,13 @@ export const usePipelinesStore = defineStore('pipelines', () => {
   const deploying = ref(false)
   const error = ref<string | null>(null)
   const deployDialogOpen = ref(false)
+
+  // Topology & Explain state
+  const topology = ref<PipelineTopology | null>(null)
+  const topologyLoading = ref(false)
+  const explainResult = ref<ExplainResult | null>(null)
+  const explainLoading = ref(false)
+  const availableConnectors = ref<AvailableConnector[]>([])
 
   // Computed (status values match Rust GroupStatus snake_case)
   const runningGroups = computed(() =>
@@ -205,6 +214,36 @@ export const usePipelinesStore = defineStore('pipelines', () => {
     error.value = null
   }
 
+  async function fetchTopology(workerAddress: string, pipelineId: string): Promise<void> {
+    topologyLoading.value = true
+    try {
+      topology.value = await pipelinesApi.getPipelineTopology(workerAddress, pipelineId)
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Failed to fetch topology'
+    } finally {
+      topologyLoading.value = false
+    }
+  }
+
+  async function fetchExplain(vplSource: string): Promise<void> {
+    explainLoading.value = true
+    try {
+      explainResult.value = await pipelinesApi.explainVpl(vplSource)
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Failed to fetch explain plan'
+    } finally {
+      explainLoading.value = false
+    }
+  }
+
+  async function fetchAvailableConnectors(): Promise<void> {
+    try {
+      availableConnectors.value = await pipelinesApi.listAvailableConnectors()
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Failed to fetch available connectors'
+    }
+  }
+
   return {
     // State
     groups,
@@ -222,6 +261,13 @@ export const usePipelinesStore = defineStore('pipelines', () => {
     allPipelines,
     pipelinesByWorker,
 
+    // Topology & Explain state
+    topology,
+    topologyLoading,
+    explainResult,
+    explainLoading,
+    availableConnectors,
+
     // Actions
     fetchGroups,
     fetchGroupDetail,
@@ -236,5 +282,8 @@ export const usePipelinesStore = defineStore('pipelines', () => {
     removeRoute,
     selectGroup,
     clearError,
+    fetchTopology,
+    fetchExplain,
+    fetchAvailableConnectors,
   }
 })

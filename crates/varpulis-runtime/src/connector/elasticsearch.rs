@@ -1,10 +1,47 @@
 //! Elasticsearch sink connector
 
-use super::types::{ConnectorError, SinkConnector};
+use super::component::{ConnectorComponentInfo, ConnectorFactory};
+use super::types::{ConnectorConfig, ConnectorError, SinkConnector};
 use crate::event::Event;
 use async_trait::async_trait;
 use tracing::warn;
 use varpulis_core::security::SecretString;
+
+// ---------------------------------------------------------------------------
+// Declarative registration
+// ---------------------------------------------------------------------------
+
+static ES_INFO: ConnectorComponentInfo = ConnectorComponentInfo {
+    connector_type: "elasticsearch",
+    display_name: "Elasticsearch",
+    description: "Elasticsearch indexing sink",
+    feature_flag: "elasticsearch",
+    supports_source: false,
+    supports_sink: true,
+    supports_managed: false,
+    config_params: &[],
+};
+
+struct ElasticsearchFactory;
+
+impl ConnectorFactory for ElasticsearchFactory {
+    fn info(&self) -> &ConnectorComponentInfo {
+        &ES_INFO
+    }
+
+    fn create_sink_connector(
+        &self,
+        config: &ConnectorConfig,
+    ) -> Result<Box<dyn SinkConnector>, ConnectorError> {
+        let index = config.topic.clone().unwrap_or_else(|| "events".to_string());
+        Ok(Box::new(ElasticsearchSink::new(
+            "elasticsearch",
+            ElasticsearchConfig::new(&config.url, &index),
+        )))
+    }
+}
+
+inventory::submit! { &ElasticsearchFactory as &dyn ConnectorFactory }
 
 /// Elasticsearch sink configuration
 ///

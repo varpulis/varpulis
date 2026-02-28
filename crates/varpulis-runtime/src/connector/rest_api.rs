@@ -1,10 +1,48 @@
 //! REST API client and sink connector
 
+use super::component::{ConnectorComponentInfo, ConnectorFactory};
 use super::helpers::json_to_event;
-use super::types::{ConnectorError, SinkConnector};
+use super::types::{ConnectorConfig, ConnectorError, SinkConnector};
 use crate::event::Event;
 use async_trait::async_trait;
 use indexmap::IndexMap;
+
+// ---------------------------------------------------------------------------
+// Declarative registration
+// ---------------------------------------------------------------------------
+
+static REST_API_INFO: ConnectorComponentInfo = ConnectorComponentInfo {
+    connector_type: "rest",
+    display_name: "REST API",
+    description: "REST API client for HTTP-based integrations",
+    feature_flag: "",
+    supports_source: false,
+    supports_sink: true,
+    supports_managed: false,
+    config_params: &[],
+};
+
+struct RestApiFactory;
+
+impl ConnectorFactory for RestApiFactory {
+    fn info(&self) -> &ConnectorComponentInfo {
+        &REST_API_INFO
+    }
+
+    fn create_sink_connector(
+        &self,
+        config: &ConnectorConfig,
+    ) -> Result<Box<dyn SinkConnector>, ConnectorError> {
+        let path = config
+            .topic
+            .clone()
+            .unwrap_or_else(|| "/events".to_string());
+        let api_config = RestApiConfig::new(&config.url);
+        Ok(Box::new(RestApiSink::new("rest", api_config, &path)?))
+    }
+}
+
+inventory::submit! { &RestApiFactory as &dyn ConnectorFactory }
 
 /// REST API client configuration
 #[derive(Debug, Clone)]

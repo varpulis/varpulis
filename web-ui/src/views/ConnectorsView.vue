@@ -1,9 +1,14 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useConnectorsStore } from '@/stores/connectors'
+import { usePipelinesStore } from '@/stores/pipelines'
 import type { ClusterConnector } from '@/api/cluster'
+import type { AvailableConnector } from '@/api/pipelines'
 
 const store = useConnectorsStore()
+const pipelinesStore = usePipelinesStore()
+
+const activeTab = ref('configured')
 
 const dialogOpen = ref(false)
 const editMode = ref(false)
@@ -56,6 +61,22 @@ const headers = [
   { title: 'Description', key: 'description', sortable: false },
   { title: 'Actions', key: 'actions', sortable: false, align: 'end' as const },
 ]
+
+const availableHeaders = [
+  { title: 'Connector', key: 'display_name', sortable: true },
+  { title: 'Type ID', key: 'connector_type', sortable: true },
+  { title: 'Roles', key: 'roles', sortable: false },
+  { title: 'Feature Flag', key: 'feature_flag', sortable: true },
+  { title: 'Description', key: 'description', sortable: false },
+]
+
+function roleChips(c: AvailableConnector): Array<{ label: string; color: string }> {
+  const chips: Array<{ label: string; color: string }> = []
+  if (c.supports_source) chips.push({ label: 'Source', color: 'green' })
+  if (c.supports_sink) chips.push({ label: 'Sink', color: 'blue' })
+  if (c.supports_managed) chips.push({ label: 'Managed', color: 'purple' })
+  return chips
+}
 
 function connectionSummary(connector: ClusterConnector): string {
   switch (connector.connector_type) {
@@ -154,6 +175,7 @@ async function handleDelete(): Promise<void> {
 
 onMounted(() => {
   store.fetchConnectors()
+  pipelinesStore.fetchAvailableConnectors()
 })
 </script>
 
@@ -171,7 +193,59 @@ onMounted(() => {
       {{ store.error }}
     </v-alert>
 
-    <v-card>
+    <v-tabs v-model="activeTab" class="mb-4">
+      <v-tab value="configured">Configured</v-tab>
+      <v-tab value="available">Available Types</v-tab>
+    </v-tabs>
+
+    <!-- Available Connector Types (Component Registry) -->
+    <v-card v-if="activeTab === 'available'">
+      <v-data-table
+        :headers="availableHeaders"
+        :items="pipelinesStore.availableConnectors"
+        item-value="connector_type"
+        no-data-text="No connector types registered. Check that connectors are compiled with the appropriate feature flags."
+        hover
+      >
+        <template #item.display_name="{ item }">
+          <div class="d-flex align-center">
+            <v-icon :color="typeColor(item.connector_type)" size="small" class="mr-2">
+              {{ typeIcon(item.connector_type) }}
+            </v-icon>
+            <span class="font-weight-medium">{{ item.display_name }}</span>
+          </div>
+        </template>
+
+        <template #item.connector_type="{ item }">
+          <code>{{ item.connector_type }}</code>
+        </template>
+
+        <template #item.roles="{ item }">
+          <v-chip
+            v-for="role in roleChips(item)"
+            :key="role.label"
+            :color="role.color"
+            size="x-small"
+            variant="tonal"
+            class="mr-1"
+          >
+            {{ role.label }}
+          </v-chip>
+        </template>
+
+        <template #item.feature_flag="{ item }">
+          <code v-if="item.feature_flag" class="text-medium-emphasis">{{ item.feature_flag }}</code>
+          <span v-else class="text-medium-emphasis">-</span>
+        </template>
+
+        <template #item.description="{ item }">
+          <span class="text-body-2 text-medium-emphasis">{{ item.description }}</span>
+        </template>
+      </v-data-table>
+    </v-card>
+
+    <!-- Configured Connectors -->
+    <v-card v-if="activeTab === 'configured'">
       <v-data-table
         :headers="headers"
         :items="store.connectors"

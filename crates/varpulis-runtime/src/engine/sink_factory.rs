@@ -221,7 +221,10 @@ impl crate::sink::Sink for BatchKafkaSinkAdapter {
     }
 }
 
-/// Create a sink from a ConnectorConfig, with an optional topic override from .to() params
+/// Create a sink from a ConnectorConfig, with an optional topic override from .to() params.
+///
+/// Tries the inventory-based `find_factory()` first, then falls back to the
+/// match-arm dispatch for connectors that haven't been migrated yet.
 #[allow(unused_variables)]
 pub(crate) fn create_sink_from_config(
     name: &str,
@@ -229,6 +232,21 @@ pub(crate) fn create_sink_from_config(
     topic_override: Option<&str>,
     context_name: Option<&str>,
 ) -> Option<Arc<dyn crate::sink::Sink>> {
+    // Try inventory-based factory first
+    if let Some(factory) = connector::component::find_factory(&config.connector_type) {
+        if factory.info().supports_sink {
+            match factory.create_engine_sink(name, config, topic_override, context_name) {
+                Ok(sink) => return Some(sink),
+                Err(connector::ConnectorError::NotAvailable(_)) => {} // fall through
+                Err(e) => {
+                    warn!("Factory error creating sink '{}': {}", name, e);
+                    return None;
+                }
+            }
+        }
+    }
+
+    // Fallback to match-arm dispatch
     match config.connector_type.as_str() {
         "console" => Some(Arc::new(crate::sink::ConsoleSink::new(name))),
         "file" => {

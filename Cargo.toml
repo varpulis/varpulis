@@ -48,6 +48,7 @@ clap = { version = "4.4", features = ["derive", "env"] }
 
 # Collections
 indexmap = { version = "2.1", features = ["serde"] }
+inventory = "0.3"
 smallvec = "1.11"
 rustc-hash = "2"
 

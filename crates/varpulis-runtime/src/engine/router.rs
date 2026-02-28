@@ -52,6 +52,11 @@ impl EventRouter {
             .unwrap_or_else(|| Arc::from([]))
     }
 
+    /// Get all routes for topology building and introspection.
+    pub fn all_routes(&self) -> &FxHashMap<String, Arc<[String]>> {
+        &self.routes
+    }
+
     /// Clear all routes (used during hot reload)
     pub fn clear(&mut self) {
         self.routes.clear();
