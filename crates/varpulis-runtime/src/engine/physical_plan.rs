@@ -1,22 +1,24 @@
-//! Physical plan: the bridge between logical plans and runtime execution
+//! Physical plan: the bridge between logical plans and runtime execution.
 //!
-//! A `PhysicalPlan` wraps existing `StreamDefinition` + `Vec<RuntimeOp>` structures,
-//! correlating each physical stream back to its logical plan node.
-
-use super::types::StreamDefinition;
+//! A `PhysicalPlan` captures metadata about the materialized streams,
+//! correlating each back to its logical plan node for introspection.
 
 /// Physical plan produced by materializing a logical plan.
 ///
-/// Each stream carries a `StreamDefinition` (which contains the actual
-/// `Vec<RuntimeOp>`) plus metadata for correlation and debugging.
+/// Stores metadata about each stream's materialization without owning
+/// the actual runtime state (which lives in `Engine::streams`).
 pub(crate) struct PhysicalPlan {
     pub streams: Vec<PhysicalStream>,
 }
 
-/// A single physical stream in the plan.
+/// Metadata for a single materialized stream.
 pub(crate) struct PhysicalStream {
-    /// The runtime stream definition containing operations, SASE engine, etc.
-    pub definition: StreamDefinition,
+    /// Stream name
+    pub name: String,
+    /// Number of runtime operations in the stream pipeline
+    pub operation_count: usize,
+    /// Human-readable summary of operations
+    pub operation_summary: String,
     /// Correlation ID back to the logical plan stream
     pub logical_id: u32,
     /// Event types this stream is registered to receive
@@ -46,11 +48,12 @@ impl PhysicalPlan {
         let mut out = format!("PhysicalPlan ({} streams):\n", self.streams.len());
         for s in &self.streams {
             out.push_str(&format!(
-                "  [logical={}] {} — {} ops, {} event types\n",
+                "  [logical={}] {} — {} ops ({}), events: [{}]\n",
                 s.logical_id,
-                s.definition.name,
-                s.definition.operations.len(),
-                s.registered_event_types.len(),
+                s.name,
+                s.operation_count,
+                s.operation_summary,
+                s.registered_event_types.join(", "),
             ));
         }
         out
@@ -72,5 +75,21 @@ mod tests {
         let plan = PhysicalPlan::new();
         assert_eq!(plan.stream_count(), 0);
         assert!(plan.summary().contains("0 streams"));
+    }
+
+    #[test]
+    fn test_plan_with_streams() {
+        let mut plan = PhysicalPlan::new();
+        plan.add_stream(PhysicalStream {
+            name: "Alerts".to_string(),
+            operation_count: 3,
+            operation_summary: "where → select → emit".to_string(),
+            logical_id: 0,
+            registered_event_types: vec!["SensorReading".to_string()],
+        });
+        assert_eq!(plan.stream_count(), 1);
+        let summary = plan.summary();
+        assert!(summary.contains("Alerts"));
+        assert!(summary.contains("SensorReading"));
     }
 }
