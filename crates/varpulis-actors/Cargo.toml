@@ -1,0 +1,20 @@
+[package]
+name = "varpulis-actors"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Lightweight actor framework with supervision and health observation for Varpulis"
+
+[dependencies]
+tokio = { workspace = true }
+tokio-util = "0.7"
+async-trait = "0.1"
+tracing = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+futures = "0.3"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+serde_json = { workspace = true }

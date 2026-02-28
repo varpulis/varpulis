@@ -8,8 +8,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use varpulis_cluster::*;
-use warp::reply::Reply;
-use warp::Filter;
+
+use axum::extract::{Path, State};
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
+use axum::routing::{delete, post};
+use axum::{Json, Router};
 
 // =============================================================================
 // Mock Worker Server
@@ -25,124 +29,88 @@ struct MockWorkerState {
     fail_deploys: bool,
 }
 
-fn mock_worker_routes(
+/// Shared state for the mock worker axum app.
+#[derive(Clone)]
+struct MockAppState {
     state: Arc<Mutex<MockWorkerState>>,
-    api_key: &str,
-) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
-    let key = api_key.to_string();
+    #[allow(dead_code)]
+    api_key: String,
+}
 
-    let deploy_state = state.clone();
-    let deploy_key = key.clone();
-    let deploy = warp::path("api")
-        .and(warp::path("v1"))
-        .and(warp::path("pipelines"))
-        .and(warp::path::end())
-        .and(warp::post())
-        .and(warp::header::<String>("x-api-key"))
-        .and(warp::body::json::<serde_json::Value>())
-        .and(warp::any().map(move || deploy_state.clone()))
-        .and(warp::any().map(move || deploy_key.clone()))
-        .and_then(
-            |provided_key: String,
-             body: serde_json::Value,
-             state: Arc<Mutex<MockWorkerState>>,
-             expected_key: String| async move {
-                if provided_key != expected_key {
-                    return Ok::<_, warp::Rejection>(
-                        warp::reply::with_status(
-                            warp::reply::json(&serde_json::json!({"error": "unauthorized"})),
-                            warp::http::StatusCode::UNAUTHORIZED,
-                        )
-                        .into_response(),
-                    );
-                }
+fn mock_worker_routes(state: Arc<Mutex<MockWorkerState>>, api_key: &str) -> Router {
+    let app_state = MockAppState {
+        state,
+        api_key: api_key.to_string(),
+    };
 
-                let mut s = state.lock().await;
-                if s.fail_deploys {
-                    return Ok(warp::reply::with_status(
-                        warp::reply::json(&serde_json::json!({"error": "internal server error"})),
-                        warp::http::StatusCode::INTERNAL_SERVER_ERROR,
-                    )
-                    .into_response());
-                }
+    Router::new()
+        .route("/api/v1/pipelines", post(mock_deploy))
+        .route("/api/v1/pipelines/{pipeline_id}", delete(mock_delete))
+        .route("/api/v1/pipelines/{pipeline_id}/events", post(mock_inject))
+        .with_state(app_state)
+}
 
-                let name = body["name"].as_str().unwrap_or("unknown").to_string();
-                let id = format!("pid-{}", name);
-                s.deploys.push(body);
+async fn mock_deploy(
+    State(app): State<MockAppState>,
+    Json(body): Json<serde_json::Value>,
+) -> axum::response::Response {
+    let mut s = app.state.lock().await;
+    if s.fail_deploys {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "internal server error"})),
+        )
+            .into_response();
+    }
 
-                let resp = serde_json::json!({
-                    "id": id,
-                    "name": name,
-                    "status": "running",
-                });
-                Ok(warp::reply::with_status(
-                    warp::reply::json(&resp),
-                    warp::http::StatusCode::CREATED,
-                )
-                .into_response())
-            },
-        );
+    let name = body["name"].as_str().unwrap_or("unknown").to_string();
+    let id = format!("pid-{}", name);
+    s.deploys.push(body);
 
-    let delete_state = state.clone();
-    let delete = warp::path("api")
-        .and(warp::path("v1"))
-        .and(warp::path("pipelines"))
-        .and(warp::path::param::<String>())
-        .and(warp::path::end())
-        .and(warp::delete())
-        .and(warp::any().map(move || delete_state.clone()))
-        .and_then(
-            |pipeline_id: String, state: Arc<Mutex<MockWorkerState>>| async move {
-                let mut s = state.lock().await;
-                s.deletes.push(pipeline_id);
-                Ok::<_, warp::Rejection>(warp::reply::with_status(
-                    warp::reply::json(&serde_json::json!({"deleted": true})),
-                    warp::http::StatusCode::OK,
-                ))
-            },
-        );
+    let resp = serde_json::json!({
+        "id": id,
+        "name": name,
+        "status": "running",
+    });
+    (StatusCode::CREATED, Json(resp)).into_response()
+}
 
-    let event_state = state;
-    let inject =
-        warp::path("api")
-            .and(warp::path("v1"))
-            .and(warp::path("pipelines"))
-            .and(warp::path::param::<String>())
-            .and(warp::path("events"))
-            .and(warp::path::end())
-            .and(warp::post())
-            .and(warp::body::json::<serde_json::Value>())
-            .and(warp::any().map(move || event_state.clone()))
-            .and_then(
-                |pipeline_id: String,
-                 body: serde_json::Value,
-                 state: Arc<Mutex<MockWorkerState>>| async move {
-                    let mut s = state.lock().await;
-                    s.events.push((pipeline_id, body));
-                    Ok::<_, warp::Rejection>(warp::reply::with_status(
-                        warp::reply::json(&serde_json::json!({
-                            "processed": true,
-                            "alerts_generated": 0,
-                        })),
-                        warp::http::StatusCode::OK,
-                    ))
-                },
-            );
+async fn mock_delete(
+    State(app): State<MockAppState>,
+    Path(pipeline_id): Path<String>,
+) -> axum::response::Response {
+    let mut s = app.state.lock().await;
+    s.deletes.push(pipeline_id);
+    (StatusCode::OK, Json(serde_json::json!({"deleted": true}))).into_response()
+}
 
-    deploy.or(delete).or(inject)
+async fn mock_inject(
+    State(app): State<MockAppState>,
+    Path(pipeline_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> axum::response::Response {
+    let mut s = app.state.lock().await;
+    s.events.push((pipeline_id, body));
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "processed": true,
+            "alerts_generated": 0,
+        })),
+    )
+        .into_response()
 }
 
 /// Start a mock worker server on a random port. Returns (port, state_handle).
 async fn start_mock_worker(api_key: &str) -> (u16, Arc<Mutex<MockWorkerState>>) {
     let state = Arc::new(Mutex::new(MockWorkerState::default()));
-    let routes = mock_worker_routes(state.clone(), api_key);
+    let app = mock_worker_routes(state.clone(), api_key);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
 
     tokio::spawn(async move {
-        let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener);
-        warp::serve(routes).run_incoming(incoming).await;
+        axum::serve(listener, app).await.unwrap();
     });
 
     // Brief pause to ensure server is ready
@@ -1061,86 +1029,112 @@ async fn test_health_sweep_and_heartbeat_recovery() {
 
 #[tokio::test]
 async fn test_api_deploy_inject_teardown_e2e() {
+    use axum::body::Body;
+    use tower::ServiceExt;
+
     let (port, worker_state) = start_mock_worker("worker-key").await;
     let worker_addr = format!("http://127.0.0.1:{}", port);
 
     let coord = shared_coordinator();
-    let routes = cluster_routes(
+    let router = cluster_routes(
         coord.clone(),
         Arc::new(RbacConfig::single_key("admin".into())),
         None,
         None,
-    )
-    .recover(varpulis_cluster::api::handle_rejection);
+    );
+
+    // Helper: send a request and get response body bytes
+    async fn send(router: &Router, req: axum::http::Request<Body>) -> (StatusCode, Vec<u8>) {
+        let resp = router.clone().oneshot(req).await.unwrap();
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec();
+        (status, bytes)
+    }
 
     // Register worker via API
-    let resp = warp::test::request()
+    let req = axum::http::Request::builder()
         .method("POST")
-        .path("/api/v1/cluster/workers/register")
+        .uri("/api/v1/cluster/workers/register")
         .header("x-api-key", "admin")
-        .json(&RegisterWorkerRequest {
-            worker_id: "w1".into(),
-            address: worker_addr,
-            api_key: "worker-key".into(),
-            capacity: WorkerCapacity::default(),
-        })
-        .reply(&routes)
-        .await;
-    assert_eq!(resp.status(), 201);
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&RegisterWorkerRequest {
+                worker_id: "w1".into(),
+                address: worker_addr,
+                api_key: "worker-key".into(),
+                capacity: WorkerCapacity::default(),
+            })
+            .unwrap(),
+        ))
+        .unwrap();
+    let (status, _) = send(&router, req).await;
+    assert_eq!(status, StatusCode::CREATED);
 
     // Deploy pipeline group via API
-    let resp = warp::test::request()
+    let req = axum::http::Request::builder()
         .method("POST")
-        .path("/api/v1/cluster/pipeline-groups")
+        .uri("/api/v1/cluster/pipeline-groups")
         .header("x-api-key", "admin")
-        .json(&serde_json::json!({
-            "name": "e2e-test",
-            "pipelines": [
-                {"name": "p1", "source": "stream A = X"}
-            ],
-            "routes": [
-                {
-                    "from_pipeline": "_external",
-                    "to_pipeline": "p1",
-                    "event_types": ["*"]
-                }
-            ]
-        }))
-        .reply(&routes)
-        .await;
-    assert_eq!(resp.status(), 201);
-    let body: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "name": "e2e-test",
+                "pipelines": [
+                    {"name": "p1", "source": "stream A = X"}
+                ],
+                "routes": [
+                    {
+                        "from_pipeline": "_external",
+                        "to_pipeline": "p1",
+                        "event_types": ["*"]
+                    }
+                ]
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    let (status, bytes) = send(&router, req).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     let group_id = body["id"].as_str().unwrap().to_string();
     assert_eq!(body["status"], "running");
 
     // Get the deployed group
-    let resp = warp::test::request()
+    let req = axum::http::Request::builder()
         .method("GET")
-        .path(&format!("/api/v1/cluster/pipeline-groups/{}", group_id))
+        .uri(&format!("/api/v1/cluster/pipeline-groups/{}", group_id))
         .header("x-api-key", "admin")
-        .reply(&routes)
-        .await;
-    assert_eq!(resp.status(), 200);
-    let body: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+        .body(Body::empty())
+        .unwrap();
+    let (status, bytes) = send(&router, req).await;
+    assert_eq!(status, StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(body["name"], "e2e-test");
     assert_eq!(body["pipeline_count"], 1);
 
     // Inject event via API
-    let resp = warp::test::request()
+    let req = axum::http::Request::builder()
         .method("POST")
-        .path(&format!(
+        .uri(&format!(
             "/api/v1/cluster/pipeline-groups/{}/inject",
             group_id
         ))
         .header("x-api-key", "admin")
-        .json(&serde_json::json!({
-            "event_type": "TestEvent",
-            "fields": {"value": 42}
-        }))
-        .reply(&routes)
-        .await;
-    assert_eq!(resp.status(), 200);
-    let body: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&serde_json::json!({
+                "event_type": "TestEvent",
+                "fields": {"value": 42}
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+    let (status, bytes) = send(&router, req).await;
+    assert_eq!(status, StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(body["routed_to"], "p1");
 
     // Verify mock worker received the event
@@ -1150,33 +1144,36 @@ async fn test_api_deploy_inject_teardown_e2e() {
     }
 
     // Check topology
-    let resp = warp::test::request()
+    let req = axum::http::Request::builder()
         .method("GET")
-        .path("/api/v1/cluster/topology")
+        .uri("/api/v1/cluster/topology")
         .header("x-api-key", "admin")
-        .reply(&routes)
-        .await;
-    assert_eq!(resp.status(), 200);
-    let body: serde_json::Value = serde_json::from_slice(resp.body()).unwrap();
+        .body(Body::empty())
+        .unwrap();
+    let (status, bytes) = send(&router, req).await;
+    assert_eq!(status, StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(body["groups"].as_array().unwrap().len(), 1);
 
     // Teardown via API
-    let resp = warp::test::request()
+    let req = axum::http::Request::builder()
         .method("DELETE")
-        .path(&format!("/api/v1/cluster/pipeline-groups/{}", group_id))
+        .uri(&format!("/api/v1/cluster/pipeline-groups/{}", group_id))
         .header("x-api-key", "admin")
-        .reply(&routes)
-        .await;
-    assert_eq!(resp.status(), 200);
+        .body(Body::empty())
+        .unwrap();
+    let (status, _) = send(&router, req).await;
+    assert_eq!(status, StatusCode::OK);
 
     // Verify group is removed (404)
-    let resp = warp::test::request()
+    let req = axum::http::Request::builder()
         .method("GET")
-        .path(&format!("/api/v1/cluster/pipeline-groups/{}", group_id))
+        .uri(&format!("/api/v1/cluster/pipeline-groups/{}", group_id))
         .header("x-api-key", "admin")
-        .reply(&routes)
-        .await;
-    assert_eq!(resp.status(), 404);
+        .body(Body::empty())
+        .unwrap();
+    let (status, _) = send(&router, req).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 // =============================================================================

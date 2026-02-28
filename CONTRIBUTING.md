@@ -99,7 +99,8 @@ Scopes are optional but encouraged. Common scopes: `engine`, `parser`, `runtime`
    - Web UI type-check and unit tests
    - Coverage threshold
 5. Update relevant documentation if your change affects user-facing behavior.
-6. Respond to review feedback with fixup commits; the maintainer will squash on merge.
+6. For changes that affect public APIs, wire formats, or performance characteristics, write an [Architecture Decision Record](design/decisions/README.md) (ADR). See the template in the ADR directory.
+7. Respond to review feedback with fixup commits; the maintainer will squash on merge.
 
 ## Running Benchmarks
 

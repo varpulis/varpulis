@@ -1,6 +1,6 @@
 # ADR-002: Warp as the HTTP Framework
 
-**Status:** Accepted
+**Status:** Superseded by [ADR-007](../../design/decisions/ADR-007-axum-migration.md)
 **Date:** 2026-02-17
 **Authors:** Varpulis Team
 
