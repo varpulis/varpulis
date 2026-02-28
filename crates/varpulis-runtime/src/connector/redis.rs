@@ -34,9 +34,9 @@ impl ConnectorFactory for RedisFactory {
         &self,
         config: &ConnectorConfig,
     ) -> Result<Box<dyn SinkConnector>, ConnectorError> {
-        let channel = config.topic.clone().unwrap_or_else(|| "events".to_string());
         #[cfg(not(feature = "redis"))]
         {
+            let channel = config.topic.clone().unwrap_or_else(|| "events".to_string());
             Ok(Box::new(RedisSink::new(
                 "redis",
                 RedisConfig::new(&config.url, &channel),
@@ -44,6 +44,7 @@ impl ConnectorFactory for RedisFactory {
         }
         #[cfg(feature = "redis")]
         {
+            let _ = config;
             Err(ConnectorError::ConfigError(
                 "Use async create_from_config for redis with feature enabled".to_string(),
             ))
