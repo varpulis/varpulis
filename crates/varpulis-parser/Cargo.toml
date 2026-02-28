@@ -3,11 +3,12 @@ name = "varpulis-parser"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Parser for VPL language"
 build = "build.rs"
 
 [dependencies]
-varpulis-core = { path = "../varpulis-core" }
+varpulis-core = { version = "0.4.1", path = "../varpulis-core" }
 logos = { workspace = true }
 thiserror = { workspace = true }
 pest = "2.8.5"
