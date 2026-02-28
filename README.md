@@ -21,7 +21,7 @@ Your events already contain the signal. A login, two fast transfers, a sudden te
 CEP engines solve this, but traditional options are either **proprietary and expensive**, **too heavyweight for pure pattern work**, or **fight you when patterns get temporal**. Varpulis is a different trade: an open-source, Rust-native engine with a **pipeline DSL designed for exactly this problem**.
 
 - **10 lines, not 50** — VPL expresses temporal patterns directly. No boilerplate event monitors, no framework plumbing.
-- **Sub-millisecond at scale** — 250K+ evt/s on a single core, 36 MB memory footprint for sequence detection.
+- **Sub-millisecond at scale** — 1.5M evt/s SASE+ core, 400K+ evt/s full pipeline on a single core.
 - **Patterns that predict** — `.forecast()` tells you a pattern is *about to* complete, not just that it did.
 - **Deploy anywhere** — single binary, Docker, Kubernetes. MQTT/Kafka/NATS in, webhooks/databases/S3 out.
 
@@ -109,27 +109,50 @@ stream RapidSwing = Readings as t1
 
 ## Performance
 
-Benchmarked with 100K events on a single machine, median of 3 runs.
+All numbers from [Criterion](https://bheisler.github.io/criterion.rs/book/) micro-benchmarks (`cargo bench`) unless noted. Single core, 100K events.
 
-### Throughput (CPU-bound, preloaded events)
+### Core SASE+ Engine
 
-| Scenario | Throughput | Memory |
-|----------|-----------|--------|
-| Filter | 234K evt/s | 54 MB |
+Direct `SaseEngine::process()` — no VPL pipeline, no I/O, no event cloning.
+
+| Pattern | Throughput |
+|---------|-----------|
+| Sequence (A → B → C) | **1.5M evt/s** |
+| Simple sequence (A → B) | **1.4M evt/s** |
+| Kleene+ (A → B+ → C) | **1.1M evt/s** |
+
+### Full VPL Pipeline
+
+End-to-end `Engine::process()` — VPL parsing, predicate evaluation, emit, async channel output.
+
+| Scenario | Throughput |
+|----------|-----------|
+| Filter + emit | **410K evt/s** |
+| Windowed aggregation (window 100) | **1.4M evt/s** |
+
+### CLI End-to-End (`simulate --preload`)
+
+Complete binary: JSONL file parsing, event routing, processing, stdout serialization. 100K events on ramdisk, median of 3 runs.
+
+| Scenario | Throughput | RSS |
+|----------|-----------|-----|
+| Sequence (SASE+) | 256K evt/s | 36 MB |
 | Temporal Join | 268K evt/s | 66 MB |
 | EMA Crossover | 266K evt/s | 54 MB |
-| Sequence (SASE+) | 256K evt/s | 36 MB |
+| Filter | 234K evt/s | 54 MB |
 | Kleene (SASE+) | 97K matches/s | 58 MB |
 
-Kleene uses exhaustive SASE+ semantics — finds all valid matches, not just greedy first-match.
+Kleene uses exhaustive SASE+ semantics — enumerates all valid combinations, not just greedy first-match.
 
-### Throughput (MQTT connector, I/O-bound)
+### MQTT Connector (I/O-bound)
 
-| Scenario | Throughput | Memory |
-|----------|-----------|--------|
+| Scenario | Throughput | RSS |
+|----------|-----------|-----|
 | Filter | 6.1K evt/s | 10 MB |
 | Kleene | 6.3K evt/s | 24 MB |
 | Sequence | 6.8K evt/s | 10 MB |
+
+Throughput ceiling is the MQTT broker (~6K msg/s QoS 0, single-message publish).
 
 ### Multi-Query Scaling (Hamlet Algorithm)
 
