@@ -3,6 +3,7 @@ name = "varpulis-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Core types and AST for VPL"
 
 [dependencies]
@@ -15,4 +16,4 @@ rustc-hash = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
-varpulis-parser = { path = "../varpulis-parser" }
+varpulis-parser = { version = "0.4.1", path = "../varpulis-parser" }

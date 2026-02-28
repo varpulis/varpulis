@@ -3,6 +3,7 @@ name = "varpulis-datagen"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Event generator library for Varpulis demos and testing"
 
 [dependencies]

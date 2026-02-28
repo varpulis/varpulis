@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "MCP server exposing Varpulis CEP engine to AI agents"
 
 [[bin]]
@@ -23,8 +24,8 @@ anyhow = { workspace = true }
 chrono = { workspace = true }
 reqwest = { workspace = true }
 schemars = "1"
-varpulis-parser = { path = "../varpulis-parser" }
-varpulis-core = { path = "../varpulis-core" }
+varpulis-parser = { version = "0.4.1", path = "../varpulis-parser" }
+varpulis-core = { version = "0.4.1", path = "../varpulis-core" }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
