@@ -31,15 +31,19 @@ pub struct UserInfo {
     pub avatar: String,
 }
 
-/// Error type for auth provider operations.
+/// Error type for OAuth provider operations.
+///
+/// Distinct from [`crate::auth::AuthError`] which covers API key/header authentication.
 #[derive(Debug)]
-pub struct AuthError(pub String);
+pub struct OAuthError(pub String);
 
-impl std::fmt::Display for AuthError {
+impl std::fmt::Display for OAuthError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Auth error: {}", self.0)
+        write!(f, "OAuth error: {}", self.0)
     }
 }
+
+impl std::error::Error for OAuthError {}
 
 /// Trait for pluggable authentication providers.
 ///
@@ -55,7 +59,7 @@ pub trait AuthProvider: Send + Sync {
     fn authorize_url(&self, redirect_uri: &str) -> String;
 
     /// Exchange an authorization code for user info.
-    async fn exchange_code(&self, code: &str, redirect_uri: &str) -> Result<UserInfo, AuthError>;
+    async fn exchange_code(&self, code: &str, redirect_uri: &str) -> Result<UserInfo, OAuthError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -157,7 +161,7 @@ impl AuthProvider for GitHubOAuth {
         )
     }
 
-    async fn exchange_code(&self, code: &str, redirect_uri: &str) -> Result<UserInfo, AuthError> {
+    async fn exchange_code(&self, code: &str, redirect_uri: &str) -> Result<UserInfo, OAuthError> {
         // Exchange authorization code for access token
         let token_resp = self
             .http_client
@@ -171,12 +175,12 @@ impl AuthProvider for GitHubOAuth {
             ])
             .send()
             .await
-            .map_err(|e| AuthError(format!("GitHub token exchange failed: {}", e)))?;
+            .map_err(|e| OAuthError(format!("GitHub token exchange failed: {}", e)))?;
 
         let token_data: GitHubTokenResponse = token_resp
             .json()
             .await
-            .map_err(|e| AuthError(format!("Failed to parse GitHub token response: {}", e)))?;
+            .map_err(|e| OAuthError(format!("Failed to parse GitHub token response: {}", e)))?;
 
         // Fetch user profile
         let user: GitHubUser = self
@@ -189,10 +193,10 @@ impl AuthProvider for GitHubOAuth {
             .header("User-Agent", "Varpulis")
             .send()
             .await
-            .map_err(|e| AuthError(format!("GitHub user fetch failed: {}", e)))?
+            .map_err(|e| OAuthError(format!("GitHub user fetch failed: {}", e)))?
             .json()
             .await
-            .map_err(|e| AuthError(format!("Failed to parse GitHub user: {}", e)))?;
+            .map_err(|e| OAuthError(format!("Failed to parse GitHub user: {}", e)))?;
 
         Ok(UserInfo {
             provider_id: user.id.to_string(),
@@ -457,9 +461,11 @@ async fn handle_github_redirect(
         urlencoding::encode(&redirect_uri),
     );
 
-    Ok(warp::redirect::temporary(
-        url.parse::<warp::http::Uri>().unwrap(),
-    ))
+    let uri = url.parse::<warp::http::Uri>().map_err(|e| {
+        tracing::error!("Failed to parse GitHub OAuth redirect URL: {}", e);
+        warp::reject::reject()
+    })?;
+    Ok(warp::redirect::temporary(uri))
 }
 
 /// Query params for the OAuth callback.
@@ -562,9 +568,11 @@ async fn handle_github_callback(
 
     // Redirect to frontend with JWT as query parameter
     let redirect_url = format!("{}/?token={}", state.config.frontend_url, jwt);
-    Ok(warp::redirect::temporary(
-        redirect_url.parse::<warp::http::Uri>().unwrap(),
-    ))
+    let uri = redirect_url.parse::<warp::http::Uri>().map_err(|e| {
+        tracing::error!("Failed to parse frontend redirect URL: {}", e);
+        warp::reject::reject()
+    })?;
+    Ok(warp::redirect::temporary(uri))
 }
 
 /// Upsert user in DB and auto-create a default org if none exist.

@@ -86,6 +86,23 @@ hex = "0.4"
 # Testing
 pretty_assertions = "1.4"
 
+# ---------------------------------------------------------------------------
+# Duplicate dependency note
+# ---------------------------------------------------------------------------
+# `cargo deny check bans` reports ~64 duplicate entries. Root causes:
+#
+# 1. warp 0.3.7 pins hyper 0.14 / http 0.2 / h2 0.3 / rustls 0.22 / base64 0.21
+#    (all other crates use the 1.x / 0.23+ versions). This single dependency
+#    accounts for ~15 duplicates. Migration path: warp → axum.
+#
+# 2. lsp-types 0.94 pins bitflags 1.x (everything else uses 2.x).
+#
+# 3. pulsar 6.7 brings in async-std (unmaintained). Feature-gated.
+#
+# 4. Dev-deps (proptest) pull rand 0.9 while production uses rand 0.8.
+#
+# These are all transitive and cannot be resolved without major crate migrations.
+
 [profile.release]
 lto = true
 codegen-units = 1
