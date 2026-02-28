@@ -55,6 +55,7 @@
 
 pub mod ast;
 pub mod pagination;
+pub mod plan;
 pub mod security;
 pub mod span;
 pub mod types;

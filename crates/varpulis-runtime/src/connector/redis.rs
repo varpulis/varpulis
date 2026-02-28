@@ -1,11 +1,57 @@
 //! Redis connector
 
+use super::component::{ConnectorComponentInfo, ConnectorFactory};
 #[cfg(feature = "redis")]
 use super::helpers::json_to_event;
-use super::types::{ConnectorError, SinkConnector, SourceConnector};
+use super::types::{ConnectorConfig, ConnectorError, SinkConnector, SourceConnector};
 use crate::event::Event;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
+
+// ---------------------------------------------------------------------------
+// Declarative registration
+// ---------------------------------------------------------------------------
+
+static REDIS_INFO: ConnectorComponentInfo = ConnectorComponentInfo {
+    connector_type: "redis",
+    display_name: "Redis",
+    description: "Redis pub/sub and streams connector",
+    feature_flag: "redis",
+    supports_source: true,
+    supports_sink: true,
+    supports_managed: false,
+    config_params: &[],
+};
+
+struct RedisFactory;
+
+impl ConnectorFactory for RedisFactory {
+    fn info(&self) -> &ConnectorComponentInfo {
+        &REDIS_INFO
+    }
+
+    fn create_sink_connector(
+        &self,
+        config: &ConnectorConfig,
+    ) -> Result<Box<dyn SinkConnector>, ConnectorError> {
+        let channel = config.topic.clone().unwrap_or_else(|| "events".to_string());
+        #[cfg(not(feature = "redis"))]
+        {
+            Ok(Box::new(RedisSink::new(
+                "redis",
+                RedisConfig::new(&config.url, &channel),
+            )))
+        }
+        #[cfg(feature = "redis")]
+        {
+            Err(ConnectorError::ConfigError(
+                "Use async create_from_config for redis with feature enabled".to_string(),
+            ))
+        }
+    }
+}
+
+inventory::submit! { &RedisFactory as &dyn ConnectorFactory }
 
 /// Redis configuration
 #[derive(Debug, Clone)]

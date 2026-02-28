@@ -1,12 +1,62 @@
 //! HTTP connector: webhook source and HTTP sink
 
+use super::component::{ConnectorComponentInfo, ConnectorFactory};
 use super::helpers::json_to_value;
-use super::types::{ConnectorError, SinkConnector, SourceConnector};
+use super::types::{ConnectorConfig, ConnectorError, SinkConnector, SourceConnector};
 use crate::event::Event;
 use async_trait::async_trait;
 use indexmap::IndexMap;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
+
+// ---------------------------------------------------------------------------
+// Declarative registration
+// ---------------------------------------------------------------------------
+
+static HTTP_INFO: ConnectorComponentInfo = ConnectorComponentInfo {
+    connector_type: "http",
+    display_name: "HTTP",
+    description: "HTTP webhook source and HTTP POST sink",
+    feature_flag: "",
+    supports_source: true,
+    supports_sink: true,
+    supports_managed: false,
+    config_params: &[],
+};
+
+struct HttpFactory;
+
+impl ConnectorFactory for HttpFactory {
+    fn info(&self) -> &ConnectorComponentInfo {
+        &HTTP_INFO
+    }
+
+    fn create_sink_connector(
+        &self,
+        config: &ConnectorConfig,
+    ) -> Result<Box<dyn SinkConnector>, ConnectorError> {
+        Ok(Box::new(HttpSink::new("http", &config.url)))
+    }
+
+    fn create_engine_sink(
+        &self,
+        name: &str,
+        config: &ConnectorConfig,
+        _topic_override: Option<&str>,
+        _context_name: Option<&str>,
+    ) -> Result<Arc<dyn crate::sink::Sink>, ConnectorError> {
+        if config.url.is_empty() {
+            return Err(ConnectorError::ConfigError(format!(
+                "HTTP connector '{}' has no URL configured",
+                name
+            )));
+        }
+        Ok(Arc::new(crate::sink::HttpSink::new(name, &config.url)))
+    }
+}
+
+inventory::submit! { &HttpFactory as &dyn ConnectorFactory }
 
 // =============================================================================
 // HTTP Sink (sends events via HTTP POST)

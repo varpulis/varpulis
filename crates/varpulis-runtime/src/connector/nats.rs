@@ -4,13 +4,84 @@
 //! connectivity via `async-nats`.  When the feature is disabled, stub
 //! implementations return `ConnectorError::NotAvailable`.
 
-use super::types::{ConnectorError, SinkConnector, SourceConnector};
+use super::component::{ConnectorComponentInfo, ConnectorFactory};
+use super::types::{ConnectorConfig, ConnectorError, SinkConnector, SourceConnector};
 use crate::event::Event;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 #[cfg(feature = "nats")]
 use tracing::{info, warn};
 use varpulis_core::security::SecretString;
+
+// ---------------------------------------------------------------------------
+// Declarative registration
+// ---------------------------------------------------------------------------
+
+static NATS_INFO: ConnectorComponentInfo = ConnectorComponentInfo {
+    connector_type: "nats",
+    display_name: "NATS",
+    description: "Cloud-native messaging system",
+    feature_flag: "nats",
+    supports_source: true,
+    supports_sink: true,
+    supports_managed: true,
+    config_params: &[],
+};
+
+struct NatsFactory;
+
+impl ConnectorFactory for NatsFactory {
+    fn info(&self) -> &ConnectorComponentInfo {
+        &NATS_INFO
+    }
+
+    fn create_managed(
+        &self,
+        name: &str,
+        config: &ConnectorConfig,
+    ) -> Result<Box<dyn super::managed::ManagedConnector>, ConnectorError> {
+        let servers = if config.url.is_empty() {
+            config
+                .properties
+                .get("servers")
+                .cloned()
+                .unwrap_or_else(|| "nats://localhost:4222".to_string())
+        } else {
+            config.url.clone()
+        };
+        let subject = config.topic.as_deref().unwrap_or(">");
+        let mut nats_config = NatsConfig::new(&servers, subject);
+        if let Some(queue_group) = config.properties.get("queue_group") {
+            nats_config = nats_config.with_queue_group(queue_group);
+        }
+        Ok(Box::new(super::managed_nats::ManagedNatsConnector::new(
+            name,
+            nats_config,
+        )))
+    }
+
+    fn create_sink_connector(
+        &self,
+        config: &ConnectorConfig,
+    ) -> Result<Box<dyn SinkConnector>, ConnectorError> {
+        let subject = config.topic.clone().unwrap_or_else(|| "events".to_string());
+        let servers = if config.url.is_empty() {
+            config
+                .properties
+                .get("servers")
+                .cloned()
+                .unwrap_or_else(|| "nats://localhost:4222".to_string())
+        } else {
+            config.url.clone()
+        };
+        Ok(Box::new(NatsSink::new(
+            "nats",
+            NatsConfig::new(&servers, &subject),
+        )))
+    }
+}
+
+inventory::submit! { &NatsFactory as &dyn ConnectorFactory }
 
 // =============================================================================
 // NATS Configuration (always available, not feature-gated)

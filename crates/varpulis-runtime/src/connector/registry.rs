@@ -63,10 +63,25 @@ impl ConnectorRegistry {
         self.sinks.get(name).map(|b| b.as_ref())
     }
 
-    /// Create a connector from configuration
+    /// Create a connector from configuration.
+    ///
+    /// Tries the inventory-based `find_factory()` first, then falls back to the
+    /// match-arm dispatch for connectors that haven't been migrated yet.
     pub async fn create_from_config(
         config: &ConnectorConfig,
     ) -> Result<Box<dyn SinkConnector>, ConnectorError> {
+        // Try inventory-based factory first
+        if let Some(factory) = super::component::find_factory(&config.connector_type) {
+            if factory.info().supports_sink {
+                match factory.create_sink_connector(config) {
+                    Ok(sink) => return Ok(sink),
+                    Err(ConnectorError::NotAvailable(_)) => {} // fall through
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+
+        // Fallback to match-arm dispatch
         match config.connector_type.as_str() {
             "console" => Ok(Box::new(ConsoleSink::new("console"))),
             "http" => Ok(Box::new(HttpSink::new("http", &config.url))),

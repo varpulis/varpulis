@@ -4,13 +4,144 @@
 //! connectivity via `rumqttc`.  When the feature is disabled, stub
 //! implementations return `ConnectorError::NotAvailable`.
 
-use super::types::{ConnectorError, SinkConnector, SourceConnector};
+use super::component::{ConfigParamInfo, ConnectorComponentInfo, ConnectorFactory};
+use super::types::{ConnectorConfig, ConnectorError, SinkConnector, SourceConnector};
 use crate::event::Event;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 #[cfg(feature = "mqtt")]
 use tracing::{info, warn};
 use varpulis_core::security::SecretString;
+
+// ---------------------------------------------------------------------------
+// Declarative registration
+// ---------------------------------------------------------------------------
+
+static MQTT_PARAMS: &[ConfigParamInfo] = &[
+    ConfigParamInfo {
+        name: "host",
+        description: "MQTT broker hostname",
+        required: true,
+        default_value: None,
+    },
+    ConfigParamInfo {
+        name: "port",
+        description: "MQTT broker port",
+        required: false,
+        default_value: Some("1883"),
+    },
+    ConfigParamInfo {
+        name: "topic",
+        description: "MQTT topic to subscribe/publish",
+        required: true,
+        default_value: None,
+    },
+    ConfigParamInfo {
+        name: "client_id",
+        description: "MQTT client identifier",
+        required: false,
+        default_value: None,
+    },
+    ConfigParamInfo {
+        name: "qos",
+        description: "Quality of service (0, 1, 2)",
+        required: false,
+        default_value: Some("0"),
+    },
+];
+
+static MQTT_INFO: ConnectorComponentInfo = ConnectorComponentInfo {
+    connector_type: "mqtt",
+    display_name: "MQTT",
+    description: "MQTT broker connectivity for IoT and messaging",
+    feature_flag: "mqtt",
+    supports_source: true,
+    supports_sink: true,
+    supports_managed: true,
+    config_params: MQTT_PARAMS,
+};
+
+struct MqttFactory;
+
+impl ConnectorFactory for MqttFactory {
+    fn info(&self) -> &ConnectorComponentInfo {
+        &MQTT_INFO
+    }
+
+    fn create_managed(
+        &self,
+        name: &str,
+        config: &ConnectorConfig,
+    ) -> Result<Box<dyn super::managed::ManagedConnector>, ConnectorError> {
+        let mut mqtt_config = MqttConfig::new(&config.url, config.topic.as_deref().unwrap_or("#"));
+        if let Some(port) = config.properties.get("port") {
+            if let Ok(p) = port.parse::<u16>() {
+                mqtt_config = mqtt_config.with_port(p);
+            }
+        }
+        if let Some(client_id) = config.properties.get("client_id") {
+            mqtt_config = mqtt_config.with_client_id(client_id);
+        }
+        if let Some(qos) = config.properties.get("qos") {
+            if let Ok(q) = qos.parse::<u8>() {
+                mqtt_config = mqtt_config.with_qos(q);
+            }
+        }
+        Ok(Box::new(super::managed_mqtt::ManagedMqttConnector::new(
+            name,
+            mqtt_config,
+        )))
+    }
+
+    fn create_sink_connector(
+        &self,
+        config: &ConnectorConfig,
+    ) -> Result<Box<dyn SinkConnector>, ConnectorError> {
+        let topic = config.topic.clone().unwrap_or_else(|| "events".to_string());
+        Ok(Box::new(MqttSink::new(
+            "mqtt",
+            MqttConfig::new(&config.url, &topic),
+        )))
+    }
+
+    #[cfg(feature = "mqtt")]
+    fn create_engine_sink(
+        &self,
+        name: &str,
+        config: &ConnectorConfig,
+        topic_override: Option<&str>,
+        context_name: Option<&str>,
+    ) -> Result<std::sync::Arc<dyn crate::sink::Sink>, ConnectorError> {
+        let broker = config.url.clone();
+        let port: u16 = config
+            .properties
+            .get("port")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1883);
+        let topic = topic_override
+            .map(|s| s.to_string())
+            .or_else(|| config.topic.clone())
+            .unwrap_or_else(|| format!("{}-output", name));
+        let base_id = config
+            .properties
+            .get("client_id")
+            .cloned()
+            .unwrap_or_else(|| name.to_string());
+        let client_id = match context_name {
+            Some(ctx) => format!("{}-{}", base_id, ctx),
+            None => base_id,
+        };
+        let mqtt_config = MqttConfig::new(&broker, &topic)
+            .with_port(port)
+            .with_client_id(&client_id);
+        let sink = MqttSink::new(name, mqtt_config);
+        Ok(std::sync::Arc::new(
+            crate::engine::SinkConnectorAdapter::new(name, Box::new(sink)),
+        ))
+    }
+}
+
+inventory::submit! { &MqttFactory as &dyn ConnectorFactory }
 
 // =============================================================================
 // MQTT Configuration (always available, not feature-gated)

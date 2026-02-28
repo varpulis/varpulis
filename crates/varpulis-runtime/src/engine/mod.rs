@@ -6,9 +6,13 @@
 pub mod compiler;
 pub mod evaluator;
 mod pattern_analyzer;
+pub mod physical_plan;
 mod pipeline;
+pub mod planner;
 mod router;
 mod sink_factory;
+pub mod topology;
+pub mod topology_builder;
 mod types;
 
 // Re-export public types
@@ -3313,6 +3317,26 @@ impl Engine {
     /// Get the names of all loaded streams.
     pub fn stream_names(&self) -> Vec<&str> {
         self.streams.keys().map(|s| s.as_str()).collect()
+    }
+
+    /// Generate a logical plan explanation for the currently loaded program.
+    ///
+    /// Returns a human-readable plan if a program has been loaded via
+    /// [`load`](Self::load), or `None` if no program is loaded.
+    pub fn explain(&self, program: &Program) -> Result<String, String> {
+        let logical = planner::logical_plan(program)?;
+        let optimized = varpulis_parser::optimize_plan(logical);
+        Ok(optimized.explain())
+    }
+
+    /// Build a topology snapshot of the currently loaded streams and routes.
+    pub fn topology(&self) -> topology::Topology {
+        let mut builder = topology_builder::TopologyBuilder::new();
+        for (name, stream_def) in &self.streams {
+            builder = builder.add_stream(name, stream_def);
+        }
+        builder = builder.add_routes(self.router.all_routes());
+        builder.build()
     }
 
     /// Get a user-defined function by name

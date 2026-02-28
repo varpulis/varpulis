@@ -22,6 +22,7 @@ indexmap = { workspace = true }
 rand = { workspace = true }
 prometheus = { workspace = true }
 rustc-hash = { workspace = true }
+inventory = { workspace = true }
 async-trait = "0.1"
 rayon = "1.10"
 smallvec = "1.13"
