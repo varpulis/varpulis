@@ -59,6 +59,8 @@ pub fn logical_plan(program: &Program) -> Result<LogicalPlan, String> {
                     name: name.clone(),
                     param_count: params.len(),
                     has_return_type: ret.is_some(),
+                    param_types: params.iter().map(|p| p.ty.clone()).collect(),
+                    return_type: ret.clone(),
                 });
             }
 

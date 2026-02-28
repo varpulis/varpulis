@@ -1,0 +1,14 @@
+---
+source: crates/varpulis-runtime/tests/golden_tests.rs
+expression: outputs
+---
+- event_type: OrderTotal
+  fields:
+    currency: USD
+    order_id: ORD-001
+    total: 99
+- event_type: OrderTotal
+  fields:
+    currency: GBP
+    order_id: ORD-003
+    total: 250

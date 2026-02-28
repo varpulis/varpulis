@@ -88,6 +88,13 @@ pub trait ManagedConnector: Send + Sync {
         ConnectorHealthReport::default()
     }
 
+    /// Return the converter used for (de)serializing events.
+    ///
+    /// Defaults to [`JsonConverter`](crate::converter::json::JsonConverter).
+    fn converter(&self) -> Box<dyn crate::converter::Converter> {
+        Box::new(crate::converter::json::JsonConverter)
+    }
+
     /// Disconnect everything and release resources.
     async fn shutdown(&mut self) -> Result<(), ConnectorError>;
 }

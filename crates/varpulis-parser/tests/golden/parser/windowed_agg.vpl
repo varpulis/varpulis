@@ -1,0 +1,4 @@
+stream AvgTemp = SensorReading
+    .window(5)
+    .aggregate(avg_temp: avg(temperature), max_temp: max(temperature))
+    .emit(avg: avg_temp, max: max_temp)

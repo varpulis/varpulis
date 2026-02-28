@@ -1,0 +1,5 @@
+SensorReading { temperature: 10 }
+SensorReading { temperature: 20 }
+SensorReading { temperature: 30 }
+SensorReading { temperature: 40 }
+SensorReading { temperature: 50 }

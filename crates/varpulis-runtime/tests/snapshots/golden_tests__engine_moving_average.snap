@@ -1,0 +1,8 @@
+---
+source: crates/varpulis-runtime/tests/golden_tests.rs
+expression: outputs
+---
+- event_type: AvgTemp
+  fields:
+    avg_temp: 20
+    count: 3

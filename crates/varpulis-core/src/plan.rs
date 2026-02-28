@@ -171,6 +171,12 @@ pub struct LogicalFunction {
     pub name: String,
     pub param_count: usize,
     pub has_return_type: bool,
+    /// Parameter types from the function declaration (empty if untyped).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_types: Vec<crate::Type>,
+    /// Declared return type (None if untyped).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub return_type: Option<crate::Type>,
 }
 
 /// Variable declaration in the logical plan.
