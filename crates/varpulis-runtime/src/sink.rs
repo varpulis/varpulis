@@ -153,7 +153,7 @@ impl Sink for FileSink {
 /// the tokio runtime. It also includes buffering for better throughput.
 ///
 /// # Example
-/// ```ignore
+/// ```text
 /// let sink = AsyncFileSink::new("output", "/tmp/events.jsonl").await?;
 /// sink.send(&event).await?;
 /// sink.flush().await?;
@@ -341,7 +341,7 @@ impl Default for HttpRetryConfig {
 /// and non-retryable errors (4xx client errors).
 ///
 /// # Example
-/// ```ignore
+/// ```text
 /// let sink = HttpSinkWithRetry::new("webhook", "https://api.example.com/events")
 ///     .with_header("Authorization", "Bearer token123")
 ///     .with_retry_config(HttpRetryConfig {

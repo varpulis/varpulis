@@ -63,7 +63,7 @@ services:
       # GitHub OAuth
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:?Set GITHUB_CLIENT_ID in .env}
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:?Set GITHUB_CLIENT_SECRET in .env}
-      - JWT_SECRET=${JWT_SECRET:-auto-generated-change-me}
+      - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in .env (min 32 chars)}
       # Stripe billing (optional — leave empty to disable)
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
       - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}

@@ -18,7 +18,7 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use varpulis_runtime::columnar::ColumnarBuffer;
 //! use varpulis_runtime::Event;
 //! use std::sync::Arc;

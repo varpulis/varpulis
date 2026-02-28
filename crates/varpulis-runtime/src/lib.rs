@@ -58,7 +58,7 @@
 //!
 //! ## Quick Start
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use varpulis_runtime::{Engine, Event};
 //! use varpulis_parser::parse;
 //! use tokio::sync::mpsc;
@@ -156,7 +156,7 @@ pub use window::{
 // Columnar storage for SIMD-optimized aggregations
 pub use columnar::{Column, ColumnarAccess, ColumnarBuffer, ColumnarCheckpoint};
 pub use worker_pool::{
-    BackpressureError, BackpressureStrategy, WorkerPool, WorkerPoolConfig, WorkerPoolMetrics,
+    BackpressureStrategy, PoolBackpressureError, WorkerPool, WorkerPoolConfig, WorkerPoolMetrics,
     WorkerState, WorkerStatus,
 };
 

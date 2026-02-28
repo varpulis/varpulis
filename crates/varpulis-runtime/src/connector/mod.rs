@@ -20,7 +20,7 @@
 //!
 //! # Example: MQTT Source
 //!
-//! ```rust,ignore
+//! ```text
 //! use varpulis_runtime::connector::{MqttConfig, MqttSource, SourceConnector};
 //! use tokio::sync::mpsc;
 //!
@@ -40,7 +40,7 @@
 //!
 //! # Example: HTTP Sink
 //!
-//! ```rust,ignore
+//! ```text
 //! use varpulis_runtime::connector::{HttpSink, SinkConnector};
 //! use varpulis_runtime::Event;
 //!

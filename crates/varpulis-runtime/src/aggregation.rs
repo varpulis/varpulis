@@ -31,7 +31,7 @@
 //!
 //! # Example
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use varpulis_runtime::aggregation::{AggregateFunc, Sum, Avg, Count};
 //! use varpulis_runtime::Event;
 //!
@@ -50,7 +50,7 @@
 //!
 //! Implement the [`AggregateFunc`] trait for custom aggregations:
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use varpulis_runtime::aggregation::AggregateFunc;
 //! use varpulis_runtime::Event;
 //! use varpulis_core::Value;
@@ -916,7 +916,7 @@ impl Aggregator {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```text
     /// let aggregator = Aggregator::new()
     ///     .add("total", Box::new(Sum), Some("price".to_string()))
     ///     .add("avg_price", Box::new(Avg), Some("price".to_string()))

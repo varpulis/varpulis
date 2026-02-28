@@ -46,8 +46,9 @@ pub fn shared_coordinator() -> SharedCoordinator {
 
 /// Build a warp CORS filter from an optional list of allowed origins.
 ///
-/// - `None` or a list containing `"*"`: allow any origin (backward-compatible default).
-/// - Otherwise: restrict to the given origins.
+/// - Explicit list of origins: restrict to those origins.
+/// - A list containing `"*"`: allow any origin (must be explicitly opted into).
+/// - `None` (default): allow only localhost origins for safety.
 fn build_cors(origins: Option<Vec<String>>) -> warp::cors::Builder {
     let base = warp::cors()
         .allow_methods(vec!["GET", "POST", "PUT", "DELETE", "OPTIONS"])
@@ -60,11 +61,26 @@ fn build_cors(origins: Option<Vec<String>>) -> warp::cors::Builder {
         ]);
 
     match origins {
-        Some(ref list) if !list.is_empty() && !list.iter().any(|o| o == "*") => {
+        Some(ref list) if list.iter().any(|o| o == "*") => {
+            tracing::warn!(
+                "CORS configured with allow_any_origin — this is unsafe for production. \
+                 Set --cors-origins to restrict to specific origins."
+            );
+            base.allow_any_origin()
+        }
+        Some(ref list) if !list.is_empty() => {
             let origins: Vec<&str> = list.iter().map(|s| s.as_str()).collect();
             base.allow_origins(origins)
         }
-        _ => base.allow_any_origin(),
+        _ => {
+            // Default: only allow localhost origins for safety
+            base.allow_origins(vec![
+                "http://localhost:5173",
+                "http://localhost:8080",
+                "http://127.0.0.1:5173",
+                "http://127.0.0.1:8080",
+            ])
+        }
     }
 }
 

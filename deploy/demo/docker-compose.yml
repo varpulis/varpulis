@@ -93,7 +93,7 @@ services:
       - DATABASE_URL=${DATABASE_URL:-postgresql://varpulis:change-me@postgres:5432/varpulis}
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
-      - JWT_SECRET=${JWT_SECRET:-change-me-jwt-secret}
+      - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in .env (min 32 chars)}
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
       - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
       - STRIPE_PRO_PRICE_ID=${STRIPE_PRO_PRICE_ID:-}

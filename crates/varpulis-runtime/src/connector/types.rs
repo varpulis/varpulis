@@ -75,7 +75,7 @@ impl ConnectorConfig {
 ///
 /// # Implementing a Custom Source
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use varpulis_runtime::connector::{SourceConnector, ConnectorError};
 /// use varpulis_runtime::Event;
 /// use async_trait::async_trait;
@@ -141,7 +141,7 @@ pub trait SourceConnector: Send + Sync {
 ///
 /// # Implementing a Custom Sink
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use varpulis_runtime::connector::{SinkConnector, ConnectorError};
 /// use varpulis_runtime::Event;
 /// use async_trait::async_trait;
@@ -218,7 +218,7 @@ pub trait SinkConnector: Send + Sync {
 ///
 /// # Error Handling Example
 ///
-/// ```rust,ignore
+/// ```text
 /// use varpulis_runtime::connector::{SinkConnector, ConnectorError};
 ///
 /// async fn send_with_retry(sink: &impl SinkConnector, event: &Event) -> Result<(), ConnectorError> {

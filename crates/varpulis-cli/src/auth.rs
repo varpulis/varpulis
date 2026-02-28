@@ -149,6 +149,23 @@ pub fn extract_from_header(header_value: &str) -> AuthResult<String> {
     Ok(header.to_string())
 }
 
+/// Extract API key from `Sec-WebSocket-Protocol` header.
+///
+/// Looks for a subprotocol prefixed with `varpulis-auth.` and extracts the API key.
+/// This avoids exposing the API key in URL query parameters (which are logged in
+/// server access logs, browser history, and proxy logs).
+pub fn extract_from_ws_protocol(header: &str) -> AuthResult<String> {
+    for protocol in header.split(',') {
+        let protocol = protocol.trim();
+        if let Some(key) = protocol.strip_prefix("varpulis-auth.") {
+            if !key.is_empty() {
+                return Ok(key.to_string());
+            }
+        }
+    }
+    Err(AuthError::MissingCredentials)
+}
+
 /// Extract API key from query parameters
 ///
 /// Looks for `api_key` or `token` parameter
@@ -234,7 +251,8 @@ pub fn generate_api_key() -> String {
 /// 1. X-API-Key header (backward-compatible)
 /// 2. Authorization: Bearer/ApiKey header (API key validation)
 /// 3. Cookie: varpulis_session=<jwt> (JWT session cookie)
-/// 4. Query parameter: api_key or token
+/// 4. Sec-WebSocket-Protocol: varpulis-auth.<key> (WebSocket upgrade)
+/// 5. Query parameter: api_key or token (last resort, kept for backward compatibility)
 ///
 /// Pass `oauth_state` to enable JWT verification from cookies.
 pub fn with_auth(
@@ -251,9 +269,13 @@ pub fn with_auth_and_jwt(
     warp::any()
         .and(warp::header::optional::<String>("authorization"))
         .and(warp::header::optional::<String>("cookie"))
+        .and(warp::header::optional::<String>("sec-websocket-protocol"))
         .and(warp::query::raw().or(warp::any().map(String::new)).unify())
         .and_then(
-            move |auth_header: Option<String>, cookie_header: Option<String>, query: String| {
+            move |auth_header: Option<String>,
+                  cookie_header: Option<String>,
+                  ws_protocol: Option<String>,
+                  query: String| {
                 let config = config.clone();
                 let oauth = oauth_state.clone();
                 async move {
@@ -308,7 +330,18 @@ pub fn with_auth_and_jwt(
                         }
                     }
 
-                    // Try query params
+                    // Try Sec-WebSocket-Protocol header (avoids API key in URL query params)
+                    if let Some(ref protocol) = ws_protocol {
+                        match extract_from_ws_protocol(protocol) {
+                            Ok(key) if config.validate_key(&key) => return Ok(()),
+                            Ok(_) => {
+                                return Err(warp::reject::custom(AuthRejection::InvalidCredentials))
+                            }
+                            Err(_) => {} // Try query params as last resort
+                        }
+                    }
+
+                    // Try query params (last resort, kept for backward compatibility)
                     match extract_from_query(&query) {
                         Ok(key) if config.validate_key(&key) => Ok(()),
                         Ok(_) => Err(warp::reject::custom(AuthRejection::InvalidCredentials)),
@@ -549,6 +582,40 @@ mod tests {
     fn test_extract_from_query_plus_sign() {
         let result = extract_from_query("api_key=key+with+plus");
         assert_eq!(result, Ok("key with plus".to_string()));
+    }
+
+    // -------------------------------------------------------------------------
+    // extract_from_ws_protocol tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_extract_from_ws_protocol_valid() {
+        let result = extract_from_ws_protocol("varpulis-v1, varpulis-auth.my-secret-key");
+        assert_eq!(result, Ok("my-secret-key".to_string()));
+    }
+
+    #[test]
+    fn test_extract_from_ws_protocol_only_auth() {
+        let result = extract_from_ws_protocol("varpulis-auth.abc123");
+        assert_eq!(result, Ok("abc123".to_string()));
+    }
+
+    #[test]
+    fn test_extract_from_ws_protocol_no_auth() {
+        let result = extract_from_ws_protocol("varpulis-v1");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_extract_from_ws_protocol_empty() {
+        let result = extract_from_ws_protocol("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_extract_from_ws_protocol_empty_key() {
+        let result = extract_from_ws_protocol("varpulis-auth.");
+        assert!(result.is_err());
     }
 
     // -------------------------------------------------------------------------

@@ -139,7 +139,7 @@ enum Commands {
         #[arg(long, env = "VARPULIS_RATE_LIMIT", default_value = "0")]
         rate_limit: u32,
 
-        /// Allowed CORS origins (comma-separated). Default: allow any origin.
+        /// Allowed CORS origins (comma-separated). Default: localhost only.
         /// Use "*" to explicitly allow all origins, or specify domains like
         /// "https://app.example.com,https://admin.example.com"
         #[arg(long, env = "VARPULIS_CORS_ORIGINS", value_delimiter = ',')]
@@ -468,7 +468,7 @@ enum Commands {
         #[arg(long, env = "VARPULIS_COORDINATOR_RATE_LIMIT", default_value = "0")]
         rate_limit: u32,
 
-        /// Allowed CORS origins (comma-separated). Default: allow any origin.
+        /// Allowed CORS origins (comma-separated). Default: localhost only.
         /// Use "*" to explicitly allow all origins, or specify domains like
         /// "https://app.example.com,https://admin.example.com"
         #[arg(long, env = "VARPULIS_CORS_ORIGINS", value_delimiter = ',')]
@@ -2463,7 +2463,9 @@ async fn run_server(
         move || broadcast_tx.clone()
     });
 
-    // WebSocket route with authentication and rate limiting
+    // WebSocket route with authentication and rate limiting.
+    // Auth can come via Sec-WebSocket-Protocol: varpulis-auth.<key> header
+    // (preferred over query params to avoid logging API keys in URLs).
     let ws_route = warp::path("ws")
         .and(auth::with_auth(auth_config.clone()))
         .and(rate_limit::with_rate_limit(rate_limiter.clone()))
@@ -2476,11 +2478,15 @@ async fn run_server(
              ws: warp::ws::Ws,
              state: Arc<RwLock<ServerState>>,
              broadcast_tx: Arc<tokio::sync::broadcast::Sender<String>>| {
-                ws.max_frame_size(1024 * 1024)
+                let reply = ws
+                    .max_frame_size(1024 * 1024)
                     .max_message_size(1024 * 1024)
                     .on_upgrade(move |socket| {
                         websocket::handle_connection(socket, state, broadcast_tx)
-                    })
+                    });
+                // Echo the varpulis-v1 subprotocol so the browser accepts the upgrade
+                // when auth was provided via Sec-WebSocket-Protocol header.
+                warp::reply::with_header(reply, "sec-websocket-protocol", "varpulis-v1")
             },
         );
 
@@ -2667,6 +2673,7 @@ async fn run_server(
                 }
             });
 
+            warn_weak_secret(&oauth_config.jwt_secret, "JWT_SECRET");
             if has_github {
                 info!(
                     "GitHub OAuth enabled (client_id: {}...)",
@@ -3483,6 +3490,28 @@ async fn run_coordinator(
 // =============================================================================
 // Generate command
 // =============================================================================
+
+/// Warn at startup if a secret looks weak or is a known placeholder.
+fn warn_weak_secret(secret: &str, name: &str) {
+    const WEAK_PATTERNS: &[&str] = &[
+        "change-me",
+        "changeme",
+        "secret",
+        "password",
+        "default",
+        "test",
+        "example",
+    ];
+    let lower = secret.to_lowercase();
+    let is_weak = secret.len() < 32 || WEAK_PATTERNS.iter().any(|p| lower.contains(p));
+    if is_weak {
+        tracing::warn!(
+            "{} appears weak (< 32 chars or matches a known placeholder). \
+             Set a strong random value for production use.",
+            name,
+        );
+    }
+}
 
 /// Parse a duration string like "60s", "5m", "1h" into seconds.
 fn parse_duration_str(s: &str) -> Result<u64> {

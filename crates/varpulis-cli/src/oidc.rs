@@ -20,7 +20,7 @@
 
 #[cfg(feature = "oidc")]
 mod inner {
-    use crate::oauth::{AuthError, AuthProvider, UserInfo};
+    use crate::oauth::{AuthProvider, OAuthError, UserInfo};
     use openidconnect::core::CoreProviderMetadata;
     use openidconnect::{AuthorizationCode, ClientId, ClientSecret, IssuerUrl, Nonce, RedirectUrl};
 
@@ -86,18 +86,18 @@ mod inner {
             &self,
             code: &str,
             redirect_uri: &str,
-        ) -> Result<UserInfo, AuthError> {
+        ) -> Result<UserInfo, OAuthError> {
             // Step 1: Discover provider metadata
             let issuer = IssuerUrl::new(self.config.issuer_url.clone())
-                .map_err(|e| AuthError(format!("Invalid issuer URL: {}", e)))?;
+                .map_err(|e| OAuthError(format!("Invalid issuer URL: {}", e)))?;
 
             let provider_metadata = CoreProviderMetadata::discover_async(issuer, &self.http_client)
                 .await
-                .map_err(|e| AuthError(format!("OIDC discovery failed: {}", e)))?;
+                .map_err(|e| OAuthError(format!("OIDC discovery failed: {}", e)))?;
 
             // Step 2: Build client from provider metadata
             let redirect_url = RedirectUrl::new(redirect_uri.to_string())
-                .map_err(|e| AuthError(format!("Invalid redirect URI: {}", e)))?;
+                .map_err(|e| OAuthError(format!("Invalid redirect URI: {}", e)))?;
 
             let client_id = ClientId::new(self.config.client_id.clone());
             let client_secret = ClientSecret::new(self.config.client_secret.clone());
@@ -112,23 +112,23 @@ mod inner {
             // Step 3: Exchange code for tokens
             let token_response = client
                 .exchange_code(AuthorizationCode::new(code.to_string()))
-                .map_err(|e| AuthError(format!("Failed to build token request: {}", e)))?
+                .map_err(|e| OAuthError(format!("Failed to build token request: {}", e)))?
                 .request_async(&self.http_client)
                 .await
-                .map_err(|e| AuthError(format!("OIDC token exchange failed: {}", e)))?;
+                .map_err(|e| OAuthError(format!("OIDC token exchange failed: {}", e)))?;
 
             // Step 4: Extract ID token claims
             use openidconnect::TokenResponse;
             let id_token = token_response
                 .id_token()
-                .ok_or_else(|| AuthError("No ID token in response".to_string()))?;
+                .ok_or_else(|| OAuthError("No ID token in response".to_string()))?;
 
             // Use an empty nonce — in production, store/verify nonce from authorize_url
             let nonce = Nonce::new(String::new());
             let verifier = client.id_token_verifier();
             let claims = id_token
                 .claims(&verifier, &nonce)
-                .map_err(|e| AuthError(format!("ID token verification failed: {}", e)))?;
+                .map_err(|e| OAuthError(format!("ID token verification failed: {}", e)))?;
 
             let subject = claims.subject().to_string();
             let email = claims.email().map(|e| e.to_string()).unwrap_or_default();
