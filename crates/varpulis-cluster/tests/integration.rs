@@ -1105,7 +1105,7 @@ async fn test_api_deploy_inject_teardown_e2e() {
     // Get the deployed group
     let req = axum::http::Request::builder()
         .method("GET")
-        .uri(&format!("/api/v1/cluster/pipeline-groups/{}", group_id))
+        .uri(format!("/api/v1/cluster/pipeline-groups/{}", group_id))
         .header("x-api-key", "admin")
         .body(Body::empty())
         .unwrap();
@@ -1118,7 +1118,7 @@ async fn test_api_deploy_inject_teardown_e2e() {
     // Inject event via API
     let req = axum::http::Request::builder()
         .method("POST")
-        .uri(&format!(
+        .uri(format!(
             "/api/v1/cluster/pipeline-groups/{}/inject",
             group_id
         ))
@@ -1158,7 +1158,7 @@ async fn test_api_deploy_inject_teardown_e2e() {
     // Teardown via API
     let req = axum::http::Request::builder()
         .method("DELETE")
-        .uri(&format!("/api/v1/cluster/pipeline-groups/{}", group_id))
+        .uri(format!("/api/v1/cluster/pipeline-groups/{}", group_id))
         .header("x-api-key", "admin")
         .body(Body::empty())
         .unwrap();
@@ -1168,7 +1168,7 @@ async fn test_api_deploy_inject_teardown_e2e() {
     // Verify group is removed (404)
     let req = axum::http::Request::builder()
         .method("GET")
-        .uri(&format!("/api/v1/cluster/pipeline-groups/{}", group_id))
+        .uri(format!("/api/v1/cluster/pipeline-groups/{}", group_id))
         .header("x-api-key", "admin")
         .body(Body::empty())
         .unwrap();

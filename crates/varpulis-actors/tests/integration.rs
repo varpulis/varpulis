@@ -30,7 +30,7 @@ impl EventSource {
 }
 
 #[derive(Debug, Clone)]
-struct NumberEvent(u64);
+struct NumberEvent(#[allow(dead_code)] u64);
 
 #[async_trait]
 impl Actor for EventSource {
