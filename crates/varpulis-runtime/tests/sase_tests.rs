@@ -1,10 +1,10 @@
 //! Tests for the SASE+ engine
 
-use super::*;
-use crate::event::Event;
 use std::sync::Arc;
 use std::time::Duration;
 use varpulis_core::Value;
+use varpulis_runtime::event::Event;
+use varpulis_runtime::sase::*;
 
 fn make_event(event_type: &str, data: Vec<(&str, Value)>) -> Event {
     let mut event = Event::new(event_type);

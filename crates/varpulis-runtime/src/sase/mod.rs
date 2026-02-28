@@ -57,9 +57,4 @@ pub use types::{
     SharedEvent, StackEntry, TimeSemantics, MAX_ENUMERATION_RESULTS, MAX_KLEENE_EVENTS,
 };
 
-// Re-export internal items needed by tests
-#[cfg(test)]
-pub(crate) use predicate::{classify_predicate, PredicateClass};
-
-#[cfg(test)]
-mod tests;
+pub use predicate::{classify_predicate, PredicateClass};
