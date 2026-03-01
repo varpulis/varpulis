@@ -141,6 +141,7 @@ pub enum LeaderStatus {
 
 /// K8s Lease-based leader elector.
 #[cfg(feature = "k8s")]
+#[derive(Debug)]
 pub struct LeaderElector {
     pub lease_name: String,
     pub namespace: String,

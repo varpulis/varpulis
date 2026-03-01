@@ -151,6 +151,7 @@ mod nats_impl {
     use varpulis_core::event::{FieldKey, FxIndexMap};
 
     /// NATS source connector with async-nats
+    #[derive(Debug)]
     pub struct NatsSource {
         name: String,
         config: NatsConfig,
@@ -271,6 +272,14 @@ mod nats_impl {
         name: String,
         config: NatsConfig,
         client: Option<async_nats::Client>,
+    }
+
+    impl std::fmt::Debug for NatsSink {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("NatsSink")
+                .field("name", &self.name)
+                .finish_non_exhaustive()
+        }
     }
 
     impl NatsSink {

@@ -92,6 +92,7 @@ mod redis_impl {
     use tracing::{info, warn};
 
     /// Redis source that subscribes to a channel
+    #[derive(Debug)]
     pub struct RedisSource {
         name: String,
         config: RedisConfig,
@@ -197,6 +198,14 @@ mod redis_impl {
         name: String,
         config: RedisConfig,
         conn: ConnectionManager,
+    }
+
+    impl std::fmt::Debug for RedisSink {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("RedisSink")
+                .field("name", &self.name)
+                .finish_non_exhaustive()
+        }
     }
 
     impl RedisSink {
@@ -441,6 +450,7 @@ mod redis_stream_impl {
     use tracing::{info, warn};
 
     /// Redis Streams source using XREADGROUP for consumer-group processing
+    #[derive(Debug)]
     pub struct RedisStreamSource {
         name: String,
         config: RedisStreamConfig,
@@ -659,6 +669,14 @@ mod redis_stream_impl {
         conn: ConnectionManager,
     }
 
+    impl std::fmt::Debug for RedisStreamSink {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("RedisStreamSink")
+                .field("name", &self.name)
+                .finish_non_exhaustive()
+        }
+    }
+
     impl RedisStreamSink {
         /// Creates a new Redis Streams sink connector.
         pub async fn new(name: &str, config: RedisStreamConfig) -> Result<Self, ConnectorError> {
@@ -725,6 +743,14 @@ mod redis_stream_impl {
         name: String,
         config: RedisStreamConfig,
         inner: tokio::sync::Mutex<Option<RedisStreamSink>>,
+    }
+
+    impl std::fmt::Debug for RedisStreamSinkStub {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("RedisStreamSinkStub")
+                .field("name", &self.name)
+                .finish_non_exhaustive()
+        }
     }
 
     impl RedisStreamSinkStub {

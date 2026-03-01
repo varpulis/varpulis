@@ -107,6 +107,16 @@ mod database_impl {
         last_id: i64,
     }
 
+    impl std::fmt::Debug for DatabaseSource {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("DatabaseSource")
+                .field("name", &self.name)
+                .field("running", &self.running)
+                .field("last_id", &self.last_id)
+                .finish_non_exhaustive()
+        }
+    }
+
     impl DatabaseSource {
         /// Create a new database source connector with the given configuration.
         pub fn new(name: &str, config: DatabaseConfig) -> Self {
@@ -214,6 +224,14 @@ mod database_impl {
         name: String,
         config: DatabaseConfig,
         pool: AnyPool,
+    }
+
+    impl std::fmt::Debug for DatabaseSink {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("DatabaseSink")
+                .field("name", &self.name)
+                .finish_non_exhaustive()
+        }
     }
 
     impl DatabaseSink {

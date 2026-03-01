@@ -24,6 +24,14 @@ pub struct RaftState {
     pub admin_key: Option<String>,
 }
 
+impl std::fmt::Debug for RaftState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RaftState")
+            .field("admin_key", &self.admin_key.as_deref().map(|_| "***"))
+            .finish_non_exhaustive()
+    }
+}
+
 /// Build all `/raft/*` axum routes.
 ///
 /// When `admin_key` is Some, all mutating Raft endpoints require the

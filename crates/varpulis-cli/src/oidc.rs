@@ -49,6 +49,7 @@ mod inner {
     }
 
     /// Generic OIDC provider using standard OpenID Connect discovery.
+    #[derive(Debug)]
     pub struct OidcProvider {
         config: OidcConfig,
         http_client: reqwest::Client,
