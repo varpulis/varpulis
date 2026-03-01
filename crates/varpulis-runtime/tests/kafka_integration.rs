@@ -26,26 +26,15 @@ fn kafka_bootstrap() -> String {
 const TEST_TOPIC_INPUT: &str = "varpulis-test-input";
 const TEST_TOPIC_OUTPUT: &str = "varpulis-test-output";
 
-/// Helper to check if Kafka is running
+/// Helper to check if Kafka is running (TCP connectivity check)
 async fn kafka_is_available() -> bool {
-    use rdkafka::admin::{AdminClient, AdminOptions};
-    use rdkafka::client::DefaultClientContext;
-    use rdkafka::config::ClientConfig;
-
     let bootstrap = kafka_bootstrap();
-    let admin: Result<AdminClient<DefaultClientContext>, _> = ClientConfig::new()
-        .set("bootstrap.servers", &bootstrap)
-        .create();
-
-    if let Ok(admin) = admin {
-        let _opts = AdminOptions::new().operation_timeout(Some(Duration::from_secs(5)));
-        admin
-            .inner()
-            .fetch_metadata(None, Duration::from_secs(5))
-            .is_ok()
-    } else {
-        false
-    }
+    timeout(
+        Duration::from_secs(5),
+        tokio::net::TcpStream::connect(&bootstrap),
+    )
+    .await
+    .is_ok_and(|r| r.is_ok())
 }
 
 #[tokio::test]
