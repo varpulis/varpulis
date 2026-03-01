@@ -1048,10 +1048,10 @@ async fn test_engine_derived_stream_filters_applied() {
 
 #[tokio::test]
 async fn test_engine_get_pattern() {
-    let source = r#"
+    let source = r"
         pattern HighTemp = TemperatureReading where value > 30
         pattern LowTemp = TemperatureReading where value < 10
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, _rx) = mpsc::channel(100);
@@ -1073,11 +1073,11 @@ async fn test_engine_get_pattern() {
 
 #[tokio::test]
 async fn test_engine_patterns_list() {
-    let source = r#"
+    let source = r"
         pattern A = EventA where x > 1
         pattern B = EventB where y < 2
         pattern C = EventC where z == 3
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, _rx) = mpsc::channel(100);
@@ -1093,7 +1093,7 @@ async fn test_engine_patterns_list() {
 
 #[tokio::test]
 async fn test_engine_user_functions() {
-    let source = r#"
+    let source = r"
         fn double(x: int) -> int:
             x * 2
 
@@ -1103,7 +1103,7 @@ async fn test_engine_user_functions() {
         stream Test = EventA
             .where(double(value) > 10)
             .emit(result: triple(value))
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, _rx) = mpsc::channel(100);
@@ -1133,10 +1133,10 @@ async fn test_engine_user_functions() {
 
 #[tokio::test]
 async fn test_engine_add_filter() {
-    let source = r#"
+    let source = r"
         stream Test = EventA
             .emit(value: value)
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -1173,10 +1173,10 @@ async fn test_engine_add_filter_nonexistent_stream() {
 
 #[tokio::test]
 async fn test_engine_metrics_detailed() {
-    let source = r#"
+    let source = r"
         stream Test1 = EventA.emit(x: 1)
         stream Test2 = EventB.emit(y: 2)
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, _rx) = mpsc::channel(100);
@@ -1220,11 +1220,11 @@ async fn test_engine_empty_program() {
 
 #[tokio::test]
 async fn test_engine_event_with_many_fields() {
-    let source = r#"
+    let source = r"
         stream Test = BigEvent
             .where(field1 > 0 and field2 > 0 and field3 > 0)
             .emit(sum: field1 + field2 + field3)
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -1296,12 +1296,12 @@ async fn test_engine_get_config() {
 
 #[tokio::test]
 async fn test_engine_count_window() {
-    let source = r#"
+    let source = r"
         stream Test = StockTick
             .window(3)
             .aggregate(avg_price: avg(price))
             .emit(average: avg_price)
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -1335,12 +1335,12 @@ async fn test_engine_count_window() {
 
 #[tokio::test]
 async fn test_engine_tumbling_time_window() {
-    let source = r#"
+    let source = r"
         stream Test = SensorData
             .window(1s)
             .aggregate(max_temp: max(temperature))
             .emit(max_value: max_temp)
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, _rx) = mpsc::channel(100);
@@ -1364,12 +1364,12 @@ async fn test_engine_tumbling_time_window() {
 
 #[tokio::test]
 async fn test_engine_sliding_count_window() {
-    let source = r#"
+    let source = r"
         stream Test = StockTick
             .window(5, sliding: 1)
             .aggregate(sum_vol: sum(volume))
             .emit(total: sum_vol)
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -1398,12 +1398,12 @@ async fn test_engine_sliding_count_window() {
 
 #[tokio::test]
 async fn test_engine_aggregation_count() {
-    let source = r#"
+    let source = r"
         stream Test = EventA
             .window(3)
             .aggregate(cnt: count())
             .emit(event_count: cnt)
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -1420,7 +1420,7 @@ async fn test_engine_aggregation_count() {
 
 #[tokio::test]
 async fn test_engine_aggregation_min_max() {
-    let source = r#"
+    let source = r"
         stream Test = Reading
             .window(4)
             .aggregate(
@@ -1428,7 +1428,7 @@ async fn test_engine_aggregation_min_max() {
                 max_val: max(value)
             )
             .emit(minimum: min_val, maximum: max_val)
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -1454,12 +1454,12 @@ async fn test_engine_aggregation_min_max() {
 
 #[tokio::test]
 async fn test_engine_select_simple() {
-    let source = r#"
+    let source = r"
         stream Test = SensorData
             .window(2)
             .select(temp: temperature, loc: location)
             .emit(selected_temp: temp, selected_loc: loc)
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -1497,13 +1497,13 @@ async fn test_engine_select_simple() {
 
 #[tokio::test]
 async fn test_engine_partitioned_window() {
-    let source = r#"
+    let source = r"
         stream Test = StockTick
             .partition_by(symbol)
             .window(2)
             .aggregate(total_vol: sum(volume))
             .emit(symbol: symbol, volume: total_vol)
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -1588,7 +1588,7 @@ async fn test_engine_max_chain_depth() {
 
 #[tokio::test]
 async fn test_engine_event_declaration() {
-    let source = r#"
+    let source = r"
         event StockTick {
             symbol: string,
             price: float,
@@ -1597,7 +1597,7 @@ async fn test_engine_event_declaration() {
 
         stream Test = StockTick
             .emit(s: symbol, p: price)
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -1728,7 +1728,7 @@ async fn test_engine_import_statement() {
 #[tokio::test]
 async fn test_engine_having_filter() {
     // Test having clause - filters aggregation results
-    let source = r#"
+    let source = r"
         stream HighVolume = Trade
             .window(3)
             .aggregate(
@@ -1737,7 +1737,7 @@ async fn test_engine_having_filter() {
             )
             .having(trade_count > 2)
             .emit(count: trade_count, volume: total_volume)
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -1770,7 +1770,7 @@ async fn test_engine_having_filter() {
 #[tokio::test]
 async fn test_engine_having_filter_blocks() {
     // Test having clause blocks when condition is false
-    let source = r#"
+    let source = r"
         stream FilteredAgg = Reading
             .window(2)
             .aggregate(
@@ -1778,7 +1778,7 @@ async fn test_engine_having_filter_blocks() {
             )
             .having(avg_value > 100.0)
             .emit(average: avg_value)
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -1821,7 +1821,7 @@ async fn test_engine_having_filter_blocks() {
 #[tokio::test]
 async fn test_imperative_for_loop_sum() {
     // Test for loop with accumulation
-    let source = r#"
+    let source = r"
         fn sum_up_to(n: int) -> int:
             let total = 0
             for i in range(n):
@@ -1831,7 +1831,7 @@ async fn test_imperative_for_loop_sum() {
         stream Test = Input
             .where(sum_up_to(5) == 10)
             .emit(result: sum_up_to(5))
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -1847,7 +1847,7 @@ async fn test_imperative_for_loop_sum() {
 #[tokio::test]
 async fn test_imperative_while_loop() {
     // Test while loop
-    let source = r#"
+    let source = r"
         fn count_until(limit: int) -> int:
             let i = 0
             while i < limit:
@@ -1856,7 +1856,7 @@ async fn test_imperative_while_loop() {
 
         stream Test = Input
             .emit(count: count_until(5))
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -1871,7 +1871,7 @@ async fn test_imperative_while_loop() {
 #[tokio::test]
 async fn test_imperative_for_loop_with_break() {
     // Test for loop with early break
-    let source = r#"
+    let source = r"
         fn find_first_over(threshold: int) -> int:
             for i in range(100):
                 if i > threshold:
@@ -1880,7 +1880,7 @@ async fn test_imperative_for_loop_with_break() {
 
         stream Test = Input
             .emit(found: find_first_over(42))
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -1986,14 +1986,14 @@ async fn test_imperative_nested_if() {
 #[tokio::test]
 async fn test_imperative_array_literal() {
     // Test array literal and length
-    let source = r#"
+    let source = r"
         fn array_len() -> int:
             let arr = [1, 2, 3, 4, 5]
             return len(arr)
 
         stream Test = Input
             .emit(length: array_len())
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -2008,14 +2008,14 @@ async fn test_imperative_array_literal() {
 #[tokio::test]
 async fn test_imperative_array_index() {
     // Test array indexing
-    let source = r#"
+    let source = r"
         fn get_third() -> int:
             let arr = [10, 20, 30, 40, 50]
             return arr[2]
 
         stream Test = Input
             .emit(value: get_third())
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -2030,14 +2030,14 @@ async fn test_imperative_array_index() {
 #[tokio::test]
 async fn test_imperative_array_sum() {
     // Test array sum function
-    let source = r#"
+    let source = r"
         fn array_sum() -> float:
             let arr = [1.0, 2.0, 3.0, 4.0, 5.0]
             return sum(arr)
 
         stream Test = Input
             .emit(total: array_sum())
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -2056,7 +2056,7 @@ async fn test_imperative_array_sum() {
 #[tokio::test]
 async fn test_imperative_array_push() {
     // Test array push function
-    let source = r#"
+    let source = r"
         fn build_array() -> int:
             let arr = [1, 2, 3]
             let arr2 = push(arr, 4)
@@ -2064,7 +2064,7 @@ async fn test_imperative_array_push() {
 
         stream Test = Input
             .emit(length: build_array())
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -2079,14 +2079,14 @@ async fn test_imperative_array_push() {
 #[tokio::test]
 async fn test_imperative_array_range() {
     // Test range function
-    let source = r#"
+    let source = r"
         fn range_length() -> int:
             let arr = range(10)
             return len(arr)
 
         stream Test = Input
             .emit(length: range_length())
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -2175,7 +2175,7 @@ async fn test_imperative_map_keys() {
 #[tokio::test]
 async fn test_builtin_math_functions() {
     // Test math built-in functions
-    let source = r#"
+    let source = r"
         fn math_ops() -> float:
             let a = abs(-5)
             let b = sqrt(16.0)
@@ -2186,7 +2186,7 @@ async fn test_builtin_math_functions() {
 
         stream Test = Input
             .emit(result: math_ops())
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -2206,7 +2206,7 @@ async fn test_builtin_math_functions() {
 #[tokio::test]
 async fn test_builtin_min_max() {
     // Test min/max functions
-    let source = r#"
+    let source = r"
         fn compute_range() -> int:
             let a = min(10, 5)
             let b = max(10, 5)
@@ -2214,7 +2214,7 @@ async fn test_builtin_min_max() {
 
         stream Test = Input
             .emit(range: compute_range())
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -2283,14 +2283,14 @@ async fn test_builtin_type_checking() {
 #[tokio::test]
 async fn test_builtin_contains() {
     // Test contains function
-    let source = r#"
+    let source = r"
         fn test_contains() -> bool:
             let arr = [1, 2, 3, 4, 5]
             return contains(arr, 3)
 
         stream Test = Input
             .emit(found: test_contains())
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -2305,7 +2305,7 @@ async fn test_builtin_contains() {
 #[tokio::test]
 async fn test_builtin_sort() {
     // Test sort function
-    let source = r#"
+    let source = r"
         fn test_sort() -> int:
             let arr = [5, 2, 8, 1, 9]
             let sorted = sort(arr)
@@ -2313,7 +2313,7 @@ async fn test_builtin_sort() {
 
         stream Test = Input
             .emit(first_val: test_sort())
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -2332,13 +2332,13 @@ async fn test_builtin_sort() {
 #[tokio::test]
 async fn test_operator_modulo() {
     // Test modulo operator
-    let source = r#"
+    let source = r"
         fn is_even(n: int) -> bool:
             return n % 2 == 0
 
         stream Test = Input
             .emit(even: is_even(value))
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -2363,14 +2363,14 @@ async fn test_operator_modulo() {
 #[tokio::test]
 async fn test_operator_in() {
     // Test 'in' operator
-    let source = r#"
+    let source = r"
         fn check_in(x: int) -> bool:
             let arr = [1, 2, 3, 4, 5]
             return x in arr
 
         stream Test = Input
             .emit(found: check_in(value))
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -2399,7 +2399,7 @@ async fn test_operator_in() {
 #[tokio::test]
 async fn test_imperative_break_in_for_loop() {
     // Test break statement in for loop
-    let source = r#"
+    let source = r"
         fn find_first_gt(arr: [int], threshold: int) -> int:
             for x in arr:
                 if x > threshold:
@@ -2408,7 +2408,7 @@ async fn test_imperative_break_in_for_loop() {
 
         stream Test = Input
             .emit(result: find_first_gt([1, 5, 10, 15, 20], 7))
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -2423,7 +2423,7 @@ async fn test_imperative_break_in_for_loop() {
 #[tokio::test]
 async fn test_imperative_continue_in_loop() {
     // Test continue statement - skip even numbers
-    let source = r#"
+    let source = r"
         fn sum_odd(n: int) -> int:
             let total = 0
             for i in range(n):
@@ -2434,7 +2434,7 @@ async fn test_imperative_continue_in_loop() {
 
         stream Test = Input
             .emit(result: sum_odd(10))
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -2450,14 +2450,14 @@ async fn test_imperative_continue_in_loop() {
 #[tokio::test]
 async fn test_imperative_negative_number() {
     // Test that negative numbers are correctly evaluated
-    let source = r#"
+    let source = r"
         fn get_negative() -> int:
             let x = -1
             return x
 
         stream Test = Input
             .emit(value: get_negative())
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -2472,14 +2472,14 @@ async fn test_imperative_negative_number() {
 #[tokio::test]
 async fn test_imperative_negative_index() {
     // Test negative array indexing
-    let source = r#"
+    let source = r"
         fn get_last() -> int:
             let arr = [10, 20, 30, 40, 50]
             return arr[-1]
 
         stream Test = Input
             .emit(last: get_last())
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -2494,7 +2494,7 @@ async fn test_imperative_negative_index() {
 #[tokio::test]
 async fn test_imperative_slice() {
     // Test array slicing
-    let source = r#"
+    let source = r"
         fn slice_middle() -> int:
             let arr = [10, 20, 30, 40, 50]
             let sliced = arr[1:4]
@@ -2502,7 +2502,7 @@ async fn test_imperative_slice() {
 
         stream Test = Input
             .emit(length: slice_middle())
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -2518,14 +2518,14 @@ async fn test_imperative_slice() {
 #[tokio::test]
 async fn test_imperative_range_inclusive() {
     // Test inclusive range
-    let source = r#"
+    let source = r"
         fn inclusive_range() -> int:
             let arr = 1..=5
             return len(arr)
 
         stream Test = Input
             .emit(length: inclusive_range())
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -2567,7 +2567,7 @@ async fn test_imperative_for_over_map() {
 #[tokio::test]
 async fn test_imperative_recursive_fibonacci() {
     // Test recursive function (Fibonacci)
-    let source = r#"
+    let source = r"
         fn fib(n: int) -> int:
             if n <= 1:
                 return n
@@ -2575,7 +2575,7 @@ async fn test_imperative_recursive_fibonacci() {
 
         stream Test = Input
             .emit(result: fib(10))
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -2591,13 +2591,13 @@ async fn test_imperative_recursive_fibonacci() {
 #[tokio::test]
 async fn test_builtin_pow() {
     // Test power function
-    let source = r#"
+    let source = r"
         fn power_test() -> int:
             return pow(2, 10)
 
         stream Test = Input
             .emit(result: power_test())
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -2613,7 +2613,7 @@ async fn test_builtin_pow() {
 #[tokio::test]
 async fn test_builtin_log() {
     // Test log functions
-    let source = r#"
+    let source = r"
         fn log_test() -> float:
             let a = log(2.71828)
             let b = log10(100.0)
@@ -2621,7 +2621,7 @@ async fn test_builtin_log() {
 
         stream Test = Input
             .emit(result: log_test())
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -2644,7 +2644,7 @@ async fn test_builtin_log() {
 #[tokio::test]
 async fn test_builtin_reverse() {
     // Test reverse function
-    let source = r#"
+    let source = r"
         fn reverse_test() -> int:
             let arr = [1, 2, 3, 4, 5]
             let rev = reverse(arr)
@@ -2652,7 +2652,7 @@ async fn test_builtin_reverse() {
 
         stream Test = Input
             .emit(result: reverse_test())
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -2736,7 +2736,7 @@ async fn test_builtin_substring() {
 #[tokio::test]
 async fn test_operator_not_in() {
     // Test 'not in' operator - simplified to test literal values directly
-    let source = r#"
+    let source = r"
         fn test_not_in_true() -> bool:
             return 99 not in [1, 2, 3, 4, 5]
 
@@ -2745,7 +2745,7 @@ async fn test_operator_not_in() {
 
         stream Test = Input
             .emit(should_be_true: test_not_in_true(), should_be_false: test_not_in_false())
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -2767,7 +2767,7 @@ async fn test_operator_not_in() {
 #[tokio::test]
 async fn test_complex_algorithm_quicksort() {
     // Test a more complex algorithm - find min/max in array manually
-    let source = r#"
+    let source = r"
         fn find_minmax(arr: [int]) -> int:
             let min_val = arr[0]
             let max_val = arr[0]
@@ -2780,7 +2780,7 @@ async fn test_complex_algorithm_quicksort() {
 
         stream Test = Input
             .emit(range: find_minmax([5, 2, 8, 1, 9, 3]))
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -2796,14 +2796,14 @@ async fn test_complex_algorithm_quicksort() {
 #[tokio::test]
 async fn test_process_with_emit() {
     // Test .process() that emits 3 events from a loop
-    let source = r#"
+    let source = r"
         fn generate_items(n: int):
             for i in 0..n:
                 emit Item(index: i)
 
         stream Items = Trigger
             .process(generate_items(3))
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -2825,7 +2825,7 @@ async fn test_process_with_emit() {
 #[tokio::test]
 async fn test_emit_in_nested_function() {
     // Function A calls function B which emits
-    let source = r#"
+    let source = r"
         fn inner_emit(val: int):
             emit Result(value: val * 10)
 
@@ -2835,7 +2835,7 @@ async fn test_emit_in_nested_function() {
 
         stream Output = Trigger
             .process(outer(2))
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -2854,7 +2854,7 @@ async fn test_emit_in_nested_function() {
 #[tokio::test]
 async fn test_process_replaces_events() {
     // Verify that emitted events replace input events and flow through the pipeline
-    let source = r#"
+    let source = r"
         fn double_emit():
             emit A(val: 1)
             emit A(val: 2)
@@ -2862,7 +2862,7 @@ async fn test_process_replaces_events() {
         stream Output = Trigger
             .process(double_emit())
             .where(val > 1)
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -2880,7 +2880,7 @@ async fn test_process_replaces_events() {
 #[tokio::test]
 async fn test_process_with_while_loop_emit() {
     // Test emit inside a while loop
-    let source = r#"
+    let source = r"
         fn count_up(limit: int):
             var i = 0
             while i < limit:
@@ -2889,7 +2889,7 @@ async fn test_process_with_while_loop_emit() {
 
         stream Ticks = Start
             .process(count_up(3))
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -2901,7 +2901,7 @@ async fn test_process_with_while_loop_emit() {
     for expected in 0..3 {
         let out = rx
             .try_recv()
-            .unwrap_or_else(|_| panic!("Should have output {}", expected));
+            .unwrap_or_else(|_| panic!("Should have output {expected}"));
         assert_eq!(out.data.get("n"), Some(&Value::Int(expected)));
     }
     assert!(rx.try_recv().is_err());
@@ -2951,13 +2951,13 @@ async fn test_batch_sequence_processing() {
 
 #[tokio::test]
 async fn test_trend_aggregate_loads_without_error() {
-    let source = r#"
+    let source = r"
         stream RisingTrend = StockTick as first
             -> all StockTick as rising
             .within(60s)
             .trend_aggregate(count: count_trends())
             .emit(trends: count)
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, _rx) = mpsc::channel(100);
@@ -2973,13 +2973,13 @@ async fn test_trend_aggregate_loads_without_error() {
 
 #[tokio::test]
 async fn test_trend_aggregate_processes_events() {
-    let source = r#"
+    let source = r"
         stream RisingTrend = StockTick as first
             -> all StockTick as rising
             .within(60s)
             .trend_aggregate(count: count_trends())
             .emit(trends: count)
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -3043,14 +3043,14 @@ async fn test_trend_aggregate_backward_compat() {
 
 #[tokio::test]
 async fn test_trend_aggregate_with_partition() {
-    let source = r#"
+    let source = r"
         stream TrendsBySymbol = StockTick as first
             -> all StockTick as rising
             .within(60s)
             .partition_by(symbol)
             .trend_aggregate(count: count_trends())
             .emit(trends: count)
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, _rx) = mpsc::channel(100);
@@ -3094,7 +3094,7 @@ async fn test_trend_aggregate_with_partition() {
 async fn test_trend_aggregate_multi_query_sharing() {
     // Two streams using .trend_aggregate() on overlapping patterns
     // The engine should detect the sharing opportunity
-    let source = r#"
+    let source = r"
         stream TrendsBySymbol = StockTick as first
             -> all StockTick as rising
             .within(60s)
@@ -3108,7 +3108,7 @@ async fn test_trend_aggregate_multi_query_sharing() {
             .partition_by(exchange)
             .trend_aggregate(count: count_trends())
             .emit(exchange: exchange, count: count)
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, _rx) = mpsc::channel(100);
@@ -3160,11 +3160,11 @@ async fn test_trend_aggregate_multi_query_sharing() {
 
 #[tokio::test]
 async fn test_engine_distinct_by_field() {
-    let source = r#"
+    let source = r"
         stream Unique = Input
             .distinct(category)
             .emit(category: category, value: value)
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -3207,11 +3207,11 @@ async fn test_engine_distinct_by_field() {
 
 #[tokio::test]
 async fn test_engine_distinct_whole_event() {
-    let source = r#"
+    let source = r"
         stream Unique = Input
             .distinct()
             .emit(x: x)
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -3242,11 +3242,11 @@ async fn test_engine_distinct_whole_event() {
 
 #[tokio::test]
 async fn test_engine_limit() {
-    let source = r#"
+    let source = r"
         stream Limited = Input
             .limit(2)
             .emit(n: n)
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -3274,11 +3274,11 @@ async fn test_engine_limit() {
 
 #[tokio::test]
 async fn test_engine_first() {
-    let source = r#"
+    let source = r"
         stream FirstOnly = Input
             .first()
             .emit(n: n)
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -3305,11 +3305,11 @@ async fn test_engine_first() {
 
 #[tokio::test]
 async fn test_engine_filter_alias() {
-    let source = r#"
+    let source = r"
         stream Filtered = Input
             .filter(value > 10)
             .emit(value: value)
-    "#;
+    ";
 
     let program = parse_program(source);
     let (tx, mut rx) = mpsc::channel(100);
@@ -3351,7 +3351,6 @@ async fn test_score_without_onnx_returns_error() {
     let err = result.unwrap_err().to_string();
     assert!(
         err.contains("onnx"),
-        "Error should mention onnx feature: {}",
-        err
+        "Error should mention onnx feature: {err}"
     );
 }

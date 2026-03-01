@@ -42,7 +42,7 @@ pub struct StageBufferConfig {
     pub when_full: WhenFull,
 }
 
-fn default_capacity() -> usize {
+const fn default_capacity() -> usize {
     1000
 }
 
@@ -65,7 +65,7 @@ pub struct StageBufferMetrics {
 }
 
 impl StageBufferMetrics {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             events_received: AtomicU64::new(0),
             events_dropped: AtomicU64::new(0),
@@ -164,7 +164,7 @@ impl StageBuffer {
     }
 
     /// Get a reference to the metrics.
-    pub fn metrics(&self) -> &Arc<StageBufferMetrics> {
+    pub const fn metrics(&self) -> &Arc<StageBufferMetrics> {
         &self.metrics
     }
 

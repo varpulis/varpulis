@@ -109,9 +109,9 @@ mod tests {
 
     #[test]
     fn test_simple_function() {
-        let input = r#"fn add(a: int, b: int) -> int:
+        let input = r"fn add(a: int, b: int) -> int:
     return a + b
-"#;
+";
         let output = preprocess_indentation(input);
         assert!(output.contains("«INDENT»"));
         assert!(output.contains("«DEDENT»"));
@@ -127,8 +127,7 @@ mod tests {
         // Should NOT add INDENT/DEDENT for continuation lines
         assert!(
             !output.contains("«INDENT»"),
-            "Should not have INDENT: {}",
-            output
+            "Should not have INDENT: {output}"
         );
         // The output should be all on separate lines without indentation markers
         assert!(output.contains(".window(1m)"));
@@ -137,12 +136,12 @@ mod tests {
 
     #[test]
     fn test_nested_blocks() {
-        let input = r#"fn test():
+        let input = r"fn test():
     if x > 0:
         return x
     else:
         return 0
-"#;
+";
         let output = preprocess_indentation(input);
         // Should have multiple INDENT/DEDENT pairs
         assert_eq!(output.matches("«INDENT»").count(), 3);

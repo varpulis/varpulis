@@ -56,11 +56,11 @@ fn run_sync(code: &str, events: Vec<Event>) -> Vec<Event> {
 #[tokio::test]
 async fn distinct_whole_event_dedup() {
     // When no field is specified the entire event data is hashed for dedup.
-    let code = r#"
+    let code = r"
         stream S = Tick
             .distinct()
             .emit(x: x, y: y)
-    "#;
+    ";
     let events = vec![
         Event::new("Tick")
             .with_field("x", Value::Int(1))
@@ -79,11 +79,11 @@ async fn distinct_whole_event_dedup() {
 #[tokio::test]
 async fn distinct_field_across_batches() {
     // Distinct state persists across individual process() calls.
-    let code = r#"
+    let code = r"
         stream S = Tick
             .distinct(id)
             .emit(id: id)
-    "#;
+    ";
     let program = parse(code).expect("parse");
     let (tx, mut rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
@@ -115,11 +115,11 @@ async fn distinct_field_across_batches() {
 
 #[tokio::test]
 async fn limit_zero_blocks_all() {
-    let code = r#"
+    let code = r"
         stream S = Tick
             .limit(0)
             .emit(val: x)
-    "#;
+    ";
     let events = vec![
         Event::new("Tick").with_field("x", Value::Int(1)),
         Event::new("Tick").with_field("x", Value::Int(2)),
@@ -130,11 +130,11 @@ async fn limit_zero_blocks_all() {
 
 #[tokio::test]
 async fn limit_larger_than_input() {
-    let code = r#"
+    let code = r"
         stream S = Tick
             .limit(100)
             .emit(val: x)
-    "#;
+    ";
     let events: Vec<Event> = (1..=5)
         .map(|i| Event::new("Tick").with_field("x", Value::Int(i)))
         .collect();
@@ -144,11 +144,11 @@ async fn limit_larger_than_input() {
 
 #[tokio::test]
 async fn first_shorthand_is_limit_one() {
-    let code = r#"
+    let code = r"
         stream S = Tick
             .first()
             .emit(val: x)
-    "#;
+    ";
     let events: Vec<Event> = (1..=5)
         .map(|i| Event::new("Tick").with_field("x", Value::Int(i)))
         .collect();
@@ -163,13 +163,13 @@ async fn first_shorthand_is_limit_one() {
 
 #[tokio::test]
 async fn partition_by_count_window_aggregate() {
-    let code = r#"
+    let code = r"
         stream S = Reading
             .partition_by(sensor)
             .window(2)
             .aggregate(total: sum(value))
             .emit(sensor: sensor, total: total)
-    "#;
+    ";
     let events = vec![
         Event::new("Reading")
             .with_field("sensor", Value::str("A"))
@@ -195,12 +195,12 @@ async fn partition_by_count_window_aggregate() {
 
 #[tokio::test]
 async fn sliding_count_window_produces_multiple_outputs() {
-    let code = r#"
+    let code = r"
         stream S = Reading
             .window(3, sliding: 1)
             .aggregate(total: sum(value))
             .emit(total: total)
-    "#;
+    ";
     let events: Vec<Event> = (1..=5)
         .map(|i| Event::new("Reading").with_field("value", Value::Float(i as f64 * 10.0)))
         .collect();
@@ -219,12 +219,12 @@ async fn sliding_count_window_produces_multiple_outputs() {
 
 #[tokio::test]
 async fn count_window_exact_fill() {
-    let code = r#"
+    let code = r"
         stream S = Reading
             .window(3)
             .aggregate(cnt: count())
             .emit(cnt: cnt)
-    "#;
+    ";
     let events: Vec<Event> = (1..=6)
         .map(|i| Event::new("Reading").with_field("value", Value::Int(i)))
         .collect();
@@ -238,11 +238,11 @@ async fn count_window_exact_fill() {
 
 #[tokio::test]
 async fn session_window_with_aggregate() {
-    let code = r#"
+    let code = r"
         stream S = Click
             .window(session: 5s)
             .aggregate(clicks: count())
-    "#;
+    ";
     let events = vec![
         Event::new("Click")
             .with_field("user", Value::str("u1"))
@@ -267,19 +267,19 @@ async fn session_window_with_aggregate() {
 
 #[tokio::test]
 async fn reload_adds_new_stream() {
-    let code_v1 = r#"
+    let code_v1 = r"
         stream A = Tick
             .where(x > 0)
             .emit(val: x)
-    "#;
-    let code_v2 = r#"
+    ";
+    let code_v2 = r"
         stream A = Tick
             .where(x > 0)
             .emit(val: x)
 
         stream B = Tock
             .emit(val: y)
-    "#;
+    ";
 
     let program_v1 = parse(code_v1).expect("parse v1");
     let program_v2 = parse(code_v2).expect("parse v2");
@@ -311,17 +311,17 @@ async fn reload_adds_new_stream() {
 
 #[tokio::test]
 async fn reload_removes_stream() {
-    let code_v1 = r#"
+    let code_v1 = r"
         stream A = Tick
             .emit(val: x)
 
         stream B = Tock
             .emit(val: y)
-    "#;
-    let code_v2 = r#"
+    ";
+    let code_v2 = r"
         stream A = Tick
             .emit(val: x)
-    "#;
+    ";
 
     let program_v1 = parse(code_v1).expect("parse v1");
     let program_v2 = parse(code_v2).expect("parse v2");
@@ -343,18 +343,18 @@ async fn reload_removes_stream() {
 #[tokio::test]
 async fn reload_updates_stream_with_structural_change() {
     // When the ops count changes, reload replaces the stream definition
-    let code_v1 = r#"
+    let code_v1 = r"
         stream S = Tick
             .where(x > 10)
             .emit(val: x)
-    "#;
+    ";
     // v2 adds a .distinct() operation — structural change (3 ops vs 2)
-    let code_v2 = r#"
+    let code_v2 = r"
         stream S = Tick
             .where(x > 50)
             .distinct(x)
             .emit(val: x)
-    "#;
+    ";
 
     let program_v1 = parse(code_v1).expect("parse");
     let program_v2 = parse(code_v2).expect("parse");
@@ -401,10 +401,10 @@ async fn reload_updates_stream_with_structural_change() {
 
 #[tokio::test]
 async fn reload_empty_report_for_identical_program() {
-    let code = r#"
+    let code = r"
         stream S = Tick
             .emit(val: x)
-    "#;
+    ";
     let program = parse(code).expect("parse");
     let (tx, _rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
@@ -423,11 +423,11 @@ async fn reload_empty_report_for_identical_program() {
 
 #[tokio::test]
 async fn stream_names_returns_all() {
-    let code = r#"
+    let code = r"
         stream Alpha = X .emit(v: v)
         stream Beta  = Y .emit(v: v)
         stream Gamma = Z .emit(v: v)
-    "#;
+    ";
     let program = parse(code).expect("parse");
     let (tx, _rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
@@ -442,9 +442,9 @@ async fn stream_names_returns_all() {
 
 #[tokio::test]
 async fn has_sink_operations_false_without_to() {
-    let code = r#"
+    let code = r"
         stream S = Tick .emit(val: x)
-    "#;
+    ";
     let program = parse(code).expect("parse");
     let (tx, _rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
@@ -462,11 +462,11 @@ async fn has_sink_operations_false_without_to() {
 
 #[tokio::test]
 async fn process_batch_sync_filter_and_emit() {
-    let code = r#"
+    let code = r"
         stream S = Tick
             .where(x > 5)
             .emit(val: x)
-    "#;
+    ";
     let events: Vec<Event> = (1..=10)
         .map(|i| Event::new("Tick").with_field("x", Value::Int(i)))
         .collect();
@@ -476,9 +476,9 @@ async fn process_batch_sync_filter_and_emit() {
 
 #[tokio::test]
 async fn process_batch_sync_empty_batch() {
-    let code = r#"
+    let code = r"
         stream S = Tick .emit(val: x)
-    "#;
+    ";
     let program = parse(code).expect("parse");
     let (tx, mut rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
@@ -504,12 +504,12 @@ async fn process_batch_sync_with_sequence() {
 
 #[tokio::test]
 async fn process_batch_sync_with_distinct_and_limit() {
-    let code = r#"
+    let code = r"
         stream S = Tick
             .distinct(id)
             .limit(2)
             .emit(id: id)
-    "#;
+    ";
     let events = vec![
         Event::new("Tick").with_field("id", Value::Int(1)),
         Event::new("Tick").with_field("id", Value::Int(1)),
@@ -531,12 +531,12 @@ async fn process_batch_sync_with_distinct_and_limit() {
 
 #[tokio::test]
 async fn sequence_with_within_cross_ref() {
-    let code = r#"
+    let code = r"
         stream S = Order as order
             -> Payment where amount == order.total as pay
             .within(10s)
             .emit(order_id: order.id, paid: pay.amount)
-    "#;
+    ";
     let events = vec![
         Event::new("Order")
             .with_field("id", Value::Int(100))
@@ -589,10 +589,10 @@ async fn sequence_no_match_when_out_of_order() {
 
 #[tokio::test]
 async fn processing_event_with_no_matching_stream() {
-    let code = r#"
+    let code = r"
         stream S = Alpha
             .emit(val: x)
-    "#;
+    ";
     let events = vec![
         Event::new("Beta").with_field("x", Value::Int(1)),
         Event::new("Gamma").with_field("x", Value::Int(2)),
@@ -614,11 +614,11 @@ async fn empty_program_processes_events() {
 
 #[tokio::test]
 async fn program_with_only_event_decls() {
-    let code = r#"
+    let code = r"
         event Sensor:
             temp: float
             humidity: float
-    "#;
+    ";
     let events = vec![Event::new("Sensor")
         .with_field("temp", Value::Float(25.0))
         .with_field("humidity", Value::Float(60.0))];
@@ -656,11 +656,11 @@ async fn multiple_streams_consuming_same_event_type() {
 
 #[tokio::test]
 async fn benchmark_engine_processes_without_panic() {
-    let code = r#"
+    let code = r"
         stream S = Tick
             .where(x > 0)
             .emit(val: x)
-    "#;
+    ";
     let program = parse(code).expect("parse");
     let mut engine = Engine::new_benchmark();
     engine.load(&program).unwrap();
@@ -680,11 +680,11 @@ async fn benchmark_engine_processes_without_panic() {
 
 #[tokio::test]
 async fn benchmark_engine_sync_batch() {
-    let code = r#"
+    let code = r"
         stream S = Tick
             .where(x > 0)
             .emit(val: x)
-    "#;
+    ";
     let program = parse(code).expect("parse");
     let mut engine = Engine::new_benchmark();
     engine.load(&program).unwrap();
@@ -705,10 +705,10 @@ async fn benchmark_engine_sync_batch() {
 
 #[tokio::test]
 async fn add_filter_closure_to_stream() {
-    let code = r#"
+    let code = r"
         stream S = Tick
             .emit(val: x)
-    "#;
+    ";
     let program = parse(code).expect("parse");
     let (tx, mut rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
@@ -720,8 +720,7 @@ async fn add_filter_closure_to_stream() {
             e.data
                 .get("x")
                 .and_then(|v| v.as_int())
-                .map(|n| n % 2 == 0)
-                .unwrap_or(false)
+                .is_some_and(|n| n % 2 == 0)
         })
         .unwrap();
 
@@ -741,9 +740,9 @@ async fn add_filter_closure_to_stream() {
 
 #[tokio::test]
 async fn add_filter_to_nonexistent_stream_returns_error() {
-    let code = r#"
+    let code = r"
         stream S = Tick .emit(val: x)
-    "#;
+    ";
     let program = parse(code).expect("parse");
     let (tx, _rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
@@ -759,9 +758,9 @@ async fn add_filter_to_nonexistent_stream_returns_error() {
 
 #[tokio::test]
 async fn immutable_variable_rejects_set() {
-    let code = r#"
+    let code = r"
         let threshold: int = 10
-    "#;
+    ";
     let program = parse(code).expect("parse");
     let (tx, _rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
@@ -775,9 +774,9 @@ async fn immutable_variable_rejects_set() {
 
 #[tokio::test]
 async fn mutable_variable_allows_set() {
-    let code = r#"
+    let code = r"
         var counter: int = 0
-    "#;
+    ";
     let program = parse(code).expect("parse");
     let (tx, _rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
@@ -793,10 +792,10 @@ async fn mutable_variable_allows_set() {
 
 #[tokio::test]
 async fn metrics_count_events_and_outputs() {
-    let code = r#"
+    let code = r"
         stream S = Tick
             .emit(val: x)
-    "#;
+    ";
     let program = parse(code).expect("parse");
     let (tx, mut rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
@@ -820,9 +819,9 @@ async fn metrics_count_events_and_outputs() {
 
 #[tokio::test]
 async fn event_counters_method() {
-    let code = r#"
+    let code = r"
         stream S = Tick .emit(val: x)
-    "#;
+    ";
     let program = parse(code).expect("parse");
     let (tx, mut rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
@@ -850,7 +849,7 @@ async fn event_counters_method() {
 
 #[tokio::test]
 async fn count_window_with_multiple_aggregates() {
-    let code = r#"
+    let code = r"
         stream S = Sensor
             .window(4)
             .aggregate(
@@ -861,7 +860,7 @@ async fn count_window_with_multiple_aggregates() {
                 av: avg(value)
             )
             .emit(cnt: cnt, s: s, mn: mn, mx: mx, av: av)
-    "#;
+    ";
     let events: Vec<Event> = vec![10.0, 20.0, 30.0, 40.0]
         .into_iter()
         .map(|v| Event::new("Sensor").with_field("value", Value::Float(v)))
@@ -881,13 +880,13 @@ async fn count_window_with_multiple_aggregates() {
 
 #[tokio::test]
 async fn window_with_having_filter() {
-    let code = r#"
+    let code = r"
         stream S = Sensor
             .window(3)
             .aggregate(total: sum(value))
             .having(total > 100.0)
             .emit(total: total)
-    "#;
+    ";
     let events: Vec<Event> = vec![10.0, 20.0, 30.0, 50.0, 60.0, 40.0]
         .into_iter()
         .map(|v| Event::new("Sensor").with_field("value", Value::Float(v)))
@@ -906,11 +905,11 @@ async fn window_with_having_filter() {
 
 #[tokio::test]
 async fn select_projects_specific_fields() {
-    let code = r#"
+    let code = r"
         stream S = Data
             .select(a: x, doubled: x * 2)
             .emit(a: a, doubled: doubled)
-    "#;
+    ";
     let events = vec![Event::new("Data")
         .with_field("x", Value::Int(5))
         .with_field("y", Value::Int(100))
@@ -950,11 +949,11 @@ async fn derived_stream_in_sequence() {
 
 #[tokio::test]
 async fn stateless_pipeline_detected() {
-    let code = r#"
+    let code = r"
         stream S = Tick
             .where(x > 0)
             .emit(val: x)
-    "#;
+    ";
     let program = parse(code).expect("parse");
     let (tx, _rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
@@ -968,11 +967,11 @@ async fn stateless_pipeline_detected() {
 
 #[tokio::test]
 async fn stateful_pipeline_with_window() {
-    let code = r#"
+    let code = r"
         stream S = Tick
             .window(3)
             .aggregate(c: count())
-    "#;
+    ";
     let program = parse(code).expect("parse");
     let (tx, _rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
@@ -987,12 +986,12 @@ async fn stateful_pipeline_with_window() {
 
 #[tokio::test]
 async fn partition_key_detected() {
-    let code = r#"
+    let code = r"
         stream S = Reading
             .partition_by(region)
             .window(3)
             .aggregate(c: count())
-    "#;
+    ";
     let program = parse(code).expect("parse");
     let (tx, _rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
@@ -1057,9 +1056,9 @@ async fn log_and_print_do_not_filter() {
 async fn shared_event_channel_works() {
     use varpulis_runtime::event::SharedEvent;
 
-    let code = r#"
+    let code = r"
         stream S = Tick .emit(val: x)
-    "#;
+    ";
     let program = parse(code).expect("parse");
     let (tx, mut rx) = mpsc::channel::<SharedEvent>(100);
     let mut engine = Engine::new_shared(tx);
@@ -1080,9 +1079,9 @@ async fn shared_event_channel_works() {
 
 #[tokio::test]
 async fn optional_output_none() {
-    let code = r#"
+    let code = r"
         stream S = Tick .emit(val: x)
-    "#;
+    ";
     let program = parse(code).expect("parse");
     let mut engine = Engine::new_with_optional_output(None);
     engine.load(&program).unwrap();
@@ -1103,7 +1102,7 @@ async fn optional_output_none() {
 
 #[tokio::test]
 async fn chain_depth_three_levels() {
-    let code = r#"
+    let code = r"
         stream Level1 = Raw
             .where(x > 0)
 
@@ -1112,7 +1111,7 @@ async fn chain_depth_three_levels() {
 
         stream Level3 = Level2
             .emit(val: x)
-    "#;
+    ";
     let events = vec![
         Event::new("Raw").with_field("x", Value::Int(10)),
         Event::new("Raw").with_field("x", Value::Int(3)),
@@ -1133,11 +1132,11 @@ async fn chain_depth_three_levels() {
 
 #[tokio::test]
 async fn process_batch_async_produces_output() {
-    let code = r#"
+    let code = r"
         stream S = Tick
             .where(x > 5)
             .emit(val: x)
-    "#;
+    ";
     let program = parse(code).expect("parse");
     let (tx, mut rx) = mpsc::channel(4096);
     let mut engine = Engine::new(tx);
@@ -1161,11 +1160,11 @@ async fn process_batch_async_produces_output() {
 
 #[tokio::test]
 async fn has_session_windows_detected() {
-    let code = r#"
+    let code = r"
         stream S = Click
             .window(session: 10s)
             .aggregate(c: count())
-    "#;
+    ";
     let program = parse(code).expect("parse");
     let (tx, _rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
@@ -1178,11 +1177,11 @@ async fn has_session_windows_detected() {
 
 #[tokio::test]
 async fn no_session_windows_when_count_based() {
-    let code = r#"
+    let code = r"
         stream S = Tick
             .window(5)
             .aggregate(c: count())
-    "#;
+    ";
     let program = parse(code).expect("parse");
     let (tx, _rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
@@ -1198,11 +1197,11 @@ async fn no_session_windows_when_count_based() {
 
 #[tokio::test]
 async fn filter_alias_behaves_like_where() {
-    let code = r#"
+    let code = r"
         stream S = Tick
             .filter(x > 5)
             .emit(val: x)
-    "#;
+    ";
     let events: Vec<Event> = (1..=10)
         .map(|i| Event::new("Tick").with_field("x", Value::Int(i)))
         .collect();
@@ -1216,10 +1215,10 @@ async fn filter_alias_behaves_like_where() {
 
 #[tokio::test]
 async fn map_operation_returns_error() {
-    let code = r#"
+    let code = r"
         stream S = Tick
             .map(x * 2)
-    "#;
+    ";
     let program = parse(code).expect("parse");
     let (tx, _rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
@@ -1237,13 +1236,13 @@ async fn map_operation_returns_error() {
 
 #[tokio::test]
 async fn partitioned_sliding_count_window() {
-    let code = r#"
+    let code = r"
         stream S = Reading
             .partition_by(sensor)
             .window(3, sliding: 1)
             .aggregate(s: sum(value))
             .emit(total: s)
-    "#;
+    ";
     let events = vec![
         Event::new("Reading")
             .with_field("sensor", Value::str("A"))
@@ -1277,7 +1276,7 @@ async fn partitioned_sliding_count_window() {
 
 #[tokio::test]
 async fn function_declaration_accessible() {
-    let code = r#"
+    let code = r"
         fn double(x: int) -> int:
             return x * 2
 
@@ -1285,7 +1284,7 @@ async fn function_declaration_accessible() {
             return x * 3
 
         stream S = Tick .emit(val: x)
-    "#;
+    ";
     let program = parse(code).expect("parse");
     let (tx, _rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
@@ -1306,7 +1305,7 @@ async fn function_declaration_accessible() {
 
 #[tokio::test]
 async fn process_function_multiple_emits() {
-    let code = r#"
+    let code = r"
         fn fan_out():
             emit Low(v: value * 0.5)
             emit Mid(v: value * 1.0)
@@ -1314,7 +1313,7 @@ async fn process_function_multiple_emits() {
 
         stream S = Input
             .process(fan_out())
-    "#;
+    ";
     let events = vec![Event::new("Input").with_field("value", Value::Float(100.0))];
     let out = run(code, events).await;
     assert_eq!(out.len(), 3, "fan_out should emit 3 events per input");
@@ -1326,10 +1325,10 @@ async fn process_function_multiple_emits() {
 
 #[tokio::test]
 async fn variables_map_accessible() {
-    let code = r#"
+    let code = r"
         var x: int = 10
         var y: float = 3.14
-    "#;
+    ";
     let program = parse(code).expect("parse");
     let (tx, _rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
@@ -1347,14 +1346,14 @@ async fn variables_map_accessible() {
 
 #[tokio::test]
 async fn reload_preserves_user_set_variables() {
-    let code_v1 = r#"
+    let code_v1 = r"
         var threshold: int = 10
         stream S = Tick .emit(val: x)
-    "#;
-    let code_v2 = r#"
+    ";
+    let code_v2 = r"
         var threshold: int = 10
         stream S = Tick .where(x > 0) .emit(val: x)
-    "#;
+    ";
 
     let program_v1 = parse(code_v1).expect("parse v1");
     let program_v2 = parse(code_v2).expect("parse v2");
@@ -1382,14 +1381,14 @@ async fn reload_preserves_user_set_variables() {
 
 #[tokio::test]
 async fn partitioned_aggregate_with_having() {
-    let code = r#"
+    let code = r"
         stream S = Reading
             .partition_by(region)
             .window(2)
             .aggregate(total: sum(value))
             .having(total > 50.0)
             .emit(region: region, total: total)
-    "#;
+    ";
     let events = vec![
         // Region "east": 10 + 20 = 30 (fails having)
         Event::new("Reading")
@@ -1420,11 +1419,11 @@ async fn partitioned_aggregate_with_having() {
 
 #[tokio::test]
 async fn load_with_source_validates() {
-    let code = r#"
+    let code = r"
         event Reading: value: float
         stream S = Reading
             .emit(val: value)
-    "#;
+    ";
     let program = parse(code).expect("parse");
     let (tx, _rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);

@@ -111,6 +111,117 @@ insta = { version = "1", features = ["yaml"] }
 #
 # These are all transitive and cannot be resolved without major crate migrations.
 
+# ---------------------------------------------------------------------------
+# Workspace-wide lint configuration
+# ---------------------------------------------------------------------------
+# Every member crate inherits these via `[lints] workspace = true`.
+[workspace.lints.rust]
+unsafe_code = "deny"
+# 140 existing types lack Debug — allow pending dedicated cleanup
+missing_debug_implementations = "allow"
+
+[workspace.lints.clippy]
+# Enable pedantic and nursery groups at warn (lower priority so individual
+# overrides take effect).
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+
+# ---------------------------------------------------------------------------
+# Individual overrides — allowed for now, tighten over time
+# ---------------------------------------------------------------------------
+# These lints are from pedantic/nursery but have too many existing violations
+# to enable at once. Each should be addressed in a dedicated cleanup PR.
+
+# Safety & correctness (aspirational — 662 existing uses)
+unwrap_used = "allow"
+
+# Style & readability — allowed pending dedicated cleanup
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+return_self_not_must_use = "allow"
+items_after_statements = "allow"
+too_many_lines = "allow"
+similar_names = "allow"
+if_not_else = "allow"
+redundant_closure_for_method_calls = "allow"
+single_match_else = "allow"
+unnested_or_patterns = "allow"
+unreadable_literal = "allow"
+wildcard_imports = "allow"
+implicit_hasher = "allow"
+doc_markdown = "allow"
+needless_pass_by_value = "allow"
+trivially_copy_pass_by_ref = "allow"
+
+# Casts — allow all cast lints (numeric code is pervasive)
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_precision_loss = "allow"
+cast_lossless = "allow"
+cast_possible_wrap = "allow"
+
+# Bool parameters
+struct_excessive_bools = "allow"
+fn_params_excessive_bools = "allow"
+
+# Remaining pedantic/nursery lints with existing violations
+option_if_let_else = "allow"
+match_same_arms = "allow"
+needless_collect = "allow"
+missing_const_for_fn = "allow"
+float_cmp = "allow"
+used_underscore_binding = "allow"
+significant_drop_tightening = "allow"
+manual_let_else = "allow"
+default_trait_access = "allow"
+redundant_pub_crate = "allow"
+needless_continue = "allow"
+comparison_chain = "allow"
+format_push_string = "allow"
+literal_string_with_formatting_args = "allow"
+unnecessary_wraps = "allow"
+assigning_clones = "allow"
+unused_self = "allow"
+ref_option = "allow"
+needless_pass_by_ref_mut = "allow"
+match_wildcard_for_single_variants = "allow"
+no_effect_underscore_binding = "allow"
+unused_async = "allow"
+missing_fields_in_debug = "allow"
+useless_let_if_seq = "allow"
+unnecessary_debug_formatting = "allow"
+redundant_else = "allow"
+use_self = "allow"
+map_unwrap_or = "allow"
+derive_partial_eq_without_eq = "allow"
+stable_sort_primitive = "allow"
+semicolon_if_nothing_returned = "allow"
+non_std_lazy_statics = "allow"
+bool_to_int_with_if = "allow"
+uninlined_format_args = "allow"
+unnecessary_literal_bound = "allow"
+suboptimal_flops = "allow"
+single_char_pattern = "allow"
+redundant_clone = "allow"
+ignored_unit_patterns = "allow"
+explicit_iter_loop = "allow"
+elidable_lifetime_names = "allow"
+manual_string_new = "allow"
+suspicious_operation_groupings = "allow"
+iter_without_into_iter = "allow"
+cloned_instead_of_copied = "allow"
+collection_is_never_read = "allow"
+implicit_clone = "allow"
+or_fun_call = "allow"
+unchecked_time_subtraction = "allow"
+unnecessary_join = "allow"
+ignore_without_reason = "allow"
+future_not_send = "allow"
+unused_peekable = "allow"
+branches_sharing_code = "allow"
+
 [profile.dev.package."*"]
 opt-level = 1
 

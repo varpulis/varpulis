@@ -12,7 +12,7 @@ use varpulis_parser::parse;
 // ============================================================================
 
 fn parse_first_stmt(source: &str) -> Stmt {
-    let program = parse(source).unwrap_or_else(|e| panic!("Parse failed: {:?}", e));
+    let program = parse(source).unwrap_or_else(|e| panic!("Parse failed: {e:?}"));
     assert!(
         !program.statements.is_empty(),
         "Expected at least one statement"
@@ -32,7 +32,7 @@ fn test_type_decl_float() {
             assert_eq!(name, "Temperature");
             assert_eq!(ty, Type::Float);
         }
-        other => panic!("Expected TypeDecl, got {:?}", other),
+        other => panic!("Expected TypeDecl, got {other:?}"),
     }
 }
 
@@ -44,7 +44,7 @@ fn test_type_decl_int() {
             assert_eq!(name, "Counter");
             assert_eq!(ty, Type::Int);
         }
-        other => panic!("Expected TypeDecl, got {:?}", other),
+        other => panic!("Expected TypeDecl, got {other:?}"),
     }
 }
 
@@ -56,7 +56,7 @@ fn test_type_decl_bool() {
             assert_eq!(name, "Flag");
             assert_eq!(ty, Type::Bool);
         }
-        other => panic!("Expected TypeDecl, got {:?}", other),
+        other => panic!("Expected TypeDecl, got {other:?}"),
     }
 }
 
@@ -68,7 +68,7 @@ fn test_type_decl_str() {
             assert_eq!(name, "Label");
             assert_eq!(ty, Type::Str);
         }
-        other => panic!("Expected TypeDecl, got {:?}", other),
+        other => panic!("Expected TypeDecl, got {other:?}"),
     }
 }
 
@@ -80,7 +80,7 @@ fn test_type_decl_timestamp() {
             assert_eq!(name, "EventTime");
             assert_eq!(ty, Type::Timestamp);
         }
-        other => panic!("Expected TypeDecl, got {:?}", other),
+        other => panic!("Expected TypeDecl, got {other:?}"),
     }
 }
 
@@ -92,7 +92,7 @@ fn test_type_decl_duration() {
             assert_eq!(name, "Interval");
             assert_eq!(ty, Type::Duration);
         }
-        other => panic!("Expected TypeDecl, got {:?}", other),
+        other => panic!("Expected TypeDecl, got {other:?}"),
     }
 }
 
@@ -104,7 +104,7 @@ fn test_type_decl_array() {
             assert_eq!(name, "IntList");
             assert_eq!(ty, Type::Array(Box::new(Type::Int)));
         }
-        other => panic!("Expected TypeDecl, got {:?}", other),
+        other => panic!("Expected TypeDecl, got {other:?}"),
     }
 }
 
@@ -116,7 +116,7 @@ fn test_type_decl_map() {
             assert_eq!(name, "Lookup");
             assert_eq!(ty, Type::Map(Box::new(Type::Str), Box::new(Type::Int)));
         }
-        other => panic!("Expected TypeDecl, got {:?}", other),
+        other => panic!("Expected TypeDecl, got {other:?}"),
     }
 }
 
@@ -128,7 +128,7 @@ fn test_type_decl_tuple() {
             assert_eq!(name, "Pair");
             assert_eq!(ty, Type::Tuple(vec![Type::Int, Type::Float]));
         }
-        other => panic!("Expected TypeDecl, got {:?}", other),
+        other => panic!("Expected TypeDecl, got {other:?}"),
     }
 }
 
@@ -140,7 +140,7 @@ fn test_type_decl_stream_type() {
             assert_eq!(name, "EventStream");
             assert_eq!(ty, Type::Stream(Box::new(Type::Float)));
         }
-        other => panic!("Expected TypeDecl, got {:?}", other),
+        other => panic!("Expected TypeDecl, got {other:?}"),
     }
 }
 
@@ -152,7 +152,7 @@ fn test_type_decl_optional() {
             assert_eq!(name, "MaybeInt");
             assert_eq!(ty, Type::Optional(Box::new(Type::Int)));
         }
-        other => panic!("Expected TypeDecl, got {:?}", other),
+        other => panic!("Expected TypeDecl, got {other:?}"),
     }
 }
 
@@ -164,7 +164,7 @@ fn test_type_decl_named_type() {
             assert_eq!(name, "Alias");
             assert_eq!(ty, Type::Named("SensorReading".to_string()));
         }
-        other => panic!("Expected TypeDecl, got {:?}", other),
+        other => panic!("Expected TypeDecl, got {other:?}"),
     }
 }
 
@@ -181,7 +181,7 @@ fn test_const_decl_int() {
             assert!(ty.is_none());
             assert_eq!(value, Expr::Int(100));
         }
-        other => panic!("Expected ConstDecl, got {:?}", other),
+        other => panic!("Expected ConstDecl, got {other:?}"),
     }
 }
 
@@ -194,7 +194,7 @@ fn test_const_decl_with_type_annotation() {
             assert_eq!(ty, Some(Type::Float));
             assert_eq!(value, Expr::Float(99.5));
         }
-        other => panic!("Expected ConstDecl, got {:?}", other),
+        other => panic!("Expected ConstDecl, got {other:?}"),
     }
 }
 
@@ -206,7 +206,7 @@ fn test_const_decl_string() {
             assert_eq!(name, "NAME");
             assert_eq!(value, Expr::Str("hello".to_string()));
         }
-        other => panic!("Expected ConstDecl, got {:?}", other),
+        other => panic!("Expected ConstDecl, got {other:?}"),
     }
 }
 
@@ -218,7 +218,7 @@ fn test_const_decl_bool() {
             assert_eq!(name, "ENABLED");
             assert_eq!(value, Expr::Bool(true));
         }
-        other => panic!("Expected ConstDecl, got {:?}", other),
+        other => panic!("Expected ConstDecl, got {other:?}"),
     }
 }
 
@@ -245,7 +245,7 @@ fn test_fn_decl_with_return_type() {
             assert_eq!(ret, Some(Type::Float));
             assert!(!body.is_empty());
         }
-        other => panic!("Expected FnDecl, got {:?}", other),
+        other => panic!("Expected FnDecl, got {other:?}"),
     }
 }
 
@@ -265,10 +265,10 @@ fn test_fn_decl_no_params_no_return_type() {
             // Body should have a return statement with no value
             match &body[0].node {
                 Stmt::Return(None) => {}
-                other => panic!("Expected Return(None), got {:?}", other),
+                other => panic!("Expected Return(None), got {other:?}"),
             }
         }
-        other => panic!("Expected FnDecl, got {:?}", other),
+        other => panic!("Expected FnDecl, got {other:?}"),
     }
 }
 
@@ -283,7 +283,7 @@ fn test_fn_decl_with_multiple_statements() {
             assert!(matches!(&body[0].node, Stmt::VarDecl { .. }));
             assert!(matches!(&body[1].node, Stmt::Return(Some(_))));
         }
-        other => panic!("Expected FnDecl, got {:?}", other),
+        other => panic!("Expected FnDecl, got {other:?}"),
     }
 }
 
@@ -299,9 +299,9 @@ fn test_binary_power_expression() {
     match stmt {
         Stmt::VarDecl { value, .. } => match value {
             Expr::Binary { op: BinOp::Pow, .. } => {}
-            other => panic!("Expected Pow binary, got {:?}", other),
+            other => panic!("Expected Pow binary, got {other:?}"),
         },
-        other => panic!("Expected VarDecl, got {:?}", other),
+        other => panic!("Expected VarDecl, got {other:?}"),
     }
 }
 
@@ -330,9 +330,9 @@ fn test_member_access_expression() {
     match stmt {
         Stmt::VarDecl { value, .. } => match value {
             Expr::Member { member, .. } => assert_eq!(member, "temperature"),
-            other => panic!("Expected Member, got {:?}", other),
+            other => panic!("Expected Member, got {other:?}"),
         },
-        other => panic!("Expected VarDecl, got {:?}", other),
+        other => panic!("Expected VarDecl, got {other:?}"),
     }
 }
 
@@ -342,9 +342,9 @@ fn test_optional_member_access() {
     match stmt {
         Stmt::VarDecl { value, .. } => match value {
             Expr::OptionalMember { member, .. } => assert_eq!(member, "temperature"),
-            other => panic!("Expected OptionalMember, got {:?}", other),
+            other => panic!("Expected OptionalMember, got {other:?}"),
         },
-        other => panic!("Expected VarDecl, got {:?}", other),
+        other => panic!("Expected VarDecl, got {other:?}"),
     }
 }
 
@@ -356,9 +356,9 @@ fn test_index_access_expression() {
             Expr::Index { index, .. } => {
                 assert_eq!(*index, Expr::Int(0));
             }
-            other => panic!("Expected Index, got {:?}", other),
+            other => panic!("Expected Index, got {other:?}"),
         },
-        other => panic!("Expected VarDecl, got {:?}", other),
+        other => panic!("Expected VarDecl, got {other:?}"),
     }
 }
 
@@ -371,9 +371,9 @@ fn test_slice_access_full() {
                 assert!(start.is_some());
                 assert!(end.is_some());
             }
-            other => panic!("Expected Slice, got {:?}", other),
+            other => panic!("Expected Slice, got {other:?}"),
         },
-        other => panic!("Expected VarDecl, got {:?}", other),
+        other => panic!("Expected VarDecl, got {other:?}"),
     }
 }
 
@@ -386,9 +386,9 @@ fn test_slice_access_open_start() {
                 assert!(start.is_none());
                 assert!(end.is_some());
             }
-            other => panic!("Expected Slice, got {:?}", other),
+            other => panic!("Expected Slice, got {other:?}"),
         },
-        other => panic!("Expected VarDecl, got {:?}", other),
+        other => panic!("Expected VarDecl, got {other:?}"),
     }
 }
 
@@ -401,9 +401,9 @@ fn test_slice_access_open_end() {
                 assert!(start.is_some());
                 assert!(end.is_none());
             }
-            other => panic!("Expected Slice, got {:?}", other),
+            other => panic!("Expected Slice, got {other:?}"),
         },
-        other => panic!("Expected VarDecl, got {:?}", other),
+        other => panic!("Expected VarDecl, got {other:?}"),
     }
 }
 
@@ -416,9 +416,9 @@ fn test_slice_access_both_open() {
                 assert!(start.is_none());
                 assert!(end.is_none());
             }
-            other => panic!("Expected Slice, got {:?}", other),
+            other => panic!("Expected Slice, got {other:?}"),
         },
-        other => panic!("Expected VarDecl, got {:?}", other),
+        other => panic!("Expected VarDecl, got {other:?}"),
     }
 }
 
@@ -428,9 +428,9 @@ fn test_call_expression() {
     match stmt {
         Stmt::VarDecl { value, .. } => match value {
             Expr::Call { args, .. } => assert_eq!(args.len(), 3),
-            other => panic!("Expected Call, got {:?}", other),
+            other => panic!("Expected Call, got {other:?}"),
         },
-        other => panic!("Expected VarDecl, got {:?}", other),
+        other => panic!("Expected VarDecl, got {other:?}"),
     }
 }
 
@@ -443,12 +443,12 @@ fn test_call_with_named_args() {
                 assert_eq!(args.len(), 2);
                 match &args[0] {
                     Arg::Named(name, _) => assert_eq!(name, "a"),
-                    other => panic!("Expected Named arg, got {:?}", other),
+                    other => panic!("Expected Named arg, got {other:?}"),
                 }
             }
-            other => panic!("Expected Call, got {:?}", other),
+            other => panic!("Expected Call, got {other:?}"),
         },
-        other => panic!("Expected VarDecl, got {:?}", other),
+        other => panic!("Expected VarDecl, got {other:?}"),
     }
 }
 
@@ -471,9 +471,9 @@ fn test_aliased_source() {
                 assert_eq!(name, "SensorReading");
                 assert_eq!(alias, "sr");
             }
-            other => panic!("Expected IdentWithAlias, got {:?}", other),
+            other => panic!("Expected IdentWithAlias, got {other:?}"),
         },
-        other => panic!("Expected StreamDecl, got {:?}", other),
+        other => panic!("Expected StreamDecl, got {other:?}"),
     }
 }
 
@@ -486,9 +486,9 @@ fn test_all_source_with_alias() {
                 assert_eq!(name, "SensorReading");
                 assert_eq!(alias, Some("sr".to_string()));
             }
-            other => panic!("Expected AllWithAlias, got {:?}", other),
+            other => panic!("Expected AllWithAlias, got {other:?}"),
         },
-        other => panic!("Expected StreamDecl, got {:?}", other),
+        other => panic!("Expected StreamDecl, got {other:?}"),
     }
 }
 
@@ -501,9 +501,9 @@ fn test_all_source_without_alias() {
                 assert_eq!(name, "SensorReading");
                 assert!(alias.is_none());
             }
-            other => panic!("Expected AllWithAlias, got {:?}", other),
+            other => panic!("Expected AllWithAlias, got {other:?}"),
         },
-        other => panic!("Expected StreamDecl, got {:?}", other),
+        other => panic!("Expected StreamDecl, got {other:?}"),
     }
 }
 
@@ -527,10 +527,10 @@ fn test_followed_by_match_all() {
 #[test]
 fn test_merge_source_with_inline_where() {
     let result = parse(
-        r#"stream S = merge(
+        r"stream S = merge(
             stream high = Source.where(value > 100),
             stream low = Source.where(value < 10)
-        )"#,
+        )",
     );
     assert!(result.is_ok(), "Failed: {:?}", result.err());
     let program = result.unwrap();
@@ -542,7 +542,7 @@ fn test_merge_source_with_inline_where() {
                 assert_eq!(streams[0].source, "Source");
                 assert!(streams[0].filter.is_some());
             }
-            other => panic!("Expected Merge, got {:?}", other),
+            other => panic!("Expected Merge, got {other:?}"),
         }
     } else {
         panic!("Expected StreamDecl");
@@ -552,10 +552,10 @@ fn test_merge_source_with_inline_where() {
 #[test]
 fn test_join_source_with_on_clause() {
     let result = parse(
-        r#"stream S = join(
+        r"stream S = join(
             stream orders = OrderEvent.on(order_id),
             stream payments = PaymentEvent.on(order_id)
-        )"#,
+        )",
     );
     assert!(result.is_ok(), "Failed: {:?}", result.err());
     let program = result.unwrap();
@@ -566,7 +566,7 @@ fn test_join_source_with_on_clause() {
                 assert_eq!(clauses[0].name, "orders");
                 assert!(clauses[0].on.is_some());
             }
-            other => panic!("Expected Join, got {:?}", other),
+            other => panic!("Expected Join, got {other:?}"),
         }
     } else {
         panic!("Expected StreamDecl");
@@ -585,7 +585,7 @@ fn test_join_source_simple_identifiers() {
                 assert_eq!(clauses[0].name, "A");
                 assert!(clauses[0].on.is_none());
             }
-            other => panic!("Expected Join, got {:?}", other),
+            other => panic!("Expected Join, got {other:?}"),
         }
     } else {
         panic!("Expected StreamDecl");
@@ -600,9 +600,9 @@ fn test_timer_source_with_initial_delay() {
             StreamSource::Timer(decl) => {
                 assert!(decl.initial_delay.is_some());
             }
-            other => panic!("Expected Timer, got {:?}", other),
+            other => panic!("Expected Timer, got {other:?}"),
         },
-        other => panic!("Expected StreamDecl, got {:?}", other),
+        other => panic!("Expected StreamDecl, got {other:?}"),
     }
 }
 
@@ -621,10 +621,10 @@ fn test_pattern_decl_seq_kleene_star() {
                     assert_eq!(items.len(), 3);
                     assert_eq!(items[1].kleene, Some(KleeneOp::Star));
                 }
-                other => panic!("Expected Seq, got {:?}", other),
+                other => panic!("Expected Seq, got {other:?}"),
             }
         }
-        other => panic!("Expected PatternDecl, got {:?}", other),
+        other => panic!("Expected PatternDecl, got {other:?}"),
     }
 }
 
@@ -636,9 +636,9 @@ fn test_pattern_decl_seq_optional() {
             SasePatternExpr::Seq(items) => {
                 assert_eq!(items[1].kleene, Some(KleeneOp::Optional));
             }
-            other => panic!("Expected Seq, got {:?}", other),
+            other => panic!("Expected Seq, got {other:?}"),
         },
-        other => panic!("Expected PatternDecl, got {:?}", other),
+        other => panic!("Expected PatternDecl, got {other:?}"),
     }
 }
 
@@ -657,7 +657,7 @@ fn test_pattern_decl_with_within_and_partition() {
             assert!(partition_by.is_some());
             assert_eq!(partition_by.unwrap(), Expr::Ident("user_id".to_string()));
         }
-        other => panic!("Expected PatternDecl, got {:?}", other),
+        other => panic!("Expected PatternDecl, got {other:?}"),
     }
 }
 
@@ -671,9 +671,9 @@ fn test_pattern_decl_negated_item() {
                 // Negated items are prefixed with "!"
                 assert!(items[1].event_type.starts_with('!'));
             }
-            other => panic!("Expected Seq, got {:?}", other),
+            other => panic!("Expected Seq, got {other:?}"),
         },
-        other => panic!("Expected PatternDecl, got {:?}", other),
+        other => panic!("Expected PatternDecl, got {other:?}"),
     }
 }
 
@@ -683,9 +683,9 @@ fn test_pattern_decl_or() {
     match stmt {
         Stmt::PatternDecl { expr, .. } => match expr {
             SasePatternExpr::Or(_, _) => {}
-            other => panic!("Expected Or, got {:?}", other),
+            other => panic!("Expected Or, got {other:?}"),
         },
-        other => panic!("Expected PatternDecl, got {:?}", other),
+        other => panic!("Expected PatternDecl, got {other:?}"),
     }
 }
 
@@ -695,9 +695,9 @@ fn test_pattern_decl_and() {
     match stmt {
         Stmt::PatternDecl { expr, .. } => match expr {
             SasePatternExpr::And(_, _) => {}
-            other => panic!("Expected And, got {:?}", other),
+            other => panic!("Expected And, got {other:?}"),
         },
-        other => panic!("Expected PatternDecl, got {:?}", other),
+        other => panic!("Expected PatternDecl, got {other:?}"),
     }
 }
 
@@ -716,9 +716,9 @@ fn test_pattern_decl_not_in_seq() {
                     "Expected negated item"
                 );
             }
-            other => panic!("Expected Seq with negated item, got {:?}", other),
+            other => panic!("Expected Seq with negated item, got {other:?}"),
         },
-        other => panic!("Expected PatternDecl, got {:?}", other),
+        other => panic!("Expected PatternDecl, got {other:?}"),
     }
 }
 
@@ -729,11 +729,11 @@ fn test_pattern_decl_grouped() {
         Stmt::PatternDecl { expr, .. } => match expr {
             SasePatternExpr::And(left, _right) => match *left {
                 SasePatternExpr::Group(_) => {}
-                other => panic!("Expected Group inside And, got {:?}", other),
+                other => panic!("Expected Group inside And, got {other:?}"),
             },
-            other => panic!("Expected And with Group, got {:?}", other),
+            other => panic!("Expected And with Group, got {other:?}"),
         },
-        other => panic!("Expected PatternDecl, got {:?}", other),
+        other => panic!("Expected PatternDecl, got {other:?}"),
     }
 }
 
@@ -749,9 +749,9 @@ fn test_pattern_decl_event_with_kleene_as_sase_event_ref() {
                 assert!(items[0].filter.is_some());
                 assert_eq!(items[0].alias, Some("txs".to_string()));
             }
-            other => panic!("Expected single-item Seq, got {:?}", other),
+            other => panic!("Expected single-item Seq, got {other:?}"),
         },
-        other => panic!("Expected PatternDecl, got {:?}", other),
+        other => panic!("Expected PatternDecl, got {other:?}"),
     }
 }
 
@@ -776,7 +776,7 @@ fn test_connector_mqtt() {
             assert_eq!(params[1].name, "port");
             assert_eq!(params[1].value, ConfigValue::Int(1883));
         }
-        other => panic!("Expected ConnectorDecl, got {:?}", other),
+        other => panic!("Expected ConnectorDecl, got {other:?}"),
     }
 }
 
@@ -792,10 +792,10 @@ fn test_connector_kafka_with_array() {
                 ConfigValue::Array(values) => {
                     assert_eq!(values.len(), 2);
                 }
-                other => panic!("Expected Array config value, got {:?}", other),
+                other => panic!("Expected Array config value, got {other:?}"),
             }
         }
-        other => panic!("Expected ConnectorDecl, got {:?}", other),
+        other => panic!("Expected ConnectorDecl, got {other:?}"),
     }
 }
 
@@ -812,7 +812,7 @@ fn test_connector_no_params() {
             assert_eq!(connector_type, "websocket");
             assert!(params.is_empty());
         }
-        other => panic!("Expected ConnectorDecl, got {:?}", other),
+        other => panic!("Expected ConnectorDecl, got {other:?}"),
     }
 }
 
@@ -826,7 +826,7 @@ fn test_connector_with_boolean_param() {
             assert_eq!(params[1].name, "ssl");
             assert_eq!(params[1].value, ConfigValue::Bool(true));
         }
-        other => panic!("Expected ConnectorDecl, got {:?}", other),
+        other => panic!("Expected ConnectorDecl, got {other:?}"),
     }
 }
 
@@ -838,7 +838,7 @@ fn test_connector_with_duration_param() {
             assert_eq!(params[1].name, "timeout");
             assert_eq!(params[1].value, ConfigValue::Duration(30_000_000_000));
         }
-        other => panic!("Expected ConnectorDecl, got {:?}", other),
+        other => panic!("Expected ConnectorDecl, got {other:?}"),
     }
 }
 
@@ -957,10 +957,10 @@ fn test_if_elif_else() {
                     assert_eq!(elif_branches.len(), 1);
                     assert!(else_branch.is_some());
                 }
-                other => panic!("Expected If, got {:?}", other),
+                other => panic!("Expected If, got {other:?}"),
             }
         }
-        other => panic!("Expected FnDecl, got {:?}", other),
+        other => panic!("Expected FnDecl, got {other:?}"),
     }
 }
 
@@ -973,9 +973,9 @@ fn test_for_loop() {
             Stmt::For { var, .. } => {
                 assert_eq!(var, "i");
             }
-            other => panic!("Expected For, got {:?}", other),
+            other => panic!("Expected For, got {other:?}"),
         },
-        other => panic!("Expected FnDecl, got {:?}", other),
+        other => panic!("Expected FnDecl, got {other:?}"),
     }
 }
 
@@ -986,20 +986,20 @@ fn test_while_loop() {
     match stmt {
         Stmt::FnDecl { body, .. } => match &body[0].node {
             Stmt::While { .. } => {}
-            other => panic!("Expected While, got {:?}", other),
+            other => panic!("Expected While, got {other:?}"),
         },
-        other => panic!("Expected FnDecl, got {:?}", other),
+        other => panic!("Expected FnDecl, got {other:?}"),
     }
 }
 
 #[test]
 fn test_break_continue_in_loop() {
-    let src = r#"fn loop_fn():
+    let src = r"fn loop_fn():
   for i in 0..10:
     if i == 5:
       break
     if i == 3:
-      continue"#;
+      continue";
     let stmt = parse_first_stmt(src);
     match stmt {
         Stmt::FnDecl { body, .. } => {
@@ -1013,20 +1013,20 @@ fn test_break_continue_in_loop() {
                         Stmt::If { then_branch, .. } => {
                             assert!(matches!(&then_branch[0].node, Stmt::Break));
                         }
-                        other => panic!("Expected If with break, got {:?}", other),
+                        other => panic!("Expected If with break, got {other:?}"),
                     }
                     // Second if has continue
                     match &for_body[1].node {
                         Stmt::If { then_branch, .. } => {
                             assert!(matches!(&then_branch[0].node, Stmt::Continue));
                         }
-                        other => panic!("Expected If with continue, got {:?}", other),
+                        other => panic!("Expected If with continue, got {other:?}"),
                     }
                 }
-                other => panic!("Expected For, got {:?}", other),
+                other => panic!("Expected For, got {other:?}"),
             }
         }
-        other => panic!("Expected FnDecl, got {:?}", other),
+        other => panic!("Expected FnDecl, got {other:?}"),
     }
 }
 
@@ -1039,9 +1039,9 @@ fn test_return_with_value() {
             Stmt::Return(Some(expr)) => {
                 assert_eq!(*expr, Expr::Int(42));
             }
-            other => panic!("Expected Return(Some(42)), got {:?}", other),
+            other => panic!("Expected Return(Some(42)), got {other:?}"),
         },
-        other => panic!("Expected FnDecl, got {:?}", other),
+        other => panic!("Expected FnDecl, got {other:?}"),
     }
 }
 
@@ -1057,9 +1057,9 @@ fn test_string_with_escaped_quotes() {
             Expr::Str(s) => {
                 assert!(s.contains("\\\""));
             }
-            other => panic!("Expected Str, got {:?}", other),
+            other => panic!("Expected Str, got {other:?}"),
         },
-        other => panic!("Expected VarDecl, got {:?}", other),
+        other => panic!("Expected VarDecl, got {other:?}"),
     }
 }
 
@@ -1071,9 +1071,9 @@ fn test_string_with_backslash_n() {
             Expr::Str(s) => {
                 assert!(s.contains("\\n"));
             }
-            other => panic!("Expected Str, got {:?}", other),
+            other => panic!("Expected Str, got {other:?}"),
         },
-        other => panic!("Expected VarDecl, got {:?}", other),
+        other => panic!("Expected VarDecl, got {other:?}"),
     }
 }
 
@@ -1309,7 +1309,7 @@ fn test_distinct_with_expr() {
     if let Stmt::StreamDecl { ops, .. } = &program.statements[0].node {
         match &ops[0] {
             StreamOp::Distinct(Some(_)) => {}
-            other => panic!("Expected Distinct(Some(_)), got {:?}", other),
+            other => panic!("Expected Distinct(Some(_)), got {other:?}"),
         }
     }
 }
@@ -1322,7 +1322,7 @@ fn test_distinct_without_expr() {
     if let Stmt::StreamDecl { ops, .. } = &program.statements[0].node {
         match &ops[0] {
             StreamOp::Distinct(None) => {}
-            other => panic!("Expected Distinct(None), got {:?}", other),
+            other => panic!("Expected Distinct(None), got {other:?}"),
         }
     }
 }
@@ -1353,7 +1353,7 @@ fn test_limit_op() {
     if let Stmt::StreamDecl { ops, .. } = &program.statements[0].node {
         match &ops[0] {
             StreamOp::Limit(Expr::Int(10)) => {}
-            other => panic!("Expected Limit(10), got {:?}", other),
+            other => panic!("Expected Limit(10), got {other:?}"),
         }
     }
 }
@@ -1479,9 +1479,9 @@ fn test_config_block_brace_syntax() {
 #[test]
 fn test_config_with_float_value() {
     let result = parse(
-        r#"config settings {
+        r"config settings {
             threshold: 99.5,
-        }"#,
+        }",
     );
     assert!(result.is_ok(), "Failed: {:?}", result.err());
     let program = result.unwrap();
@@ -1507,7 +1507,7 @@ fn test_import_basic() {
             assert_eq!(path, "utils.vpl");
             assert!(alias.is_none());
         }
-        other => panic!("Expected Import, got {:?}", other),
+        other => panic!("Expected Import, got {other:?}"),
     }
 }
 
@@ -1519,7 +1519,7 @@ fn test_import_with_alias() {
             assert_eq!(path, "lib/math.vpl");
             assert_eq!(alias, Some("math".to_string()));
         }
-        other => panic!("Expected Import, got {:?}", other),
+        other => panic!("Expected Import, got {other:?}"),
     }
 }
 
@@ -1541,7 +1541,7 @@ fn test_event_decl_with_extends() {
             assert_eq!(extends, Some("SensorReading".to_string()));
             assert_eq!(fields.len(), 1);
         }
-        other => panic!("Expected EventDecl, got {:?}", other),
+        other => panic!("Expected EventDecl, got {other:?}"),
     }
 }
 
@@ -1557,7 +1557,7 @@ fn test_event_decl_optional_field() {
             assert_eq!(fields[0].ty, Type::Str);
             assert_eq!(fields[1].ty, Type::Optional(Box::new(Type::Str)));
         }
-        other => panic!("Expected EventDecl, got {:?}", other),
+        other => panic!("Expected EventDecl, got {other:?}"),
     }
 }
 
@@ -1573,7 +1573,7 @@ fn test_context_decl_with_cores() {
             assert_eq!(name, "ingestion");
             assert_eq!(cores, Some(vec![0, 1, 2]));
         }
-        other => panic!("Expected ContextDecl, got {:?}", other),
+        other => panic!("Expected ContextDecl, got {other:?}"),
     }
 }
 
@@ -1585,7 +1585,7 @@ fn test_context_decl_without_cores() {
             assert_eq!(name, "analytics");
             assert!(cores.is_none());
         }
-        other => panic!("Expected ContextDecl, got {:?}", other),
+        other => panic!("Expected ContextDecl, got {other:?}"),
     }
 }
 
@@ -1599,9 +1599,9 @@ fn test_range_exclusive() {
     match stmt {
         Stmt::VarDecl { value, .. } => match value {
             Expr::Range { inclusive, .. } => assert!(!inclusive),
-            other => panic!("Expected Range, got {:?}", other),
+            other => panic!("Expected Range, got {other:?}"),
         },
-        other => panic!("Expected VarDecl, got {:?}", other),
+        other => panic!("Expected VarDecl, got {other:?}"),
     }
 }
 
@@ -1611,9 +1611,9 @@ fn test_range_inclusive() {
     match stmt {
         Stmt::VarDecl { value, .. } => match value {
             Expr::Range { inclusive, .. } => assert!(inclusive),
-            other => panic!("Expected Range, got {:?}", other),
+            other => panic!("Expected Range, got {other:?}"),
         },
-        other => panic!("Expected VarDecl, got {:?}", other),
+        other => panic!("Expected VarDecl, got {other:?}"),
     }
 }
 
@@ -1623,9 +1623,9 @@ fn test_if_expression() {
     match stmt {
         Stmt::VarDecl { value, .. } => match value {
             Expr::If { .. } => {}
-            other => panic!("Expected If expr, got {:?}", other),
+            other => panic!("Expected If expr, got {other:?}"),
         },
-        other => panic!("Expected VarDecl, got {:?}", other),
+        other => panic!("Expected VarDecl, got {other:?}"),
     }
 }
 
@@ -1639,16 +1639,16 @@ fn test_comparison_operators() {
         (">", BinOp::Gt),
         (">=", BinOp::Ge),
     ] {
-        let src = format!("let x = a {} b", op_str);
+        let src = format!("let x = a {op_str} b");
         let stmt = parse_first_stmt(&src);
         match stmt {
             Stmt::VarDecl { value, .. } => match value {
                 Expr::Binary { op, .. } => {
-                    assert_eq!(op, expected_op, "Failed for operator {}", op_str);
+                    assert_eq!(op, expected_op, "Failed for operator {op_str}");
                 }
-                other => panic!("Expected Binary for {}, got {:?}", op_str, other),
+                other => panic!("Expected Binary for {op_str}, got {other:?}"),
             },
-            other => panic!("Expected VarDecl for {}, got {:?}", op_str, other),
+            other => panic!("Expected VarDecl for {op_str}, got {other:?}"),
         }
     }
 }
@@ -1671,9 +1671,9 @@ fn test_modulo_operator() {
     match stmt {
         Stmt::VarDecl { value, .. } => match value {
             Expr::Binary { op: BinOp::Mod, .. } => {}
-            other => panic!("Expected Mod, got {:?}", other),
+            other => panic!("Expected Mod, got {other:?}"),
         },
-        other => panic!("Expected VarDecl, got {:?}", other),
+        other => panic!("Expected VarDecl, got {other:?}"),
     }
 }
 
@@ -1692,7 +1692,7 @@ fn test_literal_null() {
     let stmt = parse_first_stmt("let x = null");
     match stmt {
         Stmt::VarDecl { value, .. } => assert_eq!(value, Expr::Null),
-        other => panic!("Expected VarDecl, got {:?}", other),
+        other => panic!("Expected VarDecl, got {other:?}"),
     }
 }
 
@@ -1701,7 +1701,7 @@ fn test_literal_false() {
     let stmt = parse_first_stmt("let x = false");
     match stmt {
         Stmt::VarDecl { value, .. } => assert_eq!(value, Expr::Bool(false)),
-        other => panic!("Expected VarDecl, got {:?}", other),
+        other => panic!("Expected VarDecl, got {other:?}"),
     }
 }
 
@@ -1711,9 +1711,9 @@ fn test_literal_float_with_exponent() {
     match stmt {
         Stmt::VarDecl { value, .. } => match value {
             Expr::Float(v) => assert!((v - 1.5e10).abs() < 1.0),
-            other => panic!("Expected Float, got {:?}", other),
+            other => panic!("Expected Float, got {other:?}"),
         },
-        other => panic!("Expected VarDecl, got {:?}", other),
+        other => panic!("Expected VarDecl, got {other:?}"),
     }
 }
 
@@ -1725,9 +1725,9 @@ fn test_literal_timestamp() {
             Expr::Timestamp(ns) => {
                 assert!(ns > 0, "Timestamp should be positive");
             }
-            other => panic!("Expected Timestamp, got {:?}", other),
+            other => panic!("Expected Timestamp, got {other:?}"),
         },
-        other => panic!("Expected VarDecl, got {:?}", other),
+        other => panic!("Expected VarDecl, got {other:?}"),
     }
 }
 
@@ -1739,9 +1739,9 @@ fn test_literal_timestamp_with_time() {
             Expr::Timestamp(ns) => {
                 assert!(ns > 0, "Timestamp should be positive");
             }
-            other => panic!("Expected Timestamp, got {:?}", other),
+            other => panic!("Expected Timestamp, got {other:?}"),
         },
-        other => panic!("Expected VarDecl, got {:?}", other),
+        other => panic!("Expected VarDecl, got {other:?}"),
     }
 }
 
@@ -1751,9 +1751,9 @@ fn test_array_literal() {
     match stmt {
         Stmt::VarDecl { value, .. } => match value {
             Expr::Array(items) => assert_eq!(items.len(), 3),
-            other => panic!("Expected Array, got {:?}", other),
+            other => panic!("Expected Array, got {other:?}"),
         },
-        other => panic!("Expected VarDecl, got {:?}", other),
+        other => panic!("Expected VarDecl, got {other:?}"),
     }
 }
 
@@ -1763,9 +1763,9 @@ fn test_empty_array_literal() {
     match stmt {
         Stmt::VarDecl { value, .. } => match value {
             Expr::Array(items) => assert!(items.is_empty()),
-            other => panic!("Expected empty Array, got {:?}", other),
+            other => panic!("Expected empty Array, got {other:?}"),
         },
-        other => panic!("Expected VarDecl, got {:?}", other),
+        other => panic!("Expected VarDecl, got {other:?}"),
     }
 }
 
@@ -1779,9 +1779,9 @@ fn test_map_literal() {
                 assert_eq!(entries[0].0, "key");
                 assert_eq!(entries[1].0, "name");
             }
-            other => panic!("Expected Map, got {:?}", other),
+            other => panic!("Expected Map, got {other:?}"),
         },
-        other => panic!("Expected VarDecl, got {:?}", other),
+        other => panic!("Expected VarDecl, got {other:?}"),
     }
 }
 
@@ -1791,9 +1791,9 @@ fn test_empty_map_literal() {
     match stmt {
         Stmt::VarDecl { value, .. } => match value {
             Expr::Map(entries) => assert!(entries.is_empty()),
-            other => panic!("Expected empty Map, got {:?}", other),
+            other => panic!("Expected empty Map, got {other:?}"),
         },
-        other => panic!("Expected VarDecl, got {:?}", other),
+        other => panic!("Expected VarDecl, got {other:?}"),
     }
 }
 
@@ -1809,9 +1809,9 @@ fn test_lambda_single_param() {
             Expr::Lambda { params, .. } => {
                 assert_eq!(params, vec!["x"]);
             }
-            other => panic!("Expected Lambda, got {:?}", other),
+            other => panic!("Expected Lambda, got {other:?}"),
         },
-        other => panic!("Expected VarDecl, got {:?}", other),
+        other => panic!("Expected VarDecl, got {other:?}"),
     }
 }
 
@@ -1823,9 +1823,9 @@ fn test_lambda_multi_params() {
             Expr::Lambda { params, .. } => {
                 assert_eq!(params, vec!["a", "b"]);
             }
-            other => panic!("Expected Lambda, got {:?}", other),
+            other => panic!("Expected Lambda, got {other:?}"),
         },
-        other => panic!("Expected VarDecl, got {:?}", other),
+        other => panic!("Expected VarDecl, got {other:?}"),
     }
 }
 
@@ -1851,7 +1851,7 @@ fn test_var_mutable() {
             assert!(mutable);
             assert_eq!(name, "counter");
         }
-        other => panic!("Expected VarDecl, got {:?}", other),
+        other => panic!("Expected VarDecl, got {other:?}"),
     }
 }
 
@@ -1863,7 +1863,7 @@ fn test_let_immutable() {
             assert!(!mutable);
             assert_eq!(name, "constant");
         }
-        other => panic!("Expected VarDecl, got {:?}", other),
+        other => panic!("Expected VarDecl, got {other:?}"),
     }
 }
 
@@ -1882,7 +1882,7 @@ fn test_var_with_type_annotation() {
             assert_eq!(ty, Some(Type::Int));
             assert_eq!(value, Expr::Int(0));
         }
-        other => panic!("Expected VarDecl, got {:?}", other),
+        other => panic!("Expected VarDecl, got {other:?}"),
     }
 }
 
@@ -2026,12 +2026,12 @@ fn test_assignment_stmt() {
                 assert_eq!(name, "x");
                 match value {
                     Expr::Binary { op: BinOp::Add, .. } => {}
-                    other => panic!("Expected Add, got {:?}", other),
+                    other => panic!("Expected Add, got {other:?}"),
                 }
             }
-            other => panic!("Expected Assignment, got {:?}", other),
+            other => panic!("Expected Assignment, got {other:?}"),
         },
-        other => panic!("Expected FnDecl, got {:?}", other),
+        other => panic!("Expected FnDecl, got {other:?}"),
     }
 }
 
@@ -2055,9 +2055,9 @@ fn test_from_connector_source() {
                 assert_eq!(params.len(), 1);
                 assert_eq!(params[0].name, "topic");
             }
-            other => panic!("Expected FromConnector, got {:?}", other),
+            other => panic!("Expected FromConnector, got {other:?}"),
         },
-        other => panic!("Expected StreamDecl, got {:?}", other),
+        other => panic!("Expected StreamDecl, got {other:?}"),
     }
 }
 
@@ -2127,7 +2127,7 @@ fn test_context_op_in_stream() {
     if let Stmt::StreamDecl { ops, .. } = &program.statements[0].node {
         match &ops[0] {
             StreamOp::Context(name) => assert_eq!(name, "ingestion"),
-            other => panic!("Expected Context op, got {:?}", other),
+            other => panic!("Expected Context op, got {other:?}"),
         }
     }
 }
@@ -2265,7 +2265,7 @@ fn test_pattern_op_sequence() {
                     op: BinOp::FollowedBy,
                     ..
                 } => {}
-                other => panic!("Expected FollowedBy chain, got {:?}", other),
+                other => panic!("Expected FollowedBy chain, got {other:?}"),
             }
         }
     }
@@ -2281,9 +2281,9 @@ fn test_parenthesized_expression() {
     match stmt {
         Stmt::VarDecl { value, .. } => match value {
             Expr::Binary { op: BinOp::Mul, .. } => {}
-            other => panic!("Expected Mul at top, got {:?}", other),
+            other => panic!("Expected Mul at top, got {other:?}"),
         },
-        other => panic!("Expected VarDecl, got {:?}", other),
+        other => panic!("Expected VarDecl, got {other:?}"),
     }
 }
 
@@ -2301,9 +2301,9 @@ fn test_emit_statement_with_fields() {
                 assert_eq!(event_type, "Alert");
                 assert_eq!(fields.len(), 2);
             }
-            other => panic!("Expected Emit stmt, got {:?}", other),
+            other => panic!("Expected Emit stmt, got {other:?}"),
         },
-        other => panic!("Expected FnDecl, got {:?}", other),
+        other => panic!("Expected FnDecl, got {other:?}"),
     }
 }
 
@@ -2381,7 +2381,7 @@ fn test_merge_simple_identifiers() {
                 assert_eq!(streams[0].source, "StreamA");
                 assert!(streams[0].filter.is_none());
             }
-            other => panic!("Expected Merge, got {:?}", other),
+            other => panic!("Expected Merge, got {other:?}"),
         }
     }
 }
@@ -2417,7 +2417,7 @@ fn test_fork_op_structure() {
 
 #[test]
 fn test_emit_with_context_target() {
-    let result = parse(r#"stream S = E.emit(context: analytics, value: x)"#);
+    let result = parse(r"stream S = E.emit(context: analytics, value: x)");
     assert!(result.is_ok(), "Failed: {:?}", result.err());
     let program = result.unwrap();
     if let Stmt::StreamDecl { ops, .. } = &program.statements[0].node {
@@ -2481,11 +2481,11 @@ fn test_lexer_single_char_identifiers() {
 #[test]
 fn test_lexer_very_long_string() {
     let long = "a".repeat(10000);
-    let input = format!("\"{}\"", long);
+    let input = format!("\"{long}\"");
     let tokens: Vec<_> = tokenize(&input).into_iter().map(|t| t.token).collect();
     match &tokens[0] {
         Token::String(s) => assert_eq!(s.len(), 10000),
-        other => panic!("Expected String, got {:?}", other),
+        other => panic!("Expected String, got {other:?}"),
     }
 }
 
@@ -2634,7 +2634,7 @@ fn test_lexer_timestamp_utc() {
         .into_iter()
         .map(|t| t.token)
         .collect();
-    assert!(matches!(&tokens[0], Token::Timestamp(s) if s.ends_with("Z")));
+    assert!(matches!(&tokens[0], Token::Timestamp(s) if s.ends_with('Z')));
 }
 
 // ---------------------------------------------------------------------------
@@ -2900,12 +2900,12 @@ fn test_deeply_nested_member_access() {
                 // The inner expr should be a.b.c.d.e
                 match *expr {
                     Expr::Member { member: m, .. } => assert_eq!(m, "e"),
-                    other => panic!("Expected inner Member, got {:?}", other),
+                    other => panic!("Expected inner Member, got {other:?}"),
                 }
             }
-            other => panic!("Expected Member chain, got {:?}", other),
+            other => panic!("Expected Member chain, got {other:?}"),
         },
-        other => panic!("Expected VarDecl, got {:?}", other),
+        other => panic!("Expected VarDecl, got {other:?}"),
     }
 }
 
@@ -3031,7 +3031,7 @@ fn test_lexer_keyword_vs_identifier() {
 #[test]
 fn test_lexer_empty_string() {
     let tokens: Vec<_> = tokenize(r#""""#).into_iter().map(|t| t.token).collect();
-    assert_eq!(tokens[0], Token::String("".to_string()));
+    assert_eq!(tokens[0], Token::String(String::new()));
 }
 
 // ---------------------------------------------------------------------------
@@ -3355,7 +3355,7 @@ fn parse_error_display_located() {
         message: "unexpected token".to_string(),
         hint: Some("try this".to_string()),
     };
-    let msg = format!("{}", err);
+    let msg = format!("{err}");
     assert_eq!(msg, "Line 3, column 10: unexpected token");
 }
 
@@ -3368,7 +3368,7 @@ fn parse_error_display_located_no_hint() {
         message: "syntax error".to_string(),
         hint: None,
     };
-    let msg = format!("{}", err);
+    let msg = format!("{err}");
     assert_eq!(msg, "Line 1, column 1: syntax error");
 }
 
@@ -3379,7 +3379,7 @@ fn parse_error_display_unexpected_token() {
         expected: "identifier".to_string(),
         found: "number".to_string(),
     };
-    let msg = format!("{}", err);
+    let msg = format!("{err}");
     assert_eq!(
         msg,
         "Unexpected token at position 15: expected identifier, found number"
@@ -3389,7 +3389,7 @@ fn parse_error_display_unexpected_token() {
 #[test]
 fn parse_error_display_unexpected_eof() {
     let err = ParseError::UnexpectedEof;
-    let msg = format!("{}", err);
+    let msg = format!("{err}");
     assert_eq!(msg, "Unexpected end of input");
 }
 
@@ -3399,42 +3399,42 @@ fn parse_error_display_invalid_token() {
         position: 7,
         message: "bad char".to_string(),
     };
-    let msg = format!("{}", err);
+    let msg = format!("{err}");
     assert_eq!(msg, "Invalid token at position 7: bad char");
 }
 
 #[test]
 fn parse_error_display_invalid_number() {
     let err = ParseError::InvalidNumber("12.34.56".to_string());
-    let msg = format!("{}", err);
+    let msg = format!("{err}");
     assert_eq!(msg, "Invalid number literal: 12.34.56");
 }
 
 #[test]
 fn parse_error_display_invalid_duration() {
     let err = ParseError::InvalidDuration("5x".to_string());
-    let msg = format!("{}", err);
+    let msg = format!("{err}");
     assert_eq!(msg, "Invalid duration literal: 5x");
 }
 
 #[test]
 fn parse_error_display_invalid_timestamp() {
     let err = ParseError::InvalidTimestamp("not-a-date".to_string());
-    let msg = format!("{}", err);
+    let msg = format!("{err}");
     assert_eq!(msg, "Invalid timestamp literal: not-a-date");
 }
 
 #[test]
 fn parse_error_display_unterminated_string() {
     let err = ParseError::UnterminatedString(20);
-    let msg = format!("{}", err);
+    let msg = format!("{err}");
     assert_eq!(msg, "Unterminated string starting at position 20");
 }
 
 #[test]
 fn parse_error_display_invalid_escape() {
     let err = ParseError::InvalidEscape("\\q".to_string());
-    let msg = format!("{}", err);
+    let msg = format!("{err}");
     assert_eq!(msg, "Invalid escape sequence: \\q");
 }
 
@@ -3444,7 +3444,7 @@ fn parse_error_display_custom() {
         span: varpulis_core::Span::new(0, 5),
         message: "custom error message".to_string(),
     };
-    let msg = format!("{}", err);
+    let msg = format!("{err}");
     assert_eq!(msg, "custom error message");
 }
 
@@ -3470,7 +3470,7 @@ fn parse_error_at_location_with_hint() {
             assert_eq!(message, "bad token");
             assert_eq!(hint, Some("try something".to_string()));
         }
-        other => panic!("Expected Located, got {:?}", other),
+        other => panic!("Expected Located, got {other:?}"),
     }
 }
 
@@ -3492,7 +3492,7 @@ fn parse_error_at_location_without_hint() {
             assert_eq!(message, "oops");
             assert_eq!(hint, None);
         }
-        other => panic!("Expected Located, got {:?}", other),
+        other => panic!("Expected Located, got {other:?}"),
     }
 }
 
@@ -3510,7 +3510,7 @@ fn parse_error_custom_constructor() {
             assert_eq!(s.end, 20);
             assert_eq!(message, "something went wrong");
         }
-        other => panic!("Expected Custom, got {:?}", other),
+        other => panic!("Expected Custom, got {other:?}"),
     }
 }
 
@@ -3522,7 +3522,7 @@ fn parse_error_custom_constructor_string_arg() {
         ParseError::Custom { message, .. } => {
             assert_eq!(message, "owned message");
         }
-        other => panic!("Expected Custom, got {:?}", other),
+        other => panic!("Expected Custom, got {other:?}"),
     }
 }
 

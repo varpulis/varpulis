@@ -59,7 +59,7 @@ fn generate_sensor_events(count: usize) -> Vec<Event> {
         let sensor_id = format!("sensor_{}", i % 10);
         // Simulate normal values with occasional spikes
         let value = if i % 50 == 0 {
-            150.0 + (i as f64 * 0.1) // Spike
+            (i as f64).mul_add(0.1, 150.0) // Spike
         } else {
             50.0 + (i as f64 * 0.01) % 30.0 // Normal
         };
@@ -120,8 +120,8 @@ fn bench_simple_filter(c: &mut Criterion) {
                         }
                         // Drain output
                         while rx.try_recv().is_ok() {}
-                    })
-                })
+                    });
+                });
             },
         );
     }
@@ -181,8 +181,8 @@ fn bench_windowed_aggregation(c: &mut Criterion) {
                         engine.process(black_box(event.clone())).await.unwrap();
                     }
                     while rx.try_recv().is_ok() {}
-                })
-            })
+                });
+            });
         });
     }
 
@@ -254,8 +254,8 @@ fn bench_multi_aggregate(c: &mut Criterion) {
                             engine.process(black_box(event.clone())).await.unwrap();
                         }
                         while rx.try_recv().is_ok() {}
-                    })
-                })
+                    });
+                });
             },
         );
     }
@@ -320,8 +320,8 @@ fn bench_filter_aggregate_pipeline(c: &mut Criterion) {
                             engine.process(black_box(event.clone())).await.unwrap();
                         }
                         while rx.try_recv().is_ok() {}
-                    })
-                })
+                    });
+                });
             },
         );
     }
@@ -382,8 +382,8 @@ fn bench_anomaly_detection(c: &mut Criterion) {
                             engine.process(black_box(event.clone())).await.unwrap();
                         }
                         while rx.try_recv().is_ok() {}
-                    })
-                })
+                    });
+                });
             },
         );
     }
@@ -458,8 +458,8 @@ fn bench_complex_udf(c: &mut Criterion) {
                             engine.process(black_box(event.clone())).await.unwrap();
                         }
                         while rx.try_recv().is_ok() {}
-                    })
-                })
+                    });
+                });
             },
         );
     }
@@ -549,8 +549,8 @@ fn bench_multi_stream(c: &mut Criterion) {
                             engine.process(black_box(event.clone())).await.unwrap();
                         }
                         while rx.try_recv().is_ok() {}
-                    })
-                })
+                    });
+                });
             },
         );
     }
@@ -598,8 +598,8 @@ fn bench_scalability(c: &mut Criterion) {
                     engine.process(black_box(event.clone())).await.unwrap();
                 }
                 while rx.try_recv().is_ok() {}
-            })
-        })
+            });
+        });
     });
 
     // Aggregation for complex throughput
@@ -630,8 +630,8 @@ fn bench_scalability(c: &mut Criterion) {
                     engine.process(black_box(event.clone())).await.unwrap();
                 }
                 while rx.try_recv().is_ok() {}
-            })
-        })
+            });
+        });
     });
 
     group.finish();
@@ -646,20 +646,20 @@ fn bench_parse_load(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse_load");
 
     // Small program
-    let small_source = r#"
+    let small_source = r"
         event Input:
             value: int
 
         stream Output = Input
             .where(value > 0)
             .emit(value: value)
-    "#;
+    ";
 
     group.bench_function("small_program", |b| {
         b.iter(|| {
             let program = parse(black_box(small_source)).unwrap();
             black_box(program)
-        })
+        });
     });
 
     // Medium program with UDF
@@ -700,7 +700,7 @@ fn bench_parse_load(c: &mut Criterion) {
         b.iter(|| {
             let program = parse(black_box(medium_source)).unwrap();
             black_box(program)
-        })
+        });
     });
 
     // Large program with multiple streams
@@ -759,7 +759,7 @@ fn bench_parse_load(c: &mut Criterion) {
         b.iter(|| {
             let program = parse(black_box(large_source)).unwrap();
             black_box(program)
-        })
+        });
     });
 
     group.finish();

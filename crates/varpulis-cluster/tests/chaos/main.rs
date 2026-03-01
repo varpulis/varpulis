@@ -126,7 +126,7 @@ impl ProcessCluster {
         let mut workers = Vec::with_capacity(num_workers);
         for i in 0..num_workers {
             let worker_port = base_port + 1 + i as u16;
-            let worker_id = format!("chaos-w{}", i);
+            let worker_id = format!("chaos-w{i}");
 
             let process = Command::new(&bin)
                 .args([
@@ -134,7 +134,7 @@ impl ProcessCluster {
                     "--port",
                     &worker_port.to_string(),
                     "--coordinator",
-                    &format!("http://127.0.0.1:{}", coordinator_port),
+                    &format!("http://127.0.0.1:{coordinator_port}"),
                     "--worker-id",
                     &worker_id,
                     "--api-key",
@@ -145,7 +145,7 @@ impl ProcessCluster {
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .spawn()
-                .unwrap_or_else(|e| panic!("Failed to spawn worker {}: {}", worker_id, e));
+                .unwrap_or_else(|e| panic!("Failed to spawn worker {worker_id}: {e}"));
 
             workers.push(WorkerProcess {
                 id: worker_id,
@@ -192,7 +192,7 @@ impl ProcessCluster {
             let _ = wp.process.kill();
             let _ = wp.process.wait();
         } else {
-            panic!("kill_worker: no worker with id '{}'", worker_id);
+            panic!("kill_worker: no worker with id '{worker_id}'");
         }
     }
 
@@ -220,7 +220,7 @@ impl ProcessCluster {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .unwrap_or_else(|e| panic!("Failed to spawn worker {}: {}", worker_id, e));
+            .unwrap_or_else(|e| panic!("Failed to spawn worker {worker_id}: {e}"));
 
         self.workers.push(WorkerProcess {
             id: worker_id.clone(),
@@ -255,9 +255,7 @@ impl ProcessCluster {
         let body: Json = resp.json().await.expect("deploy_group: invalid JSON");
         assert!(
             status.is_success(),
-            "deploy_group failed with {}: {}",
-            status,
-            body
+            "deploy_group failed with {status}: {body}"
         );
 
         body["id"]
@@ -270,7 +268,7 @@ impl ProcessCluster {
     pub async fn inject_batch(&self, group_id: &str, events: Vec<Json>) -> Json {
         let resp = self
             .http_client
-            .post(self.api_url(&format!("/pipeline-groups/{}/inject-batch", group_id)))
+            .post(self.api_url(&format!("/pipeline-groups/{group_id}/inject-batch")))
             .header("x-api-key", &self.api_key)
             .json(&serde_json::json!({ "events": events }))
             .send()
@@ -281,9 +279,7 @@ impl ProcessCluster {
         let body: Json = resp.json().await.expect("inject_batch: invalid JSON");
         assert!(
             status.is_success(),
-            "inject_batch failed with {}: {}",
-            status,
-            body
+            "inject_batch failed with {status}: {body}"
         );
         body
     }
@@ -293,7 +289,7 @@ impl ProcessCluster {
     pub async fn inject_event(&self, group_id: &str, event: Json) -> Json {
         let resp = self
             .http_client
-            .post(self.api_url(&format!("/pipeline-groups/{}/inject", group_id)))
+            .post(self.api_url(&format!("/pipeline-groups/{group_id}/inject")))
             .header("x-api-key", &self.api_key)
             .json(&event)
             .send()
@@ -304,9 +300,7 @@ impl ProcessCluster {
         let body: Json = resp.json().await.expect("inject_event: invalid JSON");
         assert!(
             status.is_success(),
-            "inject_event failed with {}: {}",
-            status,
-            body
+            "inject_event failed with {status}: {body}"
         );
         body
     }
@@ -316,7 +310,7 @@ impl ProcessCluster {
     pub async fn try_inject_event(&self, group_id: &str, event: Json) -> Result<Json, u16> {
         let resp = self
             .http_client
-            .post(self.api_url(&format!("/pipeline-groups/{}/inject", group_id)))
+            .post(self.api_url(&format!("/pipeline-groups/{group_id}/inject")))
             .header("x-api-key", &self.api_key)
             .json(&event)
             .send()
@@ -344,7 +338,7 @@ impl ProcessCluster {
 
     /// Get details of a specific pipeline group.
     pub async fn get_group(&self, group_id: &str) -> Json {
-        self.get(&format!("/pipeline-groups/{}", group_id)).await
+        self.get(&format!("/pipeline-groups/{group_id}")).await
     }
 
     /// List active migrations.
@@ -356,7 +350,7 @@ impl ProcessCluster {
     pub async fn drain_worker(&self, worker_id: &str) -> Json {
         let resp = self
             .http_client
-            .post(self.api_url(&format!("/workers/{}/drain", worker_id)))
+            .post(self.api_url(&format!("/workers/{worker_id}/drain")))
             .header("x-api-key", &self.api_key)
             .json(&serde_json::json!({ "timeout_secs": null }))
             .send()
@@ -367,9 +361,7 @@ impl ProcessCluster {
         let body: Json = resp.json().await.expect("drain_worker: invalid JSON");
         assert!(
             status.is_success(),
-            "drain_worker failed with {}: {}",
-            status,
-            body
+            "drain_worker failed with {status}: {body}"
         );
         body
     }
@@ -388,9 +380,7 @@ impl ProcessCluster {
         let body: Json = resp.json().await.expect("rebalance: invalid JSON");
         assert!(
             status.is_success(),
-            "rebalance failed with {}: {}",
-            status,
-            body
+            "rebalance failed with {status}: {body}"
         );
         body
     }
@@ -404,7 +394,7 @@ impl ProcessCluster {
     ) -> Json {
         let resp = self
             .http_client
-            .post(self.api_url(&format!("/pipelines/{}/{}/migrate", group_id, pipeline)))
+            .post(self.api_url(&format!("/pipelines/{group_id}/{pipeline}/migrate")))
             .header("x-api-key", &self.api_key)
             .json(&serde_json::json!({ "target_worker_id": target_worker }))
             .send()
@@ -415,9 +405,7 @@ impl ProcessCluster {
         let body: Json = resp.json().await.expect("manual_migrate: invalid JSON");
         assert!(
             status.is_success(),
-            "manual_migrate failed with {}: {}",
-            status,
-            body
+            "manual_migrate failed with {status}: {body}"
         );
         body
     }
@@ -431,7 +419,7 @@ impl ProcessCluster {
     pub async fn delete_group(&self, group_id: &str) -> Json {
         let resp = self
             .http_client
-            .delete(self.api_url(&format!("/pipeline-groups/{}", group_id)))
+            .delete(self.api_url(&format!("/pipeline-groups/{group_id}")))
             .header("x-api-key", &self.api_key)
             .send()
             .await
@@ -441,9 +429,7 @@ impl ProcessCluster {
         let body: Json = resp.json().await.expect("delete_group: invalid JSON");
         assert!(
             status.is_success(),
-            "delete_group failed with {}: {}",
-            status,
-            body
+            "delete_group failed with {status}: {body}"
         );
         body
     }
@@ -467,9 +453,10 @@ impl ProcessCluster {
             if condition().await {
                 return;
             }
-            if start.elapsed() > timeout {
-                panic!("wait_for: condition not met within {:?}", timeout);
-            }
+            assert!(
+                start.elapsed() <= timeout,
+                "wait_for: condition not met within {timeout:?}"
+            );
             tokio::time::sleep(interval).await;
             interval = (interval * 2).min(max_interval);
         }
@@ -515,20 +502,14 @@ impl ProcessCluster {
             .header("x-api-key", &self.api_key)
             .send()
             .await
-            .unwrap_or_else(|e| panic!("GET {} failed: {}", path, e));
+            .unwrap_or_else(|e| panic!("GET {path} failed: {e}"));
 
         let status = resp.status();
         let body: Json = resp
             .json()
             .await
-            .unwrap_or_else(|e| panic!("GET {} invalid JSON: {}", path, e));
-        assert!(
-            status.is_success(),
-            "GET {} returned {}: {}",
-            path,
-            status,
-            body
-        );
+            .unwrap_or_else(|e| panic!("GET {path} invalid JSON: {e}"));
+        assert!(status.is_success(), "GET {path} returned {status}: {body}");
         body
     }
 
@@ -556,13 +537,12 @@ impl ProcessCluster {
                 }
             }
 
-            if start.elapsed() > timeout {
-                panic!(
-                    "Timed out waiting for {} workers to register (elapsed {:?})",
-                    expected,
-                    start.elapsed()
-                );
-            }
+            assert!(
+                start.elapsed() <= timeout,
+                "Timed out waiting for {} workers to register (elapsed {:?})",
+                expected,
+                start.elapsed()
+            );
 
             tokio::time::sleep(interval).await;
             interval = (interval * 2).min(max_interval);

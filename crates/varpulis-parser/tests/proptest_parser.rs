@@ -19,7 +19,7 @@ fn plausible_vpl() -> impl Strategy<Value = String> {
         Just(".where(a.x > 0)".to_string()),
         Just(".where(a.y == 1)".to_string()),
         Just(".where(a.z < 100)".to_string()),
-        Just("".to_string()),
+        Just(String::new()),
     ];
     let emit_field = field_name;
     let emit_expr = prop_oneof![
@@ -30,10 +30,7 @@ fn plausible_vpl() -> impl Strategy<Value = String> {
 
     (stream_name, field_name, op, emit_field, emit_expr).prop_map(
         |(sname, _fname, op, efield, eexpr)| {
-            format!(
-                "stream {} = EventType as a\n  {}\n  .emit({}: {})",
-                sname, op, efield, eexpr
-            )
+            format!("stream {sname} = EventType as a\n  {op}\n  .emit({efield}: {eexpr})")
         },
     )
 }

@@ -111,13 +111,11 @@ mod tests {
         let (lower, upper) = cal.prediction_interval(0.5);
         assert!(
             (lower - 0.0).abs() < 1e-10,
-            "Empty calibrator lower should be 0.0, got {}",
-            lower
+            "Empty calibrator lower should be 0.0, got {lower}"
         );
         assert!(
             (upper - 1.0).abs() < 1e-10,
-            "Empty calibrator upper should be 1.0, got {}",
-            upper
+            "Empty calibrator upper should be 1.0, got {upper}"
         );
     }
 
@@ -138,8 +136,7 @@ mod tests {
         let width = upper - lower;
         assert!(
             width < 0.5,
-            "Perfect predictions should yield narrow interval, got width={}",
-            width
+            "Perfect predictions should yield narrow interval, got width={width}"
         );
     }
 
@@ -160,8 +157,7 @@ mod tests {
         let width = upper - lower;
         assert!(
             width > 0.5,
-            "Bad predictions should yield wide interval, got width={}",
-            width
+            "Bad predictions should yield wide interval, got width={width}"
         );
     }
 
@@ -195,13 +191,10 @@ mod tests {
             let (lower, upper) = cal.prediction_interval(p);
             assert!(
                 lower <= upper,
-                "lower ({}) should be <= upper ({}) for predicted={}",
-                lower,
-                upper,
-                p
+                "lower ({lower}) should be <= upper ({upper}) for predicted={p}"
             );
-            assert!(lower >= 0.0, "lower should be >= 0.0, got {}", lower);
-            assert!(upper <= 1.0, "upper should be <= 1.0, got {}", upper);
+            assert!(lower >= 0.0, "lower should be >= 0.0, got {lower}");
+            assert!(upper <= 1.0, "upper should be <= 1.0, got {upper}");
         }
     }
 
@@ -215,15 +208,7 @@ mod tests {
         }
 
         let (lower, upper) = cal.prediction_interval(0.5);
-        assert!(
-            lower >= 0.0,
-            "Lower should be clamped >= 0.0, got {}",
-            lower
-        );
-        assert!(
-            upper <= 1.0,
-            "Upper should be clamped <= 1.0, got {}",
-            upper
-        );
+        assert!(lower >= 0.0, "Lower should be clamped >= 0.0, got {lower}");
+        assert!(upper <= 1.0, "Upper should be clamped <= 1.0, got {upper}");
     }
 }

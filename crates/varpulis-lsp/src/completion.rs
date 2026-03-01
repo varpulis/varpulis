@@ -940,7 +940,7 @@ fn completion_item(
         documentation: doc.map(|d| {
             Documentation::MarkupContent(MarkupContent {
                 kind: MarkupKind::Markdown,
-                value: format!("```vpl\n{}\n```", d),
+                value: format!("```vpl\n{d}\n```"),
             })
         }),
         insert_text: Some(insert_text.to_string()),
@@ -1284,8 +1284,8 @@ fn get_emit_field_completions(text: &str, position: Position) -> Vec<CompletionI
             &field_name,
             CompletionItemKind::FIELD,
             "Event field",
-            &format!("{}: {}", field_name, field_name),
-            Some(&format!("{}: {}", field_name, field_name)),
+            &format!("{field_name}: {field_name}"),
+            Some(&format!("{field_name}: {field_name}")),
         ));
     }
 
@@ -1296,8 +1296,8 @@ fn get_emit_field_completions(text: &str, position: Position) -> Vec<CompletionI
                 name,
                 CompletionItemKind::VARIABLE,
                 desc,
-                &format!("{}: {}", name, name),
-                Some(&format!("{}: {}", name, name)),
+                &format!("{name}: {name}"),
+                Some(&format!("{name}: {name}")),
             ));
         }
     }
@@ -1309,8 +1309,8 @@ fn get_emit_field_completions(text: &str, position: Position) -> Vec<CompletionI
                 name,
                 CompletionItemKind::VARIABLE,
                 desc,
-                &format!("{}: {}", name, name),
-                Some(&format!("{}: {}", name, name)),
+                &format!("{name}: {name}"),
+                Some(&format!("{name}: {name}")),
             ));
         }
     }
@@ -1345,7 +1345,7 @@ fn get_where_field_completions(text: &str, position: Position) -> Vec<Completion
         items.push(completion_item(
             &field_name,
             CompletionItemKind::FIELD,
-            &format!("Event field ({})", type_name),
+            &format!("Event field ({type_name})"),
             &field_name,
             Some(&field_name),
         ));
@@ -1390,8 +1390,8 @@ fn get_select_field_completions(text: &str, position: Position) -> Vec<Completio
             &field_name,
             CompletionItemKind::FIELD,
             "Event field",
-            &format!("{}: {}", field_name, field_name),
-            Some(&format!("{}: {}", field_name, field_name)),
+            &format!("{field_name}: {field_name}"),
+            Some(&format!("{field_name}: {field_name}")),
         ));
     }
 
@@ -1402,8 +1402,8 @@ fn get_select_field_completions(text: &str, position: Position) -> Vec<Completio
                 name,
                 CompletionItemKind::VARIABLE,
                 desc,
-                &format!("{}: {}", name, name),
-                Some(&format!("{}: {}", name, name)),
+                &format!("{name}: {name}"),
+                Some(&format!("{name}: {name}")),
             ));
         }
     }
@@ -1415,8 +1415,8 @@ fn get_select_field_completions(text: &str, position: Position) -> Vec<Completio
                 name,
                 CompletionItemKind::VARIABLE,
                 desc,
-                &format!("{}: {}", name, name),
-                Some(&format!("{}: {}", name, name)),
+                &format!("{name}: {name}"),
+                Some(&format!("{name}: {name}")),
             ));
         }
     }
@@ -1570,8 +1570,7 @@ mod tests {
         let labels: Vec<&str> = completions.iter().map(|c| c.label.as_str()).collect();
         assert!(
             labels.contains(&"value"),
-            "Expected 'value' in completions, got: {:?}",
-            labels
+            "Expected 'value' in completions, got: {labels:?}"
         );
         assert!(labels.contains(&"zone"));
     }
@@ -1616,8 +1615,7 @@ mod tests {
         let insert = http_item.insert_text.as_deref().unwrap();
         assert!(
             insert.contains("base_url"),
-            "HTTP snippet should use base_url, got: {}",
-            insert
+            "HTTP snippet should use base_url, got: {insert}"
         );
         assert!(
             !insert.contains("http(url:"),
@@ -1670,13 +1668,11 @@ mod tests {
         let labels: Vec<&str> = completions.iter().map(|c| c.label.as_str()).collect();
         assert!(
             labels.contains(&"id"),
-            "Should suggest 'id' from event A, got: {:?}",
-            labels
+            "Should suggest 'id' from event A, got: {labels:?}"
         );
         assert!(
             !labels.contains(&"name"),
-            "Should NOT suggest 'name' from event B, got: {:?}",
-            labels
+            "Should NOT suggest 'name' from event B, got: {labels:?}"
         );
     }
 
@@ -1701,13 +1697,11 @@ mod tests {
         let labels: Vec<&str> = completions.iter().map(|c| c.label.as_str()).collect();
         assert!(
             labels.contains(&"value"),
-            "Should suggest 'value' from Temperature, got: {:?}",
-            labels
+            "Should suggest 'value' from Temperature, got: {labels:?}"
         );
         assert!(
             labels.contains(&"level"),
-            "Should suggest 'level' from Humidity, got: {:?}",
-            labels
+            "Should suggest 'level' from Humidity, got: {labels:?}"
         );
     }
 
@@ -1723,13 +1717,11 @@ mod tests {
         let labels: Vec<&str> = completions.iter().map(|c| c.label.as_str()).collect();
         assert!(
             labels.contains(&"value"),
-            "Should suggest 'value' from Source, got: {:?}",
-            labels
+            "Should suggest 'value' from Source, got: {labels:?}"
         );
         assert!(
             labels.contains(&"zone"),
-            "Should suggest 'zone' from Source, got: {:?}",
-            labels
+            "Should suggest 'zone' from Source, got: {labels:?}"
         );
     }
 

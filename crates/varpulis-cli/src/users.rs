@@ -126,7 +126,7 @@ impl UserStore {
             users: self.users.values().cloned().collect(),
         };
         let json =
-            serde_json::to_string_pretty(&data).map_err(|e| format!("Serialize error: {}", e))?;
+            serde_json::to_string_pretty(&data).map_err(|e| format!("Serialize error: {e}"))?;
 
         // Ensure parent directory exists
         if let Some(parent) = self.file_path.parent() {
@@ -135,8 +135,8 @@ impl UserStore {
 
         // Atomic write: write to temp file, then rename
         let tmp_path = self.file_path.with_extension("tmp");
-        std::fs::write(&tmp_path, &json).map_err(|e| format!("Write error: {}", e))?;
-        std::fs::rename(&tmp_path, &self.file_path).map_err(|e| format!("Rename error: {}", e))?;
+        std::fs::write(&tmp_path, &json).map_err(|e| format!("Write error: {e}"))?;
+        std::fs::rename(&tmp_path, &self.file_path).map_err(|e| format!("Rename error: {e}"))?;
 
         Ok(())
     }
@@ -156,7 +156,7 @@ impl UserStore {
         role: &str,
     ) -> Result<StoredUser, String> {
         if self.users.contains_key(username) {
-            return Err(format!("User '{}' already exists", username));
+            return Err(format!("User '{username}' already exists"));
         }
 
         if username.is_empty() || username.len() > 64 {
@@ -184,7 +184,7 @@ impl UserStore {
 
         self.users.insert(username.to_string(), user.clone());
         self.save()
-            .map_err(|e| format!("Failed to persist user: {}", e))?;
+            .map_err(|e| format!("Failed to persist user: {e}"))?;
 
         Ok(user)
     }
@@ -375,8 +375,7 @@ impl UserStore {
         user.updated_at = Utc::now();
 
         let updated = user.clone();
-        self.save()
-            .map_err(|e| format!("Failed to persist: {}", e))?;
+        self.save().map_err(|e| format!("Failed to persist: {e}"))?;
 
         Ok(updated)
     }
@@ -396,8 +395,7 @@ impl UserStore {
         user.password_hash = hash_password(new_password)?;
         user.updated_at = Utc::now();
 
-        self.save()
-            .map_err(|e| format!("Failed to persist: {}", e))?;
+        self.save().map_err(|e| format!("Failed to persist: {e}"))?;
         Ok(())
     }
 
@@ -412,14 +410,13 @@ impl UserStore {
 
         self.users.remove(&username);
         self.revoke_all_user_sessions(user_id);
-        self.save()
-            .map_err(|e| format!("Failed to persist: {}", e))?;
+        self.save().map_err(|e| format!("Failed to persist: {e}"))?;
 
         Ok(())
     }
 
     /// Get session config (for JWT TTL).
-    pub fn session_config(&self) -> &SessionConfig {
+    pub const fn session_config(&self) -> &SessionConfig {
         &self.config
     }
 }
@@ -453,15 +450,14 @@ fn hash_password(password: &str) -> Result<String, String> {
     argon2
         .hash_password(password.as_bytes(), &salt)
         .map(|h| h.to_string())
-        .map_err(|e| format!("Password hashing failed: {}", e))
+        .map_err(|e| format!("Password hashing failed: {e}"))
 }
 
 fn verify_password(password: &str, hash: &str) -> Result<bool, String> {
     use argon2::password_hash::PasswordHash;
     use argon2::{Argon2, PasswordVerifier};
 
-    let parsed_hash =
-        PasswordHash::new(hash).map_err(|e| format!("Invalid password hash: {}", e))?;
+    let parsed_hash = PasswordHash::new(hash).map_err(|e| format!("Invalid password hash: {e}"))?;
 
     Ok(Argon2::default()
         .verify_password(password.as_bytes(), &parsed_hash)

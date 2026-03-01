@@ -23,9 +23,9 @@ fn bench_for_loop(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("for_loop");
 
-    for size in [10, 100, 1000].iter() {
+    for size in &[10, 100, 1000] {
         let source = format!(
-            r#"
+            r"
             fn sum_range(n: int) -> int:
                 let total = 0
                 for i in range(n):
@@ -33,9 +33,8 @@ fn bench_for_loop(c: &mut Criterion) {
                 return total
 
             stream Test = Input
-                .emit(result: sum_range({}))
-        "#,
-            size
+                .emit(result: sum_range({size}))
+        "
         );
 
         let program = parse_program(&source);
@@ -48,8 +47,8 @@ fn bench_for_loop(c: &mut Criterion) {
                     engine.load(&program).unwrap();
                     engine.process(Event::new("Input")).await.unwrap();
                     let _ = rx.try_recv();
-                })
-            })
+                });
+            });
         });
     }
 
@@ -62,9 +61,9 @@ fn bench_while_loop(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("while_loop");
 
-    for iterations in [10, 100, 1000].iter() {
+    for iterations in &[10, 100, 1000] {
         let source = format!(
-            r#"
+            r"
             fn count_to(limit: int) -> int:
                 let i = 0
                 while i < limit:
@@ -72,9 +71,8 @@ fn bench_while_loop(c: &mut Criterion) {
                 return i
 
             stream Test = Input
-                .emit(result: count_to({}))
-        "#,
-            iterations
+                .emit(result: count_to({iterations}))
+        "
         );
 
         let program = parse_program(&source);
@@ -90,8 +88,8 @@ fn bench_while_loop(c: &mut Criterion) {
                         engine.load(&program).unwrap();
                         engine.process(Event::new("Input")).await.unwrap();
                         let _ = rx.try_recv();
-                    })
-                })
+                    });
+                });
             },
         );
     }
@@ -106,14 +104,14 @@ fn bench_array_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("array_ops");
 
     // Array sum
-    let source = r#"
+    let source = r"
         fn array_sum() -> float:
             let arr = range(100)
             return sum(arr)
 
         stream Test = Input
             .emit(result: array_sum())
-    "#;
+    ";
 
     let program = parse_program(source);
 
@@ -125,12 +123,12 @@ fn bench_array_operations(c: &mut Criterion) {
                 engine.load(&program).unwrap();
                 engine.process(Event::new("Input")).await.unwrap();
                 let _ = rx.try_recv();
-            })
-        })
+            });
+        });
     });
 
     // Array sort
-    let source = r#"
+    let source = r"
         fn array_sort() -> int:
             let arr = [9, 3, 7, 1, 5, 8, 2, 6, 4, 0]
             let sorted = sort(arr)
@@ -138,7 +136,7 @@ fn bench_array_operations(c: &mut Criterion) {
 
         stream Test = Input
             .emit(result: array_sort())
-    "#;
+    ";
 
     let program = parse_program(source);
 
@@ -150,19 +148,19 @@ fn bench_array_operations(c: &mut Criterion) {
                 engine.load(&program).unwrap();
                 engine.process(Event::new("Input")).await.unwrap();
                 let _ = rx.try_recv();
-            })
-        })
+            });
+        });
     });
 
     // Array contains
-    let source = r#"
+    let source = r"
         fn array_contains() -> bool:
             let arr = range(100)
             return contains(arr, 50)
 
         stream Test = Input
             .emit(result: array_contains())
-    "#;
+    ";
 
     let program = parse_program(source);
 
@@ -174,8 +172,8 @@ fn bench_array_operations(c: &mut Criterion) {
                 engine.load(&program).unwrap();
                 engine.process(Event::new("Input")).await.unwrap();
                 let _ = rx.try_recv();
-            })
-        })
+            });
+        });
     });
 
     group.finish();
@@ -207,8 +205,8 @@ fn bench_map_operations(c: &mut Criterion) {
                 engine.load(&program).unwrap();
                 engine.process(Event::new("Input")).await.unwrap();
                 let _ = rx.try_recv();
-            })
-        })
+            });
+        });
     });
 
     // Map keys
@@ -231,8 +229,8 @@ fn bench_map_operations(c: &mut Criterion) {
                 engine.load(&program).unwrap();
                 engine.process(Event::new("Input")).await.unwrap();
                 let _ = rx.try_recv();
-            })
-        })
+            });
+        });
     });
 
     group.finish();
@@ -245,7 +243,7 @@ fn bench_math_functions(c: &mut Criterion) {
     let mut group = c.benchmark_group("math_funcs");
 
     // Basic math
-    let source = r#"
+    let source = r"
         fn math_ops() -> float:
             let a = abs(-42)
             let b = sqrt(16.0)
@@ -256,7 +254,7 @@ fn bench_math_functions(c: &mut Criterion) {
 
         stream Test = Input
             .emit(result: math_ops())
-    "#;
+    ";
 
     let program = parse_program(source);
 
@@ -268,12 +266,12 @@ fn bench_math_functions(c: &mut Criterion) {
                 engine.load(&program).unwrap();
                 engine.process(Event::new("Input")).await.unwrap();
                 let _ = rx.try_recv();
-            })
-        })
+            });
+        });
     });
 
     // Trigonometry
-    let source = r#"
+    let source = r"
         fn trig_ops() -> float:
             let a = sin(1.0)
             let b = cos(1.0)
@@ -282,7 +280,7 @@ fn bench_math_functions(c: &mut Criterion) {
 
         stream Test = Input
             .emit(result: trig_ops())
-    "#;
+    ";
 
     let program = parse_program(source);
 
@@ -294,8 +292,8 @@ fn bench_math_functions(c: &mut Criterion) {
                 engine.load(&program).unwrap();
                 engine.process(Event::new("Input")).await.unwrap();
                 let _ = rx.try_recv();
-            })
-        })
+            });
+        });
     });
 
     group.finish();
@@ -330,8 +328,8 @@ fn bench_string_functions(c: &mut Criterion) {
                 engine.load(&program).unwrap();
                 engine.process(Event::new("Input")).await.unwrap();
                 let _ = rx.try_recv();
-            })
-        })
+            });
+        });
     });
 
     // Split and join
@@ -355,8 +353,8 @@ fn bench_string_functions(c: &mut Criterion) {
                 engine.load(&program).unwrap();
                 engine.process(Event::new("Input")).await.unwrap();
                 let _ = rx.try_recv();
-            })
-        })
+            });
+        });
     });
 
     group.finish();
@@ -369,13 +367,13 @@ fn bench_user_functions(c: &mut Criterion) {
     let mut group = c.benchmark_group("user_funcs");
 
     // Simple function
-    let source = r#"
+    let source = r"
         fn double(x: int) -> int:
             return x * 2
 
         stream Test = Input
             .emit(result: double(value))
-    "#;
+    ";
 
     let program = parse_program(source);
 
@@ -390,12 +388,12 @@ fn bench_user_functions(c: &mut Criterion) {
                     .await
                     .unwrap();
                 let _ = rx.try_recv();
-            })
-        })
+            });
+        });
     });
 
     // Recursive function (factorial)
-    let source = r#"
+    let source = r"
         fn factorial(n: int) -> int:
             if n <= 1:
                 return 1
@@ -403,7 +401,7 @@ fn bench_user_functions(c: &mut Criterion) {
 
         stream Test = Input
             .emit(result: factorial(10))
-    "#;
+    ";
 
     let program = parse_program(source);
 
@@ -415,12 +413,12 @@ fn bench_user_functions(c: &mut Criterion) {
                 engine.load(&program).unwrap();
                 engine.process(Event::new("Input")).await.unwrap();
                 let _ = rx.try_recv();
-            })
-        })
+            });
+        });
     });
 
     // Complex function with multiple statements
-    let source = r#"
+    let source = r"
         fn complex_calc(x: int, y: int) -> int:
             let result = 0
             if x > y:
@@ -433,7 +431,7 @@ fn bench_user_functions(c: &mut Criterion) {
 
         stream Test = Input
             .emit(result: complex_calc(20, 10))
-    "#;
+    ";
 
     let program = parse_program(source);
 
@@ -445,8 +443,8 @@ fn bench_user_functions(c: &mut Criterion) {
                 engine.load(&program).unwrap();
                 engine.process(Event::new("Input")).await.unwrap();
                 let _ = rx.try_recv();
-            })
-        })
+            });
+        });
     });
 
     group.finish();
@@ -485,8 +483,8 @@ fn bench_conditionals(c: &mut Criterion) {
                     .await
                     .unwrap();
                 let _ = rx.try_recv();
-            })
-        })
+            });
+        });
     });
 
     // Nested if
@@ -517,8 +515,8 @@ fn bench_conditionals(c: &mut Criterion) {
                 engine.load(&program).unwrap();
                 engine.process(Event::new("Input")).await.unwrap();
                 let _ = rx.try_recv();
-            })
-        })
+            });
+        });
     });
 
     group.finish();

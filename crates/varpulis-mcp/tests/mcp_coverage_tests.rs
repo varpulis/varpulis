@@ -19,10 +19,9 @@ fn error_unauthorized_display() {
     let msg = err.to_string();
     assert!(
         msg.contains("Authentication failed"),
-        "Unauthorized display: {}",
-        msg
+        "Unauthorized display: {msg}"
     );
-    assert!(msg.contains("401"), "Should mention HTTP 401: {}", msg);
+    assert!(msg.contains("401"), "Should mention HTTP 401: {msg}");
 }
 
 #[test]
@@ -31,8 +30,7 @@ fn error_not_found_display() {
     let msg = err.to_string();
     assert!(
         msg.contains("not found") || msg.contains("Not found") || msg.contains("pipeline xyz"),
-        "NotFound display: {}",
-        msg
+        "NotFound display: {msg}"
     );
 }
 
@@ -42,8 +40,7 @@ fn error_bad_request_display() {
     let msg = err.to_string();
     assert!(
         msg.contains("Bad request") || msg.contains("missing field"),
-        "BadRequest display: {}",
-        msg
+        "BadRequest display: {msg}"
     );
 }
 
@@ -54,15 +51,10 @@ fn error_api_error_display() {
         message: "Service unavailable".into(),
     };
     let msg = err.to_string();
-    assert!(
-        msg.contains("503"),
-        "ApiError should contain status: {}",
-        msg
-    );
+    assert!(msg.contains("503"), "ApiError should contain status: {msg}");
     assert!(
         msg.contains("Service unavailable"),
-        "ApiError should contain message: {}",
-        msg
+        "ApiError should contain message: {msg}"
     );
 }
 
@@ -72,13 +64,11 @@ fn error_parse_error_display() {
     let msg = err.to_string();
     assert!(
         msg.contains("parse") || msg.contains("Parse"),
-        "ParseError display: {}",
-        msg
+        "ParseError display: {msg}"
     );
     assert!(
         msg.contains("unexpected token"),
-        "ParseError should contain inner message: {}",
-        msg
+        "ParseError should contain inner message: {msg}"
     );
 }
 
@@ -88,13 +78,11 @@ fn error_validation_error_display() {
     let msg = err.to_string();
     assert!(
         msg.contains("validation") || msg.contains("Validation"),
-        "ValidationError display: {}",
-        msg
+        "ValidationError display: {msg}"
     );
     assert!(
         msg.contains("undefined stream Foo"),
-        "ValidationError should contain inner: {}",
-        msg
+        "ValidationError should contain inner: {msg}"
     );
 }
 
@@ -102,11 +90,7 @@ fn error_validation_error_display() {
 fn error_other_display() {
     let err = CoordinatorError::Other("something unexpected".into());
     let msg = err.to_string();
-    assert!(
-        msg.contains("something unexpected"),
-        "Other display: {}",
-        msg
-    );
+    assert!(msg.contains("something unexpected"), "Other display: {msg}");
 }
 
 #[test]
@@ -115,11 +99,7 @@ fn error_into_tool_result_unauthorized() {
     let result = err.into_tool_result();
     assert_eq!(result.is_error, Some(true));
     let text = result.content[0].as_text().unwrap().text.as_str();
-    assert!(
-        text.contains("Authentication"),
-        "Tool result text: {}",
-        text
-    );
+    assert!(text.contains("Authentication"), "Tool result text: {text}");
 }
 
 #[test]
@@ -128,7 +108,7 @@ fn error_into_tool_result_not_found() {
     let result = err.into_tool_result();
     assert_eq!(result.is_error, Some(true));
     let text = result.content[0].as_text().unwrap().text.as_str();
-    assert!(text.contains("group-123"), "Tool result text: {}", text);
+    assert!(text.contains("group-123"), "Tool result text: {text}");
 }
 
 #[test]
@@ -140,7 +120,7 @@ fn error_into_tool_result_api_error() {
     let result = err.into_tool_result();
     assert_eq!(result.is_error, Some(true));
     let text = result.content[0].as_text().unwrap().text.as_str();
-    assert!(text.contains("500"), "Tool result text: {}", text);
+    assert!(text.contains("500"), "Tool result text: {text}");
 }
 
 // =============================================================================
@@ -166,7 +146,7 @@ fn client_construction_with_api_key() {
 #[test]
 fn client_clone() {
     let client = CoordinatorClient::new("http://localhost:9100".into(), Some("key".into()));
-    let cloned = client.clone();
+    let cloned = client;
     let _ = &cloned;
 }
 
@@ -179,8 +159,7 @@ async fn client_unreachable_list_pipeline_groups() {
     let msg = err.to_string();
     assert!(
         msg.contains("reach") || msg.contains("connect") || msg.contains("Unreachable"),
-        "Expected unreachable error, got: {}",
-        msg
+        "Expected unreachable error, got: {msg}"
     );
 }
 
@@ -324,8 +303,7 @@ async fn resource_read_unknown_uri() {
     let err = result.unwrap_err();
     assert!(
         err.contains("Unknown resource URI"),
-        "Expected unknown URI error, got: {}",
-        err
+        "Expected unknown URI error, got: {err}"
     );
 }
 
@@ -340,8 +318,7 @@ async fn resource_read_cluster_status_no_coordinator() {
     let err = result.unwrap_err();
     assert!(
         err.contains("Failed to fetch"),
-        "Expected fetch failure, got: {}",
-        err
+        "Expected fetch failure, got: {err}"
     );
 }
 
@@ -498,8 +475,7 @@ fn get_prompt_unknown_returns_error() {
     let err = result.unwrap_err();
     assert!(
         err.contains("Unknown prompt"),
-        "Expected unknown prompt error, got: {}",
-        err
+        "Expected unknown prompt error, got: {err}"
     );
 }
 
@@ -518,7 +494,7 @@ fn server_construction() {
 fn server_clone() {
     let client = CoordinatorClient::new("http://localhost:9100".into(), Some("key".into()));
     let server = VarpulisMcpServer::new(client);
-    let cloned = server.clone();
+    let cloned = server;
     let _ = &cloned;
 }
 
@@ -560,8 +536,7 @@ fn server_get_info() {
     let instructions = info.instructions.unwrap();
     assert!(
         instructions.contains("Varpulis"),
-        "Instructions should mention Varpulis: {}",
-        instructions
+        "Instructions should mention Varpulis: {instructions}"
     );
 }
 
@@ -602,8 +577,7 @@ fn server_get_info_version() {
 #[test]
 fn validate_vpl_params_serde() {
     let json = json!({"source": "stream A = X"});
-    let params: varpulis_mcp::tools::ValidateVplParams =
-        serde_json::from_value(json.clone()).unwrap();
+    let params: varpulis_mcp::tools::ValidateVplParams = serde_json::from_value(json).unwrap();
     assert_eq!(params.source, "stream A = X");
 }
 
@@ -708,39 +682,39 @@ fn tool_params_debug() {
     let p1 = varpulis_mcp::tools::ValidateVplParams {
         source: "test".into(),
     };
-    assert!(format!("{:?}", p1).contains("ValidateVplParams"));
+    assert!(format!("{p1:?}").contains("ValidateVplParams"));
 
     let p2 = varpulis_mcp::tools::DeployPipelineParams {
         name: "test".into(),
         source: "src".into(),
         worker_affinity: None,
     };
-    assert!(format!("{:?}", p2).contains("DeployPipelineParams"));
+    assert!(format!("{p2:?}").contains("DeployPipelineParams"));
 
     let p3 = varpulis_mcp::tools::ListPipelinesParams { status: None };
-    assert!(format!("{:?}", p3).contains("ListPipelinesParams"));
+    assert!(format!("{p3:?}").contains("ListPipelinesParams"));
 
     let p4 = varpulis_mcp::tools::QueryMetricsParams {
         pipeline_group: None,
         include_prometheus: None,
     };
-    assert!(format!("{:?}", p4).contains("QueryMetricsParams"));
+    assert!(format!("{p4:?}").contains("QueryMetricsParams"));
 
     let p5 = varpulis_mcp::tools::ExplainAlertParams {
         pipeline_group: "test".into(),
         alert_description: None,
     };
-    assert!(format!("{:?}", p5).contains("ExplainAlertParams"));
+    assert!(format!("{p5:?}").contains("ExplainAlertParams"));
 
     let p6 = varpulis_mcp::tools::SearchEventsParams {
         pipeline_group: "g".into(),
         event_type: "E".into(),
         fields: serde_json::Map::new(),
     };
-    assert!(format!("{:?}", p6).contains("SearchEventsParams"));
+    assert!(format!("{p6:?}").contains("SearchEventsParams"));
 
     let p7 = varpulis_mcp::tools::ListModelsParams {};
-    assert!(format!("{:?}", p7).contains("ListModelsParams"));
+    assert!(format!("{p7:?}").contains("ListModelsParams"));
 }
 
 // ── Error module: additional coverage ────────────────────────────────
@@ -758,11 +732,7 @@ async fn error_from_reqwest_connect_error() {
     let coord_err: CoordinatorError = reqwest_err.into();
     let msg = coord_err.to_string();
     // Should be Unreachable or Other depending on platform
-    assert!(
-        !msg.is_empty(),
-        "Error message should not be empty: {}",
-        msg
-    );
+    assert!(!msg.is_empty(), "Error message should not be empty: {msg}");
 }
 
 #[test]
@@ -814,7 +784,7 @@ fn error_unreachable_display() {
 #[test]
 fn error_debug_format() {
     let err = CoordinatorError::BadRequest("test".into());
-    let dbg = format!("{:?}", err);
+    let dbg = format!("{err:?}");
     assert!(dbg.contains("BadRequest"));
 }
 
@@ -926,11 +896,10 @@ async fn validate_vpl_valid_simple() {
     .await;
     assert_eq!(result.is_error, Some(false));
     let text = first_text(&result);
-    assert!(text.contains("valid"), "Expected 'valid' in: {}", text);
+    assert!(text.contains("valid"), "Expected 'valid' in: {text}");
     assert!(
         text.contains("No errors"),
-        "Expected 'No errors' for a clean program, got: {}",
-        text
+        "Expected 'No errors' for a clean program, got: {text}"
     );
 }
 
@@ -944,8 +913,7 @@ async fn validate_vpl_valid_complex_multi_stream() {
     assert_eq!(
         result.is_error,
         Some(false),
-        "Multi-stream VPL should be valid: {}",
-        text
+        "Multi-stream VPL should be valid: {text}"
     );
 }
 
@@ -957,8 +925,7 @@ async fn validate_vpl_parse_error() {
     let text = first_text(&result);
     assert!(
         text.contains("Parse error") || text.contains("parse"),
-        "Expected parse error, got: {}",
-        text
+        "Expected parse error, got: {text}"
     );
 }
 
@@ -986,20 +953,17 @@ async fn validate_vpl_semantic_error_having_without_aggregate() {
     let text = first_text(&result);
     assert!(
         text.contains("error") || text.contains("Validation"),
-        "Expected validation error text, got: {}",
-        text
+        "Expected validation error text, got: {text}"
     );
     // Should contain the diagnostic with line/col information
     assert!(
         text.contains(".having()"),
-        "Error should mention .having(), got: {}",
-        text
+        "Error should mention .having(), got: {text}"
     );
     // Should contain the hint
     assert!(
         text.contains("hint") || text.contains("aggregate"),
-        "Error should contain hint about aggregate, got: {}",
-        text
+        "Error should contain hint about aggregate, got: {text}"
     );
 }
 
@@ -1019,7 +983,7 @@ async fn validate_vpl_semantic_warning_only_no_errors() {
         first_text(&result)
     );
     let text = first_text(&result);
-    assert!(text.contains("valid"), "Expected 'valid', got: {}", text);
+    assert!(text.contains("valid"), "Expected 'valid', got: {text}");
 }
 
 #[tokio::test]
@@ -1045,13 +1009,11 @@ async fn deploy_pipeline_parse_error() {
     let text = first_text(&result);
     assert!(
         text.contains("parse error") || text.contains("Parse"),
-        "Expected parse error, got: {}",
-        text
+        "Expected parse error, got: {text}"
     );
     assert!(
         text.contains("fix before deploying"),
-        "Expected 'fix before deploying' hint, got: {}",
-        text
+        "Expected 'fix before deploying' hint, got: {text}"
     );
 }
 
@@ -1074,8 +1036,7 @@ async fn deploy_pipeline_valid_vpl_unreachable_coordinator() {
     let text = first_text(&result);
     assert!(
         text.contains("reach") || text.contains("connect") || text.contains("Unreachable"),
-        "Expected connection error, got: {}",
-        text
+        "Expected connection error, got: {text}"
     );
 }
 
@@ -1097,7 +1058,7 @@ async fn deploy_pipeline_empty_source() {
     let client = unreachable_client();
     let params = varpulis_mcp::tools::DeployPipelineParams {
         name: "empty".to_string(),
-        source: "".to_string(),
+        source: String::new(),
         worker_affinity: None,
     };
     let result = varpulis_mcp::tools::deploy_pipeline_impl(&client, params).await;
@@ -1116,8 +1077,7 @@ async fn list_pipelines_unreachable_no_filter() {
     let text = first_text(&result);
     assert!(
         text.contains("reach") || text.contains("connect") || text.contains("Unreachable"),
-        "Expected connection error, got: {}",
-        text
+        "Expected connection error, got: {text}"
     );
 }
 
@@ -1145,8 +1105,7 @@ async fn query_metrics_unreachable_no_filter() {
     let text = first_text(&result);
     assert!(
         text.contains("reach") || text.contains("connect") || text.contains("Unreachable"),
-        "Expected connection error, got: {}",
-        text
+        "Expected connection error, got: {text}"
     );
 }
 
@@ -1320,8 +1279,7 @@ async fn search_events_unreachable() {
     let text = first_text(&result);
     assert!(
         text.contains("reach") || text.contains("connect") || text.contains("Unreachable"),
-        "Expected connection error, got: {}",
-        text
+        "Expected connection error, got: {text}"
     );
 }
 
@@ -1347,8 +1305,7 @@ async fn list_models_unreachable() {
     let text = first_text(&result);
     assert!(
         text.contains("reach") || text.contains("connect") || text.contains("Unreachable"),
-        "Expected connection error, got: {}",
-        text
+        "Expected connection error, got: {text}"
     );
 }
 
@@ -1365,9 +1322,8 @@ async fn validate_vpl_error_includes_line_col_format() {
     // Diagnostics format: "line:col: [severity] message (hint: ...)"
     // Check that we have at least one line:col pattern
     assert!(
-        text.contains(":"),
-        "Diagnostics should contain line:col format, got: {}",
-        text
+        text.contains(':'),
+        "Diagnostics should contain line:col format, got: {text}"
     );
 }
 
@@ -1383,8 +1339,7 @@ async fn validate_vpl_error_diagnostics_include_hint_text() {
     // The hint should be formatted as "(hint: ...)"
     assert!(
         text.contains("hint") || text.contains("aggregate"),
-        "Error diagnostics should include hint about aggregate, got: {}",
-        text
+        "Error diagnostics should include hint about aggregate, got: {text}"
     );
 }
 
@@ -1399,8 +1354,7 @@ async fn validate_vpl_multiple_errors() {
     // Should contain multiple error lines
     assert!(
         text.contains(".having()"),
-        "Should mention .having() in diagnostics, got: {}",
-        text
+        "Should mention .having() in diagnostics, got: {text}"
     );
 }
 
@@ -1420,8 +1374,7 @@ async fn deploy_pipeline_complex_vpl_with_affinity() {
     let text = first_text(&result);
     assert!(
         text.contains("reach") || text.contains("connect") || text.contains("Unreachable"),
-        "Expected connection error after passing parse, got: {}",
-        text
+        "Expected connection error after passing parse, got: {text}"
     );
 }
 

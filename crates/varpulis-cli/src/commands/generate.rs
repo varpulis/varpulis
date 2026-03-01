@@ -18,12 +18,12 @@ fn parse_duration_str(s: &str) -> Result<u64> {
     };
     let value: u64 = num_part
         .parse()
-        .map_err(|_| anyhow::anyhow!("Invalid duration number: '{}'", num_part))?;
+        .map_err(|_| anyhow::anyhow!("Invalid duration number: '{num_part}'"))?;
     match suffix {
         "s" => Ok(value),
         "m" => Ok(value * 60),
         "h" => Ok(value * 3600),
-        _ => anyhow::bail!("Unknown duration suffix: '{}'", suffix),
+        _ => anyhow::bail!("Unknown duration suffix: '{suffix}'"),
     }
 }
 
@@ -38,10 +38,7 @@ pub async fn run_generate(
     use std::io::Write;
 
     if !(0.0..=1.0).contains(&anomaly_rate) {
-        anyhow::bail!(
-            "--anomaly-rate must be between 0.0 and 1.0, got {}",
-            anomaly_rate
-        );
+        anyhow::bail!("--anomaly-rate must be between 0.0 and 1.0, got {anomaly_rate}");
     }
     if rate == 0 {
         anyhow::bail!("--rate must be greater than 0");
@@ -49,7 +46,7 @@ pub async fn run_generate(
     let pretty = match format.to_lowercase().as_str() {
         "json" => true,
         "jsonl" => false,
-        other => anyhow::bail!("Unknown format '{}'. Use 'json' or 'jsonl'", other),
+        other => anyhow::bail!("Unknown format '{other}'. Use 'json' or 'jsonl'"),
     };
 
     let duration_secs = parse_duration_str(duration)?;
@@ -98,13 +95,13 @@ pub async fn run_generate(
         };
         match result {
             Ok(json) => {
-                if writeln!(writer, "{}", json).is_err() {
+                if writeln!(writer, "{json}").is_err() {
                     // Broken pipe (e.g., piped to head) — exit cleanly
                     break;
                 }
             }
             Err(e) => {
-                eprintln!("Failed to serialize event: {}", e);
+                eprintln!("Failed to serialize event: {e}");
             }
         }
         count += 1;
@@ -112,7 +109,7 @@ pub async fn run_generate(
 
     // Flush any buffered output
     let _ = writer.flush();
-    eprintln!("Generated {} events.", count);
+    eprintln!("Generated {count} events.");
 
     Ok(())
 }

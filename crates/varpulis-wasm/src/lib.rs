@@ -157,7 +157,7 @@ fn parse_error_to_diagnostic(source: &str, error: &varpulis_parser::ParseError) 
         }
         ParseError::UnexpectedEof => {
             let line = source.lines().count().saturating_sub(1);
-            let col = source.lines().last().map(|l| l.len()).unwrap_or(0);
+            let col = source.lines().last().map_or(0, |l| l.len());
             WasmDiagnostic {
                 severity: "error",
                 message: "Unexpected end of input".into(),
@@ -205,7 +205,7 @@ fn parse_error_to_diagnostic(source: &str, error: &varpulis_parser::ParseError) 
                 start_line: line as u32,
                 start_col: col as u32,
                 end_line: line as u32,
-                end_col: source.lines().nth(line).map(|l| l.len()).unwrap_or(col) as u32,
+                end_col: source.lines().nth(line).map_or(col, |l| l.len()) as u32,
             }
         }
         ParseError::Custom { span, message } => {
@@ -252,14 +252,14 @@ mod tests {
 
     #[test]
     fn test_parse_valid_vpl() {
-        let input = r#"
+        let input = r"
 event SensorReading:
     temperature: int
 
 stream SensorData = SensorReading
     .where(temperature > 25)
     .emit()
-"#;
+";
         let result = parse_vpl(input);
         let json: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(json["ok"], true);
@@ -277,14 +277,14 @@ stream SensorData = SensorReading
 
     #[test]
     fn test_validate_valid_vpl() {
-        let input = r#"
+        let input = r"
 event SensorReading:
     temperature: int
 
 stream SensorData = SensorReading
     .where(temperature > 25)
     .emit()
-"#;
+";
         let result = validate_vpl(input);
         let json: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(json["ok"], true);
@@ -293,13 +293,13 @@ stream SensorData = SensorReading
     #[test]
     fn test_validate_with_semantic_warning() {
         // This should parse but may produce semantic diagnostics
-        let input = r#"
+        let input = r"
 event A:
     x: int
 
 event A:
     y: int
-"#;
+";
         let result = validate_vpl(input);
         let _json: serde_json::Value = serde_json::from_str(&result).unwrap();
         // Just verify it returns valid JSON

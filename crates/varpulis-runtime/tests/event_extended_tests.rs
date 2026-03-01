@@ -172,7 +172,7 @@ fn parse_jsonl_missing_event_type() {
 
 #[test]
 fn parse_jsonl_invalid_json() {
-    let source = r#"{not valid json}"#;
+    let source = r"{not valid json}";
     let result = EventFileParser::parse(source);
     assert!(result.is_err());
 }
@@ -398,12 +398,12 @@ fn parse_empty_array() {
 
 #[test]
 fn parse_mixed_batch_and_timing() {
-    let source = r#"
+    let source = r"
 BATCH 50
 Event1 { x: 1 }
 @100ms Event2 { y: 2 }
 Event3 { z: 3 }
-"#;
+";
     let events = EventFileParser::parse(source).unwrap();
     assert_eq!(events[0].time_offset_ms, 50);
     assert_eq!(events[1].time_offset_ms, 100);

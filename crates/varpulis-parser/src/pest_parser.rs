@@ -27,7 +27,7 @@ impl<'a> IteratorExt<'a> for pest::iterators::Pairs<'a, Rule> {
             line: 0,
             column: 0,
             position: 0,
-            message: format!("Expected {}", expected),
+            message: format!("Expected {expected}"),
             hint: None,
         })
     }
@@ -53,7 +53,7 @@ pub fn parse(source: &str) -> ParseResult<Program> {
         .spawn(move || parse_inner(&source))
         .map_err(|e| ParseError::InvalidToken {
             position: 0,
-            message: format!("Failed to spawn parser thread: {}", e),
+            message: format!("Failed to spawn parser thread: {e}"),
         })?
         .join()
         .unwrap_or_else(|_| {
@@ -141,10 +141,7 @@ fn check_nesting_depth(source: &str) -> ParseResult<()> {
         if max_depth > MAX_NESTING_DEPTH {
             return Err(ParseError::InvalidToken {
                 position: max_depth_pos,
-                message: format!(
-                    "Nesting depth exceeds maximum of {} levels",
-                    MAX_NESTING_DEPTH
-                ),
+                message: format!("Nesting depth exceeds maximum of {MAX_NESTING_DEPTH} levels"),
             });
         }
 
@@ -262,7 +259,7 @@ fn format_rule_name(rule: &Rule) -> String {
         Rule::sase_pattern_expr => "SASE pattern expression".to_string(),
         Rule::sase_seq_expr => "SEQ expression".to_string(),
         Rule::kleene_op => "Kleene operator (+, *, ?)".to_string(),
-        _ => format!("{:?}", rule).to_lowercase().replace('_', " "),
+        _ => format!("{rule:?}").to_lowercase().replace('_', " "),
     }
 }
 
@@ -422,7 +419,7 @@ fn parse_stream_decl(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
     let name = inner.expect_next("stream name")?.as_str().to_string();
 
     let mut type_annotation = None;
-    let mut source = StreamSource::Ident("".to_string());
+    let mut source = StreamSource::Ident(String::new());
     let mut ops = Vec::new();
     let mut op_spans = Vec::new();
 
@@ -478,7 +475,7 @@ fn parse_pattern_decl(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
     let mut inner = pair.into_inner();
     let name = inner.expect_next("pattern name")?.as_str().to_string();
 
-    let mut expr = SasePatternExpr::Event("".to_string());
+    let mut expr = SasePatternExpr::Event(String::new());
     let mut within = None;
     let mut partition_by = None;
 
@@ -631,7 +628,7 @@ fn parse_sase_item_inner(
     // For negated items, we prefix with "!" to indicate negation
     // The runtime will interpret this
     let event_type = if _negated {
-        format!("!{}", event_type)
+        format!("!{event_type}")
     } else {
         event_type
     };
@@ -1320,7 +1317,7 @@ fn parse_dot_op(pair: pest::iterators::Pair<Rule>) -> ParseResult<StreamOp> {
 fn parse_order_item(pair: pest::iterators::Pair<Rule>) -> ParseResult<OrderItem> {
     let mut inner = pair.into_inner();
     let expr = parse_expr(inner.expect_next("order expression")?)?;
-    let desc = inner.next().map(|p| p.as_str() == "desc").unwrap_or(false);
+    let desc = inner.next().is_some_and(|p| p.as_str() == "desc");
     Ok(OrderItem {
         expr,
         descending: desc,
@@ -3031,8 +3028,8 @@ mod tests {
     #[test]
     fn test_emit_stmt_parses() {
         let result = parse(
-            r#"fn test():
-    emit Pixel(x: 1, y: 2)"#,
+            r"fn test():
+    emit Pixel(x: 1, y: 2)",
         );
         assert!(result.is_ok(), "Failed: {:?}", result.err());
         let program = result.unwrap();
@@ -3045,7 +3042,7 @@ mod tests {
                     assert_eq!(fields[0].name, "x");
                     assert_eq!(fields[1].name, "y");
                 }
-                other => panic!("Expected Stmt::Emit, got {:?}", other),
+                other => panic!("Expected Stmt::Emit, got {other:?}"),
             }
         } else {
             panic!("Expected FnDecl");
@@ -3055,8 +3052,8 @@ mod tests {
     #[test]
     fn test_emit_stmt_no_args() {
         let result = parse(
-            r#"fn test():
-    emit Done()"#,
+            r"fn test():
+    emit Done()",
         );
         assert!(result.is_ok(), "Failed: {:?}", result.err());
         let program = result.unwrap();
@@ -3066,7 +3063,7 @@ mod tests {
                     assert_eq!(event_type, "Done");
                     assert!(fields.is_empty());
                 }
-                other => panic!("Expected Stmt::Emit, got {:?}", other),
+                other => panic!("Expected Stmt::Emit, got {other:?}"),
             }
         } else {
             panic!("Expected FnDecl");
@@ -3076,9 +3073,9 @@ mod tests {
     #[test]
     fn test_emit_in_function_with_for_loop() {
         let result = parse(
-            r#"fn generate(n: int):
+            r"fn generate(n: int):
     for i in 0..n:
-        emit Item(index: i, value: i * 2)"#,
+        emit Item(index: i, value: i * 2)",
         );
         assert!(result.is_ok(), "Failed: {:?}", result.err());
     }
@@ -3086,10 +3083,10 @@ mod tests {
     #[test]
     fn test_parse_process_op() {
         let result = parse(
-            r#"fn do_work():
+            r"fn do_work():
     emit Result(v: 42)
 
-stream S = timer(1s).process(do_work())"#,
+stream S = timer(1s).process(do_work())",
         );
         assert!(result.is_ok(), "Failed: {:?}", result.err());
     }
@@ -3131,14 +3128,14 @@ stream S = timer(1s).process(do_work())"#,
     #[test]
     fn test_parse_trend_aggregate_multiple_items() {
         let result = parse(
-            r#"stream S = StockTick as first
+            r"stream S = StockTick as first
     -> all StockTick as rising
     .within(60s)
     .trend_aggregate(
         trend_count: count_trends(),
         event_count: count_events(rising)
     )
-    .emit(trends: trend_count, events: event_count)"#,
+    .emit(trends: trend_count, events: event_count)",
         );
         assert!(result.is_ok(), "Failed: {:?}", result.err());
         let program = result.unwrap();
@@ -3223,8 +3220,7 @@ stream S = timer(1s).process(do_work())"#,
         );
         assert!(
             elapsed.as_millis() < 100,
-            "Parser should reject fast, took {:?}",
-            elapsed
+            "Parser should reject fast, took {elapsed:?}"
         );
     }
 
@@ -3238,8 +3234,7 @@ stream S = timer(1s).process(do_work())"#,
         assert!(result.is_err(), "Should reject deeply nested brackets");
         assert!(
             elapsed.as_millis() < 100,
-            "Parser should reject fast, took {:?}",
-            elapsed
+            "Parser should reject fast, took {elapsed:?}"
         );
     }
 
@@ -3251,11 +3246,10 @@ stream S = timer(1s).process(do_work())"#,
         // May fail for other reasons (not a valid program) but should NOT
         // fail with "Nesting depth exceeds maximum"
         if let Err(ref e) = result {
-            let msg = format!("{}", e);
+            let msg = format!("{e}");
             assert!(
                 !msg.contains("Nesting depth"),
-                "Should allow 10 levels of nesting: {}",
-                msg
+                "Should allow 10 levels of nesting: {msg}"
             );
         }
     }
@@ -3278,11 +3272,10 @@ stream S = timer(1s).process(do_work())"#,
         let input = r#"let x = "[[[[[[[[[[[[[[[[[[[[[[[[[[""#;
         let result = parse(input);
         if let Err(ref e) = result {
-            let msg = format!("{}", e);
+            let msg = format!("{e}");
             assert!(
                 !msg.contains("Nesting depth"),
-                "Brackets in strings should be ignored: {}",
-                msg
+                "Brackets in strings should be ignored: {msg}"
             );
         }
     }

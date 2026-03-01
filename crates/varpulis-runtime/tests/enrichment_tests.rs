@@ -272,7 +272,7 @@ fn test_cache_eviction_at_capacity() {
     for i in 0..100_010 {
         let mut fields = HashMap::new();
         fields.insert("value".to_string(), Value::Int(i));
-        cache.insert(format!("key:{}", i), fields);
+        cache.insert(format!("key:{i}"), fields);
     }
 
     // Verify no panics and latest entry is still accessible

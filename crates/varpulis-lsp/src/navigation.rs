@@ -90,7 +90,7 @@ fn word_at_position(text: &str, position: Position) -> Option<String> {
 }
 
 fn is_ident_char(c: Option<char>) -> bool {
-    c.map(|c| c.is_alphanumeric() || c == '_').unwrap_or(false)
+    c.is_some_and(|c| c.is_alphanumeric() || c == '_')
 }
 
 /// Look up a name in the symbol table and return its definition span.

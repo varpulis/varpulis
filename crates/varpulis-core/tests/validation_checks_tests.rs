@@ -12,8 +12,7 @@ use varpulis_parser::parse;
 
 /// Parse and validate a VPL source, returning (severity, code, message) triples.
 fn validate_vpl(code: &str) -> Vec<(Severity, Option<&'static str>, String)> {
-    let program =
-        parse(code).unwrap_or_else(|e| panic!("Parse failed for:\n{}\nError: {}", code, e));
+    let program = parse(code).unwrap_or_else(|e| panic!("Parse failed for:\n{code}\nError: {e}"));
     let result = validate(code, &program);
     result
         .diagnostics
@@ -58,23 +57,19 @@ fn error_count(diagnostics: &[(Severity, Option<&'static str>, String)], code: &
 #[test]
 fn e001_duplicate_event_same_fields() {
     let diags = validate_vpl("event Temp: x: int\nevent Temp: x: int");
-    assert!(has_error(&diags, "E001"), "Expected E001: {:?}", diags);
+    assert!(has_error(&diags, "E001"), "Expected E001: {diags:?}");
 }
 
 #[test]
 fn e001_duplicate_event_different_fields() {
     let diags = validate_vpl("event Sensor: id: str\nevent Sensor: value: float");
-    assert!(has_error(&diags, "E001"), "Expected E001: {:?}", diags);
+    assert!(has_error(&diags, "E001"), "Expected E001: {diags:?}");
 }
 
 #[test]
 fn e001_no_error_distinct_events() {
     let diags = validate_vpl("event Alpha: x: int\nevent Beta: y: float");
-    assert!(
-        !has_code(&diags, "E001"),
-        "Should have no E001: {:?}",
-        diags
-    );
+    assert!(!has_code(&diags, "E001"), "Should have no E001: {diags:?}");
 }
 
 // =============================================================================
@@ -84,17 +79,13 @@ fn e001_no_error_distinct_events() {
 #[test]
 fn e002_duplicate_stream() {
     let diags = validate_vpl("stream Output = A\nstream Output = B");
-    assert!(has_error(&diags, "E002"), "Expected E002: {:?}", diags);
+    assert!(has_error(&diags, "E002"), "Expected E002: {diags:?}");
 }
 
 #[test]
 fn e002_no_error_distinct_streams() {
     let diags = validate_vpl("stream First = A\nstream Second = B");
-    assert!(
-        !has_code(&diags, "E002"),
-        "Should have no E002: {:?}",
-        diags
-    );
+    assert!(!has_code(&diags, "E002"), "Should have no E002: {diags:?}");
 }
 
 // =============================================================================
@@ -106,7 +97,7 @@ fn e003_duplicate_function() {
     let diags = validate_vpl(
         "fn calc(a: int) -> int:\n    return a\nfn calc(b: int) -> int:\n    return b\n",
     );
-    assert!(has_error(&diags, "E003"), "Expected E003: {:?}", diags);
+    assert!(has_error(&diags, "E003"), "Expected E003: {diags:?}");
 }
 
 #[test]
@@ -114,11 +105,7 @@ fn e003_no_error_distinct_functions() {
     let diags = validate_vpl(
         "fn add(a: int) -> int:\n    return a\nfn sub(b: int) -> int:\n    return b\n",
     );
-    assert!(
-        !has_code(&diags, "E003"),
-        "Should have no E003: {:?}",
-        diags
-    );
+    assert!(!has_code(&diags, "E003"), "Should have no E003: {diags:?}");
 }
 
 // =============================================================================
@@ -129,7 +116,7 @@ fn e003_no_error_distinct_functions() {
 fn e004_duplicate_connector() {
     let diags =
         validate_vpl("connector Out = mqtt(topic: \"a\")\nconnector Out = kafka(topic: \"b\")");
-    assert!(has_error(&diags, "E004"), "Expected E004: {:?}", diags);
+    assert!(has_error(&diags, "E004"), "Expected E004: {diags:?}");
 }
 
 #[test]
@@ -137,11 +124,7 @@ fn e004_no_error_distinct_connectors() {
     let diags = validate_vpl(
         "connector MqttOut = mqtt(topic: \"a\")\nconnector KafkaOut = kafka(topic: \"b\")",
     );
-    assert!(
-        !has_code(&diags, "E004"),
-        "Should have no E004: {:?}",
-        diags
-    );
+    assert!(!has_code(&diags, "E004"), "Should have no E004: {diags:?}");
 }
 
 // =============================================================================
@@ -152,17 +135,13 @@ fn e004_no_error_distinct_connectors() {
 fn e005_duplicate_context() {
     let diags =
         validate_vpl("context ingestion (cores: [0, 1])\ncontext ingestion (cores: [2, 3])");
-    assert!(has_error(&diags, "E005"), "Expected E005: {:?}", diags);
+    assert!(has_error(&diags, "E005"), "Expected E005: {diags:?}");
 }
 
 #[test]
 fn e005_no_error_distinct_contexts() {
     let diags = validate_vpl("context ingest (cores: [0])\ncontext process (cores: [1])");
-    assert!(
-        !has_code(&diags, "E005"),
-        "Should have no E005: {:?}",
-        diags
-    );
+    assert!(!has_code(&diags, "E005"), "Should have no E005: {diags:?}");
 }
 
 // =============================================================================
@@ -172,17 +151,13 @@ fn e005_no_error_distinct_contexts() {
 #[test]
 fn e006_duplicate_pattern() {
     let diags = validate_vpl("pattern P = SEQ(A, B)\npattern P = SEQ(C, D)");
-    assert!(has_error(&diags, "E006"), "Expected E006: {:?}", diags);
+    assert!(has_error(&diags, "E006"), "Expected E006: {diags:?}");
 }
 
 #[test]
 fn e006_no_error_distinct_patterns() {
     let diags = validate_vpl("pattern P1 = SEQ(A, B)\npattern P2 = SEQ(C, D)");
-    assert!(
-        !has_code(&diags, "E006"),
-        "Should have no E006: {:?}",
-        diags
-    );
+    assert!(!has_code(&diags, "E006"), "Should have no E006: {diags:?}");
 }
 
 // =============================================================================
@@ -192,17 +167,13 @@ fn e006_no_error_distinct_patterns() {
 #[test]
 fn e007_duplicate_type_alias() {
     let diags = validate_vpl("type Temp = int\ntype Temp = float");
-    assert!(has_error(&diags, "E007"), "Expected E007: {:?}", diags);
+    assert!(has_error(&diags, "E007"), "Expected E007: {diags:?}");
 }
 
 #[test]
 fn e007_no_error_distinct_types() {
     let diags = validate_vpl("type Temp = int\ntype Humidity = float");
-    assert!(
-        !has_code(&diags, "E007"),
-        "Should have no E007: {:?}",
-        diags
-    );
+    assert!(!has_code(&diags, "E007"), "Should have no E007: {diags:?}");
 }
 
 // =============================================================================
@@ -212,29 +183,25 @@ fn e007_no_error_distinct_types() {
 #[test]
 fn e010_having_without_aggregate() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = Events
             .having(total > 100)
-    "#,
+    ",
     );
-    assert!(has_error(&diags, "E010"), "Expected E010: {:?}", diags);
+    assert!(has_error(&diags, "E010"), "Expected E010: {diags:?}");
 }
 
 #[test]
 fn e010_having_after_aggregate_ok() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = Events
             .window(5)
             .aggregate(total: sum(amount))
             .having(total > 100)
-    "#,
+    ",
     );
-    assert!(
-        !has_code(&diags, "E010"),
-        "Should have no E010: {:?}",
-        diags
-    );
+    assert!(!has_code(&diags, "E010"), "Should have no E010: {diags:?}");
 }
 
 // =============================================================================
@@ -244,14 +211,14 @@ fn e010_having_after_aggregate_ok() {
 #[test]
 fn e011_duplicate_aggregate() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = Events
             .window(5)
             .aggregate(c: count())
             .aggregate(s: sum(val))
-    "#,
+    ",
     );
-    assert!(has_error(&diags, "E011"), "Expected E011: {:?}", diags);
+    assert!(has_error(&diags, "E011"), "Expected E011: {diags:?}");
 }
 
 // =============================================================================
@@ -261,13 +228,13 @@ fn e011_duplicate_aggregate() {
 #[test]
 fn e012_duplicate_window() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = Events
             .window(5)
             .window(10)
-    "#,
+    ",
     );
-    assert!(has_error(&diags, "E012"), "Expected E012: {:?}", diags);
+    assert!(has_error(&diags, "E012"), "Expected E012: {diags:?}");
 }
 
 // =============================================================================
@@ -277,29 +244,25 @@ fn e012_duplicate_window() {
 #[test]
 fn e020_within_outside_sequence() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = Events
             .where(x > 0)
             .within(10s)
-    "#,
+    ",
     );
-    assert!(has_error(&diags, "E020"), "Expected E020: {:?}", diags);
+    assert!(has_error(&diags, "E020"), "Expected E020: {diags:?}");
 }
 
 #[test]
 fn e020_within_after_followed_by_ok() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A as a
             -> B as b
             .within(10s)
-    "#,
+    ",
     );
-    assert!(
-        !has_code(&diags, "E020"),
-        "Should have no E020: {:?}",
-        diags
-    );
+    assert!(!has_code(&diags, "E020"), "Should have no E020: {diags:?}");
 }
 
 // =============================================================================
@@ -314,7 +277,7 @@ fn e030_undefined_connector_in_to() {
             .to(MissingConnector, topic: "out")
     "#,
     );
-    assert!(has_error(&diags, "E030"), "Expected E030: {:?}", diags);
+    assert!(has_error(&diags, "E030"), "Expected E030: {diags:?}");
 }
 
 #[test]
@@ -324,7 +287,7 @@ fn e030_undefined_connector_in_from() {
         stream S = SensorEvent.from(MissingConnector, topic: "in")
     "#,
     );
-    assert!(has_error(&diags, "E030"), "Expected E030: {:?}", diags);
+    assert!(has_error(&diags, "E030"), "Expected E030: {diags:?}");
 }
 
 #[test]
@@ -336,11 +299,7 @@ fn e030_valid_connector_reference_no_error() {
             .to(MqttOut, topic: "output")
     "#,
     );
-    assert!(
-        !has_error(&diags, "E030"),
-        "Should have no E030: {:?}",
-        diags
-    );
+    assert!(!has_error(&diags, "E030"), "Should have no E030: {diags:?}");
 }
 
 // =============================================================================
@@ -350,28 +309,24 @@ fn e030_valid_connector_reference_no_error() {
 #[test]
 fn e031_undefined_context() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = Events
             .context(missing_ctx)
-    "#,
+    ",
     );
-    assert!(has_error(&diags, "E031"), "Expected E031: {:?}", diags);
+    assert!(has_error(&diags, "E031"), "Expected E031: {diags:?}");
 }
 
 #[test]
 fn e031_valid_context_reference_no_error() {
     let diags = validate_vpl(
-        r#"
+        r"
         context my_ctx (cores: [0, 1])
         stream S = Events
             .context(my_ctx)
-    "#,
+    ",
     );
-    assert!(
-        !has_error(&diags, "E031"),
-        "Should have no E031: {:?}",
-        diags
-    );
+    assert!(!has_error(&diags, "E031"), "Should have no E031: {diags:?}");
 }
 
 // =============================================================================
@@ -381,23 +336,19 @@ fn e031_valid_context_reference_no_error() {
 #[test]
 fn e040_assign_to_let_variable() {
     let diags = validate_vpl("let x = 10\nx := 20");
-    assert!(has_error(&diags, "E040"), "Expected E040: {:?}", diags);
+    assert!(has_error(&diags, "E040"), "Expected E040: {diags:?}");
 }
 
 #[test]
 fn e040_assign_to_const() {
     let diags = validate_vpl("const LIMIT = 100\nLIMIT := 200");
-    assert!(has_error(&diags, "E040"), "Expected E040: {:?}", diags);
+    assert!(has_error(&diags, "E040"), "Expected E040: {diags:?}");
 }
 
 #[test]
 fn e040_mutable_var_assignment_ok() {
     let diags = validate_vpl("var counter = 0\ncounter := counter + 1");
-    assert!(
-        !has_code(&diags, "E040"),
-        "Should have no E040: {:?}",
-        diags
-    );
+    assert!(!has_code(&diags, "E040"), "Should have no E040: {diags:?}");
 }
 
 // =============================================================================
@@ -407,27 +358,19 @@ fn e040_mutable_var_assignment_ok() {
 #[test]
 fn e050_unknown_function_in_let() {
     let diags = validate_vpl("let x = totally_fake_fn(42)");
-    assert!(has_error(&diags, "E050"), "Expected E050: {:?}", diags);
+    assert!(has_error(&diags, "E050"), "Expected E050: {diags:?}");
 }
 
 #[test]
 fn e050_builtin_function_ok() {
     let diags = validate_vpl("let x = abs(-5)");
-    assert!(
-        !has_code(&diags, "E050"),
-        "Should have no E050: {:?}",
-        diags
-    );
+    assert!(!has_code(&diags, "E050"), "Should have no E050: {diags:?}");
 }
 
 #[test]
 fn e050_user_declared_function_ok() {
     let diags = validate_vpl("fn double(x: int) -> int:\n    return x * 2\nlet y = double(3)");
-    assert!(
-        !has_code(&diags, "E050"),
-        "Should have no E050: {:?}",
-        diags
-    );
+    assert!(!has_code(&diags, "E050"), "Should have no E050: {diags:?}");
 }
 
 // =============================================================================
@@ -437,23 +380,19 @@ fn e050_user_declared_function_ok() {
 #[test]
 fn e051_too_few_arguments() {
     let diags = validate_vpl("fn add(a: int, b: int) -> int:\n    return a + b\nlet x = add(1)");
-    assert!(has_error(&diags, "E051"), "Expected E051: {:?}", diags);
+    assert!(has_error(&diags, "E051"), "Expected E051: {diags:?}");
 }
 
 #[test]
 fn e051_too_many_arguments() {
     let diags = validate_vpl("fn inc(a: int) -> int:\n    return a + 1\nlet x = inc(1, 2)");
-    assert!(has_error(&diags, "E051"), "Expected E051: {:?}", diags);
+    assert!(has_error(&diags, "E051"), "Expected E051: {diags:?}");
 }
 
 #[test]
 fn e051_correct_arity_ok() {
     let diags = validate_vpl("fn add(a: int, b: int) -> int:\n    return a + b\nlet x = add(1, 2)");
-    assert!(
-        !has_code(&diags, "E051"),
-        "Should have no E051: {:?}",
-        diags
-    );
+    assert!(!has_code(&diags, "E051"), "Should have no E051: {diags:?}");
 }
 
 // =============================================================================
@@ -463,58 +402,50 @@ fn e051_correct_arity_ok() {
 #[test]
 fn e060_where_with_integer() {
     let diags = validate_vpl("stream S = A\n    .where(42)");
-    assert!(has_error(&diags, "E060"), "Expected E060: {:?}", diags);
+    assert!(has_error(&diags, "E060"), "Expected E060: {diags:?}");
 }
 
 #[test]
 fn e060_where_with_string() {
     let diags = validate_vpl("stream S = A\n    .where(\"hello\")");
-    assert!(has_error(&diags, "E060"), "Expected E060: {:?}", diags);
+    assert!(has_error(&diags, "E060"), "Expected E060: {diags:?}");
 }
 
 #[test]
 fn e060_where_with_float() {
     let diags = validate_vpl("stream S = A\n    .where(3.14)");
-    assert!(has_error(&diags, "E060"), "Expected E060: {:?}", diags);
+    assert!(has_error(&diags, "E060"), "Expected E060: {diags:?}");
 }
 
 #[test]
 fn e060_where_with_null() {
     let diags = validate_vpl("stream S = A\n    .where(null)");
-    assert!(has_error(&diags, "E060"), "Expected E060: {:?}", diags);
+    assert!(has_error(&diags, "E060"), "Expected E060: {diags:?}");
 }
 
 #[test]
 fn e060_having_with_integer() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .window(5)
             .aggregate(c: count())
             .having(99)
-    "#,
+    ",
     );
-    assert!(has_error(&diags, "E060"), "Expected E060: {:?}", diags);
+    assert!(has_error(&diags, "E060"), "Expected E060: {diags:?}");
 }
 
 #[test]
 fn e060_where_with_comparison_ok() {
     let diags = validate_vpl("stream S = A\n    .where(value > 10)");
-    assert!(
-        !has_code(&diags, "E060"),
-        "Should have no E060: {:?}",
-        diags
-    );
+    assert!(!has_code(&diags, "E060"), "Should have no E060: {diags:?}");
 }
 
 #[test]
 fn e060_where_with_bool_literal_ok() {
     let diags = validate_vpl("stream S = A\n    .where(true)");
-    assert!(
-        !has_code(&diags, "E060"),
-        "Should have no E060: {:?}",
-        diags
-    );
+    assert!(!has_code(&diags, "E060"), "Should have no E060: {diags:?}");
 }
 
 // =============================================================================
@@ -526,7 +457,7 @@ fn e061_within_with_string() {
     let diags = validate_vpl(
         "event A: x: int\nevent B: y: int\nstream S = A as a\n    -> B as b\n    .within(\"bad\")",
     );
-    assert!(has_error(&diags, "E061"), "Expected E061: {:?}", diags);
+    assert!(has_error(&diags, "E061"), "Expected E061: {diags:?}");
 }
 
 #[test]
@@ -534,7 +465,7 @@ fn e061_within_with_boolean() {
     let diags = validate_vpl(
         "event A: x: int\nevent B: y: int\nstream S = A as a\n    -> B as b\n    .within(true)",
     );
-    assert!(has_error(&diags, "E061"), "Expected E061: {:?}", diags);
+    assert!(has_error(&diags, "E061"), "Expected E061: {diags:?}");
 }
 
 #[test]
@@ -542,7 +473,7 @@ fn e061_within_with_float() {
     let diags = validate_vpl(
         "event A: x: int\nevent B: y: int\nstream S = A as a\n    -> B as b\n    .within(3.14)",
     );
-    assert!(has_error(&diags, "E061"), "Expected E061: {:?}", diags);
+    assert!(has_error(&diags, "E061"), "Expected E061: {diags:?}");
 }
 
 #[test]
@@ -550,7 +481,7 @@ fn e061_within_with_null() {
     let diags = validate_vpl(
         "event A: x: int\nevent B: y: int\nstream S = A as a\n    -> B as b\n    .within(null)",
     );
-    assert!(has_error(&diags, "E061"), "Expected E061: {:?}", diags);
+    assert!(has_error(&diags, "E061"), "Expected E061: {diags:?}");
 }
 
 #[test]
@@ -558,11 +489,7 @@ fn e061_within_with_duration_ok() {
     let diags = validate_vpl(
         "event A: x: int\nevent B: y: int\nstream S = A as a\n    -> B as b\n    .within(10s)",
     );
-    assert!(
-        !has_code(&diags, "E061"),
-        "Should have no E061: {:?}",
-        diags
-    );
+    assert!(!has_code(&diags, "E061"), "Should have no E061: {diags:?}");
 }
 
 #[test]
@@ -571,17 +498,13 @@ fn e061_within_with_integer_ok() {
     let diags = validate_vpl(
         "event A: x: int\nevent B: y: int\nstream S = A as a\n    -> B as b\n    .within(5)",
     );
-    assert!(
-        !has_code(&diags, "E061"),
-        "Should have no E061: {:?}",
-        diags
-    );
+    assert!(!has_code(&diags, "E061"), "Should have no E061: {diags:?}");
 }
 
 #[test]
 fn e061_allowed_lateness_with_string() {
     let diags = validate_vpl("stream S = A\n    .allowed_lateness(\"bad\")");
-    assert!(has_error(&diags, "E061"), "Expected E061: {:?}", diags);
+    assert!(has_error(&diags, "E061"), "Expected E061: {diags:?}");
 }
 
 // =============================================================================
@@ -591,19 +514,19 @@ fn e061_allowed_lateness_with_string() {
 #[test]
 fn e070_unknown_aggregate_function() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .window(5)
             .aggregate(x: bogus_agg(value))
-    "#,
+    ",
     );
-    assert!(has_error(&diags, "E070"), "Expected E070: {:?}", diags);
+    assert!(has_error(&diags, "E070"), "Expected E070: {diags:?}");
 }
 
 #[test]
 fn e070_valid_aggregate_functions_ok() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .window(5)
             .aggregate(
@@ -616,13 +539,9 @@ fn e070_valid_aggregate_functions_ok() {
                 f: first(value),
                 l: last(value)
             )
-    "#,
+    ",
     );
-    assert!(
-        !has_code(&diags, "E070"),
-        "Should have no E070: {:?}",
-        diags
-    );
+    assert!(!has_code(&diags, "E070"), "Should have no E070: {diags:?}");
 }
 
 // =============================================================================
@@ -632,77 +551,73 @@ fn e070_valid_aggregate_functions_ok() {
 #[test]
 fn e071_sum_without_field() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .window(5)
             .aggregate(s: sum())
-    "#,
+    ",
     );
-    assert!(has_error(&diags, "E071"), "Expected E071: {:?}", diags);
+    assert!(has_error(&diags, "E071"), "Expected E071: {diags:?}");
 }
 
 #[test]
 fn e071_avg_without_field() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .window(5)
             .aggregate(a: avg())
-    "#,
+    ",
     );
-    assert!(has_error(&diags, "E071"), "Expected E071: {:?}", diags);
+    assert!(has_error(&diags, "E071"), "Expected E071: {diags:?}");
 }
 
 #[test]
 fn e071_min_without_field() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .window(5)
             .aggregate(m: min())
-    "#,
+    ",
     );
-    assert!(has_error(&diags, "E071"), "Expected E071: {:?}", diags);
+    assert!(has_error(&diags, "E071"), "Expected E071: {diags:?}");
 }
 
 #[test]
 fn e071_max_without_field() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .window(5)
             .aggregate(m: max())
-    "#,
+    ",
     );
-    assert!(has_error(&diags, "E071"), "Expected E071: {:?}", diags);
+    assert!(has_error(&diags, "E071"), "Expected E071: {diags:?}");
 }
 
 #[test]
 fn e071_stddev_without_field() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .window(5)
             .aggregate(s: stddev())
-    "#,
+    ",
     );
-    assert!(has_error(&diags, "E071"), "Expected E071: {:?}", diags);
+    assert!(has_error(&diags, "E071"), "Expected E071: {diags:?}");
 }
 
 #[test]
 fn e071_sum_with_field_ok() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .window(5)
             .aggregate(s: sum(amount))
-    "#,
+    ",
     );
-    assert!(
-        !has_code(&diags, "E071"),
-        "Should have no E071: {:?}",
-        diags
-    );
+    assert!(!has_code(&diags, "E071"), "Should have no E071: {diags:?}");
 }
 
 // =============================================================================
@@ -712,41 +627,37 @@ fn e071_sum_with_field_ok() {
 #[test]
 fn e072_ema_no_arguments() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .window(5)
             .aggregate(e: ema())
-    "#,
+    ",
     );
-    assert!(has_error(&diags, "E072"), "Expected E072: {:?}", diags);
+    assert!(has_error(&diags, "E072"), "Expected E072: {diags:?}");
 }
 
 #[test]
 fn e072_ema_one_argument() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .window(5)
             .aggregate(e: ema(value))
-    "#,
+    ",
     );
-    assert!(has_error(&diags, "E072"), "Expected E072: {:?}", diags);
+    assert!(has_error(&diags, "E072"), "Expected E072: {diags:?}");
 }
 
 #[test]
 fn e072_ema_two_arguments_ok() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .window(5)
             .aggregate(e: ema(value, 10))
-    "#,
+    ",
     );
-    assert!(
-        !has_code(&diags, "E072"),
-        "Should have no E072: {:?}",
-        diags
-    );
+    assert!(!has_code(&diags, "E072"), "Should have no E072: {diags:?}");
 }
 
 // =============================================================================
@@ -756,13 +667,13 @@ fn e072_ema_two_arguments_ok() {
 #[test]
 fn e073_bare_field_in_aggregate() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .window(5)
             .aggregate(v: value)
-    "#,
+    ",
     );
-    assert!(has_error(&diags, "E073"), "Expected E073: {:?}", diags);
+    assert!(has_error(&diags, "E073"), "Expected E073: {diags:?}");
 }
 
 // =============================================================================
@@ -777,7 +688,7 @@ fn e080_unknown_log_parameter() {
             .log(severity: "info")
     "#,
     );
-    assert!(has_error(&diags, "E080"), "Expected E080: {:?}", diags);
+    assert!(has_error(&diags, "E080"), "Expected E080: {diags:?}");
 }
 
 #[test]
@@ -788,11 +699,7 @@ fn e080_valid_log_parameters_ok() {
             .log(level: "info", message: "hello")
     "#,
     );
-    assert!(
-        !has_code(&diags, "E080"),
-        "Should have no E080: {:?}",
-        diags
-    );
+    assert!(!has_code(&diags, "E080"), "Should have no E080: {diags:?}");
 }
 
 // =============================================================================
@@ -804,8 +711,7 @@ fn e090_map_not_implemented() {
     let diags = validate_vpl("stream S = A\n    .map(x => x + 1)");
     assert!(
         has_error(&diags, "E090"),
-        "Expected E090 for map: {:?}",
-        diags
+        "Expected E090 for map: {diags:?}"
     );
 }
 
@@ -814,8 +720,7 @@ fn e090_filter_not_implemented() {
     let diags = validate_vpl("stream S = A\n    .filter(x => x > 0)");
     assert!(
         has_error(&diags, "E090"),
-        "Expected E090 for filter: {:?}",
-        diags
+        "Expected E090 for filter: {diags:?}"
     );
 }
 
@@ -824,8 +729,7 @@ fn e090_collect_not_implemented() {
     let diags = validate_vpl("stream S = A\n    .collect()");
     assert!(
         has_error(&diags, "E090"),
-        "Expected E090 for collect: {:?}",
-        diags
+        "Expected E090 for collect: {diags:?}"
     );
 }
 
@@ -834,8 +738,7 @@ fn e090_distinct_not_implemented() {
     let diags = validate_vpl("stream S = A\n    .distinct()");
     assert!(
         has_error(&diags, "E090"),
-        "Expected E090 for distinct: {:?}",
-        diags
+        "Expected E090 for distinct: {diags:?}"
     );
 }
 
@@ -844,8 +747,7 @@ fn e090_order_by_not_implemented() {
     let diags = validate_vpl("stream S = A\n    .order_by(ts)");
     assert!(
         has_error(&diags, "E090"),
-        "Expected E090 for order_by: {:?}",
-        diags
+        "Expected E090 for order_by: {diags:?}"
     );
 }
 
@@ -854,8 +756,7 @@ fn e090_limit_not_implemented() {
     let diags = validate_vpl("stream S = A\n    .limit(100)");
     assert!(
         has_error(&diags, "E090"),
-        "Expected E090 for limit: {:?}",
-        diags
+        "Expected E090 for limit: {diags:?}"
     );
 }
 
@@ -864,8 +765,7 @@ fn e090_first_not_implemented() {
     let diags = validate_vpl("stream S = A\n    .first()");
     assert!(
         has_error(&diags, "E090"),
-        "Expected E090 for first: {:?}",
-        diags
+        "Expected E090 for first: {diags:?}"
     );
 }
 
@@ -874,8 +774,7 @@ fn e090_all_not_implemented() {
     let diags = validate_vpl("stream S = A\n    .all()");
     assert!(
         has_error(&diags, "E090"),
-        "Expected E090 for all: {:?}",
-        diags
+        "Expected E090 for all: {diags:?}"
     );
 }
 
@@ -884,8 +783,7 @@ fn e091_concurrent_unknown_param() {
     let diags = validate_vpl("event A { x: int }\nstream S = A\n    .concurrent(bogus: 4)");
     assert!(
         has_error(&diags, "E091"),
-        "Expected E091 for unknown concurrent param: {:?}",
-        diags
+        "Expected E091 for unknown concurrent param: {diags:?}"
     );
 }
 
@@ -896,8 +794,7 @@ fn concurrent_valid_no_error() {
     );
     assert!(
         !has_error(&diags, "E090") && !has_error(&diags, "E091"),
-        "Expected no E090/E091 for valid concurrent: {:?}",
-        diags
+        "Expected no E090/E091 for valid concurrent: {diags:?}"
     );
 }
 
@@ -906,8 +803,7 @@ fn e090_on_error_not_implemented() {
     let diags = validate_vpl("stream S = A\n    .on_error(x => x)");
     assert!(
         has_error(&diags, "E090"),
-        "Expected E090 for on_error: {:?}",
-        diags
+        "Expected E090 for on_error: {diags:?}"
     );
 }
 
@@ -918,28 +814,24 @@ fn e090_on_error_not_implemented() {
 #[test]
 fn w001_aggregate_without_window() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .aggregate(c: count())
-    "#,
+    ",
     );
-    assert!(has_warning(&diags, "W001"), "Expected W001: {:?}", diags);
+    assert!(has_warning(&diags, "W001"), "Expected W001: {diags:?}");
 }
 
 #[test]
 fn w001_aggregate_with_window_no_warning() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .window(5)
             .aggregate(c: count())
-    "#,
+    ",
     );
-    assert!(
-        !has_code(&diags, "W001"),
-        "Should have no W001: {:?}",
-        diags
-    );
+    assert!(!has_code(&diags, "W001"), "Should have no W001: {diags:?}");
 }
 
 // =============================================================================
@@ -949,30 +841,26 @@ fn w001_aggregate_with_window_no_warning() {
 #[test]
 fn w002_partition_after_window() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .window(5)
             .partition_by(region)
-    "#,
+    ",
     );
-    assert!(has_warning(&diags, "W002"), "Expected W002: {:?}", diags);
+    assert!(has_warning(&diags, "W002"), "Expected W002: {diags:?}");
 }
 
 #[test]
 fn w002_partition_before_window_ok() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .partition_by(region)
             .window(5)
             .aggregate(c: count())
-    "#,
+    ",
     );
-    assert!(
-        !has_code(&diags, "W002"),
-        "Should have no W002: {:?}",
-        diags
-    );
+    assert!(!has_code(&diags, "W002"), "Should have no W002: {diags:?}");
 }
 
 // =============================================================================
@@ -982,7 +870,7 @@ fn w002_partition_before_window_ok() {
 #[test]
 fn e033_undeclared_event_type() {
     let diags = validate_vpl("stream S = UndeclaredEvent\n    .where(x > 0)");
-    assert!(has_error(&diags, "E033"), "Expected E033: {:?}", diags);
+    assert!(has_error(&diags, "E033"), "Expected E033: {diags:?}");
 }
 
 #[test]
@@ -990,11 +878,7 @@ fn e033_declared_event_no_error() {
     let diags = validate_vpl(
         "event SensorReading: value: float\nstream S = SensorReading\n    .where(value > 0.0)",
     );
-    assert!(
-        !has_code(&diags, "E033"),
-        "Should have no E033: {:?}",
-        diags
-    );
+    assert!(!has_code(&diags, "E033"), "Should have no E033: {diags:?}");
 }
 
 #[test]
@@ -1007,8 +891,7 @@ fn e033_reference_to_declared_stream_no_error() {
         .any(|(sev, c, msg)| *sev == Severity::Error && *c == Some("E033") && msg.contains("Base"));
     assert!(
         !e033_for_base,
-        "Should not error for declared stream Base: {:?}",
-        diags
+        "Should not error for declared stream Base: {diags:?}"
     );
 }
 
@@ -1019,13 +902,13 @@ fn e033_reference_to_declared_stream_no_error() {
 #[test]
 fn e034_emit_as_undeclared_type() {
     let diags = validate_vpl(
-        r#"
+        r"
         event A: x: int
         stream S = A
             .emit as UnknownType (x: 1)
-    "#,
+    ",
     );
-    assert!(has_error(&diags, "E034"), "Expected E034: {:?}", diags);
+    assert!(has_error(&diags, "E034"), "Expected E034: {diags:?}");
 }
 
 #[test]
@@ -1033,11 +916,7 @@ fn e034_emit_as_declared_event_no_error() {
     let diags = validate_vpl(
         "event A: x: int\nevent Alert: msg: str\nstream S = A\n    .emit as Alert (msg: \"hi\")",
     );
-    assert!(
-        !has_code(&diags, "E034"),
-        "Should have no E034: {:?}",
-        diags
-    );
+    assert!(!has_code(&diags, "E034"), "Should have no E034: {diags:?}");
 }
 
 // =============================================================================
@@ -1047,19 +926,19 @@ fn e034_emit_as_declared_event_no_error() {
 #[test]
 fn w060_arithmetic_in_where() {
     let diags = validate_vpl("stream S = A\n    .where(x + 1)");
-    assert!(has_warning(&diags, "W060"), "Expected W060: {:?}", diags);
+    assert!(has_warning(&diags, "W060"), "Expected W060: {diags:?}");
 }
 
 #[test]
 fn w060_multiplication_in_where() {
     let diags = validate_vpl("stream S = A\n    .where(x * 2)");
-    assert!(has_warning(&diags, "W060"), "Expected W060: {:?}", diags);
+    assert!(has_warning(&diags, "W060"), "Expected W060: {diags:?}");
 }
 
 #[test]
 fn w060_subtraction_in_where() {
     let diags = validate_vpl("stream S = A\n    .where(x - 1)");
-    assert!(has_warning(&diags, "W060"), "Expected W060: {:?}", diags);
+    assert!(has_warning(&diags, "W060"), "Expected W060: {diags:?}");
 }
 
 // =============================================================================
@@ -1070,15 +949,15 @@ fn w060_subtraction_in_where() {
 fn multiple_errors_in_single_stream() {
     // Stream with both unknown aggregate and duplicate window
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .window(5)
             .window(10)
             .aggregate(x: bogus(val))
-    "#,
+    ",
     );
-    assert!(has_error(&diags, "E012"), "Expected E012: {:?}", diags);
-    assert!(has_error(&diags, "E070"), "Expected E070: {:?}", diags);
+    assert!(has_error(&diags, "E012"), "Expected E012: {diags:?}");
+    assert!(has_error(&diags, "E070"), "Expected E070: {diags:?}");
 }
 
 #[test]
@@ -1086,7 +965,7 @@ fn sequence_with_within_valid() {
     let diags = validate_vpl(
         "event Start: id: int\nevent End: id: int\nstream S = Start as s\n    -> End as e\n    .within(30s)",
     );
-    assert!(has_no_errors(&diags), "Should have no errors: {:?}", diags);
+    assert!(has_no_errors(&diags), "Should have no errors: {diags:?}");
 }
 
 #[test]
@@ -1108,36 +987,34 @@ fn complex_valid_program() {
     );
     assert!(
         has_no_errors(&diags),
-        "Valid complex program should have no errors: {:?}",
-        diags
+        "Valid complex program should have no errors: {diags:?}"
     );
 }
 
 #[test]
 fn valid_empty_program() {
     let diags = validate_vpl("");
-    assert!(has_no_errors(&diags), "Empty program: {:?}", diags);
+    assert!(has_no_errors(&diags), "Empty program: {diags:?}");
 }
 
 #[test]
 fn e040_const_cannot_be_reassigned() {
     let diags = validate_vpl("const MAX = 50\nMAX := 100");
-    assert!(has_error(&diags, "E040"), "Expected E040: {:?}", diags);
+    assert!(has_error(&diags, "E040"), "Expected E040: {diags:?}");
 }
 
 #[test]
 fn valid_count_distinct_aggregate() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .window(5)
             .aggregate(cd: count_distinct(user_id))
-    "#,
+    ",
     );
     assert!(
         !has_code(&diags, "E070"),
-        "count_distinct should be recognized: {:?}",
-        diags
+        "count_distinct should be recognized: {diags:?}"
     );
 }
 
@@ -1147,8 +1024,7 @@ fn e050_nested_unknown_function() {
     let diags = validate_vpl("let x = abs(fake_func(1))");
     assert!(
         has_error(&diags, "E050"),
-        "Expected E050 for nested call: {:?}",
-        diags
+        "Expected E050 for nested call: {diags:?}"
     );
 }
 
@@ -1158,8 +1034,7 @@ fn pattern_with_undeclared_event_refs() {
     // E033 should be emitted for undeclared event types in patterns
     assert!(
         has_error(&diags, "E033"),
-        "Expected E033 for pattern refs: {:?}",
-        diags
+        "Expected E033 for pattern refs: {diags:?}"
     );
 }
 
@@ -1176,8 +1051,7 @@ fn pattern_with_declared_event_refs_no_error() {
     });
     assert!(
         !e033_for_login && !e033_for_purchase,
-        "Declared events should not produce E033: {:?}",
-        diags
+        "Declared events should not produce E033: {diags:?}"
     );
 }
 
@@ -1189,13 +1063,11 @@ fn validation_result_format_includes_codes() {
     let formatted = result.format(code);
     assert!(
         formatted.contains("E001"),
-        "Formatted output should contain E001: {}",
-        formatted
+        "Formatted output should contain E001: {formatted}"
     );
     assert!(
         formatted.contains("duplicate"),
-        "Formatted output should contain 'duplicate': {}",
-        formatted
+        "Formatted output should contain 'duplicate': {formatted}"
     );
 }
 
@@ -1227,8 +1099,7 @@ fn three_duplicate_events_produce_two_e001() {
     assert_eq!(
         error_count(&diags, "E001"),
         2,
-        "Three duplicate events should produce exactly two E001 errors: {:?}",
-        diags
+        "Three duplicate events should produce exactly two E001 errors: {diags:?}"
     );
 }
 
@@ -1242,8 +1113,7 @@ fn e090_fork_not_implemented() {
         validate_vpl("stream S = A\n    .fork(branch1: .where(x > 0), branch2: .where(x < 0))");
     assert!(
         has_error(&diags, "E090"),
-        "Expected E090 for fork: {:?}",
-        diags
+        "Expected E090 for fork: {diags:?}"
     );
 }
 
@@ -1252,8 +1122,7 @@ fn e090_any_not_implemented() {
     let diags = validate_vpl("stream S = A\n    .any(3)");
     assert!(
         has_error(&diags, "E090"),
-        "Expected E090 for any: {:?}",
-        diags
+        "Expected E090 for any: {diags:?}"
     );
 }
 
@@ -1266,8 +1135,7 @@ fn no_error_for_select() {
     let diags = validate_vpl("stream S = A\n    .select(x, y)");
     assert!(
         !has_error(&diags, "E090"),
-        "select should not produce E090: {:?}",
-        diags
+        "select should not produce E090: {diags:?}"
     );
 }
 
@@ -1276,8 +1144,7 @@ fn no_error_for_print() {
     let diags = validate_vpl("stream S = A\n    .print()");
     assert!(
         !has_error(&diags, "E090"),
-        "print should not produce E090: {:?}",
-        diags
+        "print should not produce E090: {diags:?}"
     );
 }
 
@@ -1286,8 +1153,7 @@ fn no_error_for_emit() {
     let diags = validate_vpl("event A: x: int\nstream S = A\n    .emit()");
     assert!(
         has_no_errors(&diags),
-        "emit should not produce errors: {:?}",
-        diags
+        "emit should not produce errors: {diags:?}"
     );
 }
 
@@ -1296,8 +1162,7 @@ fn no_error_for_where() {
     let diags = validate_vpl("stream S = A\n    .where(x > 0)");
     assert!(
         !has_error(&diags, "E090"),
-        "where should not produce E090: {:?}",
-        diags
+        "where should not produce E090: {diags:?}"
     );
 }
 
@@ -1310,8 +1175,7 @@ fn e010_multiple_having_without_aggregate() {
     let diags = validate_vpl("stream S = A\n    .having(x > 1)\n    .having(y > 2)");
     assert!(
         error_count(&diags, "E010") >= 1,
-        "Expected at least one E010 for having without aggregate: {:?}",
-        diags
+        "Expected at least one E010 for having without aggregate: {diags:?}"
     );
 }
 
@@ -1352,8 +1216,7 @@ fn e033_undeclared_source_produces_error() {
     let diags = validate_vpl("stream S = UndeclaredEvent\n    .emit()");
     assert!(
         has_error(&diags, "E033"),
-        "Expected E033 for undeclared source: {:?}",
-        diags
+        "Expected E033 for undeclared source: {diags:?}"
     );
 }
 
@@ -1362,8 +1225,7 @@ fn e033_no_error_when_event_declared() {
     let diags = validate_vpl("event Used:\n    x: int\nstream S = Used\n    .emit()");
     assert!(
         !has_code(&diags, "E033"),
-        "Declared event should not produce E033: {:?}",
-        diags
+        "Declared event should not produce E033: {diags:?}"
     );
 }
 
@@ -1376,8 +1238,7 @@ fn e050_undefined_function_in_var_decl() {
     let diags = validate_vpl("var x = nonexistent_func(42)");
     assert!(
         has_error(&diags, "E050"),
-        "Expected E050 for undefined function: {:?}",
-        diags
+        "Expected E050 for undefined function: {diags:?}"
     );
 }
 
@@ -1392,8 +1253,7 @@ fn e011_duplicate_aggregate_on_same_stream() {
     );
     assert!(
         has_error(&diags, "E011"),
-        "Expected E011 for duplicate aggregate: {:?}",
-        diags
+        "Expected E011 for duplicate aggregate: {diags:?}"
     );
 }
 
@@ -1406,8 +1266,7 @@ fn e012_duplicate_window_on_same_stream() {
     let diags = validate_vpl("stream S = A\n    .window(5)\n    .window(10)");
     assert!(
         has_error(&diags, "E012"),
-        "Expected E012 for duplicate window: {:?}",
-        diags
+        "Expected E012 for duplicate window: {diags:?}"
     );
 }
 
@@ -1420,8 +1279,7 @@ fn e071_aggregate_without_field_for_sum() {
     let diags = validate_vpl("stream S = A\n    .window(5)\n    .aggregate(s: sum())");
     assert!(
         has_error(&diags, "E071"),
-        "Expected E071 for sum() without field: {:?}",
-        diags
+        "Expected E071 for sum() without field: {diags:?}"
     );
 }
 
@@ -1430,8 +1288,7 @@ fn e070_aggregate_unknown_function() {
     let diags = validate_vpl("stream S = A\n    .window(5)\n    .aggregate(m: bogus_agg(x))");
     assert!(
         has_error(&diags, "E070"),
-        "Expected E070 for unknown aggregate function: {:?}",
-        diags
+        "Expected E070 for unknown aggregate function: {diags:?}"
     );
 }
 
@@ -1444,8 +1301,7 @@ fn valid_mqtt_connector_with_required_params() {
     let diags = validate_vpl("connector mqtt_in = mqtt(topic: \"sensors/#\", qos: 1)");
     assert!(
         !has_code(&diags, "W080"),
-        "Valid MQTT should not produce W080: {:?}",
-        diags
+        "Valid MQTT should not produce W080: {diags:?}"
     );
 }
 
@@ -1459,7 +1315,6 @@ fn valid_nested_expressions_in_where() {
     // No E090 or other errors for valid where clause
     assert!(
         !has_error(&diags, "E090"),
-        "Valid where should not produce E090: {:?}",
-        diags
+        "Valid where should not produce E090: {diags:?}"
     );
 }

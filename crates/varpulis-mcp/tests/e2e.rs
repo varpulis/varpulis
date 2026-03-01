@@ -96,7 +96,7 @@ async fn mcp_server_e2e() -> anyhow::Result<()> {
         "search_events",
         "list_models",
     ] {
-        assert!(tool_names.contains(expected), "Missing tool: {}", expected);
+        assert!(tool_names.contains(expected), "Missing tool: {expected}");
     }
 
     // 2. validate_vpl — valid VPL
@@ -154,8 +154,7 @@ async fn mcp_server_e2e() -> anyhow::Result<()> {
     let text = first_text(&result);
     assert!(
         text.contains("reach") || text.contains("connect") || text.contains("Unreachable"),
-        "Expected connection error, got: {}",
-        text
+        "Expected connection error, got: {text}"
     );
 
     // 6. deploy_pipeline — parse error (no coordinator needed for parse check)
@@ -176,8 +175,7 @@ async fn mcp_server_e2e() -> anyhow::Result<()> {
     let text = first_text(&result);
     assert!(
         text.contains("parse") || text.contains("Parse") || text.contains("error"),
-        "Expected parse error, got: {}",
-        text
+        "Expected parse error, got: {text}"
     );
 
     // ─── Resources ────────────────────────────────────────────────────
@@ -200,8 +198,7 @@ async fn mcp_server_e2e() -> anyhow::Result<()> {
     ] {
         assert!(
             resource_uris.contains(expected_uri),
-            "Missing resource URI: {}",
-            expected_uri
+            "Missing resource URI: {expected_uri}"
         );
     }
 
@@ -257,8 +254,7 @@ async fn mcp_server_e2e() -> anyhow::Result<()> {
     ] {
         assert!(
             prompt_names.contains(expected),
-            "Missing prompt: {}",
-            expected
+            "Missing prompt: {expected}"
         );
     }
 

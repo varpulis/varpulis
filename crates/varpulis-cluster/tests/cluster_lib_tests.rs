@@ -55,7 +55,7 @@ fn cluster_error_not_leader() {
 #[test]
 fn cluster_error_debug_format() {
     let e = ClusterError::NoWorkersAvailable;
-    let dbg = format!("{:?}", e);
+    let dbg = format!("{e:?}");
     assert!(dbg.contains("NoWorkersAvailable"));
 }
 
@@ -557,7 +557,7 @@ fn find_target_pipeline_reexported() {
         name: "test".into(),
         pipelines: vec![PipelinePlacement {
             name: "default".into(),
-            source: "".into(),
+            source: String::new(),
             worker_affinity: None,
             replicas: 1,
             partition_key: None,

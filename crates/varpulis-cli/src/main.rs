@@ -618,7 +618,7 @@ async fn main() -> Result<()> {
         } => {
             // Use security module to validate workdir - NO unwrap()!
             let workdir =
-                security::validate_workdir(workdir).map_err(|e| anyhow::anyhow!("{}", e))?;
+                security::validate_workdir(workdir).map_err(|e| anyhow::anyhow!("{e}"))?;
 
             // Create auth config from CLI argument or environment variable
             let auth_config = match api_key {
@@ -725,7 +725,7 @@ async fn main() -> Result<()> {
         } => {
             // Load config file if specified
             let config = if let Some(ref config_path) = cli.config {
-                Some(Config::load(config_path).map_err(|e| anyhow::anyhow!("{}", e))?)
+                Some(Config::load(config_path).map_err(|e| anyhow::anyhow!("{e}"))?)
             } else {
                 None
             };
@@ -755,14 +755,14 @@ async fn main() -> Result<()> {
             let content = match format.to_lowercase().as_str() {
                 "yaml" | "yml" => Config::example_yaml(),
                 "toml" => Config::example_toml(),
-                _ => anyhow::bail!("Unsupported format: {}. Use 'yaml' or 'toml'", format),
+                _ => anyhow::bail!("Unsupported format: {format}. Use 'yaml' or 'toml'"),
             };
 
             if let Some(path) = output {
                 std::fs::write(&path, &content)?;
                 println!("Configuration written to: {}", path.display());
             } else {
-                println!("{}", content);
+                println!("{content}");
             }
         }
 
@@ -800,7 +800,7 @@ async fn main() -> Result<()> {
                     println!("  Status: {}", resp.status);
                 }
                 Err(e) => {
-                    anyhow::bail!("Deploy failed: {}", e);
+                    anyhow::bail!("Deploy failed: {e}");
                 }
             }
         }
@@ -830,7 +830,7 @@ async fn main() -> Result<()> {
                     }
                 }
                 Err(e) => {
-                    anyhow::bail!("Failed to list pipelines: {}", e);
+                    anyhow::bail!("Failed to list pipelines: {e}");
                 }
             }
         }
@@ -855,10 +855,10 @@ async fn main() -> Result<()> {
             let client = VarpulisClient::new(&server, &api_key);
             match client.delete_pipeline(&pipeline_id).await {
                 Ok(()) => {
-                    println!("Pipeline {} deleted.", pipeline_id);
+                    println!("Pipeline {pipeline_id} deleted.");
                 }
                 Err(e) => {
-                    anyhow::bail!("Undeploy failed: {}", e);
+                    anyhow::bail!("Undeploy failed: {e}");
                 }
             }
         }
@@ -895,7 +895,7 @@ async fn main() -> Result<()> {
                     );
                 }
                 Err(e) => {
-                    anyhow::bail!("Failed to get status: {}", e);
+                    anyhow::bail!("Failed to get status: {e}");
                 }
             }
         }
@@ -908,12 +908,12 @@ async fn main() -> Result<()> {
 
             let mut content = String::from("# Varpulis project configuration\n\n[remote]\n");
             if let Some(url) = server {
-                content.push_str(&format!("url = \"{}\"\n", url));
+                content.push_str(&format!("url = \"{url}\"\n"));
             } else {
                 content.push_str("url = \"http://localhost:9000\"\n");
             }
             if let Some(key) = api_key {
-                content.push_str(&format!("api_key = \"{}\"\n", key));
+                content.push_str(&format!("api_key = \"{key}\"\n"));
             } else {
                 content.push_str("# api_key = \"your-api-key-here\"\n");
             }
@@ -942,7 +942,7 @@ async fn main() -> Result<()> {
 
             let client = VarpulisClient::new(&server, &api_key);
             let url = client.logs_url(&pipeline_id);
-            println!("Streaming logs for pipeline {}...", pipeline_id);
+            println!("Streaming logs for pipeline {pipeline_id}...");
             println!("(Press Ctrl+C to stop)\n");
 
             // Connect to SSE endpoint
@@ -955,7 +955,7 @@ async fn main() -> Result<()> {
             if !resp.status().is_success() {
                 let status = resp.status().as_u16();
                 let text = resp.text().await.unwrap_or_default();
-                anyhow::bail!("Failed to connect to log stream ({}): {}", status, text);
+                anyhow::bail!("Failed to connect to log stream ({status}): {text}");
             }
 
             // Stream SSE events line by line
@@ -981,17 +981,17 @@ async fn main() -> Result<()> {
                                         .get("timestamp")
                                         .and_then(|t| t.as_str())
                                         .unwrap_or("?");
-                                    print!("[{}] {} ", ts, event_type);
+                                    print!("[{ts}] {event_type} ");
                                     if let Some(fields) = parsed.get("data") {
-                                        println!("{}", fields);
+                                        println!("{fields}");
                                     } else {
                                         println!();
                                     }
                                 } else {
-                                    println!("{}", data);
+                                    println!("{data}");
                                 }
                             } else {
-                                println!("{}", data);
+                                println!("{data}");
                             }
                         }
                     }
@@ -1066,7 +1066,7 @@ async fn main() -> Result<()> {
             let rbac_config = if let Some(ref keys_path) = api_keys {
                 std::sync::Arc::new(
                     varpulis_cluster::RbacConfig::from_file(keys_path)
-                        .map_err(|e| anyhow::anyhow!("{}", e))?,
+                        .map_err(|e| anyhow::anyhow!("{e}"))?,
                 )
             } else if let Some(ref key) = api_key {
                 std::sync::Arc::new(varpulis_cluster::RbacConfig::single_key(key.clone()))

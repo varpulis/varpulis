@@ -143,7 +143,7 @@ impl EventSchema for TradingSchema {
         ]
     }
 
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Market data events: trades, quotes, orders with flash crash/spike injection"
     }
 }

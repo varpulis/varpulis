@@ -46,7 +46,7 @@ pub fn list_resources() -> Vec<Resource> {
 }
 
 /// List resource templates (none for now, all resources have fixed URIs).
-pub fn list_resource_templates() -> Vec<ResourceTemplate> {
+pub const fn list_resource_templates() -> Vec<ResourceTemplate> {
     vec![]
 }
 
@@ -61,7 +61,7 @@ pub async fn read_resource(
         }),
         CLUSTER_STATUS_URI => read_cluster_status(client).await,
         CLUSTER_METRICS_URI => read_cluster_metrics(client).await,
-        _ => Err(format!("Unknown resource URI: {}", uri)),
+        _ => Err(format!("Unknown resource URI: {uri}")),
     }
 }
 
@@ -69,11 +69,11 @@ async fn read_cluster_status(client: &CoordinatorClient) -> Result<ReadResourceR
     let summary = client
         .get_summary()
         .await
-        .map_err(|e| format!("Failed to fetch summary: {}", e))?;
+        .map_err(|e| format!("Failed to fetch summary: {e}"))?;
     let workers = client
         .list_workers()
         .await
-        .map_err(|e| format!("Failed to fetch workers: {}", e))?;
+        .map_err(|e| format!("Failed to fetch workers: {e}"))?;
 
     let merged = serde_json::json!({
         "summary": summary,
@@ -90,7 +90,7 @@ async fn read_cluster_metrics(client: &CoordinatorClient) -> Result<ReadResource
     let metrics = client
         .get_metrics()
         .await
-        .map_err(|e| format!("Failed to fetch metrics: {}", e))?;
+        .map_err(|e| format!("Failed to fetch metrics: {e}"))?;
     let scaling = client.get_scaling().await.unwrap_or(Value::Null);
 
     let merged = serde_json::json!({

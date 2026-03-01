@@ -13,14 +13,14 @@ use varpulis_runtime::event::Event;
 
 #[tokio::test]
 async fn test_for_loop_range() {
-    let code = r#"
+    let code = r"
         fn gen():
             for i in 0..5:
                 emit R(val: i)
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
     let (tx, mut rx) = mpsc::channel(100);
@@ -39,7 +39,7 @@ async fn test_for_loop_range() {
 
 #[tokio::test]
 async fn test_for_loop_accumulator() {
-    let code = r#"
+    let code = r"
         fn gen():
             var sum = 0
             for i in 1..=4:
@@ -48,7 +48,7 @@ async fn test_for_loop_accumulator() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
     let (tx, mut rx) = mpsc::channel(100);
@@ -63,7 +63,7 @@ async fn test_for_loop_accumulator() {
 
 #[tokio::test]
 async fn test_for_loop_break() {
-    let code = r#"
+    let code = r"
         fn gen():
             for i in 0..10:
                 if i == 3:
@@ -72,7 +72,7 @@ async fn test_for_loop_break() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
     let (tx, mut rx) = mpsc::channel(100);
@@ -91,7 +91,7 @@ async fn test_for_loop_break() {
 
 #[tokio::test]
 async fn test_for_loop_continue() {
-    let code = r#"
+    let code = r"
         fn gen():
             for i in 0..6:
                 if i % 2 == 0:
@@ -100,7 +100,7 @@ async fn test_for_loop_continue() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
     let (tx, mut rx) = mpsc::channel(100);
@@ -119,7 +119,7 @@ async fn test_for_loop_continue() {
 
 #[tokio::test]
 async fn test_nested_for_loops() {
-    let code = r#"
+    let code = r"
         fn gen():
             for row in 0..3:
                 for col in 0..3:
@@ -127,7 +127,7 @@ async fn test_nested_for_loops() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
     let (tx, mut rx) = mpsc::channel(100);
@@ -155,7 +155,7 @@ async fn test_nested_for_loops() {
 
 #[tokio::test]
 async fn test_while_loop_basic() {
-    let code = r#"
+    let code = r"
         fn gen():
             var i = 0
             while i < 5:
@@ -164,7 +164,7 @@ async fn test_while_loop_basic() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
     let (tx, mut rx) = mpsc::channel(100);
@@ -183,7 +183,7 @@ async fn test_while_loop_basic() {
 
 #[tokio::test]
 async fn test_while_loop_break() {
-    let code = r#"
+    let code = r"
         fn gen():
             var sum = 0
             var i = 1
@@ -196,7 +196,7 @@ async fn test_while_loop_break() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
     let (tx, mut rx) = mpsc::channel(100);
@@ -207,12 +207,12 @@ async fn test_while_loop_break() {
 
     let event = rx.try_recv().expect("Should have output");
     let sum = event.get_int("sum").expect("Missing sum");
-    assert!(sum > 10, "sum should exceed 10, got {}", sum);
+    assert!(sum > 10, "sum should exceed 10, got {sum}");
 }
 
 #[tokio::test]
 async fn test_while_loop_continue() {
-    let code = r#"
+    let code = r"
         fn gen():
             var i = 0
             while i < 10:
@@ -223,7 +223,7 @@ async fn test_while_loop_continue() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
     let (tx, mut rx) = mpsc::channel(100);
@@ -367,7 +367,7 @@ async fn test_if_nested() {
 
 #[tokio::test]
 async fn test_return_value() {
-    let code = r#"
+    let code = r"
         fn square(n: int) -> int:
             return n * n
 
@@ -377,7 +377,7 @@ async fn test_return_value() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
     let (tx, mut rx) = mpsc::channel(100);
@@ -392,7 +392,7 @@ async fn test_return_value() {
 
 #[tokio::test]
 async fn test_return_early_exit() {
-    let code = r#"
+    let code = r"
         fn first_positive(a: int, b: int, c: int) -> int:
             if a > 0:
                 return a
@@ -408,7 +408,7 @@ async fn test_return_early_exit() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
     let (tx, mut rx) = mpsc::channel(100);
@@ -423,7 +423,7 @@ async fn test_return_early_exit() {
 
 #[tokio::test]
 async fn test_return_void() {
-    let code = r#"
+    let code = r"
         fn maybe_emit(n: int):
             if n < 0:
                 return
@@ -435,7 +435,7 @@ async fn test_return_void() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
     let (tx, mut rx) = mpsc::channel(100);
@@ -459,7 +459,7 @@ async fn test_return_void() {
 
 #[tokio::test]
 async fn test_fibonacci_iterative() {
-    let code = r#"
+    let code = r"
         fn fib(n: int) -> int:
             var a = 0
             var b = 1
@@ -477,7 +477,7 @@ async fn test_fibonacci_iterative() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
     let (tx, mut rx) = mpsc::channel(100);
@@ -492,7 +492,7 @@ async fn test_fibonacci_iterative() {
 
 #[tokio::test]
 async fn test_loop_with_conditional_emit() {
-    let code = r#"
+    let code = r"
         fn gen():
             for i in 0..10:
                 if i % 2 == 0:
@@ -502,7 +502,7 @@ async fn test_loop_with_conditional_emit() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
     let (tx, mut rx) = mpsc::channel(100);

@@ -96,7 +96,7 @@ impl CoordinatorClient {
     }
 
     pub async fn get_pipeline_group(&self, id: &str) -> Result<Value, CoordinatorError> {
-        self.get(&format!("pipeline-groups/{}", id)).await
+        self.get(&format!("pipeline-groups/{id}")).await
     }
 
     pub async fn deploy_pipeline_group(&self, spec: &Value) -> Result<Value, CoordinatorError> {
@@ -110,7 +110,7 @@ impl CoordinatorClient {
         group_id: &str,
         event: &Value,
     ) -> Result<Value, CoordinatorError> {
-        self.post(&format!("pipeline-groups/{}/inject", group_id), event)
+        self.post(&format!("pipeline-groups/{group_id}/inject"), event)
             .await
     }
 

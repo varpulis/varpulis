@@ -50,10 +50,10 @@ impl TypeConstraint {
     /// Check whether a concrete type satisfies this constraint.
     pub fn matches(&self, ty: &Type) -> bool {
         match self {
-            TypeConstraint::Exact(expected) => ty == expected,
-            TypeConstraint::Numeric => ty.is_numeric(),
-            TypeConstraint::Any => true,
-            TypeConstraint::OneOf(types) => types.contains(ty),
+            Self::Exact(expected) => ty == expected,
+            Self::Numeric => ty.is_numeric(),
+            Self::Any => true,
+            Self::OneOf(types) => types.contains(ty),
         }
     }
 }
@@ -168,7 +168,7 @@ impl UdfRegistry {
             validate_signature(&sig, arg_types)?;
             return Ok(sig.return_type);
         }
-        Err(format!("unknown UDF: {}", name))
+        Err(format!("unknown UDF: {name}"))
     }
 
     /// Returns true if the registry has no registered UDFs.
@@ -239,7 +239,7 @@ mod tests {
 
     struct DoubleUdf;
     impl ScalarUDF for DoubleUdf {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "double"
         }
         fn signature(&self) -> Signature {
@@ -282,13 +282,13 @@ mod tests {
             self.total = 0.0;
         }
         fn clone_box(&self) -> Box<dyn Accumulator> {
-            Box::new(SumAccumulator { total: self.total })
+            Box::new(Self { total: self.total })
         }
     }
 
     struct CustomSumUdf;
     impl AggregateUDF for CustomSumUdf {
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "custom_sum"
         }
         fn signature(&self) -> Signature {
@@ -398,7 +398,7 @@ mod tests {
 
         struct ConcatUdf;
         impl ScalarUDF for ConcatUdf {
-            fn name(&self) -> &str {
+            fn name(&self) -> &'static str {
                 "concat"
             }
             fn signature(&self) -> Signature {

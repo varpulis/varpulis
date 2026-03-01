@@ -27,7 +27,7 @@ pub(crate) struct PhysicalStream {
 
 impl PhysicalPlan {
     /// Create a new empty physical plan.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             streams: Vec::new(),
         }
@@ -39,7 +39,7 @@ impl PhysicalPlan {
     }
 
     /// Get the number of streams in the plan.
-    pub fn stream_count(&self) -> usize {
+    pub const fn stream_count(&self) -> usize {
         self.streams.len()
     }
 

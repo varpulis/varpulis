@@ -166,8 +166,8 @@ proptest! {
     /// Value conversions should be consistent.
     #[test]
     fn value_debug_deterministic(v in arb_value()) {
-        let d1 = format!("{:?}", v);
-        let d2 = format!("{:?}", v);
+        let d1 = format!("{v:?}");
+        let d2 = format!("{v:?}");
         prop_assert_eq!(d1, d2, "Debug output must be deterministic");
     }
 }

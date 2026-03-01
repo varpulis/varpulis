@@ -31,9 +31,9 @@ pub enum State {
 impl fmt::Display for State {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            State::Closed => f.write_str("closed"),
-            State::Open => f.write_str("open"),
-            State::HalfOpen => f.write_str("half_open"),
+            Self::Closed => f.write_str("closed"),
+            Self::Open => f.write_str("open"),
+            Self::HalfOpen => f.write_str("half_open"),
         }
     }
 }
@@ -77,7 +77,7 @@ struct InnerState {
 
 impl CircuitBreaker {
     /// Create a new circuit breaker with the given configuration.
-    pub fn new(config: CircuitBreakerConfig) -> Self {
+    pub const fn new(config: CircuitBreakerConfig) -> Self {
         Self {
             config,
             state: Mutex::new(InnerState {

@@ -112,7 +112,7 @@ impl Event {
     }
 
     /// Sets the event's timestamp (builder pattern).
-    pub fn with_timestamp(mut self, ts: DateTime<Utc>) -> Self {
+    pub const fn with_timestamp(mut self, ts: DateTime<Utc>) -> Self {
         self.timestamp = ts;
         self
     }

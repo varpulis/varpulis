@@ -95,7 +95,7 @@ fn serializable_value_array_round_trip() {
             assert_eq!(items[1], SerializableValue::String("two".to_string()));
             assert_eq!(items[2], SerializableValue::Null);
         }
-        other => panic!("Expected Array, got {:?}", other),
+        other => panic!("Expected Array, got {other:?}"),
     }
 
     let restored: Event = se.into();
@@ -104,7 +104,7 @@ fn serializable_value_array_round_trip() {
             assert_eq!(a.len(), 3);
             assert_eq!(a[0], Value::Int(1));
         }
-        other => panic!("Expected Array value, got {:?}", other),
+        other => panic!("Expected Array value, got {other:?}"),
     }
 }
 
@@ -125,7 +125,7 @@ fn serializable_value_map_round_trip() {
         Some(SerializableValue::Map(entries)) => {
             assert_eq!(entries.len(), 2);
         }
-        other => panic!("Expected Map, got {:?}", other),
+        other => panic!("Expected Map, got {other:?}"),
     }
 
     let restored: Event = se.into();
@@ -135,7 +135,7 @@ fn serializable_value_map_round_trip() {
             assert_eq!(m.get("a"), Some(&Value::Int(1)));
             assert_eq!(m.get("b"), Some(&Value::Float(2.0)));
         }
-        other => panic!("Expected Map value, got {:?}", other),
+        other => panic!("Expected Map value, got {other:?}"),
     }
 }
 
@@ -833,9 +833,9 @@ fn serializable_value_nested_array_in_map() {
                 assert_eq!(arr[0], Value::Int(1));
                 assert_eq!(arr[1], Value::Int(2));
             }
-            other => panic!("Expected nested Array, got {:?}", other),
+            other => panic!("Expected nested Array, got {other:?}"),
         },
-        other => panic!("Expected Map, got {:?}", other),
+        other => panic!("Expected Map, got {other:?}"),
     }
 }
 

@@ -62,24 +62,24 @@ pub enum Column {
 
 impl Column {
     /// Returns the number of elements in the column.
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         match self {
-            Column::Float64(v) => v.len(),
-            Column::Int64(v) => v.len(),
-            Column::String(v) => v.len(),
-            Column::Bool(v) => v.len(),
+            Self::Float64(v) => v.len(),
+            Self::Int64(v) => v.len(),
+            Self::String(v) => v.len(),
+            Self::Bool(v) => v.len(),
         }
     }
 
     /// Returns true if the column is empty.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
     /// Returns the Float64 slice if this is a Float64 column.
     pub fn as_float64(&self) -> Option<&[f64]> {
         match self {
-            Column::Float64(v) => Some(v),
+            Self::Float64(v) => Some(v),
             _ => None,
         }
     }
@@ -87,7 +87,7 @@ impl Column {
     /// Returns the Int64 slice if this is an Int64 column.
     pub fn as_int64(&self) -> Option<&[i64]> {
         match self {
-            Column::Int64(v) => Some(v),
+            Self::Int64(v) => Some(v),
             _ => None,
         }
     }
@@ -95,7 +95,7 @@ impl Column {
     /// Returns the String slice if this is a String column.
     pub fn as_string(&self) -> Option<&[Option<Arc<str>>]> {
         match self {
-            Column::String(v) => Some(v),
+            Self::String(v) => Some(v),
             _ => None,
         }
     }
@@ -103,7 +103,7 @@ impl Column {
     /// Returns the Bool slice if this is a Bool column.
     pub fn as_bool(&self) -> Option<&[Option<bool>]> {
         match self {
-            Column::Bool(v) => Some(v),
+            Self::Bool(v) => Some(v),
             _ => None,
         }
     }
@@ -208,12 +208,12 @@ impl ColumnarBuffer {
     }
 
     /// Get the number of events in the buffer.
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.events.len()
     }
 
     /// Check if the buffer is empty.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.events.is_empty()
     }
 

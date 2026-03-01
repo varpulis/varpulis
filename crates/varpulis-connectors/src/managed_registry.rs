@@ -57,7 +57,7 @@ impl ManagedConnectorRegistry {
         params: &HashMap<String, String>,
     ) -> Result<(), ConnectorError> {
         let connector = self.connectors.get_mut(connector_name).ok_or_else(|| {
-            ConnectorError::ConfigError(format!("Unknown connector: {}", connector_name))
+            ConnectorError::ConfigError(format!("Unknown connector: {connector_name}"))
         })?;
 
         connector.start_source(topic, tx, params).await
@@ -73,7 +73,7 @@ impl ManagedConnectorRegistry {
         params: &HashMap<String, String>,
     ) -> Result<Arc<dyn Sink>, ConnectorError> {
         let connector = self.connectors.get_mut(connector_name).ok_or_else(|| {
-            ConnectorError::ConfigError(format!("Unknown connector: {}", connector_name))
+            ConnectorError::ConfigError(format!("Unknown connector: {connector_name}"))
         })?;
 
         connector.create_sink(topic, params)

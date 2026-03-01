@@ -339,13 +339,12 @@ async fn test_create_from_config_unknown_type() {
     let result = ConnectorRegistry::create_from_config(&config).await;
     assert!(result.is_err());
     let msg = match result {
-        Err(e) => format!("{}", e),
+        Err(e) => format!("{e}"),
         Ok(_) => panic!("Expected error"),
     };
     assert!(
         msg.contains("Unknown connector type: nosql_magic"),
-        "Unexpected error message: {}",
-        msg
+        "Unexpected error message: {msg}"
     );
 }
 
@@ -429,7 +428,7 @@ fn test_connector_config_clone() {
 #[test]
 fn test_connector_config_debug() {
     let config = ConnectorConfig::new("console", "");
-    let debug_str = format!("{:?}", config);
+    let debug_str = format!("{config:?}");
     assert!(debug_str.contains("console"));
 }
 
@@ -440,49 +439,49 @@ fn test_connector_config_debug() {
 #[test]
 fn test_connector_error_connection_failed() {
     let err = ConnectorError::ConnectionFailed("timeout after 5s".to_string());
-    let msg = format!("{}", err);
+    let msg = format!("{err}");
     assert_eq!(msg, "Connection failed: timeout after 5s");
 }
 
 #[test]
 fn test_connector_error_send_failed() {
     let err = ConnectorError::SendFailed("network unreachable".to_string());
-    let msg = format!("{}", err);
+    let msg = format!("{err}");
     assert_eq!(msg, "Send failed: network unreachable");
 }
 
 #[test]
 fn test_connector_error_receive_failed() {
     let err = ConnectorError::ReceiveFailed("parse error".to_string());
-    let msg = format!("{}", err);
+    let msg = format!("{err}");
     assert_eq!(msg, "Receive failed: parse error");
 }
 
 #[test]
 fn test_connector_error_config_error() {
     let err = ConnectorError::ConfigError("missing url".to_string());
-    let msg = format!("{}", err);
+    let msg = format!("{err}");
     assert_eq!(msg, "Configuration error: missing url");
 }
 
 #[test]
 fn test_connector_error_not_connected() {
     let err = ConnectorError::NotConnected;
-    let msg = format!("{}", err);
+    let msg = format!("{err}");
     assert_eq!(msg, "Not connected");
 }
 
 #[test]
 fn test_connector_error_not_available() {
     let err = ConnectorError::NotAvailable("kafka requires feature flag".to_string());
-    let msg = format!("{}", err);
+    let msg = format!("{err}");
     assert_eq!(msg, "Connector not available: kafka requires feature flag");
 }
 
 #[test]
 fn test_connector_error_debug() {
     let err = ConnectorError::NotConnected;
-    let debug = format!("{:?}", err);
+    let debug = format!("{err:?}");
     assert!(debug.contains("NotConnected"));
 }
 
@@ -973,13 +972,12 @@ fn test_managed_registry_from_configs_unsupported_type() {
     let result = ManagedConnectorRegistry::from_configs(&configs);
     assert!(result.is_err());
     let msg = match result {
-        Err(e) => format!("{}", e),
+        Err(e) => format!("{e}"),
         Ok(_) => panic!("Expected error"),
     };
     assert!(
         msg.contains("ftp"),
-        "Error should mention the unsupported type: {}",
-        msg
+        "Error should mention the unsupported type: {msg}"
     );
 }
 
@@ -1004,13 +1002,12 @@ async fn test_managed_registry_start_source_unknown_name() {
 
     assert!(result.is_err());
     let msg = match result {
-        Err(e) => format!("{}", e),
-        Ok(_) => panic!("Expected error"),
+        Err(e) => format!("{e}"),
+        Ok(()) => panic!("Expected error"),
     };
     assert!(
         msg.contains("nonexistent"),
-        "Error should mention the unknown connector name: {}",
-        msg
+        "Error should mention the unknown connector name: {msg}"
     );
 }
 
@@ -1026,7 +1023,7 @@ fn test_managed_registry_create_sink_unknown_name() {
     let result = registry.create_sink("nonexistent", "topic", &std::collections::HashMap::new());
     assert!(result.is_err());
     let msg = match result {
-        Err(e) => format!("{}", e),
+        Err(e) => format!("{e}"),
         Ok(_) => panic!("Expected error"),
     };
     assert!(msg.contains("nonexistent"));
@@ -1157,7 +1154,7 @@ fn test_connector_health_report_default() {
 #[test]
 fn test_connector_health_report_debug() {
     let report = ConnectorHealthReport::default();
-    let debug = format!("{:?}", report);
+    let debug = format!("{report:?}");
     assert!(debug.contains("ConnectorHealthReport"));
     assert!(debug.contains("connected: true"));
 }
@@ -1172,7 +1169,7 @@ fn test_connector_health_report_clone() {
         ..Default::default()
     };
 
-    let cloned = report.clone();
+    let cloned = report;
     assert!(!cloned.connected);
     assert_eq!(cloned.last_error, Some("some error".to_string()));
     assert_eq!(cloned.messages_received, 42);
@@ -1377,8 +1374,7 @@ async fn test_pulsar_source_stub_not_available() {
     let err = result.unwrap_err();
     assert!(
         matches!(err, ConnectorError::NotAvailable(_)),
-        "Expected NotAvailable, got: {:?}",
-        err
+        "Expected NotAvailable, got: {err:?}"
     );
 }
 
@@ -1397,8 +1393,7 @@ async fn test_pulsar_sink_stub_not_available() {
     let err = result.unwrap_err();
     assert!(
         matches!(err, ConnectorError::NotAvailable(_)),
-        "Expected NotAvailable, got: {:?}",
-        err
+        "Expected NotAvailable, got: {err:?}"
     );
 }
 
@@ -1423,8 +1418,7 @@ async fn test_redis_stream_source_stub_not_available() {
     let err = result.unwrap_err();
     assert!(
         matches!(err, ConnectorError::NotAvailable(_)),
-        "Expected NotAvailable, got: {:?}",
-        err
+        "Expected NotAvailable, got: {err:?}"
     );
 }
 
@@ -1443,8 +1437,7 @@ async fn test_redis_stream_sink_stub_not_available() {
     let err = result.unwrap_err();
     assert!(
         matches!(err, ConnectorError::NotAvailable(_)),
-        "Expected NotAvailable, got: {:?}",
-        err
+        "Expected NotAvailable, got: {err:?}"
     );
 }
 

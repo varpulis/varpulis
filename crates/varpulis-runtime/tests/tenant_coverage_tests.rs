@@ -406,12 +406,10 @@ fn tenant_error_display_variants() {
     ];
 
     for (err, expected_substr) in errs {
-        let msg = format!("{}", err);
+        let msg = format!("{err}");
         assert!(
             msg.contains(expected_substr),
-            "Expected '{}' to contain '{}'",
-            msg,
-            expected_substr
+            "Expected '{msg}' to contain '{expected_substr}'"
         );
     }
 }
@@ -459,7 +457,7 @@ async fn shared_tenant_manager_is_usable() {
 fn tenant_id_new_and_display() {
     let id = TenantId::new("my-tenant");
     assert_eq!(id.as_str(), "my-tenant");
-    assert_eq!(format!("{}", id), "my-tenant");
+    assert_eq!(format!("{id}"), "my-tenant");
 }
 
 #[test]

@@ -48,7 +48,7 @@ impl Default for HawkesIntensity {
 
 impl HawkesIntensity {
     /// Create a new Hawkes intensity tracker with sensible defaults.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             mu: 1e-9,      // 1 event/sec baseline (in events/ns)
             alpha: 0.5e-9, // moderate excitation
@@ -84,13 +84,14 @@ impl HawkesIntensity {
             self.ema_delta_ns = dt;
             self.ema_delta_sq_ns = dt * dt;
         } else {
-            self.ema_delta_ns = EMA_ALPHA * dt + (1.0 - EMA_ALPHA) * self.ema_delta_ns;
-            self.ema_delta_sq_ns = EMA_ALPHA * dt * dt + (1.0 - EMA_ALPHA) * self.ema_delta_sq_ns;
+            self.ema_delta_ns = EMA_ALPHA.mul_add(dt, (1.0 - EMA_ALPHA) * self.ema_delta_ns);
+            self.ema_delta_sq_ns =
+                (EMA_ALPHA * dt).mul_add(dt, (1.0 - EMA_ALPHA) * self.ema_delta_sq_ns);
         }
 
         // Recursive intensity update
         let decay = (-self.beta * dt).exp();
-        self.intensity = self.mu + (self.intensity - self.mu + self.alpha) * decay;
+        self.intensity = (self.intensity - self.mu + self.alpha).mul_add(decay, self.mu);
 
         self.last_time_ns = timestamp_ns;
         self.event_count += 1;
@@ -108,7 +109,7 @@ impl HawkesIntensity {
         }
         let dt = (now_ns - self.last_time_ns).max(0) as f64;
         let decay = (-self.beta * dt).exp();
-        self.mu + (self.intensity - self.mu) * decay
+        (self.intensity - self.mu).mul_add(decay, self.mu)
     }
 
     /// Compute the boost factor: ratio of current intensity to baseline.
@@ -141,7 +142,7 @@ impl HawkesIntensity {
         self.mu = (1.0 / mean_delta).max(1e-15);
 
         // Variance from EMA: Var ≈ E[X²] - E[X]²
-        let variance = self.ema_delta_sq_ns - mean_delta * mean_delta;
+        let variance = mean_delta.mul_add(-mean_delta, self.ema_delta_sq_ns);
         if variance > 0.0 {
             let stddev = variance.sqrt();
             // Decay rate inversely proportional to timing variability
@@ -167,8 +168,7 @@ mod tests {
         let boost = hawkes.boost_factor(0);
         assert!(
             (boost - 1.0).abs() < 1e-6,
-            "Initial boost should be 1.0, got {}",
-            boost
+            "Initial boost should be 1.0, got {boost}"
         );
     }
 
@@ -184,8 +184,7 @@ mod tests {
         let boost = hawkes.boost_factor(20 * 1_000_000);
         assert!(
             boost > 1.0,
-            "Burst of events should increase boost above 1.0, got {}",
-            boost
+            "Burst of events should increase boost above 1.0, got {boost}"
         );
     }
 
@@ -205,9 +204,7 @@ mod tests {
 
         assert!(
             boost_after_decay < boost_at_burst,
-            "Boost should decay over time: at_burst={}, after_decay={}",
-            boost_at_burst,
-            boost_after_decay
+            "Boost should decay over time: at_burst={boost_at_burst}, after_decay={boost_after_decay}"
         );
     }
 
@@ -221,11 +218,7 @@ mod tests {
         }
 
         let boost = hawkes.boost_factor(1000 * 1_000);
-        assert!(
-            boost <= 5.0,
-            "Boost should be clamped at 5.0, got {}",
-            boost
-        );
+        assert!(boost <= 5.0, "Boost should be clamped at 5.0, got {boost}");
     }
 
     #[test]
@@ -268,7 +261,7 @@ mod tests {
 
         // Should not panic or produce NaN
         let boost = hawkes.boost_factor(1_000_000_000);
-        assert!(boost.is_finite(), "Boost should be finite, got {}", boost);
-        assert!(boost >= 1.0, "Boost should be >= 1.0, got {}", boost);
+        assert!(boost.is_finite(), "Boost should be finite, got {boost}");
+        assert!(boost >= 1.0, "Boost should be >= 1.0, got {boost}");
     }
 }

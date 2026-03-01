@@ -39,6 +39,6 @@ pub enum EngineError {
 /// Backward-compat: allow `?` on code that still produces `String` errors.
 impl From<String> for EngineError {
     fn from(s: String) -> Self {
-        EngineError::Other(s)
+        Self::Other(s)
     }
 }

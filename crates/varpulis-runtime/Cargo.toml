@@ -127,3 +127,6 @@ name = "cdc_benchmark"
 harness = false
 required-features = ["cdc"]
 
+[lints]
+workspace = true
+

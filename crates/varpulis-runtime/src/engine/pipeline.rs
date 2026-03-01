@@ -29,7 +29,7 @@ fn empty_vars() -> &'static FxHashMap<String, Value> {
 /// Flags indicating which operation types to skip during pipeline execution.
 /// Different entry points (normal stream, join result, post-window) skip different ops.
 #[derive(Default, Clone, Copy)]
-pub(crate) struct SkipFlags {
+pub struct SkipFlags {
     /// Skip non-partitioned Window ops (used by join processing - JoinBuffer handles windowing)
     pub window: bool,
     /// Skip Print/Log ops
@@ -76,7 +76,7 @@ impl SkipFlags {
 /// - `process_stream_with_functions` (start_idx = 0, SkipFlags::none())
 /// - `process_join_result` (start_idx = 0, SkipFlags::for_join())
 /// - `process_post_window` (start_idx = window_idx + 1, SkipFlags::for_post_window())
-pub(crate) async fn execute_pipeline(
+pub async fn execute_pipeline(
     stream: &mut StreamDefinition,
     initial_events: Vec<SharedEvent>,
     start_idx: usize,
@@ -150,7 +150,7 @@ pub(crate) async fn execute_pipeline(
 }
 
 /// Check if an operation should be skipped based on flags
-fn should_skip_op(op: &RuntimeOp, flags: SkipFlags) -> bool {
+const fn should_skip_op(op: &RuntimeOp, flags: SkipFlags) -> bool {
     match op {
         // Window skipping
         RuntimeOp::Window(_) => flags.window || flags.all_windows,
@@ -576,14 +576,14 @@ fn execute_op_common(
                     let value =
                         evaluator::eval_filter_expr(expr, event.as_ref(), SequenceContext::empty())
                             .unwrap_or(Value::Null);
-                    parts.push(format!("{}", value));
+                    parts.push(format!("{value}"));
                 }
                 let output = if parts.is_empty() {
                     format!("[{}] {}: {:?}", stream_name, event.event_type, event.data)
                 } else {
                     parts.join(" ")
                 };
-                println!("[PRINT] {}", output);
+                println!("[PRINT] {output}");
             }
         }
 
@@ -597,29 +597,26 @@ fn execute_op_common(
                     &fallback
                 };
                 let data = if let Some(ref field) = config.data_field {
-                    event
-                        .get(field)
-                        .map(|v| format!("{}", v))
-                        .unwrap_or_default()
+                    event.get(field).map(|v| format!("{v}")).unwrap_or_default()
                 } else {
                     format!("{:?}", event.data)
                 };
 
                 match config.level.as_str() {
                     "error" => {
-                        tracing::error!(stream = %stream_name, message = %msg, data = %data, "Stream log")
+                        tracing::error!(stream = %stream_name, message = %msg, data = %data, "Stream log");
                     }
                     "warn" | "warning" => {
-                        tracing::warn!(stream = %stream_name, message = %msg, data = %data, "Stream log")
+                        tracing::warn!(stream = %stream_name, message = %msg, data = %data, "Stream log");
                     }
                     "debug" => {
-                        tracing::debug!(stream = %stream_name, message = %msg, data = %data, "Stream log")
+                        tracing::debug!(stream = %stream_name, message = %msg, data = %data, "Stream log");
                     }
                     "trace" => {
-                        tracing::trace!(stream = %stream_name, message = %msg, data = %data, "Stream log")
+                        tracing::trace!(stream = %stream_name, message = %msg, data = %data, "Stream log");
                     }
                     _ => {
-                        tracing::info!(stream = %stream_name, message = %msg, data = %data, "Stream log")
+                        tracing::info!(stream = %stream_name, message = %msg, data = %data, "Stream log");
                     }
                 }
             }
@@ -644,7 +641,7 @@ fn execute_op_common(
                             for (k, v) in &captured.data {
                                 seq_event
                                     .data
-                                    .insert(format!("{}_{}", alias, k).into(), v.clone());
+                                    .insert(format!("{alias}_{k}").into(), v.clone());
                             }
                         }
                         sequence_results.push(Arc::new(seq_event));
@@ -867,7 +864,7 @@ fn execute_op_common(
         RuntimeOp::Process(expr) => {
             let mut all_emitted = Vec::with_capacity(current_events.len());
             for event in current_events.iter() {
-                let (_, emitted) = evaluator::with_emit_collector(|| {
+                let ((), emitted) = evaluator::with_emit_collector(|| {
                     evaluator::eval_expr_with_functions(
                         expr,
                         event.as_ref(),
@@ -899,7 +896,7 @@ fn execute_op_common(
                         functions,
                         empty_vars(),
                     )
-                    .map(|v| format!("{}", v))
+                    .map(|v| format!("{v}"))
                     .unwrap_or_default()
                 } else {
                     format!("{:?}", event.data)
@@ -933,15 +930,12 @@ fn execute_op_common(
                 let mut buckets: Vec<Vec<SharedEvent>> =
                     (0..config.workers).map(|_| Vec::new()).collect();
                 for event in events {
-                    let hash = event
-                        .get(key)
-                        .map(|v| {
-                            use std::hash::{Hash, Hasher};
-                            let mut h = std::collections::hash_map::DefaultHasher::new();
-                            format!("{}", v).hash(&mut h);
-                            h.finish() as usize
-                        })
-                        .unwrap_or(0);
+                    let hash = event.get(key).map_or(0, |v| {
+                        use std::hash::{Hash, Hasher};
+                        let mut h = std::collections::hash_map::DefaultHasher::new();
+                        format!("{v}").hash(&mut h);
+                        h.finish() as usize
+                    });
                     buckets[hash % config.workers].push(event);
                 }
                 buckets
@@ -983,7 +977,7 @@ fn execute_op_common(
 /// Skips all async operations (.to() sink sends).
 /// When `skip_output_rename` is true, output events pass through without cloning
 /// (used when there are no downstream routes that need the renamed event_type).
-pub(crate) fn execute_pipeline_sync(
+pub fn execute_pipeline_sync(
     stream: &mut StreamDefinition,
     initial_events: Vec<SharedEvent>,
     start_idx: usize,

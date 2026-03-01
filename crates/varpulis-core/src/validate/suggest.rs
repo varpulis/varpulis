@@ -18,7 +18,7 @@ pub fn levenshtein(a: &str, b: &str) -> usize {
     for (i, a_ch) in a.chars().enumerate() {
         curr[0] = i + 1;
         for (j, b_ch) in b.chars().enumerate() {
-            let cost = if a_ch == b_ch { 0 } else { 1 };
+            let cost = usize::from(a_ch != b_ch);
             curr[j + 1] = (prev[j] + cost).min(prev[j + 1] + 1).min(curr[j] + 1);
         }
         std::mem::swap(&mut prev, &mut curr);
@@ -52,7 +52,7 @@ pub fn suggest(name: &str, candidates: &[&str]) -> Option<String> {
 /// Build a "did you mean 'X'?" suffix string, or empty if no suggestion.
 pub fn did_you_mean(name: &str, candidates: &[&str]) -> String {
     match suggest(name, candidates) {
-        Some(s) => format!("; did you mean '{}'?", s),
+        Some(s) => format!("; did you mean '{s}'?"),
         None => String::new(),
     }
 }

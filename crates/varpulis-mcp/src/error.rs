@@ -38,15 +38,14 @@ impl CoordinatorError {
 impl From<reqwest::Error> for CoordinatorError {
     fn from(err: reqwest::Error) -> Self {
         if err.is_connect() || err.is_timeout() {
-            CoordinatorError::Unreachable {
+            Self::Unreachable {
                 url: err
                     .url()
-                    .map(|u| u.to_string())
-                    .unwrap_or_else(|| "unknown".into()),
+                    .map_or_else(|| "unknown".into(), |u| u.to_string()),
                 source: err,
             }
         } else {
-            CoordinatorError::Other(err.to_string())
+            Self::Other(err.to_string())
         }
     }
 }

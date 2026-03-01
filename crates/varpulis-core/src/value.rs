@@ -45,9 +45,9 @@ pub enum Value {
     /// Duration in nanoseconds.
     Duration(u64),
     /// Boxed array of values.
-    Array(Box<Vec<Value>>),
+    Array(Box<Vec<Self>>),
     /// Boxed ordered map with `Arc<str>` keys.
-    Map(Box<FxIndexMap<Arc<str>, Value>>),
+    Map(Box<FxIndexMap<Arc<str>, Self>>),
 }
 
 /// Helper function to compare f64 values consistently with Hash impl.
@@ -67,15 +67,15 @@ fn float_eq(a: f64, b: f64) -> bool {
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Value::Null, Value::Null) => true,
-            (Value::Bool(a), Value::Bool(b)) => a == b,
-            (Value::Int(a), Value::Int(b)) => a == b,
-            (Value::Float(a), Value::Float(b)) => float_eq(*a, *b),
-            (Value::Str(a), Value::Str(b)) => a == b,
-            (Value::Timestamp(a), Value::Timestamp(b)) => a == b,
-            (Value::Duration(a), Value::Duration(b)) => a == b,
-            (Value::Array(a), Value::Array(b)) => a == b,
-            (Value::Map(a), Value::Map(b)) => a == b,
+            (Self::Null, Self::Null) => true,
+            (Self::Bool(a), Self::Bool(b)) => a == b,
+            (Self::Int(a), Self::Int(b)) => a == b,
+            (Self::Float(a), Self::Float(b)) => float_eq(*a, *b),
+            (Self::Str(a), Self::Str(b)) => a == b,
+            (Self::Timestamp(a), Self::Timestamp(b)) => a == b,
+            (Self::Duration(a), Self::Duration(b)) => a == b,
+            (Self::Array(a), Self::Array(b)) => a == b,
+            (Self::Map(a), Self::Map(b)) => a == b,
             _ => false,
         }
     }
@@ -84,73 +84,73 @@ impl PartialEq for Value {
 impl Value {
     /// Creates a new Array value from a Vec.
     #[inline]
-    pub fn array(v: Vec<Value>) -> Self {
-        Value::Array(Box::new(v))
+    pub fn array(v: Vec<Self>) -> Self {
+        Self::Array(Box::new(v))
     }
 
     /// Creates a new Map value from an IndexMap with `Arc<str>` keys.
     #[inline]
-    pub fn map(m: FxIndexMap<Arc<str>, Value>) -> Self {
-        Value::Map(Box::new(m))
+    pub fn map(m: FxIndexMap<Arc<str>, Self>) -> Self {
+        Self::Map(Box::new(m))
     }
 
     /// Creates a new Map value from an IndexMap with String keys (converts to `Arc<str>`).
     #[inline]
-    pub fn map_from_strings(m: FxIndexMap<String, Value>) -> Self {
-        let converted: FxIndexMap<Arc<str>, Value> =
+    pub fn map_from_strings(m: FxIndexMap<String, Self>) -> Self {
+        let converted: FxIndexMap<Arc<str>, Self> =
             m.into_iter().map(|(k, v)| (Arc::from(k), v)).collect();
-        Value::Map(Box::new(converted))
+        Self::Map(Box::new(converted))
     }
 
     /// Returns the type name as a static string (e.g., `"int"`, `"str"`).
-    pub fn type_name(&self) -> &'static str {
+    pub const fn type_name(&self) -> &'static str {
         match self {
-            Value::Null => "null",
-            Value::Bool(_) => "bool",
-            Value::Int(_) => "int",
-            Value::Float(_) => "float",
-            Value::Str(_) => "str",
-            Value::Timestamp(_) => "timestamp",
-            Value::Duration(_) => "duration",
-            Value::Array(_) => "array",
-            Value::Map(_) => "map",
+            Self::Null => "null",
+            Self::Bool(_) => "bool",
+            Self::Int(_) => "int",
+            Self::Float(_) => "float",
+            Self::Str(_) => "str",
+            Self::Timestamp(_) => "timestamp",
+            Self::Duration(_) => "duration",
+            Self::Array(_) => "array",
+            Self::Map(_) => "map",
         }
     }
 
     /// Returns whether this value is truthy (non-null, non-zero, non-empty).
     pub fn is_truthy(&self) -> bool {
         match self {
-            Value::Null => false,
-            Value::Bool(b) => *b,
-            Value::Int(n) => *n != 0,
-            Value::Float(n) => *n != 0.0,
-            Value::Str(s) => !s.is_empty(),
-            Value::Array(a) => !a.is_empty(),
-            Value::Map(m) => !m.is_empty(),
-            Value::Timestamp(_) | Value::Duration(_) => true,
+            Self::Null => false,
+            Self::Bool(b) => *b,
+            Self::Int(n) => *n != 0,
+            Self::Float(n) => *n != 0.0,
+            Self::Str(s) => !s.is_empty(),
+            Self::Array(a) => !a.is_empty(),
+            Self::Map(m) => !m.is_empty(),
+            Self::Timestamp(_) | Self::Duration(_) => true,
         }
     }
 
     /// Creates a Str value from any type that can be converted to a string slice.
     #[inline]
     pub fn str(s: impl AsRef<str>) -> Self {
-        Value::Str(s.as_ref().into())
+        Self::Str(s.as_ref().into())
     }
 
     /// Extracts an integer value, coercing floats by truncation.
-    pub fn as_int(&self) -> Option<i64> {
+    pub const fn as_int(&self) -> Option<i64> {
         match self {
-            Value::Int(n) => Some(*n),
-            Value::Float(n) => Some(*n as i64),
+            Self::Int(n) => Some(*n),
+            Self::Float(n) => Some(*n as i64),
             _ => None,
         }
     }
 
     /// Extracts a float value, coercing integers by widening.
-    pub fn as_float(&self) -> Option<f64> {
+    pub const fn as_float(&self) -> Option<f64> {
         match self {
-            Value::Float(n) => Some(*n),
-            Value::Int(n) => Some(*n as f64),
+            Self::Float(n) => Some(*n),
+            Self::Int(n) => Some(*n as f64),
             _ => None,
         }
     }
@@ -158,31 +158,31 @@ impl Value {
     /// Extracts a string slice if this value is a `Str`.
     pub fn as_str(&self) -> Option<&str> {
         match self {
-            Value::Str(s) => Some(s),
+            Self::Str(s) => Some(s),
             _ => None,
         }
     }
 
     /// Extracts a boolean if this value is a `Bool`.
-    pub fn as_bool(&self) -> Option<bool> {
+    pub const fn as_bool(&self) -> Option<bool> {
         match self {
-            Value::Bool(b) => Some(*b),
+            Self::Bool(b) => Some(*b),
             _ => None,
         }
     }
 
     /// Looks up a key in a Map value, returns `None` for non-Map values.
-    pub fn get(&self, key: &str) -> Option<&Value> {
+    pub fn get(&self, key: &str) -> Option<&Self> {
         match self {
-            Value::Map(m) => m.get(key),
+            Self::Map(m) => m.get(key),
             _ => None,
         }
     }
 
     /// Accesses an element by index in an Array value, returns `None` for non-Array values.
-    pub fn get_index(&self, idx: usize) -> Option<&Value> {
+    pub fn get_index(&self, idx: usize) -> Option<&Self> {
         match self {
-            Value::Array(a) => a.get(idx),
+            Self::Array(a) => a.get(idx),
             _ => None,
         }
     }
@@ -190,10 +190,10 @@ impl Value {
     /// Fast partition key extraction: returns `Cow` to avoid allocation for string keys.
     pub fn to_partition_key(&self) -> Cow<'_, str> {
         match self {
-            Value::Str(s) => Cow::Borrowed(&**s),
-            Value::Int(n) => Cow::Owned(n.to_string()),
-            Value::Bool(b) => Cow::Borrowed(if *b { "true" } else { "false" }),
-            other => Cow::Owned(format!("{}", other)),
+            Self::Str(s) => Cow::Borrowed(&**s),
+            Self::Int(n) => Cow::Owned(n.to_string()),
+            Self::Bool(b) => Cow::Borrowed(if *b { "true" } else { "false" }),
+            other => Cow::Owned(format!("{other}")),
         }
     }
 }
@@ -201,16 +201,16 @@ impl Value {
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Value::Null => write!(f, "null"),
-            Value::Bool(b) => write!(f, "{}", b),
-            Value::Int(n) => write!(f, "{}", n),
-            Value::Float(n) => write!(f, "{}", n),
-            Value::Str(s) => write!(f, "\"{}\"", &**s),
-            Value::Timestamp(ts) => {
+            Self::Null => write!(f, "null"),
+            Self::Bool(b) => write!(f, "{b}"),
+            Self::Int(n) => write!(f, "{n}"),
+            Self::Float(n) => write!(f, "{n}"),
+            Self::Str(s) => write!(f, "\"{}\"", &**s),
+            Self::Timestamp(ts) => {
                 let dt = DateTime::<Utc>::from_timestamp_nanos(*ts);
                 write!(f, "@{}", dt.format("%Y-%m-%dT%H:%M:%SZ"))
             }
-            Value::Duration(d) => {
+            Self::Duration(d) => {
                 let dur = Duration::from_nanos(*d);
                 if dur.as_secs() >= 86400 {
                     write!(f, "{}d", dur.as_secs() / 86400)
@@ -226,23 +226,23 @@ impl fmt::Display for Value {
                     write!(f, "{}us", dur.as_micros())
                 }
             }
-            Value::Array(a) => {
+            Self::Array(a) => {
                 write!(f, "[")?;
                 for (i, v) in a.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}", v)?;
+                    write!(f, "{v}")?;
                 }
                 write!(f, "]")
             }
-            Value::Map(m) => {
+            Self::Map(m) => {
                 write!(f, "{{")?;
                 for (i, (k, v)) in m.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}: {}", k, v)?;
+                    write!(f, "{k}: {v}")?;
                 }
                 write!(f, "}}")
             }
@@ -252,37 +252,37 @@ impl fmt::Display for Value {
 
 impl From<bool> for Value {
     fn from(b: bool) -> Self {
-        Value::Bool(b)
+        Self::Bool(b)
     }
 }
 
 impl From<i64> for Value {
     fn from(n: i64) -> Self {
-        Value::Int(n)
+        Self::Int(n)
     }
 }
 
 impl From<f64> for Value {
     fn from(n: f64) -> Self {
-        Value::Float(n)
+        Self::Float(n)
     }
 }
 
 impl From<String> for Value {
     fn from(s: String) -> Self {
-        Value::Str(s.into_boxed_str())
+        Self::Str(s.into_boxed_str())
     }
 }
 
 impl From<&str> for Value {
     fn from(s: &str) -> Self {
-        Value::Str(s.into())
+        Self::Str(s.into())
     }
 }
 
 impl From<Box<str>> for Value {
     fn from(s: Box<str>) -> Self {
-        Value::Str(s)
+        Self::Str(s)
     }
 }
 
@@ -291,10 +291,10 @@ impl Hash for Value {
         // Hash discriminant first to distinguish variants
         std::mem::discriminant(self).hash(state);
         match self {
-            Value::Null => {}
-            Value::Bool(b) => b.hash(state),
-            Value::Int(n) => n.hash(state),
-            Value::Float(f) => {
+            Self::Null => {}
+            Self::Bool(b) => b.hash(state),
+            Self::Int(n) => n.hash(state),
+            Self::Float(f) => {
                 // Use bit representation for f64 hashing
                 // Normalize -0.0 to 0.0 and handle NaN consistently
                 let bits = if f.is_nan() {
@@ -306,16 +306,16 @@ impl Hash for Value {
                 };
                 bits.hash(state);
             }
-            Value::Str(s) => s.hash(state),
-            Value::Timestamp(ts) => ts.hash(state),
-            Value::Duration(d) => d.hash(state),
-            Value::Array(arr) => {
+            Self::Str(s) => s.hash(state),
+            Self::Timestamp(ts) => ts.hash(state),
+            Self::Duration(d) => d.hash(state),
+            Self::Array(arr) => {
                 arr.len().hash(state);
                 for v in arr.iter() {
                     v.hash(state);
                 }
             }
-            Value::Map(map) => {
+            Self::Map(map) => {
                 map.len().hash(state);
                 for (k, v) in map.iter() {
                     k.hash(state);
@@ -328,17 +328,17 @@ impl Hash for Value {
 
 impl Eq for Value {}
 
-impl<T: Into<Value>> From<Vec<T>> for Value {
+impl<T: Into<Self>> From<Vec<T>> for Value {
     fn from(v: Vec<T>) -> Self {
-        Value::array(v.into_iter().map(Into::into).collect())
+        Self::array(v.into_iter().map(Into::into).collect())
     }
 }
 
-impl<T: Into<Value>> From<Option<T>> for Value {
+impl<T: Into<Self>> From<Option<T>> for Value {
     fn from(o: Option<T>) -> Self {
         match o {
             Some(v) => v.into(),
-            None => Value::Null,
+            None => Self::Null,
         }
     }
 }
@@ -572,7 +572,7 @@ mod tests {
     #[test]
     fn test_display_array() {
         let v = Value::array(vec![Value::Int(1), Value::Int(2)]);
-        assert_eq!(format!("{}", v), "[1, 2]");
+        assert_eq!(format!("{v}"), "[1, 2]");
     }
 
     #[test]

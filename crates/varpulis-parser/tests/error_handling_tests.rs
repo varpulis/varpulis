@@ -15,8 +15,7 @@ fn test_invalid_syntax_returns_error_not_panic() {
         let result = parse(input);
         assert!(
             result.is_err(),
-            "Should return error for invalid input: {:?}",
-            input
+            "Should return error for invalid input: {input:?}"
         );
     }
 }
@@ -34,18 +33,17 @@ fn test_incomplete_stream_descriptive_error() {
         err_msg.contains("Expected")
             || err_msg.contains("expected")
             || err_msg.contains("Unexpected"),
-        "Error should be descriptive: {}",
-        err_msg
+        "Error should be descriptive: {err_msg}"
     );
 }
 
 #[test]
 fn test_missing_field_type_error_with_location() {
-    let input = r#"
+    let input = r"
 event BadEvent:
     name:
     value: float
-"#;
+";
     let result = parse(input);
     assert!(result.is_err());
 
@@ -53,9 +51,8 @@ event BadEvent:
     let err_msg = err.to_string();
     // Error should include line/column information
     assert!(
-        err_msg.contains("line") || err_msg.contains("3") || err_msg.contains("column"),
-        "Error should include location: {}",
-        err_msg
+        err_msg.contains("line") || err_msg.contains('3') || err_msg.contains("column"),
+        "Error should include location: {err_msg}"
     );
 }
 
@@ -98,7 +95,7 @@ fn test_fuzz_input_no_panic() {
     for input in &fuzz_inputs {
         // Should not panic - either parse successfully or return error
         let result = std::panic::catch_unwind(|| parse(input));
-        assert!(result.is_ok(), "Parser panicked on input: {:?}", input);
+        assert!(result.is_ok(), "Parser panicked on input: {input:?}");
     }
 }
 
@@ -116,8 +113,7 @@ fn test_unicode_input_no_panic() {
         let result = std::panic::catch_unwind(|| parse(input));
         assert!(
             result.is_ok(),
-            "Parser panicked on unicode input: {:?}",
-            input
+            "Parser panicked on unicode input: {input:?}"
         );
     }
 }
@@ -126,23 +122,23 @@ fn test_unicode_input_no_panic() {
 fn test_valid_syntax_still_works() {
     // Ensure valid syntax still parses correctly after error handling changes
     let valid_inputs = [
-        r#"
+        r"
 event Temperature:
     sensor_id: str
     value: float
 
 stream TempStream = Temperature
-"#,
+",
         r#"
 stream Filtered = SomeEvent
     .where(value > 100)
     .emit(event_type: "Alert")
 "#,
-        r#"
+        r"
 # A comment
 event Simple:
     data: str
-"#,
+",
     ];
 
     for input in &valid_inputs {
@@ -209,22 +205,18 @@ fn test_fuzz_timeout_regression_nested_unclosed_brackets() {
         let elapsed = start.elapsed();
 
         // Must be rejected (nesting depth exceeded)
-        assert!(result.is_err(), "{}: should be rejected", label);
+        assert!(result.is_err(), "{label}: should be rejected");
 
         // Must complete in <1 second (was >1200s / 39s before fix)
         assert!(
             elapsed.as_secs() < 1,
-            "{}: took {:?}, should be rejected instantly by nesting check",
-            label,
-            elapsed
+            "{label}: took {elapsed:?}, should be rejected instantly by nesting check"
         );
 
         let err_msg = result.unwrap_err().to_string();
         assert!(
             err_msg.contains("Nesting depth"),
-            "{}: error should mention nesting depth, got: {}",
-            label,
-            err_msg
+            "{label}: error should mention nesting depth, got: {err_msg}"
         );
     }
 }

@@ -35,7 +35,7 @@ pub struct RelayMetrics {
 }
 
 impl RelayMetrics {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             events_forwarded: AtomicU64::new(0),
             events_dropped: AtomicU64::new(0),
@@ -223,7 +223,7 @@ async fn handle_load_file(path: &str, state: &Arc<RwLock<ServerState>>) -> WsMes
             return WsMessage::LoadResult {
                 success: false,
                 streams_loaded: 0,
-                error: Some(format!("Parse error: {}", e)),
+                error: Some(format!("Parse error: {e}")),
             };
         }
     };
@@ -275,14 +275,11 @@ async fn handle_get_streams(state: &Arc<RwLock<ServerState>>) -> WsMessage {
 /// Handle GetMetrics message
 async fn handle_get_metrics(state: &Arc<RwLock<ServerState>>) -> WsMessage {
     let state = state.read().await;
-    let (events_processed, output_events_emitted, active_streams) = state
-        .engine
-        .as_ref()
-        .map(|engine| {
+    let (events_processed, output_events_emitted, active_streams) =
+        state.engine.as_ref().map_or((0, 0, 0), |engine| {
             let m = engine.metrics();
             (m.events_processed, m.output_events_emitted, m.streams_count)
-        })
-        .unwrap_or((0, 0, 0));
+        });
 
     WsMessage::Metrics {
         events_processed,
@@ -344,7 +341,7 @@ async fn handle_inject_event(
             success: true,
         },
         Err(e) => WsMessage::Error {
-            message: format!("Failed to process event: {}", e),
+            message: format!("Failed to process event: {e}"),
         },
     }
 }
@@ -587,7 +584,7 @@ pub fn forward_output_events_to_coordinator(
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                         }
                     }
-                    _ = &mut deadline => break,
+                    () = &mut deadline => break,
                 }
             }
 
@@ -812,7 +809,7 @@ mod tests {
         let json = serde_json::to_string(&msg).expect("should serialize");
         assert!(json.contains("load_result"));
         assert!(json.contains("true"));
-        assert!(json.contains("5"));
+        assert!(json.contains('5'));
     }
 
     #[test]

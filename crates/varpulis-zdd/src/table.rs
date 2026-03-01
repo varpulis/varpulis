@@ -104,18 +104,18 @@ impl UniqueTable {
     #[inline]
     pub fn get_node_from_ref(&self, r: ZddRef) -> &ZddNode {
         self.try_get_node_from_ref(r)
-            .unwrap_or_else(|| panic!("Expected Node, got {:?}", r))
+            .unwrap_or_else(|| panic!("Expected Node, got {r:?}"))
     }
 
     /// Number of nodes in the table
     #[inline]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.nodes.len()
     }
 
     /// Check if the table is empty
     #[inline]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }
 

@@ -63,7 +63,7 @@ impl Default for TenantQuota {
 
 impl TenantQuota {
     /// Free tier limits
-    pub fn free() -> Self {
+    pub const fn free() -> Self {
         Self {
             max_pipelines: 2,
             max_events_per_second: 100,
@@ -72,7 +72,7 @@ impl TenantQuota {
     }
 
     /// Pro tier limits
-    pub fn pro() -> Self {
+    pub const fn pro() -> Self {
         Self {
             max_pipelines: 20,
             max_events_per_second: 50_000,
@@ -81,7 +81,7 @@ impl TenantQuota {
     }
 
     /// Enterprise tier limits
-    pub fn enterprise() -> Self {
+    pub const fn enterprise() -> Self {
         Self {
             max_pipelines: 1000,
             max_events_per_second: 500_000,
@@ -126,7 +126,7 @@ impl TenantUsage {
         true
     }
 
-    pub fn record_output_event(&mut self) {
+    pub const fn record_output_event(&mut self) {
         self.output_events_emitted += 1;
     }
 }
@@ -167,9 +167,9 @@ pub enum PipelineStatus {
 impl std::fmt::Display for PipelineStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PipelineStatus::Running => write!(f, "running"),
-            PipelineStatus::Stopped => write!(f, "stopped"),
-            PipelineStatus::Error(msg) => write!(f, "error: {msg}"),
+            Self::Running => write!(f, "running"),
+            Self::Stopped => write!(f, "stopped"),
+            Self::Error(msg) => write!(f, "error: {msg}"),
         }
     }
 }
@@ -302,8 +302,7 @@ impl Tenant {
                 Ok(orch) => Some(orch),
                 Err(e) => {
                     return Err(crate::engine::error::EngineError::Pipeline(format!(
-                        "Failed to build context orchestrator: {}",
-                        e
+                        "Failed to build context orchestrator: {e}"
                     ))
                     .into());
                 }
@@ -326,8 +325,7 @@ impl Tenant {
             )
             .map_err(|e| {
                 TenantError::EngineError(crate::engine::error::EngineError::Pipeline(format!(
-                    "Registry build error: {}",
-                    e
+                    "Registry build error: {e}"
                 )))
             })?;
 
@@ -362,8 +360,7 @@ impl Tenant {
                     .await
                     .map_err(|e| -> TenantError {
                         crate::engine::error::EngineError::Pipeline(format!(
-                            "Source start error: {}",
-                            e
+                            "Source start error: {e}"
                         ))
                         .into()
                     })?;
@@ -534,7 +531,7 @@ impl Tenant {
                             .process(event)
                             .await
                             .map_err(|e| -> TenantError {
-                                crate::engine::error::EngineError::Pipeline(e.to_string()).into()
+                                crate::engine::error::EngineError::Pipeline(e).into()
                             })?;
                     }
                 }
@@ -676,7 +673,7 @@ impl TenantManager {
     }
 
     /// Set maximum queue depth for backpressure (0 = unlimited)
-    pub fn set_max_queue_depth(&mut self, max_depth: u64) {
+    pub const fn set_max_queue_depth(&mut self, max_depth: u64) {
         self.max_queue_depth = max_depth;
     }
 
@@ -691,7 +688,7 @@ impl TenantManager {
     }
 
     /// Get the maximum queue depth setting
-    pub fn max_queue_depth(&self) -> u64 {
+    pub const fn max_queue_depth(&self) -> u64 {
         self.max_queue_depth
     }
 
@@ -918,7 +915,7 @@ impl TenantManager {
         let mut failed = 0;
 
         for tid in &tenant_ids {
-            let key = format!("tenant:{}", tid);
+            let key = format!("tenant:{tid}");
             let data = match store.get(&key)? {
                 Some(d) => d,
                 None => {
@@ -1027,7 +1024,6 @@ impl TenantManager {
         tenant.usage.output_events_emitted = snapshot.output_events_emitted;
         tenant.usage.events_in_window = snapshot.events_in_window;
 
-        let mut pipeline_failures = Vec::new();
         for ps in snapshot.pipelines {
             match Self::restore_pipeline_from_snapshot(ps.clone()) {
                 Ok(pipeline) => {
@@ -1038,7 +1034,6 @@ impl TenantManager {
                         "Failed to restore pipeline '{}' ({}): {}",
                         ps.name, ps.id, e
                     );
-                    pipeline_failures.push(ps.id);
                 }
             }
         }
@@ -1271,10 +1266,10 @@ mod tests {
             .unwrap();
 
         let tenant = mgr.get_tenant_mut(&id).unwrap();
-        let vpl = r#"
+        let vpl = r"
             stream Alerts = SensorReading
                 .where(temperature > 100)
-        "#;
+        ";
         let pipeline_id = tenant
             .deploy_pipeline("My Pipeline".into(), vpl.into())
             .await
@@ -1868,8 +1863,8 @@ mod tests {
         let tenant = mgr.get_tenant_mut(&id).unwrap();
         let pid = tenant.pipelines.keys().next().unwrap().clone();
         for i in 0..10 {
-            let event =
-                Event::new("SensorReading").with_field("temperature", 50.0 + (i as f64) * 20.0);
+            let event = Event::new("SensorReading")
+                .with_field("temperature", (i as f64).mul_add(20.0, 50.0));
             tenant.process_event(&pid, event).await.unwrap();
         }
 
@@ -1936,12 +1931,12 @@ mod tests {
             )
             .unwrap();
 
-        let vpl = r#"
+        let vpl = r"
             event MarketTick:
                 symbol: str
                 price: float
             stream Ticks = MarketTick .where(price > 100)
-        "#;
+        ";
         let pipeline_id = mgr
             .deploy_pipeline_on_tenant(&id, "financial-cep".into(), vpl.into())
             .await

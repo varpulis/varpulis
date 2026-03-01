@@ -10,7 +10,7 @@ use std::sync::Arc;
 ///
 /// Uses `Arc<[String]>` internally for zero-cost sharing in the hot path,
 /// avoiding Vec cloning when accessing routes during event processing.
-pub(crate) struct EventRouter {
+pub struct EventRouter {
     /// event_type -> stream names (Arc<[String]> for O(1) clone in hot path)
     routes: FxHashMap<String, Arc<[String]>>,
 }
@@ -53,7 +53,7 @@ impl EventRouter {
     }
 
     /// Get all routes for topology building and introspection.
-    pub fn all_routes(&self) -> &FxHashMap<String, Arc<[String]>> {
+    pub const fn all_routes(&self) -> &FxHashMap<String, Arc<[String]>> {
         &self.routes
     }
 

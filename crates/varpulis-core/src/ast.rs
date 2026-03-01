@@ -82,7 +82,7 @@ pub enum Stmt {
         /// Optional return type.
         ret: Option<Type>,
         /// Function body statements.
-        body: Vec<Spanned<Stmt>>,
+        body: Vec<Spanned<Self>>,
     },
     /// Configuration block with name (e.g., `config mqtt { ... }`)
     ///
@@ -114,11 +114,11 @@ pub enum Stmt {
         /// Condition expression.
         cond: Expr,
         /// Statements to execute when the condition is true.
-        then_branch: Vec<Spanned<Stmt>>,
+        then_branch: Vec<Spanned<Self>>,
         /// Optional else-if branches (condition, body pairs).
-        elif_branches: Vec<(Expr, Vec<Spanned<Stmt>>)>,
+        elif_branches: Vec<(Expr, Vec<Spanned<Self>>)>,
         /// Optional else branch.
-        else_branch: Option<Vec<Spanned<Stmt>>>,
+        else_branch: Option<Vec<Spanned<Self>>>,
     },
     /// For loop
     For {
@@ -127,14 +127,14 @@ pub enum Stmt {
         /// Iterable expression.
         iter: Expr,
         /// Loop body statements.
-        body: Vec<Spanned<Stmt>>,
+        body: Vec<Spanned<Self>>,
     },
     /// While loop
     While {
         /// Loop condition.
         cond: Expr,
         /// Loop body statements.
-        body: Vec<Spanned<Stmt>>,
+        body: Vec<Spanned<Self>>,
     },
     /// Return statement
     Return(Option<Expr>),
@@ -191,15 +191,15 @@ pub enum SasePatternExpr {
     /// Sequence: SEQ(A, B, C)
     Seq(Vec<SasePatternItem>),
     /// Conjunction: A AND B
-    And(Box<SasePatternExpr>, Box<SasePatternExpr>),
+    And(Box<Self>, Box<Self>),
     /// Disjunction: A OR B
-    Or(Box<SasePatternExpr>, Box<SasePatternExpr>),
+    Or(Box<Self>, Box<Self>),
     /// Negation: NOT A
-    Not(Box<SasePatternExpr>),
+    Not(Box<Self>),
     /// Single event type reference
     Event(String),
     /// Grouped expression
-    Group(Box<SasePatternExpr>),
+    Group(Box<Self>),
 }
 
 /// Item in a SASE+ sequence with optional Kleene operator
@@ -216,7 +216,7 @@ pub struct SasePatternItem {
 }
 
 /// Kleene operators for SASE+ patterns
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum KleeneOp {
     /// One or more (+)
     Plus,
@@ -449,7 +449,7 @@ pub struct TrendAggItem {
 }
 
 /// Specification for ONNX model scoring
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScoreSpec {
     /// Path to the ONNX model file.
     pub model_path: String,
@@ -468,7 +468,7 @@ pub struct ScoreSpec {
     pub device_id: i32,
 }
 
-fn default_batch_size() -> usize {
+const fn default_batch_size() -> usize {
     1
 }
 
@@ -580,7 +580,7 @@ pub struct NamedArg {
 }
 
 /// Field in event declaration
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Field {
     /// Field name.
     pub name: String,
@@ -591,7 +591,7 @@ pub struct Field {
 }
 
 /// Function parameter
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Param {
     /// Parameter name.
     pub name: String,
@@ -618,9 +618,9 @@ pub enum Expr {
     Timestamp(i64),
 
     /// Array literal: `[1, 2, 3]`.
-    Array(Vec<Expr>),
+    Array(Vec<Self>),
     /// Map literal: `{key: value, ...}`.
-    Map(Vec<(String, Expr)>),
+    Map(Vec<(String, Self)>),
 
     /// Identifier reference.
     Ident(String),
@@ -630,9 +630,9 @@ pub enum Expr {
         /// The binary operator.
         op: BinOp,
         /// Left operand.
-        left: Box<Expr>,
+        left: Box<Self>,
         /// Right operand.
-        right: Box<Expr>,
+        right: Box<Self>,
     },
 
     /// Unary operation: `op expr`.
@@ -640,13 +640,13 @@ pub enum Expr {
         /// The unary operator.
         op: UnaryOp,
         /// Operand expression.
-        expr: Box<Expr>,
+        expr: Box<Self>,
     },
 
     /// Member access: `expr.member`.
     Member {
         /// Object expression.
-        expr: Box<Expr>,
+        expr: Box<Self>,
         /// Member name to access.
         member: String,
     },
@@ -654,7 +654,7 @@ pub enum Expr {
     /// Optional member access: `expr?.member`.
     OptionalMember {
         /// Object expression (may be null).
-        expr: Box<Expr>,
+        expr: Box<Self>,
         /// Member name to access.
         member: String,
     },
@@ -662,25 +662,25 @@ pub enum Expr {
     /// Index access: `expr[index]`.
     Index {
         /// Collection expression.
-        expr: Box<Expr>,
+        expr: Box<Self>,
         /// Index expression.
-        index: Box<Expr>,
+        index: Box<Self>,
     },
 
     /// Slice: `expr[start:end]`.
     Slice {
         /// Collection expression.
-        expr: Box<Expr>,
+        expr: Box<Self>,
         /// Optional start index.
-        start: Option<Box<Expr>>,
+        start: Option<Box<Self>>,
         /// Optional end index.
-        end: Option<Box<Expr>>,
+        end: Option<Box<Self>>,
     },
 
     /// Function call: `func(args)`.
     Call {
         /// Function expression to call.
-        func: Box<Expr>,
+        func: Box<Self>,
         /// Arguments to the function.
         args: Vec<Arg>,
     },
@@ -690,33 +690,33 @@ pub enum Expr {
         /// Lambda parameter names.
         params: Vec<String>,
         /// Lambda body expression.
-        body: Box<Expr>,
+        body: Box<Self>,
     },
 
     /// Conditional expression: `if cond then a else b`.
     If {
         /// Condition expression.
-        cond: Box<Expr>,
+        cond: Box<Self>,
         /// Value when true.
-        then_branch: Box<Expr>,
+        then_branch: Box<Self>,
         /// Value when false.
-        else_branch: Box<Expr>,
+        else_branch: Box<Self>,
     },
 
     /// Null coalescing: `expr ?? default`.
     Coalesce {
         /// Expression that may be null.
-        expr: Box<Expr>,
+        expr: Box<Self>,
         /// Fallback value when expr is null.
-        default: Box<Expr>,
+        default: Box<Self>,
     },
 
     /// Range: `start..end` or `start..=end`.
     Range {
         /// Range start.
-        start: Box<Expr>,
+        start: Box<Self>,
         /// Range end.
-        end: Box<Expr>,
+        end: Box<Self>,
         /// Whether the end is inclusive (`..=`).
         inclusive: bool,
     },
@@ -724,9 +724,9 @@ pub enum Expr {
     /// Block expression: `{ let a = 1; let b = 2; a + b }`.
     Block {
         /// Local bindings: (name, optional type, value, is_mutable).
-        stmts: Vec<(String, Option<Type>, Expr, bool)>,
+        stmts: Vec<(String, Option<Type>, Self, bool)>,
         /// Final expression that produces the block's value.
-        result: Box<Expr>,
+        result: Box<Self>,
     },
 }
 
@@ -798,32 +798,32 @@ pub enum BinOp {
 
 impl BinOp {
     /// Returns the operator's source-level string representation.
-    pub fn as_str(&self) -> &'static str {
+    pub const fn as_str(&self) -> &'static str {
         match self {
-            BinOp::Add => "+",
-            BinOp::Sub => "-",
-            BinOp::Mul => "*",
-            BinOp::Div => "/",
-            BinOp::Mod => "%",
-            BinOp::Pow => "**",
-            BinOp::Eq => "==",
-            BinOp::NotEq => "!=",
-            BinOp::Lt => "<",
-            BinOp::Le => "<=",
-            BinOp::Gt => ">",
-            BinOp::Ge => ">=",
-            BinOp::In => "in",
-            BinOp::NotIn => "not in",
-            BinOp::Is => "is",
-            BinOp::And => "and",
-            BinOp::Or => "or",
-            BinOp::Xor => "xor",
-            BinOp::FollowedBy => "->",
-            BinOp::BitAnd => "&",
-            BinOp::BitOr => "|",
-            BinOp::BitXor => "^",
-            BinOp::Shl => "<<",
-            BinOp::Shr => ">>",
+            Self::Add => "+",
+            Self::Sub => "-",
+            Self::Mul => "*",
+            Self::Div => "/",
+            Self::Mod => "%",
+            Self::Pow => "**",
+            Self::Eq => "==",
+            Self::NotEq => "!=",
+            Self::Lt => "<",
+            Self::Le => "<=",
+            Self::Gt => ">",
+            Self::Ge => ">=",
+            Self::In => "in",
+            Self::NotIn => "not in",
+            Self::Is => "is",
+            Self::And => "and",
+            Self::Or => "or",
+            Self::Xor => "xor",
+            Self::FollowedBy => "->",
+            Self::BitAnd => "&",
+            Self::BitOr => "|",
+            Self::BitXor => "^",
+            Self::Shl => "<<",
+            Self::Shr => ">>",
         }
     }
 }
@@ -841,11 +841,11 @@ pub enum UnaryOp {
 
 impl UnaryOp {
     /// Returns the operator's source-level string representation.
-    pub fn as_str(&self) -> &'static str {
+    pub const fn as_str(&self) -> &'static str {
         match self {
-            UnaryOp::Neg => "-",
-            UnaryOp::Not => "not",
-            UnaryOp::BitNot => "~",
+            Self::Neg => "-",
+            Self::Not => "not",
+            Self::BitNot => "~",
         }
     }
 }
@@ -856,7 +856,7 @@ pub enum ConfigItem {
     /// Simple key-value pair.
     Value(String, ConfigValue),
     /// Nested configuration block.
-    Nested(String, Vec<ConfigItem>),
+    Nested(String, Vec<Self>),
 }
 
 /// Configuration value
@@ -875,43 +875,43 @@ pub enum ConfigValue {
     /// Identifier reference.
     Ident(String),
     /// Array of configuration values.
-    Array(Vec<ConfigValue>),
+    Array(Vec<Self>),
     /// Map of key-value pairs.
-    Map(Vec<(String, ConfigValue)>),
+    Map(Vec<(String, Self)>),
 }
 
 impl ConfigValue {
     /// Get value as string (works for Str and Ident)
     pub fn as_string(&self) -> Option<&str> {
         match self {
-            ConfigValue::Str(s) => Some(s),
-            ConfigValue::Ident(s) => Some(s),
+            Self::Str(s) => Some(s),
+            Self::Ident(s) => Some(s),
             _ => None,
         }
     }
 
     /// Get value as i64
-    pub fn as_int(&self) -> Option<i64> {
+    pub const fn as_int(&self) -> Option<i64> {
         match self {
-            ConfigValue::Int(i) => Some(*i),
-            ConfigValue::Float(f) => Some(*f as i64),
+            Self::Int(i) => Some(*i),
+            Self::Float(f) => Some(*f as i64),
             _ => None,
         }
     }
 
     /// Get value as f64
-    pub fn as_float(&self) -> Option<f64> {
+    pub const fn as_float(&self) -> Option<f64> {
         match self {
-            ConfigValue::Float(f) => Some(*f),
-            ConfigValue::Int(i) => Some(*i as f64),
+            Self::Float(f) => Some(*f),
+            Self::Int(i) => Some(*i as f64),
             _ => None,
         }
     }
 
     /// Get value as bool
-    pub fn as_bool(&self) -> Option<bool> {
+    pub const fn as_bool(&self) -> Option<bool> {
         match self {
-            ConfigValue::Bool(b) => Some(*b),
+            Self::Bool(b) => Some(*b),
             _ => None,
         }
     }

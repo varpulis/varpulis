@@ -54,7 +54,7 @@ impl PostgresCdcConfig {
     }
 
     /// Set the database port (default: 5432).
-    pub fn with_port(mut self, port: u16) -> Self {
+    pub const fn with_port(mut self, port: u16) -> Self {
         self.port = port;
         self
     }
@@ -98,11 +98,11 @@ pub enum CdcOperation {
 
 impl CdcOperation {
     /// Return the operation as a string (`"INSERT"`, `"UPDATE"`, or `"DELETE"`).
-    pub fn as_str(&self) -> &str {
+    pub const fn as_str(&self) -> &str {
         match self {
-            CdcOperation::Insert => "INSERT",
-            CdcOperation::Update => "UPDATE",
-            CdcOperation::Delete => "DELETE",
+            Self::Insert => "INSERT",
+            Self::Update => "UPDATE",
+            Self::Delete => "DELETE",
         }
     }
 }
@@ -120,7 +120,7 @@ pub fn cdc_event(
     operation: CdcOperation,
     fields: Vec<(String, varpulis_core::Value)>,
 ) -> Event {
-    let event_type = format!("{}.{}", table, operation);
+    let event_type = format!("{table}.{operation}");
     let mut event = Event::new(event_type.as_str());
     event
         .data

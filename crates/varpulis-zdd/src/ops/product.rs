@@ -41,13 +41,13 @@ impl Zdd {
     /// # Complexity
     /// O(|Z|) where |Z| is the number of nodes in the ZDD.
     /// This is much better than the naive O(2^n) for n elements.
-    pub fn product_with_optional(&self, var: u32) -> Zdd {
+    pub fn product_with_optional(&self, var: u32) -> Self {
         let mut table = self.table().clone();
         let mut cache: FxHashMap<ZddRef, ZddRef> = FxHashMap::default();
 
         let new_root = product_with_optional_rec(self.root(), var, &mut table, self, &mut cache);
 
-        Zdd::from_parts(new_root, table)
+        Self::from_parts(new_root, table)
     }
 
     /// Cartesian product of two families: {a ∪ b | a ∈ S₁, b ∈ S₂}
@@ -61,7 +61,7 @@ impl Zdd {
     /// let c = a.product(&b);                          // {∅, {0}, {1}, {0,1}}
     /// assert_eq!(c.count(), 4);
     /// ```
-    pub fn product(&self, other: &Zdd) -> Zdd {
+    pub fn product(&self, other: &Self) -> Self {
         let mut table = self.table().clone();
         let mut node_map: FxHashMap<u32, ZddRef> = FxHashMap::default();
 
@@ -78,7 +78,7 @@ impl Zdd {
             &mut cache,
         );
 
-        Zdd::from_parts(result_root, table)
+        Self::from_parts(result_root, table)
     }
 }
 

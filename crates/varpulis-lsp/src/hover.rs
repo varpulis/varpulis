@@ -52,7 +52,7 @@ fn get_word_at_position(text: &str, position: Position) -> Option<String> {
 }
 
 fn is_word_char(c: Option<char>) -> bool {
-    c.map(|c| c.is_alphanumeric() || c == '_').unwrap_or(false)
+    c.is_some_and(|c| c.is_alphanumeric() || c == '_')
 }
 
 /// Get documentation for a keyword, function, or type

@@ -202,10 +202,10 @@ fn test_context_config_debug_and_clone() {
         name: "test".to_string(),
         cores: Some(vec![5]),
     };
-    let debug_str = format!("{:?}", config);
+    let debug_str = format!("{config:?}");
     assert!(debug_str.contains("test"));
 
-    let cloned = config.clone();
+    let cloned = config;
     assert_eq!(cloned.name, "test");
     assert_eq!(cloned.cores, Some(vec![5]));
 }
@@ -234,7 +234,7 @@ fn test_checkpoint_barrier_clone_and_debug() {
     assert_eq!(cloned.checkpoint_id, 1);
     assert_eq!(cloned.timestamp_ms, 999);
 
-    let debug = format!("{:?}", barrier);
+    let debug = format!("{barrier:?}");
     assert!(debug.contains("checkpoint_id"));
 }
 
@@ -287,7 +287,7 @@ fn test_context_message_watermark_variant() {
 fn test_context_message_clone() {
     let event = make_event("Cloneable");
     let msg = ContextMessage::Event(event);
-    let cloned = msg.clone();
+    let cloned = msg;
     match cloned {
         ContextMessage::Event(e) => assert_eq!(&*e.event_type, "Cloneable"),
         _ => panic!("Expected Event variant"),
@@ -298,7 +298,7 @@ fn test_context_message_clone() {
 fn test_context_message_debug() {
     let event = make_event("Debug");
     let msg = ContextMessage::Event(event);
-    let debug = format!("{:?}", msg);
+    let debug = format!("{msg:?}");
     assert!(debug.contains("Event"));
 }
 

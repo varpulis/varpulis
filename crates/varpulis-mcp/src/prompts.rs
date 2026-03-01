@@ -87,7 +87,7 @@ pub fn get_prompt(
         "investigate_alert" => Ok(build_investigate_alert(args)),
         "create_fraud_detection" => Ok(build_create_fraud_detection(args)),
         "optimize_stream" => Ok(build_optimize_stream(args)),
-        _ => Err(format!("Unknown prompt: {}", name)),
+        _ => Err(format!("Unknown prompt: {name}")),
     }
 }
 

@@ -16,7 +16,7 @@ pub async fn run_demo(
 ) -> Result<()> {
     println!("Varpulis HVAC Building Demo");
     println!("================================");
-    println!("Duration: {} seconds", duration_secs);
+    println!("Duration: {duration_secs} seconds");
     println!(
         "Anomalies: {}",
         if anomalies { "enabled" } else { "disabled" }
@@ -26,7 +26,7 @@ pub async fn run_demo(
         if degradation { "enabled" } else { "disabled" }
     );
     if enable_metrics {
-        println!("Metrics: http://127.0.0.1:{}/metrics", metrics_port);
+        println!("Metrics: http://127.0.0.1:{metrics_port}/metrics");
     }
     println!();
 
@@ -49,13 +49,13 @@ pub async fn run_demo(
     let (output_tx, mut output_rx) = mpsc::channel::<Event>(100);
 
     // Create engine with a simple stream
-    let demo_program = r#"
+    let demo_program = r"
         stream TemperatureReadings = TemperatureReading
         stream HumidityReadings = HumidityReading
         stream HVACStatuses = HVACStatus
-    "#;
+    ";
 
-    let program = parse(demo_program).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
+    let program = parse(demo_program).map_err(|e| anyhow::anyhow!("Parse error: {e}"))?;
 
     // Create prometheus metrics if enabled
     let prom_metrics = enable_metrics.then(Metrics::new);
@@ -68,7 +68,7 @@ pub async fn run_demo(
 
     // Spawn metrics server if enabled
     if let Some(ref metrics) = prom_metrics {
-        let server = MetricsServer::new(metrics.clone(), format!("127.0.0.1:{}", metrics_port));
+        let server = MetricsServer::new(metrics.clone(), format!("127.0.0.1:{metrics_port}"));
         tokio::spawn(async move {
             if let Err(e) = server.run().await {
                 tracing::error!("Metrics server error: {}", e);
@@ -118,7 +118,7 @@ pub async fn run_demo(
                     last_report = std::time::Instant::now();
                 }
             }
-            _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+            () = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
                 // Timeout, continue loop
             }
         }

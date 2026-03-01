@@ -187,7 +187,7 @@ impl CheckpointCoordinator {
     }
 
     /// Whether a checkpoint is currently in progress (waiting for acks).
-    pub fn has_pending(&self) -> bool {
+    pub const fn has_pending(&self) -> bool {
         self.pending.is_some()
     }
 }
@@ -245,7 +245,7 @@ impl ContextMap {
     }
 
     /// Get all declared contexts
-    pub fn contexts(&self) -> &HashMap<String, ContextConfig> {
+    pub const fn contexts(&self) -> &HashMap<String, ContextConfig> {
         &self.contexts
     }
 
@@ -255,12 +255,12 @@ impl ContextMap {
     }
 
     /// Get all stream assignments
-    pub fn stream_assignments(&self) -> &HashMap<String, String> {
+    pub const fn stream_assignments(&self) -> &HashMap<String, String> {
         &self.stream_assignments
     }
 
     /// Get all cross-context emits
-    pub fn cross_context_emits(&self) -> &HashMap<(String, usize), String> {
+    pub const fn cross_context_emits(&self) -> &HashMap<(String, usize), String> {
         &self.cross_context_emits
     }
 }
@@ -357,7 +357,7 @@ pub struct ContextRuntime {
 impl ContextRuntime {
     /// Create a new context runtime
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub const fn new(
         name: String,
         engine: Engine,
         output_tx: mpsc::Sender<Event>,
@@ -568,7 +568,7 @@ impl EventTypeRouter {
         let tx = self.routes.get(&*event_type).unwrap_or(&self.default_tx);
         tx.send(ContextMessage::Event(event))
             .await
-            .map_err(|e| format!("Failed to send event type '{}': {}", event_type, e))
+            .map_err(|e| format!("Failed to send event type '{event_type}': {e}"))
     }
 
     /// Batch dispatch — non-blocking, returns errors for any events that could not be sent.
@@ -663,7 +663,7 @@ impl ContextOrchestrator {
         let context_names: Vec<String> = context_map.contexts().keys().cloned().collect();
         let checkpoint_coordinator = checkpoint_config.map(|(config, store)| {
             let manager = CheckpointManager::new(store, config)
-                .map_err(|e| format!("Failed to create checkpoint manager: {}", e))
+                .map_err(|e| format!("Failed to create checkpoint manager: {e}"))
                 .unwrap();
             CheckpointCoordinator::new(manager, context_names.clone())
         });
@@ -718,7 +718,7 @@ impl ContextOrchestrator {
         let default_tx = context_txs
             .get(&default_context)
             .cloned()
-            .ok_or_else(|| format!("No channel for default context '{}'", default_context))?;
+            .ok_or_else(|| format!("No channel for default context '{default_context}'"))?;
         let router = EventTypeRouter {
             routes: Arc::new(event_type_txs),
             default_tx,
@@ -736,7 +736,7 @@ impl ContextOrchestrator {
         for (ctx_name, config) in context_map.contexts() {
             let rx = context_rxs
                 .remove(ctx_name)
-                .ok_or_else(|| format!("No receiver for context {}", ctx_name))?;
+                .ok_or_else(|| format!("No receiver for context {ctx_name}"))?;
 
             let ctx_output_tx = output_tx.clone();
             let ctx_name_clone = ctx_name.clone();
@@ -757,7 +757,7 @@ impl ContextOrchestrator {
             let ctx_recovery = recovery_states.get(ctx_name).cloned();
 
             let handle = std::thread::Builder::new()
-                .name(format!("varpulis-ctx-{}", ctx_name))
+                .name(format!("varpulis-ctx-{ctx_name}"))
                 .spawn(move || {
                     // Set CPU affinity if specified
                     if let Some(ref core_ids) = cores {
@@ -822,7 +822,7 @@ impl ContextOrchestrator {
                         ctx_runtime.run().await;
                     });
                 })
-                .map_err(|e| format!("Failed to spawn context thread: {}", e))?;
+                .map_err(|e| format!("Failed to spawn context thread: {e}"))?;
 
             handles.push(handle);
         }
@@ -925,7 +925,7 @@ impl ContextOrchestrator {
     }
 
     /// Get the ingress routing table (for testing/debugging)
-    pub fn ingress_routing(&self) -> &FxHashMap<String, String> {
+    pub const fn ingress_routing(&self) -> &FxHashMap<String, String> {
         &self.ingress_routing
     }
 

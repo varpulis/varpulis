@@ -22,19 +22,18 @@ const SCENARIOS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/sc
 
 /// Load a VPL program from a scenario file
 fn load_vpl(filename: &str) -> varpulis_core::ast::Program {
-    let path = format!("{}/{}", SCENARIOS_DIR, filename);
+    let path = format!("{SCENARIOS_DIR}/{filename}");
     let source =
-        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("Failed to read {}: {}", path, e));
-    parse(&source).unwrap_or_else(|e| panic!("Failed to parse {}: {:?}", path, e))
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("Failed to read {path}: {e}"));
+    parse(&source).unwrap_or_else(|e| panic!("Failed to parse {path}: {e:?}"))
 }
 
 /// Load and parse an event file from the scenarios directory
 fn load_events(filename: &str) -> Vec<varpulis_runtime::event_file::TimedEvent> {
-    let path = format!("{}/{}", SCENARIOS_DIR, filename);
+    let path = format!("{SCENARIOS_DIR}/{filename}");
     let source =
-        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("Failed to read {}: {}", path, e));
-    EventFileParser::parse(&source)
-        .unwrap_or_else(|e| panic!("Failed to parse events {}: {}", path, e))
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("Failed to read {path}: {e}"));
+    EventFileParser::parse(&source).unwrap_or_else(|e| panic!("Failed to parse events {path}: {e}"))
 }
 
 /// Helper to create a test engine and output receiver
@@ -502,8 +501,7 @@ async fn test_kill_restart_checkpoint_pruning() {
     assert_eq!(
         checkpoint_ids.len(),
         2,
-        "Should have pruned to 2 checkpoints, got {:?}",
-        checkpoint_ids
+        "Should have pruned to 2 checkpoints, got {checkpoint_ids:?}"
     );
 }
 
@@ -590,8 +588,7 @@ async fn test_reject_future_checkpoint_version() {
     let err = result.unwrap_err();
     assert!(
         err.to_string().contains("newer than supported"),
-        "Expected version mismatch error, got: {}",
-        err
+        "Expected version mismatch error, got: {err}"
     );
 }
 

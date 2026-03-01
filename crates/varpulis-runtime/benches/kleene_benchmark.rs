@@ -47,7 +47,7 @@ fn generate_rising_price_events(count: usize) -> Vec<Event> {
     for i in 0..count {
         // Simulate price movements: mostly up with occasional resets
         if i % 20 == 0 {
-            price = 100.0 + (i as f64 * 0.01); // Reset for new sequence
+            price = (i as f64).mul_add(0.01, 100.0); // Reset for new sequence
         } else if i % 5 == 4 {
             price -= 5.0; // End sequence (lower price)
         } else {
@@ -139,7 +139,7 @@ fn bench_kleene_simple(c: &mut Criterion) {
                     }
 
                     matches
-                })
+                });
             },
         );
     }
@@ -195,7 +195,7 @@ fn bench_kleene_rising_sequence(c: &mut Criterion) {
                     }
 
                     matches
-                })
+                });
             },
         );
     }
@@ -221,7 +221,7 @@ fn bench_kleene_exponential(c: &mut Criterion) {
 
         group.throughput(Throughput::Elements(total_events as u64));
 
-        let label = format!("{}middles_2^{}_combos", middles, middles);
+        let label = format!("{middles}middles_2^{middles}_combos");
         group.bench_with_input(
             BenchmarkId::new(&label, potential_combinations),
             &events,
@@ -257,7 +257,7 @@ fn bench_kleene_exponential(c: &mut Criterion) {
                     }
 
                     matches
-                })
+                });
             },
         );
     }
@@ -311,7 +311,7 @@ fn bench_kleene_star(c: &mut Criterion) {
                     }
 
                     matches
-                })
+                });
             },
         );
     }
@@ -364,7 +364,7 @@ fn bench_all_pattern(c: &mut Criterion) {
                     }
 
                     matches
-                })
+                });
             },
         );
     }
@@ -419,7 +419,7 @@ fn bench_max_runs_impact(c: &mut Criterion) {
                     }
 
                     matches
-                })
+                });
             },
         );
     }
@@ -441,7 +441,7 @@ fn bench_memory_efficiency(c: &mut Criterion) {
         let events = generate_kleene_stress_events(5, middles);
         let potential_combinations: u128 = (1u128 << middles) - 1;
 
-        let label = format!("2^{}_combinations", middles);
+        let label = format!("2^{middles}_combinations");
         group.bench_function(&label, |b| {
             b.iter(|| {
                 let pattern = SasePattern::Seq(vec![
@@ -475,7 +475,7 @@ fn bench_memory_efficiency(c: &mut Criterion) {
 
                 // ZDD allows tracking 2^25 = 33M combinations efficiently
                 black_box((matches, potential_combinations))
-            })
+            });
         });
     }
 

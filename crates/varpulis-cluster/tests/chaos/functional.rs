@@ -128,7 +128,7 @@ async fn test_failover_preserves_state() {
                     }),
                 )
                 .await;
-            assert!(resp.is_ok(), "Pre-failover injection {} should succeed", i);
+            assert!(resp.is_ok(), "Pre-failover injection {i} should succeed");
         }
 
         // Kill the hosting worker.
@@ -148,7 +148,7 @@ async fn test_failover_preserves_state() {
                     }),
                 )
                 .await;
-            assert!(resp.is_ok(), "Post-failover injection {} should succeed", i);
+            assert!(resp.is_ok(), "Post-failover injection {i} should succeed");
         }
 
         // Verify the pipeline is operational on a new worker.
@@ -311,11 +311,8 @@ async fn test_rebalance_on_join() {
         if migrations > 0 {
             assert!(
                 new_worker_pipelines > 0,
-                "New worker {} should have at least 1 pipeline after rebalance \
-                 (migrations={}), got: {:?}",
-                new_worker_id,
-                migrations,
-                worker_pipeline_count
+                "New worker {new_worker_id} should have at least 1 pipeline after rebalance \
+                 (migrations={migrations}), got: {worker_pipeline_count:?}"
             );
         }
 
@@ -373,8 +370,7 @@ async fn test_replica_deployment() {
         assert_eq!(
             replica_workers.len(),
             2,
-            "Should have 2 replicas (p1#0 and p1#1), got: {:?}",
-            replica_workers
+            "Should have 2 replicas (p1#0 and p1#1), got: {replica_workers:?}"
         );
 
         // Verify they are on different workers (round-robin should distribute
@@ -382,8 +378,7 @@ async fn test_replica_deployment() {
         let workers: Vec<&str> = replica_workers.iter().map(|(_, w)| w.as_str()).collect();
         assert_ne!(
             workers[0], workers[1],
-            "Replicas should be on different workers: {:?}",
-            replica_workers
+            "Replicas should be on different workers: {replica_workers:?}"
         );
 
         // Inject an event -- should be routed to one of the replicas.
@@ -457,9 +452,8 @@ async fn test_replica_hash_partitioning() {
                     if let Some(prev) = route_map.get(&key) {
                         assert_eq!(
                             prev, routed_to,
-                            "Events with source='{}' should always route to same replica \
-                             (round {})",
-                            source, round
+                            "Events with source='{source}' should always route to same replica \
+                             (round {round})"
                         );
                     } else {
                         route_map.insert(key, routed_to.to_string());
@@ -474,8 +468,7 @@ async fn test_replica_hash_partitioning() {
         assert!(
             unique_routes.len() >= 2,
             "Hash partitioning should distribute across at least 2 replicas, \
-             got: {:?}",
-            route_map
+             got: {route_map:?}"
         );
 
         cluster.shutdown().await;

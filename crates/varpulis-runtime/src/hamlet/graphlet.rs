@@ -59,7 +59,7 @@ impl GraphletNode {
 
     /// Compute the actual count given a snapshot value
     #[inline]
-    pub fn count(&self, snapshot_value: u64) -> u64 {
+    pub const fn count(&self, snapshot_value: u64) -> u64 {
         self.snapshot_coeff
             .saturating_mul(snapshot_value)
             .saturating_add(self.local_sum)
@@ -123,7 +123,7 @@ impl Graphlet {
     }
 
     /// Mark graphlet as processed
-    pub fn mark_processed(&mut self) {
+    pub const fn mark_processed(&mut self) {
         self.status = GraphletStatus::Processed;
     }
 
@@ -141,13 +141,13 @@ impl Graphlet {
 
     /// Number of events in the graphlet
     #[inline]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.nodes.len()
     }
 
     /// Check if graphlet is empty
     #[inline]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }
 

@@ -7,17 +7,14 @@ use crate::greta::GretaAggregate;
 use varpulis_core::ast::{Expr, FollowedByClause, StreamSource, TrendAggItem};
 
 /// Extracted Kleene info: (position_index, event_type_name, is_match_all)
-pub(crate) struct KleeneInfo {
+pub struct KleeneInfo {
     pub position: usize,
     pub event_type: String,
 }
 
 /// Extract all event types from a stream source + followed-by chain.
 /// Returns them in sequence order.
-pub(crate) fn extract_event_types(
-    source: &StreamSource,
-    followed_by: &[FollowedByClause],
-) -> Vec<String> {
+pub fn extract_event_types(source: &StreamSource, followed_by: &[FollowedByClause]) -> Vec<String> {
     let mut types = Vec::new();
 
     // Get the initial event type from the source
@@ -47,7 +44,7 @@ pub(crate) fn extract_event_types(
 
 /// Extract Kleene (match_all) positions from followed-by clauses.
 /// A clause with `match_all: true` (the `all` keyword) indicates Kleene+.
-pub(crate) fn extract_kleene_info(
+pub fn extract_kleene_info(
     source: &StreamSource,
     followed_by: &[FollowedByClause],
 ) -> Vec<KleeneInfo> {
@@ -76,7 +73,7 @@ pub(crate) fn extract_kleene_info(
 }
 
 /// Extract within duration from ops (in milliseconds).
-pub(crate) fn extract_within_ms(within_expr: Option<&Expr>) -> u64 {
+pub fn extract_within_ms(within_expr: Option<&Expr>) -> u64 {
     match within_expr {
         Some(Expr::Duration(ns)) => ns / 1_000_000,
         _ => 60_000, // Default 60 seconds
@@ -84,7 +81,7 @@ pub(crate) fn extract_within_ms(within_expr: Option<&Expr>) -> u64 {
 }
 
 /// Convert a TrendAggItem to a GretaAggregate, using the type_indices map.
-pub(crate) fn trend_item_to_greta(
+pub fn trend_item_to_greta(
     item: &TrendAggItem,
     type_indices: &std::collections::HashMap<String, u16>,
 ) -> GretaAggregate {

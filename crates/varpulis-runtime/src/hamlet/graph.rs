@@ -194,13 +194,13 @@ impl HamletGraph {
 
     /// Get the snapshot manager
     #[inline]
-    pub fn snapshots(&self) -> &SnapshotManager {
+    pub const fn snapshots(&self) -> &SnapshotManager {
         &self.snapshots
     }
 
     /// Get mutable snapshot manager
     #[inline]
-    pub fn snapshots_mut(&mut self) -> &mut SnapshotManager {
+    pub const fn snapshots_mut(&mut self) -> &mut SnapshotManager {
         &mut self.snapshots
     }
 

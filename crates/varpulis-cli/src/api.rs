@@ -248,7 +248,7 @@ where
             .headers
             .get("x-api-key")
             .and_then(|v| v.to_str().ok())
-            .map(|s| ApiKey(s.to_string()))
+            .map(|s| Self(s.to_string()))
             .ok_or_else(|| {
                 (
                     StatusCode::UNAUTHORIZED,
@@ -276,7 +276,7 @@ where
             .headers
             .get("x-admin-key")
             .and_then(|v| v.to_str().ok())
-            .map(|s| AdminKey(s.to_string()))
+            .map(|s| Self(s.to_string()))
             .ok_or_else(|| {
                 (
                     StatusCode::UNAUTHORIZED,
@@ -967,7 +967,7 @@ async fn handle_logs(
                 return error_response(
                     StatusCode::NOT_FOUND,
                     "pipeline_not_found",
-                    &format!("Pipeline {} not found", pipeline_id),
+                    &format!("Pipeline {pipeline_id} not found"),
                 )
             }
         };
@@ -995,7 +995,7 @@ async fn handle_logs(
                 Some((Ok::<_, Infallible>(sse), rx))
             }
             Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                let msg = format!("{{\"warning\":\"skipped {} events\"}}", n);
+                let msg = format!("{{\"warning\":\"skipped {n} events\"}}");
                 let sse = axum::response::sse::Event::default()
                     .event("warning")
                     .data(msg);
@@ -1111,7 +1111,7 @@ async fn handle_dlq_get(
         Err(e) => error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "dlq_read_error",
-            &format!("Failed to read DLQ: {}", e),
+            &format!("Failed to read DLQ: {e}"),
         ),
     }
 }
@@ -1174,7 +1174,7 @@ async fn handle_dlq_replay(
                 return error_response(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "dlq_read_error",
-                    &format!("Failed to read DLQ: {}", e),
+                    &format!("Failed to read DLQ: {e}"),
                 )
             }
         }
@@ -1259,7 +1259,7 @@ async fn handle_dlq_clear(
             Err(e) => error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "dlq_clear_error",
-                &format!("Failed to clear DLQ: {}", e),
+                &format!("Failed to clear DLQ: {e}"),
             ),
         },
         None => {
@@ -1741,7 +1741,7 @@ mod tests {
 
         let resp = test_request()
             .method("POST")
-            .path(&format!("/api/v1/pipelines/{}/events", pipeline_id))
+            .path(&format!("/api/v1/pipelines/{pipeline_id}/events"))
             .header("x-api-key", "test-key-123")
             .json(&InjectEventRequest {
                 event_type: "SensorReading".into(),
@@ -2017,7 +2017,7 @@ mod tests {
 
         let resp = test_request()
             .method("GET")
-            .path(&format!("/api/v1/pipelines/{}", pipeline_id))
+            .path(&format!("/api/v1/pipelines/{pipeline_id}"))
             .header("x-api-key", "test-key-123")
             .reply(&routes)
             .await;
@@ -2053,7 +2053,7 @@ mod tests {
 
         let resp = test_request()
             .method("DELETE")
-            .path(&format!("/api/v1/pipelines/{}", pipeline_id))
+            .path(&format!("/api/v1/pipelines/{pipeline_id}"))
             .header("x-api-key", "test-key-123")
             .reply(&routes)
             .await;
@@ -2100,7 +2100,7 @@ mod tests {
 
         let resp = test_request()
             .method("POST")
-            .path(&format!("/api/v1/pipelines/{}/events-batch", pipeline_id))
+            .path(&format!("/api/v1/pipelines/{pipeline_id}/events-batch"))
             .header("x-api-key", "test-key-123")
             .json(&InjectBatchRequest {
                 events: vec![
@@ -2168,7 +2168,7 @@ mod tests {
 
         let resp = test_request()
             .method("POST")
-            .path(&format!("/api/v1/pipelines/{}/checkpoint", pipeline_id))
+            .path(&format!("/api/v1/pipelines/{pipeline_id}/checkpoint"))
             .header("x-api-key", "test-key-123")
             .reply(&routes)
             .await;
@@ -2202,7 +2202,7 @@ mod tests {
         // First checkpoint
         let cp_resp = test_request()
             .method("POST")
-            .path(&format!("/api/v1/pipelines/{}/checkpoint", pipeline_id))
+            .path(&format!("/api/v1/pipelines/{pipeline_id}/checkpoint"))
             .header("x-api-key", "test-key-123")
             .reply(&routes)
             .await;
@@ -2211,7 +2211,7 @@ mod tests {
         // Then restore
         let resp = test_request()
             .method("POST")
-            .path(&format!("/api/v1/pipelines/{}/restore", pipeline_id))
+            .path(&format!("/api/v1/pipelines/{pipeline_id}/restore"))
             .header("x-api-key", "test-key-123")
             .json(&RestoreRequest {
                 checkpoint: cp.checkpoint,
@@ -2266,7 +2266,7 @@ mod tests {
 
         let resp = test_request()
             .method("GET")
-            .path(&format!("/api/v1/pipelines/{}/metrics", pipeline_id))
+            .path(&format!("/api/v1/pipelines/{pipeline_id}/metrics"))
             .header("x-api-key", "test-key-123")
             .reply(&routes)
             .await;
@@ -2303,7 +2303,7 @@ mod tests {
 
         let resp = test_request()
             .method("POST")
-            .path(&format!("/api/v1/pipelines/{}/reload", pipeline_id))
+            .path(&format!("/api/v1/pipelines/{pipeline_id}/reload"))
             .header("x-api-key", "test-key-123")
             .json(&ReloadPipelineRequest {
                 source: "stream B = Events .where(y > 10)".into(),
@@ -2324,7 +2324,7 @@ mod tests {
 
         let resp = test_request()
             .method("POST")
-            .path(&format!("/api/v1/pipelines/{}/reload", pipeline_id))
+            .path(&format!("/api/v1/pipelines/{pipeline_id}/reload"))
             .header("x-api-key", "test-key-123")
             .json(&ReloadPipelineRequest {
                 source: "not valid {{{".into(),
@@ -2380,7 +2380,7 @@ mod tests {
 
         let resp = test_request()
             .method("GET")
-            .path(&format!("/api/v1/pipelines/{}/logs", pipeline_id))
+            .path(&format!("/api/v1/pipelines/{pipeline_id}/logs"))
             .header("x-api-key", "wrong-key")
             .reply(&routes)
             .await;
@@ -2645,7 +2645,7 @@ mod tests {
 
         let resp = test_request()
             .method("POST")
-            .path(&format!("/api/v1/pipelines/{}/events", pid))
+            .path(&format!("/api/v1/pipelines/{pid}/events"))
             .header("x-api-key", "bp-key-123")
             .json(&InjectEventRequest {
                 event_type: "SensorReading".into(),
@@ -2693,7 +2693,7 @@ mod tests {
 
         let resp = test_request()
             .method("POST")
-            .path(&format!("/api/v1/pipelines/{}/events-batch", pid))
+            .path(&format!("/api/v1/pipelines/{pid}/events-batch"))
             .header("x-api-key", "bp-batch-key")
             .json(&InjectBatchRequest {
                 events: vec![InjectEventRequest {

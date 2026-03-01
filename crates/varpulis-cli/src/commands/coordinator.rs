@@ -190,12 +190,9 @@ pub async fn run_coordinator(
     let http_protocol = if tls_enabled { "https" } else { "http" };
     println!("Varpulis Coordinator");
     println!("=======================");
-    println!(
-        "API:       {}://{}:{}/api/v1/cluster/",
-        http_protocol, bind, port
-    );
+    println!("API:       {http_protocol}://{bind}:{port}/api/v1/cluster/");
     if let Some(ref nurl) = nats_url {
-        println!("NATS:      {}", nurl);
+        println!("NATS:      {nurl}");
     }
     println!(
         "Auth:      {}",
@@ -217,10 +214,7 @@ pub async fn run_coordinator(
             }
         );
     }
-    println!(
-        "Heartbeat: {}s interval, {}s timeout",
-        heartbeat_interval_secs, heartbeat_timeout_secs
-    );
+    println!("Heartbeat: {heartbeat_interval_secs}s interval, {heartbeat_timeout_secs}s timeout");
     if let Some(ref sp) = scaling_policy {
         println!(
             "Scaling:   min={}, max={}, up={:.1}, down={:.1}",
@@ -229,15 +223,12 @@ pub async fn run_coordinator(
     }
     if _ha {
         let id = _coordinator_id.as_deref().unwrap_or("unknown");
-        println!("HA:        enabled (id={})", id);
+        println!("HA:        enabled (id={id})");
     }
 
     // Build rate limiter for API routes
     let coordinator_rate_limiter = if rate_limit_rps > 0 {
-        println!(
-            "Rate limit: {} req/s per client (mutating endpoints)",
-            rate_limit_rps
-        );
+        println!("Rate limit: {rate_limit_rps} req/s per client (mutating endpoints)");
         Some(Arc::new(varpulis_cluster::rate_limit::RateLimiter::new(
             varpulis_cluster::rate_limit::RateLimitConfig::new(rate_limit_rps),
         )))
@@ -352,7 +343,7 @@ pub async fn run_coordinator(
                     .map(varpulis_core::security::SecretString::new),
                 provider,
             });
-            println!("AI Chat:   {} ({})", llm_model, llm_provider);
+            println!("AI Chat:   {llm_model} ({llm_provider})");
         }
 
         // Attach Raft handle to coordinator
@@ -517,7 +508,7 @@ pub async fn run_coordinator(
 
     let bind_addr: std::net::IpAddr = bind
         .parse()
-        .map_err(|e| anyhow::anyhow!("Invalid bind address '{}': {}", bind, e))?;
+        .map_err(|e| anyhow::anyhow!("Invalid bind address '{bind}': {e}"))?;
     info!("Coordinator listening on {}:{}", bind, port);
 
     // Macro to start axum with or without TLS (avoids duplicating the TLS branching
