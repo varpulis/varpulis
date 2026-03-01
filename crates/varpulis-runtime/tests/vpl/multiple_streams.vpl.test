@@ -1,0 +1,20 @@
+# Test: multiple streams in one program
+# Both streams process independently.
+
+=== VPL ===
+stream Hot = Sensor
+    .where(temp > 50)
+    .emit(sensor: id, temp: temp)
+
+stream Cold = Sensor
+    .where(temp < 10)
+    .emit(sensor: id, temp: temp)
+
+=== INPUT ===
+Sensor { id: "S1", temp: 75 }
+Sensor { id: "S2", temp: 5 }
+Sensor { id: "S3", temp: 25 }
+Sensor { id: "S4", temp: 3 }
+
+=== EXPECT_COUNT ===
+3
