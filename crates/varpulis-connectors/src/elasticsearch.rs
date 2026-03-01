@@ -57,7 +57,7 @@ inventory::submit! { &ElasticsearchFactory as &dyn ConnectorFactory }
 ///     .with_username("elastic")
 ///     .with_password("changeme");
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct ElasticsearchConfig {
     /// Elasticsearch URL(s), comma-separated
     pub urls: String,

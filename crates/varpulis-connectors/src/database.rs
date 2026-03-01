@@ -58,7 +58,7 @@ fn validate_table_name(table: &str) -> Result<(), ConnectorError> {
 }
 
 /// Database configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct DatabaseConfig {
     /// Connection string (zeroized on drop — may contain credentials)
     pub connection_string: SecretString,

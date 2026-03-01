@@ -55,7 +55,7 @@ impl ConnectorFactory for RedisFactory {
 inventory::submit! { &RedisFactory as &dyn ConnectorFactory }
 
 /// Redis configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct RedisConfig {
     /// Redis server URL (e.g., `"redis://localhost:6379"`).
     pub url: String,
@@ -377,7 +377,7 @@ impl SinkConnector for RedisSink {
 // ============================================================================
 
 /// Configuration for Redis Streams (XADD/XREADGROUP)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct RedisStreamConfig {
     /// Redis server URL.
     pub url: String,

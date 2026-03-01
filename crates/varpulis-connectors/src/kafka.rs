@@ -112,7 +112,7 @@ inventory::submit! { &KafkaFactory as &dyn ConnectorFactory }
 // =============================================================================
 
 /// Kafka configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct KafkaConfig {
     /// Kafka broker addresses (comma-separated).
     pub brokers: String,

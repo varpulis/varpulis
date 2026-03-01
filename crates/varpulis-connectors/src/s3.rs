@@ -51,7 +51,17 @@ impl ConnectorFactory for S3Factory {
 inventory::submit! { &S3Factory as &dyn ConnectorFactory }
 
 /// S3 output format
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 pub enum S3OutputFormat {
     /// JSON Lines (one JSON object per line)
     #[default]
@@ -74,7 +84,7 @@ pub enum S3OutputFormat {
 ///     .with_file_rotation_size(100 * 1024 * 1024)  // 100MB
 ///     .with_file_rotation_seconds(3600);  // 1 hour
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct S3Config {
     /// S3 bucket name
     pub bucket: String,

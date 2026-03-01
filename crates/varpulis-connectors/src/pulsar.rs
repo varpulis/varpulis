@@ -45,7 +45,7 @@ impl ConnectorFactory for PulsarFactory {
 inventory::submit! { &PulsarFactory as &dyn ConnectorFactory }
 
 /// Pulsar configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct PulsarConfig {
     /// Pulsar service URL (e.g., `"pulsar://localhost:6650"`).
     pub service_url: String,
