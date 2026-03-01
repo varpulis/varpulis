@@ -248,10 +248,13 @@ fn parse_line_batch_skipped() {
 }
 
 #[test]
-fn parse_line_timing_skipped() {
-    assert!(EventFileParser::parse_line("@5s Event { x: 1 }")
+fn parse_line_timing_parsed() {
+    // @Ns timing prefix is stripped and event is parsed in streaming mode
+    let event = EventFileParser::parse_line("@5s Event { x: 1 }")
         .unwrap()
-        .is_none());
+        .expect("should parse event with timing prefix");
+    assert_eq!(event.event_type.as_ref(), "Event");
+    assert_eq!(event.get("x"), Some(&varpulis_core::Value::Int(1)));
 }
 
 #[test]

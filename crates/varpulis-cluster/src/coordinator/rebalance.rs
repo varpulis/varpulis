@@ -36,7 +36,7 @@ impl Coordinator {
                 };
                 // If the worker's assigned_pipelines already lists this pipeline,
                 // the placement is healthy -- nothing to do.
-                if worker.assigned_pipelines.contains(&pname.to_string()) {
+                if worker.assigned_pipelines.contains(&pname.clone()) {
                     continue;
                 }
                 // Resolve source: strip replica suffix to find pipeline spec

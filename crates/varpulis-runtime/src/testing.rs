@@ -85,6 +85,7 @@ impl SimulatedScheduler {
         for timer in &mut self.timers {
             while timer.next_fire <= target_time {
                 let mut event = Event::new(timer.event_type.clone());
+                event.timestamp = timer.next_fire;
                 event.data.insert(
                     "timestamp".into(),
                     varpulis_core::Value::Int(timer.next_fire.timestamp_millis()),

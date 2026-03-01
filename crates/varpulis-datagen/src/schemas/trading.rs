@@ -43,22 +43,18 @@ impl EventSchema for TradingSchema {
         let exchange = EXCHANGES[self.rng.gen_range(0..EXCHANGES.len())];
         let price = self.prices.get(symbol).copied().unwrap_or(150.0);
 
-        let is_anomaly;
-        let new_price;
-
         // ~2% chance of anomaly (flash crash / spike)
-        if self.rng.gen_bool(0.02) {
-            is_anomaly = true;
+        let (is_anomaly, new_price) = if self.rng.gen_bool(0.02) {
             let crash_pct = self.rng.gen_range(0.03..0.10);
-            new_price = if self.rng.gen_bool(0.5) {
+            let p = if self.rng.gen_bool(0.5) {
                 price * (1.0 - crash_pct)
             } else {
                 price * (1.0 + crash_pct)
             };
+            (true, p)
         } else {
-            is_anomaly = false;
-            new_price = price * (1.0 + self.rng.gen_range(-0.002..0.002));
-        }
+            (false, price * (1.0 + self.rng.gen_range(-0.002..0.002)))
+        };
 
         self.prices.insert(symbol.to_string(), new_price);
         let rounded_price = (new_price * 100.0).round() / 100.0;

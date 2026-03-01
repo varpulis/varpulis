@@ -247,13 +247,7 @@ impl ZddTraversal {
     pub fn count_with_var(&mut self, zdd: &Zdd, var: ZddVar) -> u64 {
         // Check if the ZDD contains this variable
         // This is a simplified implementation
-        if zdd.contains(&[var]) {
-            // At least one set contains the variable
-            // For accurate count, we'd need ZDD traversal
-            1
-        } else {
-            0
-        }
+        u64::from(zdd.contains(&[var]))
     }
 
     /// Clear memoization cache

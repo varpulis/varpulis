@@ -196,7 +196,7 @@ pub fn extract_from_query(query: &str) -> AuthResult<String> {
 /// Basic URL decoding for API keys
 fn url_decode(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
+    let mut chars = s.chars();
 
     while let Some(c) = chars.next() {
         if c == '%' {
