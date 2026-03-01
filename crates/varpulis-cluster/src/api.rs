@@ -634,12 +634,12 @@ async fn handle_register_worker(
                             )));
                         }
                     }
-                } else {
-                    drop(coord);
-                    return cluster_error_response(ClusterError::NotLeader(
-                        "no leader elected yet".into(),
-                    ));
                 }
+
+                drop(coord);
+                return cluster_error_response(ClusterError::NotLeader(
+                    "no leader elected yet".into(),
+                ));
             }
         }
     }
