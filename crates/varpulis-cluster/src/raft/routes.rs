@@ -190,7 +190,7 @@ async fn handle_init(
         .collect();
 
     match state.raft.initialize(members).await {
-        Ok(_) => Json(serde_json::json!({"status": "ok"})).into_response(),
+        Ok(()) => Json(serde_json::json!({"status": "ok"})).into_response(),
         Err(e) => {
             Json(serde_json::json!({"status": "error", "message": e.to_string()})).into_response()
         }
