@@ -2456,7 +2456,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
 
         let resp = tenant_error_response(TenantError::EngineError(
-            varpulis_runtime::EngineError::Other("boom".into()),
+            varpulis_runtime::EngineError::Pipeline("boom".into()),
         ));
         assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
 
