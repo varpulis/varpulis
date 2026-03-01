@@ -305,6 +305,7 @@ mod pulsar_impl {
     }
 
     #[async_trait]
+    #[allow(clippy::large_futures)] // Pulsar library produces large internal futures
     impl SinkConnector for PulsarSink {
         fn name(&self) -> &str {
             &self.name

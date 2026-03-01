@@ -107,6 +107,7 @@ impl RegionState {
 }
 
 /// Federation coordinator that manages cross-region state.
+#[derive(Debug)]
 pub struct FederationCoordinator {
     config: FederationConfig,
     regions: HashMap<String, RegionState>,

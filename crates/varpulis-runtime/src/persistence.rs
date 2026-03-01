@@ -888,6 +888,7 @@ pub(crate) fn ser_to_value(sv: SerializableValue) -> varpulis_core::Value {
 /// let store = EncryptedStateStore::new(inner, key);
 /// ```
 #[cfg(feature = "encryption")]
+#[derive(Debug)]
 pub struct EncryptedStateStore<S: StateStore> {
     inner: S,
     key: [u8; 32],
