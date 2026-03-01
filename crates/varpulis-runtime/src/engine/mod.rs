@@ -481,7 +481,9 @@ impl Engine {
                         &self.variables,
                     )
                     .ok_or_else(|| {
-                        format!("Failed to evaluate initial value for variable '{name}'")
+                        error::EngineError::Compilation(format!(
+                            "Failed to evaluate initial value for variable '{name}'"
+                        ))
                     })?;
 
                     info!(
@@ -506,7 +508,11 @@ impl Engine {
                         &self.functions,
                         &self.variables,
                     )
-                    .ok_or_else(|| format!("Failed to evaluate assignment value for '{name}'"))?;
+                    .ok_or_else(|| {
+                        error::EngineError::Compilation(format!(
+                            "Failed to evaluate assignment value for '{name}'"
+                        ))
+                    })?;
 
                     if self.variables.contains_key(name) && !self.mutable_vars.contains(name) {
                         return Err(error::EngineError::Compilation(format!(
@@ -949,7 +955,7 @@ impl Engine {
     }
 
     pub fn explain(&self, program: &Program) -> Result<String, error::EngineError> {
-        let logical = planner::logical_plan(program)?;
+        let logical = planner::logical_plan(program).map_err(error::EngineError::Compilation)?;
         let optimized = varpulis_parser::optimize_plan(logical);
         Ok(optimized.explain())
     }

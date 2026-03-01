@@ -341,8 +341,12 @@ impl Engine {
             });
             if let Some(config) = enrich_op {
                 if let Some(conn_config) = self.connectors.get(&config.connector_name) {
-                    let provider = crate::enrichment::create_provider(conn_config)
-                        .map_err(|e| format!("Failed to create enrichment provider: {e}"))?;
+                    let provider =
+                        crate::enrichment::create_provider(conn_config).map_err(|e| {
+                            super::error::EngineError::Compilation(format!(
+                                "Failed to create enrichment provider: {e}"
+                            ))
+                        })?;
                     let cache_ttl = config.cache_ttl_ns.map_or(
                         std::time::Duration::from_secs(300),
                         std::time::Duration::from_nanos,
@@ -400,7 +404,7 @@ impl Engine {
             Option<crate::hamlet::HamletAggregator>,
             Option<crate::pst::PatternMarkovChain>,
         ),
-        String,
+        super::error::EngineError,
     > {
         let mut runtime_ops = Vec::new();
         let mut sequence_event_types: Vec<String> = Vec::new();
@@ -591,7 +595,11 @@ impl Engine {
                             spec.outputs.clone(),
                             gpu_config,
                         )
-                        .map_err(|e| format!("Failed to load ONNX model: {}", e))?;
+                        .map_err(|e| {
+                            super::error::EngineError::Compilation(format!(
+                                "Failed to load ONNX model: {e}"
+                            ))
+                        })?;
                         runtime_ops.push(RuntimeOp::Score(super::types::ScoreConfig {
                             model: std::sync::Arc::new(model),
                             input_fields: spec.inputs.clone(),
@@ -601,11 +609,11 @@ impl Engine {
                         continue;
                     }
                     #[cfg(not(feature = "onnx"))]
-                    return Err(format!(
+                    return Err(super::error::EngineError::Compilation(format!(
                         ".score() operator requires the 'onnx' feature. \
                          Rebuild with: cargo build --features onnx (model: {})",
                         spec.model_path
-                    ));
+                    )));
                 }
                 StreamOp::Context(_) => {
                     // Context assignment is metadata, not a runtime operation.
@@ -925,10 +933,9 @@ impl Engine {
                     let max = match expr {
                         varpulis_core::ast::Expr::Int(n) => *n as usize,
                         _ => {
-                            return Err(
-                                ".limit() requires an integer argument (e.g., .limit(100))"
-                                    .to_string(),
-                            );
+                            return Err(super::error::EngineError::Compilation(
+                                ".limit() requires an integer argument (e.g., .limit(100))".into(),
+                            ));
                         }
                     };
                     runtime_ops.push(RuntimeOp::Limit(LimitState { max, count: 0 }));
@@ -938,34 +945,33 @@ impl Engine {
                     runtime_ops.push(RuntimeOp::Limit(LimitState { max: 1, count: 0 }));
                 }
                 StreamOp::Map(_) => {
-                    return Err(
+                    return Err(super::error::EngineError::Compilation(
                         ".map() is not supported — use .emit() for field projection or .process() for arbitrary transformation"
-                            .to_string(),
-                    );
+                            .into(),
+                    ));
                 }
                 StreamOp::Tap(_) => {
-                    return Err(
+                    return Err(super::error::EngineError::Compilation(
                         ".tap() is not yet implemented — use .print() or .log() for debugging"
-                            .to_string(),
-                    );
+                            .into(),
+                    ));
                 }
                 StreamOp::Collect => {
-                    return Err(
+                    return Err(super::error::EngineError::Compilation(
                         ".collect() is not yet implemented — use .window() with .aggregate() for batching"
-                            .to_string(),
-                    );
+                            .into(),
+                    ));
                 }
                 StreamOp::OnError(_) => {
-                    return Err(
-                        ".on_error() is not yet implemented — errors are logged via tracing"
-                            .to_string(),
-                    );
+                    return Err(super::error::EngineError::Compilation(
+                        ".on_error() is not yet implemented — errors are logged via tracing".into(),
+                    ));
                 }
                 StreamOp::Fork(_) | StreamOp::Any(_) | StreamOp::All => {
-                    return Err(
+                    return Err(super::error::EngineError::Compilation(
                         ".fork()/.any()/.all() are not yet implemented — use multiple streams for parallel processing"
-                            .to_string(),
-                    );
+                            .into(),
+                    ));
                 }
                 StreamOp::Concurrent(ref args) => {
                     let mut workers = std::thread::available_parallelism()
@@ -996,7 +1002,11 @@ impl Engine {
                         rayon::ThreadPoolBuilder::new()
                             .num_threads(workers)
                             .build()
-                            .map_err(|e| format!("Failed to create thread pool: {e}"))?,
+                            .map_err(|e| {
+                                super::error::EngineError::Compilation(format!(
+                                    "Failed to create thread pool: {e}"
+                                ))
+                            })?,
                     );
 
                     runtime_ops.push(RuntimeOp::Concurrent(ConcurrentConfig {
@@ -1006,22 +1016,22 @@ impl Engine {
                     }));
                 }
                 StreamOp::OrderBy(_) => {
-                    return Err(
+                    return Err(super::error::EngineError::Compilation(
                         ".order_by() is not yet implemented — use .window() with .aggregate() for ordered output"
-                            .to_string(),
-                    );
+                            .into(),
+                    ));
                 }
                 StreamOp::ToExpr(_) => {
-                    return Err(
+                    return Err(super::error::EngineError::Compilation(
                         ".to(expr) is not supported — use .to(ConnectorName, topic: \"...\") instead"
-                            .to_string(),
-                    );
+                            .into(),
+                    ));
                 }
                 other => {
-                    return Err(format!(
+                    return Err(super::error::EngineError::Compilation(format!(
                         "unsupported stream operation: {}",
                         stream_op_name(other)
-                    ));
+                    )));
                 }
             }
         }
@@ -1285,10 +1295,9 @@ impl Engine {
         // === Build PST Forecaster if .forecast() specified ===
         if let Some(spec) = forecast_spec {
             if sase_engine.is_none() {
-                return Err(
-                    ".forecast() requires a sequence pattern (use -> followed-by operators)"
-                        .to_string(),
-                );
+                return Err(super::error::EngineError::Compilation(
+                    ".forecast() requires a sequence pattern (use -> followed-by operators)".into(),
+                ));
             }
 
             // Resolve mode preset first, then allow explicit params to override
