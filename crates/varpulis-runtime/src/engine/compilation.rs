@@ -35,7 +35,7 @@ impl Engine {
         name: &str,
         source: &StreamSource,
         ops: &[StreamOp],
-    ) -> Result<(), String> {
+    ) -> Result<(), super::error::EngineError> {
         // Extract context assignments from stream ops
         for (emit_idx, op) in ops.iter().enumerate() {
             match op {

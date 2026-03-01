@@ -20,7 +20,7 @@ members = [
 [workspace.package]
 version = "0.4.1"
 edition = "2021"
-rust-version = "1.88"
+rust-version = "1.93"
 authors = ["Varpulis Contributors"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/varpulis/varpulis"

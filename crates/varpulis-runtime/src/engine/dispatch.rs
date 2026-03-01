@@ -22,21 +22,24 @@ use super::Engine;
 impl Engine {
     /// Process an incoming event
     #[tracing::instrument(level = "trace", skip(self))]
-    pub async fn process(&mut self, event: Event) -> Result<(), String> {
+    pub async fn process(&mut self, event: Event) -> Result<(), super::error::EngineError> {
         self.events_processed += 1;
         self.process_inner(Arc::new(event)).await
     }
 
     /// Process a pre-wrapped SharedEvent (zero-copy path for context pipelines)
     #[tracing::instrument(level = "trace", skip(self))]
-    pub async fn process_shared(&mut self, event: SharedEvent) -> Result<(), String> {
+    pub async fn process_shared(
+        &mut self,
+        event: SharedEvent,
+    ) -> Result<(), super::error::EngineError> {
         self.events_processed += 1;
         self.process_inner(event).await
     }
 
     /// Internal processing logic shared by process() and process_shared()
     #[tracing::instrument(level = "trace", skip(self))]
-    async fn process_inner(&mut self, event: SharedEvent) -> Result<(), String> {
+    async fn process_inner(&mut self, event: SharedEvent) -> Result<(), super::error::EngineError> {
         // Record incoming event in Prometheus
         if let Some(ref m) = self.metrics {
             m.record_event(&event.event_type);
@@ -210,7 +213,10 @@ impl Engine {
     /// - Collects output events and sends in batches
     /// - Amortizes async overhead
     #[tracing::instrument(level = "trace", skip(self))]
-    pub async fn process_batch(&mut self, events: Vec<Event>) -> Result<(), String> {
+    pub async fn process_batch(
+        &mut self,
+        events: Vec<Event>,
+    ) -> Result<(), super::error::EngineError> {
         if events.is_empty() {
             return Ok(());
         }
@@ -323,7 +329,10 @@ impl Engine {
     /// Synchronous batch processing for maximum throughput.
     /// Use this when no .to() sink operations are in the pipeline (e.g., benchmark mode).
     /// Avoids async runtime overhead completely.
-    pub fn process_batch_sync(&mut self, events: Vec<Event>) -> Result<(), String> {
+    pub fn process_batch_sync(
+        &mut self,
+        events: Vec<Event>,
+    ) -> Result<(), super::error::EngineError> {
         if events.is_empty() {
             return Ok(());
         }
@@ -421,7 +430,7 @@ impl Engine {
         event: SharedEvent,
         functions: &FxHashMap<String, UserFunction>,
         skip_output_rename: bool,
-    ) -> Result<StreamProcessResult, String> {
+    ) -> Result<StreamProcessResult, super::error::EngineError> {
         // For merge sources, check if the event passes the appropriate filter
         if let RuntimeSource::Merge(ref sources) = stream.source {
             let mut passes_filter = false;
@@ -478,7 +487,10 @@ impl Engine {
 
     /// Process a batch of pre-wrapped SharedEvents (zero-copy path for context pipelines)
     #[tracing::instrument(level = "trace", skip(self))]
-    pub async fn process_batch_shared(&mut self, events: Vec<SharedEvent>) -> Result<(), String> {
+    pub async fn process_batch_shared(
+        &mut self,
+        events: Vec<SharedEvent>,
+    ) -> Result<(), super::error::EngineError> {
         if events.is_empty() {
             return Ok(());
         }
@@ -585,7 +597,7 @@ impl Engine {
         event: SharedEvent,
         functions: &FxHashMap<String, UserFunction>,
         sinks: &FxHashMap<String, Arc<dyn crate::sink::Sink>>,
-    ) -> Result<StreamProcessResult, String> {
+    ) -> Result<StreamProcessResult, super::error::EngineError> {
         // For merge sources, check if the event passes the appropriate filter
         if let RuntimeSource::Merge(ref sources) = stream.source {
             let mut passes_filter = false;
@@ -705,7 +717,7 @@ impl Engine {
         correlated_event: SharedEvent,
         functions: &FxHashMap<String, UserFunction>,
         sinks: &FxHashMap<String, Arc<dyn crate::sink::Sink>>,
-    ) -> Result<StreamProcessResult, String> {
+    ) -> Result<StreamProcessResult, super::error::EngineError> {
         // Delegate to unified pipeline with join-specific skip flags
         pipeline::execute_pipeline(
             stream,
@@ -725,7 +737,7 @@ impl Engine {
     /// Flush all expired session windows and process the resulting events
     /// through the remaining pipeline stages (aggregate, having, select, emit, etc.).
     #[tracing::instrument(skip(self))]
-    pub async fn flush_expired_sessions(&mut self) -> Result<(), String> {
+    pub async fn flush_expired_sessions(&mut self) -> Result<(), super::error::EngineError> {
         let now = chrono::Utc::now();
         let stream_names: Vec<String> = self.streams.keys().cloned().collect();
 
@@ -800,7 +812,7 @@ impl Engine {
         window_idx: usize,
         functions: &FxHashMap<String, UserFunction>,
         sinks: &FxHashMap<String, Arc<dyn crate::sink::Sink>>,
-    ) -> Result<StreamProcessResult, String> {
+    ) -> Result<StreamProcessResult, super::error::EngineError> {
         // Delegate to unified pipeline starting after the window with post-window skip flags
         pipeline::execute_pipeline(
             stream,
@@ -818,7 +830,7 @@ impl Engine {
     pub(super) async fn apply_watermark_to_windows(
         &mut self,
         wm: DateTime<Utc>,
-    ) -> Result<(), String> {
+    ) -> Result<(), super::error::EngineError> {
         let stream_names: Vec<String> = self.streams.keys().cloned().collect();
 
         for stream_name in stream_names {

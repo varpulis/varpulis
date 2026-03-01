@@ -205,43 +205,29 @@ pub struct PartialMatchCheckpoint {
 }
 
 /// Error type for state store operations
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum StoreError {
     /// I/O or storage error
+    #[error("I/O error: {0}")]
     IoError(String),
     /// Serialization error
+    #[error("Serialization error: {0}")]
     SerializationError(String),
     /// Key not found
+    #[error("Key not found: {0}")]
     NotFound(String),
     /// Store not initialized
+    #[error("Store not initialized")]
     NotInitialized,
     /// Checkpoint version is newer than this binary supports
+    #[error(
+        "Checkpoint version {checkpoint_version} is newer than supported version {current_version}"
+    )]
     IncompatibleVersion {
         checkpoint_version: u32,
         current_version: u32,
     },
 }
-
-impl std::fmt::Display for StoreError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            StoreError::IoError(s) => write!(f, "I/O error: {}", s),
-            StoreError::SerializationError(s) => write!(f, "Serialization error: {}", s),
-            StoreError::NotFound(s) => write!(f, "Key not found: {}", s),
-            StoreError::NotInitialized => write!(f, "Store not initialized"),
-            StoreError::IncompatibleVersion {
-                checkpoint_version,
-                current_version,
-            } => write!(
-                f,
-                "Checkpoint version {} is newer than supported version {}",
-                checkpoint_version, current_version
-            ),
-        }
-    }
-}
-
-impl std::error::Error for StoreError {}
 
 /// Trait for state storage backends
 pub trait StateStore: Send + Sync {

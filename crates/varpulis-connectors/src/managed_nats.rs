@@ -41,6 +41,7 @@ mod nats_managed_impl {
     }
 
     impl ManagedNatsConnector {
+        /// Creates a new managed NATS connector.
         pub fn new(name: &str, config: NatsConfig) -> Self {
             Self {
                 connector_name: name.to_string(),

@@ -65,23 +65,12 @@ pub enum BackpressureStrategy {
 /// Error returned when backpressure strategy is Error and the worker pool queue is full.
 ///
 /// Distinct from [`crate::sase::BackpressureError`] which covers SASE run-level backpressure.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("Pool '{}' queue full (depth: {})", pool_name, queue_depth)]
 pub struct PoolBackpressureError {
     pub pool_name: String,
     pub queue_depth: usize,
 }
-
-impl std::fmt::Display for PoolBackpressureError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Pool '{}' queue full (depth: {})",
-            self.pool_name, self.queue_depth
-        )
-    }
-}
-
-impl std::error::Error for PoolBackpressureError {}
 
 /// Metrics for a worker pool
 #[derive(Debug, Clone, Default)]

@@ -158,6 +158,7 @@ mod nats_impl {
     }
 
     impl NatsSource {
+        /// Creates a new NATS source connector.
         pub fn new(name: &str, config: NatsConfig) -> Self {
             Self {
                 name: name.to_string(),
@@ -273,6 +274,7 @@ mod nats_impl {
     }
 
     impl NatsSink {
+        /// Creates a new NATS sink connector.
         pub fn new(name: &str, config: NatsConfig) -> Self {
             Self {
                 name: name.to_string(),

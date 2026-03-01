@@ -64,7 +64,7 @@ pub async fn run_demo(
     if let Some(ref m) = prom_metrics {
         engine = engine.with_metrics(m.clone());
     }
-    engine.load(&program).map_err(|e| anyhow::anyhow!(e))?;
+    engine.load(&program)?;
 
     // Spawn metrics server if enabled
     if let Some(ref metrics) = prom_metrics {

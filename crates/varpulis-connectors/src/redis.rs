@@ -99,6 +99,7 @@ mod redis_impl {
     }
 
     impl RedisSource {
+        /// Creates a new Redis pub/sub source connector.
         pub fn new(name: &str, config: RedisConfig) -> Self {
             Self {
                 name: name.to_string(),
@@ -199,6 +200,7 @@ mod redis_impl {
     }
 
     impl RedisSink {
+        /// Creates a new Redis pub/sub sink connector.
         pub async fn new(name: &str, config: RedisConfig) -> Result<Self, ConnectorError> {
             let client = redis::Client::open(config.url.as_str())
                 .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
@@ -444,6 +446,7 @@ mod redis_stream_impl {
     }
 
     impl RedisStreamSource {
+        /// Creates a new Redis Streams source connector.
         pub fn new(name: &str, config: RedisStreamConfig) -> Self {
             Self {
                 name: name.to_string(),
@@ -655,6 +658,7 @@ mod redis_stream_impl {
     }
 
     impl RedisStreamSink {
+        /// Creates a new Redis Streams sink connector.
         pub async fn new(name: &str, config: RedisStreamConfig) -> Result<Self, ConnectorError> {
             let client = redis::Client::open(config.url.as_str())
                 .map_err(|e| ConnectorError::ConnectionFailed(e.to_string()))?;
@@ -722,6 +726,7 @@ mod redis_stream_impl {
     }
 
     impl RedisStreamSinkStub {
+        /// Creates a new lazy-initialized Redis Streams sink stub.
         pub fn new(name: &str, config: RedisStreamConfig) -> Self {
             Self {
                 name: name.to_string(),

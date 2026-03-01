@@ -396,8 +396,12 @@ fn tenant_error_display_variants() {
         ),
         (TenantError::QuotaExceeded("max".into()), "quota exceeded"),
         (TenantError::RateLimitExceeded, "rate limit"),
-        (TenantError::ParseError("bad syntax".into()), "parse error"),
-        (TenantError::EngineError("boom".into()), "engine error"),
+        (
+            TenantError::EngineError(varpulis_runtime::EngineError::Compilation(
+                "bad syntax".into(),
+            )),
+            "engine error",
+        ),
         (TenantError::AlreadyExists("dup".into()), "already exists"),
     ];
 

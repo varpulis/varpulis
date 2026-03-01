@@ -306,6 +306,7 @@ mod kafka_impl {
     }
 
     impl KafkaSourceImpl {
+        /// Creates a new Kafka source connector.
         pub fn new(name: &str, config: KafkaConfig) -> Self {
             Self {
                 name: name.to_string(),
@@ -457,6 +458,7 @@ mod kafka_impl {
     }
 
     impl KafkaSinkImpl {
+        /// Creates a new Kafka sink connector.
         pub fn new(name: &str, config: KafkaConfig) -> Result<Self, ConnectorError> {
             let transactional = config.transactional_id.is_some();
 
