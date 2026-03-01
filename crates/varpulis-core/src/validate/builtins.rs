@@ -158,27 +158,39 @@ pub fn is_aggregate_function(name: &str) -> bool {
 /// Type of a connector parameter value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParamType {
+    /// String parameter.
     Str,
+    /// Integer parameter.
     Int,
+    /// Boolean parameter.
     Bool,
+    /// Array of strings parameter.
     StrArray,
 }
 
 /// Whether a parameter is valid for source (.from()), sink (.to()), or both.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParamContext {
+    /// Valid only for `.from()` (source) operations.
     Source,
+    /// Valid only for `.to()` (sink) operations.
     Sink,
+    /// Valid for both source and sink operations.
     Both,
 }
 
 /// Schema definition for a single connector parameter.
 #[derive(Debug, Clone)]
 pub struct ConnectorParamDef {
+    /// Parameter name.
     pub name: &'static str,
+    /// Expected value type.
     pub param_type: ParamType,
+    /// Whether this parameter is required.
     pub required: bool,
+    /// Human-readable description for diagnostics.
     pub description: &'static str,
+    /// Whether valid for source, sink, or both contexts.
     pub context: ParamContext,
 }
 

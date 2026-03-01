@@ -105,12 +105,9 @@
 
 pub mod aggregation;
 pub mod backpressure;
-pub mod circuit_breaker;
 pub mod codec;
 pub mod columnar;
-pub mod connector;
 pub mod context;
-pub mod converter;
 pub mod dead_letter;
 pub mod engine;
 pub mod enrichment;
@@ -120,11 +117,11 @@ pub mod greta;
 pub mod hamlet;
 pub mod health;
 pub mod join;
-pub mod limits;
 pub mod metrics;
 pub mod persistence;
 pub mod pst;
-pub mod sase;
+pub use varpulis_sase as sase;
+pub mod sase_persistence;
 pub mod scoring;
 pub mod sequence;
 pub mod simd;
@@ -140,6 +137,12 @@ pub mod window;
 pub mod worker_pool;
 pub mod zdd_unified;
 
+// Re-export from varpulis-connectors for backwards compatibility
+pub use varpulis_connectors as connector;
+pub use varpulis_connectors::circuit_breaker;
+pub use varpulis_connectors::converter;
+pub use varpulis_connectors::limits;
+
 pub use context::{
     CheckpointAck, CheckpointBarrier, CheckpointCoordinator, ContextConfig, ContextMap,
     ContextMessage, ContextOrchestrator, ContextRuntime, DispatchError, EventTypeRouter,
@@ -148,9 +151,10 @@ pub use engine::{Engine, ReloadReport, SourceBinding};
 pub use event::{Event, SharedEvent};
 pub use event_file::StreamingEventReader;
 pub use metrics::Metrics;
-pub use sink::{ConsoleSink, FileSink, HttpSink, MultiSink, Sink};
+pub use sink::{ConsoleSink, FileSink, HttpSink, MultiSink};
 pub use stream::Stream;
 pub use timer::{spawn_timer, TimerManager};
+pub use varpulis_connectors::{Sink, SinkError};
 pub use window::{
     CountWindow, DelayBuffer, IncrementalAggregates, IncrementalSlidingWindow,
     PartitionedDelayBuffer, PartitionedPreviousValueTracker, PartitionedSessionWindow,

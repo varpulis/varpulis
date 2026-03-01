@@ -11,16 +11,22 @@ pub const MAX_LIMIT: usize = 1000;
 /// Query parameters for paginated list endpoints.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct PaginationParams {
+    /// Maximum number of items to return (clamped to [`MAX_LIMIT`]).
     pub limit: Option<usize>,
+    /// Number of items to skip from the start.
     pub offset: Option<usize>,
 }
 
 /// Pagination metadata included in responses.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaginationMeta {
+    /// Total number of items before pagination.
     pub total: usize,
+    /// Effective limit used for this page.
     pub limit: usize,
+    /// Offset from the start.
     pub offset: usize,
+    /// Whether more items exist beyond this page.
     pub has_more: bool,
 }
 

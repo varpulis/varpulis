@@ -51,10 +51,6 @@ mod inner {
         pub batch_size: usize,
     }
 
-    // SAFETY: Session is Send+Sync, wrapped in Arc<Mutex> for mutable run()
-    unsafe impl Send for OnnxModel {}
-    unsafe impl Sync for OnnxModel {}
-
     impl OnnxModel {
         /// Load an ONNX model from a file path with optional GPU configuration.
         pub fn load(

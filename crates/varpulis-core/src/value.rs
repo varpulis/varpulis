@@ -17,7 +17,7 @@ pub type FxIndexMap<K, V> = IndexMap<K, V, FxBuildHasher>;
 ///
 /// The Array, Map, and Str variants are optimized for memory efficiency:
 /// - Array and Map are boxed to reduce overall enum size
-/// - Str uses Box<str> instead of String (16 bytes vs 24 bytes)
+/// - Str uses `Box<str>` instead of String (16 bytes vs 24 bytes)
 ///   since string values are rarely mutated after creation
 ///
 /// The Map variant uses FxBuildHasher for faster key lookups since map keys
@@ -29,15 +29,24 @@ pub type FxIndexMap<K, V> = IndexMap<K, V, FxBuildHasher>;
 #[serde(untagged)]
 #[derive(Default)]
 pub enum Value {
+    /// Null value (default).
     #[default]
     Null,
+    /// Boolean value.
     Bool(bool),
+    /// 64-bit signed integer.
     Int(i64),
+    /// 64-bit floating-point number.
     Float(f64),
-    Str(Box<str>),  // Box<str> saves 8 bytes vs String (no capacity field)
-    Timestamp(i64), // nanoseconds since epoch
-    Duration(u64),  // nanoseconds
+    /// Heap-allocated string (saves 8 bytes vs `String`).
+    Str(Box<str>),
+    /// Timestamp as nanoseconds since epoch.
+    Timestamp(i64),
+    /// Duration in nanoseconds.
+    Duration(u64),
+    /// Boxed array of values.
     Array(Box<Vec<Value>>),
+    /// Boxed ordered map with `Arc<str>` keys.
     Map(Box<FxIndexMap<Arc<str>, Value>>),
 }
 
@@ -79,13 +88,13 @@ impl Value {
         Value::Array(Box::new(v))
     }
 
-    /// Creates a new Map value from an IndexMap with Arc<str> keys.
+    /// Creates a new Map value from an IndexMap with `Arc<str>` keys.
     #[inline]
     pub fn map(m: FxIndexMap<Arc<str>, Value>) -> Self {
         Value::Map(Box::new(m))
     }
 
-    /// Creates a new Map value from an IndexMap with String keys (converts to Arc<str>).
+    /// Creates a new Map value from an IndexMap with String keys (converts to `Arc<str>`).
     #[inline]
     pub fn map_from_strings(m: FxIndexMap<String, Value>) -> Self {
         let converted: FxIndexMap<Arc<str>, Value> =
@@ -93,6 +102,7 @@ impl Value {
         Value::Map(Box::new(converted))
     }
 
+    /// Returns the type name as a static string (e.g., `"int"`, `"str"`).
     pub fn type_name(&self) -> &'static str {
         match self {
             Value::Null => "null",
@@ -107,6 +117,7 @@ impl Value {
         }
     }
 
+    /// Returns whether this value is truthy (non-null, non-zero, non-empty).
     pub fn is_truthy(&self) -> bool {
         match self {
             Value::Null => false,
@@ -126,6 +137,7 @@ impl Value {
         Value::Str(s.as_ref().into())
     }
 
+    /// Extracts an integer value, coercing floats by truncation.
     pub fn as_int(&self) -> Option<i64> {
         match self {
             Value::Int(n) => Some(*n),
@@ -134,6 +146,7 @@ impl Value {
         }
     }
 
+    /// Extracts a float value, coercing integers by widening.
     pub fn as_float(&self) -> Option<f64> {
         match self {
             Value::Float(n) => Some(*n),
@@ -142,6 +155,7 @@ impl Value {
         }
     }
 
+    /// Extracts a string slice if this value is a `Str`.
     pub fn as_str(&self) -> Option<&str> {
         match self {
             Value::Str(s) => Some(s),
@@ -149,6 +163,7 @@ impl Value {
         }
     }
 
+    /// Extracts a boolean if this value is a `Bool`.
     pub fn as_bool(&self) -> Option<bool> {
         match self {
             Value::Bool(b) => Some(*b),
@@ -156,6 +171,7 @@ impl Value {
         }
     }
 
+    /// Looks up a key in a Map value, returns `None` for non-Map values.
     pub fn get(&self, key: &str) -> Option<&Value> {
         match self {
             Value::Map(m) => m.get(key),
@@ -163,6 +179,7 @@ impl Value {
         }
     }
 
+    /// Accesses an element by index in an Array value, returns `None` for non-Array values.
     pub fn get_index(&self, idx: usize) -> Option<&Value> {
         match self {
             Value::Array(a) => a.get(idx),

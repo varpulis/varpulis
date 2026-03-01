@@ -12,7 +12,9 @@ pub enum Envelope<A: Actor> {
     Message(Box<dyn std::any::Any + Send>),
     /// A request that expects a reply via the oneshot sender.
     Ask {
+        /// The type-erased request message.
         message: Box<dyn std::any::Any + Send>,
+        /// Channel to send the reply back to the caller.
         reply_tx: oneshot::Sender<Box<dyn std::any::Any + Send>>,
     },
     /// Internal: observe the actor's current state.
@@ -124,12 +126,16 @@ impl<A: Actor> MailboxSender<A> {
 /// Errors that can occur when interacting with a mailbox.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum MailboxError {
+    /// The target actor has stopped and its mailbox channel is closed.
     #[error("actor has stopped")]
     ActorStopped,
+    /// The mailbox is full; the sender should apply backpressure.
     #[error("mailbox is full (backpressure)")]
     Full,
+    /// The actor dropped the reply channel without sending a response.
     #[error("reply was dropped before being sent")]
     ReplyDropped,
+    /// The reply could not be downcast to the expected type.
     #[error("reply type mismatch")]
     TypeMismatch,
 }

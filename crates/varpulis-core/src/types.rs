@@ -41,14 +41,17 @@ pub enum Type {
 }
 
 impl Type {
+    /// Returns true if this type is `Int` or `Float`.
     pub fn is_numeric(&self) -> bool {
         matches!(self, Type::Int | Type::Float)
     }
 
+    /// Returns true if this is an `Optional` type.
     pub fn is_optional(&self) -> bool {
         matches!(self, Type::Optional(_))
     }
 
+    /// Returns the inner type for `Array`, `Optional`, or `Stream` types.
     pub fn inner_type(&self) -> Option<&Type> {
         match self {
             Type::Array(t) | Type::Optional(t) | Type::Stream(t) => Some(t),

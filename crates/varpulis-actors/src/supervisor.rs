@@ -25,9 +25,13 @@ pub enum RestartPolicy {
 /// Metrics tracked by the supervisor.
 #[derive(Debug, Clone, Serialize)]
 pub struct SupervisorMetrics {
+    /// Total number of times the supervised actor has been restarted.
     pub restart_count: u64,
+    /// Number of restarts caused by actor panics.
     pub panic_count: u64,
+    /// Seconds elapsed since the supervisor was created.
     pub uptime_secs: u64,
+    /// The reason for the most recent restart, if any.
     pub last_restart_reason: Option<String>,
 }
 
