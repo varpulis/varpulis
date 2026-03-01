@@ -28,6 +28,14 @@ pub struct ZddIterator<'a> {
     stack: Vec<(ZddRef, Vec<u32>, u8)>,
 }
 
+impl std::fmt::Debug for ZddIterator<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ZddIterator")
+            .field("stack_depth", &self.stack.len())
+            .finish_non_exhaustive()
+    }
+}
+
 impl<'a> ZddIterator<'a> {
     pub(crate) fn new(zdd: &'a Zdd) -> Self {
         let stack = if zdd.is_empty() {

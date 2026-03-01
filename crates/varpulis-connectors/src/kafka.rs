@@ -163,6 +163,7 @@ impl KafkaConfig {
 // =============================================================================
 
 /// Kafka source connector (stub implementation)
+#[derive(Debug)]
 pub struct KafkaSource {
     name: String,
     config: KafkaConfig,
@@ -225,6 +226,7 @@ impl SourceConnector for KafkaSource {
 // =============================================================================
 
 /// Kafka sink connector (stub implementation)
+#[derive(Debug)]
 pub struct KafkaSink {
     name: String,
     config: KafkaConfig,

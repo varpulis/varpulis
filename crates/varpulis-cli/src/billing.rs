@@ -110,6 +110,7 @@ impl std::str::FromStr for Tier {
 // ---------------------------------------------------------------------------
 
 /// In-memory buffer for event counts, flushed to DB periodically.
+#[derive(Debug)]
 pub struct UsageTracker {
     buffer: HashMap<Uuid, i64>,
 }
@@ -145,6 +146,7 @@ impl UsageTracker {
 // State
 // ---------------------------------------------------------------------------
 
+#[derive(Debug)]
 pub struct BillingState {
     pub config: BillingConfig,
     pub usage: RwLock<UsageTracker>,

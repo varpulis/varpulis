@@ -486,6 +486,12 @@ pub struct Lexer<'source> {
     eof_emitted: bool,
 }
 
+impl std::fmt::Debug for Lexer<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Lexer").finish_non_exhaustive()
+    }
+}
+
 impl<'source> Lexer<'source> {
     /// Create a new lexer over the given source string.
     pub fn new(source: &'source str) -> Self {

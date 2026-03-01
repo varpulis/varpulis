@@ -263,7 +263,7 @@ pub fn auth_middleware(config: Arc<AuthConfig>) -> impl tower::Layer<axum::routi
 }
 
 /// Authentication state that can carry optional OAuth state.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct AuthState {
     pub config: Arc<AuthConfig>,
     pub oauth_state: Option<crate::oauth::SharedOAuthState>,

@@ -46,10 +46,12 @@ const MAX_VPL_LENGTH: usize = 50_000;
 pub type SharedPlayground = Arc<RwLock<PlaygroundState>>;
 
 /// State for the playground backend.
+#[derive(Debug)]
 pub struct PlaygroundState {
     sessions: HashMap<String, PlaygroundSession>,
 }
 
+#[derive(Debug)]
 struct PlaygroundSession {
     last_active: Instant,
 }

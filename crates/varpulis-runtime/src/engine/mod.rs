@@ -50,6 +50,7 @@ use varpulis_core::Value;
 pub use types::NamedPattern;
 
 /// Output channel type enumeration for zero-copy or owned event sending
+#[derive(Debug)]
 pub(super) enum OutputChannel {
     /// Legacy channel that requires cloning (for backwards compatibility)
     Owned(mpsc::Sender<Event>),
@@ -111,6 +112,22 @@ pub struct Engine {
     pub(super) physical_plan: Option<physical_plan::PhysicalPlan>,
     /// Registry for native Rust UDFs (scalar + aggregate)
     pub(super) udf_registry: UdfRegistry,
+}
+
+impl std::fmt::Debug for Engine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Engine")
+            .field("streams", &self.streams.keys().collect::<Vec<_>>())
+            .field("functions", &self.functions.keys().collect::<Vec<_>>())
+            .field("patterns", &self.patterns.keys().collect::<Vec<_>>())
+            .field("configs", &self.configs.keys().collect::<Vec<_>>())
+            .field("connectors", &self.connectors.keys().collect::<Vec<_>>())
+            .field("events_processed", &self.events_processed)
+            .field("output_events_emitted", &self.output_events_emitted)
+            .field("context_map", &self.context_map)
+            .field("context_name", &self.context_name)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Engine {

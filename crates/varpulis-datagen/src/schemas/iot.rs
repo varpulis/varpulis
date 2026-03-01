@@ -9,12 +9,14 @@ use rand::prelude::*;
 use serde_json::json;
 use std::collections::HashMap;
 
+#[derive(Debug)]
 pub struct IotSchema {
     rng: StdRng,
     sensors: Vec<SensorState>,
     event_count: u64,
 }
 
+#[derive(Debug)]
 struct SensorState {
     id: String,
     zone: String,

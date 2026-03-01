@@ -13,6 +13,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 
 /// Builder for constructing a [`Topology`] from engine components.
+#[derive(Debug)]
 pub struct TopologyBuilder {
     /// Stream definitions indexed by name
     streams: Vec<(String, StreamInfo)>,
@@ -20,12 +21,14 @@ pub struct TopologyBuilder {
     routes: Vec<(String, Vec<String>)>,
 }
 
+#[derive(Debug)]
 struct StreamInfo {
     source: SourceKind,
     operation_count: usize,
     operation_summary: String,
 }
 
+#[derive(Debug)]
 enum SourceKind {
     EventType(String),
     Stream(String),

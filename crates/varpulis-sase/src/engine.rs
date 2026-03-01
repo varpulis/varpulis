@@ -87,6 +87,31 @@ pub struct SaseEngine {
     cleanup_interval: Duration,
 }
 
+impl std::fmt::Debug for SaseEngine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SaseEngine")
+            .field("nfa", &self.nfa)
+            .field("runs", &self.runs.len())
+            .field("max_runs", &self.max_runs)
+            .field("strategy", &self.strategy)
+            .field("partition_by", &self.partition_by)
+            .field("partitioned_runs", &self.partitioned_runs.len())
+            .field("global_negations", &self.global_negations)
+            .field("time_semantics", &self.time_semantics)
+            .field("watermark", &self.watermark)
+            .field("max_out_of_orderness", &self.max_out_of_orderness)
+            .field("backpressure", &self.backpressure)
+            .field("total_runs_dropped", &self.total_runs_dropped)
+            .field("total_runs_evicted", &self.total_runs_evicted)
+            .field("total_runs_created", &self.total_runs_created)
+            .field("total_runs_completed", &self.total_runs_completed)
+            .field("instrumentation_enabled", &self.instrumentation_enabled)
+            .field("max_kleene_events", &self.max_kleene_events)
+            .field("max_enumeration_results", &self.max_enumeration_results)
+            .finish_non_exhaustive()
+    }
+}
+
 impl SaseEngine {
     /// Create a new engine that matches the given pattern.
     pub fn new(pattern: SasePattern) -> Self {

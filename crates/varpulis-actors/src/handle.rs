@@ -32,6 +32,14 @@ pub struct ActorHandle<A: Actor> {
     exit_rx: watch::Receiver<Option<ActorExitStatus>>,
 }
 
+impl<A: Actor> std::fmt::Debug for ActorHandle<A> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ActorHandle")
+            .field("name", &self.name)
+            .finish_non_exhaustive()
+    }
+}
+
 impl<A: Actor> Clone for ActorHandle<A> {
     fn clone(&self) -> Self {
         Self {

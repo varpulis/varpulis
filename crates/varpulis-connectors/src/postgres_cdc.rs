@@ -143,6 +143,7 @@ pub fn cdc_event(
 ///
 /// When the `cdc` feature is not enabled, this returns `ConnectorError::NotAvailable`.
 /// Enable with: `cargo build --features cdc`
+#[derive(Debug)]
 pub struct PostgresCdcSource {
     name: String,
     #[allow(dead_code)]

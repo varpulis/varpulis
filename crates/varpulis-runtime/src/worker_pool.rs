@@ -120,6 +120,7 @@ pub enum WorkerState {
 }
 
 /// Internal worker data shared between pool and worker tasks
+#[derive(Debug)]
 struct WorkerData {
     id: usize,
     state: AtomicUsize, // WorkerState as usize
@@ -160,6 +161,7 @@ struct PartitionedEvent {
 }
 
 /// A pool of workers for parallel event processing
+#[derive(Debug)]
 pub struct WorkerPool {
     config: WorkerPoolConfig,
     /// Sender to dispatch events to workers

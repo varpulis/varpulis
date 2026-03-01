@@ -71,6 +71,7 @@ inventory::submit! { &HttpFactory as &dyn ConnectorFactory }
 // =============================================================================
 
 /// HTTP sink that sends events via HTTP POST to a configured URL.
+#[derive(Debug)]
 pub struct HttpSink {
     name: String,
     url: String,
@@ -348,6 +349,12 @@ pub struct HttpWebhookSource {
     config: HttpWebhookConfig,
     running: std::sync::Arc<std::sync::atomic::AtomicBool>,
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+impl std::fmt::Debug for HttpWebhookSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HttpWebhookSource").finish_non_exhaustive()
+    }
 }
 
 impl HttpWebhookSource {

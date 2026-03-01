@@ -123,6 +123,7 @@ pub trait PlacementStrategy: Send + Sync {
 }
 
 /// Round-robin placement strategy.
+#[derive(Debug)]
 pub struct RoundRobinPlacement {
     counter: std::sync::atomic::AtomicUsize,
 }
@@ -156,6 +157,7 @@ impl PlacementStrategy for RoundRobinPlacement {
 
 /// Least-loaded placement strategy: picks the worker with the lowest
 /// load ratio (pipelines_running / cpu_cores), breaking ties by pipeline count.
+#[derive(Debug)]
 pub struct LeastLoadedPlacement;
 
 impl PlacementStrategy for LeastLoadedPlacement {

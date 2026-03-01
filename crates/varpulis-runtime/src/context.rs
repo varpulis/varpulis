@@ -42,6 +42,7 @@ pub struct CheckpointBarrier {
 }
 
 /// Acknowledgment from a context after completing a checkpoint.
+#[derive(Debug)]
 pub struct CheckpointAck {
     pub context_name: String,
     pub checkpoint_id: u64,
@@ -67,6 +68,16 @@ pub struct CheckpointCoordinator {
     context_names: Vec<String>,
     pending: Option<PendingCheckpoint>,
     next_checkpoint_id: u64,
+}
+
+impl std::fmt::Debug for CheckpointCoordinator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CheckpointCoordinator")
+            .field("context_names", &self.context_names)
+            .field("next_checkpoint_id", &self.next_checkpoint_id)
+            .field("has_pending", &self.pending.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl CheckpointCoordinator {
@@ -354,6 +365,17 @@ pub struct ContextRuntime {
     output_events_emitted: u64,
 }
 
+impl std::fmt::Debug for ContextRuntime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ContextRuntime")
+            .field("name", &self.name)
+            .field("ingress_routing", &self.ingress_routing)
+            .field("events_processed", &self.events_processed)
+            .field("output_events_emitted", &self.output_events_emitted)
+            .finish_non_exhaustive()
+    }
+}
+
 impl ContextRuntime {
     /// Create a new context runtime
     #[allow(clippy::too_many_arguments)]
@@ -534,7 +556,17 @@ pub struct EventTypeRouter {
     default_tx: mpsc::Sender<ContextMessage>,
 }
 
+impl std::fmt::Debug for EventTypeRouter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventTypeRouter")
+            .field("route_count", &self.routes.len())
+            .field("route_keys", &self.routes.keys().collect::<Vec<_>>())
+            .finish_non_exhaustive()
+    }
+}
+
 /// Errors returned by non-blocking dispatch methods.
+#[derive(Debug)]
 pub enum DispatchError {
     /// Channel is full — caller should retry or use async dispatch
     ChannelFull(ContextMessage),
@@ -600,6 +632,16 @@ pub struct ContextOrchestrator {
     router: EventTypeRouter,
     /// Optional checkpoint coordinator for exactly-once semantics
     checkpoint_coordinator: Option<CheckpointCoordinator>,
+}
+
+impl std::fmt::Debug for ContextOrchestrator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ContextOrchestrator")
+            .field("context_count", &self.context_txs.len())
+            .field("ingress_routing", &self.ingress_routing)
+            .field("handle_count", &self.handles.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl ContextOrchestrator {

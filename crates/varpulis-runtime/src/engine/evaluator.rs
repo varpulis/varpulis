@@ -36,7 +36,7 @@ use super::UserFunction;
 /// This struct is provided for callers who want to avoid repeatedly
 /// passing the same references. Use `eval_expr_ctx()` with this context
 /// for optimized recursive evaluation.
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 #[allow(dead_code)] // Public API for external use
 pub struct EvalContext<'a> {
     pub event: &'a Event,
@@ -1673,6 +1673,7 @@ pub fn eval_binary_op(
 
 /// Bridge implementation that connects the SASE engine's ExprEvaluator trait
 /// to the runtime's eval_filter_expr function.
+#[derive(Debug)]
 pub struct RuntimeExprEvaluator;
 
 impl varpulis_sase::ExprEvaluator for RuntimeExprEvaluator {

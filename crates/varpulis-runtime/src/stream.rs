@@ -5,6 +5,7 @@ use std::collections::VecDeque;
 use tokio::sync::mpsc;
 
 /// A stream of events
+#[derive(Debug)]
 pub struct Stream {
     pub name: String,
     receiver: mpsc::Receiver<Event>,
@@ -33,6 +34,7 @@ impl Stream {
 }
 
 /// Stream sender for producing events
+#[derive(Debug)]
 pub struct StreamSender {
     pub name: String,
     sender: mpsc::Sender<Event>,

@@ -5,6 +5,7 @@ use crate::helpers::json_to_event;
 use varpulis_core::Event;
 
 /// JSON converter that delegates to the existing `json_to_event` helper.
+#[derive(Debug)]
 pub struct JsonConverter;
 
 impl Converter for JsonConverter {

@@ -79,6 +79,16 @@ pub struct HealthRegistry {
     ready: Arc<AtomicBool>,
 }
 
+impl std::fmt::Debug for HealthRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HealthRegistry")
+            .field("reporters_count", &self.reporters.len())
+            .field("started", &self.started)
+            .field("ready", &self.ready)
+            .finish_non_exhaustive()
+    }
+}
+
 impl HealthRegistry {
     pub fn new() -> Self {
         Self {
@@ -147,6 +157,14 @@ pub struct ConnectorHealthAdapter {
     health_fn: Box<dyn Fn() -> crate::connector::ConnectorHealthReport + Send + Sync>,
 }
 
+impl std::fmt::Debug for ConnectorHealthAdapter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectorHealthAdapter")
+            .field("name", &self.name)
+            .finish_non_exhaustive()
+    }
+}
+
 impl ConnectorHealthAdapter {
     pub fn new<F>(name: String, health_fn: F) -> Self
     where
@@ -186,6 +204,7 @@ impl HealthReporter for ConnectorHealthAdapter {
 }
 
 /// Simple health reporter for the Engine component.
+#[derive(Debug)]
 pub struct EngineHealthReporter {
     name: String,
     streams_loaded: Arc<AtomicBool>,

@@ -55,6 +55,13 @@ mod mqtt_managed_impl {
         last_message_time: Arc<Mutex<Option<Instant>>>,
     }
 
+    impl std::fmt::Debug for ManagedMqttConnector {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("ManagedMqttConnector")
+                .finish_non_exhaustive()
+        }
+    }
+
     impl ManagedMqttConnector {
         /// Create a new managed MQTT connector with the given configuration.
         pub fn new(name: &str, config: MqttConfig) -> Self {
@@ -547,6 +554,7 @@ pub use mqtt_managed_impl::ManagedMqttConnector;
 
 /// Managed MQTT connector stub (requires `mqtt` feature for full functionality).
 #[cfg(not(feature = "mqtt"))]
+#[derive(Debug)]
 pub struct ManagedMqttConnector {
     name: String,
 }

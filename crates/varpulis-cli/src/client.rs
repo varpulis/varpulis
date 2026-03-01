@@ -15,6 +15,7 @@ pub enum ClientError {
 }
 
 /// Client for the Varpulis REST API.
+#[derive(Debug)]
 pub struct VarpulisClient {
     client: reqwest::Client,
     base_url: String,

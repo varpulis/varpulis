@@ -13,7 +13,7 @@ use rustc_hash::FxHashMap;
 /// 1. Canonicity: identical (var, lo, hi) → same node ID
 /// 2. Maximal sharing: identical substructures share memory
 /// 3. Zero-suppression: if hi == Empty, the node is skipped
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct UniqueTable {
     /// Storage for all nodes
     nodes: Vec<ZddNode>,

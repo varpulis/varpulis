@@ -276,6 +276,7 @@ pub use database_impl::{DatabaseSink, DatabaseSource};
 
 /// Database source stub (requires `database` feature for full functionality).
 #[cfg(not(feature = "database"))]
+#[derive(Debug)]
 pub struct DatabaseSource {
     name: String,
     #[allow(dead_code)]
@@ -317,6 +318,7 @@ impl SourceConnector for DatabaseSource {
 
 /// Database sink stub (requires `database` feature for full functionality).
 #[cfg(not(feature = "database"))]
+#[derive(Debug)]
 pub struct DatabaseSink {
     name: String,
     #[allow(dead_code)]

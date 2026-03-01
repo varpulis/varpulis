@@ -27,6 +27,7 @@ use crate::security;
 /// Thread-safe counters tracking events forwarded to WebSocket clients,
 /// events dropped (no subscribers or coordinator unreachable), forwarding
 /// errors, and coordinator health status.
+#[derive(Debug)]
 pub struct RelayMetrics {
     pub events_forwarded: AtomicU64,
     pub events_dropped: AtomicU64,
@@ -133,6 +134,7 @@ pub struct StreamInfo {
 // =============================================================================
 
 /// Shared state for the WebSocket server
+#[derive(Debug)]
 pub struct ServerState {
     /// The loaded engine (if any)
     pub engine: Option<Engine>,

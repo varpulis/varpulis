@@ -132,6 +132,7 @@ impl TenantUsage {
 }
 
 /// A pipeline deployed by a tenant
+#[derive(Debug)]
 pub struct Pipeline {
     /// Pipeline identifier
     pub id: String,
@@ -209,6 +210,7 @@ pub enum TenantError {
 }
 
 /// A single tenant with its pipelines and quotas
+#[derive(Debug)]
 pub struct Tenant {
     /// Tenant identifier
     pub id: TenantId,
@@ -639,6 +641,18 @@ pub struct TenantManager {
     /// Optional global output event broadcast for WebSocket relay.
     /// When set, all pipeline output events are forwarded here as JSON strings.
     ws_broadcast: Option<Arc<tokio::sync::broadcast::Sender<String>>>,
+}
+
+impl std::fmt::Debug for TenantManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TenantManager")
+            .field("tenant_count", &self.tenants.len())
+            .field("max_queue_depth", &self.max_queue_depth)
+            .field("pending_events", &self.pending_events)
+            .field("has_store", &self.store.is_some())
+            .field("has_ws_broadcast", &self.ws_broadcast.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl TenantManager {

@@ -7,6 +7,7 @@ use super::pruning::PruningStrategy;
 use super::tree::{PredictionSuffixTree, SymbolId};
 
 /// Online learner that incrementally updates a PST from streaming events.
+#[derive(Debug)]
 pub struct OnlinePSTLearner {
     /// Rolling context buffer of recent symbols.
     context_buffer: Vec<SymbolId>,

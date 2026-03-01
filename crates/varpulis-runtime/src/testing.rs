@@ -26,6 +26,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 /// Internal timer state for the simulated scheduler.
+#[derive(Debug)]
 struct TimerState {
     /// Interval between fires in nanoseconds
     interval_ns: u64,
@@ -39,6 +40,7 @@ struct TimerState {
 ///
 /// Instead of waiting for real time to pass, `advance()` jumps the clock
 /// forward and collects all timer events that would have fired in that window.
+#[derive(Debug)]
 pub struct SimulatedScheduler {
     timers: Vec<TimerState>,
     current_time: DateTime<Utc>,
@@ -110,6 +112,7 @@ impl SimulatedScheduler {
 ///
 /// Combines an [`Engine`] with a [`SimulatedScheduler`] to enable deterministic,
 /// instant testing of VPL programs that include timer-based streams.
+#[derive(Debug)]
 pub struct TestUniverse {
     engine: Engine,
     scheduler: SimulatedScheduler,

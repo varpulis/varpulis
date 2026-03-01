@@ -350,6 +350,7 @@ pub use pulsar_impl::{PulsarSink, PulsarSource};
 
 /// Pulsar source stub (requires `pulsar` feature for full functionality).
 #[cfg(not(feature = "pulsar"))]
+#[derive(Debug)]
 pub struct PulsarSource {
     name: String,
     #[allow(dead_code)]
@@ -391,6 +392,7 @@ impl SourceConnector for PulsarSource {
 
 /// Pulsar sink stub (requires `pulsar` feature for full functionality).
 #[cfg(not(feature = "pulsar"))]
+#[derive(Debug)]
 pub struct PulsarSink {
     name: String,
     #[allow(dead_code)]

@@ -281,6 +281,7 @@ pub use redis_impl::{RedisSink, RedisSource};
 
 /// Redis source stub (requires `redis` feature for full functionality).
 #[cfg(not(feature = "redis"))]
+#[derive(Debug)]
 pub struct RedisSource {
     name: String,
     #[allow(dead_code)]
@@ -322,6 +323,7 @@ impl SourceConnector for RedisSource {
 
 /// Redis sink stub (requires `redis` feature for full functionality).
 #[cfg(not(feature = "redis"))]
+#[derive(Debug)]
 pub struct RedisSink {
     name: String,
     #[allow(dead_code)]
@@ -782,6 +784,7 @@ pub use redis_stream_impl::{RedisStreamSink, RedisStreamSinkStub, RedisStreamSou
 
 /// Redis Streams source stub (requires `redis` feature for full functionality).
 #[cfg(not(feature = "redis"))]
+#[derive(Debug)]
 pub struct RedisStreamSource {
     name: String,
     #[allow(dead_code)]
@@ -823,6 +826,7 @@ impl SourceConnector for RedisStreamSource {
 
 /// Redis Streams sink stub (requires `redis` feature for full functionality).
 #[cfg(not(feature = "redis"))]
+#[derive(Debug)]
 pub struct RedisStreamSink {
     name: String,
     #[allow(dead_code)]
@@ -864,6 +868,7 @@ impl SinkConnector for RedisStreamSink {
 
 /// Deferred-connect Redis Streams sink stub (requires `redis` feature for full functionality).
 #[cfg(not(feature = "redis"))]
+#[derive(Debug)]
 pub struct RedisStreamSinkStub {
     name: String,
     #[allow(dead_code)]

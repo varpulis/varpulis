@@ -28,6 +28,7 @@ impl Default for PSTConfig {
 }
 
 /// A node in the Prediction Suffix Tree.
+#[derive(Debug)]
 pub struct PSTNode {
     /// The context (suffix) that leads to this node.
     pub context: SmallVec<[SymbolId; 4]>,
@@ -77,6 +78,7 @@ impl PSTNode {
 }
 
 /// Prediction Suffix Tree — variable-order Markov model for event sequences.
+#[derive(Debug)]
 pub struct PredictionSuffixTree {
     /// Arena of nodes; index 0 is the root.
     pub(crate) nodes: Vec<PSTNode>,

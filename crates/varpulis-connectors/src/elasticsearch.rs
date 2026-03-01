@@ -124,6 +124,7 @@ impl ElasticsearchConfig {
 }
 
 /// Elasticsearch sink connector (stub implementation)
+#[derive(Debug)]
 pub struct ElasticsearchSink {
     name: String,
     config: ElasticsearchConfig,

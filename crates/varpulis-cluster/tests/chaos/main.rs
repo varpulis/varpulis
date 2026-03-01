@@ -22,6 +22,7 @@ const WORKER_REGISTER_TIMEOUT: Duration = Duration::from_secs(10);
 const COORDINATOR_STARTUP_DELAY: Duration = Duration::from_millis(500);
 
 /// A worker process managed by the test harness.
+#[derive(Debug)]
 pub struct WorkerProcess {
     pub id: String,
     pub process: Child,
@@ -31,6 +32,7 @@ pub struct WorkerProcess {
 /// A test cluster consisting of a coordinator and zero or more worker processes.
 ///
 /// All processes are spawned from the real `varpulis` binary (no mocking).
+#[derive(Debug)]
 pub struct ProcessCluster {
     coordinator: Child,
     pub workers: Vec<WorkerProcess>,

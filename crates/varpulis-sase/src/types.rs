@@ -153,7 +153,7 @@ pub struct MatchResult {
 
 /// SASE+ Pattern Matching Engine
 /// Global negation condition for invalidating active runs
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct GlobalNegation {
     /// Event type that triggers negation
     pub event_type: String,

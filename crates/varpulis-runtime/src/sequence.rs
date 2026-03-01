@@ -23,6 +23,18 @@ pub struct SequenceStep {
     pub match_all: bool,
 }
 
+impl std::fmt::Debug for SequenceStep {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SequenceStep")
+            .field("event_type", &self.event_type)
+            .field("has_filter", &self.filter.is_some())
+            .field("alias", &self.alias)
+            .field("timeout", &self.timeout)
+            .field("match_all", &self.match_all)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Context for evaluating sequence filters
 #[derive(Debug, Clone, Default)]
 pub struct SequenceContext {
@@ -124,6 +136,15 @@ pub struct NegationCondition {
     pub filter: Option<SequenceFilter>,
 }
 
+impl std::fmt::Debug for NegationCondition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NegationCondition")
+            .field("event_type", &self.event_type)
+            .field("has_filter", &self.filter.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
 /// Tracks sequences for a stream
 pub struct SequenceTracker {
     /// Steps in the sequence pattern
@@ -136,6 +157,18 @@ pub struct SequenceTracker {
     match_all_first: bool,
     /// Negation conditions that invalidate sequences
     negations: Vec<NegationCondition>,
+}
+
+impl std::fmt::Debug for SequenceTracker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SequenceTracker")
+            .field("steps", &self.steps)
+            .field("active_count", &self.active.len())
+            .field("max_active", &self.max_active)
+            .field("match_all_first", &self.match_all_first)
+            .field("negations", &self.negations)
+            .finish_non_exhaustive()
+    }
 }
 
 impl SequenceTracker {

@@ -37,7 +37,7 @@ impl<'a> IteratorExt<'a> for pest::iterators::Pairs<'a, Rule> {
 ///
 /// The grammar rules are auto-generated from `varpulis.pest` by the
 /// `pest_derive` macro. Use [`parse`] instead of calling this directly.
-#[derive(Parser)]
+#[derive(Debug, Parser)]
 #[grammar = "varpulis.pest"]
 pub struct VarpulisParser;
 
