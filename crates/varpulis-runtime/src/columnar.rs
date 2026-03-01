@@ -170,7 +170,7 @@ impl ColumnarBuffer {
 
     /// Drain the first `count` events from the buffer.
     ///
-    /// Returns the drained events as a Vec<SharedEvent>.
+    /// Returns the drained events as a `Vec<SharedEvent>`.
     /// Clears all cached columns since indices shift.
     pub fn drain_front(&mut self, count: usize) -> Vec<SharedEvent> {
         let count = count.min(self.events.len());
@@ -183,7 +183,7 @@ impl ColumnarBuffer {
 
     /// Take all events from the buffer, leaving it empty.
     ///
-    /// Returns the events as a Vec<SharedEvent>.
+    /// Returns the events as a `Vec<SharedEvent>`.
     pub fn take_all(&mut self) -> Vec<SharedEvent> {
         self.timestamps.clear();
         self.columns.clear();

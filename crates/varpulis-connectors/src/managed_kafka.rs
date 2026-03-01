@@ -132,7 +132,7 @@ impl ManagedConnector for ManagedKafkaConnector {
 
         tokio::spawn(async move {
             use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
-            use futures::StreamExt;
+            use futures_util::StreamExt;
             info!(
                 "Managed Kafka {} consumer started on topic {}",
                 name, topic_owned
