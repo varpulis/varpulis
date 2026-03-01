@@ -7258,6 +7258,7 @@ dependencies = [
  "bytes",
  "chrono",
  "elasticsearch",
+ "futures-util",
  "indexmap 2.13.0",
  "inventory",
  "pulsar",

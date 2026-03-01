@@ -253,8 +253,8 @@ pub fn generate_api_key() -> String {
 /// Checks authentication in this order:
 /// 1. X-API-Key header (backward-compatible)
 /// 2. Authorization: Bearer/ApiKey header (API key validation)
-/// 3. Cookie: varpulis_session=<jwt> (JWT session cookie)
-/// 4. Sec-WebSocket-Protocol: varpulis-auth.<key> (WebSocket upgrade)
+/// 3. Cookie: varpulis_session=`<jwt>` (JWT session cookie)
+/// 4. Sec-WebSocket-Protocol: varpulis-auth.`<key>` (WebSocket upgrade)
 /// 5. Query parameter: api_key or token (last resort, kept for backward compatibility)
 ///
 /// Pass `oauth_state` to enable JWT verification from cookies.

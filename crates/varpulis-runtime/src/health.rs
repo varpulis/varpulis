@@ -128,7 +128,7 @@ impl HealthRegistry {
         self.ready.load(Ordering::SeqCst)
     }
 
-    /// Startup check — true once [`mark_started`] has been called.
+    /// Startup check — true once `mark_started` has been called.
     pub fn is_started(&self) -> bool {
         self.started
     }

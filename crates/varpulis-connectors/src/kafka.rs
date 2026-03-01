@@ -356,7 +356,7 @@ mod kafka_impl {
                 info!("Kafka source {} started, consuming from topic", name);
 
                 use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
-                use futures::StreamExt;
+                use futures_util::StreamExt;
                 let mut stream = consumer.stream();
                 let cb = CircuitBreaker::new(CircuitBreakerConfig {
                     failure_threshold: 10,
@@ -576,7 +576,7 @@ mod kafka_impl {
             }
 
             // Await all delivery acknowledgments concurrently
-            let results = futures::future::join_all(futures).await;
+            let results = futures_util::future::join_all(futures).await;
             for result in results {
                 match result {
                     Ok(Ok(_)) => {}

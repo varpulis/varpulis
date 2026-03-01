@@ -19,6 +19,7 @@ indexmap = { workspace = true }
 rustc-hash = { workspace = true }
 inventory = { workspace = true }
 async-trait = "0.1"
+futures-util = { workspace = true }
 reqwest = { workspace = true }
 axum = { workspace = true }
 tower-http = { workspace = true }

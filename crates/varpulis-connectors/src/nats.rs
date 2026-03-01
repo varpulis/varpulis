@@ -143,7 +143,7 @@ impl NatsConfig {
 #[cfg(feature = "nats")]
 mod nats_impl {
     use super::*;
-    use futures::StreamExt;
+    use futures_util::StreamExt;
     use rustc_hash::FxBuildHasher;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;

@@ -135,7 +135,7 @@ mod redis_impl {
             tokio::spawn(async move {
                 info!("Redis source {} started, subscribed to channel", name);
 
-                use futures::StreamExt;
+                use futures_util::StreamExt;
                 let mut stream = pubsub.on_message();
 
                 while running.load(Ordering::SeqCst) {

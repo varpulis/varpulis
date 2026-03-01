@@ -255,7 +255,7 @@ mod mqtt_impl {
         /// Subscribe to an additional topic on the existing connection.
         ///
         /// Use this when multiple `.from()` bindings reference the same
-        /// connector — call [`start`] once, then `subscribe` for each
+        /// connector — call `start` once, then `subscribe` for each
         /// extra topic.
         pub async fn subscribe(&self, topic: &str) -> Result<(), ConnectorError> {
             let client = self.client.as_ref().ok_or(ConnectorError::NotConnected)?;
