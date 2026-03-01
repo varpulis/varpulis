@@ -12,12 +12,14 @@ use crate::navigation;
 use crate::semantic::{get_semantic_tokens, SEMANTIC_TOKEN_LEGEND};
 
 /// Document state stored by the server
+#[derive(Debug)]
 pub struct Document {
     pub text: String,
     pub version: i32,
 }
 
 /// LSP Backend implementation
+#[derive(Debug)]
 pub struct Backend {
     client: Client,
     documents: DashMap<Url, Document>,

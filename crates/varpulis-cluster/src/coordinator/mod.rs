@@ -184,6 +184,32 @@ pub struct Coordinator {
     pub federation: Option<crate::federation::FederationCoordinator>,
 }
 
+impl std::fmt::Debug for Coordinator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Coordinator")
+            .field("workers", &self.workers)
+            .field("pipeline_groups", &self.pipeline_groups)
+            .field("connectors", &self.connectors)
+            .field("worker_metrics", &self.worker_metrics)
+            .field("active_migrations", &self.active_migrations)
+            .field("pending_rebalance", &self.pending_rebalance)
+            .field("last_health_sweep", &self.last_health_sweep)
+            .field("scaling_policy", &self.scaling_policy)
+            .field(
+                "last_scaling_recommendation",
+                &self.last_scaling_recommendation,
+            )
+            .field("last_scaling_webhook", &self.last_scaling_webhook)
+            .field("heartbeat_interval", &self.heartbeat_interval)
+            .field("heartbeat_timeout", &self.heartbeat_timeout)
+            .field("ha_role", &self.ha_role)
+            .field("cluster_metrics", &self.cluster_metrics)
+            .field("model_registry", &self.model_registry)
+            .field("llm_config", &self.llm_config)
+            .finish_non_exhaustive()
+    }
+}
+
 /// The HA role of this coordinator (re-exported from ha module for non-k8s builds).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

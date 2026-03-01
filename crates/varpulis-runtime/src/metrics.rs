@@ -7,7 +7,7 @@ use tokio::net::TcpListener;
 use tracing::{error, info};
 
 /// Metrics collection for Varpulis engine
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Metrics {
     registry: Arc<Registry>,
     pub events_total: CounterVec,
@@ -164,6 +164,7 @@ impl Default for Metrics {
 }
 
 /// HTTP server for Prometheus metrics endpoint
+#[derive(Debug)]
 pub struct MetricsServer {
     metrics: Metrics,
     addr: String,

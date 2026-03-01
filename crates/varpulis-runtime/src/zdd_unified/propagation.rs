@@ -224,6 +224,7 @@ impl Default for ZddPropagator {
 /// Computes counts by traversing the ZDD and accumulating at each node.
 /// This is more expensive than Hamlet's direct propagation but provides
 /// automatic sharing via the ZDD structure.
+#[derive(Debug)]
 pub struct ZddTraversal {
     memo: FxHashMap<usize, u64>,
 }

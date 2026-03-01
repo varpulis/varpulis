@@ -117,8 +117,7 @@ insta = { version = "1", features = ["yaml"] }
 # Every member crate inherits these via `[lints] workspace = true`.
 [workspace.lints.rust]
 unsafe_code = "deny"
-# 140 existing types lack Debug — allow pending dedicated cleanup
-missing_debug_implementations = "allow"
+missing_debug_implementations = "warn"
 
 [workspace.lints.clippy]
 # Enable pedantic and nursery groups at warn (lower priority so individual

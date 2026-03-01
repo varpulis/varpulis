@@ -77,6 +77,7 @@ pub struct EventFile {
 }
 
 /// Event file parser
+#[derive(Debug)]
 pub struct EventFileParser;
 
 impl EventFileParser {
@@ -496,6 +497,14 @@ pub struct StreamingEventReader<R: std::io::BufRead> {
     events_read: usize,
 }
 
+impl<R: std::io::BufRead> std::fmt::Debug for StreamingEventReader<R> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StreamingEventReader")
+            .field("events_read", &self.events_read)
+            .finish_non_exhaustive()
+    }
+}
+
 impl<R: std::io::BufRead> StreamingEventReader<R> {
     pub const fn new(reader: R) -> Self {
         Self {
@@ -560,6 +569,7 @@ impl<R: std::io::BufRead> Iterator for StreamingEventReader<R> {
 }
 
 /// Event file player - sends events to engine with timing
+#[derive(Debug)]
 pub struct EventFilePlayer {
     events: Vec<TimedEvent>,
     sender: mpsc::Sender<Event>,

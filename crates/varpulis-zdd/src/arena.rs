@@ -765,6 +765,7 @@ pub struct GcStats {
 // ============================================================================
 
 /// Thread-safe wrapper around ZddArena
+#[derive(Debug)]
 pub struct SharedArena {
     inner: Arc<RwLock<ZddArena>>,
 }
@@ -934,6 +935,7 @@ impl Clone for SharedArena {
 // ============================================================================
 
 /// Iterator over sets in a ZDD using push/pop for efficiency
+#[derive(Debug)]
 pub struct ArenaIterator<'a> {
     arena: &'a ZddArena,
     stack: Vec<(ZddRef, u8)>, // (node, next_branch: 0=lo, 1=hi, 2=done)

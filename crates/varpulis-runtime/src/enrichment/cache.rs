@@ -11,6 +11,7 @@ use varpulis_core::Value;
 const MAX_ENTRIES: usize = 100_000;
 
 /// A single cached enrichment result with expiry time.
+#[derive(Debug)]
 struct CacheEntry {
     fields: HashMap<String, Value>,
     expires_at: Instant,
@@ -20,6 +21,7 @@ struct CacheEntry {
 ///
 /// Uses a `Mutex<FxHashMap>` for simplicity (enrichment calls are async I/O-bound,
 /// so lock contention is negligible compared to network latency).
+#[derive(Debug)]
 pub struct EnrichmentCache {
     entries: std::sync::Mutex<FxHashMap<String, CacheEntry>>,
     ttl: std::time::Duration,

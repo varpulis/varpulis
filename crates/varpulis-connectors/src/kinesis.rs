@@ -146,6 +146,7 @@ impl KinesisConfig {
 /// Kinesis source connector (stub implementation)
 ///
 /// This stub is always available. For full functionality, enable the `kinesis` feature.
+#[derive(Debug)]
 pub struct KinesisSource {
     name: String,
     config: KinesisConfig,
@@ -198,6 +199,7 @@ impl SourceConnector for KinesisSource {
 /// Kinesis sink connector (stub implementation)
 ///
 /// This stub is always available. For full functionality, enable the `kinesis` feature.
+#[derive(Debug)]
 pub struct KinesisSink {
     name: String,
     config: KinesisConfig,

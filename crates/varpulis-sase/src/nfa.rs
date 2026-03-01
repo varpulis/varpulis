@@ -170,6 +170,7 @@ impl Default for Nfa {
 // ============================================================================
 
 /// Compiles a SasePattern into an NFA
+#[derive(Debug)]
 pub struct NfaCompiler {
     nfa: Nfa,
 }

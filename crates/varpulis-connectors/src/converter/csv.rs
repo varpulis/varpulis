@@ -13,6 +13,7 @@ use varpulis_core::Event;
 /// Expects the first line to be a header row. Each subsequent line
 /// produces one Event with fields named after the headers.
 #[cfg(feature = "csv-converter")]
+#[derive(Debug)]
 pub struct CsvConverter {
     delimiter: u8,
 }
@@ -117,7 +118,7 @@ fn parse_csv_value(s: &str) -> varpulis_core::Value {
 
 /// CSV converter stub (requires `csv-converter` feature for full functionality).
 #[cfg(not(feature = "csv-converter"))]
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct CsvConverter;
 
 #[cfg(not(feature = "csv-converter"))]

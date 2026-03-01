@@ -50,6 +50,7 @@ pub struct DlqEntryOwned {
 /// File-backed dead letter queue.
 ///
 /// Appends JSON-lines to a file. Thread-safe via internal mutex on the file handle.
+#[derive(Debug)]
 pub struct DeadLetterQueue {
     file: Mutex<File>,
     path: PathBuf,

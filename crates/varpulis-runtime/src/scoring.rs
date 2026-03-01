@@ -51,6 +51,17 @@ mod inner {
         pub batch_size: usize,
     }
 
+    impl std::fmt::Debug for OnnxModel {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("OnnxModel")
+                .field("input_name", &self.input_name)
+                .field("input_fields", &self.input_fields)
+                .field("output_fields", &self.output_fields)
+                .field("batch_size", &self.batch_size)
+                .finish_non_exhaustive()
+        }
+    }
+
     impl OnnxModel {
         /// Load an ONNX model from a file path with optional GPU configuration.
         pub fn load(
@@ -224,6 +235,7 @@ mod inner {
     use crate::event::Event;
 
     /// Stub `OnnxModel` when the `onnx` feature is not enabled.
+    #[derive(Debug)]
     pub struct OnnxModel {
         pub input_fields: Vec<String>,
         pub output_fields: Vec<String>,

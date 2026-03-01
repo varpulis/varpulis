@@ -80,6 +80,13 @@ pub struct SinkConnectorAdapter {
     inner: tokio::sync::Mutex<Box<dyn crate::types::SinkConnector>>,
 }
 
+impl std::fmt::Debug for SinkConnectorAdapter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SinkConnectorAdapter")
+            .finish_non_exhaustive()
+    }
+}
+
 impl SinkConnectorAdapter {
     /// Create a new adapter wrapping a SinkConnector.
     pub fn new(name: &str, connector: Box<dyn crate::types::SinkConnector>) -> Self {

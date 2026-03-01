@@ -450,6 +450,7 @@ mod nats_impl {
     use super::*;
 
     /// NATS source stub (requires `nats` feature for full functionality).
+    #[derive(Debug)]
     pub struct NatsSource {
         name: String,
         #[allow(dead_code)]
@@ -491,6 +492,7 @@ mod nats_impl {
     }
 
     /// NATS sink stub (requires `nats` feature for full functionality).
+    #[derive(Debug)]
     pub struct NatsSink {
         name: String,
         #[allow(dead_code)]

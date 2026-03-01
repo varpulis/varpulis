@@ -224,7 +224,7 @@ fn build_cors(origins: Option<Vec<String>>) -> CorsLayer {
 }
 
 /// Shared state for the API router.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ApiState {
     pub manager: SharedTenantManager,
     pub admin_key: Option<String>,
@@ -232,6 +232,7 @@ pub struct ApiState {
 }
 
 /// Axum extractor for X-API-Key header.
+#[derive(Debug)]
 pub struct ApiKey(pub String);
 
 impl<S> axum::extract::FromRequestParts<S> for ApiKey
@@ -260,6 +261,7 @@ where
 }
 
 /// Axum extractor for X-Admin-Key header.
+#[derive(Debug)]
 pub struct AdminKey(pub String);
 
 impl<S> axum::extract::FromRequestParts<S> for AdminKey

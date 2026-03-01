@@ -9,7 +9,7 @@ use rmcp::service::RequestContext;
 use rmcp::{tool_handler, ErrorData as McpError, RoleServer, ServerHandler};
 
 /// The Varpulis MCP server.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct VarpulisMcpServer {
     pub(crate) client: CoordinatorClient,
     pub(crate) tool_router: ToolRouter<Self>,

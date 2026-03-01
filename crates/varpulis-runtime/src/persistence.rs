@@ -260,7 +260,7 @@ pub trait StateStore: Send + Sync {
 }
 
 /// In-memory state store for testing
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct MemoryStore {
     data: std::sync::RwLock<HashMap<String, Vec<u8>>>,
 }
@@ -512,6 +512,7 @@ impl StateStore for RocksDbStore {
 /// Stores key-value pairs as files in a directory. Keys containing ":"
 /// are mapped to subdirectories (e.g., "tenant:abc" → "tenant/abc").
 /// Writes are atomic via temp file + rename.
+#[derive(Debug)]
 pub struct FileStore {
     dir: std::path::PathBuf,
 }
@@ -632,6 +633,16 @@ pub struct CheckpointManager {
     config: CheckpointConfig,
     last_checkpoint: Instant,
     next_checkpoint_id: u64,
+}
+
+impl std::fmt::Debug for CheckpointManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CheckpointManager")
+            .field("config", &self.config)
+            .field("last_checkpoint", &self.last_checkpoint)
+            .field("next_checkpoint_id", &self.next_checkpoint_id)
+            .finish_non_exhaustive()
+    }
 }
 
 impl CheckpointManager {

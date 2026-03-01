@@ -141,6 +141,7 @@ impl S3Config {
 }
 
 /// S3 sink connector (stub implementation)
+#[derive(Debug)]
 pub struct S3Sink {
     name: String,
     config: S3Config,

@@ -36,6 +36,12 @@ pub struct Mailbox<A: Actor> {
     rx: mpsc::Receiver<Envelope<A>>,
 }
 
+impl<A: Actor> std::fmt::Debug for Mailbox<A> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Mailbox").finish_non_exhaustive()
+    }
+}
+
 impl<A: Actor> Mailbox<A> {
     /// Receive the next envelope, blocking until one is available.
     ///
@@ -53,6 +59,12 @@ impl<A: Actor> Mailbox<A> {
 /// The sending half of a mailbox, cheaply cloneable.
 pub struct MailboxSender<A: Actor> {
     tx: mpsc::Sender<Envelope<A>>,
+}
+
+impl<A: Actor> std::fmt::Debug for MailboxSender<A> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MailboxSender").finish_non_exhaustive()
+    }
 }
 
 impl<A: Actor> Clone for MailboxSender<A> {

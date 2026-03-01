@@ -57,6 +57,7 @@ impl Default for CircuitBreakerConfig {
 }
 
 /// Thread-safe circuit breaker.
+#[derive(Debug)]
 pub struct CircuitBreaker {
     config: CircuitBreakerConfig,
     state: Mutex<InnerState>,
@@ -69,6 +70,7 @@ pub struct CircuitBreaker {
     pub rejections_total: AtomicU64,
 }
 
+#[derive(Debug)]
 struct InnerState {
     state: State,
     consecutive_failures: u32,

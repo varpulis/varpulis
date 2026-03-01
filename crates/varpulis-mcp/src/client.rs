@@ -4,7 +4,7 @@ use crate::error::CoordinatorError;
 use serde_json::Value;
 
 /// HTTP client that proxies requests to the Varpulis coordinator.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct CoordinatorClient {
     client: reqwest::Client,
     base_url: String,

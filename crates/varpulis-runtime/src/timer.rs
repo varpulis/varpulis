@@ -68,6 +68,7 @@ pub fn spawn_timer(
 }
 
 /// Timer manager that tracks spawned timer tasks
+#[derive(Debug)]
 pub struct TimerManager {
     handles: Vec<JoinHandle<()>>,
 }

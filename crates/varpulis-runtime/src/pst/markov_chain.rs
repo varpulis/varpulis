@@ -82,6 +82,7 @@ pub use varpulis_sase::RunSnapshot;
 ///
 /// Includes Hawkes process intensity modulation to boost predictions during
 /// temporal bursts, and conformal calibration for prediction intervals.
+#[derive(Debug)]
 pub struct PatternMarkovChain {
     /// The Prediction Suffix Tree for learning event transitions.
     pst: PredictionSuffixTree,

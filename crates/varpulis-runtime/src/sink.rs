@@ -18,6 +18,7 @@ use tokio::sync::Mutex;
 use tracing::{error, warn};
 
 /// Console sink - prints to stdout
+#[derive(Debug)]
 pub struct ConsoleSink {
     name: String,
     pretty: bool,
@@ -67,6 +68,7 @@ impl Sink for ConsoleSink {
 }
 
 /// File sink - writes JSON lines to a file
+#[derive(Debug)]
 pub struct FileSink {
     name: String,
     path: PathBuf,
@@ -127,6 +129,7 @@ impl Sink for FileSink {
 /// sink.send(&event).await?;
 /// sink.flush().await?;
 /// ```
+#[derive(Debug)]
 pub struct AsyncFileSink {
     name: String,
     path: PathBuf,
@@ -220,6 +223,7 @@ impl Sink for AsyncFileSink {
 }
 
 /// HTTP webhook sink
+#[derive(Debug)]
 pub struct HttpSink {
     name: String,
     url: String,
@@ -319,6 +323,7 @@ impl Default for HttpRetryConfig {
 ///     });
 /// sink.send(&event).await?;
 /// ```
+#[derive(Debug)]
 pub struct HttpSinkWithRetry {
     name: String,
     url: String,
@@ -458,6 +463,18 @@ pub struct MultiSink {
     sinks: Vec<Box<dyn Sink>>,
 }
 
+impl std::fmt::Debug for MultiSink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MultiSink")
+            .field("name", &self.name)
+            .field(
+                "sinks",
+                &self.sinks.iter().map(|s| s.name()).collect::<Vec<_>>(),
+            )
+            .finish()
+    }
+}
+
 impl MultiSink {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
@@ -515,6 +532,17 @@ pub struct ResilientSink {
     cb: Arc<crate::circuit_breaker::CircuitBreaker>,
     dlq: Option<Arc<crate::dead_letter::DeadLetterQueue>>,
     metrics: Option<crate::metrics::Metrics>,
+}
+
+impl std::fmt::Debug for ResilientSink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ResilientSink")
+            .field("inner", &self.inner.name())
+            .field("cb", &self.cb)
+            .field("has_dlq", &self.dlq.is_some())
+            .field("has_metrics", &self.metrics.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl ResilientSink {

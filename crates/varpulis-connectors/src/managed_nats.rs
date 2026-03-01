@@ -366,6 +366,7 @@ pub use nats_managed_impl::ManagedNatsConnector;
 
 /// Managed NATS connector stub (requires `nats` feature for full functionality).
 #[cfg(not(feature = "nats"))]
+#[derive(Debug)]
 pub struct ManagedNatsConnector {
     name: String,
 }

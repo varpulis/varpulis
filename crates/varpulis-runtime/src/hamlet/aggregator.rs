@@ -94,6 +94,7 @@ struct QueryState {
 }
 
 /// The Hamlet aggregator
+#[derive(Debug)]
 pub struct HamletAggregator {
     /// Configuration
     config: HamletConfig,

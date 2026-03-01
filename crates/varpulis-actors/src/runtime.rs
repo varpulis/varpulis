@@ -17,6 +17,15 @@ pub struct Runtime {
     grace_period: Duration,
 }
 
+impl std::fmt::Debug for Runtime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Runtime")
+            .field("grace_period", &self.grace_period)
+            .field("tasks_count", &self.tasks.len())
+            .finish_non_exhaustive()
+    }
+}
+
 impl Runtime {
     /// Create a new runtime with the default 10-second grace period.
     pub fn new() -> Self {

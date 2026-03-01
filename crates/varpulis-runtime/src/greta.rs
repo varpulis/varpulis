@@ -292,6 +292,7 @@ impl GretaQuery {
 }
 
 /// GRETA executor for non-shared online trend aggregation
+#[derive(Debug)]
 pub struct GretaExecutor {
     /// Registered queries
     queries: Vec<GretaQuery>,

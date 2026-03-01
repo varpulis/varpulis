@@ -4,7 +4,7 @@ use prometheus::{CounterVec, Gauge, GaugeVec, HistogramOpts, HistogramVec, Opts,
 use std::sync::Arc;
 
 /// Cluster-specific Prometheus metrics.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ClusterPrometheusMetrics {
     registry: Arc<Registry>,
     /// Number of workers by status (ready, unhealthy, draining, registering).

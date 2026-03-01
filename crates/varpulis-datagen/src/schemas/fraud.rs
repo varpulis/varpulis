@@ -36,6 +36,7 @@ const MERCHANTS: &[&str] = &[
     "ATM",
 ];
 
+#[derive(Debug)]
 pub struct FraudSchema {
     rng: StdRng,
     event_count: u64,

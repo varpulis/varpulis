@@ -100,6 +100,12 @@ pub struct RestApiClient {
     client: reqwest::Client,
 }
 
+impl std::fmt::Debug for RestApiClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RestApiClient").finish_non_exhaustive()
+    }
+}
+
 impl RestApiClient {
     /// Create a new REST API client with the given configuration.
     pub fn new(_name: &str, config: RestApiConfig) -> Result<Self, ConnectorError> {
@@ -225,6 +231,7 @@ impl RestApiClient {
 }
 
 /// REST API sink that POSTs events to an endpoint
+#[derive(Debug)]
 pub struct RestApiSink {
     name: String,
     client: RestApiClient,

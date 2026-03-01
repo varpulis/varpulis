@@ -60,6 +60,7 @@ fn num_cpus() -> usize {
 }
 
 /// A worker node in the cluster.
+#[derive(Debug)]
 pub struct WorkerNode {
     pub id: WorkerId,
     pub address: String,
