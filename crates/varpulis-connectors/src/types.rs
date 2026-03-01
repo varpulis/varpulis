@@ -130,6 +130,19 @@ pub trait SourceConnector: Send + Sync {
 
     /// Check if the connector is currently running.
     fn is_running(&self) -> bool;
+
+    /// Return the current health status of this connector.
+    ///
+    /// The default implementation derives health from `is_running()`.
+    /// Override to provide richer health information (e.g., events processed,
+    /// connection latency, error counts).
+    fn health_check(&self) -> ConnectorHealth {
+        if self.is_running() {
+            ConnectorHealth::healthy(0)
+        } else {
+            ConnectorHealth::unhealthy("not running")
+        }
+    }
 }
 
 /// Trait for sink connectors that send events to external systems.
@@ -212,6 +225,50 @@ pub trait SinkConnector: Send + Sync {
     ///
     /// This should flush remaining events and close connections.
     async fn close(&self) -> Result<(), ConnectorError>;
+
+    /// Return the current health status of this connector.
+    ///
+    /// The default implementation always reports healthy.
+    /// Override to provide richer health information (e.g., events sent,
+    /// connection latency, error counts).
+    fn health_check(&self) -> ConnectorHealth {
+        ConnectorHealth::healthy(0)
+    }
+}
+
+/// Health status returned by connector health checks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectorHealth {
+    /// Whether the connector is operational.
+    pub healthy: bool,
+    /// Human-readable status message.
+    pub message: String,
+    /// Number of events processed since the connector started.
+    pub events_processed: u64,
+    /// Number of errors encountered since the connector started.
+    pub errors: u64,
+}
+
+impl ConnectorHealth {
+    /// Create a healthy status.
+    pub fn healthy(events_processed: u64) -> Self {
+        Self {
+            healthy: true,
+            message: "ok".to_string(),
+            events_processed,
+            errors: 0,
+        }
+    }
+
+    /// Create an unhealthy status with an error message.
+    pub fn unhealthy(message: impl Into<String>) -> Self {
+        Self {
+            healthy: false,
+            message: message.into(),
+            events_processed: 0,
+            errors: 0,
+        }
+    }
 }
 
 /// Errors that can occur during connector operations.
