@@ -3,7 +3,9 @@
 //! This module provides the core engine that processes events and executes
 //! stream definitions written in VPL.
 
+mod compilation;
 pub mod compiler;
+mod dispatch;
 pub mod evaluator;
 mod pattern_analyzer;
 pub mod physical_plan;
@@ -23,43 +25,31 @@ pub use types::{EngineConfig, EngineMetrics, ReloadReport, SourceBinding, UserFu
 pub use evaluator::eval_filter_expr;
 
 // Re-export internal types for use within the engine module
-use types::{
-    ConcurrentConfig, DistinctState, EmitConfig, EmitExprConfig, EnrichConfig, ForecastConfig,
-    LimitState, LogConfig, MergeSource, PartitionedAggregatorState,
-    PartitionedSlidingCountWindowState, PartitionedWindowState, PatternConfig, PrintConfig,
-    RuntimeOp, RuntimeSource, SelectConfig, StreamDefinition, StreamProcessResult, TimerConfig,
-    ToConfig, TrendAggregateConfig, WindowType,
-};
+use types::{RuntimeOp, RuntimeSource, StreamDefinition, WindowType};
 
-use crate::aggregation::Aggregator;
 use crate::connector;
 use crate::context::ContextMap;
 use crate::event::{Event, SharedEvent};
-use crate::join::JoinBuffer;
 use crate::metrics::Metrics;
-use crate::sase::SaseEngine;
+use crate::sase_persistence::SaseCheckpointExt;
 use crate::sequence::SequenceContext;
 use crate::udf::UdfRegistry;
 use crate::watermark::PerSourceWatermarkTracker;
-use crate::window::{
-    CountWindow, PartitionedSessionWindow, PartitionedSlidingWindow, PartitionedTumblingWindow,
-    SessionWindow, SlidingCountWindow, SlidingWindow, TumblingWindow,
-};
+use crate::window::CountWindow;
 use chrono::Duration;
 use chrono::{DateTime, Utc};
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{debug, info, warn};
-use varpulis_core::ast::{ConfigItem, Program, Stmt, StreamOp, StreamSource};
+use tracing::{info, warn};
+use varpulis_core::ast::{ConfigItem, Program, Stmt};
 use varpulis_core::Value;
 
 // Re-export NamedPattern from types
 pub use types::NamedPattern;
 
 /// Output channel type enumeration for zero-copy or owned event sending
-enum OutputChannel {
+pub(super) enum OutputChannel {
     /// Legacy channel that requires cloning (for backwards compatibility)
     Owned(mpsc::Sender<Event>),
     /// Zero-copy channel using SharedEvent (Arc<Event>)
@@ -69,57 +59,57 @@ enum OutputChannel {
 /// The main Varpulis engine
 pub struct Engine {
     /// Registered stream definitions
-    streams: FxHashMap<String, StreamDefinition>,
+    pub(super) streams: FxHashMap<String, StreamDefinition>,
     /// Event routing: maps event types to stream names
-    router: router::EventRouter,
+    pub(super) router: router::EventRouter,
     /// User-defined functions
-    functions: FxHashMap<String, UserFunction>,
+    pub(super) functions: FxHashMap<String, UserFunction>,
     /// Named patterns for reuse
-    patterns: FxHashMap<String, NamedPattern>,
+    pub(super) patterns: FxHashMap<String, NamedPattern>,
     /// Configuration blocks (e.g., mqtt, kafka)
-    configs: FxHashMap<String, EngineConfig>,
+    pub(super) configs: FxHashMap<String, EngineConfig>,
     /// Mutable variables accessible across events
-    variables: FxHashMap<String, Value>,
+    pub(super) variables: FxHashMap<String, Value>,
     /// Tracks which variables are declared as mutable (var vs let)
-    mutable_vars: FxHashSet<String>,
+    pub(super) mutable_vars: FxHashSet<String>,
     /// Declared connectors from VPL
-    connectors: FxHashMap<String, connector::ConnectorConfig>,
+    pub(super) connectors: FxHashMap<String, connector::ConnectorConfig>,
     /// Source connector bindings from .from() declarations
-    source_bindings: Vec<SourceBinding>,
+    pub(super) source_bindings: Vec<SourceBinding>,
     /// Sink registry for .to() operations
-    sinks: sink_factory::SinkRegistry,
+    pub(super) sinks: sink_factory::SinkRegistry,
     /// Output event sender (None for benchmark/quiet mode - skips cloning overhead)
-    output_channel: Option<OutputChannel>,
+    pub(super) output_channel: Option<OutputChannel>,
     /// Metrics
-    events_processed: u64,
-    output_events_emitted: u64,
+    pub(super) events_processed: u64,
+    pub(super) output_events_emitted: u64,
     /// Prometheus metrics
-    metrics: Option<Metrics>,
+    pub(super) metrics: Option<Metrics>,
     /// Context assignments for multi-threaded execution
-    context_map: ContextMap,
+    pub(super) context_map: ContextMap,
     /// Per-source watermark tracker for event-time processing
-    watermark_tracker: Option<PerSourceWatermarkTracker>,
+    pub(super) watermark_tracker: Option<PerSourceWatermarkTracker>,
     /// Last applied watermark (for detecting advances)
-    last_applied_watermark: Option<DateTime<Utc>>,
+    pub(super) last_applied_watermark: Option<DateTime<Utc>>,
     /// Late data configurations per stream
-    late_data_configs: FxHashMap<String, types::LateDataConfig>,
+    pub(super) late_data_configs: FxHashMap<String, types::LateDataConfig>,
     /// Context name when running inside a context thread (used for unique connector IDs)
-    context_name: Option<String>,
+    pub(super) context_name: Option<String>,
     /// Shared Hamlet aggregators for multi-query optimization
-    shared_hamlet_aggregators:
+    pub(super) shared_hamlet_aggregators:
         Vec<std::sync::Arc<std::sync::Mutex<crate::hamlet::HamletAggregator>>>,
     /// Auto-checkpointing manager (None = checkpointing disabled)
-    checkpoint_manager: Option<crate::persistence::CheckpointManager>,
+    pub(super) checkpoint_manager: Option<crate::persistence::CheckpointManager>,
     /// Custom DLQ file path (defaults to "varpulis-dlq.jsonl")
-    dlq_path: Option<std::path::PathBuf>,
+    pub(super) dlq_path: Option<std::path::PathBuf>,
     /// DLQ configuration (rotation limits etc.)
-    dlq_config: crate::dead_letter::DlqConfig,
+    pub(super) dlq_config: crate::dead_letter::DlqConfig,
     /// Shared DLQ instance (created during load())
-    dlq: Option<Arc<crate::dead_letter::DeadLetterQueue>>,
+    pub(super) dlq: Option<Arc<crate::dead_letter::DeadLetterQueue>>,
     /// Physical plan snapshot for introspection (built during load_program)
-    physical_plan: Option<physical_plan::PhysicalPlan>,
+    pub(super) physical_plan: Option<physical_plan::PhysicalPlan>,
     /// Registry for native Rust UDFs (scalar + aggregate)
-    udf_registry: UdfRegistry,
+    pub(super) udf_registry: UdfRegistry,
 }
 
 impl Engine {
@@ -214,7 +204,7 @@ impl Engine {
     /// In benchmark mode (no output channel), this is a no-op to avoid cloning overhead.
     /// PERF: Uses zero-copy for SharedEvent channels, clones only for legacy Owned channels.
     #[inline]
-    fn send_output_shared(&mut self, event: &SharedEvent) {
+    pub(super) fn send_output_shared(&mut self, event: &SharedEvent) {
         match &self.output_channel {
             Some(OutputChannel::Shared(tx)) => {
                 // PERF: Zero-copy - just increment Arc refcount
@@ -238,7 +228,7 @@ impl Engine {
     /// Send an output event to the output channel (if configured).
     /// In benchmark mode (no output channel), this is a no-op to avoid cloning overhead.
     #[inline]
-    fn send_output(&mut self, event: Event) {
+    pub(super) fn send_output(&mut self, event: Event) {
         match &self.output_channel {
             Some(OutputChannel::Shared(tx)) => {
                 // Wrap in Arc for shared channel
@@ -258,11 +248,6 @@ impl Engine {
     }
 
     /// Set the context name for this engine instance.
-    ///
-    /// When set, connectors (e.g., MQTT) append the context name to their
-    /// client IDs to avoid broker conflicts when multiple contexts share the
-    /// same connector configuration. Without a context, the exact client_id
-    /// from the VPL connector declaration is used unchanged.
     pub fn set_context_name(&mut self, name: &str) {
         self.context_name = Some(name.to_string());
     }
@@ -356,7 +341,6 @@ impl Engine {
         F: Fn(&Event) -> bool + Send + Sync + 'static,
     {
         if let Some(stream) = self.streams.get_mut(stream_name) {
-            // Wrap the closure to accept SharedEvent (dereferences to &Event)
             let wrapped = move |e: &SharedEvent| filter(e.as_ref());
             stream
                 .operations
@@ -368,9 +352,6 @@ impl Engine {
     }
 
     /// Load a program into the engine with semantic validation.
-    ///
-    /// `source` is the original VPL source text (used for diagnostic formatting).
-    /// Pass `""` if the source is unavailable.
     pub fn load_with_source(&mut self, source: &str, program: &Program) -> Result<(), String> {
         let validation = varpulis_core::validate::validate(source, program);
         if validation.has_errors() {
@@ -475,9 +456,6 @@ impl Engine {
                     self.patterns.insert(name.clone(), named_pattern);
                 }
                 Stmt::Import { path, alias } => {
-                    // Imports should be resolved before reaching the engine
-                    // (e.g., by resolve_imports() in the CLI). If one reaches here,
-                    // it means the caller didn't pre-process imports.
                     warn!(
                         "Unresolved import '{}' (alias: {:?}) — imports must be resolved before engine.load()",
                         path, alias
@@ -489,7 +467,6 @@ impl Engine {
                     value,
                     ..
                 } => {
-                    // Evaluate the initial value, using existing variables as bindings
                     let dummy_event = Event::new("__init__");
                     let empty_ctx = SequenceContext::new();
                     let initial_value = evaluator::eval_expr_with_functions(
@@ -516,7 +493,6 @@ impl Engine {
                     }
                 }
                 Stmt::Assignment { name, value } => {
-                    // Evaluate the new value, using existing variables as bindings
                     let dummy_event = Event::new("__assign__");
                     let empty_ctx = SequenceContext::new();
                     let new_value = evaluator::eval_expr_with_functions(
@@ -528,7 +504,6 @@ impl Engine {
                     )
                     .ok_or_else(|| format!("Failed to evaluate assignment value for '{}'", name))?;
 
-                    // Check if variable is mutable
                     if self.variables.contains_key(name) && !self.mutable_vars.contains(name) {
                         return Err(format!(
                             "Cannot assign to immutable variable '{}'. Use 'var' instead of 'let'.",
@@ -536,7 +511,6 @@ impl Engine {
                         ));
                     }
 
-                    // If variable doesn't exist, treat as implicit mutable declaration
                     if !self.variables.contains_key(name) {
                         self.mutable_vars.insert(name.clone());
                     }
@@ -562,14 +536,14 @@ impl Engine {
                     self.connectors.insert(name.clone(), config);
                 }
                 _ => {
-                    debug!("Skipping statement: {:?}", stmt.node);
+                    tracing::debug!("Skipping statement: {:?}", stmt.node);
                 }
             }
         }
 
         // Collect all sink_keys actually referenced by stream operations
         let mut referenced_sink_keys: FxHashSet<String> = FxHashSet::default();
-        let mut topic_overrides: Vec<(String, String, String)> = Vec::new(); // (sink_key, connector_name, topic)
+        let mut topic_overrides: Vec<(String, String, String)> = Vec::new();
         for stream in self.streams.values() {
             for op in &stream.operations {
                 if let RuntimeOp::To(to_config) = op {
@@ -625,7 +599,6 @@ impl Engine {
 
         // Build physical plan snapshot for introspection
         let mut plan = physical_plan::PhysicalPlan::new();
-        // Build reverse index: stream_name → event types that route to it
         let mut stream_event_types: FxHashMap<String, Vec<String>> = FxHashMap::default();
         for (event_type, targets) in self.router.all_routes() {
             for target in targets.iter() {
@@ -663,7 +636,6 @@ impl Engine {
         use crate::hamlet::template::TemplateBuilder;
         use crate::hamlet::{HamletAggregator, HamletConfig, QueryRegistration};
 
-        // Collect streams that have Hamlet aggregators
         let hamlet_streams: Vec<String> = self
             .streams
             .iter()
@@ -672,20 +644,16 @@ impl Engine {
             .collect();
 
         if hamlet_streams.len() < 2 {
-            return; // No sharing possible with fewer than 2 queries
+            return;
         }
 
-        // Extract Kleene type info from each stream's TrendAggregate config
-        // Group streams by their Kleene event types
         let mut kleene_groups: FxHashMap<Vec<String>, Vec<String>> = FxHashMap::default();
 
         for stream_name in &hamlet_streams {
             if let Some(stream) = self.streams.get(stream_name) {
-                // Find TrendAggregate op and extract event types
                 let mut kleene_types = Vec::new();
                 for op in &stream.operations {
                     if let RuntimeOp::TrendAggregate(_) = op {
-                        // Get event types from the stream's hamlet aggregator
                         if let Some(ref agg) = stream.hamlet_aggregator {
                             for query in agg.registered_queries() {
                                 for &kt in query.kleene_types.iter() {
@@ -706,7 +674,6 @@ impl Engine {
             }
         }
 
-        // For groups with 2+ streams sharing Kleene patterns, create shared aggregators
         for (kleene_key, group_streams) in &kleene_groups {
             if group_streams.len() < 2 || kleene_key.is_empty() {
                 continue;
@@ -719,9 +686,7 @@ impl Engine {
                 group_streams,
             );
 
-            // Build a shared template from all queries in the group
             let mut builder = TemplateBuilder::new();
-            // (stream_name, registration, fields_config)
             type SharingEntry = (
                 String,
                 QueryRegistration,
@@ -734,11 +699,9 @@ impl Engine {
                 if let Some(stream) = self.streams.get(stream_name) {
                     if let Some(ref agg) = stream.hamlet_aggregator {
                         for query in agg.registered_queries() {
-                            // Re-register with a new query ID in the shared template
                             let new_id = next_query_id;
                             next_query_id += 1;
 
-                            // Get event type names from template
                             let event_names: Vec<String> = query
                                 .event_types
                                 .iter()
@@ -749,10 +712,8 @@ impl Engine {
 
                             builder.add_sequence(new_id, &name_strs);
 
-                            // Add Kleene patterns
                             for &kt in &query.kleene_types {
                                 let type_name = format!("type_{}", kt);
-                                // Find the state for this type in the sequence
                                 let position = event_names
                                     .iter()
                                     .position(|n| *n == type_name)
@@ -760,7 +721,6 @@ impl Engine {
                                 builder.add_kleene(new_id, &type_name, position as u16);
                             }
 
-                            // Get fields from the TrendAggregate config
                             let fields: Vec<(String, crate::greta::GretaAggregate)> = stream
                                 .operations
                                 .iter()
@@ -788,7 +748,6 @@ impl Engine {
                 }
             }
 
-            // Create shared aggregator
             let template = builder.build();
             let config = HamletConfig {
                 window_ms: 60_000,
@@ -804,15 +763,11 @@ impl Engine {
             let shared_ref = std::sync::Arc::new(std::sync::Mutex::new(shared_agg));
             self.shared_hamlet_aggregators.push(shared_ref.clone());
 
-            // Update each stream to use the shared aggregator
-            // (We replace the per-stream aggregator with None and update the TrendAggregateConfig query_id)
             for (stream_name, registration, fields) in &all_registrations {
                 if let Some(stream) = self.streams.get_mut(stream_name) {
-                    // Remove per-stream aggregator - shared one is used instead
                     stream.hamlet_aggregator = None;
                     stream.shared_hamlet_ref = Some(shared_ref.clone());
 
-                    // Update the TrendAggregate op's query_id
                     for op in &mut stream.operations {
                         if let RuntimeOp::TrendAggregate(config) = op {
                             config.query_id = registration.id;
@@ -830,19 +785,12 @@ impl Engine {
     }
 
     /// Connect all sinks that require explicit connection.
-    ///
-    /// Call this after `load()` to establish connections to external systems
-    /// like MQTT brokers, databases, etc. This must be called before processing
-    /// events if any `.to()` operations are used.
+    #[tracing::instrument(skip(self))]
     pub async fn connect_sinks(&self) -> Result<(), String> {
         self.sinks.connect_all().await
     }
 
     /// Inject a pre-built sink into the engine's registry.
-    ///
-    /// Use this to share connections — e.g. when a source and sink use the
-    /// same MQTT broker, clone the source's client into a sink and inject it
-    /// here so that `connect_sinks()` becomes a no-op for that sink.
     pub fn inject_sink(&mut self, key: &str, sink: Arc<dyn crate::sink::Sink>) {
         self.sinks.insert(key.to_string(), sink);
     }
@@ -853,9 +801,6 @@ impl Engine {
     }
 
     /// Return all sink keys that belong to a given connector name.
-    ///
-    /// A key matches if it equals the connector name exactly, or if it
-    /// starts with `connector_name::` (topic-override keys).
     pub fn sink_keys_for_connector(&self, connector_name: &str) -> Vec<String> {
         let prefix = format!("{}::", connector_name);
         self.sinks
@@ -866,2282 +811,11 @@ impl Engine {
             .collect()
     }
 
-    fn register_stream(
-        &mut self,
-        name: &str,
-        source: &StreamSource,
-        ops: &[StreamOp],
-    ) -> Result<(), String> {
-        // Extract context assignments from stream ops
-        for (emit_idx, op) in ops.iter().enumerate() {
-            match op {
-                StreamOp::Context(ctx_name) => {
-                    self.context_map
-                        .assign_stream(name.to_string(), ctx_name.clone());
-                }
-                StreamOp::Emit {
-                    target_context: Some(ctx),
-                    ..
-                } => {
-                    self.context_map.add_cross_context_emit(
-                        name.to_string(),
-                        emit_idx,
-                        ctx.clone(),
-                    );
-                }
-                StreamOp::Watermark(args) => {
-                    // Configure per-source watermark tracking for this stream
-                    self.enable_watermark_tracking();
-                    let mut max_ooo = Duration::seconds(0);
-                    for arg in args {
-                        if arg.name == "out_of_order" {
-                            if let varpulis_core::ast::Expr::Duration(ns) = &arg.value {
-                                max_ooo = Duration::nanoseconds(*ns as i64);
-                            }
-                        }
-                    }
-                    let source_et = match source {
-                        StreamSource::Ident(s) => Some(s.as_str()),
-                        StreamSource::IdentWithAlias { name: et, .. } => Some(et.as_str()),
-                        StreamSource::FromConnector { event_type, .. } => Some(event_type.as_str()),
-                        _ => None,
-                    };
-                    if let Some(et) = source_et {
-                        self.register_watermark_source(et, max_ooo);
-                    }
-                }
-                StreamOp::AllowedLateness(expr) => {
-                    // Configure late-data handling for this stream
-                    let lateness_ns = match expr {
-                        varpulis_core::ast::Expr::Duration(ns) => *ns as i64,
-                        _ => 0,
-                    };
-                    self.late_data_configs.insert(
-                        name.to_string(),
-                        types::LateDataConfig {
-                            allowed_lateness: Duration::nanoseconds(lateness_ns),
-                            side_output_stream: None,
-                        },
-                    );
-                }
-                _ => {}
-            }
-        }
-
-        // Check if we have sequence operations and build SASE+ engine
-        let (runtime_ops, sase_engine, sequence_event_types, hamlet_aggregator, pst_forecaster) =
-            self.compile_ops_with_sequences(source, ops)?;
-
-        // Mapping from event_type to source name (for join streams)
-        let mut event_type_to_source: FxHashMap<String, String> = FxHashMap::default();
-
-        let runtime_source = match source {
-            StreamSource::FromConnector {
-                event_type,
-                connector_name,
-                params,
-            } => {
-                // EventType.from(Connector, topic: "...", ...)
-                // Register for the event type, connector info will be used at runtime
-                info!(
-                    "Registering stream {} from connector {} for event type {}",
-                    name, connector_name, event_type
-                );
-                let topic_override = params
-                    .iter()
-                    .find(|p| p.name == "topic")
-                    .and_then(|p| p.value.as_string().map(|s| s.to_string()));
-                let extra_params: HashMap<String, String> = params
-                    .iter()
-                    .filter(|p| p.name != "topic")
-                    .filter_map(|p| {
-                        let val = match &p.value {
-                            varpulis_core::ast::ConfigValue::Str(s) => s.clone(),
-                            varpulis_core::ast::ConfigValue::Ident(s) => s.clone(),
-                            varpulis_core::ast::ConfigValue::Int(i) => i.to_string(),
-                            varpulis_core::ast::ConfigValue::Bool(b) => b.to_string(),
-                            varpulis_core::ast::ConfigValue::Float(f) => f.to_string(),
-                            _ => return None,
-                        };
-                        Some((p.name.clone(), val))
-                    })
-                    .collect();
-                self.source_bindings.push(SourceBinding {
-                    connector_name: connector_name.clone(),
-                    event_type: event_type.clone(),
-                    topic_override,
-                    extra_params,
-                });
-                self.router.add_route(event_type, name);
-                RuntimeSource::EventType(event_type.clone())
-            }
-            StreamSource::Ident(stream_name) => {
-                // Check if this refers to a named SASE+ pattern
-                if self.patterns.contains_key(stream_name) {
-                    let event_types = compiler::extract_event_types_from_pattern_expr(
-                        &self.patterns[stream_name].expr,
-                    );
-                    for et in &event_types {
-                        self.router.add_route(et, name);
-                    }
-                    let first_type = event_types.first().cloned().unwrap_or_default();
-                    RuntimeSource::EventType(first_type)
-                } else {
-                    // Regular stream reference
-                    self.router.add_route(stream_name, name);
-                    RuntimeSource::Stream(stream_name.clone())
-                }
-            }
-            StreamSource::IdentWithAlias {
-                name: event_type, ..
-            } => {
-                // Register for the event type (alias is handled in sequence)
-                self.router.add_route(event_type, name);
-                RuntimeSource::EventType(event_type.clone())
-            }
-            StreamSource::AllWithAlias {
-                name: event_type, ..
-            } => {
-                // Register for the event type (all + alias handled in sequence)
-                self.router.add_route(event_type, name);
-                RuntimeSource::EventType(event_type.clone())
-            }
-            StreamSource::Sequence(decl) => {
-                // Register for all event types in the sequence
-                for step in &decl.steps {
-                    self.router.add_route(&step.event_type, name);
-                }
-                // Use first event type as the primary source
-                let first_type = decl
-                    .steps
-                    .first()
-                    .map(|s| s.event_type.clone())
-                    .unwrap_or_default();
-                RuntimeSource::EventType(first_type)
-            }
-            StreamSource::Join(clauses) => {
-                let sources: Vec<String> = clauses.iter().map(|c| c.source.clone()).collect();
-                info!(
-                    "Registering join stream {} from sources: {:?}",
-                    name, sources
-                );
-                // For join sources, we register based on whether the source is a derived stream or an event type
-                // - Derived streams (with operations like aggregate, window, etc.) output events with stream name as event_type
-                // - Simple event streams need to receive the raw event type
-                for source in &sources {
-                    if let Some(stream_def) = self.streams.get(source) {
-                        // Source is a registered stream
-                        // Check if it has any transforming operations (aggregate, window, select, etc.)
-                        let has_operations = !stream_def.operations.is_empty();
-
-                        if has_operations {
-                            // Derived stream with operations - register for the stream name
-                            // because its output events have event_type = stream name
-                            info!(
-                                "Join source '{}' is a derived stream, registering for stream name",
-                                source
-                            );
-                            self.router.add_route(source, name);
-                            event_type_to_source.insert(source.clone(), source.clone());
-                        } else {
-                            // Simple passthrough stream - register for underlying event type
-                            let event_type = match &stream_def.source {
-                                RuntimeSource::EventType(et) => et.clone(),
-                                RuntimeSource::Stream(s) => s.clone(),
-                                _ => source.clone(),
-                            };
-                            info!(
-                                "Join source '{}' is a passthrough stream, registering for event type '{}'",
-                                source, event_type
-                            );
-                            self.router.add_route(&event_type, name);
-                            event_type_to_source.insert(event_type, source.clone());
-                        }
-                    } else {
-                        // Source stream not yet registered, assume it's an event type name
-                        info!(
-                            "Join source '{}' not found as stream, treating as event type",
-                            source
-                        );
-                        self.router.add_route(source, name);
-                        event_type_to_source.insert(source.clone(), source.clone());
-                    }
-                }
-                RuntimeSource::Join(sources)
-            }
-            StreamSource::Merge(decls) => {
-                let merge_sources: Vec<MergeSource> = decls
-                    .iter()
-                    .map(|d| MergeSource {
-                        name: d.name.clone(),
-                        event_type: d.source.clone(),
-                        filter: d.filter.clone(),
-                    })
-                    .collect();
-
-                // Register for all source event types
-                for ms in &merge_sources {
-                    self.router.add_route(&ms.event_type, name);
-                }
-
-                info!(
-                    "Registering merge stream {} with {} sources",
-                    name,
-                    merge_sources.len()
-                );
-                RuntimeSource::Merge(merge_sources)
-            }
-            StreamSource::Timer(decl) => {
-                // Extract interval from duration expression
-                let interval_ns = match &decl.interval {
-                    varpulis_core::ast::Expr::Duration(ns) => *ns,
-                    _ => {
-                        warn!("Timer interval must be a duration, defaulting to 1s");
-                        1_000_000_000u64 // 1 second default
-                    }
-                };
-
-                // Extract optional initial delay
-                let initial_delay_ns =
-                    decl.initial_delay
-                        .as_ref()
-                        .and_then(|expr| match expr.as_ref() {
-                            varpulis_core::ast::Expr::Duration(ns) => Some(*ns),
-                            _ => None,
-                        });
-
-                // Create timer event type based on stream name
-                let timer_event_type = format!("Timer_{}", name);
-
-                // Register this stream to receive timer events
-                self.router.add_route(&timer_event_type, name);
-
-                info!(
-                    "Registering timer stream {} with interval {}ms{}",
-                    name,
-                    interval_ns / 1_000_000,
-                    initial_delay_ns
-                        .map(|d| format!(", initial_delay {}ms", d / 1_000_000))
-                        .unwrap_or_default()
-                );
-
-                RuntimeSource::Timer(TimerConfig {
-                    interval_ns,
-                    initial_delay_ns,
-                    timer_event_type,
-                })
-            }
-        };
-
-        // Register for all event types in sequence (avoid duplicates)
-        for event_type in &sequence_event_types {
-            self.router.add_route(event_type, name);
-        }
-        if !sequence_event_types.is_empty() {
-            debug!(
-                "Stream {} registered for sequence event types: {:?}",
-                name, sequence_event_types
-            );
-        }
-
-        // Create JoinBuffer for Join sources
-        let join_buffer = if let StreamSource::Join(clauses) = source {
-            let join_sources: Vec<String> = clauses.iter().map(|c| c.source.clone()).collect();
-            let join_keys = self.extract_join_keys(clauses, ops);
-            let window_duration = self.extract_window_duration(ops);
-            let join_type = clauses.first().map(|c| c.join_type).unwrap_or_default();
-
-            debug!(
-                "Creating JoinBuffer for stream {} ({:?}) with sources {:?}, keys {:?}, window {:?}",
-                name, join_type, join_sources, join_keys, window_duration
-            );
-
-            Some(
-                JoinBuffer::new(join_sources, join_keys, window_duration).with_join_type(join_type),
-            )
-        } else {
-            None
-        };
-
-        // Log source description before moving
-        let source_desc = runtime_source.describe();
-
-        // Build enrichment provider if any .enrich() ops reference a connector
-        let enrichment = {
-            let enrich_op = runtime_ops.iter().find_map(|op| {
-                if let RuntimeOp::Enrich(config) = op {
-                    Some(config)
-                } else {
-                    None
-                }
-            });
-            if let Some(config) = enrich_op {
-                if let Some(conn_config) = self.connectors.get(&config.connector_name) {
-                    let provider = crate::enrichment::create_provider(conn_config)
-                        .map_err(|e| format!("Failed to create enrichment provider: {}", e))?;
-                    let cache_ttl = config
-                        .cache_ttl_ns
-                        .map(std::time::Duration::from_nanos)
-                        .unwrap_or(std::time::Duration::from_secs(300));
-                    let cache = crate::enrichment::EnrichmentCache::new(cache_ttl);
-                    Some((
-                        Arc::from(provider) as Arc<dyn crate::enrichment::EnrichmentProvider>,
-                        Arc::new(cache),
-                    ))
-                } else {
-                    warn!(
-                        "Connector '{}' not found for .enrich() in stream '{}'",
-                        config.connector_name, name
-                    );
-                    None
-                }
-            } else {
-                None
-            }
-        };
-
-        self.streams.insert(
-            name.to_string(),
-            StreamDefinition {
-                name: name.to_string(),
-                name_arc: Arc::from(name),
-                source: runtime_source,
-                operations: runtime_ops,
-                sase_engine,
-                join_buffer,
-                event_type_to_source,
-                hamlet_aggregator,
-                shared_hamlet_ref: None,
-                pst_forecaster,
-                last_raw_event: None,
-                enrichment,
-                buffer_config: None,
-            },
-        );
-
-        info!("Registered stream: {} (source: {})", name, source_desc);
-        Ok(())
-    }
-
-    #[allow(clippy::type_complexity)]
-    fn compile_ops_with_sequences(
-        &self,
-        source: &StreamSource,
-        ops: &[StreamOp],
-    ) -> Result<
-        (
-            Vec<RuntimeOp>,
-            Option<SaseEngine>,
-            Vec<String>,
-            Option<crate::hamlet::HamletAggregator>,
-            Option<crate::pst::PatternMarkovChain>,
-        ),
-        String,
-    > {
-        let mut runtime_ops = Vec::new();
-        let mut sequence_event_types: Vec<String> = Vec::new();
-        let mut partition_key: Option<String> = None;
-
-        // For SASE+ pattern compilation
-        let mut followed_by_clauses: Vec<varpulis_core::ast::FollowedByClause> = Vec::new();
-        let mut negation_clauses: Vec<varpulis_core::ast::FollowedByClause> = Vec::new();
-        let mut global_within: Option<std::time::Duration> = None;
-
-        // For Hamlet trend aggregation
-        let mut trend_agg_items: Option<Vec<varpulis_core::ast::TrendAggItem>> = None;
-        let mut within_expr_for_hamlet: Option<varpulis_core::ast::Expr> = None;
-
-        // For PST forecasting
-        let mut forecast_spec: Option<varpulis_core::ast::ForecastSpec> = None;
-        let mut forecast_insert_idx: Option<usize> = None;
-
-        // Helper closure to resolve a stream/event name to the underlying event type
-        let resolve_event_type = |name: &str| -> String {
-            if let Some(stream_def) = self.streams.get(name) {
-                // This is a registered stream - get its underlying event type
-                match &stream_def.source {
-                    RuntimeSource::EventType(et) => et.clone(),
-                    RuntimeSource::Stream(s) => s.clone(),
-                    _ => name.to_string(),
-                }
-            } else {
-                // Not a registered stream - use as-is (it's an event type)
-                name.to_string()
-            }
-        };
-
-        // Collect sequence event types from source (with stream resolution)
-        // Only add source event types when there are actual sequence operations
-        // (followedBy, not, within). Without this guard, a derived stream like
-        // `HighTempAlert = Temperatures .where(...)` would incorrectly register
-        // for the underlying event type (TemperatureReading) in addition to the
-        // stream name (Temperatures), causing duplicate processing.
-        let has_sequence_ops = ops.iter().any(|op| {
-            matches!(
-                op,
-                StreamOp::FollowedBy(_) | StreamOp::Not(_) | StreamOp::Within(_)
-            )
-        });
-
-        match source {
-            StreamSource::Sequence(decl) => {
-                for step in &decl.steps {
-                    let resolved = resolve_event_type(&step.event_type);
-                    if !sequence_event_types.contains(&resolved) {
-                        sequence_event_types.push(resolved);
-                    }
-                }
-            }
-            StreamSource::Ident(name) if self.patterns.contains_key(name) => {
-                // Named pattern reference - extract event types from pattern
-                let event_types =
-                    compiler::extract_event_types_from_pattern_expr(&self.patterns[name].expr);
-                for et in event_types {
-                    let resolved = resolve_event_type(&et);
-                    if !sequence_event_types.contains(&resolved) {
-                        sequence_event_types.push(resolved);
-                    }
-                }
-            }
-            StreamSource::Ident(name) if has_sequence_ops => {
-                // Initial source for a sequence pattern - resolve to underlying event type
-                let resolved = resolve_event_type(name);
-                if !sequence_event_types.contains(&resolved) {
-                    sequence_event_types.push(resolved);
-                }
-            }
-            StreamSource::IdentWithAlias { name, .. } | StreamSource::AllWithAlias { name, .. }
-                if has_sequence_ops =>
-            {
-                let resolved = resolve_event_type(name);
-                if !sequence_event_types.contains(&resolved) {
-                    sequence_event_types.push(resolved);
-                }
-            }
-            _ => {}
-        }
-
-        for op in ops {
-            match op {
-                StreamOp::FollowedBy(clause) => {
-                    // Store raw clause for SASE+ compilation
-                    followed_by_clauses.push(clause.clone());
-                    // Resolve event type for routing registration
-                    let resolved = resolve_event_type(&clause.event_type);
-                    if !sequence_event_types.contains(&resolved) {
-                        sequence_event_types.push(resolved);
-                    }
-                    continue;
-                }
-                StreamOp::Within(expr) => {
-                    // Parse duration from expression
-                    let duration_ns = match expr {
-                        varpulis_core::ast::Expr::Duration(ns) => *ns,
-                        _ => 300_000_000_000u64, // 5 minutes default
-                    };
-                    global_within = Some(std::time::Duration::from_nanos(duration_ns));
-                    within_expr_for_hamlet = Some(expr.clone());
-                    continue;
-                }
-                StreamOp::Not(clause) => {
-                    // Store negation clause for SASE+ engine
-                    negation_clauses.push(clause.clone());
-                    // Add negation event type to sequence event types so it gets routed
-                    let resolved = resolve_event_type(&clause.event_type);
-                    if !sequence_event_types.contains(&resolved) {
-                        sequence_event_types.push(resolved);
-                    }
-                    continue;
-                }
-                StreamOp::TrendAggregate(items) => {
-                    trend_agg_items = Some(items.clone());
-                    continue;
-                }
-                StreamOp::Forecast(spec) => {
-                    forecast_spec = Some(spec.clone());
-                    // Record current position so Forecast op is inserted here,
-                    // BEFORE any subsequent .emit()/.where() ops.
-                    forecast_insert_idx = Some(runtime_ops.len());
-                    continue;
-                }
-                StreamOp::Enrich(spec) => {
-                    // Resolve timeout (default 5s = 5_000_000_000 ns)
-                    let timeout_ns = match &spec.timeout {
-                        Some(varpulis_core::ast::Expr::Duration(ns)) => *ns,
-                        _ => 5_000_000_000u64,
-                    };
-                    // Resolve cache TTL
-                    let cache_ttl_ns = match &spec.cache_ttl {
-                        Some(varpulis_core::ast::Expr::Duration(ns)) => Some(*ns),
-                        _ => None,
-                    };
-                    // Resolve fallback value
-                    let fallback = match &spec.fallback {
-                        Some(varpulis_core::ast::Expr::Str(s)) => {
-                            Some(varpulis_core::Value::str(s.as_str()))
-                        }
-                        Some(varpulis_core::ast::Expr::Int(i)) => {
-                            Some(varpulis_core::Value::Int(*i))
-                        }
-                        Some(varpulis_core::ast::Expr::Float(f)) => {
-                            Some(varpulis_core::Value::Float(*f))
-                        }
-                        Some(varpulis_core::ast::Expr::Bool(b)) => {
-                            Some(varpulis_core::Value::Bool(*b))
-                        }
-                        Some(varpulis_core::ast::Expr::Null) => Some(varpulis_core::Value::Null),
-                        _ => None,
-                    };
-                    runtime_ops.push(RuntimeOp::Enrich(EnrichConfig {
-                        connector_name: spec.connector_name.clone(),
-                        key_expr: (*spec.key_expr).clone(),
-                        fields: spec.fields.clone(),
-                        cache_ttl_ns,
-                        timeout_ns,
-                        fallback,
-                    }));
-                    continue;
-                }
-                StreamOp::Score(spec) => {
-                    #[cfg(feature = "onnx")]
-                    {
-                        let gpu_config = if spec.gpu {
-                            Some(crate::scoring::GpuConfig {
-                                provider: crate::scoring::GpuProvider::Cuda {
-                                    device_id: spec.device_id,
-                                },
-                                batch_size: spec.batch_size.max(1),
-                            })
-                        } else if spec.batch_size > 1 {
-                            Some(crate::scoring::GpuConfig {
-                                provider: crate::scoring::GpuProvider::Cpu,
-                                batch_size: spec.batch_size,
-                            })
-                        } else {
-                            None
-                        };
-
-                        let model = crate::scoring::OnnxModel::load(
-                            &spec.model_path,
-                            spec.inputs.clone(),
-                            spec.outputs.clone(),
-                            gpu_config,
-                        )
-                        .map_err(|e| format!("Failed to load ONNX model: {}", e))?;
-                        runtime_ops.push(RuntimeOp::Score(types::ScoreConfig {
-                            model: std::sync::Arc::new(model),
-                            input_fields: spec.inputs.clone(),
-                            output_fields: spec.outputs.clone(),
-                            batch_size: spec.batch_size.max(1),
-                        }));
-                        continue;
-                    }
-                    #[cfg(not(feature = "onnx"))]
-                    return Err(format!(
-                        ".score() operator requires the 'onnx' feature. \
-                         Rebuild with: cargo build --features onnx (model: {})",
-                        spec.model_path
-                    ));
-                }
-                StreamOp::Context(_) => {
-                    // Context assignment is metadata, not a runtime operation.
-                    // Handled by the engine's load() method via context_map.
-                    continue;
-                }
-                StreamOp::Watermark(_) | StreamOp::AllowedLateness(_) => {
-                    // Handled in register_stream() as metadata ops
-                    continue;
-                }
-                _ => {}
-            }
-
-            // Handle non-sequence operations
-            match op {
-                StreamOp::Window(args) => {
-                    // Check for session window first
-                    if let Some(ref gap_expr) = args.session_gap {
-                        let gap_ns = match gap_expr {
-                            varpulis_core::ast::Expr::Duration(ns) => *ns,
-                            _ => 300_000_000_000, // 5 minute default
-                        };
-                        let gap = Duration::nanoseconds(gap_ns as i64);
-                        if let Some(ref key) = partition_key {
-                            runtime_ops.push(RuntimeOp::Window(WindowType::PartitionedSession(
-                                PartitionedSessionWindow::new(key.clone(), gap),
-                            )));
-                        } else {
-                            runtime_ops.push(RuntimeOp::Window(WindowType::Session(
-                                SessionWindow::new(gap),
-                            )));
-                        }
-                    } else {
-                        // Check if this is a count-based or time-based window
-                        match &args.duration {
-                            varpulis_core::ast::Expr::Int(count) => {
-                                // Count-based window
-                                let count = *count as usize;
-
-                                // Get slide amount if specified (default to window size for tumbling)
-                                let slide = args.sliding.as_ref().map(|s| match s {
-                                    varpulis_core::ast::Expr::Int(n) => *n as usize,
-                                    _ => 1,
-                                });
-
-                                // If we have a partition key, use partitioned window
-                                if let Some(ref key) = partition_key {
-                                    if let Some(slide_size) = slide {
-                                        // Partitioned sliding count window
-                                        runtime_ops.push(RuntimeOp::PartitionedSlidingCountWindow(
-                                            PartitionedSlidingCountWindowState::new(
-                                                key.clone(),
-                                                count,
-                                                slide_size,
-                                            ),
-                                        ));
-                                    } else {
-                                        // Partitioned tumbling count window
-                                        runtime_ops.push(RuntimeOp::PartitionedWindow(
-                                            PartitionedWindowState::new(key.clone(), count),
-                                        ));
-                                    }
-                                } else if let Some(slide_size) = slide {
-                                    runtime_ops.push(RuntimeOp::Window(WindowType::SlidingCount(
-                                        SlidingCountWindow::new(count, slide_size),
-                                    )));
-                                } else {
-                                    runtime_ops.push(RuntimeOp::Window(WindowType::Count(
-                                        CountWindow::new(count),
-                                    )));
-                                }
-                            }
-                            varpulis_core::ast::Expr::Duration(ns) => {
-                                // Time-based window
-                                let duration = Duration::nanoseconds(*ns as i64);
-                                if let Some(ref key) = partition_key {
-                                    // Partitioned time-based window
-                                    if let Some(sliding) = &args.sliding {
-                                        let slide_ns = match sliding {
-                                            varpulis_core::ast::Expr::Duration(ns) => *ns,
-                                            _ => 60_000_000_000, // 1 minute default
-                                        };
-                                        let slide = Duration::nanoseconds(slide_ns as i64);
-                                        runtime_ops.push(RuntimeOp::Window(
-                                            WindowType::PartitionedSliding(
-                                                PartitionedSlidingWindow::new(
-                                                    key.clone(),
-                                                    duration,
-                                                    slide,
-                                                ),
-                                            ),
-                                        ));
-                                    } else {
-                                        runtime_ops.push(RuntimeOp::Window(
-                                            WindowType::PartitionedTumbling(
-                                                PartitionedTumblingWindow::new(
-                                                    key.clone(),
-                                                    duration,
-                                                ),
-                                            ),
-                                        ));
-                                    }
-                                } else if let Some(sliding) = &args.sliding {
-                                    let slide_ns = match sliding {
-                                        varpulis_core::ast::Expr::Duration(ns) => *ns,
-                                        _ => 60_000_000_000, // 1 minute default
-                                    };
-                                    let slide = Duration::nanoseconds(slide_ns as i64);
-                                    runtime_ops.push(RuntimeOp::Window(WindowType::Sliding(
-                                        SlidingWindow::new(duration, slide),
-                                    )));
-                                } else {
-                                    runtime_ops.push(RuntimeOp::Window(WindowType::Tumbling(
-                                        TumblingWindow::new(duration),
-                                    )));
-                                }
-                            }
-                            _ => {
-                                // Default to 5 minute tumbling window
-                                let duration = Duration::nanoseconds(300_000_000_000);
-                                if let Some(ref key) = partition_key {
-                                    runtime_ops.push(RuntimeOp::Window(
-                                        WindowType::PartitionedTumbling(
-                                            PartitionedTumblingWindow::new(key.clone(), duration),
-                                        ),
-                                    ));
-                                } else {
-                                    runtime_ops.push(RuntimeOp::Window(WindowType::Tumbling(
-                                        TumblingWindow::new(duration),
-                                    )));
-                                }
-                            }
-                        }
-                    } // close else (non-session)
-                }
-                StreamOp::PartitionBy(expr) => {
-                    // Extract partition key field name
-                    if let varpulis_core::ast::Expr::Ident(field) = expr {
-                        partition_key = Some(field.clone());
-                    }
-                }
-                StreamOp::Aggregate(items) => {
-                    let mut aggregator = Aggregator::new();
-                    for item in items {
-                        if let Some((func, field)) = compiler::compile_agg_expr(&item.expr) {
-                            aggregator = aggregator.add(item.alias.clone(), func, field);
-                        }
-                    }
-                    // If we have a partition key, use partitioned aggregate
-                    if let Some(ref key) = partition_key {
-                        runtime_ops.push(RuntimeOp::PartitionedAggregate(
-                            PartitionedAggregatorState::new(key.clone(), aggregator),
-                        ));
-                    } else {
-                        runtime_ops.push(RuntimeOp::Aggregate(aggregator));
-                    }
-                }
-                StreamOp::Select(items) => {
-                    let fields: Vec<(String, varpulis_core::ast::Expr)> = items
-                        .iter()
-                        .map(|item| match item {
-                            varpulis_core::ast::SelectItem::Field(name) => {
-                                (name.clone(), varpulis_core::ast::Expr::Ident(name.clone()))
-                            }
-                            varpulis_core::ast::SelectItem::Alias(name, expr) => {
-                                (name.clone(), expr.clone())
-                            }
-                        })
-                        .collect();
-                    runtime_ops.push(RuntimeOp::Select(SelectConfig { fields }));
-                }
-                StreamOp::Emit {
-                    output_type: _,
-                    fields: args,
-                    target_context,
-                } => {
-                    // Check if any args have complex expressions (not just strings or idents)
-                    let has_complex_expr = args.iter().any(|arg| {
-                        !matches!(
-                            &arg.value,
-                            varpulis_core::ast::Expr::Str(_) | varpulis_core::ast::Expr::Ident(_)
-                        )
-                    });
-
-                    if has_complex_expr {
-                        // Use EmitExpr for complex expressions with function evaluation
-                        let fields: Vec<(String, varpulis_core::ast::Expr)> = args
-                            .iter()
-                            .map(|arg| (arg.name.clone(), arg.value.clone()))
-                            .collect();
-                        runtime_ops.push(RuntimeOp::EmitExpr(EmitExprConfig {
-                            fields,
-                            target_context: target_context.clone(),
-                        }));
-                    } else {
-                        // Use simple EmitConfig for string/ident only
-                        let fields: Vec<(String, String)> = args
-                            .iter()
-                            .filter_map(|arg| {
-                                let value = match &arg.value {
-                                    varpulis_core::ast::Expr::Str(s) => s.clone(),
-                                    varpulis_core::ast::Expr::Ident(s) => s.clone(),
-                                    _ => return None,
-                                };
-                                Some((arg.name.clone(), value))
-                            })
-                            .collect();
-                        runtime_ops.push(RuntimeOp::Emit(EmitConfig {
-                            fields,
-                            target_context: target_context.clone(),
-                        }));
-                    }
-                }
-                StreamOp::Print(exprs) => {
-                    runtime_ops.push(RuntimeOp::Print(PrintConfig {
-                        exprs: exprs.clone(),
-                    }));
-                }
-                StreamOp::Log(args) => {
-                    let mut level = "info".to_string();
-                    let mut message = None;
-                    let mut data_field = None;
-
-                    for arg in args {
-                        match arg.name.as_str() {
-                            "level" => {
-                                if let varpulis_core::ast::Expr::Str(s) = &arg.value {
-                                    level = s.clone();
-                                }
-                            }
-                            "message" => {
-                                if let varpulis_core::ast::Expr::Str(s) = &arg.value {
-                                    message = Some(s.clone());
-                                }
-                            }
-                            "data" => {
-                                if let varpulis_core::ast::Expr::Ident(s) = &arg.value {
-                                    data_field = Some(s.clone());
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-
-                    runtime_ops.push(RuntimeOp::Log(LogConfig {
-                        level,
-                        message,
-                        data_field,
-                    }));
-                }
-                StreamOp::Where(expr) => {
-                    // Store expression for runtime evaluation with user functions
-                    runtime_ops.push(RuntimeOp::WhereExpr(expr.clone()));
-                }
-                StreamOp::Pattern(def) => {
-                    runtime_ops.push(RuntimeOp::Pattern(PatternConfig {
-                        name: def.name.clone(),
-                        matcher: def.matcher.clone(),
-                    }));
-                }
-                StreamOp::Having(expr) => {
-                    // Having filter - applied after aggregation
-                    runtime_ops.push(RuntimeOp::Having(expr.clone()));
-                }
-                StreamOp::To {
-                    connector_name,
-                    params,
-                } => {
-                    let topic_override = params
-                        .iter()
-                        .find(|p| p.name == "topic")
-                        .and_then(|p| p.value.as_string().map(|s| s.to_string()));
-                    let extra_params: HashMap<String, String> = params
-                        .iter()
-                        .filter(|p| p.name != "topic")
-                        .filter_map(|p| {
-                            let val = match &p.value {
-                                varpulis_core::ast::ConfigValue::Str(s) => s.clone(),
-                                varpulis_core::ast::ConfigValue::Ident(s) => s.clone(),
-                                varpulis_core::ast::ConfigValue::Int(i) => i.to_string(),
-                                varpulis_core::ast::ConfigValue::Bool(b) => b.to_string(),
-                                varpulis_core::ast::ConfigValue::Float(f) => f.to_string(),
-                                _ => return None,
-                            };
-                            Some((p.name.clone(), val))
-                        })
-                        .collect();
-                    let sink_key = if let Some(ref topic) = topic_override {
-                        format!("{}::{}", connector_name, topic)
-                    } else {
-                        connector_name.clone()
-                    };
-                    runtime_ops.push(RuntimeOp::To(ToConfig {
-                        connector_name: connector_name.clone(),
-                        topic_override,
-                        sink_key,
-                        extra_params,
-                    }));
-                }
-                StreamOp::Process(expr) => {
-                    runtime_ops.push(RuntimeOp::Process(expr.clone()));
-                }
-                StreamOp::On(_) => {
-                    // Join condition - handled by extract_join_keys(), not a runtime op
-                }
-                StreamOp::Filter(expr) => {
-                    // .filter(expr) is an alias for .where(expr)
-                    runtime_ops.push(RuntimeOp::WhereExpr(expr.clone()));
-                }
-                StreamOp::Distinct(expr) => {
-                    runtime_ops.push(RuntimeOp::Distinct(DistinctState {
-                        expr: expr.clone(),
-                        seen: hashlink::LruCache::new(types::DISTINCT_LRU_CAPACITY),
-                    }));
-                }
-                StreamOp::Limit(expr) => {
-                    let max = match expr {
-                        varpulis_core::ast::Expr::Int(n) => *n as usize,
-                        _ => {
-                            return Err(
-                                ".limit() requires an integer argument (e.g., .limit(100))"
-                                    .to_string(),
-                            );
-                        }
-                    };
-                    runtime_ops.push(RuntimeOp::Limit(LimitState { max, count: 0 }));
-                }
-                StreamOp::First => {
-                    // .first() is shorthand for .limit(1)
-                    runtime_ops.push(RuntimeOp::Limit(LimitState { max: 1, count: 0 }));
-                }
-                StreamOp::Map(_) => {
-                    return Err(
-                        ".map() is not supported — use .emit() for field projection or .process() for arbitrary transformation"
-                            .to_string(),
-                    );
-                }
-                StreamOp::Tap(_) => {
-                    return Err(
-                        ".tap() is not yet implemented — use .print() or .log() for debugging"
-                            .to_string(),
-                    );
-                }
-                StreamOp::Collect => {
-                    return Err(
-                        ".collect() is not yet implemented — use .window() with .aggregate() for batching"
-                            .to_string(),
-                    );
-                }
-                StreamOp::OnError(_) => {
-                    return Err(
-                        ".on_error() is not yet implemented — errors are logged via tracing"
-                            .to_string(),
-                    );
-                }
-                StreamOp::Fork(_) | StreamOp::Any(_) | StreamOp::All => {
-                    return Err(
-                        ".fork()/.any()/.all() are not yet implemented — use multiple streams for parallel processing"
-                            .to_string(),
-                    );
-                }
-                StreamOp::Concurrent(ref args) => {
-                    let mut workers = std::thread::available_parallelism()
-                        .map(|n| n.get())
-                        .unwrap_or(4)
-                        .min(128);
-                    let mut partition_key = None;
-
-                    for arg in args {
-                        match arg.name.as_str() {
-                            "workers" => {
-                                if let varpulis_core::Expr::Int(n) = &arg.value {
-                                    workers = (*n as usize).clamp(1, 128);
-                                }
-                            }
-                            "partition_key" => {
-                                if let varpulis_core::Expr::Str(s) = &arg.value {
-                                    partition_key = Some(s.clone());
-                                } else if let varpulis_core::Expr::Ident(s) = &arg.value {
-                                    partition_key = Some(s.clone());
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-
-                    let thread_pool = std::sync::Arc::new(
-                        rayon::ThreadPoolBuilder::new()
-                            .num_threads(workers)
-                            .build()
-                            .map_err(|e| format!("Failed to create thread pool: {}", e))?,
-                    );
-
-                    runtime_ops.push(RuntimeOp::Concurrent(ConcurrentConfig {
-                        workers,
-                        partition_key,
-                        thread_pool,
-                    }));
-                }
-                StreamOp::OrderBy(_) => {
-                    return Err(
-                        ".order_by() is not yet implemented — use .window() with .aggregate() for ordered output"
-                            .to_string(),
-                    );
-                }
-                StreamOp::ToExpr(_) => {
-                    return Err(
-                        ".to(expr) is not supported — use .to(ConnectorName, topic: \"...\") instead"
-                            .to_string(),
-                    );
-                }
-                other => {
-                    return Err(format!(
-                        "unsupported stream operation: {}",
-                        stream_op_name(other)
-                    ));
-                }
-            }
-        }
-
-        // Check if we're in trend aggregation mode (Hamlet) or detection mode (SASE)
-        if let Some(ref agg_items) = trend_agg_items {
-            // === Trend Aggregation Mode (Hamlet) ===
-            // Build Hamlet aggregator instead of SASE engine.
-
-            let event_types = pattern_analyzer::extract_event_types(source, &followed_by_clauses);
-            let kleene_info = pattern_analyzer::extract_kleene_info(source, &followed_by_clauses);
-            let window_ms = pattern_analyzer::extract_within_ms(within_expr_for_hamlet.as_ref());
-
-            // Build a type_indices map for aggregate function resolution
-            let mut type_indices_map = std::collections::HashMap::new();
-
-            // Build MergedTemplate via TemplateBuilder
-            use crate::hamlet::template::TemplateBuilder;
-            let mut builder = TemplateBuilder::new();
-            let query_id: crate::greta::QueryId = 0;
-
-            // Register event types as a sequence
-            let type_strs: Vec<&str> = event_types.iter().map(|s| s.as_str()).collect();
-            builder.add_sequence(query_id, &type_strs);
-
-            // Build type_indices from the template after adding sequence
-            // (TemplateBuilder registers types internally)
-            let template_preview = builder.build();
-            for et in &event_types {
-                if let Some(idx) = template_preview.type_index(et) {
-                    type_indices_map.insert(et.clone(), idx);
-                }
-            }
-
-            // Also map aliases to type indices
-            // Source alias
-            match source {
-                StreamSource::IdentWithAlias { name, alias } => {
-                    if let Some(idx) = type_indices_map.get(name) {
-                        type_indices_map.insert(alias.clone(), *idx);
-                    }
-                }
-                StreamSource::AllWithAlias {
-                    name,
-                    alias: Some(alias),
-                } => {
-                    if let Some(idx) = type_indices_map.get(name) {
-                        type_indices_map.insert(alias.clone(), *idx);
-                    }
-                }
-                _ => {}
-            }
-            for clause in &followed_by_clauses {
-                if let Some(ref alias) = clause.alias {
-                    if let Some(idx) = type_indices_map.get(&clause.event_type) {
-                        type_indices_map.insert(alias.clone(), *idx);
-                    }
-                }
-            }
-
-            // Rebuild template with Kleene info
-            let mut builder = TemplateBuilder::new();
-            builder.add_sequence(query_id, &type_strs);
-
-            for ki in &kleene_info {
-                // The Kleene state in the template is at position ki.position
-                // (the state index after the transition for that event type)
-                let state = ki.position as u16;
-                builder.add_kleene(query_id, &ki.event_type, state);
-            }
-
-            let template = builder.build();
-
-            // Create Hamlet aggregator
-            let config = crate::hamlet::HamletConfig {
-                window_ms,
-                incremental: true,
-                ..Default::default()
-            };
-            let mut aggregator = crate::hamlet::HamletAggregator::new(config, template);
-
-            // Convert trend_agg_items to GretaAggregate list
-            let fields: Vec<(String, crate::greta::GretaAggregate)> = agg_items
-                .iter()
-                .map(|item| {
-                    let agg = pattern_analyzer::trend_item_to_greta(item, &type_indices_map);
-                    (item.alias.clone(), agg)
-                })
-                .collect();
-
-            // Use the first aggregate for the query registration
-            let primary_aggregate = fields
-                .first()
-                .map(|(_, agg)| *agg)
-                .unwrap_or(crate::greta::GretaAggregate::CountTrends);
-
-            // Build Kleene types
-            let kleene_types: smallvec::SmallVec<[u16; 4]> = kleene_info
-                .iter()
-                .filter_map(|ki| type_indices_map.get(&ki.event_type).copied())
-                .collect();
-
-            // Build event type indices
-            let event_type_indices: smallvec::SmallVec<[u16; 4]> = event_types
-                .iter()
-                .filter_map(|et| type_indices_map.get(et).copied())
-                .collect();
-
-            aggregator.register_query(crate::hamlet::QueryRegistration {
-                id: query_id,
-                event_types: event_type_indices,
-                kleene_types,
-                aggregate: primary_aggregate,
-            });
-
-            // Insert TrendAggregate op at the beginning (replaces Sequence)
-            runtime_ops.insert(
-                0,
-                RuntimeOp::TrendAggregate(TrendAggregateConfig { fields, query_id }),
-            );
-
-            info!(
-                "Created Hamlet aggregator for trend aggregation ({} event types, {} Kleene patterns)",
-                event_types.len(),
-                kleene_info.len()
-            );
-
-            return Ok((
-                runtime_ops,
-                None,
-                sequence_event_types,
-                Some(aggregator),
-                None,
-            ));
-        }
-
-        // === Forecast Mode (PST + SASE) ===
-        // If .forecast() is present, we need a sequence pattern (SASE engine)
-        // and must not have .trend_aggregate()
-        let mut pst_forecaster = None;
-
-        // === Detection Mode (SASE) ===
-        // Build SASE+ engine if we have sequence patterns or a named pattern reference
-        let is_pattern_ref =
-            matches!(source, StreamSource::Ident(name) if self.patterns.contains_key(name));
-        let sase_engine =
-            if !followed_by_clauses.is_empty() || matches!(source, StreamSource::Sequence(_)) {
-                // Add Sequence operation marker at the beginning
-                runtime_ops.insert(0, RuntimeOp::Sequence);
-
-                // Create stream resolver for derived streams
-                let stream_resolver = |name: &str| -> Option<compiler::DerivedStreamInfo> {
-                    let stream_def = self.streams.get(name)?;
-
-                    // Extract event type from the stream source
-                    let event_type = match &stream_def.source {
-                        RuntimeSource::EventType(et) => et.clone(),
-                        RuntimeSource::Stream(s) => s.clone(),
-                        _ => return None, // Join/Merge sources not supported as derived streams
-                    };
-
-                    // Find the first WhereExpr in operations (the stream's filter)
-                    let filter = stream_def.operations.iter().find_map(|op| {
-                        if let RuntimeOp::WhereExpr(expr) = op {
-                            Some(expr.clone())
-                        } else {
-                            None
-                        }
-                    });
-
-                    Some(compiler::DerivedStreamInfo { event_type, filter })
-                };
-
-                // Compile to SASE+ pattern with stream resolution
-                if let Some(pattern) = compiler::compile_to_sase_pattern_with_resolver(
-                    source,
-                    &followed_by_clauses,
-                    &negation_clauses,
-                    global_within,
-                    &stream_resolver,
-                ) {
-                    let mut engine = SaseEngine::new(pattern);
-
-                    // Apply explicit partition_by to SASE engine (NOT auto-inferred keys,
-                    // which are high-cardinality join keys that would degrade SASE performance)
-                    if let Some(ref key) = partition_key {
-                        engine = engine.with_partition_by(key.clone());
-                    }
-
-                    // Add global negation conditions
-                    for clause in &negation_clauses {
-                        let predicate = clause
-                            .filter
-                            .as_ref()
-                            .and_then(compiler::expr_to_sase_predicate);
-                        engine.add_negation(clause.event_type.clone(), predicate);
-                    }
-
-                    info!("Created SASE+ engine for sequence pattern");
-                    Some(engine)
-                } else {
-                    warn!("Failed to compile SASE+ pattern");
-                    None
-                }
-            } else if is_pattern_ref {
-                // Named pattern reference: compile the pattern's SasePatternExpr directly
-                let pattern_name = match source {
-                    StreamSource::Ident(name) => name,
-                    _ => unreachable!(),
-                };
-                let named_pattern = &self.patterns[pattern_name];
-
-                // Extract within duration from the pattern declaration
-                let within_duration = named_pattern.within.as_ref().and_then(|expr| {
-                    if let varpulis_core::ast::Expr::Duration(ns) = expr {
-                        Some(std::time::Duration::from_nanos(*ns))
-                    } else {
-                        None
-                    }
-                });
-
-                // Extract partition key from the pattern declaration
-                if let Some(varpulis_core::ast::Expr::Ident(field)) =
-                    named_pattern.partition_by.as_ref()
-                {
-                    partition_key = Some(field.clone());
-                }
-
-                // Add Sequence operation marker
-                runtime_ops.insert(0, RuntimeOp::Sequence);
-
-                // Compile the named pattern expression to a SASE pattern
-                if let Some(pattern) =
-                    compiler::compile_sase_pattern_expr(&named_pattern.expr, within_duration)
-                {
-                    let mut engine = SaseEngine::new(pattern);
-
-                    if let Some(ref key) = partition_key {
-                        engine = engine.with_partition_by(key.clone());
-                    }
-
-                    info!("Created SASE+ engine from named pattern '{}'", pattern_name);
-                    Some(engine)
-                } else {
-                    warn!(
-                        "Failed to compile named pattern '{}' to SASE+ engine",
-                        pattern_name
-                    );
-                    None
-                }
-            } else {
-                None
-            };
-
-        // === Build PST Forecaster if .forecast() specified ===
-        if let Some(spec) = forecast_spec {
-            if sase_engine.is_none() {
-                return Err(
-                    ".forecast() requires a sequence pattern (use -> followed-by operators)"
-                        .to_string(),
-                );
-            }
-
-            // Resolve mode preset first, then allow explicit params to override
-            let mode_str = match &spec.mode {
-                Some(varpulis_core::ast::Expr::Str(s)) => Some(s.as_str()),
-                _ => None,
-            };
-
-            // Mode presets: defaults that can be overridden by explicit params
-            let (
-                mode_confidence,
-                mode_warmup,
-                mode_max_depth,
-                mode_hawkes,
-                mode_conformal,
-                mode_adaptive,
-            ) = match mode_str {
-                Some("fast") => (0.5, 50u64, 3usize, false, false, false),
-                Some("accurate") => (0.5, 200, 5, true, true, true),
-                // "balanced" or default
-                _ => (0.5, 100, 3, true, true, true),
-            };
-
-            // Extract forecast parameters — explicit params override mode defaults
-            let confidence = match &spec.confidence {
-                Some(varpulis_core::ast::Expr::Float(f)) => *f,
-                Some(varpulis_core::ast::Expr::Int(i)) => *i as f64,
-                _ => mode_confidence,
-            };
-            let horizon_ns = match &spec.horizon {
-                Some(varpulis_core::ast::Expr::Duration(ns)) => *ns,
-                _ => global_within
-                    .map(|d| d.as_nanos() as u64)
-                    .unwrap_or(300_000_000_000),
-            };
-            let warmup = match &spec.warmup {
-                Some(varpulis_core::ast::Expr::Int(n)) => *n as u64,
-                _ => mode_warmup,
-            };
-            let max_depth = match &spec.max_depth {
-                Some(varpulis_core::ast::Expr::Int(n)) => *n as usize,
-                _ => mode_max_depth,
-            };
-            let hawkes = match &spec.hawkes {
-                Some(varpulis_core::ast::Expr::Bool(b)) => *b,
-                _ => mode_hawkes,
-            };
-            let conformal = match &spec.conformal {
-                Some(varpulis_core::ast::Expr::Bool(b)) => *b,
-                _ => mode_conformal,
-            };
-            let adaptive_warmup = mode_adaptive && spec.warmup.is_none();
-
-            // Build NFA transition map from SASE engine
-            let sase = sase_engine.as_ref().unwrap();
-            let nfa = sase.nfa();
-            let num_states = nfa.states.len();
-            let accept_states = nfa.accept_states.clone();
-
-            // Collect event types and build transition map
-            let pst_config = crate::pst::PSTConfig {
-                max_depth,
-                smoothing: 0.01,
-                ..Default::default()
-            };
-            let pmc_config = crate::pst::PMCConfig {
-                confidence_threshold: confidence,
-                horizon_ns,
-                warmup_events: warmup,
-                max_simulation_steps: 1000,
-                hawkes_enabled: hawkes,
-                conformal_enabled: conformal,
-                adaptive_warmup,
-                ..Default::default()
-            };
-
-            // Build NFA transitions: for each state, map symbol_id -> next_state
-            let mut nfa_transitions = vec![rustc_hash::FxHashMap::default(); num_states];
-            let mut nfa_event_types: Vec<String> = Vec::new();
-
-            // Register event types and build symbol map
-            let mut temp_pst = crate::pst::PredictionSuffixTree::new(crate::pst::PSTConfig {
-                max_depth,
-                smoothing: 0.01,
-                ..Default::default()
-            });
-            for et in &sequence_event_types {
-                temp_pst.register_symbol(et);
-                if !nfa_event_types.contains(et) {
-                    nfa_event_types.push(et.clone());
-                }
-            }
-
-            // Extract transitions from NFA states.
-            // SASE run current_state means "this state's event was already matched".
-            // The transition label is the NEXT state's event_type (what's needed
-            // to advance from current_state to the next state).
-            for state in &nfa.states {
-                for &next in &state.transitions {
-                    let next_state = &nfa.states[next];
-                    if let Some(ref next_event_type) = next_state.event_type {
-                        if let Some(sym_id) = temp_pst.symbol_id(next_event_type) {
-                            nfa_transitions[state.id].insert(sym_id, next);
-                        }
-                    }
-                }
-            }
-
-            let pmc = crate::pst::PatternMarkovChain::new(
-                &nfa_event_types,
-                nfa_transitions,
-                accept_states,
-                num_states,
-                pst_config,
-                pmc_config,
-            );
-
-            // Insert Forecast op at the position where .forecast() appeared in the
-            // VPL source (after Sequence but BEFORE any downstream .where()/.emit()).
-            // It reads the raw event from `last_raw_event` (set before pipeline
-            // execution) so it can learn from every event even when Sequence
-            // clears current_events.
-            let forecast_config = ForecastConfig {
-                confidence_threshold: confidence,
-                horizon_ns,
-                warmup_events: warmup,
-                max_depth,
-                hawkes,
-                conformal,
-            };
-            // Sequence was inserted at position 0 after forecast_insert_idx was
-            // recorded, shifting all indices by 1.  Account for that offset.
-            let insert_pos = forecast_insert_idx
-                .map(|i| i + 1)
-                .unwrap_or(runtime_ops.len());
-            runtime_ops.insert(insert_pos, RuntimeOp::Forecast(forecast_config));
-
-            pst_forecaster = Some(pmc);
-
-            info!(
-                "Created PST forecaster for pattern forecasting ({} event types, max_depth={}, warmup={}, mode={}, adaptive={})",
-                nfa_event_types.len(),
-                max_depth,
-                warmup,
-                mode_str.unwrap_or("balanced"),
-                adaptive_warmup
-            );
-        }
-
-        Ok((
-            runtime_ops,
-            sase_engine,
-            sequence_event_types,
-            None,
-            pst_forecaster,
-        ))
-    }
-
-    /// Extract join keys from join clauses and operations
-    /// Returns a map of source_name -> join_key_field
-    fn extract_join_keys(
-        &self,
-        clauses: &[varpulis_core::ast::JoinClause],
-        ops: &[StreamOp],
-    ) -> FxHashMap<String, String> {
-        let mut join_keys: FxHashMap<String, String> = FxHashMap::default();
-
-        // First check clauses for on conditions
-        for clause in clauses {
-            if let Some(ref on_expr) = clause.on {
-                if let Some((source, field)) = self.extract_field_from_expr(on_expr, &clause.source)
-                {
-                    join_keys.insert(source, field);
-                }
-            }
-        }
-
-        // Then check operations for StreamOp::On
-        for op in ops {
-            if let StreamOp::On(expr) = op {
-                // Parse expressions like: EMA12.symbol == EMA26.symbol
-                // or: A.key == B.key and B.key == C.key
-                self.extract_join_keys_from_expr(expr, &mut join_keys);
-            }
-        }
-
-        // Normalize join key source names to match clause source names.
-        // The .on() expression may use event type names (e.g., "Transaction") while
-        // the clause sources use stream names (e.g., "Transactions").
-        let clause_sources: Vec<String> = clauses.iter().map(|c| c.source.clone()).collect();
-        let mut normalized_keys: FxHashMap<String, String> = FxHashMap::default();
-        for (src, field) in &join_keys {
-            if clause_sources.contains(src) {
-                // Already matches a clause source
-                normalized_keys.insert(src.clone(), field.clone());
-            } else {
-                // Try to find a clause source whose underlying event type matches
-                let mut found = false;
-                for clause in clauses {
-                    if let Some(stream_def) = self.streams.get(&clause.source) {
-                        let matches = match &stream_def.source {
-                            RuntimeSource::EventType(et) => et == src,
-                            RuntimeSource::Stream(s) => s == src,
-                            _ => false,
-                        };
-                        if matches {
-                            normalized_keys.insert(clause.source.clone(), field.clone());
-                            found = true;
-                            break;
-                        }
-                    }
-                }
-                if !found {
-                    normalized_keys.insert(src.clone(), field.clone());
-                }
-            }
-        }
-
-        // If no join keys found, use "symbol" as default (common join key)
-        if normalized_keys.is_empty() {
-            for clause in clauses {
-                normalized_keys.insert(clause.source.clone(), "symbol".to_string());
-            }
-        }
-
-        normalized_keys
-    }
-
-    /// Extract join keys from an expression (e.g., EMA12.symbol == EMA26.symbol)
-    fn extract_join_keys_from_expr(
-        &self,
-        expr: &varpulis_core::ast::Expr,
-        keys: &mut FxHashMap<String, String>,
-    ) {
-        use varpulis_core::ast::{BinOp, Expr};
-
-        if let Expr::Binary { op, left, right } = expr {
-            match op {
-                BinOp::Eq => {
-                    // Extract source.field from both sides
-                    if let (Some((src1, field1)), Some((src2, field2))) = (
-                        self.extract_source_field(left),
-                        self.extract_source_field(right),
-                    ) {
-                        keys.insert(src1, field1);
-                        keys.insert(src2, field2);
-                    }
-                }
-                BinOp::And => {
-                    // Recursively process both sides for compound conditions
-                    self.extract_join_keys_from_expr(left, keys);
-                    self.extract_join_keys_from_expr(right, keys);
-                }
-                _ => {}
-            }
-        }
-    }
-
-    /// Extract source name and field name from an expression like EMA12.symbol
-    fn extract_source_field(
-        &self,
-        expr_node: &varpulis_core::ast::Expr,
-    ) -> Option<(String, String)> {
-        use varpulis_core::ast::Expr;
-
-        match expr_node {
-            Expr::Member { expr, member } => {
-                if let Expr::Ident(source) = expr.as_ref() {
-                    return Some((source.clone(), member.clone()));
-                }
-            }
-            Expr::Ident(name) => {
-                // Simple identifier - might be just a field name
-                // Return as field only, source will be inferred
-                return Some(("".to_string(), name.clone()));
-            }
-            _ => {}
-        }
-        None
-    }
-
-    /// Extract a field from an expression for a specific source
-    fn extract_field_from_expr(
-        &self,
-        expr: &varpulis_core::ast::Expr,
-        source: &str,
-    ) -> Option<(String, String)> {
-        use varpulis_core::ast::{BinOp, Expr};
-
-        if let Expr::Binary {
-            op: BinOp::Eq,
-            left,
-            right,
-        } = expr
-        {
-            // Check left side
-            if let Some((src, field)) = self.extract_source_field(left) {
-                if src == source || src.is_empty() {
-                    return Some((source.to_string(), field));
-                }
-            }
-            // Check right side
-            if let Some((src, field)) = self.extract_source_field(right) {
-                if src == source || src.is_empty() {
-                    return Some((source.to_string(), field));
-                }
-            }
-        }
-        None
-    }
-
-    /// Extract window duration from operations
-    fn extract_window_duration(&self, ops: &[StreamOp]) -> Duration {
-        for op in ops {
-            if let StreamOp::Window(args) = op {
-                if let varpulis_core::ast::Expr::Duration(ns) = &args.duration {
-                    return Duration::nanoseconds(*ns as i64);
-                }
-            }
-        }
-        // Default to 1 minute if no window specified
-        Duration::minutes(1)
-    }
-
-    /// Process an incoming event
-    pub async fn process(&mut self, event: Event) -> Result<(), String> {
-        self.events_processed += 1;
-        self.process_inner(Arc::new(event)).await
-    }
-
-    /// Process a pre-wrapped SharedEvent (zero-copy path for context pipelines)
-    pub async fn process_shared(&mut self, event: SharedEvent) -> Result<(), String> {
-        self.events_processed += 1;
-        self.process_inner(event).await
-    }
-
-    /// Internal processing logic shared by process() and process_shared()
-    async fn process_inner(&mut self, event: SharedEvent) -> Result<(), String> {
-        // Record incoming event in Prometheus
-        if let Some(ref m) = self.metrics {
-            m.record_event(&event.event_type);
-        }
-
-        // Check for late data against the watermark
-        if let Some(ref tracker) = self.watermark_tracker {
-            if let Some(effective_wm) = tracker.effective_watermark() {
-                if event.timestamp < effective_wm {
-                    // Event is behind the watermark — check allowed lateness per stream
-                    let mut allowed = false;
-                    if let Some(stream_names) = self.router.get_routes(&event.event_type) {
-                        for sn in stream_names.iter() {
-                            if let Some(cfg) = self.late_data_configs.get(sn) {
-                                if event.timestamp >= effective_wm - cfg.allowed_lateness {
-                                    allowed = true;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    if !allowed && !self.late_data_configs.is_empty() {
-                        // Route to side-output if configured, otherwise drop
-                        let mut routed = false;
-                        if let Some(stream_names) = self.router.get_routes(&event.event_type) {
-                            for sn in stream_names.iter() {
-                                if let Some(cfg) = self.late_data_configs.get(sn) {
-                                    if let Some(ref side_stream) = cfg.side_output_stream {
-                                        debug!(
-                                            "Routing late event to side-output '{}' type={} ts={}",
-                                            side_stream, event.event_type, event.timestamp
-                                        );
-                                        // Create a late-data event with metadata
-                                        let mut late_event = (*event).clone();
-                                        late_event.event_type = side_stream.clone().into();
-                                        self.send_output(late_event);
-                                        routed = true;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        if !routed {
-                            debug!(
-                                "Dropping late event type={} ts={} (watermark={})",
-                                event.event_type, event.timestamp, effective_wm
-                            );
-                        }
-                        return Ok(());
-                    }
-                }
-            }
-        }
-
-        // Process events with depth limit to prevent infinite loops
-        // Each event carries its depth level - use SharedEvent to avoid cloning
-        let mut pending_events: VecDeque<(SharedEvent, usize)> =
-            VecDeque::from([(event.clone(), 0)]);
-        const MAX_CHAIN_DEPTH: usize = 10;
-
-        // Observe event in watermark tracker (after processing to not block)
-        if let Some(ref mut tracker) = self.watermark_tracker {
-            tracker.observe_event(&event.event_type, event.timestamp);
-
-            if let Some(new_wm) = tracker.effective_watermark() {
-                if self.last_applied_watermark.is_none_or(|last| new_wm > last) {
-                    self.last_applied_watermark = Some(new_wm);
-                    // Note: we don't call apply_watermark_to_windows here to avoid
-                    // double-mutable-borrow. The caller should periodically flush.
-                }
-            }
-        }
-
-        // Process events iteratively, feeding output to dependent streams
-        while let Some((current_event, depth)) = pending_events.pop_front() {
-            // Prevent infinite loops by limiting chain depth
-            if depth >= MAX_CHAIN_DEPTH {
-                debug!(
-                    "Max chain depth reached for event type: {}",
-                    current_event.event_type
-                );
-                continue;
-            }
-
-            // Collect stream names to avoid borrowing issues
-            // PERF: Arc<[String]> clone is O(1) - just atomic increment, not deep copy
-            let stream_names: Arc<[String]> = self
-                .router
-                .get_routes(&current_event.event_type)
-                .cloned()
-                .unwrap_or_else(|| Arc::from([]));
-
-            for stream_name in stream_names.iter() {
-                if let Some(stream) = self.streams.get_mut(stream_name) {
-                    let start = std::time::Instant::now();
-                    let result = Self::process_stream_with_functions(
-                        stream,
-                        Arc::clone(&current_event),
-                        &self.functions,
-                        self.sinks.cache(),
-                    )
-                    .await?;
-
-                    // Record per-stream processing metrics
-                    if let Some(ref m) = self.metrics {
-                        m.record_processing(stream_name, start.elapsed().as_secs_f64());
-                    }
-
-                    // Check if we need to send output_events to the output channel.
-                    // This is true when there are no .emit() events AND the stream has
-                    // a .process() UDF or a .to() sink (so sink events appear in the
-                    // live event stream / WebSocket relay).
-                    let send_outputs = result.emitted_events.is_empty()
-                        && stream
-                            .operations
-                            .iter()
-                            .any(|op| matches!(op, RuntimeOp::Process(_) | RuntimeOp::To(_)));
-
-                    // Send emitted events to output channel (non-blocking)
-                    // PERF: Use send_output_shared for zero-copy when using SharedEvent channel
-                    if self.output_channel.is_some() {
-                        for emitted in &result.emitted_events {
-                            self.output_events_emitted += 1;
-                            if let Some(ref m) = self.metrics {
-                                m.record_output_event("pipeline", &emitted.event_type);
-                            }
-                            self.send_output_shared(emitted);
-                        }
-                        if send_outputs {
-                            for output in &result.output_events {
-                                self.output_events_emitted += 1;
-                                if let Some(ref m) = self.metrics {
-                                    m.record_output_event("pipeline", &output.event_type);
-                                }
-                                self.send_output_shared(output);
-                            }
-                        }
-                    } else {
-                        // Benchmark mode: just count, don't send
-                        self.output_events_emitted += result.emitted_events.len() as u64;
-                        if send_outputs {
-                            self.output_events_emitted += result.output_events.len() as u64;
-                        }
-                    }
-
-                    // Count events sent to connector sinks via .to() operations.
-                    // Skip if already counted via output_events above (avoids double-counting).
-                    if !send_outputs {
-                        self.output_events_emitted += result.sink_events_sent;
-                    }
-
-                    // Queue output events for processing by dependent streams
-                    for output_event in result.output_events {
-                        pending_events.push_back((output_event, depth + 1));
-                    }
-                }
-            }
-        }
-
-        // Update active streams gauge
-        if let Some(ref m) = self.metrics {
-            m.set_stream_count(self.streams.len());
-        }
-
-        Ok(())
-    }
-
-    /// Process a batch of events for improved throughput.
-    /// More efficient than calling process() repeatedly because:
-    /// - Pre-allocates SharedEvents in bulk
-    /// - Collects output events and sends in batches
-    /// - Amortizes async overhead
-    pub async fn process_batch(&mut self, events: Vec<Event>) -> Result<(), String> {
-        if events.is_empty() {
-            return Ok(());
-        }
-
-        let batch_size = events.len();
-        self.events_processed += batch_size as u64;
-
-        // Update Prometheus metrics
-        if let Some(ref m) = self.metrics {
-            for event in &events {
-                m.record_event(&event.event_type);
-            }
-        }
-
-        // Pre-allocate pending events with capacity for batch + some derived events
-        // Use VecDeque so we can process in FIFO order (push_back + pop_front)
-        let mut pending_events: std::collections::VecDeque<(SharedEvent, usize)> =
-            std::collections::VecDeque::with_capacity(batch_size + batch_size / 4);
-
-        // Convert all events to SharedEvents upfront
-        for event in events {
-            pending_events.push_back((Arc::new(event), 0));
-        }
-
-        const MAX_CHAIN_DEPTH: usize = 10;
-
-        // Collect emitted events to send in batch
-        let mut emitted_batch: Vec<SharedEvent> = Vec::with_capacity(batch_size / 10);
-
-        // Process all events in FIFO order (critical for sequence patterns!)
-        while let Some((current_event, depth)) = pending_events.pop_front() {
-            if depth >= MAX_CHAIN_DEPTH {
-                debug!(
-                    "Max chain depth reached for event type: {}",
-                    current_event.event_type
-                );
-                continue;
-            }
-
-            // Get stream names (Arc clone is O(1))
-            let stream_names: Arc<[String]> = self
-                .router
-                .get_routes(&current_event.event_type)
-                .cloned()
-                .unwrap_or_else(|| Arc::from([]));
-
-            for stream_name in stream_names.iter() {
-                if let Some(stream) = self.streams.get_mut(stream_name) {
-                    let start = std::time::Instant::now();
-                    let result = Self::process_stream_with_functions(
-                        stream,
-                        Arc::clone(&current_event),
-                        &self.functions,
-                        self.sinks.cache(),
-                    )
-                    .await?;
-
-                    // Record per-stream processing in Prometheus
-                    if let Some(ref m) = self.metrics {
-                        m.record_processing(stream_name, start.elapsed().as_secs_f64());
-                    }
-
-                    // Collect emitted events for batch sending
-                    self.output_events_emitted += result.emitted_events.len() as u64;
-                    let has_emitted = !result.emitted_events.is_empty();
-                    emitted_batch.extend(result.emitted_events);
-
-                    // If .process() or .to() was used but no .emit(), send output_events
-                    // to the output channel so they appear in the live event stream.
-                    let forward_outputs = !has_emitted
-                        && stream
-                            .operations
-                            .iter()
-                            .any(|op| matches!(op, RuntimeOp::Process(_) | RuntimeOp::To(_)));
-                    if forward_outputs {
-                        self.output_events_emitted += result.output_events.len() as u64;
-                        emitted_batch.extend(result.output_events.iter().map(Arc::clone));
-                    }
-
-                    // Count sink events only when not already counted via forwarded outputs
-                    if !forward_outputs {
-                        self.output_events_emitted += result.sink_events_sent;
-                    }
-
-                    // Queue output events (push_back to maintain order)
-                    for output_event in result.output_events {
-                        pending_events.push_back((output_event, depth + 1));
-                    }
-                }
-            }
-        }
-
-        // Send all emitted events in batch (non-blocking to avoid async overhead)
-        // PERF: Use send_output_shared to avoid cloning in benchmark mode
-        for emitted in &emitted_batch {
-            self.send_output_shared(emitted);
-        }
-
-        // Update Prometheus output metrics
-        if let Some(ref m) = self.metrics {
-            for emitted in &emitted_batch {
-                m.record_output_event("pipeline", &emitted.event_type);
-            }
-            m.set_stream_count(self.streams.len());
-        }
-
-        Ok(())
-    }
-
-    /// Synchronous batch processing for maximum throughput.
-    /// Use this when no .to() sink operations are in the pipeline (e.g., benchmark mode).
-    /// Avoids async runtime overhead completely.
-    pub fn process_batch_sync(&mut self, events: Vec<Event>) -> Result<(), String> {
-        if events.is_empty() {
-            return Ok(());
-        }
-
-        let batch_size = events.len();
-        self.events_processed += batch_size as u64;
-
-        // Pre-allocate pending events with capacity for batch + some derived events
-        // Use VecDeque so we can process in FIFO order (push_back + pop_front)
-        let mut pending_events: std::collections::VecDeque<(SharedEvent, usize)> =
-            std::collections::VecDeque::with_capacity(batch_size + batch_size / 4);
-
-        // Convert all events to SharedEvents upfront
-        for event in events {
-            pending_events.push_back((Arc::new(event), 0));
-        }
-
-        const MAX_CHAIN_DEPTH: usize = 10;
-
-        // Collect emitted events to send in batch
-        let mut emitted_batch: Vec<SharedEvent> = Vec::with_capacity(batch_size / 10);
-
-        // Process all events in FIFO order (critical for sequence patterns!)
-        while let Some((current_event, depth)) = pending_events.pop_front() {
-            if depth >= MAX_CHAIN_DEPTH {
-                debug!(
-                    "Max chain depth reached for event type: {}",
-                    current_event.event_type
-                );
-                continue;
-            }
-
-            // Get stream names (Arc clone is O(1))
-            let stream_names: Arc<[String]> = self
-                .router
-                .get_routes(&current_event.event_type)
-                .cloned()
-                .unwrap_or_else(|| Arc::from([]));
-
-            for stream_name in stream_names.iter() {
-                if let Some(stream) = self.streams.get_mut(stream_name) {
-                    // Skip output clone+rename when stream has no downstream routes
-                    let skip_rename = self.router.get_routes(stream_name).is_none();
-                    let result = Self::process_stream_sync(
-                        stream,
-                        Arc::clone(&current_event),
-                        &self.functions,
-                        skip_rename,
-                    )?;
-
-                    // Collect emitted events for batch sending
-                    self.output_events_emitted += result.emitted_events.len() as u64;
-                    let has_emitted = !result.emitted_events.is_empty();
-                    emitted_batch.extend(result.emitted_events);
-
-                    // If .process() or .to() was used but no .emit(), send output_events
-                    // to the output channel so they appear in the live event stream.
-                    let forward_outputs = !has_emitted
-                        && stream
-                            .operations
-                            .iter()
-                            .any(|op| matches!(op, RuntimeOp::Process(_) | RuntimeOp::To(_)));
-                    if forward_outputs {
-                        self.output_events_emitted += result.output_events.len() as u64;
-                        emitted_batch.extend(result.output_events.iter().map(Arc::clone));
-                    }
-
-                    // Count sink events only when not already counted via forwarded outputs
-                    if !forward_outputs {
-                        self.output_events_emitted += result.sink_events_sent;
-                    }
-
-                    // Queue output events (push_back to maintain order)
-                    for output_event in result.output_events {
-                        pending_events.push_back((output_event, depth + 1));
-                    }
-                }
-            }
-        }
-
-        // Send all emitted events in batch (non-blocking to avoid async overhead)
-        // PERF: Use send_output_shared to avoid cloning in benchmark mode
-        for emitted in &emitted_batch {
-            self.send_output_shared(emitted);
-        }
-
-        Ok(())
-    }
-
-    /// Synchronous stream processing - no async operations.
-    /// Skips .to() sink operations (which are the only async parts).
-    /// When `skip_output_rename` is true, output events skip the clone+rename step.
-    fn process_stream_sync(
-        stream: &mut StreamDefinition,
-        event: SharedEvent,
-        functions: &FxHashMap<String, UserFunction>,
-        skip_output_rename: bool,
-    ) -> Result<StreamProcessResult, String> {
-        // For merge sources, check if the event passes the appropriate filter
-        if let RuntimeSource::Merge(ref sources) = stream.source {
-            let mut passes_filter = false;
-            for ms in sources {
-                if ms.event_type == *event.event_type {
-                    if let Some(ref filter) = ms.filter {
-                        let ctx = SequenceContext::new();
-                        if let Some(result) = evaluator::eval_expr_with_functions(
-                            filter,
-                            &event,
-                            &ctx,
-                            functions,
-                            &FxHashMap::default(),
-                        ) {
-                            if result.as_bool().unwrap_or(false) {
-                                passes_filter = true;
-                                break;
-                            }
-                        }
-                    } else {
-                        passes_filter = true;
-                        break;
-                    }
-                }
-            }
-            if !passes_filter {
-                return Ok(StreamProcessResult {
-                    emitted_events: vec![],
-                    output_events: vec![],
-                    sink_events_sent: 0,
-                });
-            }
-        }
-
-        // For join sources - return empty (join requires async in some paths)
-        if matches!(stream.source, RuntimeSource::Join(_)) {
-            return Ok(StreamProcessResult {
-                emitted_events: vec![],
-                output_events: vec![],
-                sink_events_sent: 0,
-            });
-        }
-
-        // Use synchronous pipeline execution
-        pipeline::execute_pipeline_sync(
-            stream,
-            vec![event],
-            0,
-            pipeline::SkipFlags::none(),
-            functions,
-            skip_output_rename,
-        )
-    }
-
-    /// Process a batch of pre-wrapped SharedEvents (zero-copy path for context pipelines)
-    pub async fn process_batch_shared(&mut self, events: Vec<SharedEvent>) -> Result<(), String> {
-        if events.is_empty() {
-            return Ok(());
-        }
-
-        let batch_size = events.len();
-        self.events_processed += batch_size as u64;
-
-        // Update Prometheus metrics
-        if let Some(ref m) = self.metrics {
-            for event in &events {
-                m.record_event(&event.event_type);
-            }
-        }
-
-        // Use VecDeque so we can process in FIFO order (critical for sequence patterns!)
-        let mut pending_events: std::collections::VecDeque<(SharedEvent, usize)> =
-            std::collections::VecDeque::with_capacity(batch_size + batch_size / 4);
-
-        for event in events {
-            pending_events.push_back((event, 0));
-        }
-
-        const MAX_CHAIN_DEPTH: usize = 10;
-
-        let mut emitted_batch: Vec<SharedEvent> = Vec::with_capacity(batch_size / 10);
-
-        // Process all events in FIFO order
-        while let Some((current_event, depth)) = pending_events.pop_front() {
-            if depth >= MAX_CHAIN_DEPTH {
-                debug!(
-                    "Max chain depth reached for event type: {}",
-                    current_event.event_type
-                );
-                continue;
-            }
-
-            let stream_names: Arc<[String]> = self
-                .router
-                .get_routes(&current_event.event_type)
-                .cloned()
-                .unwrap_or_else(|| Arc::from([]));
-
-            for stream_name in stream_names.iter() {
-                if let Some(stream) = self.streams.get_mut(stream_name) {
-                    let start = std::time::Instant::now();
-                    let result = Self::process_stream_with_functions(
-                        stream,
-                        Arc::clone(&current_event),
-                        &self.functions,
-                        self.sinks.cache(),
-                    )
-                    .await?;
-
-                    if let Some(ref m) = self.metrics {
-                        m.record_processing(stream_name, start.elapsed().as_secs_f64());
-                    }
-
-                    self.output_events_emitted += result.emitted_events.len() as u64;
-                    let has_emitted = !result.emitted_events.is_empty();
-                    emitted_batch.extend(result.emitted_events);
-
-                    // If .process() or .to() was used but no .emit(), send output_events
-                    // to the output channel so they appear in the live event stream.
-                    let forward_outputs = !has_emitted
-                        && stream
-                            .operations
-                            .iter()
-                            .any(|op| matches!(op, RuntimeOp::Process(_) | RuntimeOp::To(_)));
-                    if forward_outputs {
-                        self.output_events_emitted += result.output_events.len() as u64;
-                        emitted_batch.extend(result.output_events.iter().map(Arc::clone));
-                    }
-
-                    // Count sink events only when not already counted via forwarded outputs
-                    if !forward_outputs {
-                        self.output_events_emitted += result.sink_events_sent;
-                    }
-
-                    for output_event in result.output_events {
-                        pending_events.push_back((output_event, depth + 1));
-                    }
-                }
-            }
-        }
-
-        // PERF: Use send_output_shared to avoid cloning in benchmark mode
-        for emitted in &emitted_batch {
-            self.send_output_shared(emitted);
-        }
-
-        // Update Prometheus output metrics
-        if let Some(ref m) = self.metrics {
-            for emitted in &emitted_batch {
-                m.record_output_event("pipeline", &emitted.event_type);
-            }
-            m.set_stream_count(self.streams.len());
-        }
-
-        Ok(())
-    }
-
-    async fn process_stream_with_functions(
-        stream: &mut StreamDefinition,
-        event: SharedEvent,
-        functions: &FxHashMap<String, UserFunction>,
-        sinks: &FxHashMap<String, Arc<dyn crate::sink::Sink>>,
-    ) -> Result<StreamProcessResult, String> {
-        // For merge sources, check if the event passes the appropriate filter
-        if let RuntimeSource::Merge(ref sources) = stream.source {
-            let mut passes_filter = false;
-            let mut matched_source_name = None;
-            for ms in sources {
-                if ms.event_type == *event.event_type {
-                    if let Some(ref filter) = ms.filter {
-                        let ctx = SequenceContext::new();
-                        if let Some(result) = evaluator::eval_expr_with_functions(
-                            filter,
-                            &event,
-                            &ctx,
-                            functions,
-                            &FxHashMap::default(),
-                        ) {
-                            if result.as_bool().unwrap_or(false) {
-                                passes_filter = true;
-                                matched_source_name = Some(&ms.name);
-                                break;
-                            }
-                        }
-                    } else {
-                        // No filter means it passes
-                        passes_filter = true;
-                        matched_source_name = Some(&ms.name);
-                        break;
-                    }
-                }
-            }
-            if !passes_filter {
-                return Ok(StreamProcessResult {
-                    emitted_events: vec![],
-                    output_events: vec![],
-                    sink_events_sent: 0,
-                });
-            }
-            // Log which merge source matched (uses ms.name)
-            if let Some(source_name) = matched_source_name {
-                tracing::trace!("Event matched merge source: {}", source_name);
-            }
-        }
-
-        // For join sources, route through the JoinBuffer for correlation
-        if let RuntimeSource::Join(ref _sources) = stream.source {
-            if let Some(ref mut join_buffer) = stream.join_buffer {
-                // Determine which source this event came from using the event_type_to_source mapping
-                // This maps event types (e.g., "MarketATick") to source names (e.g., "MarketA")
-                let source_name = stream
-                    .event_type_to_source
-                    .get(&*event.event_type)
-                    .cloned()
-                    .unwrap_or_else(|| event.event_type.to_string());
-
-                tracing::debug!(
-                    "Join stream {}: Adding event from source '{}' (event_type: {})",
-                    stream.name,
-                    source_name,
-                    event.event_type
-                );
-
-                // Add event to join buffer and try to correlate (join still needs owned Event)
-                match join_buffer.add_event(&source_name, (*event).clone()) {
-                    Some(correlated_event) => {
-                        tracing::debug!(
-                            "Join stream {}: Correlated event with {} fields",
-                            stream.name,
-                            correlated_event.data.len()
-                        );
-                        // Continue processing with the correlated event
-                        return Self::process_join_result(
-                            stream,
-                            Arc::new(correlated_event),
-                            functions,
-                            sinks,
-                        )
-                        .await;
-                    }
-                    None => {
-                        // No correlation yet - need events from all sources
-                        tracing::debug!(
-                            "Join stream {}: No correlation yet, waiting for more events (buffer stats: {:?})",
-                            stream.name,
-                            join_buffer.stats()
-                        );
-                        return Ok(StreamProcessResult {
-                            emitted_events: vec![],
-                            output_events: vec![],
-                            sink_events_sent: 0,
-                        });
-                    }
-                }
-            } else {
-                tracing::warn!("Join stream {} has no JoinBuffer configured", stream.name);
-                return Ok(StreamProcessResult {
-                    emitted_events: vec![],
-                    output_events: vec![],
-                    sink_events_sent: 0,
-                });
-            }
-        }
-
-        // Delegate to unified pipeline execution
-        pipeline::execute_pipeline(
-            stream,
-            vec![event],
-            0,
-            pipeline::SkipFlags::none(),
-            functions,
-            sinks,
-        )
-        .await
-    }
-
-    /// Process a join result through the stream operations (skipping join-specific handling)
-    async fn process_join_result(
-        stream: &mut StreamDefinition,
-        correlated_event: SharedEvent,
-        functions: &FxHashMap<String, UserFunction>,
-        sinks: &FxHashMap<String, Arc<dyn crate::sink::Sink>>,
-    ) -> Result<StreamProcessResult, String> {
-        // Delegate to unified pipeline with join-specific skip flags
-        pipeline::execute_pipeline(
-            stream,
-            vec![correlated_event],
-            0,
-            pipeline::SkipFlags::for_join(),
-            functions,
-            sinks,
-        )
-        .await
-    }
-
     // =========================================================================
-    // Session Window Sweep
+    // Query / Introspection
     // =========================================================================
 
     /// Check if any registered stream uses `.to()` or `.enrich()` operations.
-    /// When these are present, the async processing path must be used.
     pub fn has_sink_operations(&self) -> bool {
         self.streams.values().any(|s| {
             s.operations
@@ -3156,8 +830,6 @@ impl Engine {
     }
 
     /// Check if all streams are stateless (safe for round-robin distribution).
-    /// Stateless pipelines contain only filter, select, emit, print, log, pattern, and process ops.
-    /// Stateful ops (windows, aggregation, sequence, join, SASE, Hamlet) need partition affinity.
     pub fn is_stateless(&self) -> bool {
         self.streams.values().all(|s| {
             s.sase_engine.is_none()
@@ -3184,17 +856,13 @@ impl Engine {
     }
 
     /// Return the partition key used by partitioned operations, if any.
-    /// Checks SASE engine partition_by, partitioned windows, partitioned aggregates,
-    /// and infers join keys from sequence where clauses (e.g., `a.id == b.id` → "id").
     pub fn partition_key(&self) -> Option<String> {
         for stream in self.streams.values() {
-            // Check SASE engine partition_by
             if let Some(ref sase) = stream.sase_engine {
                 if let Some(key) = sase.partition_by() {
                     return Some(key.to_string());
                 }
             }
-            // Check partitioned operations
             for op in &stream.operations {
                 match op {
                     RuntimeOp::PartitionedWindow(pw) => return Some(pw.partition_key.clone()),
@@ -3205,11 +873,10 @@ impl Engine {
                     _ => {}
                 }
             }
-            // Infer join key from sequence where clauses (e.g., a.id == b.id → "id")
             if stream.sase_engine.is_some() {
                 for op in &stream.operations {
                     if let RuntimeOp::WhereExpr(expr) = op {
-                        if let Some(key) = extract_equality_join_key(expr) {
+                        if let Some(key) = compilation::extract_equality_join_key(expr) {
                             return Some(key);
                         }
                     }
@@ -3256,96 +923,6 @@ impl Engine {
         min_gap
     }
 
-    /// Flush all expired session windows and process the resulting events
-    /// through the remaining pipeline stages (aggregate, having, select, emit, etc.).
-    pub async fn flush_expired_sessions(&mut self) -> Result<(), String> {
-        let now = chrono::Utc::now();
-        let stream_names: Vec<String> = self.streams.keys().cloned().collect();
-
-        for stream_name in stream_names {
-            // Step 1: Find the window op index and collect expired events
-            let (window_idx, expired) = {
-                let stream = self.streams.get_mut(&stream_name).unwrap();
-                let mut result = Vec::new();
-                let mut found_idx = None;
-
-                for (idx, op) in stream.operations.iter_mut().enumerate() {
-                    if let RuntimeOp::Window(window) = op {
-                        match window {
-                            WindowType::Session(w) => {
-                                if let Some(events) = w.check_expired(now) {
-                                    result = events;
-                                }
-                                found_idx = Some(idx);
-                            }
-                            WindowType::PartitionedSession(w) => {
-                                for (_key, events) in w.check_expired(now) {
-                                    result.extend(events);
-                                }
-                                found_idx = Some(idx);
-                            }
-                            _ => {}
-                        }
-                        // Only process the first session window op per stream
-                        if found_idx.is_some() {
-                            break;
-                        }
-                    }
-                }
-                (found_idx, result)
-            };
-
-            if expired.is_empty() {
-                continue;
-            }
-
-            let window_idx = match window_idx {
-                Some(idx) => idx,
-                None => continue,
-            };
-
-            // Step 2: Process expired events through the post-window pipeline
-            let result = Self::process_post_window(
-                self.streams.get_mut(&stream_name).unwrap(),
-                expired,
-                window_idx,
-                &self.functions,
-                self.sinks.cache(),
-            )
-            .await?;
-
-            // Step 3: Send emitted events to output channel
-            for emitted in &result.emitted_events {
-                self.output_events_emitted += 1;
-                let owned = (**emitted).clone();
-                self.send_output(owned);
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Process events through the pipeline operations that come after the window
-    /// at `window_idx`. This runs aggregate, having, select, emit, etc.
-    async fn process_post_window(
-        stream: &mut StreamDefinition,
-        events: Vec<SharedEvent>,
-        window_idx: usize,
-        functions: &FxHashMap<String, UserFunction>,
-        sinks: &FxHashMap<String, Arc<dyn crate::sink::Sink>>,
-    ) -> Result<StreamProcessResult, String> {
-        // Delegate to unified pipeline starting after the window with post-window skip flags
-        pipeline::execute_pipeline(
-            stream,
-            events,
-            window_idx + 1,
-            pipeline::SkipFlags::for_post_window(),
-            functions,
-            sinks,
-        )
-        .await
-    }
-
     /// Get metrics
     pub fn metrics(&self) -> EngineMetrics {
         EngineMetrics {
@@ -3360,10 +937,6 @@ impl Engine {
         self.streams.keys().map(|s| s.as_str()).collect()
     }
 
-    /// Generate a logical plan explanation for the currently loaded program.
-    ///
-    /// Returns a human-readable plan if a program has been loaded via
-    /// [`load`](Self::load), or `None` if no program is loaded.
     /// Get the physical plan summary (available after `load()`).
     pub fn physical_plan_summary(&self) -> Option<String> {
         self.physical_plan.as_ref().map(|p| p.summary())
@@ -3396,7 +969,6 @@ impl Engine {
     }
 
     /// Get all timer configurations for spawning timer tasks
-    /// Returns: Vec<(interval_ns, initial_delay_ns, timer_event_type)>
     pub fn get_timers(&self) -> Vec<(u64, Option<u64>, String)> {
         let mut timers = Vec::new();
         for stream in self.streams.values() {
@@ -3431,34 +1003,16 @@ impl Engine {
     // =========================================================================
 
     /// Reload program without losing state where possible.
-    ///
-    /// State preservation rules:
-    /// - Filter changes: state preserved
-    /// - Window size changes: state reset
-    /// - Aggregation changes: state reset
-    /// - New streams: added fresh
-    /// - Removed streams: dropped
-    ///
-    /// # Example
-    /// ```text
-    /// let new_program = varpulis_parser::parse(&new_source)?;
-    /// let report = engine.reload(&new_program)?;
-    /// println!("Reload complete: {:?}", report);
-    /// ```
     pub fn reload(&mut self, program: &Program) -> Result<ReloadReport, String> {
         let mut report = ReloadReport::default();
 
-        // Collect current stream names
         let old_streams: FxHashSet<String> = self.streams.keys().cloned().collect();
 
-        // Parse new program to get new stream definitions
-        // We need to compile the new program to compare with existing streams
         let mut new_engine = Self::new_internal(self.clone_output_channel());
         new_engine.load(program)?;
 
         let new_streams: FxHashSet<String> = new_engine.streams.keys().cloned().collect();
 
-        // Find added, removed, and potentially updated streams
         for name in new_streams.difference(&old_streams) {
             report.streams_added.push(name.clone());
         }
@@ -3467,37 +1021,27 @@ impl Engine {
             report.streams_removed.push(name.clone());
         }
 
-        // For streams that exist in both, check if they changed
         for name in old_streams.intersection(&new_streams) {
             let old_stream = self.streams.get(name).unwrap();
             let new_stream = new_engine.streams.get(name).unwrap();
 
-            // Compare source types
             let source_changed = !Self::sources_compatible(&old_stream.source, &new_stream.source);
-
-            // Compare operation counts (rough heuristic)
             let ops_changed = old_stream.operations.len() != new_stream.operations.len();
 
             if source_changed || ops_changed {
                 report.streams_updated.push(name.clone());
                 report.state_reset.push(name.clone());
             } else {
-                // Source and ops count match - try to preserve state
                 report.state_preserved.push(name.clone());
             }
         }
 
-        // Now apply changes
-
-        // Remove old streams
         for name in &report.streams_removed {
             self.streams.remove(name);
         }
 
-        // Rebuild event_sources from scratch (simpler than trying to update Arc<[String]> incrementally)
         self.router.clear();
 
-        // Add/update streams from new engine
         for name in &report.streams_added {
             if let Some(stream) = new_engine.streams.remove(name) {
                 self.streams.insert(name.clone(), stream);
@@ -3510,8 +1054,6 @@ impl Engine {
             }
         }
 
-        // Rebuild event_sources for all streams
-        // First collect all (event_type, stream_name) pairs to avoid borrow issues
         let registrations: Vec<(String, String)> = self
             .streams
             .iter()
@@ -3529,9 +1071,7 @@ impl Engine {
                             pairs.push((ms.event_type.clone(), name.clone()));
                         }
                     }
-                    RuntimeSource::Join(_) => {
-                        // Join sources handled separately
-                    }
+                    RuntimeSource::Join(_) => {}
                     RuntimeSource::Timer(config) => {
                         pairs.push((config.timer_event_type.clone(), name.clone()));
                     }
@@ -3540,30 +1080,18 @@ impl Engine {
             })
             .collect();
 
-        // Now apply registrations
         for (event_type, stream_name) in registrations {
             self.router.add_route(&event_type, &stream_name);
         }
 
-        // Update functions
         self.functions = new_engine.functions;
-
-        // Update patterns
         self.patterns = new_engine.patterns;
-
-        // Update configs
         self.configs = new_engine.configs;
-
-        // Update context map
         self.context_map = new_engine.context_map;
-
-        // Update connectors, source bindings, and sinks
         self.connectors = new_engine.connectors;
         self.source_bindings = new_engine.source_bindings;
         *self.sinks.cache_mut() = std::mem::take(new_engine.sinks.cache_mut());
 
-        // Preserve variables (user might have set them)
-        // Only add new variables from program, don't overwrite existing
         for (name, value) in new_engine.variables {
             if !self.variables.contains_key(&name) {
                 self.variables.insert(name.clone(), value);
@@ -3582,6 +1110,10 @@ impl Engine {
         Ok(report)
     }
 
+    // =========================================================================
+    // Checkpointing
+    // =========================================================================
+
     /// Create a checkpoint of the engine state (windows, SASE engines, joins, variables).
     pub fn create_checkpoint(&self) -> crate::persistence::EngineCheckpoint {
         use crate::persistence::{EngineCheckpoint, WindowCheckpoint};
@@ -3593,7 +1125,6 @@ impl Engine {
         let mut limit_states = std::collections::HashMap::new();
 
         for (name, stream) in &self.streams {
-            // Checkpoint windows
             for op in &stream.operations {
                 match op {
                     RuntimeOp::Window(wt) => {
@@ -3610,7 +1141,6 @@ impl Engine {
                         window_states.insert(name.clone(), cp);
                     }
                     RuntimeOp::PartitionedWindow(pw) => {
-                        // Serialize partitioned count windows
                         let mut partitions = std::collections::HashMap::new();
                         for (key, cw) in &pw.windows {
                             let sub_cp = cw.checkpoint();
@@ -3633,7 +1163,6 @@ impl Engine {
                         );
                     }
                     RuntimeOp::Distinct(state) => {
-                        // Snapshot LRU keys (most-recent first)
                         let keys: Vec<String> =
                             state.seen.iter().rev().map(|(k, _)| k.clone()).collect();
                         distinct_states.insert(
@@ -3654,18 +1183,15 @@ impl Engine {
                 }
             }
 
-            // Checkpoint SASE engines
             if let Some(ref sase) = stream.sase_engine {
                 sase_states.insert(name.clone(), sase.checkpoint());
             }
 
-            // Checkpoint join buffers
             if let Some(ref jb) = stream.join_buffer {
                 join_states.insert(name.clone(), jb.checkpoint());
             }
         }
 
-        // Checkpoint variables
         let variables = self
             .variables
             .iter()
@@ -3689,30 +1215,22 @@ impl Engine {
     }
 
     /// Restore engine state from a checkpoint.
-    ///
-    /// Must be called after `load()` so that stream definitions exist.
-    /// Returns an error if the checkpoint version is from an unsupported future version.
     pub fn restore_checkpoint(
         &mut self,
         cp: &crate::persistence::EngineCheckpoint,
     ) -> Result<(), crate::persistence::StoreError> {
-        // Validate and migrate (on a clone so we don't mutate the caller's reference)
         let mut migrated = cp.clone();
         migrated.validate_and_migrate()?;
 
-        // Restore counters
         self.events_processed = cp.events_processed;
         self.output_events_emitted = cp.output_events_emitted;
 
-        // Restore variables
         for (k, sv) in &cp.variables {
             self.variables
                 .insert(k.clone(), crate::persistence::ser_to_value(sv.clone()));
         }
 
-        // Restore per-stream state
         for (name, stream) in &mut self.streams {
-            // Restore window state
             if let Some(wcp) = cp.window_states.get(name) {
                 for op in &mut stream.operations {
                     match op {
@@ -3727,7 +1245,6 @@ impl Engine {
                             WindowType::PartitionedSliding(w) => w.restore(wcp),
                         },
                         RuntimeOp::PartitionedWindow(pw) => {
-                            // Restore partitioned count windows
                             for (key, pcp) in &wcp.partitions {
                                 let sub_wcp = crate::persistence::WindowCheckpoint {
                                     events: pcp.events.clone(),
@@ -3747,26 +1264,22 @@ impl Engine {
                 }
             }
 
-            // Restore SASE engine state
             if let Some(scp) = cp.sase_states.get(name) {
                 if let Some(ref mut sase) = stream.sase_engine {
                     sase.restore(scp);
                 }
             }
 
-            // Restore join buffer state
             if let Some(jcp) = cp.join_states.get(name) {
                 if let Some(ref mut jb) = stream.join_buffer {
                     jb.restore(jcp);
                 }
             }
 
-            // Restore distinct state
             if let Some(dcp) = cp.distinct_states.get(name) {
                 for op in &mut stream.operations {
                     if let RuntimeOp::Distinct(state) = op {
                         state.seen.clear();
-                        // Re-insert in reverse so most-recent ends up at the front
                         for key in dcp.keys.iter().rev() {
                             state.seen.insert(key.clone(), ());
                         }
@@ -3774,7 +1287,6 @@ impl Engine {
                 }
             }
 
-            // Restore limit state
             if let Some(lcp) = cp.limit_states.get(name) {
                 for op in &mut stream.operations {
                     if let RuntimeOp::Limit(state) = op {
@@ -3785,7 +1297,6 @@ impl Engine {
             }
         }
 
-        // Restore watermark tracker state
         if let Some(ref wcp) = cp.watermark_state {
             if self.watermark_tracker.is_none() {
                 self.watermark_tracker = Some(PerSourceWatermarkTracker::new());
@@ -3809,10 +1320,6 @@ impl Engine {
     }
 
     /// Enable auto-checkpointing with the given store and config.
-    ///
-    /// Must be called **after** `load()` so that stream definitions exist.
-    /// If a previous checkpoint exists in the store, the engine state is
-    /// automatically restored from it.
     pub fn enable_checkpointing(
         &mut self,
         store: std::sync::Arc<dyn crate::persistence::StateStore>,
@@ -3820,7 +1327,6 @@ impl Engine {
     ) -> Result<(), crate::persistence::StoreError> {
         let manager = crate::persistence::CheckpointManager::new(store, config)?;
 
-        // Try to restore from latest checkpoint
         if let Some(cp) = manager.recover()? {
             if let Some(engine_cp) = cp.context_states.get("main") {
                 self.restore_checkpoint(engine_cp)?;
@@ -3836,9 +1342,6 @@ impl Engine {
     }
 
     /// Check if a checkpoint is due and create one if needed.
-    ///
-    /// Call this periodically in event processing loops (e.g., after each batch).
-    /// The checkpoint interval is controlled by `CheckpointConfig::interval`.
     pub fn checkpoint_tick(&mut self) -> Result<(), crate::persistence::StoreError> {
         let should = self
             .checkpoint_manager
@@ -3857,7 +1360,6 @@ impl Engine {
             return Ok(());
         }
 
-        // Create checkpoint while self is only immutably borrowed
         let engine_cp = self.create_checkpoint();
         let events_processed = self.events_processed;
 
@@ -3865,8 +1367,8 @@ impl Engine {
         context_states.insert("main".to_string(), engine_cp);
 
         let cp = crate::persistence::Checkpoint {
-            id: 0,           // Set by manager
-            timestamp_ms: 0, // Set by manager
+            id: 0,
+            timestamp_ms: 0,
             events_processed,
             window_states: std::collections::HashMap::new(),
             pattern_states: std::collections::HashMap::new(),
@@ -3874,7 +1376,6 @@ impl Engine {
             context_states,
         };
 
-        // Now mutably borrow checkpoint_manager
         self.checkpoint_manager.as_mut().unwrap().checkpoint(cp)?;
         Ok(())
     }
@@ -3883,6 +1384,10 @@ impl Engine {
     pub fn has_checkpointing(&self) -> bool {
         self.checkpoint_manager.is_some()
     }
+
+    // =========================================================================
+    // Watermark Management
+    // =========================================================================
 
     /// Enable per-source watermark tracking for this engine.
     pub fn enable_watermark_tracking(&mut self) {
@@ -3899,6 +1404,7 @@ impl Engine {
     }
 
     /// Advance the watermark from an external source (e.g., upstream context).
+    #[tracing::instrument(skip(self))]
     pub async fn advance_external_watermark(
         &mut self,
         source_context: &str,
@@ -3919,90 +1425,6 @@ impl Engine {
         Ok(())
     }
 
-    /// Apply a watermark advance to all windows, triggering closure of expired windows.
-    async fn apply_watermark_to_windows(&mut self, wm: DateTime<Utc>) -> Result<(), String> {
-        let stream_names: Vec<String> = self.streams.keys().cloned().collect();
-
-        for stream_name in stream_names {
-            let (window_idx, expired) = {
-                let stream = self.streams.get_mut(&stream_name).unwrap();
-                let mut result = Vec::new();
-                let mut found_idx = None;
-
-                for (idx, op) in stream.operations.iter_mut().enumerate() {
-                    if let RuntimeOp::Window(window) = op {
-                        let events: Option<Vec<SharedEvent>> = match window {
-                            WindowType::Tumbling(w) => w.advance_watermark(wm),
-                            WindowType::Sliding(w) => w.advance_watermark(wm),
-                            WindowType::Session(w) => w.advance_watermark(wm),
-                            WindowType::PartitionedTumbling(w) => {
-                                let parts = w.advance_watermark(wm);
-                                let all: Vec<_> = parts.into_iter().flat_map(|(_, e)| e).collect();
-                                if all.is_empty() {
-                                    None
-                                } else {
-                                    Some(all)
-                                }
-                            }
-                            WindowType::PartitionedSliding(w) => {
-                                let parts = w.advance_watermark(wm);
-                                let all: Vec<_> = parts.into_iter().flat_map(|(_, e)| e).collect();
-                                if all.is_empty() {
-                                    None
-                                } else {
-                                    Some(all)
-                                }
-                            }
-                            WindowType::PartitionedSession(w) => {
-                                let parts = w.advance_watermark(wm);
-                                let all: Vec<_> = parts.into_iter().flat_map(|(_, e)| e).collect();
-                                if all.is_empty() {
-                                    None
-                                } else {
-                                    Some(all)
-                                }
-                            }
-                            _ => None, // Count-based windows don't use watermarks
-                        };
-
-                        if let Some(evts) = events {
-                            result = evts;
-                            found_idx = Some(idx);
-                        }
-                        break;
-                    }
-                }
-                (found_idx, result)
-            };
-
-            if expired.is_empty() {
-                continue;
-            }
-
-            let window_idx = match window_idx {
-                Some(idx) => idx,
-                None => continue,
-            };
-
-            let result = Self::process_post_window(
-                self.streams.get_mut(&stream_name).unwrap(),
-                expired,
-                window_idx,
-                &self.functions,
-                self.sinks.cache(),
-            )
-            .await?;
-
-            for emitted in &result.emitted_events {
-                self.output_events_emitted += 1;
-                let owned = (**emitted).clone();
-                self.send_output(owned);
-            }
-        }
-
-        Ok(())
-    }
-
     /// Check if two runtime sources are compatible for state preservation
     fn sources_compatible(a: &RuntimeSource, b: &RuntimeSource) -> bool {
         match (a, b) {
@@ -4020,95 +1442,5 @@ impl Engine {
             (RuntimeSource::Join(a), RuntimeSource::Join(b)) => a == b,
             _ => false,
         }
-    }
-}
-
-fn stream_op_name(op: &StreamOp) -> &'static str {
-    match op {
-        StreamOp::Where(_) => ".where()",
-        StreamOp::Select(_) => ".select()",
-        StreamOp::Window(_) => ".window()",
-        StreamOp::Aggregate(_) => ".aggregate()",
-        StreamOp::Having(_) => ".having()",
-        StreamOp::PartitionBy(_) => ".partition_by()",
-        StreamOp::OrderBy(_) => ".order_by()",
-        StreamOp::Limit(_) => ".limit()",
-        StreamOp::Distinct(_) => ".distinct()",
-        StreamOp::Map(_) => ".map()",
-        StreamOp::Filter(_) => ".filter()",
-        StreamOp::Tap(_) => ".tap()",
-        StreamOp::Print(_) => ".print()",
-        StreamOp::Log(_) => ".log()",
-        StreamOp::Emit { .. } => ".emit()",
-        StreamOp::To { .. } => ".to()",
-        StreamOp::ToExpr(_) => ".to()",
-        StreamOp::Pattern(_) => ".pattern()",
-        StreamOp::Concurrent(_) => ".concurrent()",
-        StreamOp::Process(_) => ".process()",
-        StreamOp::OnError(_) => ".on_error()",
-        StreamOp::Collect => ".collect()",
-        StreamOp::On(_) => ".on()",
-        StreamOp::FollowedBy(_) => "-> (followed_by)",
-        StreamOp::Within(_) => ".within()",
-        StreamOp::Not(_) => ".not()",
-        StreamOp::Fork(_) => ".fork()",
-        StreamOp::Any(_) => ".any()",
-        StreamOp::All => ".all()",
-        StreamOp::First => ".first()",
-        StreamOp::Context(_) => ".context()",
-        StreamOp::Watermark(_) => ".watermark()",
-        StreamOp::AllowedLateness(_) => ".allowed_lateness()",
-        StreamOp::TrendAggregate(_) => ".trend_aggregate()",
-        StreamOp::Score(_) => ".score()",
-        StreamOp::Forecast(_) => ".forecast()",
-        StreamOp::Enrich(_) => ".enrich()",
-    }
-}
-
-/// Extract the common field name from a cross-alias equality expression.
-/// For `a.id == b.id`, returns `Some("id")`.
-/// Handles both `Binary { Eq, Member, Member }` and `And` combinations.
-fn extract_equality_join_key(expr: &varpulis_core::ast::Expr) -> Option<String> {
-    use varpulis_core::ast::{BinOp, Expr};
-    match expr {
-        Expr::Binary {
-            op: BinOp::Eq,
-            left,
-            right,
-        } => {
-            // Check for Member { Ident(alias_a), field } == Member { Ident(alias_b), field }
-            if let (
-                Expr::Member {
-                    expr: left_expr,
-                    member: left_field,
-                },
-                Expr::Member {
-                    expr: right_expr,
-                    member: right_field,
-                },
-            ) = (left.as_ref(), right.as_ref())
-            {
-                if left_field == right_field {
-                    // Ensure they're different aliases (cross-alias join)
-                    if let (Expr::Ident(left_alias), Expr::Ident(right_alias)) =
-                        (left_expr.as_ref(), right_expr.as_ref())
-                    {
-                        if left_alias != right_alias {
-                            return Some(left_field.clone());
-                        }
-                    }
-                }
-            }
-            None
-        }
-        Expr::Binary {
-            op: BinOp::And,
-            left,
-            right,
-        } => {
-            // Try left side first, then right
-            extract_equality_join_key(left).or_else(|| extract_equality_join_key(right))
-        }
-        _ => None,
     }
 }

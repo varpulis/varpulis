@@ -29,7 +29,12 @@ jobs:
       - name: Run benchmarks
         env:
           CARGO_TERM_COLOR: never
-        run: cargo bench -p varpulis-runtime --bench pattern_benchmark 2>&1 | tee criterion-output.txt
+        run: |
+          cargo bench -p varpulis-runtime --bench pattern_benchmark 2>&1 | tee criterion-output.txt
+          cargo bench -p varpulis-runtime --bench kleene_benchmark 2>&1 | tee -a criterion-output.txt
+          cargo bench -p varpulis-runtime --bench context_benchmark 2>&1 | tee -a criterion-output.txt
+          cargo bench -p varpulis-runtime --bench pst_forecast_benchmark 2>&1 | tee -a criterion-output.txt
+          cargo bench -p varpulis-runtime --bench hamlet_zdd_benchmark 2>&1 | tee -a criterion-output.txt
 
       - name: Convert Criterion output to bencher format
         run: |

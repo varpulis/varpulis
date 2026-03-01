@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 /// A complete VPL program
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Program {
+    /// The top-level statements that make up the program.
     pub statements: Vec<Spanned<Stmt>>,
 }
 
@@ -15,15 +16,22 @@ pub struct Program {
 pub enum Stmt {
     /// Connector declaration: `connector MyMqtt = mqtt (host: "localhost", port: 1883)`
     ConnectorDecl {
+        /// Connector name.
         name: String,
+        /// Connector protocol type (e.g., `"mqtt"`, `"kafka"`).
         connector_type: String,
+        /// Connection parameters.
         params: Vec<ConnectorParam>,
     },
     /// Stream declaration: `stream X = Y` or `stream X = Y.where(...)`
     StreamDecl {
+        /// Stream name.
         name: String,
+        /// Optional type annotation for the stream.
         type_annotation: Option<Type>,
+        /// Event source for this stream.
         source: StreamSource,
+        /// Chained stream operations.
         ops: Vec<StreamOp>,
         /// Per-operation source spans (parallel to `ops`). Empty when spans unavailable.
         #[serde(default)]
@@ -31,30 +39,49 @@ pub enum Stmt {
     },
     /// Event declaration: `event X: ...`
     EventDecl {
+        /// Event type name.
         name: String,
+        /// Parent event type if this event extends another.
         extends: Option<String>,
+        /// Fields declared on this event type.
         fields: Vec<Field>,
     },
     /// Type alias: `type X = Y`
-    TypeDecl { name: String, ty: Type },
+    TypeDecl {
+        /// Alias name.
+        name: String,
+        /// The aliased type.
+        ty: Type,
+    },
     /// Variable declaration: `let x = ...` or `var x = ...`
     VarDecl {
+        /// Whether the variable can be reassigned.
         mutable: bool,
+        /// Variable name.
         name: String,
+        /// Optional type annotation.
         ty: Option<Type>,
+        /// Initial value expression.
         value: Expr,
     },
     /// Constant declaration: `const X = ...`
     ConstDecl {
+        /// Constant name.
         name: String,
+        /// Optional type annotation.
         ty: Option<Type>,
+        /// Constant value expression.
         value: Expr,
     },
     /// Function declaration: `fn x(...) -> T: ...`
     FnDecl {
+        /// Function name.
         name: String,
+        /// Function parameters.
         params: Vec<Param>,
+        /// Optional return type.
         ret: Option<Type>,
+        /// Function body statements.
         body: Vec<Spanned<Stmt>>,
     },
     /// Configuration block with name (e.g., `config mqtt { ... }`)
@@ -68,29 +95,45 @@ pub enum Stmt {
     /// )
     /// ```
     Config {
+        /// Configuration block name.
         name: String,
+        /// Configuration key-value items.
         items: Vec<ConfigItem>,
     },
     /// Import statement
-    Import { path: String, alias: Option<String> },
+    Import {
+        /// Module path to import.
+        path: String,
+        /// Optional import alias.
+        alias: Option<String>,
+    },
     /// Expression statement
     Expr(Expr),
     /// If statement
     If {
+        /// Condition expression.
         cond: Expr,
+        /// Statements to execute when the condition is true.
         then_branch: Vec<Spanned<Stmt>>,
+        /// Optional else-if branches (condition, body pairs).
         elif_branches: Vec<(Expr, Vec<Spanned<Stmt>>)>,
+        /// Optional else branch.
         else_branch: Option<Vec<Spanned<Stmt>>>,
     },
     /// For loop
     For {
+        /// Loop variable name.
         var: String,
+        /// Iterable expression.
         iter: Expr,
+        /// Loop body statements.
         body: Vec<Spanned<Stmt>>,
     },
     /// While loop
     While {
+        /// Loop condition.
         cond: Expr,
+        /// Loop body statements.
         body: Vec<Spanned<Stmt>>,
     },
     /// Return statement
@@ -101,21 +144,34 @@ pub enum Stmt {
     Continue,
     /// Emit event statement: `emit EventType(field1: expr1, field2: expr2)`
     Emit {
+        /// Event type to emit.
         event_type: String,
+        /// Named field values for the emitted event.
         fields: Vec<NamedArg>,
     },
     /// Variable assignment: `name := value`
-    Assignment { name: String, value: Expr },
+    Assignment {
+        /// Variable name to assign.
+        name: String,
+        /// New value expression.
+        value: Expr,
+    },
     /// SASE+ Pattern declaration: `pattern Name = SEQ(A, B+) within 1h partition by user_id`
     PatternDecl {
+        /// Pattern name.
         name: String,
+        /// SASE+ pattern expression.
         expr: SasePatternExpr,
+        /// Optional time window constraint.
         within: Option<Expr>,
+        /// Optional partition key expression.
         partition_by: Option<Expr>,
     },
     /// Context declaration: `context name (cores: [0, 1])`
     ContextDecl {
+        /// Context name.
         name: String,
+        /// Optional CPU core affinity list.
         cores: Option<Vec<usize>>,
     },
 }
@@ -123,7 +179,9 @@ pub enum Stmt {
 /// Connector parameter: `host: "localhost"` or `port: 1883`
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ConnectorParam {
+    /// Parameter name.
     pub name: String,
+    /// Parameter value.
     pub value: ConfigValue,
 }
 
@@ -174,13 +232,26 @@ pub enum StreamSource {
     /// Reference to existing stream with optional alias
     Ident(String),
     /// Event type with optional alias: `EventType as alias`
-    IdentWithAlias { name: String, alias: String },
+    IdentWithAlias {
+        /// Event type or stream name.
+        name: String,
+        /// Alias for the source.
+        alias: String,
+    },
     /// Event type with all quantifier and optional alias: `all EventType as alias`
-    AllWithAlias { name: String, alias: Option<String> },
+    AllWithAlias {
+        /// Event type name.
+        name: String,
+        /// Optional alias for the source.
+        alias: Option<String>,
+    },
     /// From connector: `EventType.from(Connector, topic: "...", qos: 1)`
     FromConnector {
+        /// Event type to receive from the connector.
         event_type: String,
+        /// Connector name to read from.
         connector_name: String,
+        /// Additional connector parameters.
         params: Vec<ConnectorParam>,
     },
     /// Merge multiple streams
@@ -229,8 +300,11 @@ pub struct SequenceStepDecl {
 /// Inline stream declaration used in merge/join
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InlineStreamDecl {
+    /// Name alias for this inline stream.
     pub name: String,
+    /// Source event type or stream name.
     pub source: String,
+    /// Optional filter condition for this source.
     pub filter: Option<Expr>,
 }
 
@@ -251,9 +325,13 @@ pub enum JoinType {
 /// Join clause
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JoinClause {
+    /// Name alias for this join source.
     pub name: String,
+    /// Source event type or stream name.
     pub source: String,
+    /// Optional join condition expression.
     pub on: Option<Expr>,
+    /// Type of join (inner, left, right, full).
     #[serde(default)]
     pub join_type: JoinType,
 }
@@ -300,7 +378,9 @@ pub enum StreamOp {
     },
     /// Send to connector: `.to(Connector, topic: "...", method: "POST")`
     To {
+        /// Target connector name.
         connector_name: String,
+        /// Sink parameters (topic, method, etc.).
         params: Vec<ConnectorParam>,
     },
     /// Send to destination (legacy): `.to(target)`
@@ -371,8 +451,11 @@ pub struct TrendAggItem {
 /// Specification for ONNX model scoring
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScoreSpec {
+    /// Path to the ONNX model file.
     pub model_path: String,
+    /// Input tensor names to feed from event fields.
     pub inputs: Vec<String>,
+    /// Output tensor names to extract as event fields.
     pub outputs: Vec<String>,
     /// Enable GPU acceleration (default: false)
     #[serde(default)]
@@ -450,22 +533,29 @@ pub enum SelectItem {
 /// Aggregation item
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AggItem {
+    /// Output field name for the aggregation result.
     pub alias: String,
+    /// Aggregation expression (e.g., `avg(temperature)`).
     pub expr: Expr,
 }
 
 /// Order item
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OrderItem {
+    /// Expression to sort by.
     pub expr: Expr,
+    /// Whether to sort in descending order.
     pub descending: bool,
 }
 
 /// Window arguments
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WindowArgs {
+    /// Window duration (tumbling window size).
     pub duration: Expr,
+    /// Optional slide interval for sliding windows.
     pub sliding: Option<Expr>,
+    /// Optional eviction policy expression.
     pub policy: Option<Expr>,
     /// Session window gap duration (syntax: `.window(session: 5m)`)
     pub session_gap: Option<Expr>,
@@ -474,124 +564,168 @@ pub struct WindowArgs {
 /// Pattern definition
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PatternDef {
+    /// Pattern name.
     pub name: String,
+    /// Matcher expression for the pattern.
     pub matcher: Expr,
 }
 
 /// Named argument: `name: value`
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NamedArg {
+    /// Argument name.
     pub name: String,
+    /// Argument value expression.
     pub value: Expr,
 }
 
 /// Field in event declaration
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Field {
+    /// Field name.
     pub name: String,
+    /// Field type.
     pub ty: Type,
+    /// Whether the field is optional.
     pub optional: bool,
 }
 
 /// Function parameter
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Param {
+    /// Parameter name.
     pub name: String,
+    /// Parameter type.
     pub ty: Type,
 }
 
 /// Expression
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Expr {
-    // Literals
+    /// Null literal.
     Null,
+    /// Boolean literal.
     Bool(bool),
+    /// Integer literal.
     Int(i64),
+    /// Floating-point literal.
     Float(f64),
+    /// String literal.
     Str(String),
-    Duration(u64),  // nanoseconds
-    Timestamp(i64), // nanoseconds since epoch
+    /// Duration literal in nanoseconds.
+    Duration(u64),
+    /// Timestamp literal in nanoseconds since epoch.
+    Timestamp(i64),
 
-    // Collections
+    /// Array literal: `[1, 2, 3]`.
     Array(Vec<Expr>),
+    /// Map literal: `{key: value, ...}`.
     Map(Vec<(String, Expr)>),
 
-    // Identifier
+    /// Identifier reference.
     Ident(String),
 
-    // Binary operation
+    /// Binary operation: `left op right`.
     Binary {
+        /// The binary operator.
         op: BinOp,
+        /// Left operand.
         left: Box<Expr>,
+        /// Right operand.
         right: Box<Expr>,
     },
 
-    // Unary operation
+    /// Unary operation: `op expr`.
     Unary {
+        /// The unary operator.
         op: UnaryOp,
+        /// Operand expression.
         expr: Box<Expr>,
     },
 
-    // Member access: `expr.member`
+    /// Member access: `expr.member`.
     Member {
+        /// Object expression.
         expr: Box<Expr>,
+        /// Member name to access.
         member: String,
     },
 
-    // Optional member access: `expr?.member`
+    /// Optional member access: `expr?.member`.
     OptionalMember {
+        /// Object expression (may be null).
         expr: Box<Expr>,
+        /// Member name to access.
         member: String,
     },
 
-    // Index access: `expr[index]`
+    /// Index access: `expr[index]`.
     Index {
+        /// Collection expression.
         expr: Box<Expr>,
+        /// Index expression.
         index: Box<Expr>,
     },
 
-    // Slice: `expr[start:end]`
+    /// Slice: `expr[start:end]`.
     Slice {
+        /// Collection expression.
         expr: Box<Expr>,
+        /// Optional start index.
         start: Option<Box<Expr>>,
+        /// Optional end index.
         end: Option<Box<Expr>>,
     },
 
-    // Function call: `func(args)`
+    /// Function call: `func(args)`.
     Call {
+        /// Function expression to call.
         func: Box<Expr>,
+        /// Arguments to the function.
         args: Vec<Arg>,
     },
 
-    // Lambda: `x => expr` or `(x, y) => expr`
+    /// Lambda: `x => expr` or `(x, y) => expr`.
     Lambda {
+        /// Lambda parameter names.
         params: Vec<String>,
+        /// Lambda body expression.
         body: Box<Expr>,
     },
 
-    // Conditional: `if cond then a else b`
+    /// Conditional expression: `if cond then a else b`.
     If {
+        /// Condition expression.
         cond: Box<Expr>,
+        /// Value when true.
         then_branch: Box<Expr>,
+        /// Value when false.
         else_branch: Box<Expr>,
     },
 
-    // Null coalescing: `expr ?? default`
+    /// Null coalescing: `expr ?? default`.
     Coalesce {
+        /// Expression that may be null.
         expr: Box<Expr>,
+        /// Fallback value when expr is null.
         default: Box<Expr>,
     },
 
-    // Range: `start..end` or `start..=end`
+    /// Range: `start..end` or `start..=end`.
     Range {
+        /// Range start.
         start: Box<Expr>,
+        /// Range end.
         end: Box<Expr>,
+        /// Whether the end is inclusive (`..=`).
         inclusive: bool,
     },
 
-    // Block expression: `{ let a = 1; let b = 2; a + b }`
+    /// Block expression: `{ let a = 1; let b = 2; a + b }`.
     Block {
-        stmts: Vec<(String, Option<Type>, Expr, bool)>, // (name, type, value, is_mutable)
+        /// Local bindings: (name, optional type, value, is_mutable).
+        stmts: Vec<(String, Option<Type>, Expr, bool)>,
+        /// Final expression that produces the block's value.
         result: Box<Expr>,
     },
 }
@@ -599,49 +733,71 @@ pub enum Expr {
 /// Function argument
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Arg {
+    /// Positional argument.
     Positional(Expr),
+    /// Named argument: `name: value`.
     Named(String, Expr),
 }
 
 /// Binary operator
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum BinOp {
-    // Arithmetic
+    /// Addition (`+`).
     Add,
+    /// Subtraction (`-`).
     Sub,
+    /// Multiplication (`*`).
     Mul,
+    /// Division (`/`).
     Div,
+    /// Modulo (`%`).
     Mod,
+    /// Exponentiation (`**`).
     Pow,
 
-    // Comparison
+    /// Equality (`==`).
     Eq,
+    /// Inequality (`!=`).
     NotEq,
+    /// Less than (`<`).
     Lt,
+    /// Less than or equal (`<=`).
     Le,
+    /// Greater than (`>`).
     Gt,
+    /// Greater than or equal (`>=`).
     Ge,
+    /// Membership test (`in`).
     In,
+    /// Negated membership test (`not in`).
     NotIn,
+    /// Type identity test (`is`).
     Is,
 
-    // Logical
+    /// Logical AND (`and`).
     And,
+    /// Logical OR (`or`).
     Or,
+    /// Logical XOR (`xor`).
     Xor,
 
-    // Pattern operators
-    FollowedBy, // -> (A followed by B)
+    /// Temporal followed-by operator (`->`).
+    FollowedBy,
 
-    // Bitwise
+    /// Bitwise AND (`&`).
     BitAnd,
+    /// Bitwise OR (`|`).
     BitOr,
+    /// Bitwise XOR (`^`).
     BitXor,
+    /// Left shift (`<<`).
     Shl,
+    /// Right shift (`>>`).
     Shr,
 }
 
 impl BinOp {
+    /// Returns the operator's source-level string representation.
     pub fn as_str(&self) -> &'static str {
         match self {
             BinOp::Add => "+",
@@ -675,12 +831,16 @@ impl BinOp {
 /// Unary operator
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum UnaryOp {
+    /// Arithmetic negation (`-`).
     Neg,
+    /// Logical negation (`not`).
     Not,
+    /// Bitwise complement (`~`).
     BitNot,
 }
 
 impl UnaryOp {
+    /// Returns the operator's source-level string representation.
     pub fn as_str(&self) -> &'static str {
         match self {
             UnaryOp::Neg => "-",
@@ -693,20 +853,30 @@ impl UnaryOp {
 /// Configuration item
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ConfigItem {
+    /// Simple key-value pair.
     Value(String, ConfigValue),
+    /// Nested configuration block.
     Nested(String, Vec<ConfigItem>),
 }
 
 /// Configuration value
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ConfigValue {
+    /// Boolean value.
     Bool(bool),
+    /// Integer value.
     Int(i64),
+    /// Floating-point value.
     Float(f64),
+    /// String value.
     Str(String),
+    /// Duration value in nanoseconds.
     Duration(u64),
+    /// Identifier reference.
     Ident(String),
+    /// Array of configuration values.
     Array(Vec<ConfigValue>),
+    /// Map of key-value pairs.
     Map(Vec<(String, ConfigValue)>),
 }
 

@@ -25,6 +25,7 @@ pub const LARGE_BODY_LIMIT: u64 = 16 * 1024 * 1024;
 pub struct SecretString(String);
 
 impl SecretString {
+    /// Creates a new secret string from the given value.
     pub fn new(s: impl Into<String>) -> Self {
         Self(s.into())
     }

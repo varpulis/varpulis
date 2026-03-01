@@ -5,6 +5,7 @@ use std::time::Duration;
 use varpulis_core::Value;
 use varpulis_runtime::event::Event;
 use varpulis_runtime::sase::*;
+use varpulis_runtime::sase_persistence::{RunCheckpointExt, SaseCheckpointExt};
 
 fn make_event(event_type: &str, data: Vec<(&str, Value)>) -> Event {
     let mut event = Event::new(event_type);

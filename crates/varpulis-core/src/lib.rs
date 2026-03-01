@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! # Varpulis Core
 //!
 //! Foundational types and AST definitions for the VPL language.
@@ -54,6 +55,7 @@
 //! - [`varpulis_runtime`](../varpulis_runtime): Executing VPL programs
 
 pub mod ast;
+pub mod event;
 pub mod pagination;
 pub mod plan;
 pub mod security;
@@ -63,6 +65,7 @@ pub mod validate;
 pub mod value;
 
 pub use ast::*;
+pub use event::{Event, FieldKey, SharedEvent};
 pub use span::Span;
 pub use types::*;
 pub use value::Value;

@@ -1,7 +1,11 @@
 //! Sink implementations for outputting processed events
+//!
+//! The `Sink` trait and `SinkError` are defined in `varpulis-connectors` and
+//! re-exported here. This module provides the built-in sink implementations.
+
+pub use varpulis_connectors::sink::{Sink, SinkConnectorAdapter, SinkError};
 
 use crate::event::Event;
-use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use indexmap::IndexMap;
 use serde_json;
@@ -12,41 +16,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tracing::{error, warn};
-
-/// Trait for event sinks
-#[async_trait]
-pub trait Sink: Send + Sync {
-    /// Name of this sink
-    fn name(&self) -> &str;
-
-    /// Establish connection to the external system.
-    ///
-    /// Called once after sink creation to establish any necessary connections.
-    /// The default implementation is a no-op for sinks that connect eagerly.
-    async fn connect(&self) -> Result<()> {
-        Ok(())
-    }
-
-    /// Send an event to this sink
-    async fn send(&self, event: &Event) -> Result<()>;
-
-    /// Send a batch of events to this sink.
-    ///
-    /// Default implementation calls `send()` for each event.
-    /// Connectors should override this to amortize lock/syscall overhead.
-    async fn send_batch(&self, events: &[Arc<Event>]) -> Result<()> {
-        for event in events {
-            self.send(event).await?;
-        }
-        Ok(())
-    }
-
-    /// Flush any buffered data
-    async fn flush(&self) -> Result<()>;
-
-    /// Close the sink
-    async fn close(&self) -> Result<()>;
-}
 
 /// Console sink - prints to stdout
 pub struct ConsoleSink {
@@ -74,7 +43,7 @@ impl Sink for ConsoleSink {
         &self.name
     }
 
-    async fn send(&self, event: &Event) -> Result<()> {
+    async fn send(&self, event: &Event) -> Result<(), SinkError> {
         if self.pretty {
             println!(
                 "[{}] {} | {:?}",
@@ -88,11 +57,11 @@ impl Sink for ConsoleSink {
         Ok(())
     }
 
-    async fn flush(&self) -> Result<()> {
+    async fn flush(&self) -> Result<(), SinkError> {
         Ok(())
     }
 
-    async fn close(&self) -> Result<()> {
+    async fn close(&self) -> Result<(), SinkError> {
         Ok(())
     }
 }
@@ -110,7 +79,7 @@ impl FileSink {
         &self.path
     }
 
-    pub fn new(name: impl Into<String>, path: impl Into<PathBuf>) -> Result<Self> {
+    pub fn new(name: impl Into<String>, path: impl Into<PathBuf>) -> Result<Self, SinkError> {
         let path = path.into();
         let file = OpenOptions::new().create(true).append(true).open(&path)?;
 
@@ -128,7 +97,7 @@ impl Sink for FileSink {
         &self.name
     }
 
-    async fn send(&self, event: &Event) -> Result<()> {
+    async fn send(&self, event: &Event) -> Result<(), SinkError> {
         let buf = event.to_sink_payload();
         let mut file = self.file.lock().await;
         file.write_all(&buf)?;
@@ -136,13 +105,13 @@ impl Sink for FileSink {
         Ok(())
     }
 
-    async fn flush(&self) -> Result<()> {
+    async fn flush(&self) -> Result<(), SinkError> {
         let mut file = self.file.lock().await;
         file.flush()?;
         Ok(())
     }
 
-    async fn close(&self) -> Result<()> {
+    async fn close(&self) -> Result<(), SinkError> {
         self.flush().await
     }
 }
@@ -176,7 +145,7 @@ impl AsyncFileSink {
     }
 
     /// Create a new async file sink with default buffer size
-    pub async fn new(name: impl Into<String>, path: impl Into<PathBuf>) -> Result<Self> {
+    pub async fn new(name: impl Into<String>, path: impl Into<PathBuf>) -> Result<Self, SinkError> {
         Self::with_buffer_size(name, path, Self::DEFAULT_BUFFER_SIZE).await
     }
 
@@ -185,7 +154,7 @@ impl AsyncFileSink {
         name: impl Into<String>,
         path: impl Into<PathBuf>,
         buffer_size: usize,
-    ) -> Result<Self> {
+    ) -> Result<Self, SinkError> {
         use tokio::fs::OpenOptions;
 
         let path = path.into();
@@ -211,7 +180,7 @@ impl Sink for AsyncFileSink {
         &self.name
     }
 
-    async fn send(&self, event: &Event) -> Result<()> {
+    async fn send(&self, event: &Event) -> Result<(), SinkError> {
         let buf = event.to_sink_payload();
 
         let should_flush = {
@@ -228,7 +197,7 @@ impl Sink for AsyncFileSink {
         Ok(())
     }
 
-    async fn flush(&self) -> Result<()> {
+    async fn flush(&self) -> Result<(), SinkError> {
         use tokio::io::AsyncWriteExt;
 
         let data = {
@@ -245,7 +214,7 @@ impl Sink for AsyncFileSink {
         Ok(())
     }
 
-    async fn close(&self) -> Result<()> {
+    async fn close(&self) -> Result<(), SinkError> {
         self.flush().await
     }
 }
@@ -280,7 +249,7 @@ impl Sink for HttpSink {
         &self.name
     }
 
-    async fn send(&self, event: &Event) -> Result<()> {
+    async fn send(&self, event: &Event) -> Result<(), SinkError> {
         let mut req = self.client.post(&self.url);
         for (k, v) in &self.headers {
             req = req.header(k.as_str(), v.as_str());
@@ -301,11 +270,11 @@ impl Sink for HttpSink {
         Ok(())
     }
 
-    async fn flush(&self) -> Result<()> {
+    async fn flush(&self) -> Result<(), SinkError> {
         Ok(())
     }
 
-    async fn close(&self) -> Result<()> {
+    async fn close(&self) -> Result<(), SinkError> {
         Ok(())
     }
 }
@@ -391,7 +360,7 @@ impl HttpSinkWithRetry {
     }
 
     /// Send with retry logic
-    async fn send_with_retry(&self, body: Vec<u8>) -> Result<()> {
+    async fn send_with_retry(&self, body: Vec<u8>) -> Result<(), SinkError> {
         let mut attempt = 0;
         let mut delay = self.retry_config.initial_delay;
 
@@ -410,12 +379,12 @@ impl HttpSinkWithRetry {
                     } else if resp.status().is_server_error() {
                         // 5xx: retryable
                         if attempt >= self.retry_config.max_retries {
-                            return Err(anyhow!(
+                            return Err(SinkError::other(format!(
                                 "HTTP sink {} failed with status {} after {} retries",
                                 self.name,
                                 resp.status(),
                                 attempt
-                            ));
+                            )));
                         }
                         warn!(
                             "HTTP sink {} got {}, retrying ({}/{})",
@@ -426,23 +395,21 @@ impl HttpSinkWithRetry {
                         );
                     } else {
                         // 4xx: not retryable (client error)
-                        return Err(anyhow!(
+                        return Err(SinkError::other(format!(
                             "HTTP sink {} got client error status {}",
                             self.name,
                             resp.status()
-                        ));
+                        )));
                     }
                 }
                 Err(e) => {
                     // Network errors and timeouts are retryable
                     if e.is_timeout() || e.is_connect() || e.is_request() {
                         if attempt >= self.retry_config.max_retries {
-                            return Err(anyhow!(
+                            return Err(SinkError::other(format!(
                                 "HTTP sink {} failed with error {} after {} retries",
-                                self.name,
-                                e,
-                                attempt
-                            ));
+                                self.name, e, attempt
+                            )));
                         }
                         warn!(
                             "HTTP sink {} error: {}, retrying ({}/{})",
@@ -472,15 +439,15 @@ impl Sink for HttpSinkWithRetry {
         &self.name
     }
 
-    async fn send(&self, event: &Event) -> Result<()> {
+    async fn send(&self, event: &Event) -> Result<(), SinkError> {
         self.send_with_retry(event.to_sink_payload()).await
     }
 
-    async fn flush(&self) -> Result<()> {
+    async fn flush(&self) -> Result<(), SinkError> {
         Ok(())
     }
 
-    async fn close(&self) -> Result<()> {
+    async fn close(&self) -> Result<(), SinkError> {
         Ok(())
     }
 }
@@ -511,7 +478,7 @@ impl Sink for MultiSink {
         &self.name
     }
 
-    async fn send(&self, event: &Event) -> Result<()> {
+    async fn send(&self, event: &Event) -> Result<(), SinkError> {
         for sink in &self.sinks {
             if let Err(e) = sink.send(event).await {
                 error!("Sink {} error: {}", sink.name(), e);
@@ -520,14 +487,14 @@ impl Sink for MultiSink {
         Ok(())
     }
 
-    async fn flush(&self) -> Result<()> {
+    async fn flush(&self) -> Result<(), SinkError> {
         for sink in &self.sinks {
             sink.flush().await?;
         }
         Ok(())
     }
 
-    async fn close(&self) -> Result<()> {
+    async fn close(&self) -> Result<(), SinkError> {
         for sink in &self.sinks {
             sink.close().await?;
         }
@@ -582,15 +549,18 @@ impl Sink for ResilientSink {
         self.inner.name()
     }
 
-    async fn connect(&self) -> Result<()> {
+    async fn connect(&self) -> Result<(), SinkError> {
         self.inner.connect().await
     }
 
-    async fn send(&self, event: &Event) -> Result<()> {
+    async fn send(&self, event: &Event) -> Result<(), SinkError> {
         if !self.cb.allow_request() {
             let arc_event = Arc::new(event.clone());
             self.send_to_dlq("circuit breaker open", &[arc_event]);
-            return Err(anyhow!("circuit breaker open for sink '{}'", self.name()));
+            return Err(SinkError::other(format!(
+                "circuit breaker open for sink '{}'",
+                self.name()
+            )));
         }
 
         match self.inner.send(event).await {
@@ -608,10 +578,13 @@ impl Sink for ResilientSink {
         }
     }
 
-    async fn send_batch(&self, events: &[Arc<Event>]) -> Result<()> {
+    async fn send_batch(&self, events: &[Arc<Event>]) -> Result<(), SinkError> {
         if !self.cb.allow_request() {
             self.send_to_dlq("circuit breaker open", events);
-            return Err(anyhow!("circuit breaker open for sink '{}'", self.name()));
+            return Err(SinkError::other(format!(
+                "circuit breaker open for sink '{}'",
+                self.name()
+            )));
         }
 
         match self.inner.send_batch(events).await {
@@ -627,11 +600,11 @@ impl Sink for ResilientSink {
         }
     }
 
-    async fn flush(&self) -> Result<()> {
+    async fn flush(&self) -> Result<(), SinkError> {
         self.inner.flush().await
     }
 
-    async fn close(&self) -> Result<()> {
+    async fn close(&self) -> Result<(), SinkError> {
         self.inner.close().await
     }
 }
@@ -1036,9 +1009,9 @@ mod tests {
             &self.name
         }
 
-        async fn send(&self, _event: &Event) -> Result<()> {
+        async fn send(&self, _event: &Event) -> Result<(), SinkError> {
             if self.fail.load(std::sync::atomic::Ordering::Relaxed) {
-                Err(anyhow!("mock send failure"))
+                Err(SinkError::other("mock send failure"))
             } else {
                 self.send_count
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1046,10 +1019,10 @@ mod tests {
             }
         }
 
-        async fn flush(&self) -> Result<()> {
+        async fn flush(&self) -> Result<(), SinkError> {
             Ok(())
         }
-        async fn close(&self) -> Result<()> {
+        async fn close(&self) -> Result<(), SinkError> {
             Ok(())
         }
     }

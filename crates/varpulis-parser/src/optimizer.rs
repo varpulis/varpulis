@@ -1,7 +1,7 @@
 //! Rule-based logical plan optimizer
 //!
-//! Applies optimization rules to a [`LogicalPlan`] before physical materialization.
-//! Rules are applied iteratively (up to [`MAX_PASSES`]) until no rule produces changes.
+//! Applies optimization rules to a `LogicalPlan` before physical materialization.
+//! Rules are applied iteratively (up to `MAX_PASSES`) until no rule produces changes.
 //!
 //! # Current Rules
 //!
