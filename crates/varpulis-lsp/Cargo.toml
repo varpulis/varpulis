@@ -41,3 +41,6 @@ thiserror = { workspace = true }
 dashmap = "5.5"
 ropey = "1.6"
 once_cell = "1.19"
+
+[lints]
+workspace = true

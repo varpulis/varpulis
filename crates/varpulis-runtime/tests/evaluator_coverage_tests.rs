@@ -30,7 +30,7 @@ async fn run(code: &str, event: Event) -> Vec<Event> {
 
 #[tokio::test]
 async fn for_loop_with_break() {
-    let code = r#"
+    let code = r"
         fn gen():
             var result = 0
             for i in 0..10:
@@ -41,7 +41,7 @@ async fn for_loop_with_break() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].data.get("count"), Some(&Value::Int(3)));
@@ -49,7 +49,7 @@ async fn for_loop_with_break() {
 
 #[tokio::test]
 async fn for_loop_with_continue() {
-    let code = r#"
+    let code = r"
         fn gen():
             var total = 0
             for i in 0..6:
@@ -60,7 +60,7 @@ async fn for_loop_with_continue() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     // Odd numbers 1 + 3 + 5 = 9
@@ -73,7 +73,7 @@ async fn for_loop_with_continue() {
 
 #[tokio::test]
 async fn while_loop_with_return() {
-    let code = r#"
+    let code = r"
         fn find_first_over(threshold: int) -> int:
             var i = 0
             while i < 100:
@@ -87,7 +87,7 @@ async fn while_loop_with_return() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].data.get("val"), Some(&Value::Int(43)));
@@ -202,7 +202,7 @@ async fn string_substring() {
 
 #[tokio::test]
 async fn math_sqrt_pow_abs() {
-    let code = r#"
+    let code = r"
         fn gen():
             emit R(
                 sq: sqrt(16.0),
@@ -212,7 +212,7 @@ async fn math_sqrt_pow_abs() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].data.get("sq"), Some(&Value::Float(4.0)));
@@ -222,7 +222,7 @@ async fn math_sqrt_pow_abs() {
 
 #[tokio::test]
 async fn math_ceil_floor_round() {
-    let code = r#"
+    let code = r"
         fn gen():
             emit R(
                 c: ceil(3.2),
@@ -232,7 +232,7 @@ async fn math_ceil_floor_round() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].data.get("c"), Some(&Value::Int(4)));
@@ -242,7 +242,7 @@ async fn math_ceil_floor_round() {
 
 #[tokio::test]
 async fn math_log_exp() {
-    let code = r#"
+    let code = r"
         fn gen():
             emit R(
                 ln: log(1.0),
@@ -252,7 +252,7 @@ async fn math_log_exp() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].data.get("ln"), Some(&Value::Float(0.0)));
@@ -262,7 +262,7 @@ async fn math_log_exp() {
 
 #[tokio::test]
 async fn math_sin_cos_tan() {
-    let code = r#"
+    let code = r"
         fn gen():
             emit R(
                 s: sin(0.0),
@@ -272,7 +272,7 @@ async fn math_sin_cos_tan() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].data.get("s"), Some(&Value::Float(0.0)));
@@ -282,7 +282,7 @@ async fn math_sin_cos_tan() {
 
 #[tokio::test]
 async fn math_min_max() {
-    let code = r#"
+    let code = r"
         fn gen():
             emit R(
                 mn: min(3, 7),
@@ -291,7 +291,7 @@ async fn math_min_max() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].data.get("mn"), Some(&Value::Int(3)));
@@ -304,7 +304,7 @@ async fn math_min_max() {
 
 #[tokio::test]
 async fn array_reverse_first_last() {
-    let code = r#"
+    let code = r"
         fn gen():
             let arr = [10, 20, 30]
             emit R(
@@ -315,7 +315,7 @@ async fn array_reverse_first_last() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     assert_eq!(
@@ -332,7 +332,7 @@ async fn array_reverse_first_last() {
 
 #[tokio::test]
 async fn array_push_and_length() {
-    let code = r#"
+    let code = r"
         fn gen():
             let arr = [1, 2]
             let arr2 = push(arr, 3)
@@ -343,7 +343,7 @@ async fn array_push_and_length() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].data.get("l"), Some(&Value::Int(3)));
@@ -351,14 +351,14 @@ async fn array_push_and_length() {
 
 #[tokio::test]
 async fn array_sort() {
-    let code = r#"
+    let code = r"
         fn gen():
             let arr = [3, 1, 4, 1, 5, 9, 2, 6]
             emit R(sorted: sort(arr))
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     assert_eq!(
@@ -378,14 +378,14 @@ async fn array_sort() {
 
 #[tokio::test]
 async fn array_sum_avg() {
-    let code = r#"
+    let code = r"
         fn gen():
             let arr = [10, 20, 30]
             emit R(s: sum(arr), a: avg(arr))
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     // sum and avg return floats from array operations
@@ -404,7 +404,7 @@ async fn array_sum_avg() {
 
 #[tokio::test]
 async fn user_function_with_params() {
-    let code = r#"
+    let code = r"
         fn add(a: int, b: int) -> int:
             return a + b
 
@@ -416,7 +416,7 @@ async fn user_function_with_params() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     // double(3) = 6, add(6, 4) = 10
@@ -425,7 +425,7 @@ async fn user_function_with_params() {
 
 #[tokio::test]
 async fn nested_function_calls() {
-    let code = r#"
+    let code = r"
         fn square(x: int) -> int:
             return x * x
 
@@ -437,11 +437,11 @@ async fn nested_function_calls() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     if let Some(Value::Float(v)) = out[0].data.get("val") {
-        assert!((*v - 5.0).abs() < 0.001, "Expected ~5.0, got {}", v);
+        assert!((*v - 5.0).abs() < 0.001, "Expected ~5.0, got {v}");
     } else {
         panic!("Expected float value");
     }
@@ -538,13 +538,13 @@ async fn map_keys_values_len() {
 
 #[tokio::test]
 async fn division_by_zero_returns_null() {
-    let code = r#"
+    let code = r"
         fn gen():
             emit R(val: 10 / 0)
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     // Division by zero may return null or skip
@@ -561,7 +561,7 @@ async fn division_by_zero_returns_null() {
 
 #[tokio::test]
 async fn range_inclusive_iteration() {
-    let code = r#"
+    let code = r"
         fn gen():
             var total = 0
             for i in 1..=5:
@@ -570,7 +570,7 @@ async fn range_inclusive_iteration() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     // 1+2+3+4+5 = 15
@@ -604,7 +604,7 @@ async fn coalesce_operator() {
 
 #[tokio::test]
 async fn array_negative_indexing() {
-    let code = r#"
+    let code = r"
         fn gen():
             let arr = [10, 20, 30, 40]
             emit R(
@@ -614,7 +614,7 @@ async fn array_negative_indexing() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].data.get("last"), Some(&Value::Int(40)));
@@ -659,7 +659,7 @@ async fn if_elif_else() {
 
 #[tokio::test]
 async fn for_loop_over_array() {
-    let code = r#"
+    let code = r"
         fn gen():
             let items = [10, 20, 30]
             var total = 0
@@ -669,7 +669,7 @@ async fn for_loop_over_array() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].data.get("val"), Some(&Value::Int(60)));
@@ -699,7 +699,7 @@ async fn string_length() {
 
 #[tokio::test]
 async fn boolean_logic_operators() {
-    let code = r#"
+    let code = r"
         fn gen():
             emit R(
                 a: true and false,
@@ -709,7 +709,7 @@ async fn boolean_logic_operators() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].data.get("a"), Some(&Value::Bool(false)));
@@ -723,7 +723,7 @@ async fn boolean_logic_operators() {
 
 #[tokio::test]
 async fn mixed_type_arithmetic() {
-    let code = r#"
+    let code = r"
         fn gen():
             emit R(
                 val: 3 + 2.5,
@@ -733,7 +733,7 @@ async fn mixed_type_arithmetic() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     if let Some(Value::Float(v)) = out[0].data.get("val") {
@@ -750,14 +750,14 @@ async fn mixed_type_arithmetic() {
 
 #[tokio::test]
 async fn emit_inside_for_loop() {
-    let code = r#"
+    let code = r"
         fn gen():
             for i in 0..3:
                 emit Item(idx: i)
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 3);
     for (i, e) in out.iter().enumerate() {
@@ -789,13 +789,13 @@ async fn string_concatenation() {
 
 #[tokio::test]
 async fn modulo_operator() {
-    let code = r#"
+    let code = r"
         fn gen():
             emit R(val: 17 % 5)
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].data.get("val"), Some(&Value::Int(2)));
@@ -807,7 +807,7 @@ async fn modulo_operator() {
 
 #[tokio::test]
 async fn array_get_and_set() {
-    let code = r#"
+    let code = r"
         fn gen():
             let arr = [1, 2, 3]
             let arr2 = set(arr, 1, 99)
@@ -818,7 +818,7 @@ async fn array_get_and_set() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].data.get("got"), Some(&Value::Int(1)));
@@ -831,14 +831,14 @@ async fn array_get_and_set() {
 
 #[tokio::test]
 async fn range_builtin_function() {
-    let code = r#"
+    let code = r"
         fn gen():
             let r = range(5)
             emit R(l: len(r), fst: first(r), lst: last(r))
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].data.get("l"), Some(&Value::Int(5)));
@@ -870,7 +870,7 @@ async fn reverse_string() {
 
 #[tokio::test]
 async fn array_pop() {
-    let code = r#"
+    let code = r"
         fn gen():
             let arr = [1, 2, 3]
             let popped = pop(arr)
@@ -878,7 +878,7 @@ async fn array_pop() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].data.get("l"), Some(&Value::Int(2)));
@@ -913,7 +913,7 @@ async fn array_contains() {
 
 #[tokio::test]
 async fn in_not_in_operators() {
-    let code = r#"
+    let code = r"
         fn gen():
             let arr = [1, 2, 3]
             emit R(
@@ -923,7 +923,7 @@ async fn in_not_in_operators() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].data.get("yes"), Some(&Value::Bool(true)));
@@ -954,7 +954,7 @@ async fn ternary_if_expression() {
 
 #[tokio::test]
 async fn nested_for_loops() {
-    let code = r#"
+    let code = r"
         fn gen():
             var count = 0
             for i in 0..3:
@@ -964,7 +964,7 @@ async fn nested_for_loops() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].data.get("val"), Some(&Value::Int(9)));
@@ -976,7 +976,7 @@ async fn nested_for_loops() {
 
 #[tokio::test]
 async fn unary_negation() {
-    let code = r#"
+    let code = r"
         fn gen():
             emit R(
                 ni: -42,
@@ -985,7 +985,7 @@ async fn unary_negation() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].data.get("ni"), Some(&Value::Int(-42)));
@@ -1048,13 +1048,13 @@ async fn is_array_is_map_type_checks() {
 
 #[tokio::test]
 async fn power_operator_int_int() {
-    let code = r#"
+    let code = r"
         fn gen():
             emit R(val: 2 ** 10)
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].data.get("val"), Some(&Value::Int(1024)));
@@ -1062,13 +1062,13 @@ async fn power_operator_int_int() {
 
 #[tokio::test]
 async fn power_operator_float_int() {
-    let code = r#"
+    let code = r"
         fn gen():
             emit R(val: 2.5 ** 3)
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     if let Some(Value::Float(v)) = out[0].data.get("val") {
@@ -1080,13 +1080,13 @@ async fn power_operator_float_int() {
 
 #[tokio::test]
 async fn power_operator_int_float() {
-    let code = r#"
+    let code = r"
         fn gen():
             emit R(val: 4 ** 0.5)
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     if let Some(Value::Float(v)) = out[0].data.get("val") {
@@ -1172,13 +1172,13 @@ async fn not_in_operator_on_string() {
 
 #[tokio::test]
 async fn modulo_float_int() {
-    let code = r#"
+    let code = r"
         fn gen():
             emit R(val: 10.5 % 3)
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     if let Some(Value::Float(v)) = out[0].data.get("val") {
@@ -1188,13 +1188,13 @@ async fn modulo_float_int() {
 
 #[tokio::test]
 async fn modulo_int_float() {
-    let code = r#"
+    let code = r"
         fn gen():
             emit R(val: 10 % 3.0)
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     if let Some(Value::Float(v)) = out[0].data.get("val") {
@@ -1231,7 +1231,7 @@ async fn for_loop_over_map() {
 
 #[tokio::test]
 async fn array_slice() {
-    let code = r#"
+    let code = r"
         fn gen():
             let arr = [10, 20, 30, 40, 50]
             emit R(
@@ -1242,7 +1242,7 @@ async fn array_slice() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     assert_eq!(
@@ -1272,7 +1272,7 @@ async fn string_slice() {
 
 #[tokio::test]
 async fn not_operator() {
-    let code = r#"
+    let code = r"
         fn gen():
             emit R(
                 n2: not false,
@@ -1281,7 +1281,7 @@ async fn not_operator() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     // `not` may be handled at parse level differently
@@ -1295,13 +1295,13 @@ async fn not_operator() {
 
 #[tokio::test]
 async fn float_division_by_zero() {
-    let code = r#"
+    let code = r"
         fn gen():
             emit R(val: 10.0 / 0.0)
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     // Float div by zero may return None (null) — that's acceptable
@@ -1314,7 +1314,7 @@ async fn float_division_by_zero() {
 
 #[tokio::test]
 async fn mixed_type_comparisons() {
-    let code = r#"
+    let code = r"
         fn gen():
             emit R(
                 gt: to_float(5) > 3.0,
@@ -1325,7 +1325,7 @@ async fn mixed_type_comparisons() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].data.get("gt"), Some(&Value::Bool(true)));
@@ -1340,7 +1340,7 @@ async fn mixed_type_comparisons() {
 
 #[tokio::test]
 async fn int_float_division() {
-    let code = r#"
+    let code = r"
         fn gen():
             emit R(
                 a: 10 / 3.0,
@@ -1349,7 +1349,7 @@ async fn int_float_division() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     if let Some(Value::Float(v)) = out[0].data.get("a") {
@@ -1366,7 +1366,7 @@ async fn int_float_division() {
 
 #[tokio::test]
 async fn while_loop_basic() {
-    let code = r#"
+    let code = r"
         fn gen():
             var i = 0
             var total = 0
@@ -1377,7 +1377,7 @@ async fn while_loop_basic() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     // 0+1+2+3+4 = 10
@@ -1390,14 +1390,14 @@ async fn while_loop_basic() {
 
 #[tokio::test]
 async fn const_declaration() {
-    let code = r#"
+    let code = r"
         fn gen():
             let PI = 3
             emit R(val: PI * 2)
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].data.get("val"), Some(&Value::Int(6)));
@@ -1454,7 +1454,7 @@ async fn map_in_and_set() {
 
 #[tokio::test]
 async fn filter_array_builtin() {
-    let code = r#"
+    let code = r"
         fn gen():
             let arr = [1, 2, 3, 4, 5, 6]
             let evens = filter(arr, 2)
@@ -1462,7 +1462,7 @@ async fn filter_array_builtin() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     // filter might not work as expected with int arg, just ensure no crash
     assert_eq!(out.len(), 1);
@@ -1474,7 +1474,7 @@ async fn filter_array_builtin() {
 
 #[tokio::test]
 async fn array_flatten() {
-    let code = r#"
+    let code = r"
         fn gen():
             let nested = [[1, 2], [3, 4], [5]]
             var total = 0
@@ -1485,7 +1485,7 @@ async fn array_flatten() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     // 1+2+3+4+5 = 15
@@ -1518,7 +1518,7 @@ async fn string_index_access() {
 
 #[tokio::test]
 async fn null_comparisons() {
-    let code = r#"
+    let code = r"
         fn gen():
             emit R(
                 n: is_null(null),
@@ -1528,7 +1528,7 @@ async fn null_comparisons() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].data.get("n"), Some(&Value::Bool(true)));
@@ -1541,13 +1541,13 @@ async fn null_comparisons() {
 
 #[tokio::test]
 async fn deeply_nested_expression() {
-    let code = r#"
+    let code = r"
         fn gen():
             emit R(val: abs(min(max(1, 2), 5) - 10))
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     // max(1,2)=2, min(2,5)=2, 2-10=-8, abs(-8)=8
@@ -1560,7 +1560,7 @@ async fn deeply_nested_expression() {
 
 #[tokio::test]
 async fn multi_emit_function() {
-    let code = r#"
+    let code = r"
         fn gen():
             emit A(x: 1)
             emit B(x: 2)
@@ -1568,7 +1568,7 @@ async fn multi_emit_function() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 3);
     assert_eq!(out[0].data.get("x"), Some(&Value::Int(1)));
@@ -1582,7 +1582,7 @@ async fn multi_emit_function() {
 
 #[tokio::test]
 async fn factorial_via_loop() {
-    let code = r#"
+    let code = r"
         fn factorial(n: int) -> int:
             var result = 1
             for i in 1..=n:
@@ -1594,7 +1594,7 @@ async fn factorial_via_loop() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     // 6! = 720
@@ -1607,13 +1607,13 @@ async fn factorial_via_loop() {
 
 #[tokio::test]
 async fn event_field_access_in_process() {
-    let code = r#"
+    let code = r"
         fn gen():
             emit R(doubled: value * 2)
 
         stream S = Sensor
             .process(gen())
-    "#;
+    ";
     let event = Event::new("Sensor").with_field("value", Value::Int(21));
     let out = run(code, event).await;
     assert_eq!(out.len(), 1);
@@ -1666,7 +1666,7 @@ async fn multiple_if_branches() {
 
 #[tokio::test]
 async fn to_string_various_types() {
-    let code = r#"
+    let code = r"
         fn gen():
             emit R(
                 i: to_string(42),
@@ -1677,7 +1677,7 @@ async fn to_string_various_types() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].data.get("i"), Some(&Value::str("42")));
@@ -1690,7 +1690,7 @@ async fn to_string_various_types() {
 
 #[tokio::test]
 async fn while_with_break() {
-    let code = r#"
+    let code = r"
         fn gen():
             var i = 0
             while true:
@@ -1701,7 +1701,7 @@ async fn while_with_break() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].data.get("val"), Some(&Value::Int(5)));
@@ -1709,7 +1709,7 @@ async fn while_with_break() {
 
 #[tokio::test]
 async fn for_with_nested_break() {
-    let code = r#"
+    let code = r"
         fn gen():
             var found = -1
             let matrix = [[1, 2], [3, 4], [5, 6]]
@@ -1722,7 +1722,7 @@ async fn for_with_nested_break() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let out = run(code, Event::new("Trigger")).await;
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].data.get("val"), Some(&Value::Int(4)));

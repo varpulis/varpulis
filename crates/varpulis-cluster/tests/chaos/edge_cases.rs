@@ -185,8 +185,7 @@ async fn test_double_drain() {
             let status = r.status().as_u16();
             assert!(
                 status == 200 || status == 404 || status == 409,
-                "Second drain should return 200, 404, or 409 (got {})",
-                status
+                "Second drain should return 200, 404, or 409 (got {status})"
             );
         }
 
@@ -223,14 +222,14 @@ async fn test_rapid_worker_join_leave() {
         for i in 0..5 {
             // Add a worker.
             let new_id = cluster.add_worker().await;
-            eprintln!("  [rapid] round {}: added {}", i, new_id);
+            eprintln!("  [rapid] round {i}: added {new_id}");
 
             // Brief pause.
             sleep(Duration::from_millis(200)).await;
 
             // Kill the new worker.
             cluster.kill_worker(&new_id);
-            eprintln!("  [rapid] round {}: killed {}", i, new_id);
+            eprintln!("  [rapid] round {i}: killed {new_id}");
 
             // Brief pause.
             sleep(Duration::from_millis(200)).await;

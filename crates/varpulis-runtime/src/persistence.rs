@@ -71,8 +71,8 @@ pub enum SerializableValue {
     Null,
     Timestamp(i64),
     Duration(u64),
-    Array(Vec<SerializableValue>),
-    Map(Vec<(String, SerializableValue)>),
+    Array(Vec<Self>),
+    Map(Vec<(String, Self)>),
 }
 
 /// Convert a `varpulis_core::Value` to a `SerializableValue`
@@ -136,7 +136,7 @@ impl From<&Event> for SerializableEvent {
 
 impl From<SerializableEvent> for Event {
     fn from(se: SerializableEvent) -> Self {
-        let mut event = Event::new(se.event_type);
+        let mut event = Self::new(se.event_type);
         event.timestamp = chrono::DateTime::from_timestamp_millis(se.timestamp_ms)
             .unwrap_or_else(chrono::Utc::now);
         for (k, v) in se.fields {
@@ -288,7 +288,7 @@ impl StateStore for MemoryStore {
     }
 
     fn load_checkpoint(&self, id: u64) -> Result<Option<Checkpoint>, StoreError> {
-        let key = format!("checkpoint:{}", id);
+        let key = format!("checkpoint:{id}");
         if let Some(data) = self.get(&key)? {
             let checkpoint: Checkpoint = crate::codec::deserialize(&data)?;
             Ok(Some(checkpoint))
@@ -306,7 +306,7 @@ impl StateStore for MemoryStore {
             .keys()
             .filter_map(|k| k.strip_prefix("checkpoint:").and_then(|s| s.parse().ok()))
             .collect();
-        ids.sort();
+        ids.sort_unstable();
         Ok(ids)
     }
 
@@ -314,7 +314,7 @@ impl StateStore for MemoryStore {
         let checkpoints = self.list_checkpoints()?;
         let to_delete = checkpoints.len().saturating_sub(keep);
         for id in checkpoints.iter().take(to_delete) {
-            let key = format!("checkpoint:{}", id);
+            let key = format!("checkpoint:{id}");
             self.delete(&key)?;
         }
         Ok(to_delete)
@@ -548,7 +548,7 @@ impl StateStore for FileStore {
     }
 
     fn load_checkpoint(&self, id: u64) -> Result<Option<Checkpoint>, StoreError> {
-        let key = format!("checkpoint:{}", id);
+        let key = format!("checkpoint:{id}");
         if let Some(data) = self.get(&key)? {
             let checkpoint: Checkpoint = crate::codec::deserialize(&data)?;
             Ok(Some(checkpoint))
@@ -576,7 +576,7 @@ impl StateStore for FileStore {
                 }
             }
         }
-        ids.sort();
+        ids.sort_unstable();
         Ok(ids)
     }
 
@@ -584,7 +584,7 @@ impl StateStore for FileStore {
         let checkpoints = self.list_checkpoints()?;
         let to_delete = checkpoints.len().saturating_sub(keep);
         for id in checkpoints.iter().take(to_delete) {
-            let key = format!("checkpoint:{}", id);
+            let key = format!("checkpoint:{id}");
             self.delete(&key)?;
         }
         Ok(to_delete)
@@ -638,10 +638,7 @@ impl CheckpointManager {
     /// Create a new checkpoint manager
     pub fn new(store: Arc<dyn StateStore>, config: CheckpointConfig) -> Result<Self, StoreError> {
         // Load the latest checkpoint ID
-        let next_id = store
-            .load_latest_checkpoint()?
-            .map(|c| c.id + 1)
-            .unwrap_or(1);
+        let next_id = store.load_latest_checkpoint()?.map_or(1, |c| c.id + 1);
 
         Ok(Self {
             store,
@@ -691,7 +688,7 @@ impl CheckpointManager {
 pub const CHECKPOINT_VERSION: u32 = 1;
 
 /// Default version for deserialized checkpoints that lack a version field (pre-versioning).
-fn default_checkpoint_version() -> u32 {
+const fn default_checkpoint_version() -> u32 {
     1
 }
 
@@ -729,7 +726,7 @@ impl EngineCheckpoint {
     ///
     /// Returns `Err` if the checkpoint is from a future version that this
     /// binary does not understand (forward-incompatible).
-    pub fn validate_and_migrate(&mut self) -> Result<(), StoreError> {
+    pub const fn validate_and_migrate(&mut self) -> Result<(), StoreError> {
         if self.version > CHECKPOINT_VERSION {
             return Err(StoreError::IncompatibleVersion {
                 checkpoint_version: self.version,
@@ -1132,7 +1129,12 @@ mod tests {
             for entry in std::fs::read_dir(&data_dir).unwrap() {
                 let entry = entry.unwrap();
                 let name = entry.file_name().to_string_lossy().to_string();
-                assert!(!name.ends_with(".tmp"), "tmp file left behind: {}", name);
+                assert!(
+                    !std::path::Path::new(&name)
+                        .extension()
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("tmp")),
+                    "tmp file left behind: {name}"
+                );
             }
         }
     }
@@ -1231,7 +1233,7 @@ mod tests {
                 assert_eq!(arr[0], varpulis_core::Value::Str("a".into()));
                 assert_eq!(arr[1], varpulis_core::Value::Int(1));
             }
-            other => panic!("Expected Array, got {:?}", other),
+            other => panic!("Expected Array, got {other:?}"),
         }
 
         // Verify map round-trip
@@ -1244,7 +1246,7 @@ mod tests {
                 );
                 assert_eq!(m.get("flag"), Some(&varpulis_core::Value::Bool(true)));
             }
-            other => panic!("Expected Map, got {:?}", other),
+            other => panic!("Expected Map, got {other:?}"),
         }
     }
 

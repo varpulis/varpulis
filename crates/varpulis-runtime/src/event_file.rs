@@ -147,24 +147,24 @@ impl EventFileParser {
             timing_str
                 .trim_end_matches("ms")
                 .parse::<u64>()
-                .map_err(|_| format!("Invalid timing value: {}", timing_str))?
+                .map_err(|_| format!("Invalid timing value: {timing_str}"))?
         } else if timing_str.ends_with('s') {
             let secs = timing_str
                 .trim_end_matches('s')
                 .parse::<u64>()
-                .map_err(|_| format!("Invalid timing value: {}", timing_str))?;
+                .map_err(|_| format!("Invalid timing value: {timing_str}"))?;
             secs * 1000
         } else if timing_str.ends_with('m') {
             let mins = timing_str
                 .trim_end_matches('m')
                 .parse::<u64>()
-                .map_err(|_| format!("Invalid timing value: {}", timing_str))?;
+                .map_err(|_| format!("Invalid timing value: {timing_str}"))?;
             mins * 60 * 1000
         } else {
             // Assume milliseconds if no unit
             timing_str
                 .parse::<u64>()
-                .map_err(|_| format!("Invalid timing value: {}", timing_str))?
+                .map_err(|_| format!("Invalid timing value: {timing_str}"))?
         };
 
         Ok((time_ms, rest))
@@ -183,7 +183,7 @@ impl EventFileParser {
         } else if let Some(paren_pos) = line.find('(') {
             (&line[..paren_pos].trim(), &line[paren_pos..])
         } else {
-            return Err(format!("Invalid event format: {}", line));
+            return Err(format!("Invalid event format: {line}"));
         };
 
         // Parse fields
@@ -204,7 +204,7 @@ impl EventFileParser {
 
                 let colon_pos = field_str
                     .find(':')
-                    .ok_or_else(|| format!("Invalid field format: {}", field_str))?;
+                    .ok_or_else(|| format!("Invalid field format: {field_str}"))?;
                 let field_name = field_str[..colon_pos].trim();
                 let field_value = Self::parse_value(field_str[colon_pos + 1..].trim())?;
                 event
@@ -228,9 +228,7 @@ impl EventFileParser {
                 }
 
                 let field_value = Self::parse_value(value_str)?;
-                event
-                    .data
-                    .insert(format!("field_{}", i).into(), field_value);
+                event.data.insert(format!("field_{i}").into(), field_value);
             }
 
             Ok(event)
@@ -374,8 +372,8 @@ impl EventFileParser {
     /// Parse from a file path
     pub fn parse_file<P: AsRef<Path>>(path: P) -> Result<EventFile, String> {
         let path = path.as_ref();
-        let content = fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read file {:?}: {}", path, e))?;
+        let content =
+            fs::read_to_string(path).map_err(|e| format!("Failed to read file {path:?}: {e}"))?;
 
         let events = Self::parse(&content)?;
 
@@ -420,7 +418,7 @@ impl EventFileParser {
         }
 
         let json: serde_json::Value =
-            serde_json::from_str(line).map_err(|e| format!("Invalid JSON: {}", e))?;
+            serde_json::from_str(line).map_err(|e| format!("Invalid JSON: {e}"))?;
 
         let event_type = json
             .get("event_type")
@@ -499,7 +497,7 @@ pub struct StreamingEventReader<R: std::io::BufRead> {
 }
 
 impl<R: std::io::BufRead> StreamingEventReader<R> {
-    pub fn new(reader: R) -> Self {
+    pub const fn new(reader: R) -> Self {
         Self {
             reader,
             line_buffer: String::new(),
@@ -508,7 +506,7 @@ impl<R: std::io::BufRead> StreamingEventReader<R> {
     }
 
     /// Get count of events read so far
-    pub fn events_read(&self) -> usize {
+    pub const fn events_read(&self) -> usize {
         self.events_read
     }
 }
@@ -516,8 +514,8 @@ impl<R: std::io::BufRead> StreamingEventReader<R> {
 impl StreamingEventReader<std::io::BufReader<std::fs::File>> {
     /// Create a streaming reader from a file path with large buffer for performance
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, String> {
-        let file = std::fs::File::open(path.as_ref())
-            .map_err(|e| format!("Failed to open file: {}", e))?;
+        let file =
+            std::fs::File::open(path.as_ref()).map_err(|e| format!("Failed to open file: {e}"))?;
         // Use 64KB buffer for better I/O performance
         Ok(Self::new(std::io::BufReader::with_capacity(
             64 * 1024,
@@ -555,7 +553,7 @@ impl<R: std::io::BufRead> Iterator for StreamingEventReader<R> {
                         Err(e) => return Some(Err(e)),
                     }
                 }
-                Err(e) => return Some(Err(format!("Read error: {}", e))),
+                Err(e) => return Some(Err(format!("Read error: {e}"))),
             }
         }
     }
@@ -568,7 +566,7 @@ pub struct EventFilePlayer {
 }
 
 impl EventFilePlayer {
-    pub fn new(events: Vec<TimedEvent>, sender: mpsc::Sender<Event>) -> Self {
+    pub const fn new(events: Vec<TimedEvent>, sender: mpsc::Sender<Event>) -> Self {
         Self { events, sender }
     }
 
@@ -590,7 +588,7 @@ impl EventFilePlayer {
 
         // Sort batch times
         let mut times: Vec<u64> = batches.keys().copied().collect();
-        times.sort();
+        times.sort_unstable();
 
         for batch_time in times {
             // Wait until batch time
@@ -609,7 +607,7 @@ impl EventFilePlayer {
                     self.sender
                         .send(timed_event.event.clone())
                         .await
-                        .map_err(|e| format!("Failed to send event: {}", e))?;
+                        .map_err(|e| format!("Failed to send event: {e}"))?;
                     sent_count += 1;
                 }
             }
@@ -628,7 +626,7 @@ impl EventFilePlayer {
             self.sender
                 .send(timed_event.event.clone())
                 .await
-                .map_err(|e| format!("Failed to send event: {}", e))?;
+                .map_err(|e| format!("Failed to send event: {e}"))?;
             sent_count += 1;
         }
 
@@ -725,13 +723,13 @@ mod tests {
 
     #[test]
     fn test_parse_comments() {
-        let source = r#"
+        let source = r"
             # This is a comment
             // This is also a comment
             Event1 { x: 1 }
             # Another comment
             Event2 { y: 2 }
-        "#;
+        ";
 
         let events = EventFileParser::parse(source).unwrap();
         assert_eq!(events.len(), 2);
@@ -781,9 +779,9 @@ mod tests {
 
     #[test]
     fn test_parse_boolean_values() {
-        let source = r#"
+        let source = r"
             Flags { active: true, disabled: false }
-        "#;
+        ";
 
         let events = EventFileParser::parse(source).unwrap();
         assert_eq!(events[0].event.get("active"), Some(&Value::Bool(true)));
@@ -792,9 +790,9 @@ mod tests {
 
     #[test]
     fn test_parse_null_values() {
-        let source = r#"
+        let source = r"
             Data { value: null, other: nil }
-        "#;
+        ";
 
         let events = EventFileParser::parse(source).unwrap();
         assert_eq!(events[0].event.get("value"), Some(&Value::Null));
@@ -816,9 +814,9 @@ mod tests {
 
     #[test]
     fn test_parse_single_quoted_string() {
-        let source = r#"
+        let source = r"
             Event { name: 'single quoted' }
-        "#;
+        ";
 
         let events = EventFileParser::parse(source).unwrap();
         assert_eq!(
@@ -829,9 +827,9 @@ mod tests {
 
     #[test]
     fn test_parse_unquoted_identifier() {
-        let source = r#"
+        let source = r"
             Event { status: active, mode: processing }
-        "#;
+        ";
 
         let events = EventFileParser::parse(source).unwrap();
         assert_eq!(
@@ -846,9 +844,9 @@ mod tests {
 
     #[test]
     fn test_parse_negative_numbers() {
-        let source = r#"
+        let source = r"
             Data { temp: -15, delta: -2.5 }
-        "#;
+        ";
 
         let events = EventFileParser::parse(source).unwrap();
         assert_eq!(events[0].event.get("temp"), Some(&Value::Int(-15)));
@@ -857,9 +855,9 @@ mod tests {
 
     #[test]
     fn test_parse_nested_array() {
-        let source = r#"
+        let source = r"
             Complex { matrix: [[1, 2], [3, 4]] }
-        "#;
+        ";
 
         let events = EventFileParser::parse(source).unwrap();
         let matrix = events[0].event.get("matrix").unwrap();
@@ -890,10 +888,10 @@ mod tests {
 
     #[test]
     fn test_parse_invalid_batch_time() {
-        let source = r#"
+        let source = r"
             BATCH not_a_number
             Event { x: 1 }
-        "#;
+        ";
         let result = EventFileParser::parse(source);
         assert!(result.is_err());
     }
@@ -911,11 +909,11 @@ mod tests {
 
     #[test]
     fn test_parse_only_comments() {
-        let source = r#"
+        let source = r"
             # Comment 1
             // Comment 2
             # Comment 3
-        "#;
+        ";
         let events = EventFileParser::parse(source).unwrap();
         assert!(events.is_empty());
     }

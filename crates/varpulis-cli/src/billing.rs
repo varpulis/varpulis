@@ -56,7 +56,7 @@ impl BillingConfig {
 // Tier
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Tier {
     Free,
@@ -65,19 +65,19 @@ pub enum Tier {
 }
 
 impl Tier {
-    pub fn event_limit(&self) -> Option<i64> {
+    pub const fn event_limit(&self) -> Option<i64> {
         match self {
-            Tier::Free => Some(10_000),
-            Tier::Pro => Some(10_000_000),
-            Tier::Enterprise => None,
+            Self::Free => Some(10_000),
+            Self::Pro => Some(10_000_000),
+            Self::Enterprise => None,
         }
     }
 
-    pub fn display_name(&self) -> &str {
+    pub const fn display_name(&self) -> &str {
         match self {
-            Tier::Free => "Free",
-            Tier::Pro => "Pro ($49/mo)",
-            Tier::Enterprise => "Enterprise",
+            Self::Free => "Free",
+            Self::Pro => "Pro ($49/mo)",
+            Self::Enterprise => "Enterprise",
         }
     }
 }
@@ -85,9 +85,9 @@ impl Tier {
 impl std::fmt::Display for Tier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Tier::Free => write!(f, "free"),
-            Tier::Pro => write!(f, "pro"),
-            Tier::Enterprise => write!(f, "enterprise"),
+            Self::Free => write!(f, "free"),
+            Self::Pro => write!(f, "pro"),
+            Self::Enterprise => write!(f, "enterprise"),
         }
     }
 }
@@ -97,10 +97,10 @@ impl std::str::FromStr for Tier {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "free" => Ok(Tier::Free),
-            "pro" => Ok(Tier::Pro),
-            "enterprise" => Ok(Tier::Enterprise),
-            other => Err(format!("unknown tier: {}", other)),
+            "free" => Ok(Self::Free),
+            "pro" => Ok(Self::Pro),
+            "enterprise" => Ok(Self::Enterprise),
+            other => Err(format!("unknown tier: {other}")),
         }
     }
 }
@@ -327,24 +327,24 @@ async fn stripe_post(
     params: &[(&str, &str)],
 ) -> Result<serde_json::Value, String> {
     let resp = client
-        .post(format!("https://api.stripe.com/v1/{}", endpoint))
+        .post(format!("https://api.stripe.com/v1/{endpoint}"))
         .basic_auth(secret_key, None::<&str>)
         .form(params)
         .send()
         .await
-        .map_err(|e| format!("Stripe request failed: {}", e))?;
+        .map_err(|e| format!("Stripe request failed: {e}"))?;
 
     let status = resp.status();
     let body: serde_json::Value = resp
         .json()
         .await
-        .map_err(|e| format!("Stripe response parse failed: {}", e))?;
+        .map_err(|e| format!("Stripe response parse failed: {e}"))?;
 
     if !status.is_success() {
         let msg = body["error"]["message"]
             .as_str()
             .unwrap_or("Unknown Stripe error");
-        return Err(format!("Stripe API error ({}): {}", status, msg));
+        return Err(format!("Stripe API error ({status}): {msg}"));
     }
 
     Ok(body)
@@ -590,7 +590,7 @@ async fn handle_checkout(
                                     AuditAction::CheckoutStarted,
                                     "/api/v1/billing/checkout",
                                 )
-                                .with_detail(format!("session: {}", session_id)),
+                                .with_detail(format!("session: {session_id}")),
                             )
                             .await;
                     }
@@ -1001,7 +1001,7 @@ mod tests {
         hmac::Mac::update(&mut mac, signed.as_bytes());
         let sig = hex::encode(mac.finalize().into_bytes());
 
-        let header = format!("t={},v1={}", timestamp, sig);
+        let header = format!("t={timestamp},v1={sig}");
 
         assert!(verify_stripe_signature(payload, &header, secret));
         assert!(!verify_stripe_signature(payload, &header, "wrong_secret"));

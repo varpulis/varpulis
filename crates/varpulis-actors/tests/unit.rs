@@ -46,7 +46,7 @@ impl Actor for PingPongActor {
     async fn run(mut self, ctx: &mut ActorContext<Self>) -> Result<(), ActorExitStatus> {
         loop {
             tokio::select! {
-                _ = ctx.shutdown.cancelled() => return Ok(()),
+                () = ctx.shutdown.cancelled() => return Ok(()),
                 msg = ctx.mailbox.recv() => {
                     match msg {
                         Some(Envelope::Message(_)) => {
@@ -74,7 +74,7 @@ struct FailingActor {
 }
 
 impl FailingActor {
-    fn new(fail_after: u64) -> Self {
+    const fn new(fail_after: u64) -> Self {
         Self {
             fail_after,
             count: 0,
@@ -86,7 +86,7 @@ impl FailingActor {
 impl Actor for FailingActor {
     type ObservableState = u64;
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "failing"
     }
 
@@ -101,7 +101,7 @@ impl Actor for FailingActor {
         }
         loop {
             tokio::select! {
-                _ = ctx.shutdown.cancelled() => return Ok(()),
+                () = ctx.shutdown.cancelled() => return Ok(()),
                 msg = ctx.mailbox.recv() => {
                     match msg {
                         Some(_) => {
@@ -234,8 +234,7 @@ async fn test_supervisor_never_restart() {
     // With Never policy, actor fails immediately and is not restarted
     assert!(
         matches!(status, ActorExitStatus::Failure(_)),
-        "expected Failure, got {:?}",
-        status
+        "expected Failure, got {status:?}"
     );
 
     shutdown.cancel();

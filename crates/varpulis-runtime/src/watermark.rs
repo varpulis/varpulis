@@ -87,7 +87,7 @@ impl PerSourceWatermarkTracker {
     }
 
     /// Get the effective (minimum) watermark across all sources.
-    pub fn effective_watermark(&self) -> Option<DateTime<Utc>> {
+    pub const fn effective_watermark(&self) -> Option<DateTime<Utc>> {
         self.effective_watermark
     }
 

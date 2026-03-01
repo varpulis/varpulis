@@ -387,7 +387,7 @@ impl ManagedConnector for ManagedNatsConnector {
         &self.name
     }
 
-    fn connector_type(&self) -> &str {
+    fn connector_type(&self) -> &'static str {
         "nats"
     }
 

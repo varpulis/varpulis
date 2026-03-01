@@ -21,3 +21,6 @@ serde_json = { workspace = true }
 
 [build-dependencies]
 # Tree-sitter will be added here
+
+[lints]
+workspace = true

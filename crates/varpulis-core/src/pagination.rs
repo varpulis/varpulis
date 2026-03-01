@@ -42,7 +42,7 @@ impl PaginationParams {
     }
 
     /// Returns true if the requested limit exceeds MAX_LIMIT.
-    pub fn exceeds_max(&self) -> bool {
+    pub const fn exceeds_max(&self) -> bool {
         matches!(self.limit, Some(l) if l > MAX_LIMIT)
     }
 

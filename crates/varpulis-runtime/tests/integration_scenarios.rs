@@ -56,10 +56,10 @@ async fn test_order_payment_sequence_match() {
             )
     "#;
 
-    let events = r#"
+    let events = r"
         Order { id: 1 }
         Payment { order_id: 1, amount: 100.0 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
 
@@ -78,10 +78,10 @@ async fn test_order_payment_no_match_wrong_id() {
             .emit(status: "matched")
     "#;
 
-    let events = r#"
+    let events = r"
         Order { id: 1 }
         Payment { order_id: 999, amount: 100.0 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
 
@@ -97,11 +97,11 @@ async fn test_order_payment_multiple_orders_one_payment() {
     "#;
 
     // Two orders, but only one payment matches
-    let events = r#"
+    let events = r"
         Order { id: 1 }
         Order { id: 2 }
         Payment { order_id: 1, amount: 100.0 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
 
@@ -117,10 +117,10 @@ async fn test_order_payment_wrong_sequence() {
     "#;
 
     // Payment before Order - should not match
-    let events = r#"
+    let events = r"
         Payment { order_id: 1, amount: 100.0 }
         Order { id: 1 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
 
@@ -142,11 +142,11 @@ async fn test_three_step_sequence() {
             .emit(status: "complete")
     "#;
 
-    let events = r#"
+    let events = r"
         A {}
         B {}
         C {}
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
 
@@ -160,10 +160,10 @@ async fn test_three_step_incomplete() {
             .emit(status: "complete")
     "#;
 
-    let events = r#"
+    let events = r"
         A {}
         B {}
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
 
@@ -177,11 +177,11 @@ async fn test_three_step_wrong_order() {
             .emit(status: "complete")
     "#;
 
-    let events = r#"
+    let events = r"
         A {}
         C {}
         B {}
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
 
@@ -220,7 +220,7 @@ async fn test_correlation_by_field() {
 
 #[tokio::test]
 async fn test_batch_events_parsed_correctly() {
-    let events_source = r#"
+    let events_source = r"
         # First batch at t=0
         BATCH 0
         Event1 { x: 1 }
@@ -229,7 +229,7 @@ async fn test_batch_events_parsed_correctly() {
         # Second batch at t=1000ms
         BATCH 1000
         Event3 { z: 3 }
-    "#;
+    ";
 
     let events = EventFileParser::parse(events_source).expect("Failed to parse");
 
@@ -273,9 +273,9 @@ async fn test_single_event_triggers_alert() {
             .emit(status: "order_received", id: o.id)
     "#;
 
-    let events = r#"
+    let events = r"
         Order { id: 42 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
 
@@ -294,10 +294,10 @@ async fn test_sequence_with_numeric_field() {
             .emit(status: "paid", order_id: o.id)
     "#;
 
-    let events = r#"
+    let events = r"
         Order { id: 100 }
         Payment { order_id: 100, amount: 1500 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
 
@@ -312,10 +312,10 @@ async fn test_sequence_with_boolean_field() {
             .emit(status: "flow_complete")
     "#;
 
-    let events = r#"
+    let events = r"
         Start { id: 1 }
         End { completed: true }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
 
@@ -447,10 +447,10 @@ async fn test_regression_event_field_types() {
     let (tx, mut rx) = mpsc::channel::<Event>(100);
 
     let program = parse(
-        r#"
+        r"
         stream Test = Data as d
             .emit(received: true)
-    "#,
+    ",
     )
     .expect("Failed to parse");
 
@@ -484,10 +484,10 @@ async fn test_regression_rapid_event_injection() {
     let (tx, mut rx) = mpsc::channel::<Event>(1000);
 
     let program = parse(
-        r#"
+        r"
         stream Counter = Tick as t
             .emit(count: t.n)
-    "#,
+    ",
     )
     .expect("Failed to parse");
 
@@ -599,10 +599,10 @@ async fn test_electrical_multiple_buildings() {
     let (tx, mut rx) = mpsc::channel::<Event>(100);
 
     let program = parse(
-        r#"
+        r"
         stream AllFloors = FloorConsumption
             .emit(building_id: building_id, floor_id: floor_id)
-    "#,
+    ",
     )
     .expect("Failed to parse");
 
@@ -680,10 +680,10 @@ async fn test_electrical_threshold_detection() {
             )
     "#;
 
-    let events = r#"
+    let events = r"
         Reading { value: 200.0, baseline: 100.0 }
         Reading { value: 120.0, baseline: 100.0 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
 
@@ -706,11 +706,11 @@ async fn test_user_function_in_where_clause() {
             .emit(status: "high", val: value)
     "#;
 
-    let events = r#"
+    let events = r"
         Measurement { value: 100.0, threshold: 30.0 }
         Measurement { value: 50.0, threshold: 30.0 }
         Measurement { value: 150.0, threshold: 100.0 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
 
@@ -732,12 +732,12 @@ async fn test_builtin_functions_in_where() {
             .emit(status: "large_delta", d: delta)
     "#;
 
-    let events = r#"
+    let events = r"
         Reading { delta: 5.0 }
         Reading { delta: -15.0 }
         Reading { delta: 8.0 }
         Reading { delta: 25.0 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
 
@@ -763,10 +763,10 @@ async fn test_nested_function_calls() {
             .emit(status: "above_margin")
     "#;
 
-    let events = r#"
+    let events = r"
         Price { current: 110.0, base: 100.0, margin_pct: 5.0 }
         Price { current: 104.0, base: 100.0, margin_pct: 5.0 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
 
@@ -789,11 +789,11 @@ async fn test_sequence_negation_cancels_match() {
             .emit(status: "paid", order_id: order.id)
     "#;
 
-    let events = r#"
+    let events = r"
         Order { id: 1 }
         Cancellation { order_id: 1 }
         Payment { order_id: 1 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
 
@@ -811,11 +811,11 @@ async fn test_sequence_negation_allows_non_matching() {
             .emit(status: "paid", order_id: order.id)
     "#;
 
-    let events = r#"
+    let events = r"
         Order { id: 1 }
         Cancellation { order_id: 2 }
         Payment { order_id: 1 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
 
@@ -836,11 +836,11 @@ async fn test_sequence_without_negation() {
             .emit(status: "paid", order_id: order.id)
     "#;
 
-    let events = r#"
+    let events = r"
         Order { id: 1 }
         Cancellation { order_id: 1 }
         Payment { order_id: 1 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
 
@@ -858,7 +858,7 @@ async fn test_sequence_without_negation() {
 
 #[tokio::test]
 async fn test_emit_with_function_call() {
-    let program = r#"
+    let program = r"
         fn calculate_tax(amount: float, rate: float) -> float:
             amount * rate / 100.0
         
@@ -868,7 +868,7 @@ async fn test_emit_with_function_call() {
                 amount: amount,
                 tax: calculate_tax(amount, tax_rate)
             )
-    "#;
+    ";
 
     let events = r#"
         Sale { id: "S1", amount: 100.0, tax_rate: 20.0 }
@@ -879,11 +879,7 @@ async fn test_emit_with_function_call() {
     assert_eq!(results.len(), 1);
     // Tax should be 100 * 20 / 100 = 20
     if let Some(varpulis_core::Value::Float(tax)) = results[0].data.get("tax") {
-        assert!(
-            (tax - 20.0).abs() < 0.001,
-            "Tax should be 20.0, got {}",
-            tax
-        );
+        assert!((tax - 20.0).abs() < 0.001, "Tax should be 20.0, got {tax}");
     } else {
         panic!("Tax field not found or not a float");
     }
@@ -891,13 +887,13 @@ async fn test_emit_with_function_call() {
 
 #[tokio::test]
 async fn test_emit_with_builtin_function() {
-    let program = r#"
+    let program = r"
         stream AbsoluteValues = Measurement
             .emit(
                 sensor_id: id,
                 abs_value: abs(reading)
             )
-    "#;
+    ";
 
     let events = r#"
         Measurement { id: "M1", reading: -42.5 }
@@ -909,8 +905,7 @@ async fn test_emit_with_builtin_function() {
     if let Some(varpulis_core::Value::Float(val)) = results[0].data.get("abs_value") {
         assert!(
             (val - 42.5).abs() < 0.001,
-            "Absolute value should be 42.5, got {}",
-            val
+            "Absolute value should be 42.5, got {val}"
         );
     } else {
         panic!("abs_value field not found or not a float");
@@ -919,13 +914,13 @@ async fn test_emit_with_builtin_function() {
 
 #[tokio::test]
 async fn test_emit_with_arithmetic_expression() {
-    let program = r#"
+    let program = r"
         stream PriceWithDiscount = Product
             .emit(
                 product_id: id,
                 final_price: price * (1.0 - discount / 100.0)
             )
-    "#;
+    ";
 
     let events = r#"
         Product { id: "P1", price: 100.0, discount: 25.0 }
@@ -938,8 +933,7 @@ async fn test_emit_with_arithmetic_expression() {
     if let Some(varpulis_core::Value::Float(val)) = results[0].data.get("final_price") {
         assert!(
             (val - 75.0).abs() < 0.001,
-            "Final price should be 75.0, got {}",
-            val
+            "Final price should be 75.0, got {val}"
         );
     } else {
         panic!("final_price field not found or not a float");
@@ -1016,7 +1010,7 @@ async fn test_merge_with_window_and_aggregation() {
 
 #[tokio::test]
 async fn test_count_distinct_aggregation() {
-    let program = r#"
+    let program = r"
         stream SensorStats = SensorEvent
             .window(1m)
             .aggregate(
@@ -1027,7 +1021,7 @@ async fn test_count_distinct_aggregation() {
                 unique_sensors: sensor_count,
                 total: total_count
             )
-    "#;
+    ";
 
     // We need to trigger window completion - for now just test parsing and setup
     let events = r#"
@@ -1120,8 +1114,7 @@ async fn test_building_metrics_comprehensive() {
         if let Some(varpulis_core::Value::Str(sensor)) = event.data.get("sensor") {
             assert!(
                 &**sensor == "S1" || &**sensor == "S2" || &**sensor == "S3",
-                "Sensor {} should not be in results",
-                sensor
+                "Sensor {sensor} should not be in results"
             );
         }
     }
@@ -1165,10 +1158,10 @@ async fn test_apama_and_pattern() {
             )
     "#;
 
-    let events = r#"
+    let events = r"
         EventB { id: 1 }
         EventA { id: 2 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
 
@@ -1187,9 +1180,9 @@ async fn test_apama_or_pattern() {
             )
     "#;
 
-    let events = r#"
+    let events = r"
         EventB { id: 1 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
 
@@ -1208,10 +1201,10 @@ async fn test_apama_complex_pattern() {
             )
     "#;
 
-    let events = r#"
+    let events = r"
         EventA { id: 1 }
         EventB { id: 2 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
 
@@ -1230,12 +1223,12 @@ async fn test_apama_chained_followed_by() {
             )
     "#;
 
-    let events = r#"
+    let events = r"
         EventA { step: 1 }
         EventB { step: 2 }
         EventC { step: 3 }
         EventD { step: 4 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
 
@@ -1280,7 +1273,7 @@ async fn run_scenario_with_file_sink(
     results_and_file(results, file_contents)
 }
 
-fn results_and_file(results: Vec<Event>, file_contents: String) -> (Vec<Event>, String) {
+const fn results_and_file(results: Vec<Event>, file_contents: String) -> (Vec<Event>, String) {
     (results, file_contents)
 }
 
@@ -1292,14 +1285,13 @@ async fn test_to_file_connector_basic() {
 
     let program = format!(
         r#"
-        connector FileOut = file(path: "{}")
+        connector FileOut = file(path: "{output_path_str}")
 
         stream HighTemp = SensorReading
             .where(temperature > 30.0)
             .emit(status: "hot", temp: temperature)
             .to(FileOut)
-    "#,
-        output_path_str
+    "#
     );
 
     let events = r#"
@@ -1336,9 +1328,9 @@ async fn test_to_connector_not_found() {
             .to(NonExistentConnector)
     "#;
 
-    let events = r#"
+    let events = r"
         SensorReading { temperature: 35.0 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
 
@@ -1387,22 +1379,21 @@ async fn test_to_file_connector_with_sequence() {
 
     let program = format!(
         r#"
-        connector SeqFile = file(path: "{}")
+        connector SeqFile = file(path: "{output_path_str}")
 
         stream OrderPayment = Order as order
             -> Payment where order_id == order.id as payment
             .emit(status: "matched", order_id: order.id)
             .to(SeqFile)
-    "#,
-        output_path_str
+    "#
     );
 
-    let events = r#"
+    let events = r"
         Order { id: 1 }
         Payment { order_id: 1, amount: 100.0 }
         Order { id: 2 }
         Payment { order_id: 2, amount: 200.0 }
-    "#;
+    ";
 
     let (results, file_contents) =
         run_scenario_with_file_sink(&program, events, &output_path).await;
@@ -1434,22 +1425,21 @@ async fn test_to_multiple_connectors() {
 
     let program = format!(
         r#"
-        connector File1 = file(path: "{}")
-        connector File2 = file(path: "{}")
+        connector File1 = file(path: "{path1_str}")
+        connector File2 = file(path: "{path2_str}")
 
         stream Output = SensorReading
             .where(temperature > 30.0)
             .emit(status: "hot", temp: temperature)
             .to(File1)
             .to(File2)
-    "#,
-        path1_str, path2_str
+    "#
     );
 
-    let events = r#"
+    let events = r"
         SensorReading { temperature: 35.0 }
         SensorReading { temperature: 40.0 }
-    "#;
+    ";
 
     let (tx, mut rx) = mpsc::channel::<Event>(100);
     let parsed = parse(&program).expect("Failed to parse program");
@@ -1491,20 +1481,19 @@ async fn test_to_does_not_consume_events() {
 
     let program = format!(
         r#"
-        connector FileOut = file(path: "{}")
+        connector FileOut = file(path: "{output_path_str}")
 
         stream Output = SensorReading
             .emit(value: temperature)
             .to(FileOut)
-    "#,
-        output_path_str
+    "#
     );
 
-    let events = r#"
+    let events = r"
         SensorReading { temperature: 10.0 }
         SensorReading { temperature: 20.0 }
         SensorReading { temperature: 30.0 }
-    "#;
+    ";
 
     let (results, file_contents) =
         run_scenario_with_file_sink(&program, events, &output_path).await;
@@ -1528,23 +1517,22 @@ async fn test_to_with_filter_only_matching_events() {
 
     let program = format!(
         r#"
-        connector FilteredOut = file(path: "{}")
+        connector FilteredOut = file(path: "{output_path_str}")
 
         stream CriticalOnly = SensorReading
             .where(temperature > 50.0)
             .emit(severity: "critical", temp: temperature)
             .to(FilteredOut)
-    "#,
-        output_path_str
+    "#
     );
 
-    let events = r#"
+    let events = r"
         SensorReading { temperature: 25.0 }
         SensorReading { temperature: 55.0 }
         SensorReading { temperature: 30.0 }
         SensorReading { temperature: 60.0 }
         SensorReading { temperature: 45.0 }
-    "#;
+    ";
 
     let (results, file_contents) =
         run_scenario_with_file_sink(&program, events, &output_path).await;
@@ -1572,25 +1560,23 @@ async fn test_to_connector_reload() {
     // Initial program
     let program_v1 = format!(
         r#"
-        connector Output = file(path: "{}")
+        connector Output = file(path: "{path_v1_str}")
 
         stream Temps = SensorReading
             .emit(temp: temperature)
             .to(Output)
-    "#,
-        path_v1_str
+    "#
     );
 
     // Reloaded program with different file
     let program_v2 = format!(
         r#"
-        connector Output = file(path: "{}")
+        connector Output = file(path: "{path_v2_str}")
 
         stream Temps = SensorReading
             .emit(temp: temperature)
             .to(Output)
-    "#,
-        path_v2_str
+    "#
     );
 
     let (tx, mut rx) = mpsc::channel::<Event>(100);

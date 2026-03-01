@@ -37,7 +37,7 @@ fn assert_float_near(val: &Value, expected: f64, tolerance: f64) {
                 "Expected ~{expected}, got {v}"
             );
         }
-        other => panic!("Expected Value::Float, got {:?}", other),
+        other => panic!("Expected Value::Float, got {other:?}"),
     }
 }
 
@@ -477,9 +477,9 @@ fn ema_period_ten() {
     let k = 2.0 / 11.0;
     // ema[0] = 50.0
     // ema[1] = 60 * k + 50 * (1-k)
-    let ema1 = 60.0 * k + 50.0 * (1.0 - k);
+    let ema1 = 60.0f64.mul_add(k, 50.0 * (1.0 - k));
     // ema[2] = 70 * k + ema1 * (1-k)
-    let ema2 = 70.0 * k + ema1 * (1.0 - k);
+    let ema2 = 70.0f64.mul_add(k, ema1 * (1.0 - k));
     assert_float_near(&result, ema2, 0.001);
 }
 

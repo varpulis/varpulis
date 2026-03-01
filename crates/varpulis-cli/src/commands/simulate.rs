@@ -56,16 +56,16 @@ pub async fn run_simulation(
     println!("============================");
     println!("Program: {}", program_path.display());
     println!("Events:  {}", events_path.display());
-    println!("Mode:    {}", mode_str);
-    println!("Workers: {}", num_workers);
+    println!("Mode:    {mode_str}");
+    println!("Workers: {num_workers}");
     if let Some(key) = partition_by {
-        println!("Partition: {}", key);
+        println!("Partition: {key}");
     }
     println!();
 
     // Load and parse program
     let program_source = std::fs::read_to_string(program_path)?;
-    let program = parse(&program_source).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
+    let program = parse(&program_source).map_err(|e| anyhow::anyhow!("Parse error: {e}"))?;
     let program = Arc::new(program);
     info!(
         "Loaded program with {} statements",
@@ -88,7 +88,7 @@ pub async fn run_simulation(
     };
     engine
         .load_with_source(&program_source, &program)
-        .map_err(|e| anyhow::anyhow!("Load error:\n{}", e))?;
+        .map_err(|e| anyhow::anyhow!("Load error:\n{e}"))?;
 
     // Enable auto-checkpointing if requested (must be after load())
     if let Some(ref cp_dir) = checkpoint_dir {
@@ -96,7 +96,7 @@ pub async fn run_simulation(
         let store: std::sync::Arc<dyn varpulis_runtime::persistence::StateStore> =
             std::sync::Arc::new(
                 varpulis_runtime::persistence::FileStore::open(cp_dir)
-                    .map_err(|e| anyhow::anyhow!("Checkpoint store error: {}", e))?,
+                    .map_err(|e| anyhow::anyhow!("Checkpoint store error: {e}"))?,
             );
         let config = varpulis_runtime::persistence::CheckpointConfig {
             interval: std::time::Duration::from_secs(checkpoint_interval),
@@ -106,7 +106,7 @@ pub async fn run_simulation(
         };
         engine
             .enable_checkpointing(store, config)
-            .map_err(|e| anyhow::anyhow!("Checkpoint init error: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Checkpoint init error: {e}"))?;
         println!(
             "Checkpointing: {} (every {}s)",
             cp_dir.display(),
@@ -158,7 +158,7 @@ pub async fn run_simulation(
         // Parallel preload mode - partition events and process in parallel
         let events_source = std::fs::read_to_string(events_path)?;
         let events = EventFileParser::parse(&events_source)
-            .map_err(|e| anyhow::anyhow!("Event file error: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Event file error: {e}"))?;
         let total_events = events.len();
         info!("Preloaded {} events from file", total_events);
 
@@ -166,7 +166,7 @@ pub async fn run_simulation(
         let mut probe_engine = Engine::new_benchmark();
         probe_engine
             .load(&program)
-            .map_err(|e| anyhow::anyhow!("Probe engine load error: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Probe engine load error: {e}"))?;
         let stateless = probe_engine.is_stateless();
         let auto_partition_key = probe_engine.partition_key();
         drop(probe_engine);
@@ -190,7 +190,7 @@ pub async fn run_simulation(
                 .or(auto_partition_key)
                 .unwrap_or_else(|| "symbol".to_string());
             if verbose {
-                println!("  Partition key: {}", partition_key);
+                println!("  Partition key: {partition_key}");
             }
             let mut buckets: Vec<Vec<Event>> = (0..num_workers).map(|_| Vec::new()).collect();
             for event in all_events {
@@ -246,13 +246,13 @@ pub async fn run_simulation(
                         None => Engine::new_benchmark(),
                     };
                     if let Err(e) = worker_engine.load(&program_arc) {
-                        eprintln!("Worker {}: Failed to load program: {}", worker_id, e);
+                        eprintln!("Worker {worker_id}: Failed to load program: {e}");
                         return;
                     }
 
                     // PERF: Pass entire partition as single batch — no extra copy
                     if let Err(e) = worker_engine.process_batch_sync(partition_events) {
-                        eprintln!("Worker {}: Process error: {}", worker_id, e);
+                        eprintln!("Worker {worker_id}: Process error: {e}");
                         return;
                     }
 
@@ -263,12 +263,12 @@ pub async fn run_simulation(
                 });
         })
         .await
-        .map_err(|e| anyhow::anyhow!("Spawn blocking failed: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Spawn blocking failed: {e}"))?;
     } else if immediate && preload {
         // Single-threaded preload mode
         let events_source = std::fs::read_to_string(events_path)?;
         let events = EventFileParser::parse(&events_source)
-            .map_err(|e| anyhow::anyhow!("Event file error: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Event file error: {e}"))?;
         info!("Preloaded {} events from file", events.len());
 
         // PERF: Extract owned events (zero-clone), use sync path when no sinks
@@ -296,10 +296,10 @@ pub async fn run_simulation(
                 }
                 engine
                     .process_batch_sync(batch)
-                    .map_err(|e| anyhow::anyhow!("Process error: {}", e))?;
+                    .map_err(|e| anyhow::anyhow!("Process error: {e}"))?;
                 engine
                     .checkpoint_tick()
-                    .map_err(|e| anyhow::anyhow!("Checkpoint error: {}", e))?;
+                    .map_err(|e| anyhow::anyhow!("Checkpoint error: {e}"))?;
                 batch_idx += 1;
             }
         } else {
@@ -321,10 +321,10 @@ pub async fn run_simulation(
                 engine
                     .process_batch(batch)
                     .await
-                    .map_err(|e| anyhow::anyhow!("Process error: {}", e))?;
+                    .map_err(|e| anyhow::anyhow!("Process error: {e}"))?;
                 engine
                     .checkpoint_tick()
-                    .map_err(|e| anyhow::anyhow!("Checkpoint error: {}", e))?;
+                    .map_err(|e| anyhow::anyhow!("Checkpoint error: {e}"))?;
                 batch_idx += 1;
             }
         }
@@ -333,13 +333,13 @@ pub async fn run_simulation(
         const BATCH_SIZE: usize = 50000;
 
         let mut event_reader = StreamingEventReader::from_file(events_path)
-            .map_err(|e| anyhow::anyhow!("Failed to open event file: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to open event file: {e}"))?;
 
         // Probe pipeline to decide distribution strategy
         let mut probe_engine = Engine::new_benchmark();
         probe_engine
             .load(&program)
-            .map_err(|e| anyhow::anyhow!("Probe engine load error: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Probe engine load error: {e}"))?;
         let stateless = probe_engine.is_stateless();
         let auto_partition_key = probe_engine.partition_key();
         drop(probe_engine);
@@ -360,7 +360,7 @@ pub async fn run_simulation(
                     Engine::new_shared(output_tx.clone())
                 };
                 if let Err(e) = w_engine.load(&program) {
-                    eprintln!("Failed to load program: {}", e);
+                    eprintln!("Failed to load program: {e}");
                 }
                 Mutex::new(w_engine)
             })
@@ -372,7 +372,7 @@ pub async fn run_simulation(
             for _ in 0..BATCH_SIZE {
                 match event_reader.next() {
                     Some(Ok(event)) => events.push(event),
-                    Some(Err(e)) => return Err(anyhow::anyhow!("Parse error: {}", e)),
+                    Some(Err(e)) => return Err(anyhow::anyhow!("Parse error: {e}")),
                     None => break,
                 }
             }
@@ -434,7 +434,7 @@ pub async fn run_simulation(
                         let mut engine_guard =
                             engines[worker_id].lock().unwrap_or_else(|e| e.into_inner());
                         if let Err(e) = engine_guard.process_batch_sync(partition_events) {
-                            eprintln!("Worker {}: Process error: {}", worker_id, e);
+                            eprintln!("Worker {worker_id}: Process error: {e}");
                         }
                     });
             })
@@ -463,7 +463,7 @@ pub async fn run_simulation(
         let use_sync = !engine.has_sink_operations();
 
         let mut event_reader = StreamingEventReader::from_file(events_path)
-            .map_err(|e| anyhow::anyhow!("Failed to open event file: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to open event file: {e}"))?;
 
         let mut batch: Vec<Event> = Vec::with_capacity(BATCH_SIZE);
         let mut batch_count = 0;
@@ -474,7 +474,7 @@ pub async fn run_simulation(
             for _ in 0..BATCH_SIZE {
                 match event_reader.next() {
                     Some(Ok(event)) => batch.push(event),
-                    Some(Err(e)) => return Err(anyhow::anyhow!("Parse error: {}", e)),
+                    Some(Err(e)) => return Err(anyhow::anyhow!("Parse error: {e}")),
                     None => break,
                 }
             }
@@ -497,16 +497,16 @@ pub async fn run_simulation(
             if use_sync {
                 engine
                     .process_batch_sync(std::mem::take(&mut batch))
-                    .map_err(|e| anyhow::anyhow!("Process error: {}", e))?;
+                    .map_err(|e| anyhow::anyhow!("Process error: {e}"))?;
             } else {
                 engine
                     .process_batch(std::mem::take(&mut batch))
                     .await
-                    .map_err(|e| anyhow::anyhow!("Process error: {}", e))?;
+                    .map_err(|e| anyhow::anyhow!("Process error: {e}"))?;
             }
             engine
                 .checkpoint_tick()
-                .map_err(|e| anyhow::anyhow!("Checkpoint error: {}", e))?;
+                .map_err(|e| anyhow::anyhow!("Checkpoint error: {e}"))?;
         }
 
         info!("Streamed {} events from file", event_reader.events_read());
@@ -514,7 +514,7 @@ pub async fn run_simulation(
         // Timed mode - load all events for timing control
         let events_source = std::fs::read_to_string(events_path)?;
         let events = EventFileParser::parse(&events_source)
-            .map_err(|e| anyhow::anyhow!("Event file error: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Event file error: {e}"))?;
         info!("Loaded {} events from file (timed mode)", events.len());
 
         let (event_tx, mut event_rx) = mpsc::channel(100);
@@ -538,12 +538,12 @@ pub async fn run_simulation(
             engine
                 .process(event)
                 .await
-                .map_err(|e| anyhow::anyhow!("Process error: {}", e))?;
+                .map_err(|e| anyhow::anyhow!("Process error: {e}"))?;
         }
 
         player_handle
             .await?
-            .map_err(|e| anyhow::anyhow!("Player error: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Player error: {e}"))?;
     }
 
     // Flush any remaining session windows after all events are processed
@@ -551,14 +551,14 @@ pub async fn run_simulation(
         engine
             .flush_expired_sessions()
             .await
-            .map_err(|e| anyhow::anyhow!("Session flush error: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Session flush error: {e}"))?;
     }
 
     // Final checkpoint on shutdown
     if engine.has_checkpointing() {
         engine
             .force_checkpoint()
-            .map_err(|e| anyhow::anyhow!("Final checkpoint error: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Final checkpoint error: {e}"))?;
     }
 
     // Wait a bit for any pending output events
@@ -587,10 +587,10 @@ pub async fn run_simulation(
 
     println!("\nSimulation Complete");
     println!("======================");
-    println!("Duration:         {:?}", elapsed);
-    println!("Events processed: {}", events_processed);
-    println!("Workers used:     {}", num_workers);
-    println!("Output events emitted: {}", output_events_count);
+    println!("Duration:         {elapsed:?}");
+    println!("Events processed: {events_processed}");
+    println!("Workers used:     {num_workers}");
+    println!("Output events emitted: {output_events_count}");
     println!(
         "Event rate:       {:.1} events/sec",
         events_processed as f64 / elapsed.as_secs_f64()

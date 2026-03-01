@@ -124,7 +124,7 @@ impl Runtime {
                         Err(e) => warn!("Runtime: actor '{}' join error: {}", name, e),
                     }
                 }
-                _ = &mut deadline => {
+                () = &mut deadline => {
                     warn!("Runtime: grace period expired, actor '{}' still running", name);
                     break;
                 }

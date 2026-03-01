@@ -81,7 +81,7 @@ impl KleeneStats {
         let g = self.avg_graphlet_size;
 
         // Benefit = g² × (ks - sp) - ks × sp
-        g * g * (ks - sp) - ks * sp
+        (g * g).mul_add(ks - sp, -(ks * sp))
     }
 
     /// Should we share based on current statistics?

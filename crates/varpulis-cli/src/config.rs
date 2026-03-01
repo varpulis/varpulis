@@ -269,7 +269,7 @@ impl Config {
     }
 
     /// Merge another config into this one (other values take precedence if set)
-    pub fn merge(&mut self, other: Config) {
+    pub fn merge(&mut self, other: Self) {
         if other.query_file.is_some() {
             self.query_file = other.query_file;
         }

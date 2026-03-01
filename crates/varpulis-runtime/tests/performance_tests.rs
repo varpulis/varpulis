@@ -45,7 +45,7 @@ async fn test_process_1000_events_under_100ms() {
 
     let duration = start.elapsed();
 
-    println!("Processed 1000 events in {:?}", duration);
+    println!("Processed 1000 events in {duration:?}");
     println!(
         "Throughput: {:.0} events/sec",
         1000.0 / duration.as_secs_f64()
@@ -57,14 +57,13 @@ async fn test_process_1000_events_under_100ms() {
         output_count += 1;
     }
 
-    println!("Output events: {}", output_count);
+    println!("Output events: {output_count}");
 
     // Performance assertion - should complete in under 100ms
     // (This is a generous limit; actual should be much faster)
     assert!(
         duration.as_millis() < 100,
-        "Processing 1000 events took {:?}, expected < 100ms",
-        duration
+        "Processing 1000 events took {duration:?}, expected < 100ms"
     );
 }
 
@@ -143,7 +142,7 @@ async fn test_filter_performance() {
 
     let duration = start.elapsed();
 
-    println!("Filter test: {:?} for 1000 events", duration);
+    println!("Filter test: {duration:?} for 1000 events");
     println!(
         "Throughput: {:.0} events/sec",
         1000.0 / duration.as_secs_f64()
@@ -191,15 +190,11 @@ async fn test_window_cleanup_performance() {
         count += 1;
     }
 
-    println!(
-        "Window test: {:?} for 1000 events, {} windows completed",
-        duration, count
-    );
+    println!("Window test: {duration:?} for 1000 events, {count} windows completed");
 
     // Should complete quickly
     assert!(
         duration.as_millis() < 200,
-        "Window test took too long: {:?}",
-        duration
+        "Window test took too long: {duration:?}"
     );
 }

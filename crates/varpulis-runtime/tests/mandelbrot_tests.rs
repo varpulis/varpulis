@@ -11,7 +11,7 @@ use varpulis_runtime::ContextOrchestrator;
 
 #[tokio::test]
 async fn test_mandelbrot_function_parses() {
-    let code = r#"
+    let code = r"
         fn mandelbrot(cx: float, cy: float, max_iter: int) -> int:
             var zr = 0.0
             var zi = 0.0
@@ -36,7 +36,7 @@ async fn test_mandelbrot_function_parses() {
 
         stream Tile = Trigger
             .process(compute_tile(0, 0, 2, 10))
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse mandelbrot VPL");
     let (tx, _rx) = mpsc::channel(100);
@@ -49,7 +49,7 @@ async fn test_mandelbrot_function_parses() {
 #[tokio::test]
 async fn test_mandelbrot_small_tile() {
     // Compute a 5x5 tile and verify we get 25 Pixel events
-    let code = r#"
+    let code = r"
         fn mandelbrot(cx: float, cy: float, max_iter: int) -> int:
             var zr = 0.0
             var zi = 0.0
@@ -75,7 +75,7 @@ async fn test_mandelbrot_small_tile() {
 
         stream Tile = Trigger
             .process(compute_tile(0, 0, 5, 32))
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
     let (tx, mut rx) = mpsc::channel(1000);
@@ -104,8 +104,7 @@ async fn test_mandelbrot_small_tile() {
         if let Some(Value::Int(iters)) = event.data.get("iterations") {
             assert!(
                 *iters >= 0 && *iters <= 32,
-                "iterations out of range: {}",
-                iters
+                "iterations out of range: {iters}"
             );
         } else {
             panic!("iterations should be Int");
@@ -118,14 +117,14 @@ async fn test_mandelbrot_small_tile() {
 #[tokio::test]
 async fn test_emit_produces_correct_fields() {
     // Verify that emit statement creates events with correct field values
-    let code = r#"
+    let code = r"
         fn gen():
             emit Alpha(val: 1)
             emit Beta(val: 2)
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
     let (tx, mut rx) = mpsc::channel(100);
@@ -149,13 +148,13 @@ async fn test_emit_produces_correct_fields() {
 async fn test_expanded_process_with_arithmetic_args() {
     // Verify that .process(compute(0 * 100, 0 * 200)) — the pattern produced
     // by loop expansion — evaluates correctly at runtime.
-    let code = r#"fn compute(x_off: int, y_off: int):
+    let code = r"fn compute(x_off: int, y_off: int):
     emit Result(x: x_off, y: y_off)
 
 for i in 0..3:
     stream S{i} = Trigger{i}
         .process(compute({i} * 100, {i} * 200))
-"#;
+";
 
     let program = parse(code).expect("Failed to parse expanded VPL");
     let (tx, mut rx) = mpsc::channel(1000);
@@ -188,7 +187,7 @@ async fn test_expanded_contexts_with_process() {
     // End-to-end test: loop-expanded contexts + streams + .process() with
     // arithmetic args, dispatched through the ContextOrchestrator.
     // This mirrors the compact Mandelbrot VPL pattern.
-    let code = r#"fn compute(x_off: int, y_off: int):
+    let code = r"fn compute(x_off: int, y_off: int):
     emit Result(x: x_off, y: y_off)
 
 for i in 0..4:
@@ -198,7 +197,7 @@ for i in 0..4:
     stream S{i} = Trigger{i}
         .context(ctx{i})
         .process(compute({i} * 10, {i} * 20))
-"#;
+";
 
     let program = parse(code).expect("Failed to parse");
     let (output_tx, mut output_rx) = mpsc::channel::<Event>(1000);
@@ -215,7 +214,7 @@ for i in 0..4:
 
     // Dispatch one event per context
     for i in 0..4 {
-        let event = Event::new(format!("Trigger{}", i));
+        let event = Event::new(format!("Trigger{i}"));
         orchestrator
             .process(Arc::new(event))
             .await
@@ -312,7 +311,7 @@ for row in 0..2:
     // Inject 4 trigger events (one per tile)
     for row in 0..2 {
         for col in 0..2 {
-            let event = Event::new(format!("ComputeTile{}{}", row, col));
+            let event = Event::new(format!("ComputeTile{row}{col}"));
             orchestrator
                 .process(Arc::new(event))
                 .await
@@ -356,8 +355,7 @@ for row in 0..2:
         if let Some(Value::Str(data)) = row.data.get("data") {
             assert!(
                 data.contains(','),
-                "data should contain comma-separated values, got: {}",
-                data
+                "data should contain comma-separated values, got: {data}"
             );
         }
     }

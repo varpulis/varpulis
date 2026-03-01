@@ -434,7 +434,7 @@ impl WorkerPool {
     }
 
     /// Get pool configuration
-    pub fn config(&self) -> &WorkerPoolConfig {
+    pub const fn config(&self) -> &WorkerPoolConfig {
         &self.config
     }
 
@@ -471,7 +471,7 @@ mod tests {
     #[tokio::test]
     async fn test_worker_pool_creation() {
         let counter = Arc::new(AtomicUsize::new(0));
-        let counter_clone = counter.clone();
+        let counter_clone = counter;
 
         let config = WorkerPoolConfig {
             name: "test".to_string(),

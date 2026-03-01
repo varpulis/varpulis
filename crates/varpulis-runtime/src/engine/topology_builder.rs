@@ -36,7 +36,7 @@ enum SourceKind {
 
 impl TopologyBuilder {
     /// Create a new empty builder.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             streams: Vec::new(),
             routes: Vec::new(),

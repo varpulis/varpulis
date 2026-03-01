@@ -107,7 +107,7 @@ impl DeadLetterQueue {
         if let Ok(line) = serde_json::to_string(&entry) {
             let mut file = self.file.lock().unwrap_or_else(|e| e.into_inner());
             // Best-effort: log but don't propagate DLQ write errors.
-            if writeln!(file, "{}", line).is_ok() {
+            if writeln!(file, "{line}").is_ok() {
                 self.events_total.fetch_add(1, Ordering::Relaxed);
                 self.current_lines.fetch_add(1, Ordering::Relaxed);
             }
@@ -129,7 +129,7 @@ impl DeadLetterQueue {
                 event,
             };
             if let Ok(line) = serde_json::to_string(&entry) {
-                if writeln!(file, "{}", line).is_ok() {
+                if writeln!(file, "{line}").is_ok() {
                     self.events_total.fetch_add(1, Ordering::Relaxed);
                     self.current_lines.fetch_add(1, Ordering::Relaxed);
                 }
@@ -179,7 +179,7 @@ impl DeadLetterQueue {
             .open(&self.path)?;
         let mut writer = std::io::BufWriter::new(new_file);
         for line in to_keep {
-            writeln!(writer, "{}", line)?;
+            writeln!(writer, "{line}")?;
         }
         writer.flush()?;
 
@@ -293,7 +293,7 @@ mod tests {
         let dlq = DeadLetterQueue::open(&dir).unwrap();
 
         let events: Vec<std::sync::Arc<Event>> = (0..5)
-            .map(|i| std::sync::Arc::new(Event::new(format!("Event{}", i))))
+            .map(|i| std::sync::Arc::new(Event::new(format!("Event{i}"))))
             .collect();
 
         dlq.write_batch("http-sink", "503 Service Unavailable", &events);
@@ -361,8 +361,8 @@ mod tests {
 
         // Write some entries
         for i in 0..10 {
-            let event = Event::new(format!("Event{}", i));
-            dlq.write("test-sink", &format!("error {}", i), &event);
+            let event = Event::new(format!("Event{i}"));
+            dlq.write("test-sink", &format!("error {i}"), &event);
         }
 
         // Read with offset and limit

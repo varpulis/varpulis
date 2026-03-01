@@ -110,25 +110,25 @@ impl S3Config {
     }
 
     /// Set the output format
-    pub fn with_format(mut self, format: S3OutputFormat) -> Self {
+    pub const fn with_format(mut self, format: S3OutputFormat) -> Self {
         self.format = format;
         self
     }
 
     /// Set file rotation size in bytes
-    pub fn with_file_rotation_size(mut self, bytes: usize) -> Self {
+    pub const fn with_file_rotation_size(mut self, bytes: usize) -> Self {
         self.file_rotation_size = bytes;
         self
     }
 
     /// Set file rotation time in seconds
-    pub fn with_file_rotation_seconds(mut self, seconds: u64) -> Self {
+    pub const fn with_file_rotation_seconds(mut self, seconds: u64) -> Self {
         self.file_rotation_seconds = seconds;
         self
     }
 
     /// Enable gzip compression
-    pub fn with_compression(mut self) -> Self {
+    pub const fn with_compression(mut self) -> Self {
         self.compression = true;
         self
     }

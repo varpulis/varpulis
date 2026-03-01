@@ -22,7 +22,7 @@ impl Zdd {
     /// let c = a.difference(&b);                                     // {{1,2}}
     /// assert_eq!(c.count(), 1);
     /// ```
-    pub fn difference(&self, other: &Zdd) -> Zdd {
+    pub fn difference(&self, other: &Self) -> Self {
         // Build a combined table with nodes from both ZDDs
         let mut table = self.table().clone();
         let mut node_map: FxHashMap<u32, ZddRef> = FxHashMap::default();
@@ -34,7 +34,7 @@ impl Zdd {
         let mut cache: FxHashMap<(ZddRef, ZddRef), ZddRef> = FxHashMap::default();
         let result_root = difference_rec(self.root(), other_root, &mut table, &mut cache);
 
-        Zdd::from_parts(result_root, table)
+        Self::from_parts(result_root, table)
     }
 }
 

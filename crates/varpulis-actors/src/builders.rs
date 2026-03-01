@@ -19,7 +19,7 @@ pub trait MessageSink<M: Send + 'static>: Send + Sync {
 #[async_trait]
 impl<A: Actor, M: Send + 'static> MessageSink<M> for MailboxSender<A> {
     async fn send(&self, message: M) -> Result<(), crate::mailbox::MailboxError> {
-        MailboxSender::send(self, message).await
+        Self::send(self, message).await
     }
 }
 

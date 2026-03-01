@@ -73,7 +73,7 @@ pub struct TimerManager {
 }
 
 impl TimerManager {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             handles: Vec::new(),
         }

@@ -193,7 +193,7 @@ impl PatternMarkovChain {
             if self.avg_inter_event_ns == 0.0 {
                 self.avg_inter_event_ns = delta;
             } else {
-                self.avg_inter_event_ns = 0.95 * self.avg_inter_event_ns + 0.05 * delta;
+                self.avg_inter_event_ns = 0.95f64.mul_add(self.avg_inter_event_ns, 0.05 * delta);
             }
         }
         self.last_event_ns = Some(event_timestamp_ns);
@@ -536,7 +536,7 @@ impl PatternMarkovChain {
     }
 
     /// Get the number of events processed.
-    pub fn events_processed(&self) -> u64 {
+    pub const fn events_processed(&self) -> u64 {
         self.events_processed
     }
 }
@@ -623,8 +623,7 @@ mod tests {
             let result = pmc.process("A", i * 1_000_000_000, &runs);
             assert!(
                 result.is_none(),
-                "Should suppress during warmup (event {})",
-                i
+                "Should suppress during warmup (event {i})"
             );
         }
 

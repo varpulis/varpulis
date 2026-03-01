@@ -255,7 +255,7 @@ impl LogicalPlan {
                 let ext = e
                     .extends
                     .as_deref()
-                    .map(|e| format!(" extends {}", e))
+                    .map(|e| format!(" extends {e}"))
                     .unwrap_or_default();
                 out.push_str(&format!("  {} ({} fields{})\n", e.name, e.field_count, ext));
             }
@@ -289,7 +289,7 @@ impl LogicalPlan {
                 out.push_str(&format!("    Op {}: {}\n", i, describe_op(op)));
             }
             if let Some(card) = stream.estimated_cardinality {
-                out.push_str(&format!("    Est. cardinality: {}\n", card));
+                out.push_str(&format!("    Est. cardinality: {card}\n"));
             }
         }
 
@@ -299,8 +299,8 @@ impl LogicalPlan {
 
 fn describe_source(source: &LogicalSource) -> String {
     match source {
-        LogicalSource::EventType(t) => format!("EventType({})", t),
-        LogicalSource::Stream(s) => format!("Stream({})", s),
+        LogicalSource::EventType(t) => format!("EventType({t})"),
+        LogicalSource::Stream(s) => format!("Stream({s})"),
         LogicalSource::Join(clauses) => {
             let names: Vec<_> = clauses.iter().map(|c| c.name.as_str()).collect();
             format!("Join({})", names.join(", "))
@@ -313,13 +313,13 @@ fn describe_source(source: &LogicalSource) -> String {
         LogicalSource::Sequence(decl) => {
             format!("Sequence({} steps)", decl.steps.len())
         }
-        LogicalSource::Pattern(name) => format!("Pattern({})", name),
+        LogicalSource::Pattern(name) => format!("Pattern({name})"),
         LogicalSource::FromConnector {
             event_type,
             connector_name,
             ..
         } => {
-            format!("FromConnector({} via {})", event_type, connector_name)
+            format!("FromConnector({event_type} via {connector_name})")
         }
     }
 }
@@ -348,7 +348,7 @@ fn describe_op(op: &LogicalOp) -> String {
             let ty = output_type.as_deref().unwrap_or("default");
             format!("Emit({}, {} fields)", ty, fields.len())
         }
-        LogicalOp::Sink { connector_name, .. } => format!("Sink({})", connector_name),
+        LogicalOp::Sink { connector_name, .. } => format!("Sink({connector_name})"),
         LogicalOp::FollowedBy(clause) => format!("FollowedBy({})", clause.event_type),
         LogicalOp::Not(clause) => format!("Not({})", clause.event_type),
         LogicalOp::Within(_) => "Within".to_string(),
@@ -365,7 +365,7 @@ fn describe_op(op: &LogicalOp) -> String {
         LogicalOp::Score(_) => "Score".to_string(),
         LogicalOp::Map(_) => "Map".to_string(),
         LogicalOp::OrderBy(items) => format!("OrderBy({} keys)", items.len()),
-        LogicalOp::Context(name) => format!("Context({})", name),
+        LogicalOp::Context(name) => format!("Context({name})"),
         LogicalOp::Watermark(_) => "Watermark".to_string(),
         LogicalOp::AllowedLateness(_) => "AllowedLateness".to_string(),
         LogicalOp::Fork(paths) => format!("Fork({} paths)", paths.len()),

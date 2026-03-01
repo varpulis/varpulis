@@ -123,7 +123,7 @@ pub struct CsvConverter;
 #[cfg(not(feature = "csv-converter"))]
 impl CsvConverter {
     /// Create a new CSV converter stub.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self
     }
 }

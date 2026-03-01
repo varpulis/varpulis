@@ -63,7 +63,7 @@ impl EventSchema for IotSchema {
         } else {
             is_anomaly = false;
             // Normal: small random walk
-            sensor.temperature += self.rng.gen_range(-0.5..0.5) + sensor.drift * 0.1;
+            sensor.temperature += sensor.drift.mul_add(0.1, self.rng.gen_range(-0.5..0.5));
             sensor.humidity += self.rng.gen_range(-1.0..1.0);
             sensor.pressure += self.rng.gen_range(-0.3..0.3);
             // Decay drift back to normal
@@ -123,7 +123,7 @@ impl EventSchema for IotSchema {
         ]
     }
 
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "IoT sensor readings: temperature, humidity, pressure with anomaly spike injection"
     }
 }

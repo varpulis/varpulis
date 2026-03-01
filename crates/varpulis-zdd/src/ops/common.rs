@@ -237,7 +237,7 @@ mod tests {
                 assert_eq!(node.lo, ZddRef::Base); // union of Empty and Base = Base
                 assert_eq!(node.hi, ZddRef::Base);
             }
-            _ => panic!("Expected Node, got {:?}", result),
+            _ => panic!("Expected Node, got {result:?}"),
         }
     }
 
@@ -253,7 +253,7 @@ mod tests {
                 assert_eq!(node.var, 1);
                 assert_eq!(node.lo, ZddRef::Base);
             }
-            _ => panic!("Expected Node, got {:?}", result),
+            _ => panic!("Expected Node, got {result:?}"),
         }
     }
 
@@ -291,7 +291,7 @@ mod tests {
                 assert_eq!(node.lo, ZddRef::Base);
                 assert_eq!(node.hi, ZddRef::Base);
             }
-            _ => panic!("Expected Node, got {:?}", result),
+            _ => panic!("Expected Node, got {result:?}"),
         }
     }
 

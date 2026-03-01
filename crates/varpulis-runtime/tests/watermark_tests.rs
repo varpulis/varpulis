@@ -16,10 +16,10 @@ const SCENARIOS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/sc
 
 /// Load a VPL program from a scenario file
 fn load_vpl(filename: &str) -> varpulis_core::ast::Program {
-    let path = format!("{}/{}", SCENARIOS_DIR, filename);
+    let path = format!("{SCENARIOS_DIR}/{filename}");
     let source =
-        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("Failed to read {}: {}", path, e));
-    parse(&source).unwrap_or_else(|e| panic!("Failed to parse {}: {:?}", path, e))
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("Failed to read {path}: {e}"));
+    parse(&source).unwrap_or_else(|e| panic!("Failed to parse {path}: {e:?}"))
 }
 
 /// Helper to create a test engine and output receiver
@@ -31,7 +31,7 @@ fn create_engine() -> (Engine, mpsc::Receiver<Event>) {
 #[test]
 fn test_watermark_syntax_parses() {
     // Uses: watermark_windowed.vpl (has .watermark() + .window() + .aggregate())
-    let path = format!("{}/watermark_windowed.vpl", SCENARIOS_DIR);
+    let path = format!("{SCENARIOS_DIR}/watermark_windowed.vpl");
     let source = std::fs::read_to_string(&path).expect("Failed to read VPL");
     let result = parse(&source);
     assert!(
@@ -44,7 +44,7 @@ fn test_watermark_syntax_parses() {
 #[test]
 fn test_allowed_lateness_syntax_parses() {
     // Uses: watermark_lateness.vpl (has .watermark() + .allowed_lateness() + .window())
-    let path = format!("{}/watermark_lateness.vpl", SCENARIOS_DIR);
+    let path = format!("{SCENARIOS_DIR}/watermark_lateness.vpl");
     let source = std::fs::read_to_string(&path).expect("Failed to read VPL");
     let result = parse(&source);
     assert!(

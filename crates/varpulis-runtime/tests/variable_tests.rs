@@ -8,9 +8,9 @@ use varpulis_runtime::event::Event;
 
 #[tokio::test]
 async fn test_var_declaration() {
-    let code = r#"
+    let code = r"
         var threshold: float = 10.0
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
 
@@ -26,9 +26,9 @@ async fn test_var_declaration() {
 
 #[tokio::test]
 async fn test_let_declaration() {
-    let code = r#"
+    let code = r"
         let max_count: int = 100
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
 
@@ -43,10 +43,10 @@ async fn test_let_declaration() {
 
 #[tokio::test]
 async fn test_assignment_to_mutable_var() {
-    let code = r#"
+    let code = r"
         var counter: int = 0
         counter := 5
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
 
@@ -61,10 +61,10 @@ async fn test_assignment_to_mutable_var() {
 
 #[tokio::test]
 async fn test_assignment_to_immutable_var_fails() {
-    let code = r#"
+    let code = r"
         let constant: int = 42
         constant := 100
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
 
@@ -81,11 +81,11 @@ async fn test_assignment_to_immutable_var_fails() {
 
 #[tokio::test]
 async fn test_assignment_with_expression() {
-    let code = r#"
+    let code = r"
         var base: int = 10
         var multiplier: int = 3
         base := base * multiplier + 5
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
 
@@ -101,9 +101,9 @@ async fn test_assignment_with_expression() {
 #[tokio::test]
 async fn test_implicit_mutable_on_first_assignment() {
     // Assignment to non-existent variable creates it as mutable
-    let code = r#"
+    let code = r"
         new_var := 42
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
 
@@ -118,12 +118,12 @@ async fn test_implicit_mutable_on_first_assignment() {
 
 #[tokio::test]
 async fn test_multiple_assignments() {
-    let code = r#"
+    let code = r"
         var counter: int = 0
         counter := 1
         counter := 2
         counter := 3
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
 
@@ -138,11 +138,11 @@ async fn test_multiple_assignments() {
 
 #[tokio::test]
 async fn test_var_with_float_expression() {
-    let code = r#"
+    let code = r"
         var pi: float = 3.14159
         var radius: float = 5.0
         var area: float = pi * radius * radius
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
 
@@ -155,8 +155,7 @@ async fn test_var_with_float_expression() {
     if let Value::Float(v) = area.unwrap() {
         assert!(
             (v - 78.53975).abs() < 0.001,
-            "Area should be ~78.54, got {}",
-            v
+            "Area should be ~78.54, got {v}"
         );
     } else {
         panic!("Expected Float value");
@@ -182,10 +181,10 @@ async fn test_var_with_string() {
 
 #[tokio::test]
 async fn test_var_with_bool() {
-    let code = r#"
+    let code = r"
         var enabled: bool = true
         enabled := false
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
 
@@ -200,11 +199,11 @@ async fn test_var_with_bool() {
 
 #[tokio::test]
 async fn test_variables_api() {
-    let code = r#"
+    let code = r"
         var a: int = 1
         var b: int = 2
         let c: int = 3
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
 
@@ -221,9 +220,9 @@ async fn test_variables_api() {
 
 #[tokio::test]
 async fn test_set_variable_api() {
-    let code = r#"
+    let code = r"
         var counter: int = 0
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
 
@@ -240,9 +239,9 @@ async fn test_set_variable_api() {
 
 #[tokio::test]
 async fn test_set_immutable_variable_fails() {
-    let code = r#"
+    let code = r"
         let constant: int = 100
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
 

@@ -35,7 +35,7 @@ pub enum SinkError {
 impl SinkError {
     /// Create a generic error from a displayable value.
     pub fn other(msg: impl std::fmt::Display) -> Self {
-        SinkError::Other(msg.to_string())
+        Self::Other(msg.to_string())
     }
 }
 

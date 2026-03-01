@@ -8,7 +8,7 @@ use varpulis_core::Event;
 pub struct JsonConverter;
 
 impl Converter for JsonConverter {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "json"
     }
 

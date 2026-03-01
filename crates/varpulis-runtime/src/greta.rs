@@ -169,8 +169,7 @@ impl EventGraph {
     pub fn nodes_of_type(&self, type_index: u16) -> &[NodeId] {
         self.nodes_by_type
             .get(&type_index)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
+            .map_or(&[], |v| v.as_slice())
     }
 
     /// Propagate counts for a query (GRETA core algorithm)
@@ -185,7 +184,7 @@ impl EventGraph {
             let predecessors = node.predecessors.clone();
 
             // Calculate count: start + sum of predecessor counts
-            let mut count = if is_start { 1u64 } else { 0u64 };
+            let mut count = u64::from(is_start);
             for pred_id in predecessors {
                 if let Some(pred) = self.nodes.get(pred_id as usize) {
                     count = count.saturating_add(pred.count(query));
@@ -222,13 +221,13 @@ impl EventGraph {
 
     /// Number of nodes in the graph
     #[inline]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.nodes.len()
     }
 
     /// Check if graph is empty
     #[inline]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }
 }

@@ -13,20 +13,20 @@ pub struct Span {
 
 impl Span {
     /// Creates a new span from start and end byte offsets.
-    pub fn new(start: usize, end: usize) -> Self {
+    pub const fn new(start: usize, end: usize) -> Self {
         Self { start, end }
     }
 
     /// Merges two spans into the smallest span covering both.
-    pub fn merge(self, other: Span) -> Span {
-        Span {
+    pub fn merge(self, other: Self) -> Self {
+        Self {
             start: self.start.min(other.start),
             end: self.end.max(other.end),
         }
     }
 
     /// Creates a dummy span (0..0) for synthetic AST nodes.
-    pub fn dummy() -> Self {
+    pub const fn dummy() -> Self {
         Self { start: 0, end: 0 }
     }
 }
@@ -38,7 +38,7 @@ impl Default for Span {
 }
 
 /// A value with an associated span
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "T: Serialize + for<'a> Deserialize<'a>")]
 pub struct Spanned<T> {
     /// The wrapped AST node.
@@ -49,12 +49,12 @@ pub struct Spanned<T> {
 
 impl<T> Spanned<T> {
     /// Creates a new spanned value with the given span.
-    pub fn new(node: T, span: Span) -> Self {
+    pub const fn new(node: T, span: Span) -> Self {
         Self { node, span }
     }
 
     /// Creates a spanned value with a dummy span (0..0).
-    pub fn dummy(node: T) -> Self {
+    pub const fn dummy(node: T) -> Self {
         Self {
             node,
             span: Span::dummy(),

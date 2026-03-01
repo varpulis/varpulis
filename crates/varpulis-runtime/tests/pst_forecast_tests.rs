@@ -146,13 +146,13 @@ async fn test_forecast_processes_events() {
 
 #[tokio::test]
 async fn test_forecast_with_filter() {
-    let code = r#"
+    let code = r"
         stream ForecastStream = Event1 as e1
             -> Event2 as e2
             .within(10s)
             .forecast(confidence: 0.8, warmup: 2)
             .emit(probability: forecast_probability)
-    "#;
+    ";
 
     let program = parse(code).expect("parse");
     let (tx, mut rx) = mpsc::channel(4096);
@@ -215,8 +215,7 @@ async fn test_forecast_without_sequence_errors() {
     let err_msg = result.unwrap_err().to_string();
     assert!(
         err_msg.contains("sequence") || err_msg.contains("followed-by"),
-        "Error message should mention that a sequence pattern is required, got: {}",
-        err_msg
+        "Error message should mention that a sequence pattern is required, got: {err_msg}"
     );
 }
 
@@ -273,13 +272,13 @@ async fn test_forecast_warmup_suppression() {
 
 #[tokio::test]
 async fn test_forecast_deterministic_pattern() {
-    let code = r#"
+    let code = r"
         stream ForecastStream = Start as s
             -> End as e
             .within(10s)
             .forecast(confidence: 0.0, warmup: 3)
             .emit(prob: forecast_probability)
-    "#;
+    ";
 
     let program = parse(code).expect("parse");
     let (tx, mut rx) = mpsc::channel(4096);
@@ -321,8 +320,7 @@ async fn test_forecast_deterministic_pattern() {
             if let Some(Value::Float(prob)) = result.data.get("forecast_probability") {
                 assert!(
                     *prob > 0.0,
-                    "Deterministic pattern should yield probability > 0, got {}",
-                    prob
+                    "Deterministic pattern should yield probability > 0, got {prob}"
                 );
             }
         }
@@ -508,7 +506,7 @@ async fn test_forecast_no_params() {
 
 #[tokio::test]
 async fn test_forecast_conformal_interval_fields() {
-    let code = r#"
+    let code = r"
         stream ForecastStream = Event1 as e1
             -> Event2 as e2
             .within(10s)
@@ -518,7 +516,7 @@ async fn test_forecast_conformal_interval_fields() {
                 lower: forecast_lower,
                 upper: forecast_upper
             )
-    "#;
+    ";
 
     let program = parse(code).expect("parse");
     let (tx, mut rx) = mpsc::channel(4096);
@@ -553,19 +551,15 @@ async fn test_forecast_conformal_interval_fields() {
                 if let Some(Value::Float(upper)) = result.data.get("forecast_upper") {
                     assert!(
                         *lower >= 0.0,
-                        "forecast_lower should be >= 0.0, got {}",
-                        lower
+                        "forecast_lower should be >= 0.0, got {lower}"
                     );
                     assert!(
                         *upper <= 1.0,
-                        "forecast_upper should be <= 1.0, got {}",
-                        upper
+                        "forecast_upper should be <= 1.0, got {upper}"
                     );
                     assert!(
                         lower <= upper,
-                        "forecast_lower ({}) should be <= forecast_upper ({})",
-                        lower,
-                        upper
+                        "forecast_lower ({lower}) should be <= forecast_upper ({upper})"
                     );
                 }
             }
@@ -579,13 +573,13 @@ async fn test_forecast_conformal_interval_fields() {
 
 #[tokio::test]
 async fn test_forecast_hawkes_burst_effect() {
-    let code = r#"
+    let code = r"
         stream ForecastBurst = Event1 as e1
             -> Event2 as e2
             .within(10s)
             .forecast(confidence: 0.0, warmup: 2)
             .emit(prob: forecast_probability)
-    "#;
+    ";
 
     let program = parse(code).expect("parse");
     let (tx, mut rx) = mpsc::channel(16384);
@@ -626,13 +620,13 @@ async fn test_forecast_hawkes_burst_effect() {
 
 #[tokio::test]
 async fn test_forecast_hawkes_disabled_vpl() {
-    let code = r#"
+    let code = r"
         stream ForecastNoHawkes = Event1 as e1
             -> Event2 as e2
             .within(10s)
             .forecast(confidence: 0.0, warmup: 2, hawkes: false)
             .emit(prob: forecast_probability)
-    "#;
+    ";
 
     let events: Vec<Event> = (0..20)
         .flat_map(|i| {
@@ -656,7 +650,7 @@ async fn test_forecast_hawkes_disabled_vpl() {
 
 #[tokio::test]
 async fn test_forecast_conformal_disabled_vpl() {
-    let code = r#"
+    let code = r"
         stream ForecastNoConformal = Event1 as e1
             -> Event2 as e2
             .within(10s)
@@ -666,7 +660,7 @@ async fn test_forecast_conformal_disabled_vpl() {
                 lower: forecast_lower,
                 upper: forecast_upper
             )
-    "#;
+    ";
 
     let events: Vec<Event> = (0..20)
         .flat_map(|i| {
@@ -688,15 +682,13 @@ async fn test_forecast_conformal_disabled_vpl() {
         if let Some(Value::Float(lower)) = e.data.get("lower") {
             assert!(
                 (*lower - 0.0).abs() < 1e-10,
-                "forecast_lower should be 0.0 when conformal disabled, got {}",
-                lower
+                "forecast_lower should be 0.0 when conformal disabled, got {lower}"
             );
         }
         if let Some(Value::Float(upper)) = e.data.get("upper") {
             assert!(
                 (*upper - 1.0).abs() < 1e-10,
-                "forecast_upper should be 1.0 when conformal disabled, got {}",
-                upper
+                "forecast_upper should be 1.0 when conformal disabled, got {upper}"
             );
         }
     }
@@ -708,13 +700,13 @@ async fn test_forecast_conformal_disabled_vpl() {
 
 #[tokio::test]
 async fn test_forecast_both_disabled_vpl() {
-    let code = r#"
+    let code = r"
         stream ForecastMinimal = Event1 as e1
             -> Event2 as e2
             .within(10s)
             .forecast(confidence: 0.0, warmup: 2, hawkes: false, conformal: false)
             .emit(prob: forecast_probability)
-    "#;
+    ";
 
     let program = parse(code);
     assert!(

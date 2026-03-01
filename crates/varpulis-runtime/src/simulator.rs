@@ -158,7 +158,9 @@ impl Simulator {
         // Generate HVAC status (less frequent)
         if self.tick_count.is_multiple_of(5) {
             for hvac in &self.config.hvac_units {
-                let power = hvac.base_power * self.degradation_factor + rng.gen_range(-0.5..0.5);
+                let power = hvac
+                    .base_power
+                    .mul_add(self.degradation_factor, rng.gen_range(-0.5..0.5));
                 let pressure =
                     hvac.base_pressure / self.degradation_factor + rng.gen_range(-0.1..0.1);
 

@@ -19,3 +19,6 @@ zeroize = { workspace = true }
 [dev-dependencies]
 varpulis-parser = { version = "0.4.1", path = "../varpulis-parser" }
 serde_json = { workspace = true }
+
+[lints]
+workspace = true

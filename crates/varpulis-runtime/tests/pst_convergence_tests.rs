@@ -37,7 +37,7 @@ struct Rng {
 }
 
 impl Rng {
-    fn new(seed: u64) -> Self {
+    const fn new(seed: u64) -> Self {
         Self { state: seed }
     }
 
@@ -185,8 +185,7 @@ fn test_pst_four_symbol_convergence() {
     // Report overall quality
     assert!(
         max_error < tolerance,
-        "Maximum error across all 16 transitions: {:.4}",
-        max_error
+        "Maximum error across all 16 transitions: {max_error:.4}"
     );
 }
 
@@ -283,8 +282,7 @@ fn test_pmc_completion_two_step() {
     let late_avg = last_200.iter().sum::<f64>() / last_200.len() as f64;
     assert!(
         (late_avg - 0.7).abs() < 0.08,
-        "Late-stage completion should converge closer to 0.7, got {:.4}",
-        late_avg
+        "Late-stage completion should converge closer to 0.7, got {late_avg:.4}"
     );
 }
 
@@ -498,16 +496,13 @@ fn test_pmc_convergence_rate() {
     let last_error = *epoch_errors.last().unwrap();
     assert!(
         last_error < first_error || last_error < 0.05,
-        "Error should decrease over time: first epoch MAE={:.4}, last epoch MAE={:.4}",
-        first_error,
-        last_error
+        "Error should decrease over time: first epoch MAE={first_error:.4}, last epoch MAE={last_error:.4}"
     );
 
     // Final epoch error should be small (good convergence)
     assert!(
         last_error < 0.1,
-        "Final epoch MAE should be < 0.1, got {:.4}",
-        last_error
+        "Final epoch MAE should be < 0.1, got {last_error:.4}"
     );
 }
 
@@ -690,9 +685,7 @@ fn test_conformal_intervals_narrow_with_data() {
         // Late intervals should not be wider than early (modulo noise)
         assert!(
             late_avg <= early_avg + 0.1,
-            "Late intervals ({:.4}) should not be much wider than early ({:.4})",
-            late_avg,
-            early_avg
+            "Late intervals ({late_avg:.4}) should not be much wider than early ({early_avg:.4})"
         );
     }
 }
@@ -711,13 +704,13 @@ async fn test_full_pipeline_deterministic_convergence() {
     // After warmup, every forecast should have probability close to 1.0
     // because B *always* follows A.
 
-    let code = r#"
+    let code = r"
         stream Convergence = Start as s
             -> End as e
             .within(10s)
             .forecast(confidence: 0.0, warmup: 10, hawkes: false, conformal: false)
             .emit(prob: forecast_probability)
-    "#;
+    ";
 
     let program = parse(code).expect("parse");
     let (tx, mut rx) = mpsc::channel(16384);
@@ -756,12 +749,12 @@ async fn test_full_pipeline_deterministic_convergence() {
             let prob_val = e
                 .data
                 .get("prob")
-                .map(|v| format!("{:?}", v))
+                .map(|v| format!("{v:?}"))
                 .unwrap_or_default();
             let fp_val = e
                 .data
                 .get("forecast_probability")
-                .map(|v| format!("{:?}", v))
+                .map(|v| format!("{v:?}"))
                 .unwrap_or_default();
             debug_info.push_str(&format!(
                 "\n  [{}] type={}, prob={}, forecast_probability={}, keys={:?}",
@@ -775,10 +768,7 @@ async fn test_full_pipeline_deterministic_convergence() {
         if all_events.is_empty() {
             debug_info.push_str("\n  (no events at all!)");
         }
-        panic!(
-            "Should produce forecast events with probability values. {}",
-            debug_info
-        );
+        panic!("Should produce forecast events with probability values. {debug_info}");
     }
 
     // For a deterministic A→B alternation, P(End|Start) → 1.0
@@ -801,13 +791,13 @@ async fn test_full_pipeline_mixed_pattern_convergence() {
     // But also inject C events as noise.
     // P(B after A) should still converge despite noise events.
 
-    let code = r#"
+    let code = r"
         stream MixedConvergence = EventA as a
             -> EventB as b
             .within(10s)
             .forecast(confidence: 0.0, warmup: 20, hawkes: false, conformal: false)
             .emit(prob: forecast_probability)
-    "#;
+    ";
 
     let program = parse(code).expect("parse");
     let (tx, mut rx) = mpsc::channel(16384);
@@ -857,8 +847,7 @@ async fn test_full_pipeline_mixed_pattern_convergence() {
     let avg: f64 = probs.iter().sum::<f64>() / probs.len() as f64;
     assert!(
         avg > 0.0,
-        "Forecast probability should be positive, got {:.4}",
-        avg
+        "Forecast probability should be positive, got {avg:.4}"
     );
 
     // Last quarter should show convergence
@@ -867,8 +856,7 @@ async fn test_full_pipeline_mixed_pattern_convergence() {
         let late_avg: f64 = last_q.iter().sum::<f64>() / last_q.len() as f64;
         assert!(
             late_avg > 0.1,
-            "Late-stage forecasts should reflect learned pattern, got {:.4}",
-            late_avg
+            "Late-stage forecasts should reflect learned pattern, got {late_avg:.4}"
         );
     }
 }
@@ -924,27 +912,21 @@ fn test_online_vs_batch_convergence() {
 
     assert!(
         (batch_pb_a - online_pb_a).abs() < 0.05,
-        "P(B|A) should match: batch={:.4}, online={:.4}",
-        batch_pb_a,
-        online_pb_a
+        "P(B|A) should match: batch={batch_pb_a:.4}, online={online_pb_a:.4}"
     );
     assert!(
         (batch_pa_b - online_pa_b).abs() < 0.05,
-        "P(A|B) should match: batch={:.4}, online={:.4}",
-        batch_pa_b,
-        online_pa_b
+        "P(A|B) should match: batch={batch_pa_b:.4}, online={online_pa_b:.4}"
     );
 
     // Both should be close to ground truth
     assert!(
         (batch_pb_a - 0.7).abs() < 0.05,
-        "Batch P(B|A) should be ~0.7, got {:.4}",
-        batch_pb_a
+        "Batch P(B|A) should be ~0.7, got {batch_pb_a:.4}"
     );
     assert!(
         (online_pb_a - 0.7).abs() < 0.05,
-        "Online P(B|A) should be ~0.7, got {:.4}",
-        online_pb_a
+        "Online P(B|A) should be ~0.7, got {online_pb_a:.4}"
     );
 }
 
@@ -1032,10 +1014,8 @@ fn test_adaptive_warmup_delays_until_stable() {
     // Adaptive warmup should start at or after fixed warmup
     assert!(
         adaptive_at >= fixed_at,
-        "Adaptive warmup (first forecast at event {}) should not emit before \
-         fixed warmup (first at event {})",
-        adaptive_at,
-        fixed_at
+        "Adaptive warmup (first forecast at event {adaptive_at}) should not emit before \
+         fixed warmup (first at event {fixed_at})"
     );
 }
 
@@ -1103,8 +1083,7 @@ fn test_forecast_confidence_increases_over_time() {
 
     assert!(
         late_avg > 0.5,
-        "Late forecast confidence should be > 0.5, got {:.4}",
-        late_avg
+        "Late forecast confidence should be > 0.5, got {late_avg:.4}"
     );
 }
 
@@ -1209,21 +1188,20 @@ async fn test_forecast_mode_accurate_vpl() {
         / probs[probs.len().saturating_sub(20)..].len() as f64;
     assert!(
         late_avg > 0.5,
-        "Deterministic pattern should have high completion probability, got {:.4}",
-        late_avg
+        "Deterministic pattern should have high completion probability, got {late_avg:.4}"
     );
 }
 
 #[tokio::test]
 async fn test_forecast_zero_config_vpl() {
     // Zero-config .forecast() — should use balanced defaults
-    let code = r#"
+    let code = r"
         stream ZeroConfig = Ping as p
             -> Pong as q
             .within(10s)
             .forecast()
             .emit(prob: forecast_probability, conf: forecast_confidence)
-    "#;
+    ";
 
     let program = parse(code).expect("parse");
     let (tx, mut rx) = mpsc::channel(16384);
@@ -1323,21 +1301,17 @@ fn test_hawkes_ema_adapts_to_regime_change() {
     // Both should be valid probabilities
     assert!(
         baseline_prob > 0.0 && baseline_prob <= 1.0,
-        "Baseline prob should be valid: {}",
-        baseline_prob
+        "Baseline prob should be valid: {baseline_prob}"
     );
     assert!(
         burst_prob > 0.0 && burst_prob <= 1.0,
-        "Burst prob should be valid: {}",
-        burst_prob
+        "Burst prob should be valid: {burst_prob}"
     );
 
     // Hawkes should boost during burst (or at least not crash)
     // The exact boost depends on the EMA convergence
     assert!(
         burst_prob >= baseline_prob * 0.8,
-        "Burst probability ({:.4}) should be >= 80% of baseline ({:.4})",
-        burst_prob,
-        baseline_prob
+        "Burst probability ({burst_prob:.4}) should be >= 80% of baseline ({baseline_prob:.4})"
     );
 }

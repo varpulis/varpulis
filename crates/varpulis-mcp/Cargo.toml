@@ -33,3 +33,6 @@ rmcp = { version = "0.16", features = ["client", "transport-child-process"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
+
+[lints]
+workspace = true

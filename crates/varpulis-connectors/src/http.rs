@@ -54,8 +54,7 @@ impl ConnectorFactory for HttpFactory {
     ) -> Result<Arc<dyn crate::sink::Sink>, ConnectorError> {
         if config.url.is_empty() {
             return Err(ConnectorError::ConfigError(format!(
-                "HTTP connector '{}' has no URL configured",
-                name
+                "HTTP connector '{name}' has no URL configured"
             )));
         }
         Ok(Arc::new(crate::sink::SinkConnectorAdapter::new(
@@ -187,7 +186,7 @@ impl HttpWebhookConfig {
     }
 
     /// Set the maximum requests per second (0 = unlimited).
-    pub fn with_rate_limit(mut self, rps: u32) -> Self {
+    pub const fn with_rate_limit(mut self, rps: u32) -> Self {
         self.rate_limit = rps;
         self
     }
@@ -222,21 +221,21 @@ enum HttpError {
 impl IntoResponse for HttpError {
     fn into_response(self) -> Response {
         let (status, message) = match self {
-            HttpError::Auth => (
+            Self::Auth => (
                 StatusCode::UNAUTHORIZED,
                 "Invalid or missing API key".to_string(),
             ),
-            HttpError::RateLimit => (
+            Self::RateLimit => (
                 StatusCode::TOO_MANY_REQUESTS,
                 "Rate limit exceeded".to_string(),
             ),
-            HttpError::ChannelClosed => (
+            Self::ChannelClosed => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "Service unavailable".to_string(),
             ),
-            HttpError::BatchTooLarge { actual, max } => (
+            Self::BatchTooLarge { actual, max } => (
                 StatusCode::PAYLOAD_TOO_LARGE,
-                format!("Batch too large: {} events (max: {})", actual, max),
+                format!("Batch too large: {actual} events (max: {max})"),
             ),
         };
         (status, Json(serde_json::json!({"error": message}))).into_response()
@@ -382,7 +381,7 @@ impl SourceConnector for HttpWebhookSource {
         let bind_addr: std::net::IpAddr = config
             .bind_address
             .parse()
-            .map_err(|e| ConnectorError::ConfigError(format!("Invalid bind address: {}", e)))?;
+            .map_err(|e| ConnectorError::ConfigError(format!("Invalid bind address: {e}")))?;
 
         // Rate limiter state (simple token bucket)
         let rate_limiter = (config.rate_limit > 0)
@@ -403,11 +402,11 @@ impl SourceConnector for HttpWebhookSource {
 
         let app = Router::new()
             .route(
-                &format!("/{}", event_path),
+                &format!("/{event_path}"),
                 post(handle_single_event).layer(RequestBodyLimitLayer::new(single_body_limit)),
             )
             .route(
-                &format!("/{}", batch_path),
+                &format!("/{batch_path}"),
                 post(handle_batch_events).layer(RequestBodyLimitLayer::new(batch_body_limit)),
             )
             .route("/health", get(handle_health))
@@ -492,7 +491,9 @@ impl RateLimiter {
     fn allow(&mut self) -> bool {
         let now = std::time::Instant::now();
         let elapsed = now.duration_since(self.last_refill).as_secs_f64();
-        self.tokens = (self.tokens + elapsed * self.refill_rate).min(self.max_tokens);
+        self.tokens = elapsed
+            .mul_add(self.refill_rate, self.tokens)
+            .min(self.max_tokens);
         self.last_refill = now;
 
         if self.tokens >= 1.0 {

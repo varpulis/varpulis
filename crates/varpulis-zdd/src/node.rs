@@ -26,7 +26,7 @@ pub struct ZddNode {
 impl ZddNode {
     /// Create a new ZDD node
     #[inline]
-    pub fn new(var: u32, lo: ZddRef, hi: ZddRef) -> Self {
+    pub const fn new(var: u32, lo: ZddRef, hi: ZddRef) -> Self {
         Self { var, lo, hi }
     }
 

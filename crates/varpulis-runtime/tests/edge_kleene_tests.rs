@@ -47,10 +47,10 @@ async fn kleene_plus_zero_matching() {
             .emit(status: "matched")
     "#;
 
-    let events = r#"
+    let events = r"
         A { id: 1 }
         C { id: 2 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
     assert_eq!(
@@ -70,11 +70,11 @@ async fn kleene_plus_single_match() {
             .emit(status: "matched")
     "#;
 
-    let events = r#"
+    let events = r"
         A { id: 1 }
         B { value: 10 }
         C { id: 2 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
     assert_eq!(results.len(), 1, "Single B should complete Kleene+ match");
@@ -93,7 +93,7 @@ async fn kleene_plus_many_matches() {
     // Generate 15 B events between A and C
     let mut events = String::from("A { id: 1 }\n");
     for i in 1..=15 {
-        events.push_str(&format!("B {{ value: {} }}\n", i));
+        events.push_str(&format!("B {{ value: {i} }}\n"));
     }
     events.push_str("C { id: 2 }\n");
 
@@ -114,14 +114,14 @@ async fn kleene_with_predicate_filter() {
             .emit(status: "filtered")
     "#;
 
-    let events = r#"
+    let events = r"
         A { id: 1 }
         B { value: 30 }
         B { value: 80 }
         B { value: 20 }
         B { value: 90 }
         C { id: 2 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
     // Only B(80) and B(90) match the predicate → Kleene should capture those
@@ -141,7 +141,7 @@ async fn kleene_interleaved_unrelated_events() {
             .emit(status: "matched")
     "#;
 
-    let events = r#"
+    let events = r"
         A { id: 1 }
         X { noise: 1 }
         B { value: 10 }
@@ -149,7 +149,7 @@ async fn kleene_interleaved_unrelated_events() {
         B { value: 20 }
         Z { noise: 3 }
         C { id: 2 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
     assert!(
@@ -170,7 +170,7 @@ async fn kleene_rapid_burst() {
 
     let mut events = String::from("A { id: 1 }\n");
     for i in 1..=100 {
-        events.push_str(&format!("B {{ n: {} }}\n", i));
+        events.push_str(&format!("B {{ n: {i} }}\n"));
     }
     events.push_str("C { id: 2 }\n");
 
@@ -192,7 +192,7 @@ async fn kleene_reset_after_match() {
             .emit(status: "matched")
     "#;
 
-    let events = r#"
+    let events = r"
         A { id: 1 }
         B { value: 10 }
         B { value: 20 }
@@ -200,7 +200,7 @@ async fn kleene_reset_after_match() {
         A { id: 2 }
         B { value: 30 }
         C { id: 2 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
     assert!(
@@ -221,12 +221,12 @@ async fn kleene_mixed_types_no_false_match() {
     "#;
 
     // Send D events (not B) — should not trigger match
-    let events = r#"
+    let events = r"
         A { id: 1 }
         D { value: 10 }
         D { value: 20 }
         C { id: 2 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
     assert_eq!(
@@ -247,12 +247,12 @@ async fn kleene_within_timeout() {
     "#;
 
     // B arrives within the window
-    let events = r#"
+    let events = r"
         BATCH 0
         A { id: 1 }
         B { value: 10 }
         B { value: 20 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
     // Within window → should have matches
@@ -272,13 +272,13 @@ async fn kleene_within_expired() {
             .emit(status: "timed")
     "#;
 
-    let events = r#"
+    let events = r"
         BATCH 0
         A { id: 1 }
 
         BATCH 5000
         B { value: 10 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
     // The B arrives at 5s, well outside the 1s window.
@@ -299,12 +299,12 @@ async fn kleene_simple_two_step() {
             .emit(status: "accumulated")
     "#;
 
-    let events = r#"
+    let events = r"
         A { id: 1 }
         B { value: 10 }
         B { value: 20 }
         B { value: 30 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
     // Each B after A triggers incremental Kleene output
@@ -317,19 +317,19 @@ async fn kleene_simple_two_step() {
 #[tokio::test]
 async fn kleene_with_emit_fields() {
     // Verify emitted fields from Kleene context are accessible
-    let program = r#"
+    let program = r"
         stream KleeneEmit = Start as s
             -> all Tick as t
             -> End as e
             .emit(start_id: s.id, end_id: e.id)
-    "#;
+    ";
 
-    let events = r#"
+    let events = r"
         Start { id: 1 }
         Tick { price: 100.0 }
         Tick { price: 101.0 }
         End { id: 99 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
     assert!(
@@ -357,13 +357,13 @@ async fn kleene_multiple_closures() {
             .emit(status: "double_kleene")
     "#;
 
-    let events = r#"
+    let events = r"
         A { id: 1 }
         B { v: 1 }
         B { v: 2 }
         B { v: 3 }
         D { id: 2 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
     assert!(

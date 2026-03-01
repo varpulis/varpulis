@@ -161,7 +161,7 @@ struct UdfAggregateAdapter {
 }
 
 impl crate::aggregation::AggregateFunc for UdfAggregateAdapter {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "udf_aggregate"
     }
 

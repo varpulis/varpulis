@@ -108,7 +108,7 @@ impl ConsoleSink {
     }
 
     /// Switch to compact (single-line JSON) output format.
-    pub fn compact(mut self) -> Self {
+    pub const fn compact(mut self) -> Self {
         self.pretty = false;
         self
     }

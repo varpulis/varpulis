@@ -40,7 +40,7 @@ impl<'a> ZddIterator<'a> {
     }
 }
 
-impl<'a> Iterator for ZddIterator<'a> {
+impl Iterator for ZddIterator<'_> {
     type Item = Vec<u32>;
 
     fn next(&mut self) -> Option<Self::Item> {

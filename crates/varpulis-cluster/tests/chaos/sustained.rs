@@ -57,10 +57,7 @@ async fn test_chaos_monkey() {
                 // Kill a random worker (pick by index).
                 let idx = (round as usize) % alive_count;
                 let worker_id = cluster.workers[idx].id.clone();
-                eprintln!(
-                    "  [chaos] round {}: killing {} ({} alive)",
-                    round, worker_id, alive_count
-                );
+                eprintln!("  [chaos] round {round}: killing {worker_id} ({alive_count} alive)");
                 cluster.kill_worker(&worker_id);
             } else {
                 // Add a new worker.
@@ -94,8 +91,7 @@ async fn test_chaos_monkey() {
         }
 
         eprintln!(
-            "  [chaos] Completed {} rounds: {} successful injects, {} failed",
-            round, successful_injects, failed_injects
+            "  [chaos] Completed {round} rounds: {successful_injects} successful injects, {failed_injects} failed"
         );
 
         // After chaos: coordinator should still be responsive.

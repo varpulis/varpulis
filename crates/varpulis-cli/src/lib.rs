@@ -32,21 +32,21 @@ pub fn check_syntax(source: &str) -> Result<()> {
             Ok(())
         }
         Err(e) => {
-            println!("Syntax error: {}", e);
-            Err(anyhow::anyhow!("Parse error: {}", e))
+            println!("Syntax error: {e}");
+            Err(anyhow::anyhow!("Parse error: {e}"))
         }
     }
 }
 
 /// Parse and return statement count
 pub fn parse_program(source: &str) -> Result<usize> {
-    let program = parse(source).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
+    let program = parse(source).map_err(|e| anyhow::anyhow!("Parse error: {e}"))?;
     Ok(program.statements.len())
 }
 
 /// Validate program can be loaded by engine
 pub fn validate_program(source: &str) -> Result<usize> {
-    let program = parse(source).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
+    let program = parse(source).map_err(|e| anyhow::anyhow!("Parse error: {e}"))?;
     let statement_count = program.statements.len();
 
     // Try to create engine and load program
@@ -54,7 +54,7 @@ pub fn validate_program(source: &str) -> Result<usize> {
     let mut engine = varpulis_runtime::engine::Engine::new(output_tx);
     engine
         .load(&program)
-        .map_err(|e| anyhow::anyhow!("Load error: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Load error: {e}"))?;
 
     Ok(statement_count)
 }
@@ -84,8 +84,7 @@ fn resolve_imports_inner(
 ) -> Result<()> {
     if depth > MAX_IMPORT_DEPTH {
         anyhow::bail!(
-            "Import depth limit exceeded (max {}). Check for circular imports.",
-            MAX_IMPORT_DEPTH
+            "Import depth limit exceeded (max {MAX_IMPORT_DEPTH}). Check for circular imports."
         );
     }
 
@@ -154,17 +153,17 @@ pub async fn simulate_from_source(
 ) -> Result<Vec<varpulis_runtime::event::Event>> {
     use varpulis_runtime::event::Event;
 
-    let program = parse(vpl).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
+    let program = parse(vpl).map_err(|e| anyhow::anyhow!("Parse error: {e}"))?;
 
     let (output_tx, mut output_rx) = tokio::sync::mpsc::channel::<Event>(10_000);
     let mut engine = varpulis_runtime::engine::Engine::new(output_tx);
     engine
         .load(&program)
-        .map_err(|e| anyhow::anyhow!("Load error: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Load error: {e}"))?;
 
     engine
         .process_batch_sync(events)
-        .map_err(|e| anyhow::anyhow!("Process error: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Process error: {e}"))?;
 
     // Drop the sender side so the receiver knows no more events are coming
     drop(engine);
@@ -193,19 +192,19 @@ mod tests {
 
     #[test]
     fn test_check_syntax_invalid() {
-        let source = r#"
+        let source = r"
             stream Invalid =
                 .where(
-        "#;
+        ";
         assert!(check_syntax(source).is_err());
     }
 
     #[test]
     fn test_parse_program_valid() {
-        let source = r#"
+        let source = r"
             stream Test = Events
                 .where(value > 10)
-        "#;
+        ";
         let result = parse_program(source);
         assert!(result.is_ok());
         assert_eq!(result.expect("should succeed"), 1);
@@ -269,20 +268,20 @@ mod tests {
 
     #[test]
     fn test_check_syntax_event_declaration() {
-        let source = r#"
+        let source = r"
             event TempReading:
                 sensor_id: str
                 temperature: float
-        "#;
+        ";
         assert!(check_syntax(source).is_ok());
     }
 
     #[test]
     fn test_check_syntax_function_declaration() {
-        let source = r#"
+        let source = r"
             fn celsius_to_fahrenheit(c: float) -> float:
                 c * 9.0 / 5.0 + 32.0
-        "#;
+        ";
         assert!(check_syntax(source).is_ok());
     }
 

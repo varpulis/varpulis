@@ -72,13 +72,13 @@ impl ValidationResult {
                 Severity::Error => "error",
                 Severity::Warning => "warning",
             };
-            let code_str = d.code.map(|c| format!("[{}] ", c)).unwrap_or_default();
+            let code_str = d.code.map(|c| format!("[{c}] ")).unwrap_or_default();
             out.push_str(&format!(
                 "{}:{}: {}{}{}\n",
                 line, col, prefix, code_str, d.message
             ));
             if let Some(ref hint) = d.hint {
-                out.push_str(&format!("  hint: {}\n", hint));
+                out.push_str(&format!("  hint: {hint}\n"));
             }
             for rel in &d.related {
                 let (rl, rc) = position_to_line_col(source, rel.span.start);

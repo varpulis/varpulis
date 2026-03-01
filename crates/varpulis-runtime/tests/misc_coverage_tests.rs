@@ -141,7 +141,7 @@ mod worker_pool_tests {
             pool_name: "mypool".to_string(),
             queue_depth: 42,
         };
-        let msg = format!("{}", err);
+        let msg = format!("{err}");
         assert!(msg.contains("mypool"));
         assert!(msg.contains("42"));
     }
@@ -194,7 +194,7 @@ mod worker_pool_tests {
             queue_size: 500,
             backpressure: BackpressureStrategy::DropOldest,
         };
-        let cloned = config.clone();
+        let cloned = config;
         assert_eq!(cloned.name, "clone_test");
         assert_eq!(cloned.workers, 8);
         assert_eq!(cloned.backpressure, BackpressureStrategy::DropOldest);
@@ -206,7 +206,7 @@ mod worker_pool_tests {
             pool_name: "pool1".to_string(),
             queue_depth: 100,
         };
-        let cloned = err.clone();
+        let cloned = err;
         assert_eq!(cloned.pool_name, "pool1");
         assert_eq!(cloned.queue_depth, 100);
     }
@@ -427,7 +427,7 @@ mod sequence_tests {
         let mut corr = ActiveCorrelation::new();
         let event = make_event("E", vec![]);
 
-        corr.advance(event.clone(), None);
+        corr.advance(event, None);
         assert_eq!(corr.current_step, 1);
         // Previous should be set even without alias
         assert!(corr.context.previous.is_some());
@@ -998,8 +998,7 @@ mod hamlet_optimizer_tests {
                 decision,
                 SharingDecision::Split | SharingDecision::Shared | SharingDecision::NonShared
             ),
-            "Unexpected decision: {:?}",
-            decision
+            "Unexpected decision: {decision:?}"
         );
     }
 }

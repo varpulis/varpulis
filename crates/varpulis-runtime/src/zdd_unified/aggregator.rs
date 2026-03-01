@@ -235,7 +235,7 @@ impl ZddAggregator {
     }
 
     /// Get current statistics
-    pub fn stats(&self) -> &ZddAggregatorStats {
+    pub const fn stats(&self) -> &ZddAggregatorStats {
         &self.stats
     }
 
@@ -245,12 +245,12 @@ impl ZddAggregator {
     }
 
     /// Get number of states
-    pub fn num_states(&self) -> usize {
+    pub const fn num_states(&self) -> usize {
         self.nfa.num_states()
     }
 
     /// Get number of queries
-    pub fn num_queries(&self) -> usize {
+    pub const fn num_queries(&self) -> usize {
         self.nfa.num_queries()
     }
 }

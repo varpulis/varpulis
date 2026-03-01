@@ -689,14 +689,13 @@ impl Engine {
                         });
                     }
                 }
-            } else {
-                tracing::warn!("Join stream {} has no JoinBuffer configured", stream.name);
-                return Ok(StreamProcessResult {
-                    emitted_events: vec![],
-                    output_events: vec![],
-                    sink_events_sent: 0,
-                });
             }
+            tracing::warn!("Join stream {} has no JoinBuffer configured", stream.name);
+            return Ok(StreamProcessResult {
+                emitted_events: vec![],
+                output_events: vec![],
+                sink_events_sent: 0,
+            });
         }
 
         // Delegate to unified pipeline execution

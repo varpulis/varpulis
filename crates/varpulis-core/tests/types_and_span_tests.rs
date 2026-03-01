@@ -104,43 +104,43 @@ fn type_display_null() {
 #[test]
 fn type_display_array() {
     let t = Type::Array(Box::new(Type::Int));
-    assert_eq!(format!("{}", t), "[int]");
+    assert_eq!(format!("{t}"), "[int]");
 }
 
 #[test]
 fn type_display_map() {
     let t = Type::Map(Box::new(Type::Str), Box::new(Type::Int));
-    assert_eq!(format!("{}", t), "{str: int}");
+    assert_eq!(format!("{t}"), "{str: int}");
 }
 
 #[test]
 fn type_display_tuple() {
     let t = Type::Tuple(vec![Type::Int, Type::Str, Type::Bool]);
-    assert_eq!(format!("{}", t), "(int, str, bool)");
+    assert_eq!(format!("{t}"), "(int, str, bool)");
 }
 
 #[test]
 fn type_display_tuple_single() {
     let t = Type::Tuple(vec![Type::Float]);
-    assert_eq!(format!("{}", t), "(float)");
+    assert_eq!(format!("{t}"), "(float)");
 }
 
 #[test]
 fn type_display_optional() {
     let t = Type::Optional(Box::new(Type::Str));
-    assert_eq!(format!("{}", t), "str?");
+    assert_eq!(format!("{t}"), "str?");
 }
 
 #[test]
 fn type_display_stream() {
     let t = Type::Stream(Box::new(Type::Int));
-    assert_eq!(format!("{}", t), "Stream<int>");
+    assert_eq!(format!("{t}"), "Stream<int>");
 }
 
 #[test]
 fn type_display_named() {
     let t = Type::Named("MyEvent".to_string());
-    assert_eq!(format!("{}", t), "MyEvent");
+    assert_eq!(format!("{t}"), "MyEvent");
 }
 
 #[test]
@@ -149,7 +149,7 @@ fn type_display_record() {
         ("x".to_string(), Type::Int),
         ("y".to_string(), Type::Float),
     ]);
-    assert_eq!(format!("{}", t), "{x: int, y: float}");
+    assert_eq!(format!("{t}"), "{x: int, y: float}");
 }
 
 #[test]
@@ -167,7 +167,7 @@ fn type_display_nested() {
     let t = Type::Array(Box::new(Type::Optional(Box::new(Type::Named(
         "Foo".to_string(),
     )))));
-    assert_eq!(format!("{}", t), "[Foo?]");
+    assert_eq!(format!("{t}"), "[Foo?]");
 }
 
 // =============================================================================
@@ -257,7 +257,7 @@ fn spanned_map() {
 #[test]
 fn spanned_map_type_change() {
     let s = Spanned::new(42, Span::new(0, 1));
-    let mapped = s.map(|x| format!("{}", x));
+    let mapped = s.map(|x| format!("{x}"));
     assert_eq!(mapped.node, "42");
 }
 

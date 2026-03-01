@@ -626,7 +626,7 @@ fn partitioned_delay_buffer_many_partitions() {
     let mut buffer: PartitionedDelayBuffer<f64> = PartitionedDelayBuffer::new(1);
 
     for i in 0..10 {
-        let key = format!("p{}", i);
+        let key = format!("p{i}");
         assert_eq!(buffer.push(&key, i as f64), None);
     }
 
@@ -690,13 +690,13 @@ fn partitioned_previous_tracker_many_partitions() {
     let mut tracker: PartitionedPreviousValueTracker<i32> = PartitionedPreviousValueTracker::new();
 
     for i in 0..20 {
-        let key = format!("partition_{}", i);
+        let key = format!("partition_{i}");
         tracker.update(&key, i * 10);
         tracker.update(&key, i * 10 + 1);
     }
 
     for i in 0..20 {
-        let key = format!("partition_{}", i);
+        let key = format!("partition_{i}");
         assert!(tracker.has_both(&key));
         let (curr, prev) = tracker.get_pair(&key).unwrap();
         assert_eq!(*curr, i * 10 + 1);

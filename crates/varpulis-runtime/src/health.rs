@@ -25,7 +25,7 @@ pub enum HealthStatus {
 
 impl HealthStatus {
     /// Returns the worst (most severe) of two statuses.
-    pub fn worst(self, other: Self) -> Self {
+    pub const fn worst(self, other: Self) -> Self {
         match (self, other) {
             (Self::Down, _) | (_, Self::Down) => Self::Down,
             (Self::Degraded, _) | (_, Self::Degraded) => Self::Degraded,
@@ -94,7 +94,7 @@ impl HealthRegistry {
     }
 
     /// Mark the system as started.
-    pub fn mark_started(&mut self) {
+    pub const fn mark_started(&mut self) {
         self.started = true;
     }
 
@@ -119,7 +119,7 @@ impl HealthRegistry {
     }
 
     /// Liveness check — always true if the process is running.
-    pub fn is_live(&self) -> bool {
+    pub const fn is_live(&self) -> bool {
         true
     }
 
@@ -129,7 +129,7 @@ impl HealthRegistry {
     }
 
     /// Startup check — true once `mark_started` has been called.
-    pub fn is_started(&self) -> bool {
+    pub const fn is_started(&self) -> bool {
         self.started
     }
 }

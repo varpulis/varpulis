@@ -206,7 +206,7 @@ fn bench_single_query(c: &mut Criterion) {
                 black_box(aggregator.process(event.clone()));
             }
             black_box(aggregator.flush())
-        })
+        });
     });
 
     group.bench_function("zdd_unified", |b| {
@@ -216,7 +216,7 @@ fn bench_single_query(c: &mut Criterion) {
                 black_box(aggregator.process(event.clone()));
             }
             black_box(aggregator.flush())
-        })
+        });
     });
 
     group.finish();
@@ -250,7 +250,7 @@ fn bench_multi_query_scaling(c: &mut Criterion) {
                         black_box(aggregator.process(event.clone()));
                     }
                     black_box(aggregator.flush())
-                })
+                });
             },
         );
 
@@ -264,7 +264,7 @@ fn bench_multi_query_scaling(c: &mut Criterion) {
                         black_box(aggregator.process(event.clone()));
                     }
                     black_box(aggregator.flush())
-                })
+                });
             },
         );
     }
@@ -294,7 +294,7 @@ fn bench_kleene_length(c: &mut Criterion) {
                     black_box(aggregator.process(event.clone()));
                 }
                 black_box(aggregator.flush())
-            })
+            });
         });
 
         group.bench_with_input(BenchmarkId::new("zdd_unified", length), &length, |b, _| {
@@ -304,7 +304,7 @@ fn bench_kleene_length(c: &mut Criterion) {
                     black_box(aggregator.process(event.clone()));
                 }
                 black_box(aggregator.flush())
-            })
+            });
         });
     }
 
@@ -331,7 +331,7 @@ fn bench_shared_kleene(c: &mut Criterion) {
                 black_box(aggregator.process(event.clone()));
             }
             black_box(aggregator.flush())
-        })
+        });
     });
 
     group.bench_function("zdd_unified_shared", |b| {
@@ -341,7 +341,7 @@ fn bench_shared_kleene(c: &mut Criterion) {
                 black_box(aggregator.process(event.clone()));
             }
             black_box(aggregator.flush())
-        })
+        });
     });
 
     group.finish();
@@ -372,7 +372,7 @@ fn bench_burstiness(c: &mut Criterion) {
                 black_box(aggregator.process(event.clone()));
             }
             black_box(aggregator.flush())
-        })
+        });
     });
 
     group.bench_function("zdd_bursty", |b| {
@@ -382,7 +382,7 @@ fn bench_burstiness(c: &mut Criterion) {
                 black_box(aggregator.process(event.clone()));
             }
             black_box(aggregator.flush())
-        })
+        });
     });
 
     // Regular pattern
@@ -393,7 +393,7 @@ fn bench_burstiness(c: &mut Criterion) {
                 black_box(aggregator.process(event.clone()));
             }
             black_box(aggregator.flush())
-        })
+        });
     });
 
     group.bench_function("zdd_regular", |b| {
@@ -403,7 +403,7 @@ fn bench_burstiness(c: &mut Criterion) {
                 black_box(aggregator.process(event.clone()));
             }
             black_box(aggregator.flush())
-        })
+        });
     });
 
     group.finish();
@@ -429,7 +429,7 @@ fn bench_throughput(c: &mut Criterion) {
                 black_box(aggregator.process(event.clone()));
             }
             black_box(aggregator.flush())
-        })
+        });
     });
 
     group.bench_function("zdd_10k", |b| {
@@ -439,7 +439,7 @@ fn bench_throughput(c: &mut Criterion) {
                 black_box(aggregator.process(event.clone()));
             }
             black_box(aggregator.flush())
-        })
+        });
     });
 
     group.finish();
@@ -464,7 +464,7 @@ fn bench_memory_pressure(c: &mut Criterion) {
                 black_box(aggregator.process(event.clone()));
             }
             black_box(aggregator.flush())
-        })
+        });
     });
 
     group.bench_function("zdd_many_small", |b| {
@@ -474,7 +474,7 @@ fn bench_memory_pressure(c: &mut Criterion) {
                 black_box(aggregator.process(event.clone()));
             }
             black_box(aggregator.flush())
-        })
+        });
     });
 
     // Few large sequences (tests graphlet/ZDD size)
@@ -488,7 +488,7 @@ fn bench_memory_pressure(c: &mut Criterion) {
                 black_box(aggregator.process(event.clone()));
             }
             black_box(aggregator.flush())
-        })
+        });
     });
 
     group.bench_function("zdd_few_large", |b| {
@@ -498,7 +498,7 @@ fn bench_memory_pressure(c: &mut Criterion) {
                 black_box(aggregator.process(event.clone()));
             }
             black_box(aggregator.flush())
-        })
+        });
     });
 
     group.finish();

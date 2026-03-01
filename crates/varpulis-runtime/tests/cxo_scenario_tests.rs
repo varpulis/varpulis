@@ -71,8 +71,7 @@ async fn cxo_fraud_card_testing() {
     let testing_count = count_alerts(&results, "card_testing");
     assert!(
         testing_count >= 1,
-        "Should detect at least 1 card testing sequence (stolen_card_42), got {}",
-        testing_count
+        "Should detect at least 1 card testing sequence (stolen_card_42), got {testing_count}"
     );
 }
 
@@ -196,8 +195,7 @@ async fn cxo_insider_abnormal_position() {
     let apb_count = count_alerts(&results, "abnormal_position_building");
     assert!(
         apb_count >= 1,
-        "Should detect abnormal position building for accumulator (WIDG), got {}",
-        apb_count
+        "Should detect abnormal position building for accumulator (WIDG), got {apb_count}"
     );
 }
 
@@ -215,8 +213,7 @@ async fn cxo_cyber_brute_force_lateral() {
     let bf_count = count_alerts(&results, "brute_force_lateral");
     assert!(
         bf_count >= 1,
-        "Should detect brute force + lateral movement to file-server-02, got {}",
-        bf_count
+        "Should detect brute force + lateral movement to file-server-02, got {bf_count}"
     );
 }
 
@@ -230,8 +227,7 @@ async fn cxo_cyber_dns_exfiltration() {
     let dns_count = count_alerts(&results, "dns_exfiltration");
     assert!(
         dns_count >= 1,
-        "Should detect DNS exfiltration from workstation-15, got {}",
-        dns_count
+        "Should detect DNS exfiltration from workstation-15, got {dns_count}"
     );
 }
 

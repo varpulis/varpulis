@@ -48,7 +48,7 @@ pub struct EvalContext<'a> {
 #[allow(dead_code)] // Public API for external use
 impl<'a> EvalContext<'a> {
     #[inline]
-    pub fn new(
+    pub const fn new(
         event: &'a Event,
         seq_ctx: &'a SequenceContext,
         functions: &'a FxHashMap<String, UserFunction>,
@@ -682,12 +682,12 @@ fn eval_builtin_function(func_name: &str, args: &[Value]) -> Option<Value> {
         }),
 
         // String functions
-        "to_string" => args.first().map(|v| Value::Str(format!("{}", v).into())),
+        "to_string" => args.first().map(|v| Value::Str(format!("{v}").into())),
         "to_int" => args.first().and_then(|v| match v {
             Value::Int(n) => Some(Value::Int(*n)),
             Value::Float(f) => Some(Value::Int(*f as i64)),
             Value::Str(s) => s.parse::<i64>().ok().map(Value::Int),
-            Value::Bool(b) => Some(Value::Int(if *b { 1 } else { 0 })),
+            Value::Bool(b) => Some(Value::Int(i64::from(*b))),
             _ => None,
         }),
         "to_float" => args.first().and_then(|v| match v {
@@ -716,7 +716,7 @@ fn eval_builtin_function(func_name: &str, args: &[Value]) -> Option<Value> {
         },
         "join" if args.len() == 2 => match (&args[0], &args[1]) {
             (Value::Array(arr), Value::Str(sep)) => {
-                let strs: Vec<String> = arr.iter().map(|v| format!("{}", v)).collect();
+                let strs: Vec<String> = arr.iter().map(|v| format!("{v}")).collect();
                 Some(Value::Str(strs.join(&**sep).into()))
             }
             _ => None,
@@ -1015,12 +1015,12 @@ pub fn eval_expr_with_functions(
                 }
                 // Then check event data with prefixed field name (for join results)
                 // Try dot notation (alias.field) - this is how JoinBuffer stores fields
-                let prefixed_dot = format!("{}.{}", alias, member);
+                let prefixed_dot = format!("{alias}.{member}");
                 if let Some(value) = event.get(&prefixed_dot) {
                     return Some(value.clone());
                 }
                 // Try underscore notation (alias_field)
-                let prefixed_underscore = format!("{}_{}", alias, member);
+                let prefixed_underscore = format!("{alias}_{member}");
                 if let Some(value) = event.get(&prefixed_underscore) {
                     return Some(value.clone());
                 }

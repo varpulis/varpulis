@@ -21,19 +21,19 @@ pub enum Type {
     /// Null type
     Null,
     /// Array of elements
-    Array(Box<Type>),
+    Array(Box<Self>),
     /// Map from key to value
-    Map(Box<Type>, Box<Type>),
+    Map(Box<Self>, Box<Self>),
     /// Tuple of types
-    Tuple(Vec<Type>),
+    Tuple(Vec<Self>),
     /// Optional type (T?)
-    Optional(Box<Type>),
+    Optional(Box<Self>),
     /// Stream of events
-    Stream(Box<Type>),
+    Stream(Box<Self>),
     /// Named type (event or type alias)
     Named(String),
     /// Record type (inline struct)
-    Record(Vec<(String, Type)>),
+    Record(Vec<(String, Self)>),
     /// Any type (for polymorphic functions)
     Any,
     /// Unknown type (for type inference)
@@ -42,19 +42,19 @@ pub enum Type {
 
 impl Type {
     /// Returns true if this type is `Int` or `Float`.
-    pub fn is_numeric(&self) -> bool {
-        matches!(self, Type::Int | Type::Float)
+    pub const fn is_numeric(&self) -> bool {
+        matches!(self, Self::Int | Self::Float)
     }
 
     /// Returns true if this is an `Optional` type.
-    pub fn is_optional(&self) -> bool {
-        matches!(self, Type::Optional(_))
+    pub const fn is_optional(&self) -> bool {
+        matches!(self, Self::Optional(_))
     }
 
     /// Returns the inner type for `Array`, `Optional`, or `Stream` types.
-    pub fn inner_type(&self) -> Option<&Type> {
+    pub fn inner_type(&self) -> Option<&Self> {
         match self {
-            Type::Array(t) | Type::Optional(t) | Type::Stream(t) => Some(t),
+            Self::Array(t) | Self::Optional(t) | Self::Stream(t) => Some(t),
             _ => None,
         }
     }
@@ -63,40 +63,40 @@ impl Type {
 impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Type::Int => write!(f, "int"),
-            Type::Float => write!(f, "float"),
-            Type::Bool => write!(f, "bool"),
-            Type::Str => write!(f, "str"),
-            Type::Timestamp => write!(f, "timestamp"),
-            Type::Duration => write!(f, "duration"),
-            Type::Null => write!(f, "null"),
-            Type::Array(t) => write!(f, "[{}]", t),
-            Type::Map(k, v) => write!(f, "{{{}: {}}}", k, v),
-            Type::Tuple(types) => {
+            Self::Int => write!(f, "int"),
+            Self::Float => write!(f, "float"),
+            Self::Bool => write!(f, "bool"),
+            Self::Str => write!(f, "str"),
+            Self::Timestamp => write!(f, "timestamp"),
+            Self::Duration => write!(f, "duration"),
+            Self::Null => write!(f, "null"),
+            Self::Array(t) => write!(f, "[{t}]"),
+            Self::Map(k, v) => write!(f, "{{{k}: {v}}}"),
+            Self::Tuple(types) => {
                 write!(f, "(")?;
                 for (i, t) in types.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}", t)?;
+                    write!(f, "{t}")?;
                 }
                 write!(f, ")")
             }
-            Type::Optional(t) => write!(f, "{}?", t),
-            Type::Stream(t) => write!(f, "Stream<{}>", t),
-            Type::Named(name) => write!(f, "{}", name),
-            Type::Record(fields) => {
+            Self::Optional(t) => write!(f, "{t}?"),
+            Self::Stream(t) => write!(f, "Stream<{t}>"),
+            Self::Named(name) => write!(f, "{name}"),
+            Self::Record(fields) => {
                 write!(f, "{{")?;
                 for (i, (name, ty)) in fields.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}: {}", name, ty)?;
+                    write!(f, "{name}: {ty}")?;
                 }
                 write!(f, "}}")
             }
-            Type::Any => write!(f, "any"),
-            Type::Unknown => write!(f, "?"),
+            Self::Any => write!(f, "any"),
+            Self::Unknown => write!(f, "?"),
         }
     }
 }

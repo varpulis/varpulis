@@ -40,7 +40,7 @@ fn binary(op: BinOp, left: Expr, right: Expr) -> Expr {
 }
 
 /// A no-op stream resolver that always returns None
-fn no_resolve(_name: &str) -> Option<DerivedStreamInfo> {
+const fn no_resolve(_name: &str) -> Option<DerivedStreamInfo> {
     None
 }
 
@@ -241,7 +241,7 @@ fn predicate_field_eq_int() {
             assert_eq!(op, CompareOp::Eq);
             assert_eq!(value, Value::Int(100));
         }
-        _ => panic!("Expected Predicate::Compare, got {:?}", pred),
+        _ => panic!("Expected Predicate::Compare, got {pred:?}"),
     }
 }
 
@@ -305,11 +305,10 @@ fn predicate_all_comparison_operators() {
             Predicate::Compare { op, .. } => {
                 assert_eq!(
                     op, expected_cmp,
-                    "BinOp {:?} should map to {:?}",
-                    bin_op, expected_cmp
+                    "BinOp {bin_op:?} should map to {expected_cmp:?}"
                 );
             }
-            _ => panic!("Expected Predicate::Compare for BinOp::{:?}", bin_op),
+            _ => panic!("Expected Predicate::Compare for BinOp::{bin_op:?}"),
         }
     }
 }
@@ -390,7 +389,7 @@ fn predicate_cross_event_reference() {
             assert_eq!(ref_alias, "order");
             assert_eq!(ref_field, "id");
         }
-        _ => panic!("Expected Predicate::CompareRef, got {:?}", pred),
+        _ => panic!("Expected Predicate::CompareRef, got {pred:?}"),
     }
 }
 
@@ -528,7 +527,7 @@ fn pattern_expr_seq_multiple_items() {
                     SasePattern::Event { event_type, .. } => {
                         assert_eq!(event_type, *expected_type);
                     }
-                    _ => panic!("Expected Event in seq step {}", i),
+                    _ => panic!("Expected Event in seq step {i}"),
                 }
             }
         }
@@ -724,7 +723,7 @@ fn pattern_expr_seq_with_filter() {
                     assert_eq!(op, CompareOp::Gt);
                     assert_eq!(value, Value::Float(100.0));
                 }
-                other => panic!("Expected Compare predicate, got {:?}", other),
+                other => panic!("Expected Compare predicate, got {other:?}"),
             }
         }
         _ => panic!("Expected SasePattern::Event with predicate"),
@@ -1150,7 +1149,7 @@ fn resolver_with_derived_stream_resolution() {
                     assert_eq!(op, CompareOp::Gt);
                     assert_eq!(value, Value::Float(100.0));
                 }
-                other => panic!("Expected Compare predicate, got {:?}", other),
+                other => panic!("Expected Compare predicate, got {other:?}"),
             }
         }
         _ => panic!("Expected SasePattern::Event with resolved predicate"),
@@ -1271,8 +1270,7 @@ fn resolver_followed_by_with_derived_stream_combines_predicates() {
                     match predicate.as_ref().unwrap() {
                         Predicate::And(_, _) => {} // Correct: combined predicate
                         other => panic!(
-                            "Expected And predicate combining stream and clause filters, got {:?}",
-                            other
+                            "Expected And predicate combining stream and clause filters, got {other:?}"
                         ),
                     }
                 }

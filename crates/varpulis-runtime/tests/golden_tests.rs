@@ -33,11 +33,11 @@ impl From<&Event> for SnapshotEvent {
                 varpulis_core::Value::Int(i) => serde_json::json!(*i),
                 varpulis_core::Value::Float(f) => serde_json::json!(*f),
                 varpulis_core::Value::Str(s) => serde_json::Value::String(s.to_string()),
-                _ => serde_json::Value::String(format!("{}", value)),
+                _ => serde_json::Value::String(format!("{value}")),
             };
             fields.insert(key.to_string(), json_val);
         }
-        SnapshotEvent {
+        Self {
             event_type: event.event_type.to_string(),
             fields,
         }

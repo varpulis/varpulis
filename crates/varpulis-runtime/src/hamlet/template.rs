@@ -53,7 +53,7 @@ impl TemplateTransition {
     }
 
     /// Mark as Kleene self-loop
-    pub fn mark_kleene(&mut self) {
+    pub const fn mark_kleene(&mut self) {
         self.is_kleene = true;
     }
 }
@@ -238,8 +238,7 @@ impl MergedTemplate {
     pub fn is_final(&self, query: QueryId, state: TemplateState) -> bool {
         self.final_states
             .get(&query)
-            .map(|states| states.contains(&state))
-            .unwrap_or(false)
+            .is_some_and(|states| states.contains(&state))
     }
 
     /// Get queries sharing a Kleene sub-pattern for an event type
@@ -252,13 +251,13 @@ impl MergedTemplate {
 
     /// Number of queries
     #[inline]
-    pub fn num_queries(&self) -> usize {
+    pub const fn num_queries(&self) -> usize {
         self.num_queries
     }
 
     /// Number of states
     #[inline]
-    pub fn num_states(&self) -> usize {
+    pub const fn num_states(&self) -> usize {
         self.states.len()
     }
 }

@@ -77,7 +77,7 @@ impl RestApiConfig {
     /// Set a Bearer token for Authorization header.
     pub fn with_bearer_token(mut self, token: &str) -> Self {
         self.headers
-            .insert("Authorization".to_string(), format!("Bearer {}", token));
+            .insert("Authorization".to_string(), format!("Bearer {token}"));
         self
     }
 
@@ -88,7 +88,7 @@ impl RestApiConfig {
     }
 
     /// Set the request timeout in milliseconds.
-    pub fn with_timeout(mut self, timeout_ms: u64) -> Self {
+    pub const fn with_timeout(mut self, timeout_ms: u64) -> Self {
         self.timeout_ms = timeout_ms;
         self
     }

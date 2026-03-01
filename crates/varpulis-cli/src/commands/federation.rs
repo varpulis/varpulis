@@ -45,7 +45,7 @@ pub async fn run_federation(
     let request_builder = |method: reqwest::Method, url: &str| {
         let mut rb = client.request(method, url);
         if let Some(key) = api_key {
-            rb = rb.header("Authorization", format!("Bearer {}", key));
+            rb = rb.header("Authorization", format!("Bearer {key}"));
         }
         rb
     };
@@ -92,9 +92,9 @@ pub async fn run_federation(
             if !resp.status().is_success() {
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
-                anyhow::bail!("Add region failed ({}): {}", status, body);
+                anyhow::bail!("Add region failed ({status}): {body}");
             }
-            println!("Region '{}' added successfully.", name);
+            println!("Region '{name}' added successfully.");
         }
 
         FederationAction::RemoveRegion { name } => {
@@ -104,9 +104,9 @@ pub async fn run_federation(
             if !resp.status().is_success() {
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
-                anyhow::bail!("Remove region failed ({}): {}", status, body);
+                anyhow::bail!("Remove region failed ({status}): {body}");
             }
-            println!("Region '{}' removed successfully.", name);
+            println!("Region '{name}' removed successfully.");
         }
 
         FederationAction::Catalog => {

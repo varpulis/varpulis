@@ -41,24 +41,24 @@ fn has_no_errors(diagnostics: &[(Severity, Option<&'static str>, String)]) -> bo
 #[test]
 fn duplicate_event_declaration() {
     let diags = validate_vpl("event Foo: x: int\nevent Foo: y: float");
-    assert!(has_error(&diags, "E001"), "Duplicate event: {:?}", diags);
+    assert!(has_error(&diags, "E001"), "Duplicate event: {diags:?}");
 }
 
 #[test]
 fn duplicate_stream_declaration() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
         stream S = B
-    "#,
+    ",
     );
-    assert!(has_error(&diags, "E002"), "Duplicate stream: {:?}", diags);
+    assert!(has_error(&diags, "E002"), "Duplicate stream: {diags:?}");
 }
 
 #[test]
 fn duplicate_function_declaration() {
     let diags = validate_vpl("fn f() -> int:\n    return 1\nfn f() -> int:\n    return 2\n");
-    assert!(has_error(&diags, "E003"), "Duplicate function: {:?}", diags);
+    assert!(has_error(&diags, "E003"), "Duplicate function: {diags:?}");
 }
 
 #[test]
@@ -69,11 +69,7 @@ fn duplicate_connector_declaration() {
         connector C = kafka(topic: "b")
     "#,
     );
-    assert!(
-        has_error(&diags, "E004"),
-        "Duplicate connector: {:?}",
-        diags
-    );
+    assert!(has_error(&diags, "E004"), "Duplicate connector: {diags:?}");
 }
 
 // =============================================================================
@@ -83,15 +79,14 @@ fn duplicate_connector_declaration() {
 #[test]
 fn having_without_aggregate() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .having(cnt > 0)
-    "#,
+    ",
     );
     assert!(
         has_error(&diags, "E010"),
-        "Having without aggregate: {:?}",
-        diags
+        "Having without aggregate: {diags:?}"
     );
 }
 
@@ -102,30 +97,26 @@ fn having_without_aggregate() {
 #[test]
 fn duplicate_aggregate() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .window(5)
             .aggregate(c: count())
             .aggregate(s: sum(value))
-    "#,
+    ",
     );
-    assert!(
-        has_error(&diags, "E011"),
-        "Duplicate aggregate: {:?}",
-        diags
-    );
+    assert!(has_error(&diags, "E011"), "Duplicate aggregate: {diags:?}");
 }
 
 #[test]
 fn duplicate_window() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .window(5)
             .window(10)
-    "#,
+    ",
     );
-    assert!(has_error(&diags, "E012"), "Duplicate window: {:?}", diags);
+    assert!(has_error(&diags, "E012"), "Duplicate window: {diags:?}");
 }
 
 // =============================================================================
@@ -135,15 +126,14 @@ fn duplicate_window() {
 #[test]
 fn within_outside_sequence() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .within(5s)
-    "#,
+    ",
     );
     assert!(
         has_error(&diags, "E020"),
-        "Within outside sequence: {:?}",
-        diags
+        "Within outside sequence: {diags:?}"
     );
 }
 
@@ -154,16 +144,12 @@ fn within_outside_sequence() {
 #[test]
 fn assignment_to_immutable() {
     let diags = validate_vpl(
-        r#"
+        r"
         let x = 1
         x := 2
-    "#,
+    ",
     );
-    assert!(
-        has_error(&diags, "E040"),
-        "Immutable assignment: {:?}",
-        diags
-    );
+    assert!(has_error(&diags, "E040"), "Immutable assignment: {diags:?}");
 }
 
 // =============================================================================
@@ -173,7 +159,7 @@ fn assignment_to_immutable() {
 #[test]
 fn unknown_function_call() {
     let diags = validate_vpl("let x = nonexistent_func(1)");
-    assert!(has_error(&diags, "E050"), "Unknown function: {:?}", diags);
+    assert!(has_error(&diags, "E050"), "Unknown function: {diags:?}");
 }
 
 // =============================================================================
@@ -183,12 +169,12 @@ fn unknown_function_call() {
 #[test]
 fn where_non_boolean_literal() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .where(42)
-    "#,
+    ",
     );
-    assert!(has_error(&diags, "E060"), "Where non-bool: {:?}", diags);
+    assert!(has_error(&diags, "E060"), "Where non-bool: {diags:?}");
 }
 
 #[test]
@@ -199,7 +185,7 @@ fn where_string_literal() {
             .where("hello")
     "#,
     );
-    assert!(has_error(&diags, "E060"), "Where string: {:?}", diags);
+    assert!(has_error(&diags, "E060"), "Where string: {diags:?}");
 }
 
 // =============================================================================
@@ -211,11 +197,7 @@ fn within_non_duration() {
     let diags = validate_vpl(
         "event A: x: int\nevent B: x: int\nstream S = A as a\n    -> B as b\n    .within(3.14)",
     );
-    assert!(
-        has_error(&diags, "E061"),
-        "Within non-duration: {:?}",
-        diags
-    );
+    assert!(has_error(&diags, "E061"), "Within non-duration: {diags:?}");
 }
 
 // =============================================================================
@@ -225,13 +207,13 @@ fn within_non_duration() {
 #[test]
 fn unknown_aggregate_function() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .window(5)
             .aggregate(x: bogus_agg(value))
-    "#,
+    ",
     );
-    assert!(has_error(&diags, "E070"), "Unknown aggregate: {:?}", diags);
+    assert!(has_error(&diags, "E070"), "Unknown aggregate: {diags:?}");
 }
 
 // =============================================================================
@@ -241,13 +223,13 @@ fn unknown_aggregate_function() {
 #[test]
 fn aggregate_missing_field_arg() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .window(5)
             .aggregate(s: sum())
-    "#,
+    ",
     );
-    assert!(has_error(&diags, "E071"), "Missing field arg: {:?}", diags);
+    assert!(has_error(&diags, "E071"), "Missing field arg: {diags:?}");
 }
 
 // =============================================================================
@@ -257,13 +239,13 @@ fn aggregate_missing_field_arg() {
 #[test]
 fn bare_field_in_aggregate() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .window(5)
             .aggregate(v: value)
-    "#,
+    ",
     );
-    assert!(has_error(&diags, "E073"), "Bare field: {:?}", diags);
+    assert!(has_error(&diags, "E073"), "Bare field: {diags:?}");
 }
 
 // =============================================================================
@@ -273,15 +255,14 @@ fn bare_field_in_aggregate() {
 #[test]
 fn aggregate_without_window_warning() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .aggregate(c: count())
-    "#,
+    ",
     );
     assert!(
         has_warning(&diags, "W001"),
-        "Aggregate without window warning: {:?}",
-        diags
+        "Aggregate without window warning: {diags:?}"
     );
 }
 
@@ -292,15 +273,14 @@ fn aggregate_without_window_warning() {
 #[test]
 fn arithmetic_in_where_warning() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .where(x + 1)
-    "#,
+    ",
     );
     assert!(
         has_warning(&diags, "W060"),
-        "Arithmetic in where: {:?}",
-        diags
+        "Arithmetic in where: {diags:?}"
     );
 }
 
@@ -311,69 +291,69 @@ fn arithmetic_in_where_warning() {
 #[test]
 fn valid_simple_stream() {
     let diags = validate_vpl(
-        r#"
+        r"
         event Reading: value: float
         stream S = Reading
             .where(value > 0.0)
-    "#,
+    ",
     );
-    assert!(has_no_errors(&diags), "Valid stream: {:?}", diags);
+    assert!(has_no_errors(&diags), "Valid stream: {diags:?}");
 }
 
 #[test]
 fn valid_aggregate_with_window() {
     let diags = validate_vpl(
-        r#"
+        r"
         event Reading: value: float
         stream S = Reading
             .window(5)
             .aggregate(c: count(), s: sum(value), a: avg(value))
-    "#,
+    ",
     );
-    assert!(has_no_errors(&diags), "Valid aggregate: {:?}", diags);
+    assert!(has_no_errors(&diags), "Valid aggregate: {diags:?}");
 }
 
 #[test]
 fn valid_sequence() {
     let diags = validate_vpl(
-        r#"
+        r"
         event A: x: int
         event B: x: int
         stream S = A as a
             -> B as b
             .within(10s)
-    "#,
+    ",
     );
-    assert!(has_no_errors(&diags), "Valid sequence: {:?}", diags);
+    assert!(has_no_errors(&diags), "Valid sequence: {diags:?}");
 }
 
 #[test]
 fn valid_function_declaration() {
     let diags = validate_vpl("fn add(a: int, b: int):\n    return a + b\n");
-    assert!(has_no_errors(&diags), "Valid function: {:?}", diags);
+    assert!(has_no_errors(&diags), "Valid function: {diags:?}");
 }
 
 #[test]
 fn valid_mutable_variable() {
     let diags = validate_vpl(
-        r#"
+        r"
         var x = 1
         x := 2
-    "#,
+    ",
     );
-    assert!(has_no_errors(&diags), "Valid mutable var: {:?}", diags);
+    assert!(has_no_errors(&diags), "Valid mutable var: {diags:?}");
 }
 
 #[test]
 fn valid_event_declaration() {
     let diags = validate_vpl("event Reading: sensor_id: str value: float timestamp: int");
-    assert!(has_no_errors(&diags), "Valid event decl: {:?}", diags);
+    assert!(has_no_errors(&diags), "Valid event decl: {diags:?}");
 }
 
 #[test]
 fn empty_program_is_valid() {
     let diags = validate_vpl("");
-    assert!(has_no_errors(&diags), "Empty program: {:?}", diags);
+    assert!(has_no_errors(&diags), "Empty program: {diags:?}");
 }
 
 // =============================================================================
@@ -389,8 +369,7 @@ fn format_includes_error_info() {
     assert!(!formatted.is_empty());
     assert!(
         formatted.contains("error") || formatted.contains("E001"),
-        "Format: {}",
-        formatted
+        "Format: {formatted}"
     );
 }
 
@@ -401,16 +380,15 @@ fn format_includes_error_info() {
 #[test]
 fn undeclared_event_type_warning() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = NonExistentEvent
             .where(value > 0)
-    "#,
+    ",
     );
     // E033 errors on undeclared event types (promoted from W030)
     assert!(
         has_error(&diags, "E033"),
-        "Undeclared event error: {:?}",
-        diags
+        "Undeclared event error: {diags:?}"
     );
 }
 
@@ -426,11 +404,7 @@ fn undefined_connector_in_to() {
             .to(UndefinedConnector, topic: "test")
     "#,
     );
-    assert!(
-        has_error(&diags, "E030"),
-        "Undefined connector: {:?}",
-        diags
-    );
+    assert!(has_error(&diags, "E030"), "Undefined connector: {diags:?}");
 }
 
 // =============================================================================
@@ -447,11 +421,7 @@ fn valid_connector_reference() {
     "#,
     );
     let has_e030 = has_error(&diags, "E030");
-    assert!(
-        !has_e030,
-        "Valid connector ref should not error: {:?}",
-        diags
-    );
+    assert!(!has_e030, "Valid connector ref should not error: {diags:?}");
 }
 
 // =============================================================================
@@ -461,7 +431,7 @@ fn valid_connector_reference() {
 #[test]
 fn function_arity_mismatch() {
     let diags = validate_vpl("fn add(a: int, b: int):\n    return a + b\nlet x = add(1)");
-    assert!(has_error(&diags, "E051"), "Arity mismatch: {:?}", diags);
+    assert!(has_error(&diags, "E051"), "Arity mismatch: {diags:?}");
 }
 
 // =============================================================================
@@ -471,13 +441,13 @@ fn function_arity_mismatch() {
 #[test]
 fn ema_missing_arguments() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .window(5)
             .aggregate(e: ema())
-    "#,
+    ",
     );
-    assert!(has_error(&diags, "E072"), "EMA missing args: {:?}", diags);
+    assert!(has_error(&diags, "E072"), "EMA missing args: {diags:?}");
 }
 
 // =============================================================================
@@ -487,16 +457,15 @@ fn ema_missing_arguments() {
 #[test]
 fn partition_after_window_warning() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .window(5)
             .partition_by(region)
-    "#,
+    ",
     );
     assert!(
         has_warning(&diags, "W002"),
-        "Partition after window: {:?}",
-        diags
+        "Partition after window: {diags:?}"
     );
 }
 
@@ -507,7 +476,7 @@ fn partition_after_window_warning() {
 #[test]
 fn duplicate_type_alias() {
     let diags = validate_vpl("type Temp = int\ntype Temp = float");
-    assert!(has_error(&diags, "E007"), "Duplicate type: {:?}", diags);
+    assert!(has_error(&diags, "E007"), "Duplicate type: {diags:?}");
 }
 
 // =============================================================================
@@ -517,15 +486,15 @@ fn duplicate_type_alias() {
 #[test]
 fn count_takes_no_field_arg() {
     let diags = validate_vpl(
-        r#"
+        r"
         event A: x: int
         stream S = A
             .window(5)
             .aggregate(c: count())
-    "#,
+    ",
     );
     // count() with no args is valid
-    assert!(has_no_errors(&diags), "count() no args: {:?}", diags);
+    assert!(has_no_errors(&diags), "count() no args: {diags:?}");
 }
 
 // =============================================================================
@@ -539,24 +508,23 @@ fn valid_sequence_with_within() {
     );
     assert!(
         has_no_errors(&diags),
-        "Valid sequence with within: {:?}",
-        diags
+        "Valid sequence with within: {diags:?}"
     );
 }
 
 #[test]
 fn valid_stream_with_partition_before_window() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .partition_by(region)
             .window(5)
             .aggregate(c: count())
-    "#,
+    ",
     );
     // partition_by BEFORE window is fine (no W002)
     let has_w002 = has_warning(&diags, "W002");
-    assert!(!has_w002, "No warning expected: {:?}", diags);
+    assert!(!has_w002, "No warning expected: {diags:?}");
 }
 
 #[test]
@@ -566,36 +534,34 @@ fn valid_connector_declaration() {
         connector K = kafka(brokers: "localhost:9092", topic: "test")
     "#,
     );
-    assert!(has_no_errors(&diags), "Valid connector: {:?}", diags);
+    assert!(has_no_errors(&diags), "Valid connector: {diags:?}");
 }
 
 #[test]
 fn unimplemented_distinct_warns() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .distinct()
-    "#,
+    ",
     );
     assert!(
         has_error(&diags, "E090"),
-        "Distinct should report E090: {:?}",
-        diags
+        "Distinct should report E090: {diags:?}"
     );
 }
 
 #[test]
 fn unimplemented_limit_warns() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .limit(100)
-    "#,
+    ",
     );
     assert!(
         has_error(&diags, "E090"),
-        "Limit should report E090: {:?}",
-        diags
+        "Limit should report E090: {diags:?}"
     );
 }
 
@@ -609,7 +575,7 @@ fn valid_var_declaration_and_assignment() {
         y := y + " world"
     "#,
     );
-    assert!(has_no_errors(&diags), "Valid var ops: {:?}", diags);
+    assert!(has_no_errors(&diags), "Valid var ops: {diags:?}");
 }
 
 #[test]
@@ -621,7 +587,7 @@ fn valid_let_declaration() {
         let z = true
     "#,
     );
-    assert!(has_no_errors(&diags), "Valid let decls: {:?}", diags);
+    assert!(has_no_errors(&diags), "Valid let decls: {diags:?}");
 }
 
 #[test]
@@ -629,7 +595,7 @@ fn within_with_string_literal() {
     let diags = validate_vpl(
         "event A: x: int\nevent B: y: int\nstream S = A as a\n    -> B as b\n    .within(\"bad\")",
     );
-    assert!(has_error(&diags, "E061"), "Within with string: {:?}", diags);
+    assert!(has_error(&diags, "E061"), "Within with string: {diags:?}");
 }
 
 #[test]
@@ -637,29 +603,29 @@ fn within_with_bool_literal() {
     let diags = validate_vpl(
         "event A: x: int\nevent B: y: int\nstream S = A as a\n    -> B as b\n    .within(true)",
     );
-    assert!(has_error(&diags, "E061"), "Within with bool: {:?}", diags);
+    assert!(has_error(&diags, "E061"), "Within with bool: {diags:?}");
 }
 
 #[test]
 fn where_with_boolean_literal_true() {
     let diags = validate_vpl(
-        r#"
+        r"
         event A: x: int
         stream S = A
             .where(true)
-    "#,
+    ",
     );
     // true is a valid boolean expression for .where()
-    assert!(has_no_errors(&diags), "Where with true: {:?}", diags);
+    assert!(has_no_errors(&diags), "Where with true: {diags:?}");
 }
 
 #[test]
 fn where_with_float_literal() {
     let diags = validate_vpl(
-        r#"
+        r"
         stream S = A
             .where(3.14)
-    "#,
+    ",
     );
-    assert!(has_error(&diags, "E060"), "Where float: {:?}", diags);
+    assert!(has_error(&diags, "E060"), "Where float: {diags:?}");
 }

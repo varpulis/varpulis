@@ -22,7 +22,7 @@ impl Zdd {
     /// let c = a.union(&b);             // {{1,2}, {3}}
     /// assert_eq!(c.count(), 2);
     /// ```
-    pub fn union(&self, other: &Zdd) -> Zdd {
+    pub fn union(&self, other: &Self) -> Self {
         // Build a combined table with nodes from both ZDDs
         let mut table = self.table().clone();
         let mut node_map: FxHashMap<u32, ZddRef> = FxHashMap::default();
@@ -34,7 +34,7 @@ impl Zdd {
         let mut cache: FxHashMap<(ZddRef, ZddRef), ZddRef> = FxHashMap::default();
         let result_root = union_rec(self.root(), other_root, &mut table, &mut cache);
 
-        Zdd::from_parts(result_root, table)
+        Self::from_parts(result_root, table)
     }
 }
 

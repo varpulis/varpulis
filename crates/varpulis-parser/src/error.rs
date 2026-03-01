@@ -32,7 +32,7 @@ impl SourceLocation {
             }
         }
 
-        SourceLocation {
+        Self {
             line,
             column,
             position,
@@ -118,7 +118,7 @@ pub enum ParseError {
 impl ParseError {
     /// Create a custom error from a source span and message.
     pub fn custom(span: Span, message: impl Into<String>) -> Self {
-        ParseError::Custom {
+        Self::Custom {
             span,
             message: message.into(),
         }
@@ -132,7 +132,7 @@ impl ParseError {
         hint: Option<String>,
     ) -> Self {
         let loc = SourceLocation::from_position(source, position);
-        ParseError::Located {
+        Self::Located {
             line: loc.line,
             column: loc.column,
             position,

@@ -15,7 +15,7 @@ struct EventSource {
 }
 
 impl EventSource {
-    fn new(max_events: u64) -> Self {
+    const fn new(max_events: u64) -> Self {
         Self {
             count: 0,
             max_events,
@@ -36,7 +36,7 @@ struct NumberEvent(#[allow(dead_code)] u64);
 impl Actor for EventSource {
     type ObservableState = u64;
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "event-source"
     }
 
@@ -59,7 +59,7 @@ impl Actor for EventSource {
         // Wait for shutdown while handling observe requests
         loop {
             tokio::select! {
-                _ = ctx.shutdown.cancelled() => return Ok(()),
+                () = ctx.shutdown.cancelled() => return Ok(()),
                 msg = ctx.mailbox.recv() => {
                     match msg {
                         Some(Envelope::Observe(tx)) => {
@@ -80,7 +80,7 @@ struct EventProcessor {
 }
 
 impl EventProcessor {
-    fn new(counter: Arc<AtomicU64>) -> Self {
+    const fn new(counter: Arc<AtomicU64>) -> Self {
         Self { processed: counter }
     }
 }
@@ -89,7 +89,7 @@ impl EventProcessor {
 impl Actor for EventProcessor {
     type ObservableState = u64;
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "event-processor"
     }
 
@@ -100,7 +100,7 @@ impl Actor for EventProcessor {
     async fn run(mut self, ctx: &mut ActorContext<Self>) -> Result<(), ActorExitStatus> {
         loop {
             tokio::select! {
-                _ = ctx.shutdown.cancelled() => return Ok(()),
+                () = ctx.shutdown.cancelled() => return Ok(()),
                 msg = ctx.mailbox.recv() => {
                     match msg {
                         Some(Envelope::Message(_)) => {
@@ -131,7 +131,7 @@ async fn test_multi_actor_pipeline() {
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     let count = processed_count.load(Ordering::Relaxed);
-    assert_eq!(count, 50, "expected 50 events processed, got {}", count);
+    assert_eq!(count, 50, "expected 50 events processed, got {count}");
 
     let source_state = source_handle.observe().await.unwrap();
     assert_eq!(source_state, 50);
@@ -158,8 +158,7 @@ async fn test_backpressure_via_bounded_channels() {
     let count = processed_count.load(Ordering::Relaxed);
     assert_eq!(
         count, 100,
-        "expected 100 events, got {} (backpressure should not drop)",
-        count
+        "expected 100 events, got {count} (backpressure should not drop)"
     );
 
     runtime.shutdown();

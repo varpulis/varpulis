@@ -62,9 +62,10 @@ async fn test_failover_latency() {
                 }
             }
 
-            if start.elapsed() > Duration::from_secs(60) {
-                panic!("Pipeline never migrated to chaos-w1 within 60s");
-            }
+            assert!(
+                start.elapsed() <= Duration::from_secs(60),
+                "Pipeline never migrated to chaos-w1 within 60s"
+            );
         }
     });
 
@@ -104,10 +105,7 @@ async fn test_migration_throughput() {
         let start = Instant::now();
         let drain_resp = cluster.drain_worker("chaos-w0").await;
         let migrated = drain_resp["pipelines_migrated"].as_u64().unwrap_or(0);
-        eprintln!(
-            "  [perf] Drain initiated: {} pipelines to migrate",
-            migrated
-        );
+        eprintln!("  [perf] Drain initiated: {migrated} pipelines to migrate");
 
         // Wait for all pipelines to appear on chaos-w1.
         sleep(Duration::from_secs(5)).await;
@@ -136,8 +134,7 @@ async fn test_migration_throughput() {
 
         assert!(
             on_w1 >= 5,
-            "All 5 pipelines should have migrated to chaos-w1 (got {} on w1)",
-            on_w1
+            "All 5 pipelines should have migrated to chaos-w1 (got {on_w1} on w1)"
         );
 
         cluster.shutdown().await;

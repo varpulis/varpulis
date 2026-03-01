@@ -25,10 +25,10 @@ pub fn parse_duration(s: &str) -> Result<u64, String> {
 
     let num: u64 = num_str
         .parse()
-        .map_err(|_| format!("invalid numeric value in duration: {}", s))?;
+        .map_err(|_| format!("invalid numeric value in duration: {s}"))?;
     let mul = |a: u64, b: u64| {
         a.checked_mul(b)
-            .ok_or_else(|| format!("duration overflows u64 nanoseconds: {}", s))
+            .ok_or_else(|| format!("duration overflows u64 nanoseconds: {s}"))
     };
     match unit {
         "ns" => Ok(num),
@@ -133,7 +133,7 @@ pub fn parse_timestamp(s: &str) -> i64 {
     seconds * 1_000_000_000
 }
 
-fn is_leap_year(year: i32) -> bool {
+const fn is_leap_year(year: i32) -> bool {
     (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
 }
 

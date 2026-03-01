@@ -191,7 +191,7 @@ fn config_yaml_invalid() {
         ConfigError::ParseError(msg) => {
             assert!(!msg.is_empty(), "Parse error should have a message");
         }
-        other => panic!("Expected ParseError, got: {:?}", other),
+        other => panic!("Expected ParseError, got: {other:?}"),
     }
 }
 
@@ -268,7 +268,7 @@ fn config_toml_invalid() {
         ConfigError::ParseError(msg) => {
             assert!(!msg.is_empty());
         }
-        other => panic!("Expected ParseError, got: {:?}", other),
+        other => panic!("Expected ParseError, got: {other:?}"),
     }
 }
 
@@ -299,10 +299,10 @@ fn config_load_yml_extension() {
     let path = dir.path().join("config.yml");
     std::fs::write(
         &path,
-        r#"
+        r"
 server:
   port: 6666
-"#,
+",
     )
     .unwrap();
     let cfg = Config::load(&path).unwrap();
@@ -333,10 +333,10 @@ fn config_load_unknown_extension_tries_yaml_then_toml() {
     let path = dir.path().join("config.conf");
     std::fs::write(
         &path,
-        r#"
+        r"
 server:
   port: 4444
-"#,
+",
     )
     .unwrap();
     let cfg = Config::load(&path).unwrap();
@@ -351,7 +351,7 @@ fn config_load_nonexistent_file() {
         ConfigError::IoError(path, _msg) => {
             assert_eq!(path, PathBuf::from("/nonexistent/path/config.yaml"));
         }
-        other => panic!("Expected IoError, got: {:?}", other),
+        other => panic!("Expected IoError, got: {other:?}"),
     }
 }
 
@@ -652,8 +652,8 @@ fn webhook_config_defaults() {
 fn config_error_io_display() {
     let err = ConfigError::IoError(PathBuf::from("/bad/path"), "file not found".into());
     let msg = err.to_string();
-    assert!(msg.contains("/bad/path"), "IoError display: {}", msg);
-    assert!(msg.contains("file not found"), "IoError display: {}", msg);
+    assert!(msg.contains("/bad/path"), "IoError display: {msg}");
+    assert!(msg.contains("file not found"), "IoError display: {msg}");
 }
 
 #[test]
@@ -662,8 +662,7 @@ fn config_error_parse_display() {
     let msg = err.to_string();
     assert!(
         msg.contains("unexpected token at line 5"),
-        "ParseError display: {}",
-        msg
+        "ParseError display: {msg}"
     );
 }
 

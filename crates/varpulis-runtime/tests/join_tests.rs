@@ -84,7 +84,7 @@ async fn test_join_two_streams_correlates_by_key() {
             let macd_line = event.data.get("macd_line").expect("Missing macd_line");
             // EMA12 - EMA26 = 45000 - 44500 = 500
             if let Value::Float(v) = macd_line {
-                assert!((v - 500.0).abs() < 0.001, "Expected ~500, got {}", v);
+                assert!((v - 500.0).abs() < 0.001, "Expected ~500, got {v}");
             } else {
                 panic!("macd_line should be a float");
             }
@@ -156,7 +156,7 @@ async fn test_join_buffer_window_expiration() {
             assert_eq!(&*event.event_type, "Joined");
             let total = event.data.get("total").expect("Missing total");
             if let Value::Float(v) = total {
-                assert!((v - 30.0).abs() < 0.001, "Expected 30, got {}", v);
+                assert!((v - 30.0).abs() < 0.001, "Expected 30, got {v}");
             }
         }
         Err(_) => {
@@ -344,7 +344,7 @@ async fn test_aggregate_comparison_join() {
     for i in 0..15 {
         let event = Event::new("Sensor")
             .with_field("sensor_id", "temp_1")
-            .with_field("value", 100.0 + (i as f64 * 5.0));
+            .with_field("value", (i as f64).mul_add(5.0, 100.0));
         engine.process(event).await.expect("Failed to process");
     }
 
@@ -369,13 +369,9 @@ async fn test_aggregate_comparison_join() {
     // First join should happen after event 5
     assert!(
         combined_count > 0,
-        "Expected combined events, got {}",
-        combined_count
+        "Expected combined events, got {combined_count}"
     );
-    println!(
-        "Aggregate comparison join produced {} combined events",
-        combined_count
-    );
+    println!("Aggregate comparison join produced {combined_count} combined events");
 }
 
 #[tokio::test]
@@ -431,7 +427,7 @@ async fn test_macd_example_produces_signals() {
     for i in 0..30 {
         let event = Event::new("OHLCV")
             .with_field("symbol", "BTC/USD")
-            .with_field("close", base_price + (i as f64 * 10.0))
+            .with_field("close", (i as f64).mul_add(10.0, base_price))
             .with_field("timeframe", "1m");
         engine
             .process(event)
@@ -460,5 +456,5 @@ async fn test_macd_example_produces_signals() {
         macd_count > 0,
         "Expected MACD events after aggregate join implementation"
     );
-    println!("MACD events received: {}", macd_count);
+    println!("MACD events received: {macd_count}");
 }

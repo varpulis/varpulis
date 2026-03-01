@@ -42,12 +42,12 @@ impl EnrichmentProvider for HttpEnrichmentProvider {
             Value::Str(s) => s.to_string(),
             Value::Int(i) => i.to_string(),
             Value::Float(f) => f.to_string(),
-            other => format!("{:?}", other),
+            other => format!("{other:?}"),
         };
 
         // Use reqwest's query parameter builder for proper URL encoding
         let request_url = reqwest::Url::parse_with_params(&self.base_url, &[("key", &key_str)])
-            .map_err(|e| EnrichmentError::Connection(format!("invalid URL: {}", e)))?;
+            .map_err(|e| EnrichmentError::Connection(format!("invalid URL: {e}")))?;
 
         let response = match self.method.to_uppercase().as_str() {
             "POST" => self
@@ -92,7 +92,7 @@ impl EnrichmentProvider for HttpEnrichmentProvider {
         })
     }
 
-    fn provider_name(&self) -> &str {
+    fn provider_name(&self) -> &'static str {
         "http"
     }
 }

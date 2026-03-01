@@ -13,7 +13,7 @@ use tracing::{debug, warn};
 use varpulis_core::ast::ConnectorParam;
 
 /// Convert AST ConnectorParams to a runtime ConnectorConfig
-pub(crate) fn connector_params_to_config(
+pub fn connector_params_to_config(
     connector_type: &str,
     params: &[ConnectorParam],
 ) -> connector::ConnectorConfig {
@@ -28,7 +28,7 @@ pub(crate) fn connector_params_to_config(
             varpulis_core::ast::ConfigValue::Int(i) => i.to_string(),
             varpulis_core::ast::ConfigValue::Float(f) => f.to_string(),
             varpulis_core::ast::ConfigValue::Bool(b) => b.to_string(),
-            varpulis_core::ast::ConfigValue::Duration(d) => format!("{}ns", d),
+            varpulis_core::ast::ConfigValue::Duration(d) => format!("{d}ns"),
             varpulis_core::ast::ConfigValue::Array(_) => continue,
             varpulis_core::ast::ConfigValue::Map(_) => continue,
         };
@@ -226,7 +226,7 @@ impl crate::sink::Sink for BatchKafkaSinkAdapter {
 /// Tries the inventory-based `find_factory()` first, then falls back to the
 /// match-arm dispatch for connectors that haven't been migrated yet.
 #[allow(unused_variables)]
-pub(crate) fn create_sink_from_config(
+pub fn create_sink_from_config(
     name: &str,
     config: &connector::ConnectorConfig,
     topic_override: Option<&str>,
@@ -255,7 +255,7 @@ pub(crate) fn create_sink_from_config(
                     .properties
                     .get("path")
                     .cloned()
-                    .unwrap_or_else(|| format!("{}.jsonl", name))
+                    .unwrap_or_else(|| format!("{name}.jsonl"))
             } else {
                 config.url.clone()
             };
@@ -365,14 +365,14 @@ pub(crate) fn create_sink_from_config(
                 let topic = topic_override
                     .map(|s| s.to_string())
                     .or_else(|| config.topic.clone())
-                    .unwrap_or_else(|| format!("{}-output", name));
+                    .unwrap_or_else(|| format!("{name}-output"));
                 let base_id = config
                     .properties
                     .get("client_id")
                     .cloned()
                     .unwrap_or_else(|| name.to_string());
                 let client_id = match context_name {
-                    Some(ctx) => format!("{}-{}", base_id, ctx),
+                    Some(ctx) => format!("{base_id}-{ctx}"),
                     None => base_id,
                 };
                 let mqtt_config = connector::MqttConfig::new(&broker, &topic)
@@ -510,7 +510,7 @@ pub(crate) fn create_sink_from_config(
 /// - Building sinks from connector configurations
 /// - Caching created sinks by their keys
 /// - Connecting all registered sinks
-pub(crate) struct SinkRegistry {
+pub struct SinkRegistry {
     cache: FxHashMap<String, Arc<dyn crate::sink::Sink>>,
 }
 
@@ -585,7 +585,7 @@ impl SinkRegistry {
     pub async fn connect_all(&self) -> Result<(), String> {
         for (name, sink) in &self.cache {
             if let Err(e) = sink.connect().await {
-                return Err(format!("Failed to connect sink '{}': {}", name, e));
+                return Err(format!("Failed to connect sink '{name}': {e}"));
             }
         }
         Ok(())

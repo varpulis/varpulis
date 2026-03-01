@@ -44,7 +44,7 @@ async fn test_partition_by_tumbling_window_separate_state() {
         let event = Event::new("PriceEvent")
             .with_timestamp(base_time + Duration::seconds(i * 10))
             .with_field("symbol", "BTC")
-            .with_field("price", 45000.0 + (i as f64 * 100.0));
+            .with_field("price", (i as f64).mul_add(100.0, 45000.0));
         engine.process(event).await.expect("Failed to process");
     }
 
@@ -53,7 +53,7 @@ async fn test_partition_by_tumbling_window_separate_state() {
         let event = Event::new("PriceEvent")
             .with_timestamp(base_time + Duration::seconds(i * 10))
             .with_field("symbol", "ETH")
-            .with_field("price", 3000.0 + (i as f64 * 50.0));
+            .with_field("price", (i as f64).mul_add(50.0, 3000.0));
         engine.process(event).await.expect("Failed to process");
     }
 
@@ -163,10 +163,7 @@ async fn test_partition_by_sliding_window_separate_state() {
         }
     }
 
-    println!(
-        "Sensor A events: {}, Sensor B events: {}",
-        sensor_a_count, sensor_b_count
-    );
+    println!("Sensor A events: {sensor_a_count}, Sensor B events: {sensor_b_count}");
 }
 
 #[tokio::test]
@@ -227,15 +224,13 @@ async fn test_partition_aggregate_independent_per_key() {
                 (Some(Value::Str(c)), Some(Value::Float(t))) if &**c == "customer_A" => {
                     assert!(
                         (t - 600.0).abs() < 0.01,
-                        "Customer A total should be 600, got {}",
-                        t
+                        "Customer A total should be 600, got {t}"
                     );
                 }
                 (Some(Value::Str(c)), Some(Value::Float(t))) if &**c == "customer_B" => {
                     assert!(
                         (t - 150.0).abs() < 0.01,
-                        "Customer B total should be 150, got {}",
-                        t
+                        "Customer B total should be 150, got {t}"
                     );
                 }
                 _ => {}
@@ -278,7 +273,7 @@ async fn test_macd_signal_partitioned_by_symbol() {
     for i in 0..10 {
         let event = Event::new("OHLCV")
             .with_field("symbol", "BTC/USD")
-            .with_field("close", 45000.0 + (i as f64 * 100.0))
+            .with_field("close", (i as f64).mul_add(100.0, 45000.0))
             .with_field("timeframe", "1m");
         engine.process(event).await.expect("Failed to process");
     }
@@ -287,7 +282,7 @@ async fn test_macd_signal_partitioned_by_symbol() {
     for i in 0..10 {
         let event = Event::new("OHLCV")
             .with_field("symbol", "ETH/USD")
-            .with_field("close", 3000.0 + (i as f64 * 50.0))
+            .with_field("close", (i as f64).mul_add(50.0, 3000.0))
             .with_field("timeframe", "1m");
         engine.process(event).await.expect("Failed to process");
     }
@@ -302,8 +297,7 @@ async fn test_macd_signal_partitioned_by_symbol() {
         let is_macd = event
             .data
             .get("event_type")
-            .map(|v| v == &Value::Str("MACDSignal".into()))
-            .unwrap_or(false);
+            .is_some_and(|v| v == &Value::Str("MACDSignal".into()));
 
         if is_macd {
             match event.data.get("symbol") {
@@ -315,7 +309,7 @@ async fn test_macd_signal_partitioned_by_symbol() {
     }
 
     // Both should emit signals independently
-    println!("BTC signals: {}, ETH signals: {}", btc_signals, eth_signals);
+    println!("BTC signals: {btc_signals}, ETH signals: {eth_signals}");
     assert!(btc_signals > 0, "Should have BTC signals");
     assert!(eth_signals > 0, "Should have ETH signals");
 }

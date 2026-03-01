@@ -91,14 +91,14 @@ async fn run_context_scenario(program_source: &str, events: Vec<Event>) -> Vec<E
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_single_context_basic() {
-    let program = r#"
+    let program = r"
         context ingest
 
         stream HighTemp = SensorReading
             .context(ingest)
             .where(temperature > 100.0)
             .emit(sensor: sensor_id, temp: temperature)
-    "#;
+    ";
 
     let events = vec![
         Event::new("SensorReading")
@@ -129,7 +129,7 @@ async fn test_single_context_basic() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_two_context_pipeline() {
-    let program = r#"
+    let program = r"
         context ingest
         context analytics
 
@@ -142,7 +142,7 @@ async fn test_two_context_pipeline() {
             .context(analytics)
             .where(temp > 100.0)
             .emit(alert_sensor: sensor, alert_temp: temp)
-    "#;
+    ";
 
     let events = vec![
         Event::new("SensorReading")
@@ -180,7 +180,7 @@ async fn test_two_context_pipeline() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_three_context_chain() {
-    let program = r#"
+    let program = r"
         context ingest
         context compute
         context alert
@@ -199,7 +199,7 @@ async fn test_three_context_chain() {
             .context(alert)
             .where(value > 100.0)
             .emit(critical_device: device, critical_value: value)
-    "#;
+    ";
 
     let events = vec![
         Event::new("SensorReading")
@@ -230,7 +230,7 @@ async fn test_three_context_chain() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_context_isolation() {
-    let program = r#"
+    let program = r"
         context ctx1
         context ctx2
 
@@ -243,7 +243,7 @@ async fn test_context_isolation() {
             .context(ctx2)
             .where(score > 5)
             .emit(output: score)
-    "#;
+    ";
 
     let events = vec![
         Event::new("EventA").with_field("value", 20),
@@ -281,11 +281,11 @@ async fn test_context_isolation() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_no_context_backward_compat() {
-    let program = r#"
+    let program = r"
         stream HighTemp = SensorReading
             .where(temperature > 100.0)
             .emit(sensor: sensor_id, temp: temperature)
-    "#;
+    ";
 
     let events = vec![
         Event::new("SensorReading")
@@ -308,7 +308,7 @@ async fn test_no_context_backward_compat() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_context_with_window_aggregate() {
-    let program = r#"
+    let program = r"
         context compute
 
         stream AvgTemp = SensorReading
@@ -316,7 +316,7 @@ async fn test_context_with_window_aggregate() {
             .window(3)
             .aggregate(avg_temp: avg(temperature), count: count())
             .emit(average: avg_temp, total: count)
-    "#;
+    ";
 
     let events = vec![
         Event::new("SensorReading").with_field("temperature", 100.0),
@@ -337,8 +337,7 @@ async fn test_context_with_window_aggregate() {
     if let Some(avg) = results[0].get_float("average") {
         assert!(
             (avg - 200.0).abs() < 0.01,
-            "Average should be 200.0, got {}",
-            avg
+            "Average should be 200.0, got {avg}"
         );
     }
 }
@@ -351,7 +350,7 @@ async fn test_context_with_window_aggregate() {
 async fn test_context_with_to_connector() {
     // This tests that .to() operations work within a context.
     // We use a console connector which won't fail.
-    let program = r#"
+    let program = r"
         context output_ctx
 
         connector Console = console ()
@@ -361,7 +360,7 @@ async fn test_context_with_to_connector() {
             .where(temperature > 100.0)
             .emit(sensor: sensor_id, temp: temperature)
             .to(Console)
-    "#;
+    ";
 
     let events = vec![Event::new("SensorReading")
         .with_field("sensor_id", "S1")
@@ -379,7 +378,7 @@ async fn test_context_with_to_connector() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_parallel_dispatch_via_router() {
-    let program_source = r#"
+    let program_source = r"
         context ctx1
         context ctx2
 
@@ -392,7 +391,7 @@ async fn test_parallel_dispatch_via_router() {
             .context(ctx2)
             .where(score > 0)
             .emit(output: score)
-    "#;
+    ";
 
     let program = parse(program_source).expect("Failed to parse program");
     let (output_tx, mut output_rx) = mpsc::channel::<Event>(1000);
@@ -479,14 +478,14 @@ async fn test_parallel_dispatch_via_router() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_try_process_non_blocking() {
-    let program_source = r#"
+    let program_source = r"
         context ingest
 
         stream HighTemp = SensorReading
             .context(ingest)
             .where(temperature > 100.0)
             .emit(sensor: sensor_id, temp: temperature)
-    "#;
+    ";
 
     let program = parse(program_source).expect("Failed to parse program");
     let (output_tx, _output_rx) = mpsc::channel::<Event>(1000);
@@ -505,7 +504,7 @@ async fn test_try_process_non_blocking() {
     // Send many events rapidly — some should succeed, some should return ChannelFull
     for i in 0..100 {
         let event = Event::new("SensorReading")
-            .with_field("sensor_id", format!("S{}", i))
+            .with_field("sensor_id", format!("S{i}"))
             .with_field("temperature", 50.0);
         let shared = Arc::new(event);
         match orchestrator.try_process(shared) {
@@ -541,7 +540,7 @@ async fn test_try_process_non_blocking() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_process_batch() {
-    let program_source = r#"
+    let program_source = r"
         context ctx1
         context ctx2
 
@@ -554,7 +553,7 @@ async fn test_process_batch() {
             .context(ctx2)
             .where(score > 5)
             .emit(output: score)
-    "#;
+    ";
 
     let program = parse(program_source).expect("Failed to parse program");
     let (output_tx, mut output_rx) = mpsc::channel::<Event>(1000);
@@ -613,12 +612,12 @@ async fn test_process_batch() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_session_window_basic() {
-    let program = r#"
+    let program = r"
         stream SessionAvg = SensorReading
             .window(session: 5s)
             .aggregate(avg_temp: avg(temperature), count: count())
             .emit(average: avg_temp, total: count)
-    "#;
+    ";
 
     let base_time = chrono::Utc::now();
     let events = vec![
@@ -651,8 +650,7 @@ async fn test_session_window_basic() {
     if let Some(avg) = results[0].get_float("average") {
         assert!(
             (avg - 200.0).abs() < 0.01,
-            "Average should be 200.0, got {}",
-            avg
+            "Average should be 200.0, got {avg}"
         );
     }
     if let Some(count) = results[0].get_int("total") {
@@ -662,7 +660,7 @@ async fn test_session_window_basic() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_session_window_in_context() {
-    let program = r#"
+    let program = r"
         context compute
 
         stream SessionData = SensorReading
@@ -670,7 +668,7 @@ async fn test_session_window_in_context() {
             .window(session: 3s)
             .aggregate(count: count())
             .emit(event_count: count)
-    "#;
+    ";
 
     let base_time = chrono::Utc::now();
     let events = vec![
@@ -698,12 +696,12 @@ async fn test_session_window_in_context() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_session_window_multiple_closures() {
     // Three sessions: events close two sessions, third stays open (not emitted)
-    let program = r#"
+    let program = r"
         stream SessionCount = SensorReading
             .window(session: 3s)
             .aggregate(count: count(), total: sum(temperature))
             .emit(event_count: count, temp_total: total)
-    "#;
+    ";
 
     let base_time = chrono::Utc::now();
     let events = vec![
@@ -744,8 +742,7 @@ async fn test_session_window_multiple_closures() {
     if let Some(total) = results[0].get_float("temp_total") {
         assert!(
             (total - 30.0).abs() < 0.01,
-            "Session 1 total should be 30.0, got {}",
-            total
+            "Session 1 total should be 30.0, got {total}"
         );
     }
 
@@ -756,8 +753,7 @@ async fn test_session_window_multiple_closures() {
     if let Some(total) = results[1].get_float("temp_total") {
         assert!(
             (total - 70.0).abs() < 0.01,
-            "Session 2 total should be 70.0, got {}",
-            total
+            "Session 2 total should be 70.0, got {total}"
         );
     }
 }
@@ -765,7 +761,7 @@ async fn test_session_window_multiple_closures() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_session_window_partitioned() {
     // Two partitions with independent session tracking
-    let program = r#"
+    let program = r"
         stream PerSensorSession = SensorReading
             .partition_by(sensor_id)
             .window(session: 3s)
@@ -775,7 +771,7 @@ async fn test_session_window_partitioned() {
                 avg_temp: avg(temperature)
             )
             .emit(sensor: sensor, event_count: count, average: avg_temp)
-    "#;
+    ";
 
     let base_time = chrono::Utc::now();
     let events = vec![
@@ -847,15 +843,13 @@ async fn test_session_window_partitioned() {
         match sensor.as_str() {
             "S1" => assert!(
                 (avg - 110.0).abs() < 0.01,
-                "S1 avg should be 110.0, got {}",
-                avg
+                "S1 avg should be 110.0, got {avg}"
             ),
             "S2" => assert!(
                 (avg - 210.0).abs() < 0.01,
-                "S2 avg should be 210.0, got {}",
-                avg
+                "S2 avg should be 210.0, got {avg}"
             ),
-            _ => panic!("Unexpected sensor: {}", sensor),
+            _ => panic!("Unexpected sensor: {sensor}"),
         }
     }
 }
@@ -863,7 +857,7 @@ async fn test_session_window_partitioned() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_session_window_cross_context() {
     // Session window in one context, receiving events forwarded from another
-    let program = r#"
+    let program = r"
         context ingest
         context sessions
 
@@ -877,7 +871,7 @@ async fn test_session_window_cross_context() {
             .window(session: 3s)
             .aggregate(count: count(), avg_temp: avg(temperature))
             .emit(event_count: count, average: avg_temp)
-    "#;
+    ";
 
     let base_time = chrono::Utc::now();
     let events = vec![
@@ -929,8 +923,7 @@ async fn test_session_window_cross_context() {
     if let Some(avg) = session_results[0].get_float("average") {
         assert!(
             (avg - 200.0).abs() < 0.01,
-            "Average should be 200.0, got {}",
-            avg
+            "Average should be 200.0, got {avg}"
         );
     }
 
@@ -948,7 +941,7 @@ async fn test_session_window_cross_context() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_session_window_partitioned_in_context() {
     // Partitioned session window running inside a context
-    let program = r#"
+    let program = r"
         context analytics
 
         stream UserSessions = UserActivity
@@ -960,7 +953,7 @@ async fn test_session_window_partitioned_in_context() {
                 actions: count()
             )
             .emit(user: user, action_count: actions)
-    "#;
+    ";
 
     let base_time = chrono::Utc::now();
     let events = vec![
@@ -1013,7 +1006,7 @@ async fn test_session_window_partitioned_in_context() {
         match user.as_str() {
             "alice" => assert_eq!(count, 2, "Alice should have 2 actions"),
             "bob" => assert_eq!(count, 1, "Bob should have 1 action"),
-            _ => panic!("Unexpected user: {}", user),
+            _ => panic!("Unexpected user: {user}"),
         }
     }
 }
@@ -1026,12 +1019,12 @@ async fn test_session_window_partitioned_in_context() {
 async fn test_session_window_sweep_closes_stale() {
     // Session with 3 events and no trailing event to close it.
     // The sweep (flush_expired_sessions) should close it after processing.
-    let program = r#"
+    let program = r"
         stream SessionAvg = SensorReading
             .window(session: 5s)
             .aggregate(avg_temp: avg(temperature), count: count())
             .emit(average: avg_temp, total: count)
-    "#;
+    ";
 
     let base_time = chrono::Utc::now() - chrono::Duration::seconds(30);
     let events = vec![
@@ -1059,8 +1052,7 @@ async fn test_session_window_sweep_closes_stale() {
     if let Some(avg) = results[0].get_float("average") {
         assert!(
             (avg - 200.0).abs() < 0.01,
-            "Average should be 200.0, got {}",
-            avg
+            "Average should be 200.0, got {avg}"
         );
     }
     if let Some(count) = results[0].get_int("total") {
@@ -1072,7 +1064,7 @@ async fn test_session_window_sweep_closes_stale() {
 async fn test_session_window_sweep_partitioned() {
     // Two partitions with events but no trailing event to close them.
     // The sweep should independently close both partitions.
-    let program = r#"
+    let program = r"
         stream PerSensorSession = SensorReading
             .partition_by(sensor_id)
             .window(session: 3s)
@@ -1081,7 +1073,7 @@ async fn test_session_window_sweep_partitioned() {
                 count: count()
             )
             .emit(sensor: sensor, event_count: count)
-    "#;
+    ";
 
     let base_time = chrono::Utc::now() - chrono::Duration::seconds(30);
     let events = vec![
@@ -1127,7 +1119,7 @@ async fn test_session_window_sweep_partitioned() {
         match sensor.as_str() {
             "S1" => assert_eq!(count, 2, "S1 should have 2 events"),
             "S2" => assert_eq!(count, 1, "S2 should have 1 event"),
-            _ => panic!("Unexpected sensor: {}", sensor),
+            _ => panic!("Unexpected sensor: {sensor}"),
         }
     }
 }
@@ -1137,12 +1129,12 @@ async fn test_session_window_sweep_no_false_close() {
     // Events arrive with a gap that closes session 1, then more events
     // that are still active. The sweep should NOT close the active session
     // prematurely (events are recent enough).
-    let program = r#"
+    let program = r"
         stream SessionCount = SensorReading
             .window(session: 5s)
             .aggregate(count: count())
             .emit(event_count: count)
-    "#;
+    ";
 
     // Use timestamps far in the past for session 1, then recent for session 2
     let past = chrono::Utc::now() - chrono::Duration::seconds(60);

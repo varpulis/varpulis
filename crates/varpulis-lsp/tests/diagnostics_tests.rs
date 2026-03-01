@@ -13,7 +13,7 @@ use varpulis_lsp::diagnostics::get_diagnostics;
 
 #[test]
 fn diagnostics_valid_event_and_stream() {
-    let code = r#"
+    let code = r"
 event SensorReading:
     temperature: int
     humidity: float
@@ -21,18 +21,17 @@ event SensorReading:
 stream Filtered = SensorReading
     .where(temperature > 30)
     .emit()
-"#;
+";
     let diags = get_diagnostics(code);
     assert!(
         diags.is_empty(),
-        "Valid program should have no diagnostics: {:?}",
-        diags
+        "Valid program should have no diagnostics: {diags:?}"
     );
 }
 
 #[test]
 fn diagnostics_valid_pattern() {
-    let code = r#"
+    let code = r"
 event Warning:
     level: int
 
@@ -40,7 +39,7 @@ event Error:
     code: int
 
 pattern Alert = SEQ(w: Warning, e: Error) within 5m
-"#;
+";
     let diags = get_diagnostics(code);
     // Pattern syntax may produce warnings but should not panic
     let _ = diags;
@@ -48,11 +47,11 @@ pattern Alert = SEQ(w: Warning, e: Error) within 5m
 
 #[test]
 fn diagnostics_valid_function_declaration() {
-    let code = r#"
+    let code = r"
 fn double(x: int) -> int {
     x * 2
 }
-"#;
+";
     let diags = get_diagnostics(code);
     let _ = diags;
 }
@@ -70,7 +69,7 @@ fn diagnostics_undefined_event_produces_warning_or_error() {
 #[test]
 fn diagnostics_semantic_with_hint() {
     // Some semantic diagnostics include hints — exercise the hint branch
-    let code = r#"
+    let code = r"
 event A:
     x: int
 
@@ -80,7 +79,7 @@ stream S1 = A
 stream S2 = A
     .where(y > 10)
     .emit()
-"#;
+";
     let diags = get_diagnostics(code);
     // "y" is not a field of A, which might produce a semantic diagnostic with a hint
     let _ = diags;
@@ -181,11 +180,7 @@ fn diagnostics_newlines_only() {
 fn diagnostics_comment_only_multiline() {
     let code = "# comment 1\n# comment 2\n# comment 3";
     let diags = get_diagnostics(code);
-    assert!(
-        diags.is_empty(),
-        "Comments only should be valid: {:?}",
-        diags
-    );
+    assert!(diags.is_empty(), "Comments only should be valid: {diags:?}");
 }
 
 // =============================================================================
@@ -273,14 +268,13 @@ stream Readings = SensorData
     let diags = get_diagnostics(code);
     assert!(
         diags.is_empty(),
-        "Valid program with connector should have no diagnostics: {:?}",
-        diags
+        "Valid program with connector should have no diagnostics: {diags:?}"
     );
 }
 
 #[test]
 fn diagnostics_valid_with_window_and_aggregate() {
-    let code = r#"
+    let code = r"
 event Tick:
     price: float
 
@@ -288,7 +282,7 @@ stream AvgPrice = Tick
     .window(tumbling(1m))
     .aggregate(avg(price) as avg_price)
     .emit()
-"#;
+";
     let diags = get_diagnostics(code);
     // Window/aggregate syntax may vary; just ensure no panic
     let _ = diags;
@@ -296,7 +290,7 @@ stream AvgPrice = Tick
 
 #[test]
 fn diagnostics_valid_with_join() {
-    let code = r#"
+    let code = r"
 event A:
     id: int
     value: float
@@ -308,20 +302,20 @@ event B:
 stream Joined = A
     .join(B, A.id == B.id)
     .emit()
-"#;
+";
     let diags = get_diagnostics(code);
     let _ = diags;
 }
 
 #[test]
 fn diagnostics_valid_let_var_const() {
-    let code = r#"
+    let code = r"
 let threshold = 25
 var counter = 0
 const MAX_RETRIES = 3
-"#;
+";
     let diags = get_diagnostics(code);
-    assert!(diags.is_empty(), "Variables should be valid: {:?}", diags);
+    assert!(diags.is_empty(), "Variables should be valid: {diags:?}");
 }
 
 // =============================================================================
@@ -370,7 +364,7 @@ fn diagnostics_error_on_later_line() {
 
 #[test]
 fn diagnostics_multiple_events_and_streams() {
-    let code = r#"
+    let code = r"
 event A:
     x: int
 
@@ -384,12 +378,11 @@ stream S1 = A
 stream S2 = B
     .where(y > 1.5)
     .emit()
-"#;
+";
     let diags = get_diagnostics(code);
     assert!(
         diags.is_empty(),
-        "Multiple valid declarations should have no diagnostics: {:?}",
-        diags
+        "Multiple valid declarations should have no diagnostics: {diags:?}"
     );
 }
 
@@ -421,14 +414,13 @@ fn diagnostics_many_lines() {
     let mut code = String::new();
     code.push_str("event X:\n    value: int\n\n");
     for i in 0..50 {
-        code.push_str(&format!("# line {}\n", i));
+        code.push_str(&format!("# line {i}\n"));
     }
     code.push_str("stream S = X.emit()\n");
     let diags = get_diagnostics(&code);
     assert!(
         diags.is_empty(),
-        "Many comment lines plus valid statement: {:?}",
-        diags
+        "Many comment lines plus valid statement: {diags:?}"
     );
 }
 
@@ -508,8 +500,7 @@ fn diagnostics_semantic_warning_severity() {
         .collect();
     assert!(
         !warnings.is_empty(),
-        "Should have at least one WARNING severity: {:?}",
-        diags
+        "Should have at least one WARNING severity: {diags:?}"
     );
 }
 
@@ -535,8 +526,7 @@ fn diagnostics_semantic_no_hint() {
     // Clean program should have no diagnostics
     assert!(
         diags.is_empty(),
-        "Valid program should have no diagnostics: {:?}",
-        diags
+        "Valid program should have no diagnostics: {diags:?}"
     );
 }
 
@@ -654,14 +644,14 @@ fn diagnostics_duplicate_event_produces_error() {
 #[test]
 fn diagnostics_where_bare_identifier_warns() {
     // .where(temperature) is just a bare identifier, not a boolean condition
-    let code = r#"
+    let code = r"
 event SensorData:
     temperature: float
 
 stream S = SensorData
     .where(temperature)
     .emit()
-"#;
+";
     let diags = get_diagnostics(code);
     let w061: Vec<_> = diags
         .iter()
@@ -669,22 +659,21 @@ stream S = SensorData
         .collect();
     assert!(
         !w061.is_empty(),
-        "Bare identifier in .where() should produce W061 warning: {:?}",
-        diags
+        "Bare identifier in .where() should produce W061 warning: {diags:?}"
     );
 }
 
 #[test]
 fn diagnostics_where_comparison_is_valid() {
     // .where(temperature > 30.0) is a valid boolean condition
-    let code = r#"
+    let code = r"
 event SensorData:
     temperature: float
 
 stream S = SensorData
     .where(temperature > 30.0)
     .emit()
-"#;
+";
     let diags = get_diagnostics(code);
     let w061: Vec<_> = diags
         .iter()
@@ -692,22 +681,21 @@ stream S = SensorData
         .collect();
     assert!(
         w061.is_empty(),
-        "Valid comparison should not produce W061: {:?}",
-        diags
+        "Valid comparison should not produce W061: {diags:?}"
     );
 }
 
 #[test]
 fn diagnostics_where_member_access_warns() {
     // .where(a.temperature) is a field access, not a boolean condition
-    let code = r#"
+    let code = r"
 event SensorData:
     temperature: float
 
 stream S = SensorData as a
     .where(a.temperature)
     .emit()
-"#;
+";
     let diags = get_diagnostics(code);
     let w061: Vec<_> = diags
         .iter()
@@ -715,8 +703,7 @@ stream S = SensorData as a
         .collect();
     assert!(
         !w061.is_empty(),
-        "Member access in .where() should produce W061 warning: {:?}",
-        diags
+        "Member access in .where() should produce W061 warning: {diags:?}"
     );
 }
 
@@ -747,15 +734,14 @@ stream Combined = merge(Temperature, Humidity)
         .collect();
     assert!(
         errors.is_empty(),
-        "Valid merge stream should have no errors: {:?}",
-        diags
+        "Valid merge stream should have no errors: {diags:?}"
     );
 }
 
 #[test]
 fn diagnostics_merge_unknown_field_warns() {
     // merge stream referencing nonexistent field
-    let code = r#"
+    let code = r"
 event Temperature:
     value: float
 
@@ -765,7 +751,7 @@ event Humidity:
 stream Combined = merge(Temperature, Humidity)
     .where(nonexistent > 10)
     .emit()
-"#;
+";
     let diags = get_diagnostics(code);
     let w035: Vec<_> = diags
         .iter()
@@ -773,8 +759,7 @@ stream Combined = merge(Temperature, Humidity)
         .collect();
     assert!(
         !w035.is_empty(),
-        "Unknown field in merge .where() should produce W035 warning: {:?}",
-        diags
+        "Unknown field in merge .where() should produce W035 warning: {diags:?}"
     );
 }
 
@@ -784,10 +769,10 @@ stream Combined = merge(Temperature, Humidity)
 
 #[test]
 fn diagnostics_unknown_stream_operation() {
-    let code = r#"
+    let code = r"
 event Source { x: Float }
 stream S = Source.foo(x > 1)
-"#;
+";
     let diags = get_diagnostics(code);
     assert!(!diags.is_empty(), "Unknown op should produce a diagnostic");
     assert_eq!(diags[0].severity, Some(DiagnosticSeverity::ERROR));

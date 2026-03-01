@@ -224,7 +224,7 @@ fn test_hamlet_graph_graphlet_cap() {
 
     // Add events of different types to create multiple graphlets
     for type_idx in 0u16..10 {
-        let e = Arc::new(Event::new(format!("Type{}", type_idx).as_str()));
+        let e = Arc::new(Event::new(format!("Type{type_idx}").as_str()));
         graph.add_event(e, type_idx);
         // Close the graphlet so it becomes inactive
         graph.close_graphlet_for_type(type_idx);

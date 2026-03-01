@@ -40,7 +40,7 @@ pub struct ZddHandle {
 impl ZddHandle {
     /// Get the root reference
     #[inline]
-    pub fn root(&self) -> ZddRef {
+    pub const fn root(&self) -> ZddRef {
         self.root
     }
 
@@ -126,7 +126,7 @@ impl ZddArena {
 
     /// Create an empty ZDD (∅ - no valid combinations)
     #[inline]
-    pub fn empty(&self) -> ZddHandle {
+    pub const fn empty(&self) -> ZddHandle {
         ZddHandle {
             root: ZddRef::Empty,
         }
@@ -134,7 +134,7 @@ impl ZddArena {
 
     /// Create the base ZDD ({∅} - one valid combination: empty set)
     #[inline]
-    pub fn base(&self) -> ZddHandle {
+    pub const fn base(&self) -> ZddHandle {
         ZddHandle { root: ZddRef::Base }
     }
 
@@ -553,7 +553,7 @@ impl ZddArena {
 
     /// Get the number of nodes in the arena
     #[inline]
-    pub fn node_count(&self) -> usize {
+    pub const fn node_count(&self) -> usize {
         self.table.len()
     }
 
@@ -716,7 +716,7 @@ impl ZddArena {
     /// If these invariants ever change (e.g., adding node compaction without GC),
     /// this method would need to clear the caches.
     #[inline]
-    fn invalidate_caches(&mut self) {
+    const fn invalidate_caches(&mut self) {
         // No-op: see documentation above.
         // Caches remain valid due to monotonic ID allocation.
     }
@@ -956,7 +956,7 @@ impl<'a> ArenaIterator<'a> {
     }
 }
 
-impl<'a> Iterator for ArenaIterator<'a> {
+impl Iterator for ArenaIterator<'_> {
     type Item = Vec<u32>;
 
     fn next(&mut self) -> Option<Self::Item> {
