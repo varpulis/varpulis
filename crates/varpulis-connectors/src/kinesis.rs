@@ -264,6 +264,15 @@ mod kinesis_impl {
         client: Option<KinesisClient>,
     }
 
+    impl std::fmt::Debug for KinesisSourceImpl {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("KinesisSourceImpl")
+                .field("name", &self.name)
+                .field("running", &self.running)
+                .finish_non_exhaustive()
+        }
+    }
+
     impl KinesisSourceImpl {
         /// Create a new Kinesis source with AWS SDK
         pub async fn new(name: &str, config: KinesisConfig) -> Result<Self, ConnectorError> {
@@ -434,6 +443,14 @@ mod kinesis_impl {
         name: String,
         config: KinesisConfig,
         client: Arc<Mutex<KinesisClient>>,
+    }
+
+    impl std::fmt::Debug for KinesisSinkImpl {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("KinesisSinkImpl")
+                .field("name", &self.name)
+                .finish_non_exhaustive()
+        }
     }
 
     impl KinesisSinkImpl {

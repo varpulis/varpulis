@@ -33,6 +33,15 @@ pub struct ManagedKafkaConnector {
     running: Arc<AtomicBool>,
 }
 
+impl std::fmt::Debug for ManagedKafkaConnector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ManagedKafkaConnector")
+            .field("connector_name", &self.connector_name)
+            .field("running", &self.running)
+            .finish_non_exhaustive()
+    }
+}
+
 impl ManagedKafkaConnector {
     /// Creates a new managed Kafka connector.
     pub fn new(name: &str, config: KafkaConfig) -> Self {

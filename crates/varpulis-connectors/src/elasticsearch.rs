@@ -203,6 +203,14 @@ mod elasticsearch_impl {
         buffer: Arc<Mutex<BulkBuffer>>,
     }
 
+    impl std::fmt::Debug for ElasticsearchSinkImpl {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("ElasticsearchSinkImpl")
+                .field("name", &self.name)
+                .finish_non_exhaustive()
+        }
+    }
+
     impl ElasticsearchSinkImpl {
         /// Create a new Elasticsearch sink
         pub fn new(name: &str, config: ElasticsearchConfig) -> Result<Self, ConnectorError> {

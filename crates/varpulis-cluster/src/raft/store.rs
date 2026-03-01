@@ -158,6 +158,7 @@ impl RaftLogReader<TypeConfig> for MemStore {
 // ---------------------------------------------------------------------------
 
 /// Snapshot builder that captures state at creation time.
+#[derive(Debug)]
 pub struct SnapshotBuilder {
     snapshot: StateMachineSnapshot,
 }

@@ -167,6 +167,13 @@ pub struct RaftBootstrapResult {
     pub shared_state: store::SharedCoordinatorState,
 }
 
+impl std::fmt::Debug for RaftBootstrapResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RaftBootstrapResult")
+            .finish_non_exhaustive()
+    }
+}
+
 /// Bootstrap a Raft consensus node with in-memory storage.
 ///
 /// Creates the in-memory log store, state machine, and network transport,
