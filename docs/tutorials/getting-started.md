@@ -152,26 +152,25 @@ Alerts generated: 2
 Event rate:       12.4 events/sec
 ```
 
-## Faster Processing with Immediate Mode
+## Faster Processing with Parallel Workers
 
-For larger datasets, use immediate mode to skip timing delays:
-
-```bash
-varpulis simulate \
-    --program temperature_monitor.vpl \
-    --events test_events.evt \
-    --immediate
-```
-
-For even faster processing with multiple CPU cores:
+By default, `simulate` runs in fast mode -- it preloads all events into memory and processes them as fast as possible with no timing delays. To scale across multiple CPU cores:
 
 ```bash
 varpulis simulate \
     --program temperature_monitor.vpl \
     --events test_events.evt \
-    --immediate \
     --workers 8 \
     --partition-by sensor_id
+```
+
+If you want to replay events with real-time timing delays (e.g., to observe how alerts trigger over time), use `--timed`:
+
+```bash
+varpulis simulate \
+    --program temperature_monitor.vpl \
+    --events test_events.evt \
+    --timed
 ```
 
 ## Adding Aggregations
@@ -240,7 +239,7 @@ Now that you have Varpulis running:
 | `varpulis check file.vpl` | Validate syntax |
 | `varpulis parse file.vpl` | Show AST |
 | `varpulis simulate -p file.vpl -e events.evt` | Run simulation |
-| `varpulis simulate ... --immediate --workers 8` | Fast parallel mode |
+| `varpulis simulate ... --workers 8` | Parallel mode |
 | `varpulis run --file file.vpl` | Run with MQTT |
 | `varpulis demo` | Built-in HVAC demo |
 | `varpulis server` | Start WebSocket API |
@@ -257,8 +256,8 @@ Now that you have Varpulis running:
 - Verify the stream declaration (`stream Name = EventType`) matches the event type exactly
 
 **"Simulation runs slowly"**
-- Use `--immediate` to skip timing delays
-- Add `--preload` to load events into memory
+- The default mode already runs as fast as possible (no timing delays, events preloaded)
 - Use `--workers N` for parallel processing
+- If using `--timed` or `--streaming`, switch to the default fast mode for maximum throughput
 
 For more help, see the [Troubleshooting Guide](../guides/troubleshooting.md).

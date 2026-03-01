@@ -234,7 +234,7 @@ Notice the invalid reading at `@500` (`value: -5.0`) -- the ingest stage will fi
 ### Run It
 
 ```bash
-varpulis simulate -p pipeline.vpl -e pipeline.evt --immediate --verbose
+varpulis simulate -p pipeline.vpl -e pipeline.evt --verbose
 ```
 
 **Expected output:**
@@ -350,7 +350,7 @@ Create `parallel_windows.evt`:
 ### Run It
 
 ```bash
-varpulis simulate -p parallel_windows.vpl -e parallel_windows.evt --immediate --verbose
+varpulis simulate -p parallel_windows.vpl -e parallel_windows.evt --verbose
 ```
 
 **Expected output:**
@@ -472,7 +472,7 @@ Alice has two sessions: events at 0-3s, then a gap longer than 5s, then events a
 ### Run It
 
 ```bash
-varpulis simulate -p session_contexts.vpl -e session_contexts.evt --immediate --verbose
+varpulis simulate -p session_contexts.vpl -e session_contexts.evt --verbose
 ```
 
 **Expected output:**
@@ -567,7 +567,7 @@ Cross-context events are delivered via bounded `mpsc` channels (default capacity
 
 To handle this:
 - Filter events before crossing context boundaries to reduce volume
-- Use `--immediate` mode for batch processing to avoid timing delays
+- The default fast mode processes events without timing delays; use `--timed` only when real-time replay is needed
 - Monitor channel utilization via Prometheus metrics
 
 ### Monitoring with Prometheus

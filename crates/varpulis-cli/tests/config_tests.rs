@@ -85,8 +85,8 @@ fn config_default_processing() {
 #[test]
 fn config_default_simulation() {
     let cfg = Config::default();
-    assert!(!cfg.simulation.immediate);
-    assert!(!cfg.simulation.preload);
+    assert!(!cfg.simulation.timed);
+    assert!(!cfg.simulation.streaming);
     assert!(!cfg.simulation.verbose);
     assert!(cfg.simulation.events_file.is_none());
 }
@@ -106,8 +106,8 @@ server:
   metrics_port: 9191
   workdir: /tmp/work
 simulation:
-  immediate: true
-  preload: true
+  timed: true
+  streaming: true
   verbose: true
   events_file: /data/events.csv
 kafka:
@@ -141,8 +141,8 @@ auth:
     assert!(cfg.server.metrics_enabled);
     assert_eq!(cfg.server.metrics_port, 9191);
     assert_eq!(cfg.server.workdir, Some(PathBuf::from("/tmp/work")));
-    assert!(cfg.simulation.immediate);
-    assert!(cfg.simulation.preload);
+    assert!(cfg.simulation.timed);
+    assert!(cfg.simulation.streaming);
     assert!(cfg.simulation.verbose);
     assert_eq!(
         cfg.simulation.events_file,
@@ -212,8 +212,8 @@ metrics_port = 9191
 workdir = "/var/lib/varpulis"
 
 [simulation]
-immediate = true
-preload = true
+timed = true
+streaming = true
 verbose = true
 events_file = "/data/events.csv"
 
@@ -240,8 +240,8 @@ partition_by = "region"
     assert_eq!(cfg.server.bind, "0.0.0.0");
     assert!(cfg.server.metrics_enabled);
     assert_eq!(cfg.server.metrics_port, 9191);
-    assert!(cfg.simulation.immediate);
-    assert!(cfg.simulation.preload);
+    assert!(cfg.simulation.timed);
+    assert!(cfg.simulation.streaming);
 
     let kafka = cfg.kafka.unwrap();
     assert_eq!(kafka.bootstrap_servers, "kafka:9092");
