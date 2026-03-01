@@ -18,14 +18,17 @@ Varpulis is designed for high-throughput stream processing. Typical performance:
 
 ### Batch Processing Mode
 
-For offline analytics, use batch mode to skip timing:
+By default, `simulate` runs in fast mode: all events are preloaded into memory and processed as fast as possible with no timing delays. This is optimal for offline analytics and benchmarking.
 
 ```bash
-# Basic batch mode
-varpulis simulate -p rules.vpl -e data.evt --immediate
+# Default fast mode (preloads events, no timing delays)
+varpulis simulate -p rules.vpl -e data.evt
 
-# With preloading (faster for multiple passes)
-varpulis simulate -p rules.vpl -e data.evt --immediate --preload
+# Real-time replay with timing delays
+varpulis simulate -p rules.vpl -e data.evt --timed
+
+# Line-by-line reading for huge files that don't fit in memory
+varpulis simulate -p rules.vpl -e data.evt --streaming
 ```
 
 ### Parallel Workers
@@ -34,10 +37,10 @@ Scale across CPU cores:
 
 ```bash
 # Use 8 workers
-varpulis simulate -p rules.vpl -e data.evt --immediate --workers 8
+varpulis simulate -p rules.vpl -e data.evt --workers 8
 
 # Use all available cores
-varpulis simulate -p rules.vpl -e data.evt --immediate --workers $(nproc)
+varpulis simulate -p rules.vpl -e data.evt --workers $(nproc)
 ```
 
 ### Partitioning
@@ -411,13 +414,13 @@ fn bench_my_pattern(b: &mut Bencher) {
 
 ```bash
 # Baseline
-varpulis simulate -p rules.vpl -e large.evt --immediate 2>&1 | grep "Event rate"
+varpulis simulate -p rules.vpl -e large.evt 2>&1 | grep "Event rate"
 
 # With more workers
-varpulis simulate -p rules.vpl -e large.evt --immediate --workers 8 2>&1 | grep "Event rate"
+varpulis simulate -p rules.vpl -e large.evt --workers 8 2>&1 | grep "Event rate"
 
 # With partitioning
-varpulis simulate -p rules.vpl -e large.evt --immediate --workers 8 --partition-by device_id 2>&1 | grep "Event rate"
+varpulis simulate -p rules.vpl -e large.evt --workers 8 --partition-by device_id 2>&1 | grep "Event rate"
 ```
 
 ---

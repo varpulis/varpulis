@@ -407,18 +407,18 @@ varpulis simulate -p rules.vpl -e test.evt --verbose
 
 ```bash
 # With perf (Linux)
-perf record -g varpulis simulate -p rules.vpl -e large.evt --immediate
+perf record -g varpulis simulate -p rules.vpl -e large.evt
 perf report
 
 # With flamegraph
-cargo flamegraph -- simulate -p rules.vpl -e large.evt --immediate
+cargo flamegraph -- simulate -p rules.vpl -e large.evt
 ```
 
 ### Memory Profiling
 
 ```bash
 # With heaptrack
-heaptrack varpulis simulate -p rules.vpl -e large.evt --immediate
+heaptrack varpulis simulate -p rules.vpl -e large.evt
 heaptrack_gui heaptrack.varpulis.*.gz
 
 # With valgrind massif

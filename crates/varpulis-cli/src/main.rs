@@ -192,17 +192,17 @@ enum Commands {
         #[arg(short, long)]
         events: PathBuf,
 
-        /// Run without timing delays (immediate mode)
+        /// Replay events with real-time timing delays (respects @Ns and BATCH directives)
         #[arg(long)]
-        immediate: bool,
+        timed: bool,
 
         /// Verbose output (show each event)
         #[arg(short, long)]
         verbose: bool,
 
-        /// Preload all events into memory (faster but uses more memory)
+        /// Stream events line-by-line instead of preloading (lower memory for huge files)
         #[arg(long)]
-        preload: bool,
+        streaming: bool,
 
         /// Number of worker threads for parallel processing (default: number of CPU cores)
         #[arg(long, short = 'w')]
@@ -714,9 +714,9 @@ async fn main() -> Result<()> {
         Commands::Simulate {
             program,
             events,
-            immediate,
+            timed,
             verbose,
-            preload,
+            streaming,
             workers,
             partition_by,
             quiet,
@@ -739,9 +739,9 @@ async fn main() -> Result<()> {
             commands::simulate::run_simulation(
                 &program,
                 &events,
-                immediate,
+                timed,
                 verbose,
-                preload,
+                streaming,
                 workers,
                 partition_by.as_deref(),
                 quiet,

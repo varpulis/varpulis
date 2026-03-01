@@ -43,7 +43,7 @@ The primary factor in CPU sizing is the type of operations applied to each strea
 | Per event in time window | ~200-500 bytes | Depends on field count and value sizes |
 | SASE per active run | ~500 bytes - 2 KB | Grows with pattern length and partial matches |
 | PST tree (10 event types, depth 5) | ~50-100 KB | Per forecasting stream |
-| Preloaded events (CLI `--preload`) | ~400 bytes/event | Includes parsed fields and timestamp |
+| Preloaded events (CLI simulate, default) | ~400 bytes/event | Includes parsed fields and timestamp |
 | Typical production (10 streams, 100K events/sec) | 50-200 MB RSS | Varies with window sizes and match fanout |
 
 ### Memory Estimation Formula

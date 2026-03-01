@@ -98,11 +98,11 @@ impl Default for ServerConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct SimulationConfig {
-    /// Run in immediate mode (no timing delays)
-    pub immediate: bool,
+    /// Replay events with real-time timing delays
+    pub timed: bool,
 
-    /// Preload events into memory
-    pub preload: bool,
+    /// Stream events line-by-line instead of preloading
+    pub streaming: bool,
 
     /// Verbose output
     pub verbose: bool,

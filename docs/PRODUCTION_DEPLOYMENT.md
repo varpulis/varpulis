@@ -433,8 +433,8 @@ resources:
 For high-throughput scenarios, use batch ingestion:
 
 ```bash
-# Preload mode for event files
-varpulis simulate --preload --immediate --program queries.vpl --events events.evt
+# Fast batch processing (default: preloads events into memory)
+varpulis simulate --program queries.vpl --events events.evt
 ```
 
 ---

@@ -112,7 +112,10 @@ The most powerful signals come from **indicator confluence** - when multiple ind
 varpulis check examples/financial_markets.vpl
 
 # Run with event file simulation
-varpulis simulate -p examples/financial_markets.vpl -e market_data.evt --immediate
+varpulis simulate -p examples/financial_markets.vpl -e market_data.evt
+
+# Run with real-time replay (respects event timing delays)
+varpulis simulate -p examples/financial_markets.vpl -e market_data.evt --timed
 
 # Run with MQTT data source (configured via connectors in the VPL file)
 varpulis run --file examples/financial_markets.vpl
