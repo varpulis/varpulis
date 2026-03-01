@@ -149,7 +149,7 @@ pub use context::{
     ContextMessage, ContextOrchestrator, ContextRuntime, DispatchError, EventTypeRouter,
 };
 pub use engine::error::EngineError;
-pub use engine::{Engine, ReloadReport, SourceBinding};
+pub use engine::{Engine, EngineBuilder, ReloadReport, SourceBinding};
 pub use event::{Event, SharedEvent};
 pub use event_file::StreamingEventReader;
 pub use metrics::Metrics;

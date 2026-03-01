@@ -44,7 +44,7 @@ mod managed_nats;
 mod managed_registry;
 
 // Core types and traits
-pub use types::{ConnectorConfig, ConnectorError, SinkConnector, SourceConnector};
+pub use types::{ConnectorConfig, ConnectorError, ConnectorHealth, SinkConnector, SourceConnector};
 
 // Sink trait, error, and adapter
 pub use sink::{Sink, SinkConnectorAdapter, SinkError};

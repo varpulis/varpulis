@@ -84,9 +84,10 @@ jobs:
           tool: cargo
           output-file-path: bench-results.txt
           auto-push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-          alert-threshold: "150%"
+          alert-threshold: "120%"
           comment-on-alert: true
           fail-on-alert: ${{ github.event_name == 'pull_request' }}
           gh-pages-branch: gh-pages
           benchmark-data-dir-path: dev/bench
           github-token: ${{ secrets.GITHUB_TOKEN }}
+          summary-always: true
