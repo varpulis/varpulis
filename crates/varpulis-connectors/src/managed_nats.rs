@@ -15,7 +15,7 @@ use varpulis_core::Event;
 mod nats_managed_impl {
     use super::*;
     use crate::sink::SinkError;
-    use futures::StreamExt;
+    use futures_util::StreamExt;
     use rustc_hash::FxBuildHasher;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::time::{Duration, Instant};

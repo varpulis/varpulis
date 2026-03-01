@@ -109,6 +109,7 @@ mod database_impl {
     }
 
     impl DatabaseSource {
+        /// Create a new database source connector with the given configuration.
         pub fn new(name: &str, config: DatabaseConfig) -> Self {
             Self {
                 name: name.to_string(),
@@ -217,6 +218,7 @@ mod database_impl {
     }
 
     impl DatabaseSink {
+        /// Create a new database sink connector, establishing a connection pool.
         pub async fn new(name: &str, config: DatabaseConfig) -> Result<Self, ConnectorError> {
             ensure_drivers();
             let pool = PoolOptions::<sqlx::Any>::new()

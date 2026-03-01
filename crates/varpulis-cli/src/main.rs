@@ -120,7 +120,7 @@ enum Commands {
 
         /// Allowed CORS origins (comma-separated). Default: localhost only.
         /// Use "*" to explicitly allow all origins, or specify domains like
-        /// "https://app.example.com,https://admin.example.com"
+        /// `https://app.example.com,https://admin.example.com`
         #[arg(long, env = "VARPULIS_CORS_ORIGINS", value_delimiter = ',')]
         cors_origins: Option<Vec<String>>,
 
@@ -137,7 +137,7 @@ enum Commands {
         worker_id: Option<String>,
 
         /// Address to advertise to the coordinator (e.g., http://worker-0:9000).
-        /// Defaults to http://<bind>:<port>. Use this when the bind address (0.0.0.0)
+        /// Defaults to http://`<bind>`:`<port>`. Use this when the bind address (0.0.0.0)
         /// is not reachable from the coordinator (e.g., in Docker networks).
         #[arg(long, env = "VARPULIS_ADVERTISE_ADDRESS")]
         advertise_address: Option<String>,
@@ -250,7 +250,7 @@ enum Commands {
         #[arg(short, long)]
         file: PathBuf,
 
-        /// Pipeline name (defaults to .varpulis.toml [deploy].name or filename)
+        /// Pipeline name (defaults to `.varpulis.toml` `[deploy]` name or filename)
         #[arg(short, long)]
         name: Option<String>,
     },
@@ -449,7 +449,7 @@ enum Commands {
 
         /// Allowed CORS origins (comma-separated). Default: localhost only.
         /// Use "*" to explicitly allow all origins, or specify domains like
-        /// "https://app.example.com,https://admin.example.com"
+        /// `https://app.example.com,https://admin.example.com`
         #[arg(long, env = "VARPULIS_CORS_ORIGINS", value_delimiter = ',')]
         cors_origins: Option<Vec<String>>,
     },

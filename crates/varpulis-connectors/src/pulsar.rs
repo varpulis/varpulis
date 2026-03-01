@@ -102,7 +102,7 @@ impl PulsarConfig {
 #[cfg(feature = "pulsar")]
 mod pulsar_impl {
     use super::*;
-    use futures::TryStreamExt;
+    use futures_util::TryStreamExt;
     use pulsar::{
         proto::command_subscribe::SubType, Authentication, Consumer, DeserializeMessage, Payload,
         Producer, Pulsar, SerializeMessage, TokioExecutor,
