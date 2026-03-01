@@ -464,8 +464,13 @@ fn execute_op_common(
         }
 
         RuntimeOp::Aggregate(aggregator) => {
+            // Use the latest event's timestamp for the aggregation result
+            let ts = current_events.last().map(|e| e.timestamp);
             let result = aggregator.apply_shared(current_events);
             let mut agg_event = Event::new("AggregationResult");
+            if let Some(ts) = ts {
+                agg_event.timestamp = ts;
+            }
             for (key, value) in result {
                 agg_event.data.insert(key.into(), value);
             }
@@ -473,11 +478,16 @@ fn execute_op_common(
         }
 
         RuntimeOp::PartitionedAggregate(state) => {
+            // Use the latest event's timestamp for the aggregation results
+            let ts = current_events.last().map(|e| e.timestamp);
             let results = state.apply(current_events);
             *current_events = results
                 .into_iter()
                 .map(|(partition_key, result)| {
                     let mut agg_event = Event::new("AggregationResult");
+                    if let Some(ts) = ts {
+                        agg_event.timestamp = ts;
+                    }
                     agg_event
                         .data
                         .insert("_partition".into(), Value::Str(partition_key.into()));
@@ -630,6 +640,8 @@ fn execute_op_common(
                     let matches = sase.process_shared(Arc::clone(event));
                     for match_result in matches {
                         let mut seq_event = Event::new("SequenceMatch");
+                        // Use the triggering event's timestamp (the event that completed the match)
+                        seq_event.timestamp = event.timestamp;
                         seq_event
                             .data
                             .insert("stream".into(), Value::str(stream_name.as_ref()));
@@ -675,6 +687,7 @@ fn execute_op_common(
                     let results = hamlet.process(Arc::clone(event));
                     for agg_result in results {
                         let mut trend_event = Event::new("TrendAggregateResult");
+                        trend_event.timestamp = event.timestamp;
                         trend_event
                             .data
                             .insert("stream".into(), Value::str(stream_name.as_ref()));

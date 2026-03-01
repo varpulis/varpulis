@@ -121,6 +121,12 @@ impl EventFileParser {
                     .map_err(|e| format!("Error at line {}: {}", line_num + 1, e))?
             };
 
+            // Apply timing offset to event timestamp so time-based windows
+            // and watermarks work correctly with .evt files
+            let mut event = event;
+            event.timestamp =
+                chrono::DateTime::UNIX_EPOCH + chrono::Duration::milliseconds(time_offset as i64);
+
             events.push(TimedEvent {
                 event,
                 time_offset_ms: time_offset,
@@ -373,8 +379,8 @@ impl EventFileParser {
     /// Parse from a file path
     pub fn parse_file<P: AsRef<Path>>(path: P) -> Result<EventFile, String> {
         let path = path.as_ref();
-        let content =
-            fs::read_to_string(path).map_err(|e| format!("Failed to read file {path:?}: {e}"))?;
+        let content = fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read file {}: {e}", path.display()))?;
 
         let events = Self::parse(&content)?;
 
@@ -385,6 +391,10 @@ impl EventFileParser {
     }
 
     /// Parse a single line (either .evt format or JSONL)
+    ///
+    /// In streaming mode, events get `Utc::now()` timestamps since there is
+    /// no batch-level timing context. Lines with `@Ns` timing prefixes are
+    /// parsed normally (the prefix is stripped and the event gets wall-clock time).
     pub fn parse_line(line: &str) -> Result<Option<Event>, String> {
         let line = line.trim();
 
@@ -393,18 +403,30 @@ impl EventFileParser {
             return Ok(None);
         }
 
-        // Skip BATCH directives (timing not supported in streaming mode)
-        if line.starts_with("BATCH") || line.starts_with('@') {
+        // Skip BATCH directives (not meaningful in streaming mode)
+        if line.starts_with("BATCH") {
             return Ok(None);
         }
 
+        // Strip @Ns timing prefix if present (timing is wall-clock in streaming mode)
+        let line = if line.starts_with('@') {
+            let (_, rest) = Self::parse_timing_prefix(line)?;
+            rest.trim()
+        } else {
+            line
+        };
+
         // Try JSONL format first: {"event_type": "X", "data": {...}}
         if line.starts_with('{') {
-            return Self::parse_jsonl_line(line).map(Some);
+            let mut event = Self::parse_jsonl_line(line)?;
+            event.timestamp = chrono::Utc::now();
+            return Ok(Some(event));
         }
 
         // Fall back to .evt format: EventType { field: value, ... }
-        Self::parse_event_line(line).map(Some)
+        let mut event = Self::parse_event_line(line)?;
+        event.timestamp = chrono::Utc::now();
+        Ok(Some(event))
     }
 
     /// Parse a JSONL line

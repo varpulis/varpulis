@@ -201,7 +201,7 @@ pub async fn worker_registration_loop(
         tenant_manager,
         reqwest::Client::new(),
     )
-    .await
+    .await;
 }
 
 /// Worker registration loop with a custom HTTP client (e.g. TLS-configured).
