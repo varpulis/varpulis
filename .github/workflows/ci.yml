@@ -20,7 +20,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: msrv
-      - run: cargo check --workspace
+      - run: cargo test --workspace
 
   check:
     name: Check
@@ -80,6 +80,24 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
       - run: cargo audit
+
+  semver:
+    name: Semver Checks
+    runs-on: ubuntu-latest
+    # Only run on PRs (needs a baseline to compare against)
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: semver
+      - name: Install cargo-semver-checks
+        run: cargo install cargo-semver-checks --locked
+      - name: Check semver compliance
+        run: cargo semver-checks --workspace --baseline-rev ${{ github.event.pull_request.base.sha }}
 
   feature-flags:
     name: Feature Flags (${{ matrix.features }})
