@@ -6,65 +6,85 @@ use std::collections::HashMap;
 /// Information about a declared event type.
 #[derive(Debug, Clone)]
 pub struct EventInfo {
+    /// Source span of the event declaration.
     pub span: Span,
+    /// Names of declared fields.
     pub field_names: Vec<String>,
 }
 
 /// Information about a declared stream.
 #[derive(Debug, Clone)]
 pub struct StreamInfo {
+    /// Source span of the stream declaration.
     pub span: Span,
 }
 
 /// Information about a declared function.
 #[derive(Debug, Clone)]
 pub struct FunctionInfo {
+    /// Source span of the function declaration.
     pub span: Span,
+    /// Number of declared parameters.
     pub param_count: usize,
 }
 
 /// Information about a declared connector.
 #[derive(Debug, Clone)]
 pub struct ConnectorInfo {
+    /// Source span of the connector declaration.
     pub span: Span,
+    /// Connector protocol type (e.g., `"mqtt"`, `"kafka"`).
     pub connector_type: String,
 }
 
 /// Information about a declared context.
 #[derive(Debug, Clone)]
 pub struct ContextInfo {
+    /// Source span of the context declaration.
     pub span: Span,
 }
 
 /// Information about a declared pattern.
 #[derive(Debug, Clone)]
 pub struct PatternInfo {
+    /// Source span of the pattern declaration.
     pub span: Span,
 }
 
 /// Information about a declared variable.
 #[derive(Debug, Clone)]
 pub struct VarInfo {
+    /// Source span of the variable declaration.
     pub span: Span,
+    /// Whether the variable is mutable.
     pub mutable: bool,
 }
 
 /// Information about a declared type alias.
 #[derive(Debug, Clone)]
 pub struct TypeInfo {
+    /// Source span of the type alias declaration.
     pub span: Span,
 }
 
 /// Symbol table built during Pass 1.
 #[derive(Debug)]
 pub struct SymbolTable {
+    /// Declared event types.
     pub events: HashMap<String, EventInfo>,
+    /// Declared streams.
     pub streams: HashMap<String, StreamInfo>,
+    /// Declared functions.
     pub functions: HashMap<String, FunctionInfo>,
+    /// Declared connectors.
     pub connectors: HashMap<String, ConnectorInfo>,
+    /// Declared execution contexts.
     pub contexts: HashMap<String, ContextInfo>,
+    /// Declared SASE+ patterns.
     pub patterns: HashMap<String, PatternInfo>,
+    /// Declared variables.
     pub variables: HashMap<String, VarInfo>,
+    /// Declared type aliases.
     pub types: HashMap<String, TypeInfo>,
 }
 
@@ -75,6 +95,7 @@ impl Default for SymbolTable {
 }
 
 impl SymbolTable {
+    /// Creates an empty symbol table.
     pub fn new() -> Self {
         Self {
             events: HashMap::new(),

@@ -8,14 +8,15 @@ description = "Runtime execution engine for Varpulis"
 
 [dependencies]
 varpulis-actors = { workspace = true }
+varpulis-connectors = { version = "0.4.1", path = "../varpulis-connectors" }
 varpulis-core = { version = "0.4.1", path = "../varpulis-core" }
 varpulis-parser = { version = "0.4.1", path = "../varpulis-parser" }
+varpulis-sase = { version = "0.4.1", path = "../varpulis-sase" }
 varpulis-zdd = { version = "0.4.1", path = "../varpulis-zdd" }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-anyhow = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }
 indexmap = { workspace = true }
@@ -28,38 +29,20 @@ rayon = "1.10"
 smallvec = "1.13"
 hashlink = "0.10"
 reqwest = { workspace = true }
-warp = "0.3"
+axum = { workspace = true }
+tower-http = { workspace = true }
+tower = { workspace = true }
 futures = "0.3"
 uuid = { version = "1", features = ["v4"] }
 core_affinity = "0.8"
 zeroize = { workspace = true }
 
-# Optional connectors
-rumqttc = { version = "0.25", optional = true }
-rdkafka = { version = "0.39", features = ["cmake-build"], optional = true }
+# Enrichment providers (used directly in runtime enrichment module)
 sqlx = { version = "0.8", features = ["runtime-tokio", "any", "postgres", "mysql", "sqlite"], optional = true }
 redis = { version = "0.25", features = ["tokio-comp", "connection-manager"], optional = true }
-async-nats = { version = "0.38", optional = true }
-
-# AWS connectors
-aws-config = { version = "1.5", optional = true }
-aws-sdk-kinesis = { version = "1.54", optional = true }
-aws-sdk-s3 = { version = "1.68", optional = true }
-aws-credential-types = { version = "1.2", optional = true }
-
-# PostgreSQL CDC (logical replication)
-tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-serde_json-1"], optional = true }
-bytes = { version = "1", optional = true }
-
-# Elasticsearch — no stable release exists (all versions are alpha since 2020)
-elasticsearch = { version = "8.15.0-alpha.1", optional = true }
-
-# Apache Pulsar
-pulsar = { version = "6", features = ["tokio-runtime"], optional = true }
 
 # ONNX Runtime — no stable 2.x exists (all versions are RC); pinned for reproducibility
 ort = { version = "=2.0.0-rc.11", features = ["load-dynamic"], optional = true }
-
 
 # State persistence
 rocksdb = { version = "0.22", optional = true }
@@ -74,25 +57,25 @@ rmp-serde = { version = "1.3", optional = true }
 
 [features]
 default = []
-mqtt = ["rumqttc"]
-kafka = ["rdkafka"]
-postgres = ["sqlx"]
-mysql = ["sqlx"]
-sqlite = ["sqlx"]
-database = ["sqlx"]
-redis = ["dep:redis"]
+mqtt = ["varpulis-connectors/mqtt"]
+kafka = ["varpulis-connectors/kafka"]
+postgres = ["sqlx", "varpulis-connectors/postgres"]
+mysql = ["sqlx", "varpulis-connectors/mysql"]
+sqlite = ["sqlx", "varpulis-connectors/sqlite"]
+database = ["sqlx", "varpulis-connectors/database"]
+redis = ["dep:redis", "varpulis-connectors/redis"]
 persistence = ["rocksdb"]
-kinesis = ["aws-config", "aws-sdk-kinesis", "aws-credential-types"]
-s3 = ["aws-config", "aws-sdk-s3", "aws-credential-types"]
-nats = ["async-nats"]
-elasticsearch = ["dep:elasticsearch"]
-pulsar = ["dep:pulsar"]
+kinesis = ["varpulis-connectors/kinesis"]
+s3 = ["varpulis-connectors/s3"]
+nats = ["varpulis-connectors/nats"]
+elasticsearch = ["varpulis-connectors/elasticsearch"]
+pulsar = ["varpulis-connectors/pulsar"]
 onnx = ["ort"]
 gpu = ["onnx"]
 binary-codec = ["rmp-serde"]
 encryption = ["aes-gcm", "argon2", "hex"]
-cdc = ["tokio-postgres", "bytes"]
-csv-converter = []
+cdc = ["varpulis-connectors/cdc"]
+csv-converter = ["varpulis-connectors/csv-converter"]
 all-connectors = ["mqtt", "kafka", "nats", "database", "redis", "kinesis", "s3", "elasticsearch", "pulsar"]
 
 [dev-dependencies]
@@ -100,6 +83,7 @@ tempfile = "3"
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1.5"
 async-nats = "0.38"
+rumqttc = "0.25"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 tokio-postgres = { version = "0.7" }
 uuid = { version = "1", features = ["v4"] }

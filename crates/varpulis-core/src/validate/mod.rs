@@ -16,31 +16,42 @@ use scope::SymbolTable;
 /// Severity of a diagnostic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
+    /// A fatal error that prevents compilation.
     Error,
+    /// A non-fatal warning.
     Warning,
 }
 
 /// A related source location (e.g. "previously declared here").
 #[derive(Debug, Clone)]
 pub struct RelatedSpan {
+    /// Source location of the related item.
     pub span: Span,
+    /// Description of the relationship (e.g., "previously declared here").
     pub message: String,
 }
 
 /// A single diagnostic produced by semantic validation.
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
+    /// Error or warning severity.
     pub severity: Severity,
+    /// Source location of the diagnostic.
     pub span: Span,
+    /// Human-readable diagnostic message.
     pub message: String,
+    /// Optional error code (e.g., "E001").
     pub code: Option<&'static str>,
+    /// Optional hint for fixing the issue.
     pub hint: Option<String>,
+    /// Related source locations for context.
     pub related: Vec<RelatedSpan>,
 }
 
 /// Result of semantic validation.
 #[derive(Debug)]
 pub struct ValidationResult {
+    /// All diagnostics produced during validation.
     pub diagnostics: Vec<Diagnostic>,
 }
 

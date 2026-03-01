@@ -10,225 +10,325 @@ use std::fmt;
 #[logos(skip r"/\*([^*]|\*[^/])*\*/")]
 pub enum Token {
     // === Keywords ===
+    /// `stream` keyword.
     #[token("stream")]
     Stream,
+    /// `event` keyword.
     #[token("event")]
     Event,
+    /// `type` keyword.
     #[token("type")]
     Type,
+    /// `let` keyword.
     #[token("let")]
     Let,
+    /// `var` keyword.
     #[token("var")]
     Var,
+    /// `const` keyword.
     #[token("const")]
     Const,
+    /// `fn` keyword.
     #[token("fn")]
     Fn,
+    /// `config` keyword.
     #[token("config")]
     Config,
 
+    /// `if` keyword.
     #[token("if")]
     If,
+    /// `else` keyword.
     #[token("else")]
     Else,
+    /// `elif` keyword.
     #[token("elif")]
     Elif,
+    /// `then` keyword.
     #[token("then")]
     Then,
+    /// `match` keyword.
     #[token("match")]
     Match,
+    /// `for` keyword.
     #[token("for")]
     For,
+    /// `while` keyword.
     #[token("while")]
     While,
+    /// `break` keyword.
     #[token("break")]
     Break,
+    /// `continue` keyword.
     #[token("continue")]
     Continue,
+    /// `return` keyword.
     #[token("return")]
     Return,
 
+    /// `from` keyword.
     #[token("from")]
     From,
+    /// `where` keyword.
     #[token("where")]
     Where,
+    /// `select` keyword.
     #[token("select")]
     Select,
+    /// `join` keyword.
     #[token("join")]
     Join,
+    /// `merge` keyword.
     #[token("merge")]
     Merge,
+    /// `window` keyword.
     #[token("window")]
     Window,
+    /// `aggregate` keyword.
     #[token("aggregate")]
     Aggregate,
+    /// `partition_by` keyword.
     #[token("partition_by")]
     PartitionBy,
+    /// `order_by` keyword.
     #[token("order_by")]
     OrderBy,
+    /// `limit` keyword.
     #[token("limit")]
     Limit,
+    /// `distinct` keyword.
     #[token("distinct")]
     Distinct,
+    /// `emit` keyword.
     #[token("emit")]
     Emit,
+    /// `to` keyword.
     #[token("to")]
     To,
+    /// `on` keyword.
     #[token("on")]
     On,
+    /// `all` keyword.
     #[token("all")]
     All,
+    /// `within` keyword.
     #[token("within")]
     Within,
 
+    /// `pattern` keyword.
     #[token("pattern")]
     Pattern,
     // Note: Stream operation names (map, filter, etc.) are NOT keywords
     // They are parsed contextually after '.' and can be used as identifiers
+    /// Boolean literal `true`.
     #[token("true")]
     True,
+    /// Boolean literal `false`.
     #[token("false")]
     False,
+    /// Null literal.
     #[token("null")]
     Null,
 
+    /// Logical `and` operator.
     #[token("and")]
     And,
+    /// Logical `or` operator.
     #[token("or")]
     Or,
+    /// Logical `xor` operator.
     #[token("xor")]
     Xor,
+    /// Logical `not` operator.
     #[token("not")]
     Not,
+    /// `in` keyword (membership test / for loops).
     #[token("in")]
     In,
+    /// `is` keyword (type check).
     #[token("is")]
     Is,
 
+    /// `as` keyword (alias / cast).
     #[token("as")]
     As,
+    /// `extends` keyword (event inheritance).
     #[token("extends")]
     Extends,
+    /// `import` keyword.
     #[token("import")]
     Import,
+    /// `export` keyword.
     #[token("export")]
     Export,
 
     // Type keywords
+    /// `int` type keyword.
     #[token("int")]
     IntType,
+    /// `float` type keyword.
     #[token("float")]
     FloatType,
+    /// `bool` type keyword.
     #[token("bool")]
     BoolType,
+    /// `str` type keyword.
     #[token("str")]
     StrType,
+    /// `timestamp` type keyword.
     #[token("timestamp")]
     TimestampType,
+    /// `duration` type keyword.
     #[token("duration")]
     DurationType,
+    /// `Stream` type keyword.
     #[token("Stream")]
     StreamType,
 
     // === Operators ===
+    /// `+` operator.
     #[token("+")]
     Plus,
+    /// `-` operator.
     #[token("-")]
     Minus,
+    /// `*` operator.
     #[token("*")]
     Star,
+    /// `/` operator.
     #[token("/")]
     Slash,
+    /// `%` operator (modulo).
     #[token("%")]
     Percent,
+    /// `**` operator (exponentiation).
     #[token("**")]
     DoubleStar,
 
+    /// `==` equality comparison.
     #[token("==")]
     EqEq,
+    /// `!=` inequality comparison.
     #[token("!=")]
     NotEq,
+    /// `<` less-than comparison.
     #[token("<")]
     Lt,
+    /// `<=` less-than-or-equal comparison.
     #[token("<=")]
     Le,
+    /// `>` greater-than comparison.
     #[token(">")]
     Gt,
+    /// `>=` greater-than-or-equal comparison.
     #[token(">=")]
     Ge,
 
+    /// `&` bitwise AND.
     #[token("&")]
     Amp,
+    /// `|` bitwise OR.
     #[token("|")]
     Pipe,
+    /// `^` bitwise XOR.
     #[token("^")]
     Caret,
+    /// `~` bitwise NOT.
     #[token("~")]
     Tilde,
+    /// `<<` left shift.
     #[token("<<")]
     Shl,
+    /// `>>` right shift.
     #[token(">>")]
     Shr,
 
+    /// `=` assignment.
     #[token("=")]
     Eq,
+    /// `+=` add-assign.
     #[token("+=")]
     PlusEq,
+    /// `-=` subtract-assign.
     #[token("-=")]
     MinusEq,
+    /// `*=` multiply-assign.
     #[token("*=")]
     StarEq,
+    /// `/=` divide-assign.
     #[token("/=")]
     SlashEq,
+    /// `%=` modulo-assign.
     #[token("%=")]
     PercentEq,
 
+    /// `.` member access.
     #[token(".")]
     Dot,
+    /// `?.` optional chaining.
     #[token("?.")]
     QuestionDot,
+    /// `??` null coalescing.
     #[token("??")]
     QuestionQuestion,
+    /// `=>` fat arrow (lambdas / match arms).
     #[token("=>")]
     FatArrow,
+    /// `->` thin arrow (return type annotation).
     #[token("->")]
     Arrow,
+    /// `..` exclusive range.
     #[token("..")]
     DotDot,
+    /// `..=` inclusive range.
     #[token("..=")]
     DotDotEq,
+    /// `$` dollar sign (special variable prefix).
     #[token("$")]
     Dollar,
 
     // === Delimiters ===
+    /// `(` left parenthesis.
     #[token("(")]
     LParen,
+    /// `)` right parenthesis.
     #[token(")")]
     RParen,
+    /// `[` left bracket.
     #[token("[")]
     LBracket,
+    /// `]` right bracket.
     #[token("]")]
     RBracket,
+    /// `{` left brace.
     #[token("{")]
     LBrace,
+    /// `}` right brace.
     #[token("}")]
     RBrace,
+    /// `,` comma separator.
     #[token(",")]
     Comma,
+    /// `:` colon (type annotations, block starts).
     #[token(":")]
     Colon,
+    /// `?` question mark (ternary / optional).
     #[token("?")]
     Question,
+    /// `@` at sign (timestamp literal prefix / decorator).
     #[token("@")]
     At,
 
     // === Literals ===
+    /// Integer literal (e.g., `42`).
     #[regex(r"[0-9]+", |lex| lex.slice().parse::<i64>().ok())]
     Integer(i64),
 
+    /// Floating-point literal (e.g., `3.14`, `1.0e10`).
     #[regex(r"[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?", |lex| lex.slice().parse::<f64>().ok())]
     Float(f64),
 
+    /// String literal (double- or single-quoted).
     #[regex(r#""([^"\\]|\\.)*""#, |lex| {
         let s = lex.slice();
         Some(s[1..s.len()-1].to_string())
@@ -239,17 +339,21 @@ pub enum Token {
     })]
     String(String),
 
+    /// Duration literal (e.g., `5s`, `100ms`, `2h`).
     #[regex(r"[0-9]+(ns|us|ms|s|m|h|d)", |lex| Some(lex.slice().to_string()))]
     Duration(String),
 
+    /// Timestamp literal (e.g., `@2024-01-15T10:30:00Z`).
     #[regex(r"@[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9]{2}:[0-9]{2}:[0-9]{2}(Z|[+-][0-9]{2}:[0-9]{2})?)?", |lex| Some(lex.slice().to_string()))]
     Timestamp(String),
 
     // === Identifier ===
+    /// Identifier (e.g., variable name, event type).
     #[regex(r"[a-zA-Z_][a-zA-Z0-9_]*", |lex| Some(lex.slice().to_string()))]
     Ident(String),
 
     // === Special ===
+    /// End-of-file sentinel token.
     Eof,
 }
 
@@ -367,8 +471,11 @@ impl fmt::Display for Token {
 /// Spanned token with position information
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpannedToken {
+    /// The token value.
     pub token: Token,
+    /// Byte offset of the first character of this token.
     pub start: usize,
+    /// Byte offset past the last character of this token.
     pub end: usize,
 }
 
@@ -380,6 +487,7 @@ pub struct Lexer<'source> {
 }
 
 impl<'source> Lexer<'source> {
+    /// Create a new lexer over the given source string.
     pub fn new(source: &'source str) -> Self {
         Self {
             inner: Token::lexer(source),
@@ -388,6 +496,7 @@ impl<'source> Lexer<'source> {
         }
     }
 
+    /// Peek at the next token without consuming it.
     pub fn peek(&mut self) -> Option<&SpannedToken> {
         if self.peeked.is_none() {
             self.peeked = self.next_token();

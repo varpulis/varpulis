@@ -75,14 +75,8 @@ pub struct ForecastResult {
     pub forecast_confidence: f64,
 }
 
-/// Snapshot of an active SASE run for forecast computation.
-#[derive(Debug, Clone)]
-pub struct RunSnapshot {
-    /// Current NFA state index.
-    pub current_state: usize,
-    /// When this run started (nanoseconds since epoch).
-    pub started_at_ns: i64,
-}
+// Re-export RunSnapshot from varpulis-sase (canonical definition)
+pub use varpulis_sase::RunSnapshot;
 
 /// Pattern Markov Chain — combines PST with SASE NFA for pattern forecasting.
 ///

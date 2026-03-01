@@ -178,7 +178,7 @@ impl MetricsServer {
     }
 
     /// Run the metrics HTTP server
-    pub async fn run(&self) -> anyhow::Result<()> {
+    pub async fn run(&self) -> Result<(), std::io::Error> {
         let listener = TcpListener::bind(&self.addr).await?;
         info!("Metrics server listening on http://{}/metrics", self.addr);
 

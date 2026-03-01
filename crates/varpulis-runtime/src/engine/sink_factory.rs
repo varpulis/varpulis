@@ -70,38 +70,38 @@ impl crate::sink::Sink for SinkConnectorAdapter {
     fn name(&self) -> &str {
         &self.name
     }
-    async fn connect(&self) -> anyhow::Result<()> {
+    async fn connect(&self) -> Result<(), crate::sink::SinkError> {
         let mut inner = self.inner.lock().await;
-        inner.connect().await.map_err(|e| anyhow::anyhow!("{}", e))
+        inner.connect().await.map_err(crate::sink::SinkError::from)
     }
-    async fn send(&self, event: &crate::event::Event) -> anyhow::Result<()> {
+    async fn send(&self, event: &crate::event::Event) -> Result<(), crate::sink::SinkError> {
         let inner = self.inner.lock().await;
         inner
             .send(event)
             .await
-            .map_err(|e| anyhow::anyhow!("{}", e))
+            .map_err(crate::sink::SinkError::from)
     }
     async fn send_batch(
         &self,
         events: &[std::sync::Arc<crate::event::Event>],
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), crate::sink::SinkError> {
         // Acquire lock once for the entire batch
         let inner = self.inner.lock().await;
         for event in events {
             inner
                 .send(event)
                 .await
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
+                .map_err(crate::sink::SinkError::from)?;
         }
         Ok(())
     }
-    async fn flush(&self) -> anyhow::Result<()> {
+    async fn flush(&self) -> Result<(), crate::sink::SinkError> {
         let inner = self.inner.lock().await;
-        inner.flush().await.map_err(|e| anyhow::anyhow!("{}", e))
+        inner.flush().await.map_err(crate::sink::SinkError::from)
     }
-    async fn close(&self) -> anyhow::Result<()> {
+    async fn close(&self) -> Result<(), crate::sink::SinkError> {
         let inner = self.inner.lock().await;
-        inner.close().await.map_err(|e| anyhow::anyhow!("{}", e))
+        inner.close().await.map_err(crate::sink::SinkError::from)
     }
 }
 
@@ -133,33 +133,33 @@ impl crate::sink::Sink for TransactionalKafkaSinkAdapter {
     fn name(&self) -> &str {
         &self.name
     }
-    async fn connect(&self) -> anyhow::Result<()> {
+    async fn connect(&self) -> Result<(), crate::sink::SinkError> {
         Ok(()) // Producer is connected at construction time
     }
-    async fn send(&self, event: &crate::event::Event) -> anyhow::Result<()> {
+    async fn send(&self, event: &crate::event::Event) -> Result<(), crate::sink::SinkError> {
         let inner = self.inner.lock().await;
         inner
             .send(event)
             .await
-            .map_err(|e| anyhow::anyhow!("{}", e))
+            .map_err(crate::sink::SinkError::from)
     }
     async fn send_batch(
         &self,
         events: &[std::sync::Arc<crate::event::Event>],
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), crate::sink::SinkError> {
         let inner = self.inner.lock().await;
         inner
             .send_batch_transactional(events)
             .await
-            .map_err(|e| anyhow::anyhow!("{}", e))
+            .map_err(crate::sink::SinkError::from)
     }
-    async fn flush(&self) -> anyhow::Result<()> {
+    async fn flush(&self) -> Result<(), crate::sink::SinkError> {
         let inner = self.inner.lock().await;
-        inner.flush().await.map_err(|e| anyhow::anyhow!("{}", e))
+        inner.flush().await.map_err(crate::sink::SinkError::from)
     }
-    async fn close(&self) -> anyhow::Result<()> {
+    async fn close(&self) -> Result<(), crate::sink::SinkError> {
         let inner = self.inner.lock().await;
-        inner.close().await.map_err(|e| anyhow::anyhow!("{}", e))
+        inner.close().await.map_err(crate::sink::SinkError::from)
     }
 }
 
@@ -191,33 +191,33 @@ impl crate::sink::Sink for BatchKafkaSinkAdapter {
     fn name(&self) -> &str {
         &self.name
     }
-    async fn connect(&self) -> anyhow::Result<()> {
+    async fn connect(&self) -> Result<(), crate::sink::SinkError> {
         Ok(()) // Producer is connected at construction time
     }
-    async fn send(&self, event: &crate::event::Event) -> anyhow::Result<()> {
+    async fn send(&self, event: &crate::event::Event) -> Result<(), crate::sink::SinkError> {
         let inner = self.inner.lock().await;
         inner
             .send(event)
             .await
-            .map_err(|e| anyhow::anyhow!("{}", e))
+            .map_err(crate::sink::SinkError::from)
     }
     async fn send_batch(
         &self,
         events: &[std::sync::Arc<crate::event::Event>],
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), crate::sink::SinkError> {
         let inner = self.inner.lock().await;
         inner
             .send_batch(events)
             .await
-            .map_err(|e| anyhow::anyhow!("{}", e))
+            .map_err(crate::sink::SinkError::from)
     }
-    async fn flush(&self) -> anyhow::Result<()> {
+    async fn flush(&self) -> Result<(), crate::sink::SinkError> {
         let inner = self.inner.lock().await;
-        inner.flush().await.map_err(|e| anyhow::anyhow!("{}", e))
+        inner.flush().await.map_err(crate::sink::SinkError::from)
     }
-    async fn close(&self) -> anyhow::Result<()> {
+    async fn close(&self) -> Result<(), crate::sink::SinkError> {
         let inner = self.inner.lock().await;
-        inner.close().await.map_err(|e| anyhow::anyhow!("{}", e))
+        inner.close().await.map_err(crate::sink::SinkError::from)
     }
 }
 

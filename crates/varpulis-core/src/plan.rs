@@ -66,7 +66,9 @@ pub enum LogicalSource {
     Merge(Vec<LogicalMergeSource>),
     /// Periodic timer
     Timer {
+        /// Timer interval expression.
         interval: Expr,
+        /// Optional initial delay before first fire.
         initial_delay: Option<Expr>,
     },
     /// Sequence construct for temporal event correlation
@@ -75,8 +77,11 @@ pub enum LogicalSource {
     Pattern(String),
     /// From connector source
     FromConnector {
+        /// Event type to receive.
         event_type: String,
+        /// Connector name to read from.
         connector_name: String,
+        /// Connector parameters.
         params: Vec<ConnectorParam>,
     },
 }
@@ -84,8 +89,11 @@ pub enum LogicalSource {
 /// A source in a merge construct.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogicalMergeSource {
+    /// Name alias for this merge source.
     pub name: String,
+    /// Source event type or stream name.
     pub source: String,
+    /// Optional filter condition.
     pub filter: Option<Expr>,
 }
 
@@ -106,13 +114,18 @@ pub enum LogicalOp {
     PartitionBy(Expr),
     /// Emit output: `.emit(...)` with optional type cast
     Emit {
+        /// Optional output event type cast.
         output_type: Option<String>,
+        /// Output field mappings.
         fields: Vec<NamedArg>,
+        /// Optional target context for cross-context emit.
         target_context: Option<String>,
     },
     /// Send to connector: `.to(Connector, ...)`
     Sink {
+        /// Target connector name.
         connector_name: String,
+        /// Sink parameters.
         params: Vec<ConnectorParam>,
     },
     /// Sequence step: `-> EventType where cond as alias`
@@ -160,16 +173,22 @@ pub enum LogicalOp {
 /// Connector declaration in the logical plan.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogicalConnector {
+    /// Connector name.
     pub name: String,
+    /// Connector protocol type (e.g., `"mqtt"`, `"kafka"`).
     pub connector_type: String,
+    /// Connection parameters.
     pub params: Vec<ConnectorParam>,
 }
 
 /// Function declaration in the logical plan.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogicalFunction {
+    /// Function name.
     pub name: String,
+    /// Number of parameters.
     pub param_count: usize,
+    /// Whether a return type is declared.
     pub has_return_type: bool,
     /// Parameter types from the function declaration (empty if untyped).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -182,24 +201,33 @@ pub struct LogicalFunction {
 /// Variable declaration in the logical plan.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogicalVariable {
+    /// Variable name.
     pub name: String,
+    /// Whether the variable is mutable (`var` vs `let`).
     pub is_mutable: bool,
 }
 
 /// Named SASE+ pattern in the logical plan.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogicalPattern {
+    /// Pattern name.
     pub name: String,
+    /// SASE+ pattern expression.
     pub expr: crate::ast::SasePatternExpr,
+    /// Optional time window constraint.
     pub within: Option<Expr>,
+    /// Optional partition key expression.
     pub partition_by: Option<Expr>,
 }
 
 /// Event type declaration in the logical plan.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogicalEvent {
+    /// Event type name.
     pub name: String,
+    /// Number of declared fields.
     pub field_count: usize,
+    /// Parent event type if this event extends another.
     pub extends: Option<String>,
 }
 

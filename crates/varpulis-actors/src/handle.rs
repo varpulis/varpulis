@@ -12,9 +12,15 @@ pub enum Health {
     /// The actor is running normally.
     Healthy,
     /// The actor is running but may be degraded.
-    Degraded { reason: String },
+    Degraded {
+        /// Human-readable description of why the actor is degraded.
+        reason: String,
+    },
     /// The actor has stopped.
-    Down { exit_status: String },
+    Down {
+        /// The exit status of the stopped actor as a human-readable string.
+        exit_status: String,
+    },
 }
 
 /// A handle to a running actor, used for observation and health checks.

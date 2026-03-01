@@ -1666,3 +1666,31 @@ pub fn eval_binary_op(
         _ => None,
     }
 }
+
+// ============================================================================
+// ExprEvaluator bridge for varpulis-sase
+// ============================================================================
+
+/// Bridge implementation that connects the SASE engine's ExprEvaluator trait
+/// to the runtime's eval_filter_expr function.
+pub struct RuntimeExprEvaluator;
+
+impl varpulis_sase::ExprEvaluator for RuntimeExprEvaluator {
+    fn eval(
+        &self,
+        expr: &varpulis_core::ast::Expr,
+        event: &Event,
+        captured: &rustc_hash::FxHashMap<String, varpulis_sase::SharedEvent>,
+    ) -> Option<Value> {
+        // Build SequenceContext from captured events
+        let captured_events: rustc_hash::FxHashMap<String, Event> = captured
+            .iter()
+            .map(|(k, v)| (k.clone(), (**v).clone()))
+            .collect();
+        let ctx = SequenceContext {
+            captured: captured_events,
+            previous: None,
+        };
+        eval_filter_expr(expr, event, &ctx)
+    }
+}

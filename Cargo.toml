@@ -2,8 +2,10 @@
 resolver = "2"
 members = [
     "crates/varpulis-actors",
+    "crates/varpulis-connectors",
     "crates/varpulis-core",
     "crates/varpulis-parser",
+    "crates/varpulis-sase",
     "crates/varpulis-runtime",
     "crates/varpulis-cli",
     "crates/varpulis-zdd",
@@ -70,8 +72,7 @@ rand = "0.8"
 # HTTP client
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 
-# Web (warp kept only for varpulis-runtime HTTP connector; CLI + cluster use axum)
-warp = { version = "0.3", features = ["tls"] }
+# Web framework
 axum = { version = "0.8", features = ["ws", "json", "macros"] }
 axum-extra = "0.10"
 tower = "0.5"
@@ -100,19 +101,18 @@ insta = { version = "1", features = ["yaml"] }
 # ---------------------------------------------------------------------------
 # Duplicate dependency note
 # ---------------------------------------------------------------------------
-# `cargo deny check bans` reports ~64 duplicate entries. Root causes:
+# `cargo deny check bans` reports duplicate entries. Root causes:
 #
-# 1. warp 0.3.7 (now only in varpulis-runtime HTTP connector) pins hyper 0.14 /
-#    http 0.2 / h2 0.3 / rustls 0.22 / base64 0.21. CLI + cluster migrated to
-#    axum 0.8, reducing duplicates. Remaining: migrate runtime HTTP connector.
+# 1. lsp-types 0.94 pins bitflags 1.x (everything else uses 2.x).
 #
-# 2. lsp-types 0.94 pins bitflags 1.x (everything else uses 2.x).
+# 2. pulsar 6.7 brings in async-std (unmaintained). Feature-gated.
 #
-# 3. pulsar 6.7 brings in async-std (unmaintained). Feature-gated.
-#
-# 4. Dev-deps (proptest) pull rand 0.9 while production uses rand 0.8.
+# 3. Dev-deps (proptest) pull rand 0.9 while production uses rand 0.8.
 #
 # These are all transitive and cannot be resolved without major crate migrations.
+
+[profile.dev.package."*"]
+opt-level = 1
 
 [profile.release]
 lto = true
