@@ -30,15 +30,4 @@ pub enum EngineError {
     /// Runtime pipeline error (evaluation, pattern matching, etc.)
     #[error("pipeline error: {0}")]
     Pipeline(String),
-
-    /// Catch-all for errors that don't fit other categories.
-    #[error("{0}")]
-    Other(String),
-}
-
-/// Backward-compat: allow `?` on code that still produces `String` errors.
-impl From<String> for EngineError {
-    fn from(s: String) -> Self {
-        Self::Other(s)
-    }
 }

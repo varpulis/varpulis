@@ -599,7 +599,7 @@ impl Tenant {
         let mut engine = pipeline.engine.lock().await;
         engine
             .restore_checkpoint(checkpoint)
-            .map_err(crate::engine::error::EngineError::from)?;
+            .map_err(crate::engine::error::EngineError::Store)?;
         Ok(())
     }
 
