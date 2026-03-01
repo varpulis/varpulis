@@ -33,7 +33,7 @@ impl OnlinePSTLearner {
     }
 
     /// Set the pruning interval (0 to disable pruning).
-    pub fn with_prune_interval(mut self, interval: u64) -> Self {
+    pub const fn with_prune_interval(mut self, interval: u64) -> Self {
         self.prune_interval = interval;
         self
     }
@@ -119,7 +119,7 @@ mod tests {
 
         // After seeing A, B should be very likely
         let p_b = pst.predict_symbol(&[a], b);
-        assert!(p_b > 0.6, "P(B|A) = {} should be > 0.6", p_b);
+        assert!(p_b > 0.6, "P(B|A) = {p_b} should be > 0.6");
     }
 
     #[test]

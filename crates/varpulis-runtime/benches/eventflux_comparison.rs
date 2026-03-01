@@ -162,8 +162,8 @@ fn bench_s1_simple_filter(c: &mut Criterion) {
                     for event in events {
                         engine.process(black_box(event.clone())).await.unwrap();
                     }
-                })
-            })
+                });
+            });
         });
     }
     group.finish();
@@ -206,8 +206,8 @@ fn bench_s2_window_aggregation(c: &mut Criterion) {
                     for event in events {
                         engine.process(black_box(event.clone())).await.unwrap();
                     }
-                })
-            })
+                });
+            });
         });
     }
     group.finish();
@@ -252,8 +252,8 @@ fn bench_s3_partitioned_aggregation(c: &mut Criterion) {
                     for event in events {
                         engine.process(black_box(event.clone())).await.unwrap();
                     }
-                })
-            })
+                });
+            });
         });
     }
     group.finish();
@@ -291,7 +291,7 @@ fn bench_s4_simple_sequence(c: &mut Criterion) {
                     }
                 }
                 matches
-            })
+            });
         });
     }
     group.finish();
@@ -333,7 +333,7 @@ fn bench_s5_sequence_predicate(c: &mut Criterion) {
                     }
                 }
                 matches
-            })
+            });
         });
     }
     group.finish();
@@ -383,8 +383,8 @@ fn bench_s7_multi_stream(c: &mut Criterion) {
                     for event in events {
                         engine.process(black_box(event.clone())).await.unwrap();
                     }
-                })
-            })
+                });
+            });
         });
     }
     group.finish();
@@ -429,8 +429,8 @@ fn bench_s8_filter_aggregate(c: &mut Criterion) {
                     for event in events {
                         engine.process(black_box(event.clone())).await.unwrap();
                     }
-                })
-            })
+                });
+            });
         });
     }
     group.finish();
@@ -491,8 +491,8 @@ fn bench_s9_udf(c: &mut Criterion) {
                     for event in events {
                         engine.process(black_box(event.clone())).await.unwrap();
                     }
-                })
-            })
+                });
+            });
         });
     }
     group.finish();
@@ -582,13 +582,13 @@ fn bench_s10_parse_load(c: &mut Criterion) {
     "#;
 
     group.bench_function("small_program", |b| {
-        b.iter(|| black_box(parse(black_box(small)).unwrap()))
+        b.iter(|| black_box(parse(black_box(small)).unwrap()));
     });
     group.bench_function("medium_program", |b| {
-        b.iter(|| black_box(parse(black_box(medium)).unwrap()))
+        b.iter(|| black_box(parse(black_box(medium)).unwrap()));
     });
     group.bench_function("large_program", |b| {
-        b.iter(|| black_box(parse(black_box(large)).unwrap()))
+        b.iter(|| black_box(parse(black_box(large)).unwrap()));
     });
 
     group.finish();
@@ -612,7 +612,7 @@ fn bench_s11_kleene_plus(c: &mut Criterion) {
 
         group.throughput(Throughput::Elements(total as u64));
 
-        let label = format!("{}seq_{}mid_2^{}", seqs, middles, middles);
+        let label = format!("{seqs}seq_{middles}mid_2^{middles}");
         group.bench_with_input(BenchmarkId::new(&label, total), &events, |b, events| {
             b.iter(|| {
                 let pattern = SasePattern::Seq(vec![
@@ -642,7 +642,7 @@ fn bench_s11_kleene_plus(c: &mut Criterion) {
                     }
                 }
                 black_box((matches, combinations_per_seq))
-            })
+            });
         });
     }
     group.finish();
@@ -659,7 +659,7 @@ fn bench_s12_kleene_star(c: &mut Criterion) {
 
         group.throughput(Throughput::Elements(total as u64));
 
-        let label = format!("{}seq_{}mid", seqs, middles);
+        let label = format!("{seqs}seq_{middles}mid");
         group.bench_with_input(BenchmarkId::new(&label, total), &events, |b, events| {
             b.iter(|| {
                 let pattern = SasePattern::Seq(vec![
@@ -689,7 +689,7 @@ fn bench_s12_kleene_star(c: &mut Criterion) {
                     }
                 }
                 matches
-            })
+            });
         });
     }
     group.finish();
@@ -733,7 +733,7 @@ fn bench_s13_negation(c: &mut Criterion) {
                     }
                 }
                 matches
-            })
+            });
         });
     }
     group.finish();
@@ -786,7 +786,7 @@ fn bench_s16_nested_kleene_or(c: &mut Criterion) {
                     }
                 }
                 matches
-            })
+            });
         });
     }
     group.finish();

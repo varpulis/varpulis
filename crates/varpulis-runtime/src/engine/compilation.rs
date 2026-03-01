@@ -275,7 +275,7 @@ impl Engine {
                         });
 
                 // Create timer event type based on stream name
-                let timer_event_type = format!("Timer_{}", name);
+                let timer_event_type = format!("Timer_{name}");
 
                 // Register this stream to receive timer events
                 self.router.add_route(&timer_event_type, name);
@@ -342,11 +342,11 @@ impl Engine {
             if let Some(config) = enrich_op {
                 if let Some(conn_config) = self.connectors.get(&config.connector_name) {
                     let provider = crate::enrichment::create_provider(conn_config)
-                        .map_err(|e| format!("Failed to create enrichment provider: {}", e))?;
-                    let cache_ttl = config
-                        .cache_ttl_ns
-                        .map(std::time::Duration::from_nanos)
-                        .unwrap_or(std::time::Duration::from_secs(300));
+                        .map_err(|e| format!("Failed to create enrichment provider: {e}"))?;
+                    let cache_ttl = config.cache_ttl_ns.map_or(
+                        std::time::Duration::from_secs(300),
+                        std::time::Duration::from_nanos,
+                    );
                     let cache = crate::enrichment::EnrichmentCache::new(cache_ttl);
                     Some((
                         Arc::from(provider) as Arc<dyn crate::enrichment::EnrichmentProvider>,
@@ -894,7 +894,7 @@ impl Engine {
                         })
                         .collect();
                     let sink_key = if let Some(ref topic) = topic_override {
-                        format!("{}::{}", connector_name, topic)
+                        format!("{connector_name}::{topic}")
                     } else {
                         connector_name.clone()
                     };
@@ -996,7 +996,7 @@ impl Engine {
                         rayon::ThreadPoolBuilder::new()
                             .num_threads(workers)
                             .build()
-                            .map_err(|e| format!("Failed to create thread pool: {}", e))?,
+                            .map_err(|e| format!("Failed to create thread pool: {e}"))?,
                     );
 
                     runtime_ops.push(RuntimeOp::Concurrent(ConcurrentConfig {
@@ -1115,8 +1115,7 @@ impl Engine {
             // Use the first aggregate for the query registration
             let primary_aggregate = fields
                 .first()
-                .map(|(_, agg)| *agg)
-                .unwrap_or(crate::greta::GretaAggregate::CountTrends);
+                .map_or(crate::greta::GretaAggregate::CountTrends, |(_, agg)| *agg);
 
             // Build Kleene types
             let kleene_types: smallvec::SmallVec<[u16; 4]> = kleene_info
@@ -1321,9 +1320,7 @@ impl Engine {
             };
             let horizon_ns = match &spec.horizon {
                 Some(varpulis_core::ast::Expr::Duration(ns)) => *ns,
-                _ => global_within
-                    .map(|d| d.as_nanos() as u64)
-                    .unwrap_or(300_000_000_000),
+                _ => global_within.map_or(300_000_000_000, |d| d.as_nanos() as u64),
             };
             let warmup = match &spec.warmup {
                 Some(varpulis_core::ast::Expr::Int(n)) => *n as u64,
@@ -1422,9 +1419,7 @@ impl Engine {
             };
             // Sequence was inserted at position 0 after forecast_insert_idx was
             // recorded, shifting all indices by 1.  Account for that offset.
-            let insert_pos = forecast_insert_idx
-                .map(|i| i + 1)
-                .unwrap_or(runtime_ops.len());
+            let insert_pos = forecast_insert_idx.map_or(runtime_ops.len(), |i| i + 1);
             runtime_ops.insert(insert_pos, RuntimeOp::Forecast(forecast_config));
 
             pst_forecaster = Some(pmc);
@@ -1564,7 +1559,7 @@ impl Engine {
             Expr::Ident(name) => {
                 // Simple identifier - might be just a field name
                 // Return as field only, source will be inferred
-                return Some(("".to_string(), name.clone()));
+                return Some((String::new(), name.clone()));
             }
             _ => {}
         }
@@ -1615,7 +1610,7 @@ impl Engine {
     }
 }
 
-pub(super) fn stream_op_name(op: &StreamOp) -> &'static str {
+pub(super) const fn stream_op_name(op: &StreamOp) -> &'static str {
     match op {
         StreamOp::Where(_) => ".where()",
         StreamOp::Select(_) => ".select()",

@@ -24,7 +24,7 @@ impl std::fmt::Display for ActorExitStatus {
         match self {
             Self::Success => write!(f, "success"),
             Self::Quit => write!(f, "quit"),
-            Self::Failure(msg) => write!(f, "failure: {}", msg),
+            Self::Failure(msg) => write!(f, "failure: {msg}"),
             Self::Panicked => write!(f, "panicked"),
         }
     }

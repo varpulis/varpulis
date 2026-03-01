@@ -75,8 +75,7 @@ pub fn create_provider(
             Err(".enrich() with redis connector requires the 'redis' feature flag".to_string())
         }
         other => Err(format!(
-            ".enrich() is not supported for connector type '{}' — use http, database, or redis",
-            other
+            ".enrich() is not supported for connector type '{other}' — use http, database, or redis"
         )),
     }
 }

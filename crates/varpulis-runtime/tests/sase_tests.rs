@@ -1867,7 +1867,7 @@ fn test_kleene_plus_exact_count() {
             engine.process(&make_event("B", vec![("n", Value::Int(i))]));
         }
         let results = engine.process(&make_event("C", vec![]));
-        assert!(!results.is_empty(), "Should match with {} B events", n);
+        assert!(!results.is_empty(), "Should match with {n} B events");
         assert_eq!(
             results[0].stack.len(),
             (n + 2) as usize,
@@ -2241,8 +2241,7 @@ fn test_large_kleene_no_hang() {
     // Must complete within 5 seconds (without caps this would hang/OOM)
     assert!(
         elapsed.as_secs() < 5,
-        "Enumeration took {:?} — should be bounded",
-        elapsed
+        "Enumeration took {elapsed:?} — should be bounded"
     );
     assert!(
         results.len() <= MAX_ENUMERATION_RESULTS,

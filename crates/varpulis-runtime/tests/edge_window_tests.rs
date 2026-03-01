@@ -38,18 +38,18 @@ async fn run_scenario(program_source: &str, events_source: &str) -> Vec<Event> {
 #[tokio::test]
 async fn count_window_exact_fill() {
     // .window(3) with exactly 3 events → 1 output
-    let program = r#"
+    let program = r"
         stream CountExact = Reading
             .window(3)
             .aggregate(total: sum(value))
             .emit(sum: total)
-    "#;
+    ";
 
-    let events = r#"
+    let events = r"
         Reading { value: 10.0 }
         Reading { value: 20.0 }
         Reading { value: 30.0 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
     assert_eq!(
@@ -58,31 +58,27 @@ async fn count_window_exact_fill() {
         "Exactly 3 events should fill one count window"
     );
     if let Some(varpulis_core::Value::Float(sum)) = results[0].data.get("sum") {
-        assert!(
-            (*sum - 60.0).abs() < 0.001,
-            "Sum should be 60.0, got {}",
-            sum
-        );
+        assert!((*sum - 60.0).abs() < 0.001, "Sum should be 60.0, got {sum}");
     }
 }
 
 #[tokio::test]
 async fn count_window_fewer_events() {
     // .window(10) with only 5 events → 0 output (window not full)
-    let program = r#"
+    let program = r"
         stream CountFewer = Reading
             .window(10)
             .aggregate(total: sum(value))
             .emit(sum: total)
-    "#;
+    ";
 
-    let events = r#"
+    let events = r"
         Reading { value: 10.0 }
         Reading { value: 20.0 }
         Reading { value: 30.0 }
         Reading { value: 40.0 }
         Reading { value: 50.0 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
     assert_eq!(
@@ -95,14 +91,14 @@ async fn count_window_fewer_events() {
 #[tokio::test]
 async fn count_window_overflow() {
     // .window(3) with 7 events → 2 outputs (windows 1-3, 4-6; 7th pending)
-    let program = r#"
+    let program = r"
         stream CountOverflow = Reading
             .window(3)
             .aggregate(total: sum(value))
             .emit(sum: total)
-    "#;
+    ";
 
-    let events = r#"
+    let events = r"
         Reading { value: 1.0 }
         Reading { value: 2.0 }
         Reading { value: 3.0 }
@@ -110,7 +106,7 @@ async fn count_window_overflow() {
         Reading { value: 5.0 }
         Reading { value: 6.0 }
         Reading { value: 7.0 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
     assert_eq!(
@@ -123,16 +119,14 @@ async fn count_window_overflow() {
     if let Some(varpulis_core::Value::Float(sum)) = results[0].data.get("sum") {
         assert!(
             (*sum - 6.0).abs() < 0.001,
-            "First window sum should be 6.0, got {}",
-            sum
+            "First window sum should be 6.0, got {sum}"
         );
     }
     // Second window: 4+5+6 = 15
     if let Some(varpulis_core::Value::Float(sum)) = results[1].data.get("sum") {
         assert!(
             (*sum - 15.0).abs() < 0.001,
-            "Second window sum should be 15.0, got {}",
-            sum
+            "Second window sum should be 15.0, got {sum}"
         );
     }
 }
@@ -140,19 +134,19 @@ async fn count_window_overflow() {
 #[tokio::test]
 async fn aggregate_having_filters_all() {
     // .having(total > 1000000) when all totals < 1M → 0 output
-    let program = r#"
+    let program = r"
         stream HavingFilter = Sale
             .window(3)
             .aggregate(total: sum(amount))
             .having(total > 1000000.0)
             .emit(sum: total)
-    "#;
+    ";
 
-    let events = r#"
+    let events = r"
         Sale { amount: 100.0 }
         Sale { amount: 200.0 }
         Sale { amount: 300.0 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
     assert_eq!(
@@ -165,19 +159,19 @@ async fn aggregate_having_filters_all() {
 #[tokio::test]
 async fn aggregate_having_passes() {
     // .having(total > 50) when total = 60 → 1 output
-    let program = r#"
+    let program = r"
         stream HavingPass = Sale
             .window(3)
             .aggregate(total: sum(amount))
             .having(total > 50.0)
             .emit(sum: total)
-    "#;
+    ";
 
-    let events = r#"
+    let events = r"
         Sale { amount: 10.0 }
         Sale { amount: 20.0 }
         Sale { amount: 30.0 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
     assert_eq!(
@@ -190,7 +184,7 @@ async fn aggregate_having_passes() {
 #[tokio::test]
 async fn aggregate_multiple_functions() {
     // count + sum + avg + min + max in one aggregate → all fields present
-    let program = r#"
+    let program = r"
         stream MultiAgg = Metric
             .window(4)
             .aggregate(
@@ -207,14 +201,14 @@ async fn aggregate_multiple_functions() {
                 minimum: minimum,
                 maximum: maximum
             )
-    "#;
+    ";
 
-    let events = r#"
+    let events = r"
         Metric { value: 10.0 }
         Metric { value: 20.0 }
         Metric { value: 30.0 }
         Metric { value: 40.0 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
     assert_eq!(results.len(), 1, "4 events should fill 1 window");
@@ -230,30 +224,17 @@ async fn aggregate_multiple_functions() {
     if let Some(varpulis_core::Value::Float(total)) = result.data.get("total") {
         assert!(
             (*total - 100.0).abs() < 0.001,
-            "Sum should be 100.0, got {}",
-            total
+            "Sum should be 100.0, got {total}"
         );
     }
     if let Some(varpulis_core::Value::Float(avg)) = result.data.get("average") {
-        assert!(
-            (*avg - 25.0).abs() < 0.001,
-            "Avg should be 25.0, got {}",
-            avg
-        );
+        assert!((*avg - 25.0).abs() < 0.001, "Avg should be 25.0, got {avg}");
     }
     if let Some(varpulis_core::Value::Float(min)) = result.data.get("minimum") {
-        assert!(
-            (*min - 10.0).abs() < 0.001,
-            "Min should be 10.0, got {}",
-            min
-        );
+        assert!((*min - 10.0).abs() < 0.001, "Min should be 10.0, got {min}");
     }
     if let Some(varpulis_core::Value::Float(max)) = result.data.get("maximum") {
-        assert!(
-            (*max - 40.0).abs() < 0.001,
-            "Max should be 40.0, got {}",
-            max
-        );
+        assert!((*max - 40.0).abs() < 0.001, "Max should be 40.0, got {max}");
     }
 }
 
@@ -285,21 +266,21 @@ async fn empty_partition_no_output() {
 #[tokio::test]
 async fn window_with_where_before() {
     // .where(value > 50).window(3).aggregate(...) — filter then window
-    let program = r#"
+    let program = r"
         stream FilterThenWindow = Reading
             .where(value > 50.0)
             .window(2)
             .aggregate(total: sum(value))
             .emit(sum: total)
-    "#;
+    ";
 
-    let events = r#"
+    let events = r"
         Reading { value: 30.0 }
         Reading { value: 80.0 }
         Reading { value: 40.0 }
         Reading { value: 90.0 }
         Reading { value: 20.0 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
     // Only 80 and 90 pass the filter → 1 window of size 2
@@ -311,8 +292,7 @@ async fn window_with_where_before() {
     if let Some(varpulis_core::Value::Float(sum)) = results[0].data.get("sum") {
         assert!(
             (*sum - 170.0).abs() < 0.001,
-            "Sum should be 170.0, got {}",
-            sum
+            "Sum should be 170.0, got {sum}"
         );
     }
 }
@@ -320,12 +300,12 @@ async fn window_with_where_before() {
 #[tokio::test]
 async fn session_window_basic() {
     // Session window with gap — events within gap form one session
-    let program = r#"
+    let program = r"
         stream SessionTest = Activity
             .window(session: 30s)
             .aggregate(cnt: count(action))
             .emit(count: cnt)
-    "#;
+    ";
 
     // All events within 30s of each other → one session
     let events = r#"

@@ -121,14 +121,14 @@ impl ConnectorFactory for MqttFactory {
         let topic = topic_override
             .map(|s| s.to_string())
             .or_else(|| config.topic.clone())
-            .unwrap_or_else(|| format!("{}-output", name));
+            .unwrap_or_else(|| format!("{name}-output"));
         let base_id = config
             .properties
             .get("client_id")
             .cloned()
             .unwrap_or_else(|| name.to_string());
         let client_id = match context_name {
-            Some(ctx) => format!("{}-{}", base_id, ctx),
+            Some(ctx) => format!("{base_id}-{ctx}"),
             None => base_id,
         };
         let mqtt_config = MqttConfig::new(&broker, &topic)
@@ -182,7 +182,7 @@ impl MqttConfig {
     }
 
     /// Set the broker port.
-    pub fn with_port(mut self, port: u16) -> Self {
+    pub const fn with_port(mut self, port: u16) -> Self {
         self.port = port;
         self
     }
@@ -220,7 +220,7 @@ mod mqtt_impl {
     use std::time::Duration;
     use varpulis_core::event::{FieldKey, FxIndexMap};
 
-    fn qos_from_u8(qos: u8) -> QoS {
+    const fn qos_from_u8(qos: u8) -> QoS {
         match qos {
             0 => QoS::AtMostOnce,
             1 => QoS::AtLeastOnce,
@@ -462,7 +462,7 @@ mod mqtt_impl {
 
         async fn connect(&mut self) -> Result<(), ConnectorError> {
             // Delegate to the inherent connect method
-            MqttSink::connect(self).await
+            Self::connect(self).await
         }
 
         async fn send(&self, event: &Event) -> Result<(), ConnectorError> {

@@ -230,7 +230,7 @@ mod tests {
     fn test_metrics_multiple_events() {
         let metrics = Metrics::new();
         for i in 0..10 {
-            metrics.record_event(&format!("Event{}", i));
+            metrics.record_event(&format!("Event{i}"));
         }
         let output = metrics.gather();
         assert!(output.contains("varpulis_events_total"));
@@ -336,7 +336,7 @@ mod tests {
         let metrics1 = Metrics::new();
         metrics1.record_event("TestEvent");
 
-        let metrics2 = metrics1.clone();
+        let metrics2 = metrics1;
         metrics2.record_event("AnotherEvent");
 
         // Both should see all events (they share the same registry)
@@ -358,7 +358,7 @@ mod tests {
         let metrics = Metrics::new();
 
         for i in 0..20 {
-            let stream_name = format!("stream_{}", i);
+            let stream_name = format!("stream_{i}");
             metrics.record_processing(&stream_name, 0.001 * i as f64);
         }
 

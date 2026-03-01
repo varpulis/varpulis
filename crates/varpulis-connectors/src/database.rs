@@ -51,8 +51,7 @@ fn validate_table_name(table: &str) -> Result<(), ConnectorError> {
     });
     if !valid {
         return Err(ConnectorError::ConfigError(format!(
-            "Invalid table name '{}': must match [a-zA-Z_][a-zA-Z0-9_.]*",
-            table
+            "Invalid table name '{table}': must match [a-zA-Z_][a-zA-Z0-9_.]*"
         )));
     }
     Ok(())
@@ -81,7 +80,7 @@ impl DatabaseConfig {
     }
 
     /// Set the maximum number of connections in the pool.
-    pub fn with_max_connections(mut self, max: u32) -> Self {
+    pub const fn with_max_connections(mut self, max: u32) -> Self {
         self.max_connections = max;
         self
     }

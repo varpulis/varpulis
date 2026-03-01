@@ -18,7 +18,7 @@ pub async fn create_or_update_user(
     avatar_url: &str,
 ) -> Result<User, DbError> {
     let user = sqlx::query_as::<_, User>(
-        r#"
+        r"
         INSERT INTO users (github_id, email, name, avatar_url)
         VALUES ($1, $2, $3, $4)
         ON CONFLICT (github_id) DO UPDATE
@@ -26,7 +26,7 @@ pub async fn create_or_update_user(
                 name       = EXCLUDED.name,
                 avatar_url = EXCLUDED.avatar_url
         RETURNING id, github_id, email, name, avatar_url, created_at
-        "#,
+        ",
     )
     .bind(github_id)
     .bind(email)
@@ -64,11 +64,11 @@ pub async fn create_organization(
     name: &str,
 ) -> Result<Organization, DbError> {
     let org = sqlx::query_as::<_, Organization>(
-        r#"
+        r"
         INSERT INTO organizations (owner_id, name)
         VALUES ($1, $2)
         RETURNING id, owner_id, name, tier, stripe_customer_id, created_at
-        "#,
+        ",
     )
     .bind(owner_id)
     .bind(name)
@@ -155,11 +155,11 @@ pub async fn create_api_key(
     name: &str,
 ) -> Result<ApiKey, DbError> {
     let key = sqlx::query_as::<_, ApiKey>(
-        r#"
+        r"
         INSERT INTO api_keys (org_id, key_hash, name)
         VALUES ($1, $2, $3)
         RETURNING id, org_id, key_hash, name, created_at, last_used_at
-        "#,
+        ",
     )
     .bind(org_id)
     .bind(key_hash)
@@ -227,11 +227,11 @@ pub async fn create_pipeline(
     vpl_source: &str,
 ) -> Result<Pipeline, DbError> {
     let pipeline = sqlx::query_as::<_, Pipeline>(
-        r#"
+        r"
         INSERT INTO pipelines (org_id, name, vpl_source)
         VALUES ($1, $2, $3)
         RETURNING id, org_id, name, vpl_source, status, created_at, updated_at
-        "#,
+        ",
     )
     .bind(org_id)
     .bind(name)
@@ -317,13 +317,13 @@ pub async fn record_usage(
     output_events: i64,
 ) -> Result<(), DbError> {
     sqlx::query(
-        r#"
+        r"
         INSERT INTO usage_daily (org_id, date, events_processed, output_events)
         VALUES ($1, $2, $3, $4)
         ON CONFLICT (org_id, date) DO UPDATE
             SET events_processed = usage_daily.events_processed + EXCLUDED.events_processed,
                 output_events    = usage_daily.output_events    + EXCLUDED.output_events
-        "#,
+        ",
     )
     .bind(org_id)
     .bind(date)
@@ -343,12 +343,12 @@ pub async fn get_usage(
     end_date: NaiveDate,
 ) -> Result<Vec<UsageDaily>, DbError> {
     let rows = sqlx::query_as::<_, UsageDaily>(
-        r#"
+        r"
         SELECT org_id, date, events_processed, output_events
         FROM usage_daily
         WHERE org_id = $1 AND date >= $2 AND date <= $3
         ORDER BY date
-        "#,
+        ",
     )
     .bind(org_id)
     .bind(start_date)

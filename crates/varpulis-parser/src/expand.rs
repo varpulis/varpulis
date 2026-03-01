@@ -20,8 +20,7 @@ pub fn expand_declaration_loops(source: &str) -> Result<String, String> {
         result = expanded;
         if pass == MAX_EXPANSION_PASSES - 1 {
             return Err(format!(
-                "Expansion limit exceeded: more than {} passes required",
-                MAX_EXPANSION_PASSES
+                "Expansion limit exceeded: more than {MAX_EXPANSION_PASSES} passes required"
             ));
         }
     }
@@ -71,7 +70,7 @@ fn expand_one_pass(source: &str) -> Result<String, String> {
                 }
 
                 let strip = body_indent.unwrap_or(4);
-                let pattern = format!("{{{}}}", var);
+                let pattern = format!("{{{var}}}");
 
                 for val in start..end {
                     for bl in &lines[body_start..body_end] {

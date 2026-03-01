@@ -99,15 +99,14 @@ mod tests {
             zdd = zdd.product_with_optional(var);
 
             // Verify count matches
-            assert_eq!(zdd.count(), naive.len(), "Count mismatch at var {}", var);
+            assert_eq!(zdd.count(), naive.len(), "Count mismatch at var {var}");
 
             // Verify all sets match
             for combination in zdd.iter() {
                 let set: BTreeSet<u32> = combination.into_iter().collect();
                 assert!(
                     naive.contains(&set),
-                    "ZDD contains {:?} which is not in naive",
-                    set
+                    "ZDD contains {set:?} which is not in naive"
                 );
             }
         }
@@ -169,8 +168,7 @@ mod tests {
         let node_count = zdd.node_count();
         assert!(
             node_count < 1000,
-            "Expected fewer than 1000 nodes for 25 variables, got {}",
-            node_count
+            "Expected fewer than 1000 nodes for 25 variables, got {node_count}"
         );
 
         // Verify a specific combination
@@ -202,7 +200,7 @@ mod tests {
     #[test]
     fn test_debug() {
         let zdd = Zdd::base().product_with_optional(0);
-        let debug_str = format!("{:?}", zdd);
+        let debug_str = format!("{zdd:?}");
         assert!(debug_str.contains("Zdd"));
     }
 }

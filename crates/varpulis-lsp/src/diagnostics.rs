@@ -115,20 +115,16 @@ fn error_to_diagnostic(source: &str, error: &ParseError) -> Diagnostic {
                     },
                     end: Position {
                         line: line as u32,
-                        character: (col + found.len()).min(
-                            source
-                                .lines()
-                                .nth(line)
-                                .map(|l| l.len())
-                                .unwrap_or(col + 10),
-                        ) as u32,
+                        character: (col + found.len())
+                            .min(source.lines().nth(line).map_or(col + 10, |l| l.len()))
+                            as u32,
                     },
                 },
                 severity: Some(DiagnosticSeverity::ERROR),
                 code: None,
                 code_description: None,
                 source: Some("varpulis".to_string()),
-                message: format!("Unexpected token: expected {}, found '{}'", expected, found),
+                message: format!("Unexpected token: expected {expected}, found '{found}'"),
                 related_information: None,
                 tags: None,
                 data: None,
@@ -139,11 +135,11 @@ fn error_to_diagnostic(source: &str, error: &ParseError) -> Diagnostic {
             range: Range {
                 start: Position {
                     line: source.lines().count().saturating_sub(1) as u32,
-                    character: source.lines().last().map(|l| l.len()).unwrap_or(0) as u32,
+                    character: source.lines().last().map_or(0, |l| l.len()) as u32,
                 },
                 end: Position {
                     line: source.lines().count().saturating_sub(1) as u32,
-                    character: source.lines().last().map(|l| l.len()).unwrap_or(0) as u32,
+                    character: source.lines().last().map_or(0, |l| l.len()) as u32,
                 },
             },
             severity: Some(DiagnosticSeverity::ERROR),
@@ -205,7 +201,7 @@ fn error_to_diagnostic(source: &str, error: &ParseError) -> Diagnostic {
                     },
                     end: Position {
                         line: line as u32,
-                        character: source.lines().nth(line).map(|l| l.len()).unwrap_or(col) as u32,
+                        character: source.lines().nth(line).map_or(col, |l| l.len()) as u32,
                     },
                 },
                 severity: Some(DiagnosticSeverity::ERROR),
@@ -298,14 +294,14 @@ mod tests {
 
     #[test]
     fn test_valid_code_no_diagnostics() {
-        let code = r#"
+        let code = r"
 event SensorReading:
     temperature: int
 
 stream SensorData = SensorReading
     .where(temperature > 25)
     .emit()
-"#;
+";
         let diagnostics = get_diagnostics(code);
         assert!(diagnostics.is_empty());
     }

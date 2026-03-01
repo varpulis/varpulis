@@ -146,7 +146,7 @@ impl AuditEntry {
         }
     }
 
-    pub fn with_outcome(mut self, outcome: AuditOutcome) -> Self {
+    pub const fn with_outcome(mut self, outcome: AuditOutcome) -> Self {
         self.outcome = outcome;
         self
     }
@@ -176,7 +176,7 @@ struct AuditQuery {
     actor: Option<String>,
 }
 
-fn default_limit() -> usize {
+const fn default_limit() -> usize {
     100
 }
 
@@ -273,7 +273,7 @@ mod tests {
         for i in 0..5 {
             logger
                 .log(AuditEntry::new(
-                    format!("user_{}", i),
+                    format!("user_{i}"),
                     AuditAction::Login,
                     "/auth",
                 ))

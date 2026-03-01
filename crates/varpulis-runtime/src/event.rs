@@ -22,7 +22,7 @@ pub struct TemperatureReading {
 
 impl From<TemperatureReading> for Event {
     fn from(r: TemperatureReading) -> Self {
-        Event::new("TemperatureReading")
+        Self::new("TemperatureReading")
             .with_timestamp(r.timestamp)
             .with_field("sensor_id", r.sensor_id)
             .with_field("zone", r.zone)
@@ -42,7 +42,7 @@ pub struct HumidityReading {
 
 impl From<HumidityReading> for Event {
     fn from(r: HumidityReading) -> Self {
-        Event::new("HumidityReading")
+        Self::new("HumidityReading")
             .with_timestamp(r.timestamp)
             .with_field("sensor_id", r.sensor_id)
             .with_field("zone", r.zone)
@@ -64,7 +64,7 @@ pub struct HVACStatus {
 
 impl From<HVACStatus> for Event {
     fn from(s: HVACStatus) -> Self {
-        Event::new("HVACStatus")
+        Self::new("HVACStatus")
             .with_timestamp(s.timestamp)
             .with_field("unit_id", s.unit_id)
             .with_field("mode", s.mode)

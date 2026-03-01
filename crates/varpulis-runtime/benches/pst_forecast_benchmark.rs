@@ -82,7 +82,7 @@ fn build_trained_pst(
 ) -> PredictionSuffixTree {
     let mut pst = PredictionSuffixTree::new(config);
     for i in 0..alphabet_size {
-        pst.register_symbol(&format!("E{}", i));
+        pst.register_symbol(&format!("E{i}"));
     }
     pst.train(training_seq);
     pst
@@ -90,7 +90,7 @@ fn build_trained_pst(
 
 /// Build a PMC with a linear NFA: S0 --(E0)--> S1 --(E1)--> S2 --(E2)--> Accept
 fn build_pmc(num_states: usize, alphabet_size: usize, warmup: u64) -> PatternMarkovChain {
-    let event_types: Vec<String> = (0..alphabet_size).map(|i| format!("E{}", i)).collect();
+    let event_types: Vec<String> = (0..alphabet_size).map(|i| format!("E{i}")).collect();
     let pst_config = PSTConfig {
         max_depth: 5,
         smoothing: 0.01,
@@ -149,11 +149,11 @@ fn bench_pst_training(c: &mut Criterion) {
                 };
                 let mut pst = PredictionSuffixTree::new(config);
                 for i in 0..10 {
-                    pst.register_symbol(&format!("E{}", i));
+                    pst.register_symbol(&format!("E{i}"));
                 }
                 pst.train(black_box(&sequence));
                 black_box(pst.node_count())
-            })
+            });
         });
 
         let var_seq = generate_variable_pattern_sequence(size / 4);
@@ -166,11 +166,11 @@ fn bench_pst_training(c: &mut Criterion) {
                 };
                 let mut pst = PredictionSuffixTree::new(config);
                 for i in 0..3 {
-                    pst.register_symbol(&format!("E{}", i));
+                    pst.register_symbol(&format!("E{i}"));
                 }
                 pst.train(black_box(&var_seq));
                 black_box(pst.node_count())
-            })
+            });
         });
     }
 
@@ -204,7 +204,7 @@ fn bench_pst_prediction(c: &mut Criterion) {
 
         // Benchmark single-symbol prediction
         group.bench_with_input(BenchmarkId::new("predict_symbol", depth), &depth, |b, _| {
-            b.iter(|| black_box(pst.predict_symbol(black_box(&context), 0)))
+            b.iter(|| black_box(pst.predict_symbol(black_box(&context), 0)));
         });
 
         // Benchmark full distribution prediction
@@ -242,7 +242,7 @@ fn bench_pmc_forecast(c: &mut Criterion) {
                 black_box(pmc.process(&event_type, ts, &[]));
             }
             black_box(pmc.events_processed())
-        })
+        });
     });
 
     // Benchmark with active runs (forecasts computed)
@@ -259,7 +259,7 @@ fn bench_pmc_forecast(c: &mut Criterion) {
                 black_box(pmc.process(&event_type, ts, &runs));
             }
             black_box(pmc.events_processed())
-        })
+        });
     });
 
     // Benchmark with multiple active runs
@@ -286,7 +286,7 @@ fn bench_pmc_forecast(c: &mut Criterion) {
                 black_box(pmc.process(&event_type, ts, &runs));
             }
             black_box(pmc.events_processed())
-        })
+        });
     });
 
     group.finish();
@@ -316,14 +316,14 @@ fn bench_online_learning(c: &mut Criterion) {
             };
             let mut pst = PredictionSuffixTree::new(config);
             for i in 0..alphabet_size {
-                pst.register_symbol(&format!("E{}", i));
+                pst.register_symbol(&format!("E{i}"));
             }
             let mut learner = OnlinePSTLearner::new(5);
             for &sym in &symbols {
                 learner.update(&mut pst, sym);
             }
             black_box(pst.node_count())
-        })
+        });
     });
 
     // Online learning with KL-divergence pruning every 5K events
@@ -337,7 +337,7 @@ fn bench_online_learning(c: &mut Criterion) {
             };
             let mut pst = PredictionSuffixTree::new(config);
             for i in 0..alphabet_size {
-                pst.register_symbol(&format!("E{}", i));
+                pst.register_symbol(&format!("E{i}"));
             }
             let mut learner = OnlinePSTLearner::new(5);
             for (idx, &sym) in symbols.iter().enumerate() {
@@ -347,7 +347,7 @@ fn bench_online_learning(c: &mut Criterion) {
                 }
             }
             black_box(pst.node_count())
-        })
+        });
     });
 
     // Mixed: online learning + periodic prediction (realistic workload)
@@ -361,7 +361,7 @@ fn bench_online_learning(c: &mut Criterion) {
             };
             let mut pst = PredictionSuffixTree::new(config);
             for i in 0..alphabet_size {
-                pst.register_symbol(&format!("E{}", i));
+                pst.register_symbol(&format!("E{i}"));
             }
             let mut learner = OnlinePSTLearner::new(5);
             let mut total_prob = 0.0f64;
@@ -374,7 +374,7 @@ fn bench_online_learning(c: &mut Criterion) {
                 }
             }
             black_box(total_prob)
-        })
+        });
     });
 
     group.finish();
@@ -405,11 +405,11 @@ fn bench_alphabet_scaling(c: &mut Criterion) {
                 };
                 let mut pst = PredictionSuffixTree::new(config);
                 for i in 0..a {
-                    pst.register_symbol(&format!("E{}", i));
+                    pst.register_symbol(&format!("E{i}"));
                 }
                 pst.train(black_box(&sequence));
                 black_box(pst.node_count())
-            })
+            });
         });
 
         // Prediction time with full alphabet
@@ -422,7 +422,7 @@ fn bench_alphabet_scaling(c: &mut Criterion) {
         let context: Vec<SymbolId> = (0..5).map(|i| (i % alpha) as SymbolId).collect();
 
         group.bench_with_input(BenchmarkId::new("predict", alpha), &alpha, |b, _| {
-            b.iter(|| black_box(pst.predict(black_box(&context))))
+            b.iter(|| black_box(pst.predict(black_box(&context))));
         });
 
         // Online update throughput at different alphabet sizes
@@ -436,14 +436,14 @@ fn bench_alphabet_scaling(c: &mut Criterion) {
                 };
                 let mut pst = PredictionSuffixTree::new(config);
                 for i in 0..a {
-                    pst.register_symbol(&format!("E{}", i));
+                    pst.register_symbol(&format!("E{i}"));
                 }
                 let mut learner = OnlinePSTLearner::new(5);
                 for &sym in &symbols {
                     learner.update(&mut pst, sym);
                 }
                 black_box(pst.node_count())
-            })
+            });
         });
     }
 
@@ -469,7 +469,7 @@ fn bench_hawkes_intensity(c: &mut Criterion) {
                 hawkes.update(black_box(i * 1_000_000)); // 1ms apart
             }
             black_box(hawkes.boost_factor(num_events * 1_000_000))
-        })
+        });
     });
 
     // Update throughput: burst pattern (alternating fast/slow)
@@ -487,7 +487,7 @@ fn bench_hawkes_intensity(c: &mut Criterion) {
                 hawkes.update(black_box(ts));
             }
             black_box(hawkes.boost_factor(num_events * 100_000_000))
-        })
+        });
     });
 
     // Boost factor computation throughput
@@ -502,7 +502,7 @@ fn bench_hawkes_intensity(c: &mut Criterion) {
                 total += hawkes.boost_factor(black_box(1_000_000_000 + i * 1000));
             }
             black_box(total)
-        })
+        });
     });
 
     group.finish();
@@ -532,7 +532,7 @@ fn bench_conformal_calibration(c: &mut Criterion) {
                 total_width += upper - lower;
             }
             black_box(total_width)
-        })
+        });
     });
 
     // Prediction interval only (pre-populated calibrator)
@@ -549,7 +549,7 @@ fn bench_conformal_calibration(c: &mut Criterion) {
                 total_width += upper - lower;
             }
             black_box(total_width)
-        })
+        });
     });
 
     group.finish();

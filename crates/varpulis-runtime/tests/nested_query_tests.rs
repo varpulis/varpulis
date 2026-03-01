@@ -70,7 +70,7 @@ async fn test_basic_stream_reference() {
 #[tokio::test]
 async fn test_three_stage_pipeline() {
     // Three-stage pipeline: Raw -> Filtered -> Aggregated
-    let code = r#"
+    let code = r"
         stream RawTicks = Tick
 
         stream FilteredTicks = RawTicks
@@ -79,7 +79,7 @@ async fn test_three_stage_pipeline() {
         stream AggregatedTicks = FilteredTicks
             .window(3)
             .aggregate(count: count(), avg_price: avg(price))
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
 
@@ -145,7 +145,7 @@ async fn test_nested_with_output_event() {
 #[tokio::test]
 async fn test_parallel_derived_streams() {
     // Two streams derive from the same source
-    let code = r#"
+    let code = r"
         stream Ticks = Tick
 
         stream HighTicks = Ticks
@@ -153,7 +153,7 @@ async fn test_parallel_derived_streams() {
 
         stream LowTicks = Ticks
             .where(price < 50.0)
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
 
@@ -210,13 +210,13 @@ async fn test_diamond_dependency() {
 #[tokio::test]
 async fn test_deep_nesting() {
     // Deep pipeline: 5 stages
-    let code = r#"
+    let code = r"
         stream L1 = Event
         stream L2 = L1.where(level >= 1)
         stream L3 = L2.where(level >= 2)
         stream L4 = L3.where(level >= 3)
         stream L5 = L4.where(level >= 4)
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
 
@@ -236,7 +236,7 @@ async fn test_deep_nesting() {
 #[tokio::test]
 async fn test_nested_with_aggregation_window() {
     // Nested stream with windowing and aggregation
-    let code = r#"
+    let code = r"
         stream Trades = Trade
 
         stream BigTrades = Trades
@@ -249,7 +249,7 @@ async fn test_nested_with_aggregation_window() {
                 avg_amount: avg(amount),
                 count: count()
             )
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
 
@@ -262,7 +262,7 @@ async fn test_nested_with_aggregation_window() {
         let trade = make_event(
             "Trade",
             vec![
-                ("amount", Value::Float(2000.0 + (i as f64 * 100.0))),
+                ("amount", Value::Float((i as f64).mul_add(100.0, 2000.0))),
                 ("symbol", Value::Str("BTC".into())),
             ],
         );
@@ -276,7 +276,7 @@ async fn test_nested_with_aggregation_window() {
 #[tokio::test]
 async fn test_nested_with_partition() {
     // Nested stream with partitioning
-    let code = r#"
+    let code = r"
         stream Orders = Order
 
         stream HighValueOrders = Orders
@@ -286,7 +286,7 @@ async fn test_nested_with_partition() {
             .partition_by(customer_id)
             .window(10)
             .aggregate(order_count: count(), total_spent: sum(total))
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
 
@@ -313,14 +313,14 @@ async fn test_nested_with_partition() {
 #[tokio::test]
 async fn test_stream_from_event_type_vs_stream() {
     // Verify that stream source is correctly resolved
-    let code = r#"
+    let code = r"
         # Direct from event type
         stream DirectStream = SensorReading
 
         # From another stream
         stream DerivedStream = DirectStream
             .where(value > 0.0)
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
 
@@ -348,7 +348,7 @@ async fn test_stream_from_event_type_vs_stream() {
 #[tokio::test]
 async fn test_chained_transforms() {
     // Multiple transforms in a chain
-    let code = r#"
+    let code = r"
         stream Raw = Measurement
 
         stream Filtered = Raw
@@ -360,7 +360,7 @@ async fn test_chained_transforms() {
                 reading: value,
                 quality_score: quality * 100.0
             )
-    "#;
+    ";
 
     let program = parse(code).expect("Failed to parse");
 

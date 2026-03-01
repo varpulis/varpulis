@@ -175,13 +175,13 @@ impl SnapshotManager {
 
     /// Number of active snapshots
     #[inline]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.snapshots.len()
     }
 
     /// Check if empty
     #[inline]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.snapshots.is_empty()
     }
 }

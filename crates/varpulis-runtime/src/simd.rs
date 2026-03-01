@@ -3,6 +3,7 @@
 //! This module provides vectorized implementations of common operations:
 //! - Aggregations (sum, min, max, avg)
 //! - Batch comparisons for filtering
+#![allow(unsafe_code)]
 //! - Field extraction to contiguous arrays
 
 #[cfg(target_arch = "x86_64")]
@@ -450,12 +451,12 @@ impl IncrementalSum {
     }
 
     #[inline]
-    pub fn sum(&self) -> f64 {
+    pub const fn sum(&self) -> f64 {
         self.sum
     }
 
     #[inline]
-    pub fn count(&self) -> usize {
+    pub const fn count(&self) -> usize {
         self.count
     }
 
@@ -468,7 +469,7 @@ impl IncrementalSum {
         }
     }
 
-    pub fn reset(&mut self) {
+    pub const fn reset(&mut self) {
         self.sum = 0.0;
         self.count = 0;
     }
@@ -514,7 +515,7 @@ impl Default for IncrementalMinMax {
 }
 
 impl IncrementalMinMax {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             values: std::collections::BTreeMap::new(),
         }

@@ -12,7 +12,7 @@ use varpulis_lsp::semantic::{get_document_symbols, get_semantic_tokens};
 // Helper
 // ---------------------------------------------------------------------------
 
-fn pos(line: u32, character: u32) -> Position {
+const fn pos(line: u32, character: u32) -> Position {
     Position { line, character }
 }
 
@@ -242,15 +242,12 @@ fn hover_agg_functions() {
         ("collect", "collects"),
         ("distinct", "distinct"),
     ] {
-        let text = format!("{} something", name);
+        let text = format!("{name} something");
         let h =
-            hover_text(&text, 0, 0).unwrap_or_else(|| panic!("hover should exist for '{}'", name));
+            hover_text(&text, 0, 0).unwrap_or_else(|| panic!("hover should exist for '{name}'"));
         assert!(
             h.to_lowercase().contains(expected),
-            "hover for '{}' should contain '{}', got: {}",
-            name,
-            expected,
-            h
+            "hover for '{name}' should contain '{expected}', got: {h}"
         );
     }
 }
@@ -262,15 +259,12 @@ fn hover_window_types() {
         ("sliding", "overlapping"),
         ("session_window", "session"),
     ] {
-        let text = format!("{} something", name);
+        let text = format!("{name} something");
         let h =
-            hover_text(&text, 0, 0).unwrap_or_else(|| panic!("hover should exist for '{}'", name));
+            hover_text(&text, 0, 0).unwrap_or_else(|| panic!("hover should exist for '{name}'"));
         assert!(
             h.to_lowercase().contains(expected),
-            "hover for '{}' should contain '{}', got: {}",
-            name,
-            expected,
-            h
+            "hover for '{name}' should contain '{expected}', got: {h}"
         );
     }
 }
@@ -287,15 +281,12 @@ fn hover_builtin_functions() {
         ("ceil", "Rounds up"),
         ("round", "Rounds"),
     ] {
-        let text = format!("{} something", name);
+        let text = format!("{name} something");
         let h =
-            hover_text(&text, 0, 0).unwrap_or_else(|| panic!("hover should exist for '{}'", name));
+            hover_text(&text, 0, 0).unwrap_or_else(|| panic!("hover should exist for '{name}'"));
         assert!(
             h.to_lowercase().contains(&expected.to_lowercase()),
-            "hover for '{}' should contain '{}', got: {}",
-            name,
-            expected,
-            h
+            "hover for '{name}' should contain '{expected}', got: {h}"
         );
     }
 }
@@ -312,15 +303,12 @@ fn hover_types() {
         ("list", "list"),
         ("map", "map"),
     ] {
-        let text = format!("{} something", name);
+        let text = format!("{name} something");
         let h =
-            hover_text(&text, 0, 0).unwrap_or_else(|| panic!("hover should exist for '{}'", name));
+            hover_text(&text, 0, 0).unwrap_or_else(|| panic!("hover should exist for '{name}'"));
         assert!(
             h.contains(expected),
-            "hover for '{}' should contain '{}', got: {}",
-            name,
-            expected,
-            h
+            "hover for '{name}' should contain '{expected}', got: {h}"
         );
     }
 }
@@ -338,15 +326,12 @@ fn hover_collection_functions() {
         ("filter", "Filters a collection"),
         ("reduce", "Reduces a collection"),
     ] {
-        let text = format!("{} something", name);
+        let text = format!("{name} something");
         let h =
-            hover_text(&text, 0, 0).unwrap_or_else(|| panic!("hover should exist for '{}'", name));
+            hover_text(&text, 0, 0).unwrap_or_else(|| panic!("hover should exist for '{name}'"));
         assert!(
             h.contains(expected),
-            "hover for '{}' should contain '{}', got: {}",
-            name,
-            expected,
-            h
+            "hover for '{name}' should contain '{expected}', got: {h}"
         );
     }
 }
@@ -358,15 +343,12 @@ fn hover_logical_operators() {
         ("or", "Logical OR"),
         ("not", "Logical NOT"),
     ] {
-        let text = format!("{} something", name);
+        let text = format!("{name} something");
         let h =
-            hover_text(&text, 0, 0).unwrap_or_else(|| panic!("hover should exist for '{}'", name));
+            hover_text(&text, 0, 0).unwrap_or_else(|| panic!("hover should exist for '{name}'"));
         assert!(
             h.contains(expected),
-            "hover for '{}' should contain '{}', got: {}",
-            name,
-            expected,
-            h
+            "hover for '{name}' should contain '{expected}', got: {h}"
         );
     }
 }
@@ -517,10 +499,10 @@ fn semantic_tokens_type_names() {
         "map",
         "any",
     ] {
-        let text = format!("let x: {} = 0", ty);
+        let text = format!("let x: {ty} = 0");
         let tokens = get_semantic_tokens(&text);
         let type_tokens: Vec<_> = tokens.iter().filter(|t| t.token_type == 1).collect();
-        assert!(!type_tokens.is_empty(), "type token expected for '{}'", ty);
+        assert!(!type_tokens.is_empty(), "type token expected for '{ty}'");
     }
 }
 
@@ -636,17 +618,12 @@ fn semantic_tokens_all_keywords() {
         "OR",
         "NOT",
     ] {
-        let text = format!("{} something", kw);
+        let text = format!("{kw} something");
         let tokens = get_semantic_tokens(&text);
-        assert!(
-            !tokens.is_empty(),
-            "should have tokens for keyword '{}'",
-            kw
-        );
+        assert!(!tokens.is_empty(), "should have tokens for keyword '{kw}'");
         assert_eq!(
             tokens[0].token_type, 0,
-            "keyword '{}' should be token type 0 (KEYWORD)",
-            kw
+            "keyword '{kw}' should be token type 0 (KEYWORD)"
         );
     }
 }
@@ -738,7 +715,7 @@ fn document_symbols_ignores_comments() {
 
 #[test]
 fn document_symbols_multiple_declarations() {
-    let text = r#"
+    let text = r"
 event SensorReading:
     temperature: int
 
@@ -750,7 +727,7 @@ pattern Alert = SEQ(a: SensorReading) within 5m
 fn process(x: int) -> int { x * 2 }
 
 let threshold = 25
-"#;
+";
     let symbols = get_document_symbols(text);
     assert_eq!(symbols.len(), 5);
 }
@@ -761,19 +738,18 @@ let threshold = 25
 
 #[test]
 fn diagnostics_valid_program_no_errors() {
-    let code = r#"
+    let code = r"
 event SensorReading:
     temperature: int
 
 stream SensorData = SensorReading
     .where(temperature > 25)
     .emit()
-"#;
+";
     let diags = get_diagnostics(code);
     assert!(
         diags.is_empty(),
-        "valid code should have no diagnostics, got: {:?}",
-        diags
+        "valid code should have no diagnostics, got: {diags:?}"
     );
 }
 
@@ -821,14 +797,13 @@ fn diagnostics_comment_only() {
     // Comments alone should be valid
     assert!(
         diags.is_empty(),
-        "comment-only should be valid, got: {:?}",
-        diags
+        "comment-only should be valid, got: {diags:?}"
     );
 }
 
 #[test]
 fn diagnostics_multiple_valid_statements() {
-    let code = r#"
+    let code = r"
 event A:
     x: int
 
@@ -840,22 +815,21 @@ stream S1 = A
 
 stream S2 = B
     .emit()
-"#;
+";
     let diags = get_diagnostics(code);
     assert!(
         diags.is_empty(),
-        "multiple valid statements should have no diagnostics, got: {:?}",
-        diags
+        "multiple valid statements should have no diagnostics, got: {diags:?}"
     );
 }
 
 #[test]
 fn diagnostics_semantic_undefined_event() {
     // Use an undefined event type in a stream
-    let code = r#"
+    let code = r"
 stream S = UndefinedEvent
     .emit()
-"#;
+";
     let diags = get_diagnostics(code);
     // Should have a semantic warning/error about undefined event
     // (depends on the validator's behavior)
@@ -932,8 +906,7 @@ fn completion_in_aggregate() {
     ] {
         assert!(
             labels.contains(&func),
-            "aggregate completions should contain '{}'",
-            func
+            "aggregate completions should contain '{func}'"
         );
     }
 }
@@ -969,8 +942,7 @@ fn completion_type_after_colon() {
     ] {
         assert!(
             labels.contains(&ty),
-            "type completions should contain '{}'",
-            ty
+            "type completions should contain '{ty}'"
         );
     }
 }

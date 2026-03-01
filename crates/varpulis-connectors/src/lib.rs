@@ -208,7 +208,7 @@ mod tests {
         let mut obj = serde_json::Map::new();
         obj.insert("event_type".to_string(), serde_json::json!("Test"));
         for i in 0..1100 {
-            obj.insert(format!("field_{}", i), serde_json::json!(i));
+            obj.insert(format!("field_{i}"), serde_json::json!(i));
         }
         let json = serde_json::Value::Object(obj);
 
@@ -243,8 +243,7 @@ mod tests {
         }
         assert!(
             depth < 40,
-            "Depth limiting should prevent full 40-level nesting, stopped at {}",
-            depth
+            "Depth limiting should prevent full 40-level nesting, stopped at {depth}"
         );
     }
 

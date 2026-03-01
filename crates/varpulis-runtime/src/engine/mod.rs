@@ -259,12 +259,12 @@ impl Engine {
     }
 
     /// Set custom DLQ configuration (call before `load()`).
-    pub fn set_dlq_config(&mut self, config: crate::dead_letter::DlqConfig) {
+    pub const fn set_dlq_config(&mut self, config: crate::dead_letter::DlqConfig) {
         self.dlq_config = config;
     }
 
     /// Access the shared DLQ instance (created during `load()`).
-    pub fn dlq(&self) -> Option<&Arc<crate::dead_letter::DeadLetterQueue>> {
+    pub const fn dlq(&self) -> Option<&Arc<crate::dead_letter::DeadLetterQueue>> {
         self.dlq.as_ref()
     }
 
@@ -274,7 +274,7 @@ impl Engine {
     }
 
     /// Get all registered patterns
-    pub fn patterns(&self) -> &FxHashMap<String, NamedPattern> {
+    pub const fn patterns(&self) -> &FxHashMap<String, NamedPattern> {
         &self.patterns
     }
 
@@ -289,7 +289,7 @@ impl Engine {
     }
 
     /// Get all declared connector configs (for building a ManagedConnectorRegistry).
-    pub fn connector_configs(&self) -> &FxHashMap<String, connector::ConnectorConfig> {
+    pub const fn connector_configs(&self) -> &FxHashMap<String, connector::ConnectorConfig> {
         &self.connectors
     }
 
@@ -307,8 +307,7 @@ impl Engine {
     pub fn set_variable(&mut self, name: &str, value: Value) -> Result<(), error::EngineError> {
         if self.variables.contains_key(name) && !self.mutable_vars.contains(name) {
             return Err(error::EngineError::Compilation(format!(
-                "Cannot assign to immutable variable '{}'. Use 'var' instead of 'let' to declare mutable variables.",
-                name
+                "Cannot assign to immutable variable '{name}'. Use 'var' instead of 'let' to declare mutable variables."
             )));
         }
         self.variables.insert(name.to_string(), value);
@@ -316,12 +315,12 @@ impl Engine {
     }
 
     /// Get all variables (for debugging/testing)
-    pub fn variables(&self) -> &FxHashMap<String, Value> {
+    pub const fn variables(&self) -> &FxHashMap<String, Value> {
         &self.variables
     }
 
     /// Get the context map (for orchestrator setup)
-    pub fn context_map(&self) -> &ContextMap {
+    pub const fn context_map(&self) -> &ContextMap {
         &self.context_map
     }
 
@@ -482,7 +481,7 @@ impl Engine {
                         &self.variables,
                     )
                     .ok_or_else(|| {
-                        format!("Failed to evaluate initial value for variable '{}'", name)
+                        format!("Failed to evaluate initial value for variable '{name}'")
                     })?;
 
                     info!(
@@ -507,12 +506,11 @@ impl Engine {
                         &self.functions,
                         &self.variables,
                     )
-                    .ok_or_else(|| format!("Failed to evaluate assignment value for '{}'", name))?;
+                    .ok_or_else(|| format!("Failed to evaluate assignment value for '{name}'"))?;
 
                     if self.variables.contains_key(name) && !self.mutable_vars.contains(name) {
                         return Err(error::EngineError::Compilation(format!(
-                            "Cannot assign to immutable variable '{}'. Use 'var' instead of 'let'.",
-                            name
+                            "Cannot assign to immutable variable '{name}'. Use 'var' instead of 'let'."
                         )));
                     }
 
@@ -661,8 +659,8 @@ impl Engine {
                     if let RuntimeOp::TrendAggregate(_) = op {
                         if let Some(ref agg) = stream.hamlet_aggregator {
                             for query in agg.registered_queries() {
-                                for &kt in query.kleene_types.iter() {
-                                    let type_name = format!("type_{}", kt);
+                                for &kt in &query.kleene_types {
+                                    let type_name = format!("type_{kt}");
                                     if !kleene_types.contains(&type_name) {
                                         kleene_types.push(type_name);
                                     }
@@ -710,7 +708,7 @@ impl Engine {
                             let event_names: Vec<String> = query
                                 .event_types
                                 .iter()
-                                .map(|&idx| format!("type_{}", idx))
+                                .map(|&idx| format!("type_{idx}"))
                                 .collect();
                             let name_strs: Vec<&str> =
                                 event_names.iter().map(|s| s.as_str()).collect();
@@ -718,7 +716,7 @@ impl Engine {
                             builder.add_sequence(new_id, &name_strs);
 
                             for &kt in &query.kleene_types {
-                                let type_name = format!("type_{}", kt);
+                                let type_name = format!("type_{kt}");
                                 let position = event_names
                                     .iter()
                                     .position(|n| *n == type_name)
@@ -810,7 +808,7 @@ impl Engine {
 
     /// Return all sink keys that belong to a given connector name.
     pub fn sink_keys_for_connector(&self, connector_name: &str) -> Vec<String> {
-        let prefix = format!("{}::", connector_name);
+        let prefix = format!("{connector_name}::");
         self.sinks
             .cache()
             .keys()
@@ -833,7 +831,7 @@ impl Engine {
     }
 
     /// Returns (events_in, events_out) counters for this engine.
-    pub fn event_counters(&self) -> (u64, u64) {
+    pub const fn event_counters(&self) -> (u64, u64) {
         (self.events_processed, self.output_events_emitted)
     }
 
@@ -1002,7 +1000,7 @@ impl Engine {
     }
 
     /// Get a reference to the UDF registry.
-    pub fn udf_registry(&self) -> &UdfRegistry {
+    pub const fn udf_registry(&self) -> &UdfRegistry {
         &self.udf_registry
     }
 
@@ -1172,7 +1170,7 @@ impl Engine {
                     }
                     RuntimeOp::Distinct(state) => {
                         let keys: Vec<String> =
-                            state.seen.iter().rev().map(|(k, _)| k.clone()).collect();
+                            state.seen.iter().rev().map(|(k, ())| k.clone()).collect();
                         distinct_states.insert(
                             name.clone(),
                             crate::persistence::DistinctCheckpoint { keys },
@@ -1389,7 +1387,7 @@ impl Engine {
     }
 
     /// Returns true if auto-checkpointing is enabled.
-    pub fn has_checkpointing(&self) -> bool {
+    pub const fn has_checkpointing(&self) -> bool {
         self.checkpoint_manager.is_some()
     }
 

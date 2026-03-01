@@ -107,13 +107,13 @@ impl Zdd {
 
     /// Get the root reference
     #[inline]
-    pub fn root(&self) -> ZddRef {
+    pub const fn root(&self) -> ZddRef {
         self.root
     }
 
     /// Get the number of nodes in this ZDD
     #[inline]
-    pub fn node_count(&self) -> usize {
+    pub const fn node_count(&self) -> usize {
         self.table.len()
     }
 
@@ -202,12 +202,12 @@ impl Zdd {
 
     /// Get the internal table (for operations that need it)
     #[inline]
-    pub(crate) fn table(&self) -> &UniqueTable {
+    pub(crate) const fn table(&self) -> &UniqueTable {
         &self.table
     }
 
     /// Create a new ZDD with the given root and table
-    pub(crate) fn from_parts(root: ZddRef, table: UniqueTable) -> Self {
+    pub(crate) const fn from_parts(root: ZddRef, table: UniqueTable) -> Self {
         Self { root, table }
     }
 }

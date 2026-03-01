@@ -1,37 +1,39 @@
 //! Semantic tokens and document symbols
 
-use once_cell::sync::Lazy;
 use tower_lsp::lsp_types::{
     Location, Position, Range, SemanticToken, SemanticTokenModifier, SemanticTokenType,
     SemanticTokensLegend, SymbolInformation, SymbolKind, Url,
 };
 
 /// Semantic token types used by the LSP
-pub static SEMANTIC_TOKEN_TYPES: Lazy<Vec<SemanticTokenType>> = Lazy::new(|| {
-    vec![
-        SemanticTokenType::KEYWORD,
-        SemanticTokenType::TYPE,
-        SemanticTokenType::FUNCTION,
-        SemanticTokenType::VARIABLE,
-        SemanticTokenType::STRING,
-        SemanticTokenType::NUMBER,
-        SemanticTokenType::OPERATOR,
-        SemanticTokenType::COMMENT,
-        SemanticTokenType::CLASS,     // For event types
-        SemanticTokenType::PARAMETER, // For function parameters
-        SemanticTokenType::PROPERTY,  // For fields
-        SemanticTokenType::NAMESPACE, // For stream names
-    ]
-});
+pub static SEMANTIC_TOKEN_TYPES: std::sync::LazyLock<Vec<SemanticTokenType>> =
+    std::sync::LazyLock::new(|| {
+        vec![
+            SemanticTokenType::KEYWORD,
+            SemanticTokenType::TYPE,
+            SemanticTokenType::FUNCTION,
+            SemanticTokenType::VARIABLE,
+            SemanticTokenType::STRING,
+            SemanticTokenType::NUMBER,
+            SemanticTokenType::OPERATOR,
+            SemanticTokenType::COMMENT,
+            SemanticTokenType::CLASS,     // For event types
+            SemanticTokenType::PARAMETER, // For function parameters
+            SemanticTokenType::PROPERTY,  // For fields
+            SemanticTokenType::NAMESPACE, // For stream names
+        ]
+    });
 
 /// Semantic token modifiers (none used currently)
-pub static SEMANTIC_TOKEN_MODIFIERS: Lazy<Vec<SemanticTokenModifier>> = Lazy::new(Vec::new);
+pub static SEMANTIC_TOKEN_MODIFIERS: std::sync::LazyLock<Vec<SemanticTokenModifier>> =
+    std::sync::LazyLock::new(Vec::new);
 
 /// The semantic tokens legend
-pub static SEMANTIC_TOKEN_LEGEND: Lazy<SemanticTokensLegend> = Lazy::new(|| SemanticTokensLegend {
-    token_types: SEMANTIC_TOKEN_TYPES.clone(),
-    token_modifiers: SEMANTIC_TOKEN_MODIFIERS.clone(),
-});
+pub static SEMANTIC_TOKEN_LEGEND: std::sync::LazyLock<SemanticTokensLegend> =
+    std::sync::LazyLock::new(|| SemanticTokensLegend {
+        token_types: SEMANTIC_TOKEN_TYPES.clone(),
+        token_modifiers: SEMANTIC_TOKEN_MODIFIERS.clone(),
+    });
 
 /// Token type indices
 const TOKEN_KEYWORD: u32 = 0;
@@ -362,11 +364,11 @@ fn match_token_ctx(s: &str, after_dot: bool) -> Option<(usize, u32)> {
 
     // Strings
     if let Some(rest) = s.strip_prefix('"') {
-        let end = rest.find('"').map(|i| i + 2).unwrap_or(s.len());
+        let end = rest.find('"').map_or(s.len(), |i| i + 2);
         return Some((end, TOKEN_STRING));
     }
     if let Some(rest) = s.strip_prefix('\'') {
-        let end = rest.find('\'').map(|i| i + 2).unwrap_or(s.len());
+        let end = rest.find('\'').map_or(s.len(), |i| i + 2);
         return Some((end, TOKEN_STRING));
     }
 

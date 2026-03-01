@@ -33,7 +33,7 @@ pub struct ActorContext<A: Actor> {
 
 impl<A: Actor> ActorContext<A> {
     /// Create a new actor context.
-    pub(crate) fn new(
+    pub(crate) const fn new(
         mailbox: Mailbox<A>,
         self_sender: MailboxSender<A>,
         shutdown: CancellationToken,
@@ -51,7 +51,7 @@ impl<A: Actor> ActorContext<A> {
     }
 
     /// Get a sender to this actor's own mailbox (for self-scheduling).
-    pub fn self_sender(&self) -> &MailboxSender<A> {
+    pub const fn self_sender(&self) -> &MailboxSender<A> {
         &self.self_sender
     }
 

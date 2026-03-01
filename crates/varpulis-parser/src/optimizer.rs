@@ -94,7 +94,7 @@ pub fn optimize_plan(plan: LogicalPlan) -> LogicalPlan {
 struct FilterPushdown;
 
 impl OptimizationRule for FilterPushdown {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "FilterPushdown"
     }
 
@@ -141,7 +141,7 @@ impl OptimizationRule for FilterPushdown {
 struct TemporalFilterPushdown;
 
 impl OptimizationRule for TemporalFilterPushdown {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "TemporalFilterPushdown"
     }
 
@@ -179,7 +179,7 @@ impl OptimizationRule for TemporalFilterPushdown {
 struct WindowMerge;
 
 impl OptimizationRule for WindowMerge {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "WindowMerge"
     }
 
@@ -226,7 +226,7 @@ impl OptimizationRule for WindowMerge {
 struct ProjectionPruning;
 
 impl OptimizationRule for ProjectionPruning {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "ProjectionPruning"
     }
 

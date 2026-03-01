@@ -87,7 +87,7 @@ impl PulsarConfig {
     }
 
     /// Set the number of messages to fetch per batch.
-    pub fn with_batch_size(mut self, size: usize) -> Self {
+    pub const fn with_batch_size(mut self, size: usize) -> Self {
         self.batch_size = size;
         self
     }

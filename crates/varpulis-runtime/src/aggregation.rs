@@ -155,7 +155,7 @@ pub trait AggregateFunc: Send + Sync {
 pub struct Count;
 
 impl AggregateFunc for Count {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "count"
     }
 
@@ -176,7 +176,7 @@ impl AggregateFunc for Count {
 pub struct Sum;
 
 impl AggregateFunc for Sum {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "sum"
     }
 
@@ -209,7 +209,7 @@ impl AggregateFunc for Sum {
 pub struct Avg;
 
 impl AggregateFunc for Avg {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "avg"
     }
 
@@ -253,7 +253,7 @@ impl AggregateFunc for Avg {
 pub struct Min;
 
 impl AggregateFunc for Min {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "min"
     }
 
@@ -293,7 +293,7 @@ impl AggregateFunc for Min {
 pub struct Max;
 
 impl AggregateFunc for Max {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "max"
     }
 
@@ -333,7 +333,7 @@ impl AggregateFunc for Max {
 pub struct StdDev;
 
 impl AggregateFunc for StdDev {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "stddev"
     }
 
@@ -395,7 +395,7 @@ impl AggregateFunc for StdDev {
 pub struct First;
 
 impl AggregateFunc for First {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "first"
     }
 
@@ -422,7 +422,7 @@ impl AggregateFunc for First {
 pub struct Last;
 
 impl AggregateFunc for Last {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "last"
     }
 
@@ -450,7 +450,7 @@ impl AggregateFunc for Last {
 pub struct CountDistinct;
 
 impl AggregateFunc for CountDistinct {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "count_distinct"
     }
 
@@ -531,7 +531,7 @@ impl ExprAggregate {
 }
 
 impl AggregateFunc for ExprAggregate {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "expr"
     }
 
@@ -687,7 +687,7 @@ impl Ema {
 }
 
 impl AggregateFunc for Ema {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "ema"
     }
 
@@ -700,13 +700,13 @@ impl AggregateFunc for Ema {
         for event in events {
             if let Some(value) = event.get_float(field) {
                 ema = Some(match ema {
-                    Some(prev) => value * k + prev * (1.0 - k),
+                    Some(prev) => value.mul_add(k, prev * (1.0 - k)),
                     None => value,
                 });
             }
         }
 
-        ema.map(Value::Float).unwrap_or(Value::Null)
+        ema.map_or(Value::Null, Value::Float)
     }
 
     fn apply_refs(&self, events: &[&Event], field: Option<&str>) -> Value {
@@ -717,13 +717,13 @@ impl AggregateFunc for Ema {
         for event in events {
             if let Some(value) = event.get_float(field) {
                 ema = Some(match ema {
-                    Some(prev) => value * k + prev * (1.0 - k),
+                    Some(prev) => value.mul_add(k, prev * (1.0 - k)),
                     None => value,
                 });
             }
         }
 
-        ema.map(Value::Float).unwrap_or(Value::Null)
+        ema.map_or(Value::Null, Value::Float)
     }
 }
 
@@ -744,7 +744,7 @@ pub struct Percentile {
 impl Percentile {
     pub fn new(quantile: f64) -> Self {
         let quantile = quantile.clamp(0.0, 1.0);
-        let label = format!("percentile({})", quantile);
+        let label = format!("percentile({quantile})");
         Self { quantile, label }
     }
 
@@ -761,7 +761,7 @@ impl Percentile {
             sorted[lower]
         } else {
             let frac = pos - lower as f64;
-            sorted[lower] * (1.0 - frac) + sorted[upper] * frac
+            sorted[lower].mul_add(1.0 - frac, sorted[upper] * frac)
         }
     }
 }
@@ -804,7 +804,7 @@ impl AggregateFunc for Percentile {
 pub struct Median;
 
 impl AggregateFunc for Median {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "median"
     }
 
@@ -821,7 +821,7 @@ impl AggregateFunc for Median {
 pub struct P50;
 
 impl AggregateFunc for P50 {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "p50"
     }
 
@@ -838,7 +838,7 @@ impl AggregateFunc for P50 {
 pub struct P95;
 
 impl AggregateFunc for P95 {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "p95"
     }
 
@@ -855,7 +855,7 @@ impl AggregateFunc for P95 {
 pub struct P99;
 
 impl AggregateFunc for P99 {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "p99"
     }
 
@@ -1511,7 +1511,7 @@ mod tests {
         let result = P95.apply(&events, Some("value"));
         if let Value::Float(v) = result {
             // p95 of 1..20: position = 0.95 * 19 = 18.05, interpolate 19 and 20
-            assert!(v > 18.0 && v < 20.0, "p95 = {}, expected ~19.05", v);
+            assert!(v > 18.0 && v < 20.0, "p95 = {v}, expected ~19.05");
         } else {
             panic!("Expected float");
         }
@@ -1526,7 +1526,7 @@ mod tests {
         let result = P99.apply(&events, Some("value"));
         if let Value::Float(v) = result {
             // p99 of 1..100: position = 0.99 * 99 = 98.01
-            assert!(v > 98.0 && v < 100.0, "p99 = {}, expected ~99.01", v);
+            assert!(v > 98.0 && v < 100.0, "p99 = {v}, expected ~99.01");
         } else {
             panic!("Expected float");
         }
@@ -1539,7 +1539,7 @@ mod tests {
             .collect();
         let result = Percentile::new(0.75).apply(&events, Some("value"));
         if let Value::Float(v) = result {
-            assert!(v > 74.0 && v < 76.0, "p75 = {}, expected ~75.25", v);
+            assert!(v > 74.0 && v < 76.0, "p75 = {v}, expected ~75.25");
         } else {
             panic!("Expected float");
         }

@@ -296,7 +296,7 @@ fn bench_cep_kleene_simulation(c: &mut Criterion) {
 
     // Simulate processing N Kleene events and then enumerating first M matches
     for (events, enumerate) in [(20, 10), (50, 100), (100, 100)] {
-        let label = format!("{}events_{}enum", events, enumerate);
+        let label = format!("{events}events_{enumerate}enum");
 
         group.bench_function(&label, |b| {
             b.iter(|| {

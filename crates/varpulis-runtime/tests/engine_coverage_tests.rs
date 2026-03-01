@@ -58,11 +58,11 @@ async fn run_scenario(program_source: &str, events_source: &str) -> Vec<Event> {
 
 #[tokio::test]
 async fn distinct_deduplicates_by_field() {
-    let program = r#"
+    let program = r"
         stream S = Reading
             .distinct(sensor_id)
             .emit(id: sensor_id, val: value)
-    "#;
+    ";
     let events = r#"
         Reading { sensor_id: "S1", value: 10.0 }
         Reading { sensor_id: "S2", value: 20.0 }
@@ -77,16 +77,16 @@ async fn distinct_deduplicates_by_field() {
 
 #[tokio::test]
 async fn distinct_deduplicates_by_expression() {
-    let program = r#"
+    let program = r"
         stream S = Tick
             .distinct(x)
             .emit(val: x)
-    "#;
-    let events = r#"
+    ";
+    let events = r"
         Tick { x: 1 }
         Tick { x: 1 }
         Tick { x: 2 }
-    "#;
+    ";
     let results = run_scenario(program, events).await;
     assert_eq!(results.len(), 2, "Duplicate events should be filtered");
 }
@@ -97,29 +97,29 @@ async fn distinct_deduplicates_by_expression() {
 
 #[tokio::test]
 async fn limit_stops_at_boundary() {
-    let program = r#"
+    let program = r"
         stream S = Tick
             .limit(3)
             .emit(val: x)
-    "#;
-    let events = r#"
+    ";
+    let events = r"
         Tick { x: 1 }
         Tick { x: 2 }
         Tick { x: 3 }
         Tick { x: 4 }
         Tick { x: 5 }
-    "#;
+    ";
     let results = run_scenario(program, events).await;
     assert_eq!(results.len(), 3, "Limit should stop at exactly 3");
 }
 
 #[tokio::test]
 async fn limit_one_event() {
-    let code = r#"
+    let code = r"
         stream S = Tick
             .limit(1)
             .emit(val: x)
-    "#;
+    ";
     let events = vec![
         Event::new("Tick").with_field("x", Value::Int(1)),
         Event::new("Tick").with_field("x", Value::Int(2)),
@@ -134,13 +134,13 @@ async fn limit_one_event() {
 
 #[tokio::test]
 async fn partitioned_count_window_aggregation() {
-    let program = r#"
+    let program = r"
         stream S = Reading
             .partition_by(region)
             .window(2)
             .aggregate(total: sum(value), cnt: count())
             .emit(region: region, total: total, cnt: cnt)
-    "#;
+    ";
     let events = r#"
         Reading { region: "east", value: 10.0 }
         Reading { region: "west", value: 20.0 }
@@ -161,14 +161,14 @@ async fn partitioned_count_window_aggregation() {
 
 #[tokio::test]
 async fn process_with_multiple_emits() {
-    let code = r#"
+    let code = r"
         fn expand():
             emit Low(val: value * 0.9)
             emit High(val: value * 1.1)
 
         stream S = Reading
             .process(expand())
-    "#;
+    ";
     let events = vec![Event::new("Reading").with_field("value", Value::Float(100.0))];
     let out = run_program(code, events).await;
     assert_eq!(out.len(), 2);
@@ -180,9 +180,9 @@ async fn process_with_multiple_emits() {
 
 #[tokio::test]
 async fn variable_persists_across_events() {
-    let code = r#"
+    let code = r"
         var counter: int = 0
-    "#;
+    ";
     let program = parse(code).expect("Failed to parse");
     let (tx, _rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
@@ -199,10 +199,10 @@ async fn variable_persists_across_events() {
 
 #[tokio::test]
 async fn engine_metrics_after_processing() {
-    let code = r#"
+    let code = r"
         stream S = Tick
             .emit(val: x)
-    "#;
+    ";
     let program = parse(code).expect("Failed to parse");
     let (tx, mut rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
@@ -231,13 +231,13 @@ async fn engine_metrics_after_processing() {
 
 #[tokio::test]
 async fn engine_function_lookups() {
-    let code = r#"
+    let code = r"
         fn gen():
             return 42
 
         stream S = A as a
             -> B as b
-    "#;
+    ";
     let program = parse(code).expect("Failed to parse");
     let (tx, _rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
@@ -254,9 +254,9 @@ async fn engine_function_lookups() {
 
 #[tokio::test]
 async fn engine_variable_get_set() {
-    let code = r#"
+    let code = r"
         var threshold: float = 10.0
-    "#;
+    ";
     let program = parse(code).expect("Failed to parse");
     let (tx, _rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
@@ -293,10 +293,10 @@ async fn empty_program_loads() {
 
 #[tokio::test]
 async fn select_projection() {
-    let program = r#"
+    let program = r"
         stream S = Reading
             .emit(sensor: sensor_id, v: value)
-    "#;
+    ";
     let events = r#"
         Reading { sensor_id: "S1", value: 42.0, extra: "noise" }
     "#;
@@ -312,21 +312,21 @@ async fn select_projection() {
 
 #[tokio::test]
 async fn having_filters_aggregate_results() {
-    let program = r#"
+    let program = r"
         stream S = Reading
             .window(3)
             .aggregate(total: sum(value))
             .having(total > 50.0)
             .emit(total: total)
-    "#;
-    let events = r#"
+    ";
+    let events = r"
         Reading { value: 10.0 }
         Reading { value: 20.0 }
         Reading { value: 5.0 }
         Reading { value: 30.0 }
         Reading { value: 40.0 }
         Reading { value: 50.0 }
-    "#;
+    ";
     let results = run_scenario(program, events).await;
     // First window: 10+20+5=35 (filtered out), second: 30+40+50=120 (passes)
     assert_eq!(results.len(), 1);
@@ -365,11 +365,11 @@ async fn multiple_independent_streams() {
 
 #[tokio::test]
 async fn sequence_with_event_filters() {
-    let program = r#"
+    let program = r"
         stream S = Login as a
             -> Purchase as b
             .emit(user: a.user, item: b.item)
-    "#;
+    ";
     let events = r#"
         Login { user: "bob" }
         Purchase { item: "laptop" }
@@ -385,7 +385,7 @@ async fn sequence_with_event_filters() {
 
 #[tokio::test]
 async fn aggregate_multiple_functions() {
-    let program = r#"
+    let program = r"
         stream S = Reading
             .window(4)
             .aggregate(
@@ -395,13 +395,13 @@ async fn aggregate_multiple_functions() {
                 av: avg(value)
             )
             .emit(cnt: cnt, mn: mn, mx: mx, av: av)
-    "#;
-    let events = r#"
+    ";
+    let events = r"
         Reading { value: 10.0 }
         Reading { value: 20.0 }
         Reading { value: 30.0 }
         Reading { value: 40.0 }
-    "#;
+    ";
     let results = run_scenario(program, events).await;
     assert_eq!(results.len(), 1);
     if let Some(Value::Float(mn)) = results[0].data.get("mn") {
@@ -421,17 +421,17 @@ async fn aggregate_multiple_functions() {
 
 #[tokio::test]
 async fn aggregate_last_function() {
-    let program = r#"
+    let program = r"
         stream S = Reading
             .window(3)
             .aggregate(latest: last(value), first_val: first(value))
             .emit(latest: latest, first_val: first_val)
-    "#;
-    let events = r#"
+    ";
+    let events = r"
         Reading { value: 10.0 }
         Reading { value: 20.0 }
         Reading { value: 30.0 }
-    "#;
+    ";
     let results = run_scenario(program, events).await;
     assert_eq!(results.len(), 1);
     if let Some(Value::Float(latest)) = results[0].data.get("latest") {
@@ -448,12 +448,12 @@ async fn aggregate_last_function() {
 
 #[tokio::test]
 async fn aggregate_count_distinct() {
-    let program = r#"
+    let program = r"
         stream S = Reading
             .window(5)
             .aggregate(unique: count_distinct(region))
             .emit(unique: unique)
-    "#;
+    ";
     let events = r#"
         Reading { region: "east", value: 10.0 }
         Reading { region: "west", value: 20.0 }
@@ -477,15 +477,15 @@ async fn aggregate_count_distinct() {
 
 #[tokio::test]
 async fn three_step_sequence() {
-    let program = r#"
+    let program = r"
         stream S = A as a -> B as b -> C as c
             .emit(val_a: a.x, val_b: b.x, val_c: c.x)
-    "#;
-    let events = r#"
+    ";
+    let events = r"
         A { x: 1 }
         B { x: 2 }
         C { x: 3 }
-    "#;
+    ";
     let results = run_scenario(program, events).await;
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].data.get("val_a"), Some(&Value::Int(1)));
@@ -499,14 +499,14 @@ async fn three_step_sequence() {
 
 #[tokio::test]
 async fn sequence_wrong_order_no_match() {
-    let program = r#"
+    let program = r"
         stream S = A -> B -> C
-    "#;
-    let events = r#"
+    ";
+    let events = r"
         C { x: 3 }
         B { x: 2 }
         A { x: 1 }
-    "#;
+    ";
     let results = run_scenario(program, events).await;
     assert_eq!(results.len(), 0, "Wrong order should produce no match");
 }
@@ -517,10 +517,10 @@ async fn sequence_wrong_order_no_match() {
 
 #[tokio::test]
 async fn process_batch_sync_produces_output() {
-    let code = r#"
+    let code = r"
         stream S = Tick
             .emit(val: x)
-    "#;
+    ";
     let program = parse(code).expect("Failed to parse");
     let (tx, mut rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
@@ -546,18 +546,18 @@ async fn process_batch_sync_produces_output() {
 
 #[tokio::test]
 async fn count_window_multiple_fills() {
-    let program = r#"
+    let program = r"
         stream S = Reading
             .window(2)
             .aggregate(total: sum(value))
             .emit(total: total)
-    "#;
-    let events = r#"
+    ";
+    let events = r"
         Reading { value: 10.0 }
         Reading { value: 20.0 }
         Reading { value: 30.0 }
         Reading { value: 40.0 }
-    "#;
+    ";
     let results = run_scenario(program, events).await;
     assert_eq!(
         results.len(),
@@ -572,14 +572,14 @@ async fn count_window_multiple_fills() {
 
 #[tokio::test]
 async fn derived_stream_filters_in_sequence() {
-    let code = r#"
+    let code = r"
         stream HighTemp = TempReading
             .where(temp > 100.0)
 
         stream S = HighTemp as h
             -> Alert as a
             .emit(temp: h.temp, msg: a.message)
-    "#;
+    ";
     let events = vec![
         Event::new("TempReading").with_field("temp", Value::Float(150.0)),
         Event::new("Alert").with_field("message", Value::str("warning")),
@@ -679,7 +679,7 @@ async fn connector_declaration_stored() {
 
 #[tokio::test]
 async fn multiple_streams_route_different_types() {
-    let code = r#"
+    let code = r"
         stream HighTemp = TempReading
             .where(value > 0.0)
             .emit(val: value)
@@ -687,7 +687,7 @@ async fn multiple_streams_route_different_types() {
         stream LowPress = PressureReading
             .where(value > 0.0)
             .emit(val: value)
-    "#;
+    ";
     let events = vec![
         Event::new("TempReading").with_field("value", Value::Float(10.0)),
         Event::new("PressureReading").with_field("value", Value::Float(20.0)),
@@ -703,10 +703,10 @@ async fn multiple_streams_route_different_types() {
 
 #[tokio::test]
 async fn load_with_source_detects_errors() {
-    let code = r#"
+    let code = r"
         stream S = A
             .having(x > 0)
-    "#;
+    ";
     let program = parse(code).expect("Failed to parse");
     let (tx, _rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
@@ -723,11 +723,11 @@ async fn load_with_source_detects_errors() {
 
 #[tokio::test]
 async fn print_operation_passes_through() {
-    let code = r#"
+    let code = r"
         stream S = Tick
             .print()
             .emit(val: x)
-    "#;
+    ";
     let events = vec![Event::new("Tick").with_field("x", Value::Int(1))];
     let out = run_program(code, events).await;
     assert_eq!(out.len(), 1, "Print should pass events through");
@@ -739,10 +739,10 @@ async fn print_operation_passes_through() {
 
 #[tokio::test]
 async fn benchmark_mode_no_output() {
-    let code = r#"
+    let code = r"
         stream S = Tick
             .where(x > 0)
-    "#;
+    ";
     let program = parse(code).expect("Failed to parse");
     let mut engine = Engine::new_benchmark();
     engine.load(&program).expect("Failed to load");
@@ -762,19 +762,19 @@ async fn benchmark_mode_no_output() {
 
 #[tokio::test]
 async fn aggregate_ema() {
-    let program = r#"
+    let program = r"
         stream S = Reading
             .window(5)
             .aggregate(ema_val: ema(value, 3))
             .emit(ema: ema_val)
-    "#;
-    let events = r#"
+    ";
+    let events = r"
         Reading { value: 10.0 }
         Reading { value: 20.0 }
         Reading { value: 30.0 }
         Reading { value: 40.0 }
         Reading { value: 50.0 }
-    "#;
+    ";
     let results = run_scenario(program, events).await;
     assert_eq!(results.len(), 1);
     // EMA should produce a float result
@@ -787,18 +787,18 @@ async fn aggregate_ema() {
 
 #[tokio::test]
 async fn aggregate_stddev() {
-    let program = r#"
+    let program = r"
         stream S = Reading
             .window(4)
             .aggregate(sd: stddev(value))
             .emit(sd: sd)
-    "#;
-    let events = r#"
+    ";
+    let events = r"
         Reading { value: 10.0 }
         Reading { value: 20.0 }
         Reading { value: 30.0 }
         Reading { value: 40.0 }
-    "#;
+    ";
     let results = run_scenario(program, events).await;
     assert_eq!(results.len(), 1);
     if let Some(Value::Float(sd)) = results[0].data.get("sd") {
@@ -812,11 +812,11 @@ async fn aggregate_stddev() {
 
 #[tokio::test]
 async fn where_accesses_event_fields() {
-    let code = r#"
+    let code = r"
         stream S = Reading
             .where(value > threshold)
             .emit(val: value)
-    "#;
+    ";
     let events = vec![
         Event::new("Reading")
             .with_field("value", Value::Float(100.0))
@@ -835,14 +835,14 @@ async fn where_accesses_event_fields() {
 
 #[tokio::test]
 async fn sequence_with_timeout_no_match() {
-    let program = r#"
+    let program = r"
         stream S = A as a
             -> B as b
             .within(1s)
-    "#;
-    let events = r#"
+    ";
+    let events = r"
         A { x: 1 }
-    "#;
+    ";
     let results = run_scenario(program, events).await;
     // A without B within timeout → no match
     assert_eq!(
@@ -858,15 +858,15 @@ async fn sequence_with_timeout_no_match() {
 
 #[tokio::test]
 async fn two_step_sequence_basic() {
-    let program = r#"
+    let program = r"
         stream S = A as a
             -> B as b
             .emit(ax: a.x, bx: b.x)
-    "#;
-    let events = r#"
+    ";
+    let events = r"
         A { x: 10 }
         B { x: 20 }
-    "#;
+    ";
     let results = run_scenario(program, events).await;
     assert_eq!(results.len(), 1, "Should match A -> B");
     assert_eq!(results[0].data.get("ax"), Some(&Value::Int(10)));
@@ -879,10 +879,10 @@ async fn two_step_sequence_basic() {
 
 #[tokio::test]
 async fn unmatched_event_no_output() {
-    let code = r#"
+    let code = r"
         stream S = SpecificType
             .emit(val: x)
-    "#;
+    ";
     let events = vec![Event::new("OtherType").with_field("x", Value::Int(1))];
     let out = run_program(code, events).await;
     assert_eq!(
@@ -918,17 +918,17 @@ async fn config_block_stored_in_engine() {
 
 #[tokio::test]
 async fn aggregate_binary_expression() {
-    let program = r#"
+    let program = r"
         stream S = Reading
             .window(3)
             .aggregate(range: max(value) - min(value))
             .emit(range: range)
-    "#;
-    let events = r#"
+    ";
+    let events = r"
         Reading { value: 10.0 }
         Reading { value: 50.0 }
         Reading { value: 30.0 }
-    "#;
+    ";
     let results = run_scenario(program, events).await;
     assert_eq!(results.len(), 1);
     if let Some(Value::Float(r)) = results[0].data.get("range") {
@@ -942,10 +942,10 @@ async fn aggregate_binary_expression() {
 
 #[tokio::test]
 async fn validation_catches_duplicate_stream_via_parser() {
-    let code = r#"
+    let code = r"
         stream S = A
         stream S = B
-    "#;
+    ";
     let program = parse(code).expect("Parse should succeed");
     let (tx, _rx) = mpsc::channel(100);
     let mut engine = Engine::new(tx);
@@ -961,11 +961,11 @@ async fn validation_catches_duplicate_stream_via_parser() {
 
 #[tokio::test]
 async fn event_with_many_fields() {
-    let code = r#"
+    let code = r"
         stream S = Data
             .where(f1 > 0)
             .emit(f1: f1, f2: f2, f3: f3, f4: f4, f5: f5)
-    "#;
+    ";
     let events = vec![Event::new("Data")
         .with_field("f1", Value::Int(1))
         .with_field("f2", Value::Int(2))
@@ -983,11 +983,11 @@ async fn event_with_many_fields() {
 
 #[tokio::test]
 async fn session_window_basic() {
-    let code = r#"
+    let code = r"
         stream S = Reading
             .window(session: 5s)
             .aggregate(c: count(), s: sum(value))
-    "#;
+    ";
     let mut events = Vec::new();
     for i in 0..3 {
         let t = i * 1000; // 0s, 1s, 2s — within 5s gap
@@ -1015,11 +1015,11 @@ async fn session_window_basic() {
 
 #[tokio::test]
 async fn sliding_count_window() {
-    let code = r#"
+    let code = r"
         stream S = Reading
             .window(3, sliding: 1)
             .aggregate(c: count(), a: avg(value))
-    "#;
+    ";
     let events: Vec<Event> = (1..=6)
         .map(|i| Event::new("Reading").with_field("value", Value::Float(i as f64)))
         .collect();
@@ -1034,11 +1034,11 @@ async fn sliding_count_window() {
 
 #[tokio::test]
 async fn tumbling_count_window() {
-    let code = r#"
+    let code = r"
         stream S = Reading
             .window(3)
             .aggregate(c: count())
-    "#;
+    ";
     let events: Vec<Event> = (1..=9)
         .map(|i| Event::new("Reading").with_field("value", Value::Int(i)))
         .collect();
@@ -1053,12 +1053,12 @@ async fn tumbling_count_window() {
 
 #[tokio::test]
 async fn partitioned_aggregate_multi_key() {
-    let code = r#"
+    let code = r"
         stream S = Reading
             .partition_by(region)
             .window(3)
             .aggregate(c: count(), s: sum(value))
-    "#;
+    ";
     let events = vec![
         Event::new("Reading")
             .with_field("region", Value::str("east"))
@@ -1090,11 +1090,11 @@ async fn partitioned_aggregate_multi_key() {
 
 #[tokio::test]
 async fn distinct_by_expression() {
-    let code = r#"
+    let code = r"
         stream S = Reading
             .distinct(region)
             .emit(region: region, value: value)
-    "#;
+    ";
     let events = vec![
         Event::new("Reading")
             .with_field("region", Value::str("east"))
@@ -1127,11 +1127,11 @@ async fn distinct_by_expression() {
 
 #[tokio::test]
 async fn limit_exact_boundary() {
-    let code = r#"
+    let code = r"
         stream S = Reading
             .limit(3)
             .emit(val: value)
-    "#;
+    ";
     let events: Vec<Event> = (1..=10)
         .map(|i| Event::new("Reading").with_field("value", Value::Int(i)))
         .collect();
@@ -1145,14 +1145,14 @@ async fn limit_exact_boundary() {
 
 #[tokio::test]
 async fn process_with_function() {
-    let code = r#"
+    let code = r"
         fn transform():
             let v = value * 2
             emit Result(doubled: v)
 
         stream S = Reading
             .process(transform())
-    "#;
+    ";
     let events = vec![
         Event::new("Reading").with_field("value", Value::Int(5)),
         Event::new("Reading").with_field("value", Value::Int(10)),
@@ -1194,7 +1194,7 @@ async fn multiple_streams_same_event() {
 
 #[tokio::test]
 async fn aggregate_min_max_last() {
-    let code = r#"
+    let code = r"
         stream S = Reading
             .window(5)
             .aggregate(
@@ -1202,7 +1202,7 @@ async fn aggregate_min_max_last() {
                 mx: max(value),
                 lt: last(value)
             )
-    "#;
+    ";
     // Send 5 events to fill the window, then one more to trigger flush
     let events: Vec<Event> = vec![10.0, 20.0, 5.0, 30.0, 15.0, 1.0]
         .into_iter()
@@ -1219,11 +1219,11 @@ async fn aggregate_min_max_last() {
 
 #[tokio::test]
 async fn aggregate_ema_with_alpha() {
-    let code = r#"
+    let code = r"
         stream S = Reading
             .window(5)
             .aggregate(e: ema(value, 0.3))
-    "#;
+    ";
     // Send 6 events to trigger window flush
     let events: Vec<Event> = (1..=6)
         .map(|i| Event::new("Reading").with_field("value", Value::Float(i as f64 * 10.0)))
@@ -1238,12 +1238,12 @@ async fn aggregate_ema_with_alpha() {
 
 #[tokio::test]
 async fn having_clause_filters_aggregate() {
-    let code = r#"
+    let code = r"
         stream S = Reading
             .window(3)
             .aggregate(c: count(), s: sum(value))
             .having(s > 50)
-    "#;
+    ";
     // First window: values 10, 20, 30 → sum=60 > 50 ✓
     // Second window: values 1, 2, 3 → sum=6 < 50 ✗
     let events: Vec<Event> = vec![10.0, 20.0, 30.0, 1.0, 2.0, 3.0]
@@ -1309,11 +1309,11 @@ async fn where_with_string_operations() {
 
 #[tokio::test]
 async fn engine_metrics_tracking() {
-    let code = r#"
+    let code = r"
         stream S = Reading
             .where(value > 0)
             .emit(val: value)
-    "#;
+    ";
     let program = parse(code).expect("Failed to parse");
     let (tx, _rx) = mpsc::channel(1000);
     let mut engine = Engine::new(tx);
@@ -1339,11 +1339,11 @@ async fn engine_metrics_tracking() {
 
 #[tokio::test]
 async fn watermark_basic() {
-    let code = r#"
+    let code = r"
         stream S = Reading
             .watermark(value: timestamp, delay: 2s)
             .emit(val: value)
-    "#;
+    ";
     let events = vec![
         Event::new("Reading")
             .with_field("value", Value::Int(1))
@@ -1363,12 +1363,12 @@ async fn watermark_basic() {
 
 #[tokio::test]
 async fn sequence_with_within_and_filter() {
-    let code = r#"
+    let code = r"
         stream S = Login as login
             -> Purchase as purchase
             .within(10s)
             .where(login.user_id == purchase.user_id)
-    "#;
+    ";
     let events = vec![
         Event::new("Login")
             .with_field("user_id", Value::str("alice"))
@@ -1389,16 +1389,16 @@ async fn sequence_with_within_and_filter() {
 
 #[tokio::test]
 async fn engine_reload_with_new_program() {
-    let code1 = r#"
+    let code1 = r"
         stream S = Reading
             .where(value > 10)
             .emit(val: value)
-    "#;
-    let code2 = r#"
+    ";
+    let code2 = r"
         stream S = Reading
             .where(value > 50)
             .emit(val: value)
-    "#;
+    ";
 
     let program1 = parse(code1).expect("Failed to parse");
     let program2 = parse(code2).expect("Failed to parse");
@@ -1438,12 +1438,12 @@ async fn engine_reload_with_new_program() {
 
 #[tokio::test]
 async fn allowed_lateness_setting() {
-    let code = r#"
+    let code = r"
         stream S = Reading
             .watermark(value: timestamp, delay: 1s)
             .allowed_lateness(5s)
             .emit(val: value)
-    "#;
+    ";
     let events = vec![Event::new("Reading")
         .with_field("value", Value::Int(1))
         .with_field("timestamp", Value::Int(1000))];
@@ -1457,10 +1457,10 @@ async fn allowed_lateness_setting() {
 
 #[tokio::test]
 async fn score_without_model() {
-    let code = r#"
+    let code = r"
         stream S = Reading
             .emit(val: value)
-    "#;
+    ";
     let events = vec![Event::new("Reading").with_field("value", Value::Int(42))];
     let out = run_program(code, events).await;
     assert_eq!(out.len(), 1);
@@ -1473,10 +1473,10 @@ async fn score_without_model() {
 
 #[tokio::test]
 async fn process_empty_event() {
-    let code = r#"
+    let code = r"
         stream S = Trigger
             .emit(x: 1)
-    "#;
+    ";
     let events = vec![Event::new("Trigger")];
     let out = run_program(code, events).await;
     assert_eq!(out.len(), 1);
@@ -1489,12 +1489,12 @@ async fn process_empty_event() {
 
 #[tokio::test]
 async fn sequence_three_steps() {
-    let code = r#"
+    let code = r"
         stream S = A as a
             -> B as b
             -> C as c
             .within(10s)
-    "#;
+    ";
     let events = vec![
         Event::new("A").with_timestamp(ts_ms(1000)),
         Event::new("B").with_timestamp(ts_ms(2000)),
@@ -1511,7 +1511,7 @@ async fn sequence_three_steps() {
 
 #[tokio::test]
 async fn variable_mutation_in_function() {
-    let code = r#"
+    let code = r"
         fn gen():
             var counter = 0
             for i in 0..3:
@@ -1520,7 +1520,7 @@ async fn variable_mutation_in_function() {
 
         stream S = Trigger
             .process(gen())
-    "#;
+    ";
     let events: Vec<Event> = vec![Event::new("Trigger")];
     let out = run_program(code, events).await;
     assert_eq!(out.len(), 1);

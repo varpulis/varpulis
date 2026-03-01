@@ -217,7 +217,7 @@ fn arena_default_impl() {
 #[test]
 fn arena_debug_fmt() {
     let arena = ZddArena::new();
-    let dbg = format!("{:?}", arena);
+    let dbg = format!("{arena:?}");
     assert!(dbg.contains("ZddArena"));
     assert!(dbg.contains("node_count"));
 }

@@ -25,7 +25,7 @@ pub struct Backend {
 
 impl Backend {
     pub fn new(client: Client) -> Self {
-        Backend {
+        Self {
             client,
             documents: DashMap::new(),
         }

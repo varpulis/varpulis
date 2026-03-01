@@ -69,12 +69,12 @@ async fn negation_multiple_cancel_events() {
             .emit(status: "paid")
     "#;
 
-    let events = r#"
+    let events = r"
         Order { id: 1 }
         Cancel { order_id: 1 }
         Cancel { order_id: 1 }
         Payment { order_id: 1 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
     assert_eq!(
@@ -94,11 +94,11 @@ async fn negation_after_match_no_retraction() {
             .emit(status: "paid")
     "#;
 
-    let events = r#"
+    let events = r"
         Order { id: 1 }
         Payment { order_id: 1 }
         Cancel { order_id: 1 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
     // Match should have been emitted before Cancel arrives
@@ -119,13 +119,13 @@ async fn negation_preserves_other_partitions() {
             .emit(status: "responded", req: a.id)
     "#;
 
-    let events = r#"
+    let events = r"
         Request { id: 1 }
         Request { id: 2 }
         Timeout { req_id: 1 }
         Response { req_id: 2 }
         Response { req_id: 1 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
     // Request 1 is timed out (negated), Request 2 should still match
@@ -176,10 +176,10 @@ async fn negation_no_cancel_event_allows_match() {
             .emit(status: "success", session: a.id)
     "#;
 
-    let events = r#"
+    let events = r"
         Start { id: 42 }
         End { session_id: 42 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
     assert_eq!(

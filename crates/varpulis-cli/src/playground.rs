@@ -309,10 +309,10 @@ stream AllAlerts = merge(TempAlerts, HumidAlerts)
             name: "Fraud Forecasting".into(),
             description: "Predict fraud patterns using PST-based forecasting — sequence prediction with confidence scores.".into(),
             category: "Advanced".into(),
-            vpl: r#"stream FraudForecast = login as l -> transfer as t .within(5m)
+            vpl: r"stream FraudForecast = login as l -> transfer as t .within(5m)
     .forecast(confidence: 0.7, horizon: 2m, warmup: 50, max_depth: 3)
     .where(forecast_probability > 0.5)
-    .emit(probability: forecast_probability, state: forecast_state)"#.into(),
+    .emit(probability: forecast_probability, state: forecast_state)".into(),
             events: {
                 // Generate a training sequence: alternating login/transfer pairs
                 let mut events = Vec::new();
@@ -372,10 +372,7 @@ async fn handle_run(
         return pg_error_response(
             StatusCode::BAD_REQUEST,
             "vpl_too_large",
-            &format!(
-                "VPL source exceeds maximum size of {} bytes",
-                MAX_VPL_LENGTH
-            ),
+            &format!("VPL source exceeds maximum size of {MAX_VPL_LENGTH} bytes"),
         );
     }
 
@@ -383,7 +380,7 @@ async fn handle_run(
         return pg_error_response(
             StatusCode::BAD_REQUEST,
             "too_many_events",
-            &format!("Maximum {} events per run", MAX_EVENTS_PER_RUN),
+            &format!("Maximum {MAX_EVENTS_PER_RUN} events per run"),
         );
     }
 
@@ -465,7 +462,7 @@ async fn handle_run(
                 output_events: vec![],
                 latency_ms,
                 diagnostics: vec![],
-                error: Some(format!("Execution timed out after {}s", MAX_EXECUTION_SECS)),
+                error: Some(format!("Execution timed out after {MAX_EXECUTION_SECS}s")),
             };
             (StatusCode::REQUEST_TIMEOUT, Json(resp)).into_response()
         }
@@ -480,10 +477,7 @@ async fn handle_validate(
         return pg_error_response(
             StatusCode::BAD_REQUEST,
             "vpl_too_large",
-            &format!(
-                "VPL source exceeds maximum size of {} bytes",
-                MAX_VPL_LENGTH
-            ),
+            &format!("VPL source exceeds maximum size of {MAX_VPL_LENGTH} bytes"),
         );
     }
 
@@ -552,7 +546,7 @@ async fn handle_get_example(Path(id): Path<String>) -> Response {
         None => pg_error_response(
             StatusCode::NOT_FOUND,
             "example_not_found",
-            &format!("Example '{}' not found", id),
+            &format!("Example '{id}' not found"),
         ),
     }
 }
@@ -656,7 +650,7 @@ fn parse_error_to_diagnostic(
         }
         ParseError::UnexpectedEof => {
             let line = source.lines().count().saturating_sub(1);
-            let col = source.lines().last().map(|l| l.len()).unwrap_or(0);
+            let col = source.lines().last().map_or(0, |l| l.len());
             PlaygroundDiagnostic {
                 severity: "error".into(),
                 message: "Unexpected end of input".into(),
@@ -704,7 +698,7 @@ fn parse_error_to_diagnostic(
                 start_line: line as u32,
                 start_col: col as u32,
                 end_line: line as u32,
-                end_col: source.lines().nth(line).map(|l| l.len()).unwrap_or(col) as u32,
+                end_col: source.lines().nth(line).map_or(col, |l| l.len()) as u32,
             }
         }
         ParseError::Custom { span, message } => {
@@ -765,7 +759,7 @@ mod tests {
     fn test_builtin_examples_unique_ids() {
         let examples = builtin_examples();
         let mut ids: Vec<&str> = examples.iter().map(|e| e.id.as_str()).collect();
-        ids.sort();
+        ids.sort_unstable();
         ids.dedup();
         assert_eq!(ids.len(), examples.len(), "Duplicate example IDs found");
     }

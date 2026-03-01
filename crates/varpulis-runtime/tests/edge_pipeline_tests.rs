@@ -45,10 +45,10 @@ async fn sequence_then_emit_with_expressions() {
             .emit(diff: b.value - a.value, status: "computed")
     "#;
 
-    let events = r#"
+    let events = r"
         Start { value: 100.0 }
         End { value: 250.0 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
     assert_eq!(
@@ -60,8 +60,7 @@ async fn sequence_then_emit_with_expressions() {
     if let Some(varpulis_core::Value::Float(diff)) = results[0].data.get("diff") {
         assert!(
             (*diff - 150.0).abs() < 0.001,
-            "Diff should be 150.0, got {}",
-            diff
+            "Diff should be 150.0, got {diff}"
         );
     }
 }
@@ -69,12 +68,12 @@ async fn sequence_then_emit_with_expressions() {
 #[tokio::test]
 async fn where_then_distinct() {
     // .where(v > 50).distinct(id) — filter then deduplicate
-    let program = r#"
+    let program = r"
         stream FilterDistinct = Reading
             .where(value > 50.0)
             .distinct(sensor_id)
             .emit(sensor: sensor_id, value: value)
-    "#;
+    ";
 
     let events = r#"
         Reading { sensor_id: "S1", value: 80.0 }
@@ -97,19 +96,19 @@ async fn where_then_distinct() {
 #[tokio::test]
 async fn select_then_aggregate() {
     // .select(norm: value / 100.0).window(3).aggregate(avg: avg(norm))
-    let program = r#"
+    let program = r"
         stream SelectAggregate = Metric
             .select(norm: value / 100.0)
             .window(3)
             .aggregate(average: avg(norm))
             .emit(avg_norm: average)
-    "#;
+    ";
 
-    let events = r#"
+    let events = r"
         Metric { value: 100.0 }
         Metric { value: 200.0 }
         Metric { value: 300.0 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
     assert_eq!(results.len(), 1, "3 events should fill window of 3");
@@ -118,8 +117,7 @@ async fn select_then_aggregate() {
     if let Some(varpulis_core::Value::Float(avg)) = results[0].data.get("avg_norm") {
         assert!(
             (*avg - 2.0).abs() < 0.001,
-            "Average normalized should be 2.0, got {}",
-            avg
+            "Average normalized should be 2.0, got {avg}"
         );
     }
 }
@@ -134,13 +132,13 @@ async fn within_basic_timeout() {
             .emit(status: "fast", req_id: req.id)
     "#;
 
-    let events = r#"
+    let events = r"
         BATCH 0
         Request { id: 1 }
 
         BATCH 1000
         Response { req_id: 1 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
     assert_eq!(
@@ -160,13 +158,13 @@ async fn within_expired() {
             .emit(status: "fast")
     "#;
 
-    let events = r#"
+    let events = r"
         BATCH 0
         Request { id: 1 }
 
         BATCH 10000
         Response { req_id: 1 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
     // With BATCH timing and within(5s), the 10s gap should expire the window.
@@ -216,11 +214,11 @@ async fn multiple_streams_independent() {
             .emit(alert: "cold", temp: temperature)
     "#;
 
-    let events = r#"
+    let events = r"
         Reading { temperature: 35.0 }
         Reading { temperature: 5.0 }
         Reading { temperature: 20.0 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
     // HighTemp matches 35.0, LowTemp matches 5.0, 20.0 matches neither
@@ -244,17 +242,17 @@ async fn multiple_streams_independent() {
 #[tokio::test]
 async fn emit_with_user_function() {
     // fn calc(x) -> float: x * 2.0 used in .emit(result: calc(value))
-    let program = r#"
+    let program = r"
         fn double(x: float) -> float:
             x * 2.0
 
         stream DoubleEmit = Measurement
             .emit(result: double(value), original: value)
-    "#;
+    ";
 
-    let events = r#"
+    let events = r"
         Measurement { value: 42.0 }
-    "#;
+    ";
 
     let results = run_scenario(program, events).await;
     assert_eq!(results.len(), 1, "Should emit one result");
@@ -262,8 +260,7 @@ async fn emit_with_user_function() {
     if let Some(varpulis_core::Value::Float(result)) = results[0].data.get("result") {
         assert!(
             (*result - 84.0).abs() < 0.001,
-            "double(42) should be 84.0, got {}",
-            result
+            "double(42) should be 84.0, got {result}"
         );
     }
 }

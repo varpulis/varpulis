@@ -21,27 +21,27 @@ pub enum ZddRef {
 impl ZddRef {
     /// Returns true if this is the Empty terminal
     #[inline]
-    pub fn is_empty(&self) -> bool {
-        matches!(self, ZddRef::Empty)
+    pub const fn is_empty(&self) -> bool {
+        matches!(self, Self::Empty)
     }
 
     /// Returns true if this is the Base terminal
     #[inline]
-    pub fn is_base(&self) -> bool {
-        matches!(self, ZddRef::Base)
+    pub const fn is_base(&self) -> bool {
+        matches!(self, Self::Base)
     }
 
     /// Returns true if this is a node reference
     #[inline]
-    pub fn is_node(&self) -> bool {
-        matches!(self, ZddRef::Node(_))
+    pub const fn is_node(&self) -> bool {
+        matches!(self, Self::Node(_))
     }
 
     /// Returns the node ID if this is a Node, None otherwise
     #[inline]
-    pub fn node_id(&self) -> Option<u32> {
+    pub const fn node_id(&self) -> Option<u32> {
         match self {
-            ZddRef::Node(id) => Some(*id),
+            Self::Node(id) => Some(*id),
             _ => None,
         }
     }

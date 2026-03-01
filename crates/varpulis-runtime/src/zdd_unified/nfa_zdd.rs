@@ -39,7 +39,7 @@ pub struct ZddState {
 
 impl ZddState {
     /// Create a new ZDD state
-    pub fn new(query_id: QueryId, state_index: u16, zdd_var: ZddVar) -> Self {
+    pub const fn new(query_id: QueryId, state_index: u16, zdd_var: ZddVar) -> Self {
         Self {
             query_id,
             state_index,
@@ -63,7 +63,7 @@ pub struct ZddTransition {
 
 impl ZddTransition {
     /// Create a new transition
-    pub fn new(from: ZddState, to: ZddState, event_type: u16) -> Self {
+    pub const fn new(from: ZddState, to: ZddState, event_type: u16) -> Self {
         Self {
             from,
             to,
@@ -214,8 +214,7 @@ impl NfaZdd {
     pub fn transitions(&self, event_type: u16) -> &[ZddTransition] {
         self.transitions_by_event
             .get(&event_type)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
+            .map_or(&[], |v| v.as_slice())
     }
 
     /// Initialize active states (all initial states)
@@ -323,8 +322,7 @@ impl NfaZdd {
             if !self
                 .query_trackers
                 .get(&query_id)
-                .map(|t| t.is_active)
-                .unwrap_or(false)
+                .is_some_and(|t| t.is_active)
             {
                 self.active_state_set.insert(initial_var, true);
             }
@@ -355,17 +353,13 @@ impl NfaZdd {
     fn is_final_state(&self, state: ZddState) -> bool {
         self.final_states
             .get(&state.query_id)
-            .map(|finals| finals.contains(&state.zdd_var))
-            .unwrap_or(false)
+            .is_some_and(|finals| finals.contains(&state.zdd_var))
     }
 
     /// Get final count for a query
     #[inline]
     pub fn count(&self, query_id: QueryId) -> u64 {
-        self.query_trackers
-            .get(&query_id)
-            .map(|t| t.count)
-            .unwrap_or(0)
+        self.query_trackers.get(&query_id).map_or(0, |t| t.count)
     }
 
     /// Reset for new window
@@ -375,13 +369,13 @@ impl NfaZdd {
 
     /// Number of states
     #[inline]
-    pub fn num_states(&self) -> usize {
+    pub const fn num_states(&self) -> usize {
         self.states.len()
     }
 
     /// Number of queries
     #[inline]
-    pub fn num_queries(&self) -> usize {
+    pub const fn num_queries(&self) -> usize {
         self.num_queries
     }
 
@@ -395,8 +389,7 @@ impl NfaZdd {
     pub fn is_query_active(&self, query_id: QueryId) -> bool {
         self.query_trackers
             .get(&query_id)
-            .map(|t| t.is_active)
-            .unwrap_or(false)
+            .is_some_and(|t| t.is_active)
     }
 }
 
@@ -457,7 +450,7 @@ impl NfaZddBuilder {
         let type_idx = self.nfa.register_type(Arc::from(type_name));
 
         if let Some(&state_var) = self.nfa.state_lookup.get(&(query_id, at_state_index)) {
-            if let Some(state) = self.nfa.states.get(state_var as usize).cloned() {
+            if let Some(state) = self.nfa.states.get(state_var as usize).copied() {
                 self.nfa.add_transition(state, state, type_idx);
             }
         }

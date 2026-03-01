@@ -46,7 +46,7 @@ pub struct SimulatedScheduler {
 
 impl SimulatedScheduler {
     /// Create a new scheduler starting at the given time.
-    pub fn new(start_time: DateTime<Utc>) -> Self {
+    pub const fn new(start_time: DateTime<Utc>) -> Self {
         Self {
             timers: Vec::new(),
             current_time: start_time,
@@ -101,7 +101,7 @@ impl SimulatedScheduler {
     }
 
     /// Get the current simulated time.
-    pub fn now(&self) -> DateTime<Utc> {
+    pub const fn now(&self) -> DateTime<Utc> {
         self.current_time
     }
 }
@@ -123,13 +123,13 @@ impl TestUniverse {
     /// with the simulated scheduler.
     pub fn from_source(vpl_source: &str) -> Result<Self, String> {
         let program =
-            varpulis_parser::parse(vpl_source).map_err(|e| format!("parse error: {}", e))?;
+            varpulis_parser::parse(vpl_source).map_err(|e| format!("parse error: {e}"))?;
 
         let (output_tx, output_rx) = mpsc::channel(10_000);
         let mut engine = Engine::new(output_tx);
         engine
             .load(&program)
-            .map_err(|e| format!("load error: {}", e))?;
+            .map_err(|e| format!("load error: {e}"))?;
 
         let start_time = Utc::now();
         let mut scheduler = SimulatedScheduler::new(start_time);
@@ -150,7 +150,7 @@ impl TestUniverse {
         self.engine
             .process(event)
             .await
-            .map_err(|e| format!("process error: {}", e))?;
+            .map_err(|e| format!("process error: {e}"))?;
         Ok(())
     }
 
@@ -185,17 +185,17 @@ impl TestUniverse {
     }
 
     /// Get the current simulated time.
-    pub fn now(&self) -> DateTime<Utc> {
+    pub const fn now(&self) -> DateTime<Utc> {
         self.scheduler.now()
     }
 
     /// Get a reference to the underlying engine.
-    pub fn engine(&self) -> &Engine {
+    pub const fn engine(&self) -> &Engine {
         &self.engine
     }
 
     /// Get a mutable reference to the underlying engine.
-    pub fn engine_mut(&mut self) -> &mut Engine {
+    pub const fn engine_mut(&mut self) -> &mut Engine {
         &mut self.engine
     }
 }
@@ -289,11 +289,11 @@ mod tests {
     #[tokio::test]
     async fn test_universe_basic_stream() {
         let mut universe = TestUniverse::from_source(
-            r#"
+            r"
             stream HighTemp = SensorReading
                 .where(temperature > 100)
                 .emit(sensor: sensor_id, temp: temperature)
-            "#,
+            ",
         )
         .unwrap();
 
@@ -310,11 +310,11 @@ mod tests {
     #[tokio::test]
     async fn test_universe_filters_correctly() {
         let mut universe = TestUniverse::from_source(
-            r#"
+            r"
             stream HighTemp = SensorReading
                 .where(temperature > 100)
                 .emit(temp: temperature)
-            "#,
+            ",
         )
         .unwrap();
 

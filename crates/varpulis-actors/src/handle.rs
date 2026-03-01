@@ -44,7 +44,7 @@ impl<A: Actor> Clone for ActorHandle<A> {
 
 impl<A: Actor> ActorHandle<A> {
     /// Create a new actor handle.
-    pub(crate) fn new(
+    pub(crate) const fn new(
         name: String,
         sender: MailboxSender<A>,
         exit_rx: watch::Receiver<Option<ActorExitStatus>>,
@@ -98,7 +98,7 @@ impl<A: Actor> ActorHandle<A> {
     }
 
     /// Get a reference to the underlying mailbox sender.
-    pub fn sender(&self) -> &MailboxSender<A> {
+    pub const fn sender(&self) -> &MailboxSender<A> {
         &self.sender
     }
 

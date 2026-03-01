@@ -8,10 +8,10 @@ pub fn parse_and_show(source: &str) -> Result<()> {
         Ok(program) => {
             println!("Parse successful!\n");
             println!("AST:");
-            println!("{:#?}", program);
+            println!("{program:#?}");
         }
         Err(e) => {
-            println!("Parse error: {}", e);
+            println!("Parse error: {e}");
         }
     }
 
@@ -42,10 +42,10 @@ pub fn check_syntax(source: &str) -> Result<()> {
                     for w in &warnings {
                         let (line, col) =
                             varpulis_core::validate::diagnostic_position(source, w.span.start);
-                        let code_str = w.code.map(|c| format!("[{}] ", c)).unwrap_or_default();
+                        let code_str = w.code.map(|c| format!("[{c}] ")).unwrap_or_default();
                         println!("   {}:{}: warning: {}{}", line, col, code_str, w.message);
                         if let Some(ref hint) = w.hint {
-                            println!("      hint: {}", hint);
+                            println!("      hint: {hint}");
                         }
                     }
                 }
@@ -55,10 +55,10 @@ pub fn check_syntax(source: &str) -> Result<()> {
                 for e in &errors {
                     let (line, col) =
                         varpulis_core::validate::diagnostic_position(source, e.span.start);
-                    let code_str = e.code.map(|c| format!("[{}] ", c)).unwrap_or_default();
+                    let code_str = e.code.map(|c| format!("[{c}] ")).unwrap_or_default();
                     println!("   {}:{}: error: {}{}", line, col, code_str, e.message);
                     if let Some(ref hint) = e.hint {
-                        println!("      hint: {}", hint);
+                        println!("      hint: {hint}");
                     }
                 }
                 if !warnings.is_empty() {
@@ -66,10 +66,10 @@ pub fn check_syntax(source: &str) -> Result<()> {
                     for w in &warnings {
                         let (line, col) =
                             varpulis_core::validate::diagnostic_position(source, w.span.start);
-                        let code_str = w.code.map(|c| format!("[{}] ", c)).unwrap_or_default();
+                        let code_str = w.code.map(|c| format!("[{c}] ")).unwrap_or_default();
                         println!("   {}:{}: warning: {}{}", line, col, code_str, w.message);
                         if let Some(ref hint) = w.hint {
-                            println!("      hint: {}", hint);
+                            println!("      hint: {hint}");
                         }
                     }
                 }
@@ -77,7 +77,7 @@ pub fn check_syntax(source: &str) -> Result<()> {
             }
         }
         Err(e) => {
-            println!("Syntax error: {}", e);
+            println!("Syntax error: {e}");
 
             // Show context around the error if we have a Located error
             if let varpulis_parser::ParseError::Located {
@@ -86,13 +86,13 @@ pub fn check_syntax(source: &str) -> Result<()> {
             {
                 // Show hint if available
                 if let Some(h) = hint {
-                    println!("   Hint: {}", h);
+                    println!("   Hint: {h}");
                 }
 
                 // Show the problematic line from source
                 if let Some(error_line) = source.lines().nth(line - 1) {
                     println!("   |");
-                    println!("   | {}", error_line);
+                    println!("   | {error_line}");
                     println!("   | {}^", " ".repeat(column.saturating_sub(1)));
                 }
             }

@@ -37,7 +37,7 @@ fn generate_events(count: usize, event_types: &[&str]) -> Vec<Event> {
 fn bench_sase_simple_sequence(c: &mut Criterion) {
     let mut group = c.benchmark_group("simple_sequence");
 
-    for size in [100, 1000, 10000].iter() {
+    for size in &[100, 1000, 10000] {
         let events = generate_events(*size, &["A", "B", "C"]);
 
         group.bench_with_input(BenchmarkId::new("sase", size), size, |b, _| {
@@ -67,7 +67,7 @@ fn bench_sase_simple_sequence(c: &mut Criterion) {
                 }
 
                 matches
-            })
+            });
         });
     }
 
@@ -78,7 +78,7 @@ fn bench_sase_simple_sequence(c: &mut Criterion) {
 fn bench_sase_kleene_plus(c: &mut Criterion) {
     let mut group = c.benchmark_group("kleene_plus");
 
-    for size in [100, 1000, 5000].iter() {
+    for size in &[100, 1000, 5000] {
         let events = generate_events(*size, &["A", "B", "B", "B", "C"]);
 
         group.bench_with_input(BenchmarkId::new("sase", size), size, |b, _| {
@@ -113,7 +113,7 @@ fn bench_sase_kleene_plus(c: &mut Criterion) {
                 }
 
                 matches
-            })
+            });
         });
     }
 
@@ -124,7 +124,7 @@ fn bench_sase_kleene_plus(c: &mut Criterion) {
 fn bench_sase_with_predicates(c: &mut Criterion) {
     let mut group = c.benchmark_group("with_predicates");
 
-    for size in [100, 1000, 5000].iter() {
+    for size in &[100, 1000, 5000] {
         let events = generate_events(*size, &["Order", "Payment"]);
 
         group.bench_with_input(BenchmarkId::new("sase", size), size, |b, _| {
@@ -158,7 +158,7 @@ fn bench_sase_with_predicates(c: &mut Criterion) {
                 }
 
                 matches
-            })
+            });
         });
     }
 
@@ -209,7 +209,7 @@ fn bench_long_sequence(c: &mut Criterion) {
                 }
             }
             matches
-        })
+        });
     });
 
     // 10-event sequence
@@ -222,9 +222,9 @@ fn bench_long_sequence(c: &mut Criterion) {
             let pattern = SasePattern::Seq(
                 (1..=10)
                     .map(|i| SasePattern::Event {
-                        event_type: format!("E{}", i),
+                        event_type: format!("E{i}"),
                         predicate: None,
-                        alias: Some(format!("e{}", i)),
+                        alias: Some(format!("e{i}")),
                     })
                     .collect(),
             );
@@ -237,7 +237,7 @@ fn bench_long_sequence(c: &mut Criterion) {
                 }
             }
             matches
-        })
+        });
     });
 
     group.finish();
@@ -279,7 +279,7 @@ fn bench_complex_patterns(c: &mut Criterion) {
                 }
             }
             matches
-        })
+        });
     });
 
     // OR pattern: (Login OR Register) -> Action -> Logout
@@ -318,7 +318,7 @@ fn bench_complex_patterns(c: &mut Criterion) {
                 }
             }
             matches
-        })
+        });
     });
 
     // Complex nested: (A -> B+) OR (C -> D*)
@@ -360,7 +360,7 @@ fn bench_complex_patterns(c: &mut Criterion) {
                 }
             }
             matches
-        })
+        });
     });
 
     group.finish();
@@ -416,7 +416,7 @@ fn bench_multi_predicates(c: &mut Criterion) {
                 }
             }
             matches
-        })
+        });
     });
 
     group.finish();
@@ -458,7 +458,7 @@ fn bench_throughput(c: &mut Criterion) {
                     }
                 }
                 matches
-            })
+            });
         });
     }
 
@@ -498,7 +498,7 @@ fn bench_scalability(c: &mut Criterion) {
                 }
             }
             matches
-        })
+        });
     });
 
     // Kleene+ with 100K - stress test
@@ -532,7 +532,7 @@ fn bench_scalability(c: &mut Criterion) {
                 }
             }
             matches
-        })
+        });
     });
 
     group.finish();

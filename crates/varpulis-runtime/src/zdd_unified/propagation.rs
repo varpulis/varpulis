@@ -200,10 +200,7 @@ impl ZddPropagator {
 
     /// Get current count for a query
     pub fn count(&self, query_id: QueryId) -> u64 {
-        self.accumulators
-            .get(&query_id)
-            .map(|acc| acc.count)
-            .unwrap_or(0)
+        self.accumulators.get(&query_id).map_or(0, |acc| acc.count)
     }
 
     /// Reset all accumulators

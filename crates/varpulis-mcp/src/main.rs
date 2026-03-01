@@ -64,10 +64,7 @@ async fn main() -> anyhow::Result<()> {
             service.waiting().await?;
         }
         other => {
-            anyhow::bail!(
-                "Unsupported transport: {}. Only 'stdio' is currently supported.",
-                other
-            );
+            anyhow::bail!("Unsupported transport: {other}. Only 'stdio' is currently supported.");
         }
     }
 

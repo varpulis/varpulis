@@ -24,8 +24,7 @@ async fn test_mqtt_source_stub_returns_not_available() {
     let err = result.unwrap_err();
     assert!(
         matches!(&err, ConnectorError::NotAvailable(_)),
-        "Expected NotAvailable, got: {}",
-        err
+        "Expected NotAvailable, got: {err}"
     );
 }
 
@@ -120,8 +119,7 @@ fn test_database_config_empty_table_name() {
     let err = result.unwrap_err();
     assert!(
         matches!(&err, ConnectorError::ConfigError(msg) if msg.contains("empty")),
-        "Expected 'empty' in error, got: {}",
-        err
+        "Expected 'empty' in error, got: {err}"
     );
 }
 
@@ -196,8 +194,7 @@ fn test_rest_api_client_invalid_header_name_errors() {
         .expect("Expected error for invalid header name");
     assert!(
         matches!(&err, ConnectorError::ConfigError(msg) if !msg.is_empty()),
-        "Expected ConfigError, got: {}",
-        err
+        "Expected ConfigError, got: {err}"
     );
 }
 
@@ -214,8 +211,7 @@ fn test_rest_api_client_invalid_header_value_errors() {
         .expect("Expected error for invalid header value");
     assert!(
         matches!(&err, ConnectorError::ConfigError(msg) if !msg.is_empty()),
-        "Expected ConfigError, got: {}",
-        err
+        "Expected ConfigError, got: {err}"
     );
 }
 
@@ -236,8 +232,7 @@ async fn test_managed_registry_start_source_unknown_connector() {
     let err = result.expect_err("Expected error for unknown connector");
     assert!(
         matches!(&err, ConnectorError::ConfigError(msg) if msg.contains("Unknown")),
-        "Expected ConfigError with 'Unknown', got: {}",
-        err
+        "Expected ConfigError with 'Unknown', got: {err}"
     );
 }
 
@@ -250,9 +245,9 @@ fn test_managed_registry_create_sink_unknown_connector() {
     let result = registry.create_sink("nonexistent", "topic", &params);
     match result {
         Err(ConnectorError::ConfigError(msg)) => {
-            assert!(msg.contains("Unknown"), "Expected 'Unknown' in: {}", msg);
+            assert!(msg.contains("Unknown"), "Expected 'Unknown' in: {msg}");
         }
-        Err(other) => panic!("Expected ConfigError, got: {}", other),
+        Err(other) => panic!("Expected ConfigError, got: {other}"),
         Ok(_) => panic!("Expected error for unknown connector"),
     }
 }
@@ -271,7 +266,7 @@ fn test_managed_registry_unsupported_connector_type() {
     let result = ManagedConnectorRegistry::from_configs(&configs);
     match result {
         Err(ConnectorError::NotAvailable(_)) => {} // expected
-        Err(other) => panic!("Expected NotAvailable, got: {}", other),
+        Err(other) => panic!("Expected NotAvailable, got: {other}"),
         Ok(_) => panic!("Expected error for unsupported connector type"),
     }
 }

@@ -411,19 +411,19 @@ impl RedisStreamConfig {
     }
 
     /// Set the number of messages to read per batch.
-    pub fn with_batch_size(mut self, size: usize) -> Self {
+    pub const fn with_batch_size(mut self, size: usize) -> Self {
         self.batch_size = size;
         self
     }
 
     /// Set the block timeout in milliseconds for XREADGROUP.
-    pub fn with_block_ms(mut self, ms: usize) -> Self {
+    pub const fn with_block_ms(mut self, ms: usize) -> Self {
         self.block_ms = ms;
         self
     }
 
     /// Set the maximum stream length for XADD MAXLEN trimming.
-    pub fn with_max_len(mut self, max: usize) -> Self {
+    pub const fn with_max_len(mut self, max: usize) -> Self {
         self.max_len = Some(max);
         self
     }

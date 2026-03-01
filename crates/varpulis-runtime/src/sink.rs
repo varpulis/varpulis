@@ -31,7 +31,7 @@ impl ConsoleSink {
         }
     }
 
-    pub fn compact(mut self) -> Self {
+    pub const fn compact(mut self) -> Self {
         self.pretty = false;
         self
     }
@@ -75,7 +75,7 @@ pub struct FileSink {
 
 impl FileSink {
     /// Get the file path
-    pub fn path(&self) -> &PathBuf {
+    pub const fn path(&self) -> &PathBuf {
         &self.path
     }
 
@@ -140,7 +140,7 @@ impl AsyncFileSink {
     pub const DEFAULT_BUFFER_SIZE: usize = 64 * 1024;
 
     /// Get the file path
-    pub fn path(&self) -> &PathBuf {
+    pub const fn path(&self) -> &PathBuf {
         &self.path
     }
 
@@ -1096,7 +1096,7 @@ mod tests {
         let resilient = ResilientSink::new(mock, cb, Some(dlq.clone()), None);
 
         let events: Vec<Arc<Event>> = (0..3)
-            .map(|i| Arc::new(Event::new(format!("Event{}", i))))
+            .map(|i| Arc::new(Event::new(format!("Event{i}"))))
             .collect();
 
         assert!(resilient.send_batch(&events).await.is_err());

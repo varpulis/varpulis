@@ -163,7 +163,7 @@ mod tests {
                 .unwrap();
         });
 
-        let base_url = format!("http://{}", addr);
+        let base_url = format!("http://{addr}");
         (base_url, api_key)
     }
 
@@ -220,7 +220,7 @@ mod tests {
         assert!(result.is_err());
         match result.unwrap_err() {
             ClientError::Api { status, .. } => assert_eq!(status, 401),
-            other => panic!("Expected Api error, got: {:?}", other),
+            other => panic!("Expected Api error, got: {other:?}"),
         }
     }
 }

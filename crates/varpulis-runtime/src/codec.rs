@@ -26,14 +26,14 @@ impl CheckpointFormat {
     ///
     /// With the `binary-codec` feature: returns `MessagePack` (compact, fast).
     /// Without: returns `Json` (human-readable, universal).
-    pub fn active() -> Self {
+    pub const fn active() -> Self {
         #[cfg(feature = "binary-codec")]
         {
             CheckpointFormat::MessagePack
         }
         #[cfg(not(feature = "binary-codec"))]
         {
-            CheckpointFormat::Json
+            Self::Json
         }
     }
 }

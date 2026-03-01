@@ -201,8 +201,8 @@ where
             );
 
             tokio::select! {
-                _ = tokio::time::sleep(delay) => {}
-                _ = shutdown.cancelled() => {
+                () = tokio::time::sleep(delay) => {}
+                () = shutdown.cancelled() => {
                     info!("Supervisor '{}': shutdown during restart delay", self.name);
                     return ActorExitStatus::Quit;
                 }

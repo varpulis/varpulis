@@ -23,7 +23,7 @@ mod mqtt_managed_impl {
     use tracing::{info, warn};
     use varpulis_core::event::{FieldKey, FxIndexMap};
 
-    fn qos_from_u8(qos: u8) -> QoS {
+    const fn qos_from_u8(qos: u8) -> QoS {
         match qos {
             0 => QoS::AtMostOnce,
             1 => QoS::AtLeastOnce,
@@ -139,7 +139,7 @@ mod mqtt_managed_impl {
                         }
                         Err(e) => {
                             cb.record_failure();
-                            *last_err.lock().await = Some(format!("{:?}", e));
+                            *last_err.lock().await = Some(format!("{e:?}"));
                             let failures = cb.consecutive_failures();
                             let backoff_secs =
                                 (1u64 << (failures.saturating_sub(1)).min(5)).min(30);
@@ -217,7 +217,7 @@ mod mqtt_managed_impl {
             &mut self,
             client_id: &str,
         ) -> Result<AsyncClient, ConnectorError> {
-            let sink_id = format!("{}-sink", client_id);
+            let sink_id = format!("{client_id}-sink");
             let mut mqtt_opts = MqttOptions::new(&sink_id, &self.config.broker, self.config.port);
             mqtt_opts.set_keep_alive(Duration::from_secs(60));
 
@@ -264,7 +264,7 @@ mod mqtt_managed_impl {
                     .unwrap_or_else(|_| format!("p{}", std::process::id()));
                 format!("{}-{}", self.connector_name, worker)
             });
-            let client_id = format!("{}-sink", base_id);
+            let client_id = format!("{base_id}-sink");
 
             let mut mqtt_opts = MqttOptions::new(&client_id, &self.config.broker, self.config.port);
             mqtt_opts.set_keep_alive(Duration::from_secs(60));
@@ -310,7 +310,7 @@ mod mqtt_managed_impl {
             &self.connector_name
         }
 
-        fn connector_type(&self) -> &str {
+        fn connector_type(&self) -> &'static str {
             "mqtt"
         }
 
@@ -328,8 +328,7 @@ mod mqtt_managed_impl {
                 .try_lock()
                 .ok()
                 .and_then(|guard| *guard)
-                .map(|t| t.elapsed().as_secs())
-                .unwrap_or(0);
+                .map_or(0, |t| t.elapsed().as_secs());
             ConnectorHealthReport {
                 connected,
                 last_error,
@@ -455,7 +454,7 @@ mod mqtt_managed_impl {
 
             self.client
                 .try_publish(&self.topic, self.qos, false, buf)
-                .map_err(|e| SinkError::other(format!("mqtt publish: {}", e)))?;
+                .map_err(|e| SinkError::other(format!("mqtt publish: {e}")))?;
 
             Ok(())
         }
@@ -465,7 +464,7 @@ mod mqtt_managed_impl {
                 let buf = event.to_sink_payload();
                 self.client
                     .try_publish(&self.topic, self.qos, false, buf)
-                    .map_err(|e| SinkError::other(format!("mqtt publish: {}", e)))?;
+                    .map_err(|e| SinkError::other(format!("mqtt publish: {e}")))?;
             }
             Ok(())
         }

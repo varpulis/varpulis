@@ -47,11 +47,11 @@ fn test_validate_simple_filter() {
 
 #[test]
 fn test_validate_window_and_emit() {
-    let source = r#"
+    let source = r"
         stream AvgTemp = TempReading
             .window(1m)
             .emit(total: sum(temperature), n: count())
-    "#;
+    ";
     let result = varpulis_cli::validate_program(source);
     assert!(result.is_ok());
 }
@@ -141,7 +141,7 @@ fn test_resolve_imports_simple() {
     let mut program = varpulis_parser::parse(&main_source).expect("Main program should parse");
     let base_path = dir.path().to_path_buf();
     let result = varpulis_cli::resolve_imports(&mut program, Some(&base_path));
-    assert!(result.is_ok(), "Import resolution failed: {:?}", result);
+    assert!(result.is_ok(), "Import resolution failed: {result:?}");
     // Should have both the imported function and the main stream
     assert!(
         program.statements.len() >= 2,
@@ -193,7 +193,7 @@ fn test_resolve_imports_depth_limit() {
     // Create a chain of imports deeper than MAX_IMPORT_DEPTH (10)
     let mut paths = Vec::new();
     for i in 0..13 {
-        paths.push(dir.path().join(format!("level_{}.vpl", i)));
+        paths.push(dir.path().join(format!("level_{i}.vpl")));
     }
 
     // Each file imports the next
@@ -217,8 +217,7 @@ fn test_resolve_imports_depth_limit() {
     let err_msg = result.unwrap_err().to_string();
     assert!(
         err_msg.contains("depth limit"),
-        "Expected depth limit error, got: {}",
-        err_msg
+        "Expected depth limit error, got: {err_msg}"
     );
 }
 
@@ -235,8 +234,7 @@ fn test_resolve_imports_missing_file() {
     let err_msg = result.unwrap_err().to_string();
     assert!(
         err_msg.contains("resolve import") || err_msg.contains("read import"),
-        "Expected import error, got: {}",
-        err_msg
+        "Expected import error, got: {err_msg}"
     );
 }
 
@@ -259,7 +257,7 @@ async fn test_simulate_valid_events() {
     ];
 
     let results = varpulis_cli::simulate_from_source(vpl, events).await;
-    assert!(results.is_ok(), "Simulation failed: {:?}", results);
+    assert!(results.is_ok(), "Simulation failed: {results:?}");
     let output = results.unwrap();
     // Should emit 2 events (value=100 and value=75 pass the filter)
     assert_eq!(

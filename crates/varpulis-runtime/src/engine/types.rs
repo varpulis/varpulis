@@ -63,7 +63,7 @@ pub struct ReloadReport {
 }
 
 impl ReloadReport {
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.streams_added.is_empty()
             && self.streams_removed.is_empty()
             && self.streams_updated.is_empty()
@@ -98,7 +98,7 @@ pub struct NamedPattern {
 // =============================================================================
 
 /// Runtime stream definition
-pub(crate) struct StreamDefinition {
+pub struct StreamDefinition {
     pub name: String,
     /// Cached `Arc<str>` of the stream name — avoids repeated `String→Arc<str>` conversions
     /// in the hot path (output event renaming, emit/sequence event construction).
@@ -131,7 +131,7 @@ pub(crate) struct StreamDefinition {
 }
 
 /// Source of events for a stream
-pub(crate) enum RuntimeSource {
+pub enum RuntimeSource {
     EventType(String),
     Stream(String),
     Join(Vec<String>),
@@ -145,11 +145,11 @@ impl RuntimeSource {
     /// Get a description of this source for logging
     pub fn describe(&self) -> String {
         match self {
-            RuntimeSource::EventType(t) => format!("event:{}", t),
-            RuntimeSource::Stream(s) => format!("stream:{}", s),
-            RuntimeSource::Join(sources) => format!("join:{}", sources.join(",")),
-            RuntimeSource::Merge(sources) => format!("merge:{} sources", sources.len()),
-            RuntimeSource::Timer(config) => {
+            Self::EventType(t) => format!("event:{t}"),
+            Self::Stream(s) => format!("stream:{s}"),
+            Self::Join(sources) => format!("join:{}", sources.join(",")),
+            Self::Merge(sources) => format!("merge:{} sources", sources.len()),
+            Self::Timer(config) => {
                 format!("timer:{}ms", config.interval_ns / 1_000_000)
             }
         }
@@ -157,7 +157,7 @@ impl RuntimeSource {
 }
 
 /// Configuration for a periodic timer source
-pub(crate) struct TimerConfig {
+pub struct TimerConfig {
     /// Interval between timer fires in nanoseconds
     pub interval_ns: u64,
     /// Optional initial delay before first fire in nanoseconds
@@ -167,14 +167,14 @@ pub(crate) struct TimerConfig {
 }
 
 /// A source in a merge construct with optional filter
-pub(crate) struct MergeSource {
+pub struct MergeSource {
     pub name: String,
     pub event_type: String,
     pub filter: Option<varpulis_core::ast::Expr>,
 }
 
 /// Runtime operations that can be applied to a stream
-pub(crate) enum RuntimeOp {
+pub enum RuntimeOp {
     /// Filter with closure (for sequence filters with context)
     WhereClosure(Box<dyn Fn(&SharedEvent) -> bool + Send + Sync>),
     /// Filter with expression (evaluated at runtime with user functions)
@@ -228,45 +228,45 @@ impl RuntimeOp {
     /// Return a short human-readable name for this operation.
     ///
     /// Used by the topology builder to create operation summaries.
-    pub fn summary_name(&self) -> &'static str {
+    pub const fn summary_name(&self) -> &'static str {
         match self {
-            RuntimeOp::WhereClosure(_) => "Filter",
-            RuntimeOp::WhereExpr(_) => "Filter",
-            RuntimeOp::Window(_) => "Window",
-            RuntimeOp::PartitionedWindow(_) => "PartitionedWindow",
-            RuntimeOp::PartitionedSlidingCountWindow(_) => "PartitionedSlidingCountWindow",
-            RuntimeOp::Aggregate(_) => "Aggregate",
-            RuntimeOp::PartitionedAggregate(_) => "PartitionedAggregate",
-            RuntimeOp::Having(_) => "Having",
-            RuntimeOp::Select(_) => "Select",
-            RuntimeOp::Emit(_) => "Emit",
-            RuntimeOp::EmitExpr(_) => "EmitExpr",
-            RuntimeOp::Print(_) => "Print",
-            RuntimeOp::Log(_) => "Log",
-            RuntimeOp::Sequence => "Sequence",
-            RuntimeOp::Pattern(_) => "Pattern",
-            RuntimeOp::Process(_) => "Process",
-            RuntimeOp::To(_) => "Sink",
-            RuntimeOp::TrendAggregate(_) => "TrendAggregate",
-            RuntimeOp::Score(_) => "Score",
-            RuntimeOp::Forecast(_) => "Forecast",
-            RuntimeOp::Enrich(_) => "Enrich",
-            RuntimeOp::Distinct(_) => "Distinct",
-            RuntimeOp::Limit(_) => "Limit",
-            RuntimeOp::Concurrent(_) => "Concurrent",
+            Self::WhereClosure(_) => "Filter",
+            Self::WhereExpr(_) => "Filter",
+            Self::Window(_) => "Window",
+            Self::PartitionedWindow(_) => "PartitionedWindow",
+            Self::PartitionedSlidingCountWindow(_) => "PartitionedSlidingCountWindow",
+            Self::Aggregate(_) => "Aggregate",
+            Self::PartitionedAggregate(_) => "PartitionedAggregate",
+            Self::Having(_) => "Having",
+            Self::Select(_) => "Select",
+            Self::Emit(_) => "Emit",
+            Self::EmitExpr(_) => "EmitExpr",
+            Self::Print(_) => "Print",
+            Self::Log(_) => "Log",
+            Self::Sequence => "Sequence",
+            Self::Pattern(_) => "Pattern",
+            Self::Process(_) => "Process",
+            Self::To(_) => "Sink",
+            Self::TrendAggregate(_) => "TrendAggregate",
+            Self::Score(_) => "Score",
+            Self::Forecast(_) => "Forecast",
+            Self::Enrich(_) => "Enrich",
+            Self::Distinct(_) => "Distinct",
+            Self::Limit(_) => "Limit",
+            Self::Concurrent(_) => "Concurrent",
         }
     }
 }
 
 /// Configuration for `.concurrent()` parallel processing
-pub(crate) struct ConcurrentConfig {
+pub struct ConcurrentConfig {
     pub workers: usize,
     pub partition_key: Option<String>,
     pub thread_pool: std::sync::Arc<rayon::ThreadPool>,
 }
 
 /// Configuration for trend aggregation via Hamlet engine
-pub(crate) struct TrendAggregateConfig {
+pub struct TrendAggregateConfig {
     /// Fields to compute: (output_alias, aggregate_function)
     pub fields: Vec<(String, crate::greta::GretaAggregate)>,
     /// Query ID in the Hamlet aggregator
@@ -275,7 +275,7 @@ pub(crate) struct TrendAggregateConfig {
 
 /// Configuration for PST-based pattern forecasting
 #[allow(dead_code)]
-pub(crate) struct ForecastConfig {
+pub struct ForecastConfig {
     /// Minimum probability to emit forecast events.
     pub confidence_threshold: f64,
     /// Forecast horizon in nanoseconds.
@@ -291,7 +291,7 @@ pub(crate) struct ForecastConfig {
 }
 
 /// Configuration for external connector enrichment
-pub(crate) struct EnrichConfig {
+pub struct EnrichConfig {
     /// Name of the connector to use for lookups
     pub connector_name: String,
     /// Expression to evaluate as the lookup key
@@ -308,7 +308,7 @@ pub(crate) struct EnrichConfig {
 
 /// Configuration for ONNX model scoring
 #[allow(dead_code)]
-pub(crate) struct ScoreConfig {
+pub struct ScoreConfig {
     #[cfg(feature = "onnx")]
     pub model: std::sync::Arc<crate::scoring::OnnxModel>,
     pub input_fields: Vec<String>,
@@ -317,7 +317,7 @@ pub(crate) struct ScoreConfig {
 }
 
 /// Configuration for .to() connector routing
-pub(crate) struct ToConfig {
+pub struct ToConfig {
     pub connector_name: String,
     /// Topic override from .to() params (e.g., `.to(Conn, topic: "my-topic")`)
     pub topic_override: Option<String>,
@@ -329,10 +329,10 @@ pub(crate) struct ToConfig {
 }
 
 /// Default capacity for distinct state LRU cache
-pub(crate) const DISTINCT_LRU_CAPACITY: usize = 100_000;
+pub const DISTINCT_LRU_CAPACITY: usize = 100_000;
 
 /// State for .distinct() — tracks seen values to deduplicate events
-pub(crate) struct DistinctState {
+pub struct DistinctState {
     /// Optional expression to evaluate for distinct key; None = entire event
     pub expr: Option<varpulis_core::ast::Expr>,
     /// LRU cache of seen value representations (bounded to prevent unbounded growth)
@@ -340,19 +340,19 @@ pub(crate) struct DistinctState {
 }
 
 /// State for .limit(n) — passes at most `max` events
-pub(crate) struct LimitState {
+pub struct LimitState {
     pub max: usize,
     pub count: usize,
 }
 
 /// Configuration for select/projection operation
-pub(crate) struct SelectConfig {
+pub struct SelectConfig {
     /// Fields to include: (output_name, expression)
     pub fields: Vec<(String, varpulis_core::ast::Expr)>,
 }
 
 /// Result of processing a stream
-pub(crate) struct StreamProcessResult {
+pub struct StreamProcessResult {
     /// Events produced by .emit() — sent to output channel AND downstream
     pub emitted_events: Vec<SharedEvent>,
     /// Output events to feed to dependent streams (with stream name as event_type)
@@ -362,7 +362,7 @@ pub(crate) struct StreamProcessResult {
 }
 
 /// State for partitioned windows - maintains separate windows per partition key
-pub(crate) struct PartitionedWindowState {
+pub struct PartitionedWindowState {
     pub partition_key: String,
     pub window_size: usize, // For count-based windows
     pub windows: FxHashMap<String, CountWindow>,
@@ -378,10 +378,10 @@ impl PartitionedWindowState {
     }
 
     pub fn add(&mut self, event: SharedEvent) -> Option<Vec<SharedEvent>> {
-        let key = event
-            .get(&self.partition_key)
-            .map(|v| v.to_partition_key().into_owned())
-            .unwrap_or_else(|| "default".to_string());
+        let key = event.get(&self.partition_key).map_or_else(
+            || "default".to_string(),
+            |v| v.to_partition_key().into_owned(),
+        );
 
         let window = self
             .windows
@@ -393,7 +393,7 @@ impl PartitionedWindowState {
 }
 
 /// State for partitioned sliding count windows - maintains separate sliding windows per partition key
-pub(crate) struct PartitionedSlidingCountWindowState {
+pub struct PartitionedSlidingCountWindowState {
     pub partition_key: String,
     pub window_size: usize,
     pub slide_size: usize,
@@ -411,10 +411,10 @@ impl PartitionedSlidingCountWindowState {
     }
 
     pub fn add(&mut self, event: SharedEvent) -> Option<Vec<SharedEvent>> {
-        let key = event
-            .get(&self.partition_key)
-            .map(|v| v.to_partition_key().into_owned())
-            .unwrap_or_else(|| "default".to_string());
+        let key = event.get(&self.partition_key).map_or_else(
+            || "default".to_string(),
+            |v| v.to_partition_key().into_owned(),
+        );
 
         let window = self
             .windows
@@ -426,13 +426,13 @@ impl PartitionedSlidingCountWindowState {
 }
 
 /// State for partitioned aggregators
-pub(crate) struct PartitionedAggregatorState {
+pub struct PartitionedAggregatorState {
     pub partition_key: String,
     pub aggregator_template: Aggregator,
 }
 
 impl PartitionedAggregatorState {
-    pub fn new(partition_key: String, aggregator: Aggregator) -> Self {
+    pub const fn new(partition_key: String, aggregator: Aggregator) -> Self {
         Self {
             partition_key,
             aggregator_template: aggregator,
@@ -444,10 +444,10 @@ impl PartitionedAggregatorState {
         let mut partitions: FxHashMap<String, Vec<SharedEvent>> = FxHashMap::default();
 
         for event in events {
-            let key = event
-                .get(&self.partition_key)
-                .map(|v| v.to_partition_key().into_owned())
-                .unwrap_or_else(|| "default".to_string());
+            let key = event.get(&self.partition_key).map_or_else(
+                || "default".to_string(),
+                |v| v.to_partition_key().into_owned(),
+            );
             partitions.entry(key).or_default().push(Arc::clone(event));
         }
 
@@ -464,25 +464,25 @@ impl PartitionedAggregatorState {
 
 /// Configuration for pattern matching
 #[allow(dead_code)]
-pub(crate) struct PatternConfig {
+pub struct PatternConfig {
     pub name: String,
     pub matcher: varpulis_core::ast::Expr,
 }
 
 /// Configuration for print operation
-pub(crate) struct PrintConfig {
+pub struct PrintConfig {
     pub exprs: Vec<varpulis_core::ast::Expr>,
 }
 
 /// Configuration for log operation
-pub(crate) struct LogConfig {
+pub struct LogConfig {
     pub level: String,
     pub message: Option<String>,
     pub data_field: Option<String>,
 }
 
 /// Types of windows supported
-pub(crate) enum WindowType {
+pub enum WindowType {
     Tumbling(TumblingWindow),
     Sliding(SlidingWindow),
     Count(CountWindow),
@@ -495,20 +495,20 @@ pub(crate) enum WindowType {
 
 /// Configuration for simple emit operation
 #[allow(dead_code)]
-pub(crate) struct EmitConfig {
+pub struct EmitConfig {
     pub fields: Vec<(String, String)>, // (output_name, source_field or literal)
     pub target_context: Option<String>,
 }
 
 /// Configuration for emit with expressions
 #[allow(dead_code)]
-pub(crate) struct EmitExprConfig {
+pub struct EmitExprConfig {
     pub fields: Vec<(String, varpulis_core::ast::Expr)>, // (output_name, expression)
     pub target_context: Option<String>,
 }
 
 /// Configuration for late data handling in watermark-based windowing.
-pub(crate) struct LateDataConfig {
+pub struct LateDataConfig {
     /// How much lateness to tolerate beyond the watermark.
     /// Events arriving within this window after watermark advancement are still processed.
     pub allowed_lateness: chrono::Duration,

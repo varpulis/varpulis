@@ -63,7 +63,7 @@ proptest! {
             (Value::Float(a), Value::Float(b)) => {
                 // Allow for floating-point reordering differences
                 let diff = (a - b).abs();
-                let tolerance = a.abs().max(b.abs()) * 1e-10 + 1e-15;
+                let tolerance = a.abs().max(b.abs()).mul_add(1e-10, 1e-15);
                 prop_assert!(diff < tolerance, "sum diff {} exceeds tolerance {}", diff, tolerance);
             }
             _ => prop_assert!(false, "Sum should return Float"),

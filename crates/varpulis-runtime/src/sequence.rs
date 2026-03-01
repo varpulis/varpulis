@@ -139,7 +139,7 @@ pub struct SequenceTracker {
 }
 
 impl SequenceTracker {
-    pub fn new(steps: Vec<SequenceStep>, match_all_first: bool) -> Self {
+    pub const fn new(steps: Vec<SequenceStep>, match_all_first: bool) -> Self {
         Self {
             steps,
             active: Vec::new(),
@@ -149,7 +149,7 @@ impl SequenceTracker {
         }
     }
 
-    pub fn with_max_active(mut self, max: usize) -> Self {
+    pub const fn with_max_active(mut self, max: usize) -> Self {
         self.max_active = max;
         self
     }
@@ -335,7 +335,7 @@ impl SequenceTracker {
     }
 
     /// Get count of active correlations
-    pub fn active_count(&self) -> usize {
+    pub const fn active_count(&self) -> usize {
         self.active.len()
     }
 

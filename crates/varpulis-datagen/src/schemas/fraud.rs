@@ -138,7 +138,7 @@ impl FraudSchema {
                     remaining,
                 } => {
                     let mut fields = HashMap::new();
-                    fields.insert("user_id".into(), json!(user_id.clone()));
+                    fields.insert("user_id".into(), json!(user_id));
                     fields.insert(
                         "amount".into(),
                         json!(self.rng.gen_range(5000.0..50000.0_f64).round()),
@@ -146,7 +146,7 @@ impl FraudSchema {
                     fields.insert("from_account".into(), json!(self.gen_account_id()));
                     fields.insert("to_account".into(), json!(self.gen_account_id()));
                     fields.insert("currency".into(), json!("USD"));
-                    fields.insert("city".into(), json!(city.clone()));
+                    fields.insert("city".into(), json!(city));
 
                     if remaining > 1 {
                         self.anomaly_sequence = Some(AnomalyState::LoginFromNewCity {
@@ -218,7 +218,7 @@ impl EventSchema for FraudSchema {
         ]
     }
 
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Banking fraud detection events: logins, transfers, card payments with anomaly injection"
     }
 }

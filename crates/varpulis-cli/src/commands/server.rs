@@ -41,7 +41,7 @@ pub fn build_mtls_client_config(
             anyhow::anyhow!("Failed to read CA cert '{}': {}", ca_path.display(), e)
         })?;
         let ca = reqwest::Certificate::from_pem(&ca_pem)
-            .map_err(|e| anyhow::anyhow!("Invalid CA cert: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Invalid CA cert: {e}"))?;
         builder = builder.add_root_certificate(ca);
     }
 
@@ -65,7 +65,7 @@ pub fn build_mtls_client_config(
             combined.extend_from_slice(&key_pem);
 
             let identity = reqwest::Identity::from_pem(&combined)
-                .map_err(|e| anyhow::anyhow!("Invalid client identity: {}", e))?;
+                .map_err(|e| anyhow::anyhow!("Invalid client identity: {e}"))?;
             builder = builder.identity(identity);
         }
         (None, None) => {} // No mTLS, just CA verification
@@ -237,8 +237,8 @@ pub async fn run_server(
     let http_protocol = if tls_enabled { "https" } else { "http" };
     println!("Varpulis Server");
     println!("==================");
-    println!("WebSocket: {}://{}:{}/ws", protocol, bind, port);
-    println!("REST API:  {}://{}:{}/api/v1/", http_protocol, bind, port);
+    println!("WebSocket: {protocol}://{bind}:{port}/ws");
+    println!("REST API:  {http_protocol}://{bind}:{port}/api/v1/");
     println!("Workdir:   {}", workdir.display());
     println!(
         "TLS:       {}",
@@ -268,12 +268,12 @@ pub async fn run_server(
         }
     );
     if enable_metrics {
-        println!("Metrics:   http://{}:{}/metrics", bind, metrics_port);
+        println!("Metrics:   http://{bind}:{metrics_port}/metrics");
     }
     println!(
         "Backpressure: {}",
         if max_queue_depth > 0 {
-            format!("enabled (max queue depth: {})", max_queue_depth)
+            format!("enabled (max queue depth: {max_queue_depth})")
         } else {
             "disabled".to_string()
         }
@@ -289,7 +289,7 @@ pub async fn run_server(
     // Create metrics if enabled
     let prom_metrics = enable_metrics.then(|| {
         let metrics = Metrics::new();
-        let server = MetricsServer::new(metrics.clone(), format!("{}:{}", bind, metrics_port));
+        let server = MetricsServer::new(metrics.clone(), format!("{bind}:{metrics_port}"));
         tokio::spawn(async move {
             if let Err(e) = server.run().await {
                 tracing::error!("Metrics server error: {}", e);
@@ -453,7 +453,7 @@ pub async fn run_server(
                     frontend_url: std::env::var("FRONTEND_URL")
                         .unwrap_or_else(|_| "http://localhost:5173".to_string()),
                     server_url: std::env::var("SERVER_URL")
-                        .unwrap_or_else(|_| format!("http://localhost:{}", port)),
+                        .unwrap_or_else(|_| format!("http://localhost:{port}")),
                 }
             });
 
@@ -577,13 +577,13 @@ pub async fn run_server(
     // Parse bind address - NO unwrap()!
     let bind_addr: std::net::IpAddr = bind
         .parse()
-        .map_err(|e| anyhow::anyhow!("Invalid bind address '{}': {}", bind, e))?;
+        .map_err(|e| anyhow::anyhow!("Invalid bind address '{bind}': {e}"))?;
 
     // Optionally register with a coordinator
     if let Some(coordinator_url) = coordinator_url {
         let worker_id = worker_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let worker_addr =
-            advertise_address.unwrap_or_else(|| format!("{}://{}:{}", http_protocol, bind, port));
+            advertise_address.unwrap_or_else(|| format!("{http_protocol}://{bind}:{port}"));
         let worker_api_key = auth_config.api_key().unwrap_or("no-key").to_string();
 
         // Forward output events to coordinator for live WebSocket relay

@@ -76,13 +76,13 @@ impl JoinBuffer {
     }
 
     /// Set the join type (Inner, Left, Right, Full)
-    pub fn with_join_type(mut self, join_type: JoinType) -> Self {
+    pub const fn with_join_type(mut self, join_type: JoinType) -> Self {
         self.join_type = join_type;
         self
     }
 
     /// Set the maximum number of events to keep per source/key combination
-    pub fn with_max_events(mut self, max_events: usize) -> Self {
+    pub const fn with_max_events(mut self, max_events: usize) -> Self {
         self.max_events_per_key = max_events;
         self
     }
@@ -238,7 +238,7 @@ impl JoinBuffer {
         let triggering_source = triggering_source?;
 
         // Determine if we should emit based on join type and which source triggered
-        let first_source = self.sources.first().map(|s| s.as_str()).unwrap_or("");
+        let first_source = self.sources.first().map_or("", |s| s.as_str());
         let is_left_trigger = triggering_source == first_source;
 
         let should_emit = match self.join_type {
@@ -276,7 +276,7 @@ impl JoinBuffer {
             match maybe_event {
                 Some(event) => {
                     for (field, value) in &event.data {
-                        let prefixed_key = format!("{}.{}", source, field);
+                        let prefixed_key = format!("{source}.{field}");
                         correlated.data.insert(prefixed_key.into(), value.clone());
 
                         if *source != &*event.event_type {
@@ -296,7 +296,7 @@ impl JoinBuffer {
                     // so downstream can detect missing sources via Source.field = null
                     // The join key field gets a null value for the missing source
                     if let Some(key_field) = self.join_keys.get(*source) {
-                        let prefixed_key = format!("{}.{}", source, key_field);
+                        let prefixed_key = format!("{source}.{key_field}");
                         correlated.data.insert(prefixed_key.into(), Value::Null);
                     }
                 }

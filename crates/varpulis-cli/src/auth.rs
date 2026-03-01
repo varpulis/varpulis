@@ -19,7 +19,7 @@ pub struct AuthConfig {
 
 impl AuthConfig {
     /// Create a new AuthConfig with authentication disabled
-    pub fn disabled() -> Self {
+    pub const fn disabled() -> Self {
         Self {
             enabled: false,
             api_key: None,
@@ -27,7 +27,7 @@ impl AuthConfig {
     }
 
     /// Create a new AuthConfig with the given API key
-    pub fn with_api_key(api_key: String) -> Self {
+    pub const fn with_api_key(api_key: String) -> Self {
         Self {
             enabled: true,
             api_key: Some(api_key),
@@ -47,7 +47,7 @@ impl AuthConfig {
     }
 
     /// Check if authentication is required
-    pub fn is_required(&self) -> bool {
+    pub const fn is_required(&self) -> bool {
         self.enabled
     }
 
@@ -64,7 +64,7 @@ impl Default for AuthConfig {
 }
 
 /// Authentication error types
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthError {
     /// No credentials provided
     MissingCredentials,
@@ -77,9 +77,9 @@ pub enum AuthError {
 impl std::fmt::Display for AuthError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AuthError::MissingCredentials => write!(f, "Authentication required"),
-            AuthError::InvalidCredentials => write!(f, "Invalid API key"),
-            AuthError::MalformedHeader => write!(f, "Malformed authorization header"),
+            Self::MissingCredentials => write!(f, "Authentication required"),
+            Self::InvalidCredentials => write!(f, "Invalid API key"),
+            Self::MalformedHeader => write!(f, "Malformed authorization header"),
         }
     }
 }
@@ -411,13 +411,9 @@ pub enum AuthRejection {
 impl IntoResponse for AuthRejection {
     fn into_response(self) -> Response {
         let (code, message) = match self {
-            AuthRejection::MissingCredentials => {
-                (StatusCode::UNAUTHORIZED, "Authentication required")
-            }
-            AuthRejection::InvalidCredentials => (StatusCode::UNAUTHORIZED, "Invalid API key"),
-            AuthRejection::MalformedHeader => {
-                (StatusCode::BAD_REQUEST, "Malformed authorization header")
-            }
+            Self::MissingCredentials => (StatusCode::UNAUTHORIZED, "Authentication required"),
+            Self::InvalidCredentials => (StatusCode::UNAUTHORIZED, "Invalid API key"),
+            Self::MalformedHeader => (StatusCode::BAD_REQUEST, "Malformed authorization header"),
         };
         (code, axum::Json(serde_json::json!({ "error": message }))).into_response()
     }
@@ -687,19 +683,19 @@ mod tests {
     #[test]
     fn test_auth_error_display_missing() {
         let err = AuthError::MissingCredentials;
-        assert_eq!(format!("{}", err), "Authentication required");
+        assert_eq!(format!("{err}"), "Authentication required");
     }
 
     #[test]
     fn test_auth_error_display_invalid() {
         let err = AuthError::InvalidCredentials;
-        assert_eq!(format!("{}", err), "Invalid API key");
+        assert_eq!(format!("{err}"), "Invalid API key");
     }
 
     #[test]
     fn test_auth_error_display_malformed() {
         let err = AuthError::MalformedHeader;
-        assert_eq!(format!("{}", err), "Malformed authorization header");
+        assert_eq!(format!("{err}"), "Malformed authorization header");
     }
 
     // -------------------------------------------------------------------------

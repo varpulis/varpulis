@@ -11,3 +11,6 @@ varpulis-core = { version = "0.4.1", path = "../varpulis-core" }
 varpulis-zdd = { version = "0.4.1", path = "../varpulis-zdd" }
 chrono = { workspace = true }
 rustc-hash = { workspace = true }
+
+[lints]
+workspace = true

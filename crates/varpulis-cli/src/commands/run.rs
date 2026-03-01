@@ -12,7 +12,7 @@ pub async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()
     use varpulis_runtime::ContextOrchestrator;
 
     info!("Parsing VPL program...");
-    let mut program = parse(source).map_err(|e| anyhow::anyhow!("Parse error: {}", e))?;
+    let mut program = parse(source).map_err(|e| anyhow::anyhow!("Parse error: {e}"))?;
     info!("Parsed {} statements", program.statements.len());
 
     // Resolve imports
@@ -26,7 +26,7 @@ pub async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()
     let mut engine = Engine::new(output_tx);
     engine
         .load_with_source(source, &program)
-        .map_err(|e| anyhow::anyhow!("Load error:\n{}", e))?;
+        .map_err(|e| anyhow::anyhow!("Load error:\n{e}"))?;
 
     let metrics = engine.metrics();
     println!("\nProgram loaded successfully!");
@@ -44,7 +44,7 @@ pub async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()
                 );
                 Some(orch)
             }
-            Err(e) => anyhow::bail!("Failed to build context orchestrator: {}", e),
+            Err(e) => anyhow::bail!("Failed to build context orchestrator: {e}"),
         }
     } else {
         None
@@ -74,7 +74,7 @@ pub async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()
 
         // Build managed connector registry — one connection per connector
         let mut registry = ManagedConnectorRegistry::from_configs(engine.connector_configs())
-            .map_err(|e| anyhow::anyhow!("Registry build error: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Registry build error: {e}"))?;
 
         // Start sources (connector-type-agnostic)
         for binding in &bindings {
@@ -105,7 +105,7 @@ pub async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()
                     &binding.extra_params,
                 )
                 .await
-                .map_err(|e| anyhow::anyhow!("Source start error: {}", e))?;
+                .map_err(|e| anyhow::anyhow!("Source start error: {e}"))?;
         }
 
         // Create shared sinks and inject into engine
@@ -150,7 +150,7 @@ pub async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()
             engine
                 .connect_sinks()
                 .await
-                .map_err(|e| anyhow::anyhow!("Sink connection error: {}", e))?;
+                .map_err(|e| anyhow::anyhow!("Sink connection error: {e}"))?;
         }
 
         // Spawn output event handler
@@ -270,7 +270,7 @@ pub async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()
             while let Some(output_event) = output_rx.recv().await {
                 println!("\nOUTPUT EVENT: {}", output_event.event_type);
                 for (key, value) in &output_event.data {
-                    println!("   {}: {}", key, value);
+                    println!("   {key}: {value}");
                 }
             }
         });

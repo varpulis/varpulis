@@ -404,11 +404,7 @@ impl HamletAggregator {
             .iter()
             .filter_map(|query| {
                 let count = self.final_counts.get(&query.id).copied().unwrap_or(0);
-                let state_count = self
-                    .query_states
-                    .get(&query.id)
-                    .map(|s| s.count)
-                    .unwrap_or(0);
+                let state_count = self.query_states.get(&query.id).map_or(0, |s| s.count);
                 let total = count.max(state_count);
 
                 if total > 0 {

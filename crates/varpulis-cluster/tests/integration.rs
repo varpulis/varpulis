@@ -64,7 +64,7 @@ async fn mock_deploy(
     }
 
     let name = body["name"].as_str().unwrap_or("unknown").to_string();
-    let id = format!("pid-{}", name);
+    let id = format!("pid-{name}");
     s.deploys.push(body);
 
     let resp = serde_json::json!({
@@ -125,7 +125,7 @@ async fn start_mock_worker(api_key: &str) -> (u16, Arc<Mutex<MockWorkerState>>) 
 #[tokio::test]
 async fn test_deploy_group_success() {
     let (port, worker_state) = start_mock_worker("worker-key").await;
-    let worker_addr = format!("http://127.0.0.1:{}", port);
+    let worker_addr = format!("http://127.0.0.1:{port}");
 
     let mut coord = Coordinator::new();
     coord.register_worker(WorkerNode::new(
@@ -184,12 +184,12 @@ async fn test_deploy_group_with_affinity() {
     let mut coord = Coordinator::new();
     coord.register_worker(WorkerNode::new(
         WorkerId("w1".into()),
-        format!("http://127.0.0.1:{}", port1),
+        format!("http://127.0.0.1:{port1}"),
         "key1".into(),
     ));
     coord.register_worker(WorkerNode::new(
         WorkerId("w2".into()),
-        format!("http://127.0.0.1:{}", port2),
+        format!("http://127.0.0.1:{port2}"),
         "key2".into(),
     ));
 
@@ -242,7 +242,7 @@ async fn test_deploy_group_affinity_fallback() {
     let mut coord = Coordinator::new();
     coord.register_worker(WorkerNode::new(
         WorkerId("w1".into()),
-        format!("http://127.0.0.1:{}", port),
+        format!("http://127.0.0.1:{port}"),
         "key".into(),
     ));
 
@@ -290,7 +290,7 @@ async fn test_deploy_group_no_workers() {
     assert!(result.is_err());
     match result.unwrap_err() {
         ClusterError::NoWorkersAvailable => {}
-        other => panic!("Expected NoWorkersAvailable, got: {:?}", other),
+        other => panic!("Expected NoWorkersAvailable, got: {other:?}"),
     }
 }
 
@@ -304,7 +304,7 @@ async fn test_deploy_group_worker_deploy_fails() {
     let mut coord = Coordinator::new();
     coord.register_worker(WorkerNode::new(
         WorkerId("w1".into()),
-        format!("http://127.0.0.1:{}", port),
+        format!("http://127.0.0.1:{port}"),
         "key".into(),
     ));
 
@@ -343,12 +343,12 @@ async fn test_deploy_group_partial_failure() {
     let mut coord = Coordinator::new();
     coord.register_worker(WorkerNode::new(
         WorkerId("w-ok".into()),
-        format!("http://127.0.0.1:{}", port_ok),
+        format!("http://127.0.0.1:{port_ok}"),
         "key".into(),
     ));
     coord.register_worker(WorkerNode::new(
         WorkerId("w-fail".into()),
-        format!("http://127.0.0.1:{}", port_fail),
+        format!("http://127.0.0.1:{port_fail}"),
         "key".into(),
     ));
 
@@ -432,7 +432,7 @@ async fn test_teardown_group_success() {
     let mut coord = Coordinator::new();
     coord.register_worker(WorkerNode::new(
         WorkerId("w1".into()),
-        format!("http://127.0.0.1:{}", port),
+        format!("http://127.0.0.1:{port}"),
         "key".into(),
     ));
 
@@ -488,14 +488,14 @@ async fn test_teardown_nonexistent_group() {
     assert!(result.is_err());
     match result.unwrap_err() {
         ClusterError::GroupNotFound(id) => assert_eq!(id, "nonexistent"),
-        other => panic!("Expected GroupNotFound, got: {:?}", other),
+        other => panic!("Expected GroupNotFound, got: {other:?}"),
     }
 }
 
 #[tokio::test]
 async fn test_teardown_skips_undeployed_pipelines() {
     let (port, worker_state) = start_mock_worker("key").await;
-    let addr = format!("http://127.0.0.1:{}", port);
+    let addr = format!("http://127.0.0.1:{port}");
 
     let mut coord = Coordinator::new();
     coord.register_worker(WorkerNode::new(
@@ -510,14 +510,14 @@ async fn test_teardown_skips_undeployed_pipelines() {
         pipelines: vec![
             PipelinePlacement {
                 name: "deployed".into(),
-                source: "".into(),
+                source: String::new(),
                 worker_affinity: None,
                 replicas: 1,
                 partition_key: None,
             },
             PipelinePlacement {
                 name: "failed".into(),
-                source: "".into(),
+                source: String::new(),
                 worker_affinity: None,
                 replicas: 1,
                 partition_key: None,
@@ -546,7 +546,7 @@ async fn test_teardown_skips_undeployed_pipelines() {
             worker_id: WorkerId("w1".into()),
             worker_address: addr,
             worker_api_key: "key".into(),
-            pipeline_id: "".into(), // empty = never deployed
+            pipeline_id: String::new(), // empty = never deployed
             status: PipelineDeploymentStatus::Failed,
             epoch: 0,
         },
@@ -570,8 +570,8 @@ async fn test_inject_event_routed_correctly() {
     let (port1, state1) = start_mock_worker("key").await;
     let (port2, state2) = start_mock_worker("key").await;
 
-    let addr1 = format!("http://127.0.0.1:{}", port1);
-    let addr2 = format!("http://127.0.0.1:{}", port2);
+    let addr1 = format!("http://127.0.0.1:{port1}");
+    let addr2 = format!("http://127.0.0.1:{port2}");
 
     let mut coord = Coordinator::new();
     coord.register_worker(WorkerNode::new(
@@ -673,7 +673,7 @@ async fn test_inject_event_fallback_to_first_pipeline() {
     let mut coord = Coordinator::new();
     coord.register_worker(WorkerNode::new(
         WorkerId("w1".into()),
-        format!("http://127.0.0.1:{}", port),
+        format!("http://127.0.0.1:{port}"),
         "key".into(),
     ));
 
@@ -725,7 +725,7 @@ async fn test_inject_event_group_not_found() {
     assert!(result.is_err());
     match result.unwrap_err() {
         ClusterError::GroupNotFound(id) => assert_eq!(id, "nonexistent"),
-        other => panic!("Expected GroupNotFound, got: {:?}", other),
+        other => panic!("Expected GroupNotFound, got: {other:?}"),
     }
 }
 
@@ -738,7 +738,7 @@ async fn test_inject_event_pipeline_not_deployed() {
         name: "no-placements".into(),
         pipelines: vec![PipelinePlacement {
             name: "phantom".into(),
-            source: "".into(),
+            source: String::new(),
             worker_affinity: None,
             replicas: 1,
             partition_key: None,
@@ -768,9 +768,9 @@ async fn test_inject_event_pipeline_not_deployed() {
     assert!(result.is_err());
     match result.unwrap_err() {
         ClusterError::RoutingFailed(msg) => {
-            assert!(msg.contains("not deployed"), "Got: {}", msg);
+            assert!(msg.contains("not deployed"), "Got: {msg}");
         }
-        other => panic!("Expected RoutingFailed, got: {:?}", other),
+        other => panic!("Expected RoutingFailed, got: {other:?}"),
     }
 }
 
@@ -781,7 +781,7 @@ async fn test_inject_event_pipeline_not_deployed() {
 #[tokio::test]
 async fn test_full_lifecycle_register_deploy_inject_teardown() {
     let (port, worker_state) = start_mock_worker("secret").await;
-    let addr = format!("http://127.0.0.1:{}", port);
+    let addr = format!("http://127.0.0.1:{port}");
 
     let mut coord = Coordinator::new();
 
@@ -830,10 +830,7 @@ async fn test_full_lifecycle_register_deploy_inject_teardown() {
                     fields: {
                         let mut m = serde_json::Map::new();
                         m.insert("value".into(), serde_json::Value::from(50 + i * 20));
-                        m.insert(
-                            "sensor_id".into(),
-                            serde_json::Value::from(format!("S{}", i)),
-                        );
+                        m.insert("sensor_id".into(), serde_json::Value::from(format!("S{i}")));
                         m
                     },
                 },
@@ -891,8 +888,8 @@ async fn test_distributed_mandelbrot_style_deployment() {
     let mut coord = Coordinator::new();
     for (i, port) in ports.iter().enumerate() {
         coord.register_worker(WorkerNode::new(
-            WorkerId(format!("worker-{}", i)),
-            format!("http://127.0.0.1:{}", port),
+            WorkerId(format!("worker-{i}")),
+            format!("http://127.0.0.1:{port}"),
             "key".into(),
         ));
     }
@@ -901,9 +898,9 @@ async fn test_distributed_mandelbrot_style_deployment() {
         name: "mandelbrot-distributed".into(),
         pipelines: (0..4)
             .map(|i| PipelinePlacement {
-                name: format!("row{}", i),
-                source: format!("stream Tile = ComputeTile{}* .process(compute_tile())", i),
-                worker_affinity: Some(format!("worker-{}", i)),
+                name: format!("row{i}"),
+                source: format!("stream Tile = ComputeTile{i}* .process(compute_tile())"),
+                worker_affinity: Some(format!("worker-{i}")),
                 replicas: 1,
                 partition_key: None,
             })
@@ -911,7 +908,7 @@ async fn test_distributed_mandelbrot_style_deployment() {
         routes: (0..4)
             .map(|i| InterPipelineRoute {
                 from_pipeline: "_external".into(),
-                to_pipeline: format!("row{}", i),
+                to_pipeline: format!("row{i}"),
                 event_types: vec![format!("ComputeTile{}*", i)],
                 nats_subject: None,
             })
@@ -930,7 +927,7 @@ async fn test_distributed_mandelbrot_style_deployment() {
     let mut routed: HashMap<String, Vec<String>> = HashMap::new();
     for row in 0..4 {
         for col in 0..4 {
-            let event_type = format!("ComputeTile{}{}", row, col);
+            let event_type = format!("ComputeTile{row}{col}");
             let resp = coord
                 .inject_event(
                     &group_id,
@@ -951,7 +948,7 @@ async fn test_distributed_mandelbrot_style_deployment() {
     // Each pipeline should have received 4 events
     assert_eq!(routed.len(), 4);
     for i in 0..4 {
-        let pipeline = format!("row{}", i);
+        let pipeline = format!("row{i}");
         assert_eq!(
             routed[&pipeline].len(),
             4,
@@ -991,7 +988,9 @@ async fn test_health_sweep_and_heartbeat_recovery() {
         "key".into(),
     );
     // Simulate that it was registered long ago
-    node.last_heartbeat = std::time::Instant::now() - std::time::Duration::from_secs(20);
+    node.last_heartbeat = std::time::Instant::now()
+        .checked_sub(std::time::Duration::from_secs(20))
+        .unwrap();
     coord.register_worker(node);
 
     // First sweep: should mark unhealthy
@@ -1033,7 +1032,7 @@ async fn test_api_deploy_inject_teardown_e2e() {
     use tower::ServiceExt;
 
     let (port, worker_state) = start_mock_worker("worker-key").await;
-    let worker_addr = format!("http://127.0.0.1:{}", port);
+    let worker_addr = format!("http://127.0.0.1:{port}");
 
     let coord = shared_coordinator();
     let router = cluster_routes(
@@ -1105,7 +1104,7 @@ async fn test_api_deploy_inject_teardown_e2e() {
     // Get the deployed group
     let req = axum::http::Request::builder()
         .method("GET")
-        .uri(format!("/api/v1/cluster/pipeline-groups/{}", group_id))
+        .uri(format!("/api/v1/cluster/pipeline-groups/{group_id}"))
         .header("x-api-key", "admin")
         .body(Body::empty())
         .unwrap();
@@ -1118,10 +1117,7 @@ async fn test_api_deploy_inject_teardown_e2e() {
     // Inject event via API
     let req = axum::http::Request::builder()
         .method("POST")
-        .uri(format!(
-            "/api/v1/cluster/pipeline-groups/{}/inject",
-            group_id
-        ))
+        .uri(format!("/api/v1/cluster/pipeline-groups/{group_id}/inject"))
         .header("x-api-key", "admin")
         .header("content-type", "application/json")
         .body(Body::from(
@@ -1158,7 +1154,7 @@ async fn test_api_deploy_inject_teardown_e2e() {
     // Teardown via API
     let req = axum::http::Request::builder()
         .method("DELETE")
-        .uri(format!("/api/v1/cluster/pipeline-groups/{}", group_id))
+        .uri(format!("/api/v1/cluster/pipeline-groups/{group_id}"))
         .header("x-api-key", "admin")
         .body(Body::empty())
         .unwrap();
@@ -1168,7 +1164,7 @@ async fn test_api_deploy_inject_teardown_e2e() {
     // Verify group is removed (404)
     let req = axum::http::Request::builder()
         .method("GET")
-        .uri(format!("/api/v1/cluster/pipeline-groups/{}", group_id))
+        .uri(format!("/api/v1/cluster/pipeline-groups/{group_id}"))
         .header("x-api-key", "admin")
         .body(Body::empty())
         .unwrap();
@@ -1183,7 +1179,7 @@ async fn test_api_deploy_inject_teardown_e2e() {
 #[tokio::test]
 async fn test_three_phase_deploy_success() {
     let (port, worker_state) = start_mock_worker("worker-key").await;
-    let worker_addr = format!("http://127.0.0.1:{}", port);
+    let worker_addr = format!("http://127.0.0.1:{port}");
 
     let mut coord = Coordinator::new();
     coord.register_worker(WorkerNode::new(
@@ -1300,8 +1296,8 @@ async fn test_three_phase_deploy_worker_unreachable() {
 async fn test_migrate_pipeline_between_workers() {
     let (port1, state1) = start_mock_worker("key").await;
     let (port2, state2) = start_mock_worker("key").await;
-    let addr1 = format!("http://127.0.0.1:{}", port1);
-    let addr2 = format!("http://127.0.0.1:{}", port2);
+    let addr1 = format!("http://127.0.0.1:{port1}");
+    let addr2 = format!("http://127.0.0.1:{port2}");
 
     let mut coord = Coordinator::new();
     coord.register_worker(WorkerNode::new(
@@ -1388,8 +1384,8 @@ async fn test_migrate_pipeline_between_workers() {
 async fn test_handle_worker_failure_redistributes_pipelines() {
     let (port1, _state1) = start_mock_worker("key").await;
     let (port2, state2) = start_mock_worker("key").await;
-    let addr1 = format!("http://127.0.0.1:{}", port1);
-    let addr2 = format!("http://127.0.0.1:{}", port2);
+    let addr1 = format!("http://127.0.0.1:{port1}");
+    let addr2 = format!("http://127.0.0.1:{port2}");
 
     let mut coord = Coordinator::new();
     coord.register_worker(WorkerNode::new(
@@ -1457,8 +1453,8 @@ async fn test_handle_worker_failure_redistributes_pipelines() {
 async fn test_rebalance_moves_pipelines() {
     let (port1, _state1) = start_mock_worker("key").await;
     let (port2, state2) = start_mock_worker("key").await;
-    let addr1 = format!("http://127.0.0.1:{}", port1);
-    let addr2 = format!("http://127.0.0.1:{}", port2);
+    let addr1 = format!("http://127.0.0.1:{port1}");
+    let addr2 = format!("http://127.0.0.1:{port2}");
 
     let mut coord = Coordinator::new();
     coord.register_worker(WorkerNode::new(
@@ -1472,8 +1468,8 @@ async fn test_rebalance_moves_pipelines() {
         name: "rebalance-test".into(),
         pipelines: (0..4)
             .map(|i| PipelinePlacement {
-                name: format!("p{}", i),
-                source: format!("stream S{} = X", i),
+                name: format!("p{i}"),
+                source: format!("stream S{i} = X"),
                 worker_affinity: None,
                 replicas: 1,
                 partition_key: None,
@@ -1488,7 +1484,7 @@ async fn test_rebalance_moves_pipelines() {
     // Verify all 4 pipelines on w1
     for i in 0..4 {
         assert_eq!(
-            coord.pipeline_groups[&group_id].placements[&format!("p{}", i)].worker_id,
+            coord.pipeline_groups[&group_id].placements[&format!("p{i}")].worker_id,
             WorkerId("w1".into())
         );
     }

@@ -595,7 +595,7 @@ mod pattern_expr_tests {
         let expr = call_fn("variance", make_array_expr("arr"));
         let result = eval_p(&expr, &vars).unwrap();
         if let Value::Float(v) = result {
-            assert!((v - 4.0).abs() < 1e-10, "Expected 4.0, got {}", v);
+            assert!((v - 4.0).abs() < 1e-10, "Expected 4.0, got {v}");
         } else {
             panic!("Expected Float");
         }
@@ -1057,7 +1057,7 @@ mod emit_collector_tests {
 
     #[test]
     fn emit_collector_multiple_emits() {
-        let (_, events) = with_emit_collector(|| {
+        let ((), events) = with_emit_collector(|| {
             let event = empty_event();
             let ctx = empty_seq_ctx();
             let functions = empty_functions();
@@ -1065,7 +1065,7 @@ mod emit_collector_tests {
 
             for i in 0..5 {
                 let stmt = Stmt::Emit {
-                    event_type: format!("Ev{}", i),
+                    event_type: format!("Ev{i}"),
                     fields: vec![NamedArg {
                         name: "idx".to_string(),
                         value: Expr::Int(i),
@@ -1076,7 +1076,7 @@ mod emit_collector_tests {
         });
         assert_eq!(events.len(), 5);
         for (i, ev) in events.iter().enumerate() {
-            assert_eq!(&*ev.event_type, &format!("Ev{}", i));
+            assert_eq!(&*ev.event_type, &format!("Ev{i}"));
             assert_eq!(ev.data.get("idx"), Some(&Value::Int(i as i64)));
         }
     }

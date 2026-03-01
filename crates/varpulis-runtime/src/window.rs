@@ -89,12 +89,12 @@ impl TumblingWindow {
     }
 
     /// Get the number of events currently in the window.
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.columnar.len()
     }
 
     /// Check if the window is empty.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.columnar.is_empty()
     }
 
@@ -156,7 +156,7 @@ pub struct SlidingWindow {
 }
 
 impl SlidingWindow {
-    pub fn new(window_size: Duration, slide_interval: Duration) -> Self {
+    pub const fn new(window_size: Duration, slide_interval: Duration) -> Self {
         Self {
             window_size,
             slide_interval,
@@ -312,7 +312,7 @@ impl CountWindow {
     }
 
     /// Get current count of events in buffer (for debugging)
-    pub fn current_count(&self) -> usize {
+    pub const fn current_count(&self) -> usize {
         self.columnar.len()
     }
 
@@ -490,7 +490,7 @@ impl SessionWindow {
     }
 
     /// Get the configured gap duration.
-    pub fn gap(&self) -> Duration {
+    pub const fn gap(&self) -> Duration {
         self.gap
     }
 
@@ -579,10 +579,10 @@ impl PartitionedSessionWindow {
 
     /// Add a shared event to the appropriate partition session.
     pub fn add_shared(&mut self, event: SharedEvent) -> Option<Vec<SharedEvent>> {
-        let key = event
-            .get(&self.partition_key)
-            .map(|v| v.to_partition_key().into_owned())
-            .unwrap_or_else(|| "default".to_string());
+        let key = event.get(&self.partition_key).map_or_else(
+            || "default".to_string(),
+            |v| v.to_partition_key().into_owned(),
+        );
 
         let window = self
             .windows
@@ -619,7 +619,7 @@ impl PartitionedSessionWindow {
     }
 
     /// Get the configured gap duration.
-    pub fn gap(&self) -> Duration {
+    pub const fn gap(&self) -> Duration {
         self.gap
     }
 
@@ -724,10 +724,10 @@ impl PartitionedTumblingWindow {
 
     /// Add a shared event to the appropriate partition window.
     pub fn add_shared(&mut self, event: SharedEvent) -> Option<Vec<SharedEvent>> {
-        let key = event
-            .get(&self.partition_key)
-            .map(|v| v.to_partition_key().into_owned())
-            .unwrap_or_else(|| "default".to_string());
+        let key = event.get(&self.partition_key).map_or_else(
+            || "default".to_string(),
+            |v| v.to_partition_key().into_owned(),
+        );
 
         let window = self
             .windows
@@ -839,10 +839,10 @@ impl PartitionedSlidingWindow {
 
     /// Add a shared event to the appropriate partition window.
     pub fn add_shared(&mut self, event: SharedEvent) -> Option<Vec<SharedEvent>> {
-        let key = event
-            .get(&self.partition_key)
-            .map(|v| v.to_partition_key().into_owned())
-            .unwrap_or_else(|| "default".to_string());
+        let key = event.get(&self.partition_key).map_or_else(
+            || "default".to_string(),
+            |v| v.to_partition_key().into_owned(),
+        );
 
         let window = self
             .windows
@@ -1061,7 +1061,7 @@ pub struct PreviousValueTracker<T> {
 
 impl<T: Clone> PreviousValueTracker<T> {
     /// Create a new tracker.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             current: None,
             previous: None,
@@ -1075,22 +1075,22 @@ impl<T: Clone> PreviousValueTracker<T> {
     }
 
     /// Get the current value.
-    pub fn current(&self) -> Option<&T> {
+    pub const fn current(&self) -> Option<&T> {
         self.current.as_ref()
     }
 
     /// Get the previous value.
-    pub fn previous(&self) -> Option<&T> {
+    pub const fn previous(&self) -> Option<&T> {
         self.previous.as_ref()
     }
 
     /// Check if we have both current and previous values (ready for comparison).
-    pub fn has_both(&self) -> bool {
+    pub const fn has_both(&self) -> bool {
         self.current.is_some() && self.previous.is_some()
     }
 
     /// Get both values as a tuple if both are available.
-    pub fn get_pair(&self) -> Option<(&T, &T)> {
+    pub const fn get_pair(&self) -> Option<(&T, &T)> {
         match (&self.current, &self.previous) {
             (Some(curr), Some(prev)) => Some((curr, prev)),
             _ => None,
@@ -1662,7 +1662,7 @@ mod tests {
         let e1 = Event::new("Test").with_field("value", 100i64);
         let e2 = Event::new("Test").with_field("value", 200i64);
 
-        assert!(delay.push(e1.clone()).is_none());
+        assert!(delay.push(e1).is_none());
         let output = delay.push(e2);
         assert!(output.is_some());
         assert_eq!(output.unwrap().get_int("value"), Some(100));

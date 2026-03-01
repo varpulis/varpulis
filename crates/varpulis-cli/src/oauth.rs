@@ -153,7 +153,7 @@ impl GitHubOAuth {
 
 #[async_trait::async_trait]
 impl AuthProvider for GitHubOAuth {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "github"
     }
 
@@ -179,12 +179,12 @@ impl AuthProvider for GitHubOAuth {
             ])
             .send()
             .await
-            .map_err(|e| OAuthError(format!("GitHub token exchange failed: {}", e)))?;
+            .map_err(|e| OAuthError(format!("GitHub token exchange failed: {e}")))?;
 
         let token_data: GitHubTokenResponse = token_resp
             .json()
             .await
-            .map_err(|e| OAuthError(format!("Failed to parse GitHub token response: {}", e)))?;
+            .map_err(|e| OAuthError(format!("Failed to parse GitHub token response: {e}")))?;
 
         // Fetch user profile
         let user: GitHubUser = self
@@ -197,10 +197,10 @@ impl AuthProvider for GitHubOAuth {
             .header("User-Agent", "Varpulis")
             .send()
             .await
-            .map_err(|e| OAuthError(format!("GitHub user fetch failed: {}", e)))?
+            .map_err(|e| OAuthError(format!("GitHub user fetch failed: {e}")))?
             .json()
             .await
-            .map_err(|e| OAuthError(format!("Failed to parse GitHub user: {}", e)))?;
+            .map_err(|e| OAuthError(format!("Failed to parse GitHub user: {e}")))?;
 
         Ok(UserInfo {
             provider_id: user.id.to_string(),
@@ -267,7 +267,9 @@ impl SessionStore {
 
     /// Remove entries older than 24 hours (tokens expire anyway).
     pub fn cleanup(&mut self) {
-        let cutoff = std::time::Instant::now() - std::time::Duration::from_secs(86400);
+        let cutoff = std::time::Instant::now()
+            .checked_sub(std::time::Duration::from_secs(86400))
+            .unwrap();
         self.revoked.retain(|_, instant| *instant > cutoff);
     }
 }
@@ -423,17 +425,13 @@ const COOKIE_NAME: &str = "varpulis_session";
 /// Create a Set-Cookie header value for the session JWT.
 fn create_session_cookie(jwt: &str, max_age_secs: u64) -> String {
     format!(
-        "{}={}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age={}",
-        COOKIE_NAME, jwt, max_age_secs
+        "{COOKIE_NAME}={jwt}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age={max_age_secs}"
     )
 }
 
 /// Create a Set-Cookie header value that clears the session cookie.
 fn clear_session_cookie() -> String {
-    format!(
-        "{}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0",
-        COOKIE_NAME
-    )
+    format!("{COOKIE_NAME}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0")
 }
 
 /// Extract the session JWT from a Cookie header value.
@@ -1392,7 +1390,7 @@ mod tests {
             id: 1,
             login: "u".to_string(),
             name: None,
-            avatar_url: "".to_string(),
+            avatar_url: String::new(),
             email: None,
         };
 
@@ -1472,7 +1470,7 @@ mod tests {
         let req: Request<Body> = Request::builder()
             .method("GET")
             .uri("/api/v1/me")
-            .header("authorization", format!("Bearer {}", token))
+            .header("authorization", format!("Bearer {token}"))
             .body(Body::empty())
             .unwrap();
         let res = app.oneshot(req).await.unwrap();
@@ -1516,7 +1514,7 @@ mod tests {
         let req: Request<Body> = Request::builder()
             .method("GET")
             .uri("/api/v1/me")
-            .header("authorization", format!("Bearer {}", token))
+            .header("authorization", format!("Bearer {token}"))
             .body(Body::empty())
             .unwrap();
         let res = app.oneshot(req).await.unwrap();
@@ -1701,7 +1699,7 @@ mod tests {
         let req: Request<Body> = Request::builder()
             .method("GET")
             .uri("/api/v1/me")
-            .header("cookie", format!("varpulis_session={}", token))
+            .header("cookie", format!("varpulis_session={token}"))
             .body(Body::empty())
             .unwrap();
         let res = app.oneshot(req).await.unwrap();

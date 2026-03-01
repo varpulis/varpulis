@@ -99,7 +99,7 @@ impl ElasticsearchConfig {
     }
 
     /// Set flush interval in milliseconds
-    pub fn with_flush_interval(mut self, ms: u64) -> Self {
+    pub const fn with_flush_interval(mut self, ms: u64) -> Self {
         self.flush_interval_ms = ms;
         self
     }

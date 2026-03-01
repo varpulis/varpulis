@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 
 /// Error types for security operations
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SecurityError {
     /// Path is outside the allowed working directory
     PathTraversal { path: String },
@@ -22,21 +22,21 @@ pub enum SecurityError {
 impl std::fmt::Display for SecurityError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SecurityError::PathTraversal { .. } => {
+            Self::PathTraversal { .. } => {
                 // Generic message to avoid information disclosure
                 write!(f, "Access denied: path outside allowed directory")
             }
-            SecurityError::InvalidPath { reason, .. } => {
-                write!(f, "Invalid path: {}", reason)
+            Self::InvalidPath { reason, .. } => {
+                write!(f, "Invalid path: {reason}")
             }
-            SecurityError::InvalidWorkdir { path, reason } => {
-                write!(f, "Invalid workdir '{}': {}", path, reason)
+            Self::InvalidWorkdir { path, reason } => {
+                write!(f, "Invalid workdir '{path}': {reason}")
             }
-            SecurityError::AuthenticationFailed { reason } => {
-                write!(f, "Authentication failed: {}", reason)
+            Self::AuthenticationFailed { reason } => {
+                write!(f, "Authentication failed: {reason}")
             }
-            SecurityError::RateLimitExceeded { ip } => {
-                write!(f, "Rate limit exceeded for IP: {}", ip)
+            Self::RateLimitExceeded { ip } => {
+                write!(f, "Rate limit exceeded for IP: {ip}")
             }
         }
     }
@@ -144,7 +144,7 @@ pub fn is_suspicious_path(path: &str) -> bool {
         || path.contains("//")
         || path.starts_with('/')
         || path.contains('\0')
-        || path.contains("~")
+        || path.contains('~')
 }
 
 /// Sanitize a filename by removing dangerous characters.
@@ -449,7 +449,7 @@ mod tests {
         let err = SecurityError::PathTraversal {
             path: "../etc/passwd".to_string(),
         };
-        let msg = format!("{}", err);
+        let msg = format!("{err}");
         // Should NOT reveal the actual path
         assert!(!msg.contains("passwd"));
         assert!(msg.contains("Access denied"));
@@ -461,7 +461,7 @@ mod tests {
             path: "test.txt".to_string(),
             reason: "file not found".to_string(),
         };
-        let msg = format!("{}", err);
+        let msg = format!("{err}");
         assert!(msg.contains("Invalid path"));
         assert!(msg.contains("file not found"));
     }
@@ -471,7 +471,7 @@ mod tests {
         let err = SecurityError::AuthenticationFailed {
             reason: "invalid token".to_string(),
         };
-        let msg = format!("{}", err);
+        let msg = format!("{err}");
         assert!(msg.contains("Authentication failed"));
     }
 }

@@ -28,7 +28,7 @@ impl Default for PSTConfig {
 }
 
 /// A node in the Prediction Suffix Tree.
-pub(crate) struct PSTNode {
+pub struct PSTNode {
     /// The context (suffix) that leads to this node.
     pub context: SmallVec<[SymbolId; 4]>,
     /// Counts for each observed next symbol.
@@ -58,7 +58,7 @@ impl PSTNode {
         let total = self.total as f64;
         let alpha = smoothing;
         let k = alphabet_size as f64;
-        (count + alpha) / (total + alpha * k)
+        (count + alpha) / alpha.mul_add(k, total)
     }
 
     /// Get the full smoothed distribution at this node.
@@ -70,7 +70,7 @@ impl PSTNode {
 
         // Include all symbols that have counts
         for (&sym, &count) in &self.counts {
-            dist.insert(sym, (count as f64 + alpha) / (total + alpha * k));
+            dist.insert(sym, (count as f64 + alpha) / alpha.mul_add(k, total));
         }
         dist
     }
@@ -118,7 +118,7 @@ impl PredictionSuffixTree {
     }
 
     /// Number of registered symbols (alphabet size).
-    pub fn alphabet_size(&self) -> usize {
+    pub const fn alphabet_size(&self) -> usize {
         self.id_to_symbol.len()
     }
 
@@ -203,27 +203,27 @@ impl PredictionSuffixTree {
     }
 
     /// Total number of nodes in the tree.
-    pub fn node_count(&self) -> usize {
+    pub const fn node_count(&self) -> usize {
         self.nodes.len()
     }
 
     /// Get the config.
-    pub fn config(&self) -> &PSTConfig {
+    pub const fn config(&self) -> &PSTConfig {
         &self.config
     }
 
     /// Get the maximum depth from config.
-    pub fn max_depth(&self) -> usize {
+    pub const fn max_depth(&self) -> usize {
         self.config.max_depth
     }
 
     /// Get the smoothing parameter from config.
-    pub fn smoothing(&self) -> f64 {
+    pub const fn smoothing(&self) -> f64 {
         self.config.smoothing
     }
 
     /// Get the maximum nodes cap from config.
-    pub fn max_nodes(&self) -> usize {
+    pub const fn max_nodes(&self) -> usize {
         self.config.max_nodes
     }
 
@@ -328,9 +328,7 @@ mod tests {
         let p_a_given_a = pst.predict_symbol(&[a], a);
         assert!(
             p_b_given_a > p_a_given_a,
-            "P(B|A) = {} should be > P(A|A) = {}",
-            p_b_given_a,
-            p_a_given_a
+            "P(B|A) = {p_b_given_a} should be > P(A|A) = {p_a_given_a}"
         );
 
         // After seeing B, A should be very likely
@@ -338,9 +336,7 @@ mod tests {
         let p_b_given_b = pst.predict_symbol(&[b], b);
         assert!(
             p_a_given_b > p_b_given_b,
-            "P(A|B) = {} should be > P(B|B) = {}",
-            p_a_given_b,
-            p_b_given_b
+            "P(A|B) = {p_a_given_b} should be > P(B|B) = {p_b_given_b}"
         );
     }
 
@@ -361,11 +357,11 @@ mod tests {
 
         // Context [A, B] should strongly predict C
         let p_c = pst.predict_symbol(&[a, b], c);
-        assert!(p_c > 0.5, "P(C|A,B) = {} should be > 0.5", p_c);
+        assert!(p_c > 0.5, "P(C|A,B) = {p_c} should be > 0.5");
 
         // Longer context [C, A, B] should also predict C
         let p_c_long = pst.predict_symbol(&[c, a, b], c);
-        assert!(p_c_long > 0.5, "P(C|C,A,B) = {} should be > 0.5", p_c_long);
+        assert!(p_c_long > 0.5, "P(C|C,A,B) = {p_c_long} should be > 0.5");
     }
 
     #[test]

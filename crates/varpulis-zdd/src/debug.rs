@@ -67,11 +67,11 @@ impl Zdd {
 
                 // LO edge (dashed)
                 let lo_name = ref_to_name(node.lo);
-                writeln!(out, "  N{} -> {} [style=dashed, label=\"0\"];", id, lo_name).unwrap();
+                writeln!(out, "  N{id} -> {lo_name} [style=dashed, label=\"0\"];").unwrap();
 
                 // HI edge (solid)
                 let hi_name = ref_to_name(node.hi);
-                writeln!(out, "  N{} -> {} [label=\"1\"];", id, hi_name).unwrap();
+                writeln!(out, "  N{id} -> {hi_name} [label=\"1\"];").unwrap();
 
                 // Recurse
                 self.emit_dot_node(node.lo, out, visited);
@@ -104,7 +104,7 @@ impl Zdd {
                     writeln!(out, "  ... and {} more", self.count() - 20).unwrap();
                     break;
                 }
-                writeln!(out, "  {:?}", set).unwrap();
+                writeln!(out, "  {set:?}").unwrap();
             }
         }
 
@@ -116,7 +116,7 @@ fn ref_to_name(r: ZddRef) -> String {
     match r {
         ZddRef::Empty => "Empty".to_string(),
         ZddRef::Base => "Base".to_string(),
-        ZddRef::Node(id) => format!("N{}", id),
+        ZddRef::Node(id) => format!("N{id}"),
     }
 }
 

@@ -176,7 +176,7 @@ pub async fn validate_vpl_impl(
                             d.message,
                             d.hint
                                 .as_ref()
-                                .map(|h| format!(" (hint: {})", h))
+                                .map(|h| format!(" (hint: {h})"))
                                 .unwrap_or_default()
                         )
                     })
@@ -202,7 +202,7 @@ pub async fn validate_vpl_impl(
                 success_text("VPL is valid. No errors or warnings.".to_string())
             }
         }
-        Err(e) => error_text(format!("Parse error: {}", e)),
+        Err(e) => error_text(format!("Parse error: {e}")),
     }
 }
 
@@ -212,7 +212,7 @@ pub async fn deploy_pipeline_impl(
 ) -> CallToolResult {
     // Validate locally first
     if let Err(e) = varpulis_parser::parse(&params.source) {
-        return error_text(format!("VPL parse error — fix before deploying: {}", e));
+        return error_text(format!("VPL parse error — fix before deploying: {e}"));
     }
 
     let mut pipeline = serde_json::json!({
@@ -336,7 +336,7 @@ pub async fn explain_alert_impl(
     ));
 
     if let Some(desc) = &params.alert_description {
-        report.push_str(&format!("**Alert**: {}\n\n", desc));
+        report.push_str(&format!("**Alert**: {desc}\n\n"));
     }
 
     // Pipeline group status
@@ -361,7 +361,7 @@ pub async fn explain_alert_impl(
                 }
             }
         }
-        Err(e) => report.push_str(&format!("Error fetching group: {}\n", e)),
+        Err(e) => report.push_str(&format!("Error fetching group: {e}\n")),
     }
 
     // Worker health
@@ -383,7 +383,7 @@ pub async fn explain_alert_impl(
                 }
             }
         }
-        Err(e) => report.push_str(&format!("Error fetching workers: {}\n", e)),
+        Err(e) => report.push_str(&format!("Error fetching workers: {e}\n")),
     }
 
     // Metrics
@@ -395,7 +395,7 @@ pub async fn explain_alert_impl(
                 serde_json::to_string_pretty(m).unwrap_or_default()
             ));
         }
-        Err(e) => report.push_str(&format!("Error fetching metrics: {}\n", e)),
+        Err(e) => report.push_str(&format!("Error fetching metrics: {e}\n")),
     }
 
     // Scaling
@@ -410,7 +410,7 @@ pub async fn explain_alert_impl(
                 s["target_workers"].as_u64().unwrap_or(0),
             ));
         }
-        Err(e) => report.push_str(&format!("Error fetching scaling: {}\n", e)),
+        Err(e) => report.push_str(&format!("Error fetching scaling: {e}\n")),
     }
 
     // Topology
@@ -435,7 +435,7 @@ pub async fn explain_alert_impl(
                 }
             }
         }
-        Err(e) => report.push_str(&format!("Error fetching topology: {}\n", e)),
+        Err(e) => report.push_str(&format!("Error fetching topology: {e}\n")),
     }
 
     // Heuristic analysis
@@ -481,7 +481,7 @@ pub async fn explain_alert_impl(
         report.push_str("- Event schema mismatches\n");
     } else {
         for cause in causes {
-            report.push_str(&format!("- {}\n", cause));
+            report.push_str(&format!("- {cause}\n"));
         }
     }
 
@@ -555,7 +555,7 @@ mod tests {
         ));
         assert_eq!(result.is_error, Some(false));
         let text = result.content[0].as_text().unwrap().text.as_str();
-        assert!(text.contains("valid"), "Expected 'valid' in: {}", text);
+        assert!(text.contains("valid"), "Expected 'valid' in: {text}");
     }
 
     #[test]
@@ -567,8 +567,7 @@ mod tests {
         let text = result.content[0].as_text().unwrap().text.as_str();
         assert!(
             text.contains("error") || text.contains("Parse"),
-            "Expected error in: {}",
-            text
+            "Expected error in: {text}"
         );
     }
 

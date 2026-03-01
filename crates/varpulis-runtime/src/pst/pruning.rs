@@ -16,7 +16,7 @@ pub enum PruningStrategy {
 
 impl Default for PruningStrategy {
     fn default() -> Self {
-        PruningStrategy::KLDivergence { threshold: 0.05 }
+        Self::KLDivergence { threshold: 0.05 }
     }
 }
 
@@ -116,8 +116,8 @@ fn kl_divergence(
     // Account for symbols not in either (uniform smoothed probability)
     let unseen_count = alphabet_size.saturating_sub(child.counts.len().max(parent.counts.len()));
     if unseen_count > 0 {
-        let p_unseen = alpha / (child.total as f64 + alpha * k);
-        let q_unseen = alpha / (parent.total as f64 + alpha * k);
+        let p_unseen = alpha / alpha.mul_add(k, child.total as f64);
+        let q_unseen = alpha / alpha.mul_add(k, parent.total as f64);
         if p_unseen > 0.0 && q_unseen > 0.0 {
             kl += unseen_count as f64 * p_unseen * (p_unseen / q_unseen).ln();
         }
@@ -142,7 +142,7 @@ fn conditional_entropy(node: &super::tree::PSTNode, alphabet_size: usize, smooth
     // Account for unseen symbols
     let unseen = alphabet_size.saturating_sub(node.counts.len());
     if unseen > 0 {
-        let p_unseen = alpha / (node.total as f64 + alpha * k);
+        let p_unseen = alpha / alpha.mul_add(k, node.total as f64);
         if p_unseen > 0.0 {
             entropy -= unseen as f64 * p_unseen * p_unseen.ln();
         }
@@ -182,9 +182,7 @@ mod tests {
         // Pruning should have removed some leaf nodes since distributions are similar
         assert!(
             count_after <= count_before,
-            "Pruning should not increase node count: {} -> {}",
-            count_before,
-            count_after
+            "Pruning should not increase node count: {count_before} -> {count_after}"
         );
     }
 

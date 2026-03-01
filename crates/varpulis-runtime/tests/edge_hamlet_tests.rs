@@ -38,13 +38,13 @@ async fn run_scenario(program_source: &str, events_source: &str) -> Vec<Event> {
 #[tokio::test]
 async fn trend_aggregate_correct_count() {
     // 5 events → verify count_trends() output is produced
-    let program = r#"
+    let program = r"
         stream TrendCount = StockTick as first
             -> all StockTick as rising
             .within(60s)
             .trend_aggregate(count: count_trends())
             .emit(trends: count)
-    "#;
+    ";
 
     let events = r#"
         StockTick { symbol: "AAPL", price: 100.0 }
@@ -72,7 +72,7 @@ async fn trend_aggregate_correct_count() {
 #[tokio::test]
 async fn trend_aggregate_sum_and_count() {
     // Both count_trends() and sum_trends(price) in one output
-    let program = r#"
+    let program = r"
         stream DualTrend = StockTick as first
             -> all StockTick as rising
             .within(60s)
@@ -81,7 +81,7 @@ async fn trend_aggregate_sum_and_count() {
                 total: sum_trends(price)
             )
             .emit(count: cnt, sum: total)
-    "#;
+    ";
 
     let events = r#"
         StockTick { symbol: "AAPL", price: 100.0 }
@@ -103,14 +103,14 @@ async fn trend_aggregate_sum_and_count() {
 #[tokio::test]
 async fn trend_aggregate_partition_isolation() {
     // Two symbols produce independent trend counts
-    let program = r#"
+    let program = r"
         stream PartitionedTrend = StockTick as first
             -> all StockTick as rising
             .within(60s)
             .partition_by(symbol)
             .trend_aggregate(count: count_trends())
             .emit(sym: symbol, trends: count)
-    "#;
+    ";
 
     let events = r#"
         StockTick { symbol: "AAPL", price: 100.0 }
@@ -123,14 +123,14 @@ async fn trend_aggregate_partition_isolation() {
     // Should process without error — partitions are independent
     // No panic = success
     let program_check = parse(
-        r#"
+        r"
         stream PartitionedTrend = StockTick as first
             -> all StockTick as rising
             .within(60s)
             .partition_by(symbol)
             .trend_aggregate(count: count_trends())
             .emit(sym: symbol, trends: count)
-    "#,
+    ",
     )
     .expect("should parse");
     let (tx2, _rx2) = mpsc::channel::<Event>(100);
@@ -143,14 +143,14 @@ async fn trend_aggregate_partition_isolation() {
 #[tokio::test]
 async fn trend_aggregate_interleaved_partitions() {
     // Alternating AAPL/GOOG events → correct per-partition processing
-    let program = r#"
+    let program = r"
         stream InterleavedTrend = StockTick as first
             -> all StockTick as rising
             .within(60s)
             .partition_by(symbol)
             .trend_aggregate(count: count_trends())
             .emit(sym: symbol, trends: count)
-    "#;
+    ";
 
     let events = r#"
         StockTick { symbol: "AAPL", price: 100.0 }
@@ -172,13 +172,13 @@ async fn trend_aggregate_interleaved_partitions() {
 #[tokio::test]
 async fn trend_aggregate_single_event() {
     // Degenerate case — 1 event Kleene → minimal or no output
-    let program = r#"
+    let program = r"
         stream SingleEvent = StockTick as first
             -> all StockTick as rising
             .within(60s)
             .trend_aggregate(count: count_trends())
             .emit(trends: count)
-    "#;
+    ";
 
     let events = r#"
         StockTick { symbol: "AAPL", price: 100.0 }
@@ -196,19 +196,19 @@ async fn trend_aggregate_single_event() {
 #[tokio::test]
 async fn trend_aggregate_many_events() {
     // 20+ events → verify no overflow in propagation coefficients
-    let program = r#"
+    let program = r"
         stream ManyTrends = StockTick as first
             -> all StockTick as rising
             .within(60s)
             .trend_aggregate(count: count_trends())
             .emit(trends: count)
-    "#;
+    ";
 
     let mut events = String::new();
     for i in 0..25 {
         events.push_str(&format!(
             "StockTick {{ symbol: \"AAPL\", price: {:.1} }}\n",
-            100.0 + i as f64 * 5.0
+            (i as f64).mul_add(5.0, 100.0)
         ));
     }
 
@@ -223,7 +223,7 @@ async fn trend_aggregate_many_events() {
 #[tokio::test]
 async fn trend_aggregate_with_emit_fields() {
     // .emit(count: count, total: sum) — output has correct field names
-    let program = r#"
+    let program = r"
         stream EmitFields = StockTick as first
             -> all StockTick as rising
             .within(60s)
@@ -232,7 +232,7 @@ async fn trend_aggregate_with_emit_fields() {
                 total: sum_trends(price)
             )
             .emit(event_count: cnt, price_total: total)
-    "#;
+    ";
 
     let events = r#"
         StockTick { symbol: "AAPL", price: 100.0 }

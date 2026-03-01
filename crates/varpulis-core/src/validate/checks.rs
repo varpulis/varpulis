@@ -27,7 +27,7 @@ pub fn pass1_declarations(v: &mut Validator, program: &Program) {
                         Severity::Error,
                         span,
                         "E001",
-                        format!("duplicate event type '{}'", name),
+                        format!("duplicate event type '{name}'"),
                         vec![RelatedSpan {
                             span: prev.span,
                             message: "previously declared here".to_string(),
@@ -49,7 +49,7 @@ pub fn pass1_declarations(v: &mut Validator, program: &Program) {
                         Severity::Error,
                         span,
                         "E002",
-                        format!("duplicate stream '{}'", name),
+                        format!("duplicate stream '{name}'"),
                         vec![RelatedSpan {
                             span: prev.span,
                             message: "previously declared here".to_string(),
@@ -65,7 +65,7 @@ pub fn pass1_declarations(v: &mut Validator, program: &Program) {
                         Severity::Error,
                         span,
                         "E003",
-                        format!("duplicate function '{}'", name),
+                        format!("duplicate function '{name}'"),
                         vec![RelatedSpan {
                             span: prev.span,
                             message: "previously declared here".to_string(),
@@ -91,7 +91,7 @@ pub fn pass1_declarations(v: &mut Validator, program: &Program) {
                         Severity::Error,
                         span,
                         "E004",
-                        format!("duplicate connector '{}'", name),
+                        format!("duplicate connector '{name}'"),
                         vec![RelatedSpan {
                             span: prev.span,
                             message: "previously declared here".to_string(),
@@ -113,7 +113,7 @@ pub fn pass1_declarations(v: &mut Validator, program: &Program) {
                         Severity::Error,
                         span,
                         "E005",
-                        format!("duplicate context '{}'", name),
+                        format!("duplicate context '{name}'"),
                         vec![RelatedSpan {
                             span: prev.span,
                             message: "previously declared here".to_string(),
@@ -131,7 +131,7 @@ pub fn pass1_declarations(v: &mut Validator, program: &Program) {
                         Severity::Error,
                         span,
                         "E006",
-                        format!("duplicate pattern '{}'", name),
+                        format!("duplicate pattern '{name}'"),
                         vec![RelatedSpan {
                             span: prev.span,
                             message: "previously declared here".to_string(),
@@ -167,7 +167,7 @@ pub fn pass1_declarations(v: &mut Validator, program: &Program) {
                         Severity::Error,
                         span,
                         "E007",
-                        format!("duplicate type alias '{}'", name),
+                        format!("duplicate type alias '{name}'"),
                         vec![RelatedSpan {
                             span: prev.span,
                             message: "previously declared here".to_string(),
@@ -211,7 +211,7 @@ pub fn pass2_semantic(v: &mut Validator, program: &Program) {
                         Severity::Error,
                         span,
                         "E008",
-                        format!("unknown connector type '{}'", connector_type),
+                        format!("unknown connector type '{connector_type}'"),
                         format!(
                             "known types: {}{}",
                             builtins::KNOWN_CONNECTOR_TYPES.join(", "),
@@ -266,7 +266,7 @@ fn check_assignment(v: &mut Validator, name: &str, span: Span) {
                 Severity::Error,
                 span,
                 "E040",
-                format!("cannot assign to immutable variable '{}'{}", name, context),
+                format!("cannot assign to immutable variable '{name}'{context}"),
                 vec![RelatedSpan {
                     span: var_info.span,
                     message: "declared as immutable here — use 'var' instead of 'let'".to_string(),
@@ -299,11 +299,8 @@ fn check_stream_source(v: &mut Validator, source: &StreamSource, span: Span) {
                     Severity::Error,
                     span,
                     "E030",
-                    format!("undefined connector '{}'", connector_name),
-                    format!(
-                        "declare it with: connector {} = type (...){}",
-                        connector_name, suggestion
-                    ),
+                    format!("undefined connector '{connector_name}'"),
+                    format!("declare it with: connector {connector_name} = type (...){suggestion}"),
                 );
             } else {
                 let connector_type = v.symbols.connectors[connector_name].connector_type.clone();
@@ -346,11 +343,8 @@ fn check_source_name(v: &mut Validator, name: &str, span: Span) {
             Severity::Error,
             span,
             "E033",
-            format!("undefined event type or stream '{}'", name),
-            format!(
-                "declare it with: event {} {{ ... }} or stream {} = ...{}",
-                name, name, suggestion
-            ),
+            format!("undefined event type or stream '{name}'"),
+            format!("declare it with: event {name} {{ ... }} or stream {name} = ...{suggestion}"),
         );
     }
 }
@@ -489,8 +483,7 @@ fn check_stream_ops(
                                     op_span,
                                     "E091",
                                     format!(
-                                        ".concurrent(workers: {}) out of range; must be 1–128",
-                                        n
+                                        ".concurrent(workers: {n}) out of range; must be 1–128"
                                     ),
                                 );
                             }
@@ -500,7 +493,7 @@ fn check_stream_ops(
 
                 // Check that no stateful ops follow .concurrent()
                 let mut found_concurrent = false;
-                for sop in ops.iter() {
+                for sop in ops {
                     if std::ptr::eq(sop, op) {
                         found_concurrent = true;
                         continue;
@@ -732,10 +725,9 @@ fn check_stream_ops(
                         Severity::Error,
                         op_span,
                         "E030",
-                        format!("undefined connector '{}'", connector_name),
+                        format!("undefined connector '{connector_name}'"),
                         format!(
-                            "declare it with: connector {} = type (...){}{}",
-                            connector_name, suggestion, avail_hint
+                            "declare it with: connector {connector_name} = type (...){suggestion}{avail_hint}"
                         ),
                     );
                 } else {
@@ -758,11 +750,8 @@ fn check_stream_ops(
                         Severity::Error,
                         op_span,
                         "E031",
-                        format!("undefined context '{}'", name),
-                        format!(
-                            "declare it with: context {} (cores: [0, 1]){}",
-                            name, suggestion
-                        ),
+                        format!("undefined context '{name}'"),
+                        format!("declare it with: context {name} (cores: [0, 1]){suggestion}"),
                     );
                 }
             }
@@ -805,11 +794,8 @@ fn check_stream_ops(
                             Severity::Error,
                             op_span,
                             "E034",
-                            format!(".emit as '{}' references an undeclared type", type_name),
-                            format!(
-                                "declare it with: event {} {{ ... }}{}",
-                                type_name, suggestion
-                            ),
+                            format!(".emit as '{type_name}' references an undeclared type"),
+                            format!("declare it with: event {type_name} {{ ... }}{suggestion}"),
                         );
                     }
                 }
@@ -874,7 +860,7 @@ fn check_stream_ops(
     }
 }
 
-fn is_sequence_source(source: &StreamSource) -> bool {
+const fn is_sequence_source(source: &StreamSource) -> bool {
     matches!(source, StreamSource::Sequence(_))
 }
 
@@ -907,8 +893,7 @@ fn check_expr_field_refs(
                                 span,
                                 "W034",
                                 format!(
-                                    "reference to undeclared field '{}' on event '{}'",
-                                    member, event_name
+                                    "reference to undeclared field '{member}' on event '{event_name}'"
                                 ),
                                 format!("declared fields: {}{}", fields.join(", "), suggestion),
                             );
@@ -1036,7 +1021,7 @@ fn check_bare_ident_refs(
                 Severity::Warning,
                 span,
                 "W035",
-                format!("unknown field '{}' in {}", name, context),
+                format!("unknown field '{name}' in {context}"),
                 format!("available fields: {}{}", candidates.join(", "), suggestion),
             );
         }
@@ -1193,12 +1178,10 @@ fn check_boolean_expr(v: &mut Validator, expr: &Expr, context: &str, span: Span)
                 span,
                 "W061",
                 format!(
-                    "{} condition is a bare identifier '{}', expected a boolean expression",
-                    context, name
+                    "{context} condition is a bare identifier '{name}', expected a boolean expression"
                 ),
                 format!(
-                    "use a comparison like {} > value or {} == value",
-                    name, name
+                    "use a comparison like {name} > value or {name} == value"
                 ),
             );
         }
@@ -1213,12 +1196,10 @@ fn check_boolean_expr(v: &mut Validator, expr: &Expr, context: &str, span: Span)
                     span,
                     "W061",
                     format!(
-                        "{} condition is a field access '{}.{}', expected a boolean expression",
-                        context, obj, member
+                        "{context} condition is a field access '{obj}.{member}', expected a boolean expression"
                     ),
                     format!(
-                        "use a comparison like {}.{} > value or {}.{} == value",
-                        obj, member, obj, member
+                        "use a comparison like {obj}.{member} > value or {obj}.{member} == value"
                     ),
                 );
             }
@@ -1267,7 +1248,7 @@ fn check_duration_expr(v: &mut Validator, expr: &Expr, context: &str, span: Span
     }
 }
 
-fn literal_type_name(expr: &Expr) -> &'static str {
+const fn literal_type_name(expr: &Expr) -> &'static str {
     match expr {
         Expr::Int(_) => "integer",
         Expr::Float(_) => "float",
@@ -1462,11 +1443,8 @@ fn check_aggregate_items(v: &mut Validator, items: &[AggItem], span: Span) {
                             Severity::Error,
                             span,
                             "E071",
-                            format!(
-                                "aggregate function '{}' requires a field argument",
-                                func_name
-                            ),
-                            format!("usage: {}(field_name)", func_name),
+                            format!("aggregate function '{func_name}' requires a field argument"),
+                            format!("usage: {func_name}(field_name)"),
                         );
                     }
 
@@ -1477,10 +1455,9 @@ fn check_aggregate_items(v: &mut Validator, items: &[AggItem], span: Span) {
                             span,
                             "E072",
                             format!(
-                                "aggregate function '{}' requires two arguments: field and period",
-                                func_name
+                                "aggregate function '{func_name}' requires two arguments: field and period"
                             ),
-                            format!("usage: {}(field_name, period)", func_name),
+                            format!("usage: {func_name}(field_name, period)"),
                         );
                     }
                 }
@@ -1492,12 +1469,10 @@ fn check_aggregate_items(v: &mut Validator, items: &[AggItem], span: Span) {
                     span,
                     "E073",
                     format!(
-                        "bare field reference '{}' in aggregate without an aggregate function",
-                        name
+                        "bare field reference '{name}' in aggregate without an aggregate function"
                     ),
                     format!(
-                        "wrap in an aggregate function, e.g. last({}), first({}), or sum({})",
-                        name, name, name
+                        "wrap in an aggregate function, e.g. last({name}), first({name}), or sum({name})"
                     ),
                 );
             }
@@ -1575,14 +1550,14 @@ fn check_function_call(v: &mut Validator, name: &str, args_len: usize, span: Spa
     candidates.extend(v.symbols.function_names());
     let suggestion = suggest(name, &candidates);
     let hint = match suggestion {
-        Some(s) => format!("did you mean '{}'?", s),
+        Some(s) => format!("did you mean '{s}'?"),
         None => "check the function name or declare it with fn".to_string(),
     };
     v.emit_with_hint(
         Severity::Error,
         span,
         "E050",
-        format!("unknown function '{}'", name),
+        format!("unknown function '{name}'"),
         hint,
     );
 }
