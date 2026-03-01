@@ -313,6 +313,7 @@ struct StateMachineSnapshot {
     state: CoordinatorState,
 }
 
+#[derive(Debug)]
 pub struct RocksSnapshotBuilder {
     snapshot: StateMachineSnapshot,
 }

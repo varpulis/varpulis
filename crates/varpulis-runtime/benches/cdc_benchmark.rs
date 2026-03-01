@@ -56,7 +56,7 @@ fn bench_parse_change_text(c: &mut Criterion) {
                 let fields = generate_fields(num_cols);
                 black_box(cdc_event("orders", CdcOperation::Insert, fields));
                 black_box(text);
-            })
+            });
         });
     }
 
@@ -72,7 +72,7 @@ fn bench_parse_change_text(c: &mut Criterion) {
             ];
             black_box(cdc_event("orders", CdcOperation::Update, fields));
             black_box(update_text);
-        })
+        });
     });
 
     // DELETE event
@@ -83,7 +83,7 @@ fn bench_parse_change_text(c: &mut Criterion) {
             let fields = vec![("id".to_string(), Value::Int(7))];
             black_box(cdc_event("orders", CdcOperation::Delete, fields));
             black_box(delete_text);
-        })
+        });
     });
 
     group.finish();
@@ -100,7 +100,7 @@ fn bench_cdc_event_construction(c: &mut Criterion) {
             BenchmarkId::new("fields", num_cols),
             &fields,
             |b, fields| {
-                b.iter(|| black_box(cdc_event("orders", CdcOperation::Insert, fields.clone())))
+                b.iter(|| black_box(cdc_event("orders", CdcOperation::Insert, fields.clone())));
             },
         );
     }
@@ -129,7 +129,7 @@ fn bench_cdc_batch(c: &mut Criterion) {
                         ));
                     }
                     black_box(events)
-                })
+                });
             },
         );
     }
