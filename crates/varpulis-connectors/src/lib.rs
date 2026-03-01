@@ -32,6 +32,7 @@ mod redis;
 mod registry;
 mod rest_api;
 mod s3;
+pub mod schema;
 pub mod sink;
 pub mod types;
 
@@ -309,5 +310,31 @@ mod tests {
         } else {
             panic!("Expected Str value");
         }
+    }
+
+    #[test]
+    fn test_json_schema_generation() {
+        let schema = schemars::schema_for!(ConnectorConfig);
+        let json = serde_json::to_string_pretty(&schema).unwrap();
+        assert!(json.contains("connector_type"));
+        assert!(json.contains("url"));
+        assert!(json.contains("topic"));
+    }
+
+    #[test]
+    fn test_kafka_config_schema() {
+        let schema = schemars::schema_for!(KafkaConfig);
+        let json = serde_json::to_string_pretty(&schema).unwrap();
+        assert!(json.contains("brokers"));
+        assert!(json.contains("topic"));
+    }
+
+    #[test]
+    fn test_mqtt_config_schema() {
+        let schema = schemars::schema_for!(MqttConfig);
+        let json = serde_json::to_string_pretty(&schema).unwrap();
+        assert!(json.contains("broker"));
+        assert!(json.contains("port"));
+        assert!(json.contains("password"));
     }
 }

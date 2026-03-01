@@ -45,7 +45,7 @@ impl ConnectorFactory for RestApiFactory {
 inventory::submit! { &RestApiFactory as &dyn ConnectorFactory }
 
 /// REST API client configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct RestApiConfig {
     /// Base URL for all API requests.
     pub base_url: String,

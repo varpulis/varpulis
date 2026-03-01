@@ -149,7 +149,7 @@ inventory::submit! { &MqttFactory as &dyn ConnectorFactory }
 // =============================================================================
 
 /// MQTT configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct MqttConfig {
     /// MQTT broker hostname or IP address.
     pub broker: String,

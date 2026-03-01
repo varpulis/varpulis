@@ -18,7 +18,7 @@ use varpulis_core::Event;
 // =============================================================================
 
 /// PostgreSQL CDC configuration for logical replication.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct PostgresCdcConfig {
     /// Database host
     pub host: String,

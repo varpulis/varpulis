@@ -88,7 +88,7 @@ inventory::submit! { &NatsFactory as &dyn ConnectorFactory }
 // =============================================================================
 
 /// NATS configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct NatsConfig {
     /// NATS server URL(s), comma-separated.
     pub servers: String,

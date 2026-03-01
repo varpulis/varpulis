@@ -63,7 +63,7 @@ inventory::submit! { &KinesisFactory as &dyn ConnectorFactory }
 ///     .with_shard_iterator_type("LATEST")
 ///     .with_batch_size(100);
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct KinesisConfig {
     /// Kinesis stream name
     pub stream_name: String,
