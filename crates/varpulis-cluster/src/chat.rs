@@ -447,8 +447,7 @@ pub async fn chat_completion(
                                     None
                                 }
                             })
-                            .collect::<Vec<_>>()
-                            .join("")
+                            .collect::<String>()
                     })
                     .unwrap_or_default();
 

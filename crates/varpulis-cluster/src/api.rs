@@ -317,7 +317,7 @@ async fn rate_limit_middleware_fn(
     let connect_info = req
         .extensions()
         .get::<ConnectInfo<std::net::SocketAddr>>()
-        .cloned();
+        .copied();
     crate::rate_limit::rate_limit_middleware(connect_info, state.rate_limiter, req, next).await
 }
 
@@ -397,12 +397,11 @@ fn check_rbac(
     if let Some(role) = rbac.authenticate(api_key.as_deref()) {
         if role.has_permission(required) {
             return Ok(());
-        } else {
-            return Err(error_response(
-                StatusCode::FORBIDDEN,
-                "Insufficient permissions for this operation",
-            ));
         }
+        return Err(error_response(
+            StatusCode::FORBIDDEN,
+            "Insufficient permissions for this operation",
+        ));
     }
 
     // 2. Try Authorization: Bearer <jwt> header
@@ -413,12 +412,11 @@ fn check_rbac(
                 if let Some(role) = rbac.authenticate_jwt(token) {
                     if role.has_permission(required) {
                         return Ok(());
-                    } else {
-                        return Err(error_response(
-                            StatusCode::FORBIDDEN,
-                            "Insufficient permissions for this operation",
-                        ));
                     }
+                    return Err(error_response(
+                        StatusCode::FORBIDDEN,
+                        "Insufficient permissions for this operation",
+                    ));
                 }
             }
         }
@@ -430,12 +428,11 @@ fn check_rbac(
             if let Some(role) = rbac.authenticate_jwt(&token) {
                 if role.has_permission(required) {
                     return Ok(());
-                } else {
-                    return Err(error_response(
-                        StatusCode::FORBIDDEN,
-                        "Insufficient permissions for this operation",
-                    ));
                 }
+                return Err(error_response(
+                    StatusCode::FORBIDDEN,
+                    "Insufficient permissions for this operation",
+                ));
             }
         }
     }

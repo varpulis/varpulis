@@ -844,7 +844,7 @@ mod tests {
             .missing_field_warned
             .store(true, std::sync::atomic::Ordering::Relaxed);
 
-        let cloned = group.clone();
+        let cloned = group;
         assert_eq!(cloned.pipeline_name, "p1");
         assert_eq!(cloned.replica_names.len(), 2);
         assert!(cloned

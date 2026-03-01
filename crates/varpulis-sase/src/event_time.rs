@@ -146,11 +146,10 @@ impl EventTimeManager {
                     }
 
                     return EventTimeResult::TooLate { lateness };
-                } else {
-                    // Late but acceptable
-                    self.late_events_accepted += 1;
-                    return EventTimeResult::Late { lateness };
                 }
+                // Late but acceptable
+                self.late_events_accepted += 1;
+                return EventTimeResult::Late { lateness };
             }
         }
 
