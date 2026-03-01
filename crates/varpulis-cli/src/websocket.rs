@@ -259,7 +259,7 @@ async fn handle_load_file(path: &str, state: &Arc<RwLock<ServerState>>) -> WsMes
         Err(e) => WsMessage::LoadResult {
             success: false,
             streams_loaded: 0,
-            error: Some(e),
+            error: Some(e.to_string()),
         },
     }
 }

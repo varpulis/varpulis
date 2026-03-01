@@ -175,17 +175,22 @@ impl std::fmt::Display for PipelineStatus {
 }
 
 /// Errors from tenant operations
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum TenantError {
     /// Tenant not found
+    #[error("tenant not found: {0}")]
     NotFound(String),
     /// Pipeline not found
+    #[error("pipeline not found: {0}")]
     PipelineNotFound(String),
     /// Quota exceeded
+    #[error("quota exceeded: {0}")]
     QuotaExceeded(String),
     /// Rate limit exceeded
+    #[error("rate limit exceeded")]
     RateLimitExceeded,
     /// Backpressure: queue depth exceeds configured maximum
+    #[error("queue depth {current} exceeds maximum {max}")]
     BackpressureExceeded {
         /// Current queue depth
         current: u64,
@@ -193,31 +198,15 @@ pub enum TenantError {
         max: u64,
     },
     /// Parse error in VPL source
-    ParseError(String),
+    #[error("parse error: {0}")]
+    ParseError(#[from] varpulis_parser::ParseError),
     /// Engine error
-    EngineError(String),
+    #[error("engine error: {0}")]
+    EngineError(#[from] crate::engine::error::EngineError),
     /// Tenant already exists
+    #[error("tenant already exists: {0}")]
     AlreadyExists(String),
 }
-
-impl std::fmt::Display for TenantError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TenantError::NotFound(id) => write!(f, "tenant not found: {id}"),
-            TenantError::PipelineNotFound(id) => write!(f, "pipeline not found: {id}"),
-            TenantError::QuotaExceeded(msg) => write!(f, "quota exceeded: {msg}"),
-            TenantError::RateLimitExceeded => write!(f, "rate limit exceeded"),
-            TenantError::BackpressureExceeded { current, max } => {
-                write!(f, "queue depth {current} exceeds maximum {max}")
-            }
-            TenantError::ParseError(msg) => write!(f, "parse error: {msg}"),
-            TenantError::EngineError(msg) => write!(f, "engine error: {msg}"),
-            TenantError::AlreadyExists(id) => write!(f, "tenant already exists: {id}"),
-        }
-    }
-}
-
-impl std::error::Error for TenantError {}
 
 /// A single tenant with its pipelines and quotas
 pub struct Tenant {
@@ -277,8 +266,7 @@ impl Tenant {
         }
 
         // Parse the VPL source
-        let program =
-            varpulis_parser::parse(&source).map_err(|e| TenantError::ParseError(e.to_string()))?;
+        let program = varpulis_parser::parse(&source)?;
 
         // Check streams quota
         let stream_count = program
@@ -300,9 +288,7 @@ impl Tenant {
         if let Some(m) = prometheus_metrics {
             engine = engine.with_metrics(m);
         }
-        engine
-            .load(&program)
-            .map_err(|e| TenantError::EngineError(e.to_string()))?;
+        engine.load(&program)?;
 
         // Build context orchestrator if the program declares contexts
         let orchestrator = if engine.has_contexts() {
@@ -315,18 +301,16 @@ impl Tenant {
             ) {
                 Ok(orch) => Some(orch),
                 Err(e) => {
-                    return Err(TenantError::EngineError(format!(
+                    return Err(crate::engine::error::EngineError::Pipeline(format!(
                         "Failed to build context orchestrator: {}",
                         e
-                    )));
+                    ))
+                    .into());
                 }
             }
         } else {
             // No contexts - connect sinks on the main engine
-            engine
-                .connect_sinks()
-                .await
-                .map_err(TenantError::EngineError)?;
+            engine.connect_sinks().await?;
             None
         };
 
@@ -340,15 +324,21 @@ impl Tenant {
             let mut registry = crate::connector::ManagedConnectorRegistry::from_configs(
                 engine.connector_configs(),
             )
-            .map_err(|e| TenantError::EngineError(format!("Registry build error: {}", e)))?;
+            .map_err(|e| {
+                TenantError::EngineError(crate::engine::error::EngineError::Pipeline(format!(
+                    "Registry build error: {}",
+                    e
+                )))
+            })?;
 
             for binding in &bindings {
                 let config = engine.get_connector(&binding.connector_name).cloned();
                 let Some(config) = config else {
-                    return Err(TenantError::EngineError(format!(
+                    return Err(crate::engine::error::EngineError::Pipeline(format!(
                         "Connector '{}' referenced in .from() but not declared",
                         binding.connector_name
-                    )));
+                    ))
+                    .into());
                 };
 
                 let topic = binding
@@ -370,7 +360,13 @@ impl Tenant {
                         &binding.extra_params,
                     )
                     .await
-                    .map_err(|e| TenantError::EngineError(format!("Source start error: {}", e)))?;
+                    .map_err(|e| -> TenantError {
+                        crate::engine::error::EngineError::Pipeline(format!(
+                            "Source start error: {}",
+                            e
+                        ))
+                        .into()
+                    })?;
 
                 // Create shared sinks for this connector
                 let sink_keys = engine.sink_keys_for_connector(&binding.connector_name);
@@ -519,10 +515,11 @@ impl Tenant {
             .ok_or_else(|| TenantError::PipelineNotFound(pipeline_id.to_string()))?;
 
         if pipeline.status != PipelineStatus::Running {
-            return Err(TenantError::EngineError(format!(
+            return Err(crate::engine::error::EngineError::Pipeline(format!(
                 "pipeline is {}",
                 pipeline.status
-            )));
+            ))
+            .into());
         }
 
         if let Some(ref orchestrator) = pipeline.orchestrator {
@@ -536,24 +533,21 @@ impl Tenant {
                         orchestrator
                             .process(event)
                             .await
-                            .map_err(|e| TenantError::EngineError(e.to_string()))?;
+                            .map_err(|e| -> TenantError {
+                                crate::engine::error::EngineError::Pipeline(e.to_string()).into()
+                            })?;
                     }
                 }
                 Err(crate::context::DispatchError::ChannelClosed(_)) => {
-                    return Err(TenantError::EngineError(
+                    return Err(crate::engine::error::EngineError::Pipeline(
                         "Context channel closed".to_string(),
-                    ));
+                    )
+                    .into());
                 }
             }
         } else {
             // Direct engine processing (no contexts, zero overhead)
-            pipeline
-                .engine
-                .lock()
-                .await
-                .process(event)
-                .await
-                .map_err(|e| TenantError::EngineError(e.to_string()))?;
+            pipeline.engine.lock().await.process(event).await?;
         }
 
         // Drain output events from the channel and broadcast to log subscribers
@@ -608,7 +602,7 @@ impl Tenant {
         let mut engine = pipeline.engine.lock().await;
         engine
             .restore_checkpoint(checkpoint)
-            .map_err(|e| TenantError::EngineError(e.to_string()))?;
+            .map_err(crate::engine::error::EngineError::from)?;
         Ok(())
     }
 
@@ -618,20 +612,14 @@ impl Tenant {
         pipeline_id: &str,
         source: String,
     ) -> Result<(), TenantError> {
-        let program =
-            varpulis_parser::parse(&source).map_err(|e| TenantError::ParseError(e.to_string()))?;
+        let program = varpulis_parser::parse(&source)?;
 
         let pipeline = self
             .pipelines
             .get_mut(pipeline_id)
             .ok_or_else(|| TenantError::PipelineNotFound(pipeline_id.to_string()))?;
 
-        pipeline
-            .engine
-            .lock()
-            .await
-            .reload(&program)
-            .map_err(|e| TenantError::EngineError(e.to_string()))?;
+        pipeline.engine.lock().await.reload(&program)?;
         pipeline.source = source;
 
         Ok(())
@@ -1060,14 +1048,11 @@ impl TenantManager {
     }
 
     fn restore_pipeline_from_snapshot(snapshot: PipelineSnapshot) -> Result<Pipeline, TenantError> {
-        let program = varpulis_parser::parse(&snapshot.source)
-            .map_err(|e| TenantError::ParseError(e.to_string()))?;
+        let program = varpulis_parser::parse(&snapshot.source)?;
 
         let (output_tx, output_rx) = mpsc::channel(1000);
         let mut engine = Engine::new(output_tx);
-        engine
-            .load(&program)
-            .map_err(|e| TenantError::EngineError(e.to_string()))?;
+        engine.load(&program)?;
 
         let (log_tx, _) = tokio::sync::broadcast::channel(256);
         Ok(Pipeline {
@@ -1440,7 +1425,8 @@ mod tests {
     fn test_tenant_error_display() {
         assert!(format!("{}", TenantError::NotFound("t1".into())).contains("t1"));
         assert!(format!("{}", TenantError::RateLimitExceeded).contains("rate limit"));
-        assert!(format!("{}", TenantError::ParseError("bad".into())).contains("bad"));
+        let engine_err = crate::engine::error::EngineError::Compilation("bad".into());
+        assert!(format!("{}", TenantError::EngineError(engine_err)).contains("bad"));
     }
 
     #[test]

@@ -163,6 +163,7 @@ mod pulsar_impl {
     }
 
     impl PulsarSource {
+        /// Creates a new Pulsar source connector.
         pub fn new(name: &str, config: PulsarConfig) -> Self {
             Self {
                 name: name.to_string(),
@@ -284,6 +285,7 @@ mod pulsar_impl {
     }
 
     impl PulsarSink {
+        /// Creates a new Pulsar sink connector.
         pub fn new(name: &str, config: PulsarConfig) -> Self {
             Self {
                 name: name.to_string(),

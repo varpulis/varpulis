@@ -147,6 +147,7 @@ pub use context::{
     CheckpointAck, CheckpointBarrier, CheckpointCoordinator, ContextConfig, ContextMap,
     ContextMessage, ContextOrchestrator, ContextRuntime, DispatchError, EventTypeRouter,
 };
+pub use engine::error::EngineError;
 pub use engine::{Engine, ReloadReport, SourceBinding};
 pub use event::{Event, SharedEvent};
 pub use event_file::StreamingEventReader;

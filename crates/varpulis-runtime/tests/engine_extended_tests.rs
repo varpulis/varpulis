@@ -1226,7 +1226,7 @@ async fn map_operation_returns_error() {
     let result = engine.load(&program);
     assert!(result.is_err(), ".map() should return an error");
     assert!(
-        result.unwrap_err().contains(".map()"),
+        result.unwrap_err().to_string().contains(".map()"),
         "Error should mention .map()"
     );
 }

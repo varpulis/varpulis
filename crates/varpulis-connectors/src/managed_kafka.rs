@@ -34,6 +34,7 @@ pub struct ManagedKafkaConnector {
 }
 
 impl ManagedKafkaConnector {
+    /// Creates a new managed Kafka connector.
     pub fn new(name: &str, config: KafkaConfig) -> Self {
         Self {
             connector_name: name.to_string(),

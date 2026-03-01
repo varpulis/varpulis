@@ -202,7 +202,7 @@ async fn let_decl_rejects_reassignment_in_load() {
         result.is_err(),
         "Reassigning let variable should fail at load"
     );
-    assert!(result.unwrap_err().contains("immutable"));
+    assert!(result.unwrap_err().to_string().contains("immutable"));
 }
 
 #[tokio::test]
@@ -798,7 +798,7 @@ async fn order_by_returns_error() {
     let mut engine = Engine::new(tx);
     let result = engine.load(&program);
     assert!(result.is_err(), ".order_by() should be unsupported");
-    assert!(result.unwrap_err().contains(".order_by()"));
+    assert!(result.unwrap_err().to_string().contains(".order_by()"));
 }
 
 #[tokio::test]
@@ -812,7 +812,7 @@ async fn collect_returns_error() {
     let mut engine = Engine::new(tx);
     let result = engine.load(&program);
     assert!(result.is_err(), ".collect() should be unsupported");
-    assert!(result.unwrap_err().contains(".collect()"));
+    assert!(result.unwrap_err().to_string().contains(".collect()"));
 }
 
 // ===========================================================================

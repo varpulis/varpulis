@@ -212,7 +212,7 @@ async fn test_forecast_without_sequence_errors() {
         ".forecast() on a non-sequence stream should produce a load error"
     );
 
-    let err_msg = result.unwrap_err();
+    let err_msg = result.unwrap_err().to_string();
     assert!(
         err_msg.contains("sequence") || err_msg.contains("followed-by"),
         "Error message should mention that a sequence pattern is required, got: {}",
