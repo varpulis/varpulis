@@ -2,6 +2,7 @@
 
 use async_trait::async_trait;
 use indexmap::IndexMap;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use varpulis_core::Event;
@@ -28,7 +29,7 @@ use varpulis_core::Event;
 ///     .with_property("qos", "1")
 ///     .with_property("client_id", "varpulis-prod");
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ConnectorConfig {
     /// Connector type identifier (e.g., "mqtt", "kafka", "http", "file")
     pub connector_type: String,
@@ -237,7 +238,7 @@ pub trait SinkConnector: Send + Sync {
 }
 
 /// Health status returned by connector health checks.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ConnectorHealth {
     /// Whether the connector is operational.
     pub healthy: bool,

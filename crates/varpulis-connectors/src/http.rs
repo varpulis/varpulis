@@ -139,7 +139,7 @@ impl SinkConnector for HttpSink {
 // =============================================================================
 
 /// HTTP webhook configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct HttpWebhookConfig {
     /// Port to listen on
     pub port: u16,

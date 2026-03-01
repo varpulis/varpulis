@@ -87,6 +87,17 @@ impl<'de> serde::Deserialize<'de> for SecretString {
     }
 }
 
+impl schemars::JsonSchema for SecretString {
+    fn schema_name() -> String {
+        "SecretString".to_string()
+    }
+
+    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+        // Appears as a plain string in the schema
+        String::json_schema(gen)
+    }
+}
+
 /// Constant-time string comparison to prevent timing attacks.
 ///
 /// Unlike a naive implementation, this function does **not** short-circuit on
