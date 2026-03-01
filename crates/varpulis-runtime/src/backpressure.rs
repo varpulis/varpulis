@@ -82,6 +82,7 @@ impl Default for StageBufferMetrics {
 }
 
 /// A stage buffer that wraps an mpsc sender with a backpressure strategy.
+#[derive(Debug)]
 pub struct StageBuffer {
     config: StageBufferConfig,
     tx: mpsc::Sender<SharedEvent>,

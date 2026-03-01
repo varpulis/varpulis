@@ -152,6 +152,7 @@ pub trait AggregateFunc: Send + Sync {
 }
 
 /// Count aggregation
+#[derive(Debug)]
 pub struct Count;
 
 impl AggregateFunc for Count {
@@ -173,6 +174,7 @@ impl AggregateFunc for Count {
 }
 
 /// Sum aggregation (SIMD-optimized)
+#[derive(Debug)]
 pub struct Sum;
 
 impl AggregateFunc for Sum {
@@ -206,6 +208,7 @@ impl AggregateFunc for Sum {
 }
 
 /// Average aggregation (SIMD-optimized)
+#[derive(Debug)]
 pub struct Avg;
 
 impl AggregateFunc for Avg {
@@ -250,6 +253,7 @@ impl AggregateFunc for Avg {
 }
 
 /// Min aggregation (SIMD-optimized)
+#[derive(Debug)]
 pub struct Min;
 
 impl AggregateFunc for Min {
@@ -290,6 +294,7 @@ impl AggregateFunc for Min {
 }
 
 /// Max aggregation (SIMD-optimized)
+#[derive(Debug)]
 pub struct Max;
 
 impl AggregateFunc for Max {
@@ -330,6 +335,7 @@ impl AggregateFunc for Max {
 }
 
 /// Standard deviation aggregation (Welford's online algorithm for single-pass)
+#[derive(Debug)]
 pub struct StdDev;
 
 impl AggregateFunc for StdDev {
@@ -392,6 +398,7 @@ impl AggregateFunc for StdDev {
 }
 
 /// First value aggregation
+#[derive(Debug)]
 pub struct First;
 
 impl AggregateFunc for First {
@@ -419,6 +426,7 @@ impl AggregateFunc for First {
 }
 
 /// Last value aggregation
+#[derive(Debug)]
 pub struct Last;
 
 impl AggregateFunc for Last {
@@ -447,6 +455,7 @@ impl AggregateFunc for Last {
 
 /// Count distinct values aggregation
 /// Optimized to store only hashes instead of cloning full Values
+#[derive(Debug)]
 pub struct CountDistinct;
 
 impl AggregateFunc for CountDistinct {
@@ -490,6 +499,7 @@ impl AggregateFunc for CountDistinct {
 /// Exponential Moving Average aggregation
 /// EMA = price * k + EMA(previous) * (1 - k)
 /// where k = 2 / (n + 1)
+#[derive(Debug)]
 pub struct Ema {
     pub period: usize,
 }
@@ -510,6 +520,18 @@ pub struct ExprAggregate {
     pub op: AggBinOp,
     pub right: Box<dyn AggregateFunc>,
     pub right_field: Option<String>,
+}
+
+impl std::fmt::Debug for ExprAggregate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExprAggregate")
+            .field("left", &self.left.name())
+            .field("left_field", &self.left_field)
+            .field("op", &self.op)
+            .field("right", &self.right.name())
+            .field("right_field", &self.right_field)
+            .finish()
+    }
 }
 
 impl ExprAggregate {
@@ -736,6 +758,7 @@ impl AggregateFunc for Ema {
 /// - `Percentile::new(0.5)` = median
 /// - `Percentile::new(0.95)` = p95
 /// - `Percentile::new(0.99)` = p99
+#[derive(Debug)]
 pub struct Percentile {
     pub quantile: f64,
     label: String,
@@ -801,6 +824,7 @@ impl AggregateFunc for Percentile {
 }
 
 /// Median aggregation (alias for Percentile(0.5))
+#[derive(Debug)]
 pub struct Median;
 
 impl AggregateFunc for Median {
@@ -818,6 +842,7 @@ impl AggregateFunc for Median {
 }
 
 /// P50 aggregation (alias for Percentile(0.5))
+#[derive(Debug)]
 pub struct P50;
 
 impl AggregateFunc for P50 {
@@ -835,6 +860,7 @@ impl AggregateFunc for P50 {
 }
 
 /// P95 aggregation (alias for Percentile(0.95))
+#[derive(Debug)]
 pub struct P95;
 
 impl AggregateFunc for P95 {
@@ -852,6 +878,7 @@ impl AggregateFunc for P95 {
 }
 
 /// P99 aggregation (alias for Percentile(0.99))
+#[derive(Debug)]
 pub struct P99;
 
 impl AggregateFunc for P99 {
@@ -871,6 +898,21 @@ impl AggregateFunc for P99 {
 /// Aggregator that can apply multiple aggregations
 pub struct Aggregator {
     aggregations: Vec<(String, Box<dyn AggregateFunc>, Option<String>)>,
+}
+
+impl std::fmt::Debug for Aggregator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Aggregator")
+            .field(
+                "aggregations",
+                &self
+                    .aggregations
+                    .iter()
+                    .map(|(alias, func, field)| (alias, func.name(), field))
+                    .collect::<Vec<_>>(),
+            )
+            .finish()
+    }
 }
 
 impl Aggregator {

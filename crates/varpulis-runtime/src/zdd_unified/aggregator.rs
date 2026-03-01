@@ -76,6 +76,7 @@ pub struct ZddQueryRegistration {
 }
 
 /// The ZDD unified aggregator
+#[derive(Debug)]
 pub struct ZddAggregator {
     /// Configuration
     config: ZddConfig,

@@ -29,7 +29,7 @@ pub struct EngineConfig {
 }
 
 /// User-defined function
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct UserFunction {
     pub name: String,
     pub params: Vec<(String, varpulis_core::Type)>, // (name, type)

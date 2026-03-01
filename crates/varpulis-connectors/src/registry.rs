@@ -39,6 +39,12 @@ pub struct ConnectorRegistry {
     sinks: IndexMap<String, Box<dyn SinkConnector>>,
 }
 
+impl std::fmt::Debug for ConnectorRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectorRegistry").finish_non_exhaustive()
+    }
+}
+
 impl ConnectorRegistry {
     /// Create an empty connector registry.
     pub fn new() -> Self {

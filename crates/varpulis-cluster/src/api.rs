@@ -119,7 +119,7 @@ pub fn cluster_routes_with_raft(
 }
 
 /// Shared application state for all cluster API routes.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct AppState {
     pub coordinator: SharedCoordinator,
     pub rbac: Arc<RbacConfig>,

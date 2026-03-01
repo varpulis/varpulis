@@ -26,6 +26,13 @@ pub struct ManagedConnectorRegistry {
     connectors: FxHashMap<String, Box<dyn ManagedConnector>>,
 }
 
+impl std::fmt::Debug for ManagedConnectorRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ManagedConnectorRegistry")
+            .finish_non_exhaustive()
+    }
+}
+
 impl ManagedConnectorRegistry {
     /// Build the registry from the engine's declared connector configs.
     pub fn from_configs(

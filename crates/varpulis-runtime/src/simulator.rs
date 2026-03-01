@@ -76,6 +76,7 @@ impl Default for SimulatorConfig {
 }
 
 /// HVAC Building Simulator
+#[derive(Debug)]
 pub struct Simulator {
     config: SimulatorConfig,
     sender: mpsc::Sender<Event>,

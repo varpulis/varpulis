@@ -75,6 +75,7 @@ pub enum AuditOutcome {
 // ---------------------------------------------------------------------------
 
 /// Thread-safe audit logger that writes JSON-lines to a file.
+#[derive(Debug)]
 pub struct AuditLogger {
     writer: Mutex<tokio::io::BufWriter<tokio::fs::File>>,
     recent: RwLock<Vec<AuditEntry>>,

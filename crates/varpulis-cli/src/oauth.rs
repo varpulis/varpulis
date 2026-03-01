@@ -135,6 +135,7 @@ pub struct Claims {
 // ---------------------------------------------------------------------------
 
 /// GitHub OAuth 2.0 auth provider.
+#[derive(Debug)]
 pub struct GitHubOAuth {
     pub client_id: String,
     pub client_secret: String,
@@ -239,6 +240,7 @@ struct GitHubUser {
 /// Tracks invalidated JWT tokens (logout).
 /// In production this would be backed by Redis/DB, but for MVP an in-memory
 /// set is sufficient.
+#[derive(Debug)]
 pub struct SessionStore {
     /// Set of invalidated JTIs (JWT IDs) or raw token hashes.
     revoked: HashMap<String, std::time::Instant>,
@@ -280,6 +282,7 @@ impl SessionStore {
 
 pub type SharedOAuthState = Arc<OAuthState>;
 
+#[derive(Debug)]
 pub struct OAuthState {
     pub config: OAuthConfig,
     pub sessions: RwLock<SessionStore>,

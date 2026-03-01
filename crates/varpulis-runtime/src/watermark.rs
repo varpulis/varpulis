@@ -13,11 +13,13 @@ use std::time::Instant;
 ///
 /// The effective watermark is the minimum watermark across all registered sources,
 /// ensuring no source's events are prematurely considered late.
+#[derive(Debug)]
 pub struct PerSourceWatermarkTracker {
     sources: FxHashMap<String, SourceWatermark>,
     effective_watermark: Option<DateTime<Utc>>,
 }
 
+#[derive(Debug)]
 struct SourceWatermark {
     watermark: Option<DateTime<Utc>>,
     max_timestamp: Option<DateTime<Utc>>,

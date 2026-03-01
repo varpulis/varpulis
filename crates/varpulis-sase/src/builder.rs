@@ -5,6 +5,7 @@ use std::time::Duration;
 use varpulis_core::Value;
 
 /// Builder for SASE patterns
+#[derive(Debug)]
 pub struct PatternBuilder;
 
 impl PatternBuilder {

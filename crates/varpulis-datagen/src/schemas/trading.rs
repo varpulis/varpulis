@@ -14,6 +14,7 @@ const SYMBOLS: &[&str] = &[
 ];
 const EXCHANGES: &[&str] = &["NYSE", "NASDAQ", "BATS", "IEX"];
 
+#[derive(Debug)]
 pub struct TradingSchema {
     rng: StdRng,
     prices: HashMap<String, f64>,

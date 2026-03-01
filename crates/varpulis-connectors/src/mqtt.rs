@@ -236,6 +236,12 @@ mod mqtt_impl {
         client: Option<AsyncClient>,
     }
 
+    impl std::fmt::Debug for MqttSource {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("MqttSource").finish_non_exhaustive()
+        }
+    }
+
     impl MqttSource {
         /// Create a new MQTT source connector with the given configuration.
         pub fn new(name: &str, config: MqttConfig) -> Self {
@@ -386,6 +392,12 @@ mod mqtt_impl {
         name: String,
         config: MqttConfig,
         client: Option<AsyncClient>,
+    }
+
+    impl std::fmt::Debug for MqttSink {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("MqttSink").finish_non_exhaustive()
+        }
     }
 
     impl MqttSink {

@@ -54,6 +54,7 @@ impl ConnectorFactory for ConsoleFactory {
 inventory::submit! { &ConsoleFactory as &dyn ConnectorFactory }
 
 /// Console source - reads events from stdin (for testing)
+#[derive(Debug)]
 pub struct ConsoleSource {
     name: String,
     running: bool,
@@ -93,6 +94,7 @@ impl SourceConnector for ConsoleSource {
 }
 
 /// Console sink - writes events to stdout
+#[derive(Debug)]
 pub struct ConsoleSink {
     name: String,
     pretty: bool,

@@ -19,6 +19,7 @@ use std::sync::Arc;
 /// Supports both row-oriented and columnar access patterns:
 /// - `flush_shared()`: Row-oriented access for backward compatibility
 /// - `flush_columnar()`: Columnar access for SIMD-optimized aggregations
+#[derive(Debug)]
 pub struct TumblingWindow {
     duration: Duration,
     /// Columnar storage for events (pub(crate) for checkpoint access)
@@ -148,6 +149,7 @@ impl ColumnarAccess for TumblingWindow {
 }
 
 /// A sliding window that maintains overlapping windows
+#[derive(Debug)]
 pub struct SlidingWindow {
     window_size: Duration,
     slide_interval: Duration,
@@ -267,6 +269,7 @@ impl SlidingWindow {
 /// Supports both row-oriented and columnar access patterns:
 /// - `flush_shared()`: Row-oriented access for backward compatibility
 /// - `flush_columnar()`: Columnar access for SIMD-optimized aggregations
+#[derive(Debug)]
 pub struct CountWindow {
     count: usize,
     columnar: ColumnarBuffer,
@@ -353,6 +356,7 @@ impl ColumnarAccess for CountWindow {
 }
 
 /// A sliding count window that maintains overlapping windows
+#[derive(Debug)]
 pub struct SlidingCountWindow {
     window_size: usize,
     slide_size: usize,
@@ -436,6 +440,7 @@ impl SlidingCountWindow {
 /// Supports both row-oriented and columnar access patterns:
 /// - `flush_shared()`: Row-oriented access for backward compatibility
 /// - `flush_columnar()`: Columnar access for SIMD-optimized aggregations
+#[derive(Debug)]
 pub struct SessionWindow {
     gap: Duration,
     /// Columnar storage for events (pub(crate) for checkpoint access)
@@ -562,6 +567,7 @@ impl ColumnarAccess for SessionWindow {
 }
 
 /// A partitioned session window that maintains separate sessions per partition key
+#[derive(Debug)]
 pub struct PartitionedSessionWindow {
     partition_key: String,
     gap: Duration,
@@ -707,6 +713,7 @@ impl PartitionedSessionWindow {
 }
 
 /// A partitioned tumbling window that maintains separate windows per partition key
+#[derive(Debug)]
 pub struct PartitionedTumblingWindow {
     partition_key: String,
     duration: Duration,
@@ -820,6 +827,7 @@ impl PartitionedTumblingWindow {
 }
 
 /// A partitioned sliding window that maintains separate windows per partition key
+#[derive(Debug)]
 pub struct PartitionedSlidingWindow {
     partition_key: String,
     window_size: Duration,
@@ -1208,6 +1216,7 @@ impl<T: Clone> PartitionedPreviousValueTracker<T> {
 /// - Getting aggregates: O(1)
 ///
 /// This is ~10-100x faster than recomputing for large windows.
+#[derive(Debug)]
 pub struct IncrementalSlidingWindow {
     window_size: Duration,
     slide_interval: Duration,

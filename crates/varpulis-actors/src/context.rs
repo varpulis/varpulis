@@ -31,6 +31,12 @@ pub struct ActorContext<A: Actor> {
     self_sender: MailboxSender<A>,
 }
 
+impl<A: Actor> std::fmt::Debug for ActorContext<A> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ActorContext").finish_non_exhaustive()
+    }
+}
+
 impl<A: Actor> ActorContext<A> {
     /// Create a new actor context.
     pub(crate) const fn new(

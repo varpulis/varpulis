@@ -126,6 +126,18 @@ pub struct UdfRegistry {
     aggregate_udfs: FxHashMap<String, Arc<dyn AggregateUDF>>,
 }
 
+impl std::fmt::Debug for UdfRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UdfRegistry")
+            .field("scalar_udfs", &self.scalar_udfs.keys().collect::<Vec<_>>())
+            .field(
+                "aggregate_udfs",
+                &self.aggregate_udfs.keys().collect::<Vec<_>>(),
+            )
+            .finish_non_exhaustive()
+    }
+}
+
 impl UdfRegistry {
     pub fn new() -> Self {
         Self {

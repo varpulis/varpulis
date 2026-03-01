@@ -62,6 +62,7 @@ impl Default for SessionConfig {
 }
 
 /// In-memory user + session store backed by a JSON file.
+#[derive(Debug)]
 pub struct UserStore {
     users: HashMap<String, StoredUser>,
     sessions: HashMap<String, SessionRecord>,
