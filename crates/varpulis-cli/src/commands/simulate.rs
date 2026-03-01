@@ -16,9 +16,9 @@ use varpulis_runtime::SharedEvent; // PERF: Zero-copy event sharing
 pub async fn run_simulation(
     program_path: &PathBuf,
     events_path: &PathBuf,
-    immediate: bool,
+    timed: bool,
     verbose: bool,
-    preload: bool,
+    streaming: bool,
     workers: Option<usize>,
     partition_by: Option<&str>,
     quiet: bool,
@@ -38,18 +38,18 @@ pub async fn run_simulation(
         .build_global()
         .ok(); // Ignore if already initialized
 
-    let mode_str = if !immediate {
-        "timed"
-    } else if preload {
+    let mode_str = if timed {
+        "timed (real-time replay)"
+    } else if streaming {
         if num_workers > 1 {
-            "immediate (preload, parallel)"
+            "streaming, parallel"
         } else {
-            "immediate (preload)"
+            "streaming"
         }
     } else if num_workers > 1 {
-        "immediate (streaming, parallel)"
+        "preload, parallel"
     } else {
-        "immediate (streaming)"
+        "preload"
     };
 
     println!("Varpulis Event Simulation");
@@ -154,8 +154,8 @@ pub async fn run_simulation(
     let total_events_processed = Arc::new(AtomicU64::new(0));
 
     // Process events based on mode
-    if immediate && preload && num_workers > 1 {
-        // Parallel preload mode - partition events and process in parallel
+    if !timed && !streaming && num_workers > 1 {
+        // Parallel preload mode (default with multiple workers)
         let events_source = std::fs::read_to_string(events_path)?;
         let events = EventFileParser::parse(&events_source)
             .map_err(|e| anyhow::anyhow!("Event file error: {e}"))?;
@@ -264,8 +264,8 @@ pub async fn run_simulation(
         })
         .await
         .map_err(|e| anyhow::anyhow!("Spawn blocking failed: {e}"))?;
-    } else if immediate && preload {
-        // Single-threaded preload mode
+    } else if !timed && !streaming {
+        // Single-threaded preload mode (default)
         let events_source = std::fs::read_to_string(events_path)?;
         let events = EventFileParser::parse(&events_source)
             .map_err(|e| anyhow::anyhow!("Event file error: {e}"))?;
@@ -328,8 +328,8 @@ pub async fn run_simulation(
                 batch_idx += 1;
             }
         }
-    } else if immediate && num_workers > 1 {
-        // Parallel streaming mode
+    } else if streaming && num_workers > 1 {
+        // Parallel streaming mode (--streaming with multiple workers)
         const BATCH_SIZE: usize = 50000;
 
         let mut event_reader = StreamingEventReader::from_file(events_path)
@@ -457,8 +457,8 @@ pub async fn run_simulation(
         }
 
         info!("Streamed {} events from file", event_reader.events_read());
-    } else if immediate {
-        // Single-threaded streaming mode
+    } else if streaming {
+        // Single-threaded streaming mode (--streaming for huge files)
         const BATCH_SIZE: usize = 10000;
         let use_sync = !engine.has_sink_operations();
 
@@ -511,7 +511,7 @@ pub async fn run_simulation(
 
         info!("Streamed {} events from file", event_reader.events_read());
     } else {
-        // Timed mode - load all events for timing control
+        // Timed mode (--timed) - replay events with real-time delays
         let events_source = std::fs::read_to_string(events_path)?;
         let events = EventFileParser::parse(&events_source)
             .map_err(|e| anyhow::anyhow!("Event file error: {e}"))?;
@@ -568,7 +568,7 @@ pub async fn run_simulation(
     let elapsed = start.elapsed();
 
     // Get total events processed (from parallel counter or single engine)
-    let events_processed = if num_workers > 1 && immediate {
+    let events_processed = if num_workers > 1 && !timed {
         total_events_processed.load(Ordering::Relaxed)
     } else {
         engine.metrics().events_processed

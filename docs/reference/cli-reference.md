@@ -219,7 +219,7 @@ varpulis server \
 Play events from an event file through a VPL program.
 
 ```bash
-varpulis simulate --program rules.vpl --events data.evt --immediate --workers 8
+varpulis simulate --program rules.vpl --events data.evt --workers 8
 ```
 
 **Options:**
@@ -228,9 +228,9 @@ varpulis simulate --program rules.vpl --events data.evt --immediate --workers 8
 |--------|---------|-------------|
 | `-p, --program <PATH>` | required | Path to the VPL program (.vpl) |
 | `-e, --events <PATH>` | required | Path to the event file (.evt) |
-| `--immediate` | disabled | Run without timing delays (batch mode) |
+| `--timed` | disabled | Replay events with real-time timing delays |
+| `--streaming` | disabled | Read events line-by-line instead of preloading (for huge files) |
 | `-v, --verbose` | disabled | Show each event as it's processed |
-| `--preload` | disabled | Load all events into memory before processing |
 | `-w, --workers <N>` | CPU cores | Number of worker threads for parallel processing |
 | `--partition-by <FIELD>` | auto | Field to use for partitioning events |
 
@@ -246,12 +246,12 @@ varpulis simulate --program rules.vpl --events data.evt --immediate --workers 8
 
 **Processing Modes:**
 
-| Mode | Flags | Description |
-|------|-------|-------------|
-| Timed | (none) | Events played at recorded timing intervals |
-| Immediate | `--immediate` | Events processed as fast as possible |
-| Preload | `--immediate --preload` | Load all events to memory, then process |
-| Parallel | `--immediate --workers N` | Partition and process in parallel |
+| Mode | Flag | Description |
+|------|------|-------------|
+| Fast (default) | (none) | Load all events into memory, process as fast as possible |
+| Timed | `--timed` | Replay events with real-time timing delays |
+| Streaming | `--streaming` | Read events line-by-line (lower memory for huge files) |
+| Parallel | `--workers N` | Partition and process in parallel |
 
 **Output:**
 ```
@@ -259,7 +259,7 @@ Varpulis Event Simulation
 ============================
 Program: rules.vpl
 Events:  data.evt
-Mode:    immediate (parallel)
+Mode:    fast (parallel)
 Workers: 8
 
 Starting simulation...
@@ -427,8 +427,6 @@ varpulis run --file /etc/varpulis/rules.vpl
 varpulis simulate \
     --program analytics.vpl \
     --events large_dataset.evt \
-    --immediate \
-    --preload \
     --workers 16 \
     --partition-by device_id
 ```

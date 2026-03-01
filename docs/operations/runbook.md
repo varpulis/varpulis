@@ -264,7 +264,7 @@ curl http://localhost:9090/metrics | grep varpulis_processing_latency
 |-------|---------|-----|
 | Active SASE runs | RSS grows over time | Reduce `.within()` window size |
 | Kleene patterns | Memory spikes on bursty input | Add `.where()` filters early |
-| Preloaded events | High initial RSS (~40 MB/100K events) | Expected for `--preload` mode |
+| Preloaded events | High initial RSS (~40 MB/100K events) | Expected for default simulate mode (use `--streaming` for huge files) |
 | Large windows | Aggregation state accumulates | Tune window parameters |
 
 **Diagnostic:**

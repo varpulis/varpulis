@@ -375,7 +375,7 @@ Throughput is largely I/O-bound at ~6K events/sec (MQTT QoS 0 single-message pub
 
 ## CLI Ramdisk Results
 
-Full results from CPU-bound benchmarks (100K events, `simulate --preload --workers 1`, ramdisk, median of 3 runs):
+Full results from CPU-bound benchmarks (100K events, `simulate --workers 1`, ramdisk, median of 3 runs):
 
 | Scenario | V Throughput | A Throughput | V Outputs | V RSS | A RSS |
 |----------|-------------|-------------|-----------|-------|-------|
@@ -389,7 +389,7 @@ Full results from CPU-bound benchmarks (100K events, `simulate --preload --worke
 
 Varpulis wins 4 of 5 comparable scenarios (1.2x–1.3x). The only scenario where Apama has higher raw throughput (04 Kleene) is explained by Apama detecting 5x fewer matches — see [Kleene analysis](#kleene-pattern-detection-04_kleene).
 
-Varpulis `--preload` RSS includes ~40 MB for holding 100K preloaded events in memory.
+Varpulis RSS includes ~40 MB for preloaded events in memory (preloading is the default).
 
 ---
 
@@ -399,7 +399,7 @@ Varpulis `--preload` RSS includes ~40 MB for holding 100K preloaded events in me
 - **06 Multi-Sensor**: Apama's EPL stream join query hangs the correlator. The equivalent query is valid EPL syntax but exceeds community edition capabilities.
 - **02 Aggregation**: Semantic difference — Apama EPL `from ... retain 100 ... select` emits per event (100K outputs), while Varpulis `.window(100).aggregate()` emits per window (1K outputs). CLI mode: Apama monitor failed to load.
 - **Apama output counts**: In CLI mode, Apama `engine_send` output count is not externally observable (events sent to named channels inside the correlator). Marked as N/A where applicable.
-- **Varpulis preload overhead**: The `--preload` flag loads all events into memory before processing. This adds ~40 MB to RSS but eliminates disk I/O from timing.
+- **Varpulis preload overhead**: By default, `simulate` loads all events into memory before processing. This adds ~40 MB to RSS but eliminates disk I/O from timing. Use `--streaming` to read events line-by-line if the file is too large for memory.
 
 ---
 
