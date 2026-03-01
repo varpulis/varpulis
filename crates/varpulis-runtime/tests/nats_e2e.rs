@@ -323,7 +323,7 @@ async fn test_nats_source_queue_group() {
         tokio::select! {
             Some(_) = rx1.recv() => count1 += 1,
             Some(_) = rx2.recv() => count2 += 1,
-            _ = tokio::time::sleep_until(deadline) => break,
+            () = tokio::time::sleep_until(deadline) => break,
         }
         if count1 + count2 == n {
             break;
