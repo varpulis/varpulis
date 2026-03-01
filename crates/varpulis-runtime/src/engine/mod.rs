@@ -3,6 +3,7 @@
 //! This module provides the core engine that processes events and executes
 //! stream definitions written in VPL.
 
+mod builder;
 mod compilation;
 pub mod compiler;
 mod dispatch;
@@ -19,6 +20,7 @@ pub mod topology_builder;
 mod types;
 
 // Re-export public types
+pub use builder::EngineBuilder;
 pub use sink_factory::SinkConnectorAdapter;
 pub use types::{EngineConfig, EngineMetrics, ReloadReport, SourceBinding, UserFunction};
 
@@ -131,6 +133,23 @@ impl std::fmt::Debug for Engine {
 }
 
 impl Engine {
+    /// Create an [`EngineBuilder`] for fluent engine construction.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use varpulis_runtime::Engine;
+    /// use tokio::sync::mpsc;
+    ///
+    /// let (tx, _rx) = mpsc::channel(100);
+    /// let mut engine = Engine::builder()
+    ///     .output(tx)
+    ///     .build();
+    /// ```
+    pub fn builder() -> EngineBuilder {
+        EngineBuilder::new()
+    }
+
     pub fn new(output_tx: mpsc::Sender<Event>) -> Self {
         Self {
             streams: FxHashMap::default(),

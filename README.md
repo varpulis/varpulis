@@ -6,7 +6,7 @@
 
 [![Tests](https://img.shields.io/badge/tests-4011%20passing-brightgreen)]()
 [![Coverage](https://img.shields.io/badge/coverage-%E2%89%A570%25-brightgreen)]()
-[![Rust](https://img.shields.io/badge/rust-1.85%2B-orange)]()
+[![Rust](https://img.shields.io/badge/rust-1.93%2B-orange)]()
 [![Release](https://img.shields.io/badge/release-v0.4.0-blue)]()
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-MIT)
 

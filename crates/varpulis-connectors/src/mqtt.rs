@@ -602,6 +602,7 @@ mod mqtt_impl {
     use super::*;
 
     /// MQTT source stub (requires `mqtt` feature for full functionality).
+    #[derive(Debug)]
     pub struct MqttSource {
         name: String,
         #[allow(dead_code)]
@@ -643,6 +644,7 @@ mod mqtt_impl {
     }
 
     /// MQTT sink stub (requires `mqtt` feature for full functionality).
+    #[derive(Debug)]
     pub struct MqttSink {
         name: String,
         #[allow(dead_code)]

@@ -3354,3 +3354,80 @@ async fn test_score_without_onnx_returns_error() {
         "Error should mention onnx feature: {err}"
     );
 }
+
+// =========================================================================
+// EngineBuilder tests
+// =========================================================================
+
+#[tokio::test]
+async fn test_builder_with_output() {
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::builder().output(tx).build();
+
+    let source = r"stream Out = Input .emit(v: value)";
+    let program = parse_program(source);
+    engine.load(&program).unwrap();
+
+    let event = Event::new("Input").with_field("value", Value::Int(42));
+    engine.process(event).await.unwrap();
+
+    let output = rx.try_recv().unwrap();
+    assert_eq!(output.data.get("v"), Some(&Value::Int(42)));
+}
+
+#[tokio::test]
+async fn test_builder_benchmark_mode() {
+    let mut engine = Engine::builder().build();
+
+    let source = r"stream Out = Input .emit(v: value)";
+    let program = parse_program(source);
+    engine.load(&program).unwrap();
+
+    // Should process without panic even with no output channel
+    let event = Event::new("Input").with_field("value", Value::Int(1));
+    engine.process(event).await.unwrap();
+    assert_eq!(engine.metrics().events_processed, 1);
+}
+
+#[tokio::test]
+async fn test_builder_with_metrics() {
+    let (tx, _rx) = mpsc::channel(100);
+    let metrics = varpulis_runtime::metrics::Metrics::new();
+    let engine = Engine::builder().output(tx).metrics(metrics).build();
+    assert_eq!(engine.metrics().events_processed, 0);
+}
+
+#[tokio::test]
+async fn test_builder_with_context_name() {
+    let mut engine = Engine::builder().context_name("ctx-1").build();
+
+    let source = r"stream Out = Input .emit(v: value)";
+    let program = parse_program(source);
+    engine.load(&program).unwrap();
+
+    // Engine should work with a context name set
+    let event = Event::new("Input").with_field("value", Value::Int(1));
+    engine.process(event).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_builder_shared_output() {
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::builder().shared_output(tx).build();
+
+    let source = r"stream Out = Input .emit(v: value)";
+    let program = parse_program(source);
+    engine.load(&program).unwrap();
+
+    let event = Event::new("Input").with_field("value", Value::Int(99));
+    engine.process(event).await.unwrap();
+
+    let output = rx.try_recv().unwrap();
+    assert_eq!(output.data.get("v"), Some(&Value::Int(99)));
+}
+
+#[test]
+fn test_builder_default() {
+    // Default builder should be equivalent to EngineBuilder::new()
+    let _engine: Engine = varpulis_runtime::EngineBuilder::default().build();
+}
