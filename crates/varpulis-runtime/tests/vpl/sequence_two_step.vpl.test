@@ -1,0 +1,18 @@
+# Test: two-step sequence pattern matching
+# Matches Order followed by Payment with matching order_id.
+
+=== VPL ===
+stream OrderPayment = Order as order
+    -> Payment where order_id == order.order_id as payment
+    .emit(order_id: order.order_id, paid: payment.amount)
+
+=== INPUT ===
+Order { order_id: "A1", total: 100 }
+Payment { order_id: "A1", amount: 100 }
+
+=== EXPECT_COUNT ===
+1
+
+=== EXPECT_FIELDS ===
+[0].order_id = "A1"
+[0].paid = 100

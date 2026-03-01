@@ -1,0 +1,13 @@
+# Test: sequence pattern with no matching pair
+# When events arrive but the join condition doesn't match, no output.
+
+=== VPL ===
+stream OrderPayment = Order as order
+    -> Payment where order_id == order.order_id as payment
+    .emit(order_id: order.order_id)
+
+=== INPUT ===
+Order { order_id: "A1" }
+Payment { order_id: "B2" }
+
+=== EXPECT_NONE ===

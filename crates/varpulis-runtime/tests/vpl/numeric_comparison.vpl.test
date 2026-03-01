@@ -1,0 +1,17 @@
+# Test: various numeric comparison operators
+
+=== VPL ===
+stream InRange = Reading
+    .where(value >= 10)
+    .where(value <= 50)
+    .emit(v: value)
+
+=== INPUT ===
+Reading { value: 5 }
+Reading { value: 10 }
+Reading { value: 25 }
+Reading { value: 50 }
+Reading { value: 75 }
+
+=== EXPECT_COUNT ===
+3

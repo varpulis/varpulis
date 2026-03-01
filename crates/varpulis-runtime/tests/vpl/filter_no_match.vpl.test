@@ -1,0 +1,14 @@
+# Test: filter that matches nothing
+# When no events pass the filter, output should be empty.
+
+=== VPL ===
+stream Impossible = Event
+    .where(value > 9999)
+    .emit(v: value)
+
+=== INPUT ===
+Event { value: 1 }
+Event { value: 100 }
+Event { value: 500 }
+
+=== EXPECT_NONE ===

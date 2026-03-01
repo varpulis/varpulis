@@ -1,0 +1,9 @@
+# Test: invalid VPL syntax produces parse error
+# Structurally broken VPL should fail to parse.
+
+=== VPL ===
+stream Bad = Event
+    .where(>>>{{{invalid syntax
+
+=== EXPECT_ERROR ===
+expected
