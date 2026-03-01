@@ -1,0 +1,16 @@
+# Test: emit projects only specified fields
+# Output should contain only the fields listed in .emit().
+
+=== VPL ===
+stream OrderSummary = OrderEvent
+    .where(amount > 0)
+    .emit(order_id: order_id, total: amount)
+
+=== INPUT ===
+OrderEvent { order_id: "ORD-001", amount: 99, currency: "USD" }
+OrderEvent { order_id: "ORD-002", amount: 0, currency: "EUR" }
+OrderEvent { order_id: "ORD-003", amount: 250, currency: "GBP" }
+
+=== EXPECT ===
+OrderSummary { order_id: "ORD-001", total: 99 }
+OrderSummary { order_id: "ORD-003", total: 250 }

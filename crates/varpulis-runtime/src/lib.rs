@@ -132,6 +132,7 @@ pub mod tenant;
 pub mod testing;
 pub mod timer;
 pub mod udf;
+pub mod vpl_test;
 pub mod watermark;
 pub mod window;
 pub mod worker_pool;

@@ -1,0 +1,16 @@
+# Test: basic where-clause filtering
+# Events below the threshold are excluded, events above pass through.
+
+=== VPL ===
+stream HighTemp = SensorReading
+    .where(temperature > 100)
+    .emit(sensor: sensor_id, temp: temperature)
+
+=== INPUT ===
+SensorReading { sensor_id: "S1", temperature: 105 }
+SensorReading { sensor_id: "S2", temperature: 50 }
+SensorReading { sensor_id: "S3", temperature: 200 }
+
+=== EXPECT ===
+HighTemp { sensor: "S1", temp: 105 }
+HighTemp { sensor: "S3", temp: 200 }

@@ -1,0 +1,15 @@
+# Test: string equality in where clause
+
+=== VPL ===
+stream UrgentAlerts = Alert
+    .where(severity == "critical")
+    .emit(message: message, severity: severity)
+
+=== INPUT ===
+Alert { message: "disk full", severity: "critical" }
+Alert { message: "high cpu", severity: "warning" }
+Alert { message: "service down", severity: "critical" }
+
+=== EXPECT ===
+UrgentAlerts { message: "disk full", severity: "critical" }
+UrgentAlerts { message: "service down", severity: "critical" }

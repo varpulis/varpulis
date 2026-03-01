@@ -1,0 +1,13 @@
+# Test: stream with no filter passes all events through
+
+=== VPL ===
+stream Echo = Ping
+    .emit(id: id)
+
+=== INPUT ===
+Ping { id: 1 }
+Ping { id: 2 }
+Ping { id: 3 }
+
+=== EXPECT_COUNT ===
+3
