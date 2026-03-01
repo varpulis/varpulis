@@ -1798,7 +1798,8 @@ mod tests {
         let resp = tenant_error_response(TenantError::RateLimitExceeded);
         assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
 
-        let resp = tenant_error_response(TenantError::ParseError("bad".into()));
+        let parse_err = varpulis_parser::parse("INVALID{{{").unwrap_err();
+        let resp = tenant_error_response(TenantError::ParseError(parse_err));
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
@@ -2454,7 +2455,9 @@ mod tests {
         let resp = tenant_error_response(TenantError::QuotaExceeded("max pipelines".into()));
         assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
 
-        let resp = tenant_error_response(TenantError::EngineError("boom".into()));
+        let resp = tenant_error_response(TenantError::EngineError(
+            varpulis_runtime::EngineError::Other("boom".into()),
+        ));
         assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
 
         let resp = tenant_error_response(TenantError::AlreadyExists("t1".into()));

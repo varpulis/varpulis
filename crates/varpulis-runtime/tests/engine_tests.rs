@@ -1168,7 +1168,7 @@ async fn test_engine_add_filter_nonexistent_stream() {
     // Try to add filter to non-existent stream
     let result = engine.add_filter("NonExistent", |_| true);
     assert!(result.is_err(), "Should fail for non-existent stream");
-    assert!(result.unwrap_err().contains("not found"));
+    assert!(result.unwrap_err().to_string().contains("not found"));
 }
 
 #[tokio::test]
@@ -3348,7 +3348,7 @@ async fn test_score_without_onnx_returns_error() {
     let mut engine = Engine::new(tx);
     let result = engine.load(&program);
     assert!(result.is_err(), "Should fail without onnx feature");
-    let err = result.unwrap_err();
+    let err = result.unwrap_err().to_string();
     assert!(
         err.contains("onnx"),
         "Error should mention onnx feature: {}",

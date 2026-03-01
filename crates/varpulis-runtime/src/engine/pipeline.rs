@@ -83,7 +83,7 @@ pub(crate) async fn execute_pipeline(
     skip_flags: SkipFlags,
     functions: &FxHashMap<String, UserFunction>,
     sinks: &FxHashMap<String, Arc<dyn crate::sink::Sink>>,
-) -> Result<StreamProcessResult, String> {
+) -> Result<StreamProcessResult, super::error::EngineError> {
     // Store the raw event for the Forecast op (it needs to learn from every
     // event, even when the Sequence op clears current_events on non-match).
     if stream.pst_forecaster.is_some() {
@@ -197,7 +197,7 @@ async fn execute_op(
     functions: &FxHashMap<String, UserFunction>,
     sinks: &FxHashMap<String, Arc<dyn crate::sink::Sink>>,
     sink_sent: &mut u64,
-) -> Result<(), String> {
+) -> Result<(), super::error::EngineError> {
     // Handle async-requiring ops here; everything else is sync.
     if let RuntimeOp::To(config) = op {
         if let Some(sink) = sinks.get(&config.sink_key) {
@@ -374,7 +374,7 @@ fn execute_op_common(
     current_events: &mut Vec<SharedEvent>,
     emitted_events: &mut Vec<SharedEvent>,
     functions: &FxHashMap<String, UserFunction>,
-) -> Result<(), String> {
+) -> Result<(), super::error::EngineError> {
     match op {
         RuntimeOp::WhereClosure(predicate) => {
             current_events.retain(|e| predicate(e));
@@ -990,7 +990,7 @@ pub(crate) fn execute_pipeline_sync(
     skip_flags: SkipFlags,
     functions: &FxHashMap<String, UserFunction>,
     skip_output_rename: bool,
-) -> Result<StreamProcessResult, String> {
+) -> Result<StreamProcessResult, super::error::EngineError> {
     // Store the raw event for the Forecast op
     if stream.pst_forecaster.is_some() {
         stream.last_raw_event = initial_events.first().cloned();
@@ -1070,7 +1070,7 @@ fn execute_op_sync(
     current_events: &mut Vec<SharedEvent>,
     emitted_events: &mut Vec<SharedEvent>,
     functions: &FxHashMap<String, UserFunction>,
-) -> Result<(), String> {
+) -> Result<(), super::error::EngineError> {
     execute_op_common(
         op,
         stream_name,

@@ -6,6 +6,7 @@
 mod compilation;
 pub mod compiler;
 mod dispatch;
+pub mod error;
 pub mod evaluator;
 mod pattern_analyzer;
 pub mod physical_plan;
@@ -303,12 +304,12 @@ impl Engine {
     }
 
     /// Set a variable value (must be mutable or new)
-    pub fn set_variable(&mut self, name: &str, value: Value) -> Result<(), String> {
+    pub fn set_variable(&mut self, name: &str, value: Value) -> Result<(), error::EngineError> {
         if self.variables.contains_key(name) && !self.mutable_vars.contains(name) {
-            return Err(format!(
+            return Err(error::EngineError::Compilation(format!(
                 "Cannot assign to immutable variable '{}'. Use 'var' instead of 'let' to declare mutable variables.",
                 name
-            ));
+            )));
         }
         self.variables.insert(name.to_string(), value);
         Ok(())
@@ -336,7 +337,7 @@ impl Engine {
     }
 
     /// Add a programmatic filter to a stream using a closure
-    pub fn add_filter<F>(&mut self, stream_name: &str, filter: F) -> Result<(), String>
+    pub fn add_filter<F>(&mut self, stream_name: &str, filter: F) -> Result<(), error::EngineError>
     where
         F: Fn(&Event) -> bool + Send + Sync + 'static,
     {
@@ -347,15 +348,19 @@ impl Engine {
                 .insert(0, RuntimeOp::WhereClosure(Box::new(wrapped)));
             Ok(())
         } else {
-            Err(format!("Stream '{}' not found", stream_name))
+            Err(error::EngineError::StreamNotFound(stream_name.to_string()))
         }
     }
 
     /// Load a program into the engine with semantic validation.
-    pub fn load_with_source(&mut self, source: &str, program: &Program) -> Result<(), String> {
+    pub fn load_with_source(
+        &mut self,
+        source: &str,
+        program: &Program,
+    ) -> Result<(), error::EngineError> {
         let validation = varpulis_core::validate::validate(source, program);
         if validation.has_errors() {
-            return Err(validation.format(source));
+            return Err(error::EngineError::Compilation(validation.format(source)));
         }
         for warning in validation
             .diagnostics
@@ -368,11 +373,11 @@ impl Engine {
     }
 
     /// Load a program into the engine (no semantic validation).
-    pub fn load(&mut self, program: &Program) -> Result<(), String> {
+    pub fn load(&mut self, program: &Program) -> Result<(), error::EngineError> {
         self.load_program(program)
     }
 
-    fn load_program(&mut self, program: &Program) -> Result<(), String> {
+    fn load_program(&mut self, program: &Program) -> Result<(), error::EngineError> {
         for stmt in &program.statements {
             match &stmt.node {
                 Stmt::StreamDecl {
@@ -505,10 +510,10 @@ impl Engine {
                     .ok_or_else(|| format!("Failed to evaluate assignment value for '{}'", name))?;
 
                     if self.variables.contains_key(name) && !self.mutable_vars.contains(name) {
-                        return Err(format!(
+                        return Err(error::EngineError::Compilation(format!(
                             "Cannot assign to immutable variable '{}'. Use 'var' instead of 'let'.",
                             name
-                        ));
+                        )));
                     }
 
                     if !self.variables.contains_key(name) {
@@ -786,8 +791,11 @@ impl Engine {
 
     /// Connect all sinks that require explicit connection.
     #[tracing::instrument(skip(self))]
-    pub async fn connect_sinks(&self) -> Result<(), String> {
-        self.sinks.connect_all().await
+    pub async fn connect_sinks(&self) -> Result<(), error::EngineError> {
+        self.sinks
+            .connect_all()
+            .await
+            .map_err(error::EngineError::Pipeline)
     }
 
     /// Inject a pre-built sink into the engine's registry.
@@ -942,7 +950,7 @@ impl Engine {
         self.physical_plan.as_ref().map(|p| p.summary())
     }
 
-    pub fn explain(&self, program: &Program) -> Result<String, String> {
+    pub fn explain(&self, program: &Program) -> Result<String, error::EngineError> {
         let logical = planner::logical_plan(program)?;
         let optimized = varpulis_parser::optimize_plan(logical);
         Ok(optimized.explain())
@@ -1003,7 +1011,7 @@ impl Engine {
     // =========================================================================
 
     /// Reload program without losing state where possible.
-    pub fn reload(&mut self, program: &Program) -> Result<ReloadReport, String> {
+    pub fn reload(&mut self, program: &Program) -> Result<ReloadReport, error::EngineError> {
         let mut report = ReloadReport::default();
 
         let old_streams: FxHashSet<String> = self.streams.keys().cloned().collect();
@@ -1409,7 +1417,7 @@ impl Engine {
         &mut self,
         source_context: &str,
         watermark_ms: i64,
-    ) -> Result<(), String> {
+    ) -> Result<(), error::EngineError> {
         if let Some(ref mut tracker) = self.watermark_tracker {
             if let Some(wm) = DateTime::from_timestamp_millis(watermark_ms) {
                 tracker.advance_source_watermark(source_context, wm);

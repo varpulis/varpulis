@@ -1821,7 +1821,7 @@ fn unsupported_map_op_error() {
         let mut engine = Engine::new(tx);
         let result = engine.load(&prog);
         if let Err(e) = result {
-            assert!(e.contains("map"), "Error should mention .map()");
+            assert!(e.to_string().contains("map"), "Error should mention .map()");
         }
     }
     // If parse fails, that's acceptable too — the point is we don't panic

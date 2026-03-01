@@ -76,7 +76,7 @@ async fn test_assignment_to_immutable_var_fails() {
         result.is_err(),
         "Assignment to immutable variable should fail"
     );
-    assert!(result.unwrap_err().contains("immutable"));
+    assert!(result.unwrap_err().to_string().contains("immutable"));
 }
 
 #[tokio::test]
@@ -253,5 +253,5 @@ async fn test_set_immutable_variable_fails() {
     // Try to set immutable variable via API
     let result = engine.set_variable("constant", Value::Int(200));
     assert!(result.is_err());
-    assert!(result.unwrap_err().contains("immutable"));
+    assert!(result.unwrap_err().to_string().contains("immutable"));
 }
