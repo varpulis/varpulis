@@ -260,7 +260,7 @@ mod tests {
             &mut state,
             ClusterCommand::ConnectorCreated {
                 name: "mqtt1".into(),
-                connector: connector.clone(),
+                connector,
             },
         );
         assert_eq!(state.connectors.len(), 1);

@@ -87,6 +87,15 @@ pub struct RaftHandle {
     pub admin_key: Option<String>,
 }
 
+#[cfg(feature = "raft")]
+impl std::fmt::Debug for RaftHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RaftHandle")
+            .field("peer_addrs", &self.peer_addrs)
+            .finish_non_exhaustive()
+    }
+}
+
 // =========================================================================
 // Deployment plan/result types for lock-free HTTP I/O
 // =========================================================================

@@ -301,6 +301,7 @@ mod kafka_impl {
     }
 
     /// Kafka source connector with rdkafka
+    #[derive(Debug)]
     pub struct KafkaSourceImpl {
         name: String,
         config: KafkaConfig,
@@ -457,6 +458,15 @@ mod kafka_impl {
         producer: FutureProducer,
         /// True when the producer was initialized with a transactional.id.
         transactional: bool,
+    }
+
+    impl std::fmt::Debug for KafkaSinkImpl {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("KafkaSinkImpl")
+                .field("name", &self.name)
+                .field("transactional", &self.transactional)
+                .finish_non_exhaustive()
+        }
     }
 
     impl KafkaSinkImpl {
