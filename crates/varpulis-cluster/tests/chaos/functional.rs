@@ -5,9 +5,11 @@
 //! built first (`cargo build`). All tests are marked `#[ignore]` so they only
 //! run when explicitly requested via `cargo test -- --ignored`.
 
-use super::ProcessCluster;
 use std::time::Duration;
+
 use tokio::time::sleep;
+
+use super::ProcessCluster;
 
 // =============================================================================
 // Test 1: Basic failover -- kill a worker, pipeline migrates

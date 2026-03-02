@@ -1,10 +1,10 @@
 //! Core SASE+ types and constants
 
-use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use varpulis_core::Event;
-use varpulis_core::Value;
+
+use rustc_hash::FxHashMap;
+use varpulis_core::{Event, Value};
 
 /// Shared event reference for efficient cloning in pattern matching.
 /// Using Arc allows multiple pattern runs to share the same event data

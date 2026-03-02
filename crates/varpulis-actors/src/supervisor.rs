@@ -1,14 +1,16 @@
 //! Supervision tree for automatic actor restart and health monitoring.
 
-use crate::actor::{Actor, ActorExitStatus};
-use crate::context::ActorContext;
-use crate::mailbox::create_mailbox;
-use serde::Serialize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
+
+use crate::actor::{Actor, ActorExitStatus};
+use crate::context::ActorContext;
+use crate::mailbox::create_mailbox;
 
 /// Policy controlling when a supervised actor is restarted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

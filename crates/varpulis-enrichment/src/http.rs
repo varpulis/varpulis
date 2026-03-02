@@ -1,7 +1,8 @@
 //! HTTP enrichment provider — performs GET requests and parses JSON responses.
 
-use async_trait::async_trait;
 use std::collections::HashMap;
+
+use async_trait::async_trait;
 use varpulis_core::Value;
 
 use crate::{EnrichmentError, EnrichmentProvider, EnrichmentResult};

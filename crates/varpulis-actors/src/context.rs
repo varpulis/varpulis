@@ -1,8 +1,9 @@
 //! Actor execution context providing mailbox access and shutdown signaling.
 
+use tokio_util::sync::CancellationToken;
+
 use crate::actor::Actor;
 use crate::mailbox::{Mailbox, MailboxSender};
-use tokio_util::sync::CancellationToken;
 
 /// Execution context provided to each actor during its `run` loop.
 ///

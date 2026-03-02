@@ -7,10 +7,12 @@
 //! sub-pattern (e.g., B+) is shareable across queries, all queries share
 //! the same graphlet structure but with different snapshot values.
 
-use crate::greta::{NodeId, QueryId};
-use smallvec::SmallVec;
 use std::time::Instant;
+
+use smallvec::SmallVec;
 use varpulis_core::SharedEvent;
+
+use crate::greta::{NodeId, QueryId};
 
 /// Unique identifier for a graphlet
 pub type GraphletId = u32;
@@ -270,9 +272,11 @@ impl GraphletPool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::sync::Arc;
+
     use varpulis_core::Event;
+
+    use super::*;
 
     #[test]
     fn test_graphlet_basic() {

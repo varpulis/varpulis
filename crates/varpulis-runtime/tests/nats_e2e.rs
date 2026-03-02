@@ -10,10 +10,10 @@
 
 use std::collections::HashMap;
 use std::time::Duration;
-use tokio::sync::mpsc;
-use uuid::Uuid;
 
 use futures::StreamExt;
+use tokio::sync::mpsc;
+use uuid::Uuid;
 use varpulis_runtime::connector::{
     ManagedConnector, ManagedNatsConnector, NatsConfig, NatsSink, NatsSource, SinkConnector,
     SourceConnector,

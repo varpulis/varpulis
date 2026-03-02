@@ -3,14 +3,16 @@
 //! The JoinBuffer maintains events from multiple source streams and correlates
 //! them when events with matching join keys arrive within a specified time window.
 
-use crate::event::Event;
-use chrono::{DateTime, Duration, Utc};
-use rustc_hash::FxHashMap;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
+
+use chrono::{DateTime, Duration, Utc};
+use rustc_hash::FxHashMap;
 use tracing::{debug, trace};
 use varpulis_core::ast::JoinType;
 use varpulis_core::Value;
+
+use crate::event::Event;
 
 /// Type alias for timestamped events stored by key value
 type KeyedEventBuffer = FxHashMap<String, Vec<(DateTime<Utc>, Event)>>;
@@ -413,8 +415,9 @@ impl JoinBuffer {
 
     /// Restore join buffer state from a checkpoint.
     pub fn restore(&mut self, cp: &crate::persistence::JoinCheckpoint) {
-        use crate::event::Event;
         use std::cmp::Reverse;
+
+        use crate::event::Event;
 
         self.buffers.clear();
         self.expiry_queue = BinaryHeap::new();
@@ -455,8 +458,9 @@ pub struct JoinBufferStats {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use varpulis_core::Value;
+
+    use super::*;
 
     fn create_event(event_type: &str, symbol: &str, value: f64) -> Event {
         Event::new(event_type)

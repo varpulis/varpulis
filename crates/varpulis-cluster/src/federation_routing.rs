@@ -3,8 +3,9 @@
 //! Provides routing tables and logic for forwarding events between regions
 //! via NATS super-cluster subjects.
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
 
 /// A route definition for cross-region event forwarding.
 #[derive(Debug, Clone, Serialize, Deserialize)]

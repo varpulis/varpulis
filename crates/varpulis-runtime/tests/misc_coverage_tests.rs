@@ -16,8 +16,9 @@ use varpulis_runtime::event::Event;
 // ===========================================================================
 
 mod watermark_tests {
-    use super::*;
     use varpulis_runtime::watermark::PerSourceWatermarkTracker;
+
+    use super::*;
 
     #[test]
     fn test_default_trait() {
@@ -217,8 +218,9 @@ mod worker_pool_tests {
 // ===========================================================================
 
 mod columnar_tests {
-    use super::*;
     use varpulis_runtime::columnar::{Column, ColumnarBuffer};
+
+    use super::*;
 
     #[test]
     fn test_column_is_empty() {
@@ -318,9 +320,10 @@ mod columnar_tests {
 // ===========================================================================
 
 mod join_tests {
-    use super::*;
     use rustc_hash::FxHashMap;
     use varpulis_runtime::join::JoinBuffer;
+
+    use super::*;
 
     #[test]
     fn test_join_buffer_unknown_source_with_common_key() {
@@ -393,11 +396,12 @@ mod join_tests {
 // ===========================================================================
 
 mod sequence_tests {
-    use super::*;
     use varpulis_core::Value;
     use varpulis_runtime::sequence::{
         ActiveCorrelation, SequenceContext, SequenceStep, SequenceTracker,
     };
+
+    use super::*;
 
     fn make_event(event_type: &str, fields: Vec<(&str, Value)>) -> Event {
         let mut event = Event::new(event_type);
@@ -521,8 +525,9 @@ mod sequence_tests {
 // ===========================================================================
 
 mod hamlet_graph_tests {
-    use super::*;
     use varpulis_runtime::hamlet::graph::HamletGraph;
+
+    use super::*;
 
     #[test]
     fn test_graph_default() {
@@ -687,8 +692,9 @@ mod hamlet_graph_tests {
 // ===========================================================================
 
 mod hamlet_graphlet_tests {
-    use super::*;
     use varpulis_runtime::hamlet::graphlet::{Graphlet, GraphletPool, GraphletStatus};
+
+    use super::*;
 
     #[test]
     fn test_graphlet_lifecycle() {

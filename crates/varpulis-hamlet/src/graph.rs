@@ -5,12 +5,13 @@
 //! - Support for shared vs non-shared execution modes
 //! - Integration with snapshot propagation
 
-use super::graphlet::{Graphlet, GraphletId, GraphletPool, GraphletStatus};
-use super::snapshot::{SnapshotId, SnapshotManager};
-use crate::greta::{NodeId, QueryId};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use varpulis_core::SharedEvent;
+
+use super::graphlet::{Graphlet, GraphletId, GraphletPool, GraphletStatus};
+use super::snapshot::{SnapshotId, SnapshotManager};
+use crate::greta::{NodeId, QueryId};
 
 /// The Hamlet graph structure
 #[derive(Debug)]
@@ -298,9 +299,11 @@ impl Default for HamletGraph {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::sync::Arc;
+
     use varpulis_core::Event;
+
+    use super::*;
 
     #[test]
     fn test_hamlet_graph_basic() {

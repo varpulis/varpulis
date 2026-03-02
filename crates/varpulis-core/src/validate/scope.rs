@@ -1,7 +1,8 @@
 //! Symbol table for tracking declarations during validation.
 
-use crate::span::Span;
 use std::collections::HashMap;
+
+use crate::span::Span;
 
 /// Information about a declared event type.
 #[derive(Debug, Clone)]

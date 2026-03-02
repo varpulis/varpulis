@@ -7,10 +7,12 @@
 //!     .build();
 //! ```
 
+use std::sync::Arc;
+
+use rustc_hash::{FxHashMap, FxHashSet};
+
 use super::topology::{EdgeType, NodeMetrics, NodeType, Topology, TopologyEdge, TopologyNode};
 use super::types::{RuntimeSource, StreamDefinition};
-use rustc_hash::{FxHashMap, FxHashSet};
-use std::sync::Arc;
 
 /// Builder for constructing a [`Topology`] from engine components.
 #[derive(Debug)]

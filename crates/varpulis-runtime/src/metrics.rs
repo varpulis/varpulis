@@ -1,7 +1,8 @@
 //! Prometheus metrics for Varpulis
 
-use prometheus::{CounterVec, Gauge, GaugeVec, HistogramOpts, HistogramVec, Opts, Registry};
 use std::sync::Arc;
+
+use prometheus::{CounterVec, Gauge, GaugeVec, HistogramOpts, HistogramVec, Opts, Registry};
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tracing::{error, info};

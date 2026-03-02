@@ -3,10 +3,12 @@
 //! This module defines the core `Sink` trait that all event output destinations
 //! must implement, along with the `SinkError` error type.
 
-use crate::types::ConnectorError;
-use async_trait::async_trait;
 use std::sync::Arc;
+
+use async_trait::async_trait;
 use varpulis_core::Event;
+
+use crate::types::ConnectorError;
 
 /// Errors produced by sink operations.
 #[derive(Debug, thiserror::Error)]

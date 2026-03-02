@@ -8,8 +8,8 @@
 //! - Semantic tokens
 
 use tower_lsp::{LspService, Server};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 use varpulis_lsp::server;
 
 #[tokio::main]

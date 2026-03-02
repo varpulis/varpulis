@@ -8,8 +8,10 @@
 //! so checkpoints written in either format can always be read back regardless of
 //! which feature is currently enabled.
 
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+
 use crate::persistence::StoreError;
-use serde::{de::DeserializeOwned, Serialize};
 
 /// Serialization format for checkpoint data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,8 +143,9 @@ mod tests {
     #[cfg(feature = "binary-codec")]
     #[test]
     fn test_msgpack_smaller_than_json() {
-        use crate::persistence::Checkpoint;
         use std::collections::HashMap;
+
+        use crate::persistence::Checkpoint;
 
         let cp = Checkpoint {
             id: 1,

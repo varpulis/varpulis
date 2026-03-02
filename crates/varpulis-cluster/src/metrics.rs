@@ -1,7 +1,8 @@
 //! Prometheus metrics for Varpulis cluster operations.
 
-use prometheus::{CounterVec, Gauge, GaugeVec, HistogramOpts, HistogramVec, Opts, Registry};
 use std::sync::Arc;
+
+use prometheus::{CounterVec, Gauge, GaugeVec, HistogramOpts, HistogramVec, Opts, Registry};
 
 /// Cluster-specific Prometheus metrics.
 #[derive(Debug, Clone)]

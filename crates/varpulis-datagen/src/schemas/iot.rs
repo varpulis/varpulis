@@ -3,11 +3,13 @@
 //! Generates sensor readings: temperature, humidity, pressure, vibration.
 //! Anomaly patterns: temperature spikes, sensor drift, rapid oscillation.
 
-use crate::{EventSchema, GeneratedEvent};
+use std::collections::HashMap;
+
 use chrono::Utc;
 use rand::prelude::*;
 use serde_json::json;
-use std::collections::HashMap;
+
+use crate::{EventSchema, GeneratedEvent};
 
 #[derive(Debug)]
 pub struct IotSchema {

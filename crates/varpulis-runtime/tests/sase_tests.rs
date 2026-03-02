@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 use std::time::Duration;
+
 use varpulis_core::Value;
 use varpulis_runtime::event::Event;
 use varpulis_runtime::sase::*;
@@ -228,8 +229,9 @@ fn test_watermark_with_out_of_orderness() {
 
 #[test]
 fn test_event_time_within_timeout() {
-    use chrono::{TimeZone, Utc};
     use std::time::Duration;
+
+    use chrono::{TimeZone, Utc};
 
     // Pattern with 5 second window
     let pattern = SasePattern::Within(
@@ -257,8 +259,9 @@ fn test_event_time_within_timeout() {
 
 #[test]
 fn test_event_time_within_expired_by_watermark() {
-    use chrono::{TimeZone, Utc};
     use std::time::Duration;
+
+    use chrono::{TimeZone, Utc};
 
     // Pattern with 5 second window
     let pattern = SasePattern::Within(
@@ -290,8 +293,9 @@ fn test_event_time_within_expired_by_watermark() {
 
 #[test]
 fn test_manual_watermark_advance() {
-    use chrono::{TimeZone, Utc};
     use std::time::Duration;
+
+    use chrono::{TimeZone, Utc};
 
     // Pattern with 5 second window
     let pattern = SasePattern::Within(
@@ -1431,8 +1435,9 @@ fn test_partition_cleanup_after_match() {
 
 #[test]
 fn test_within_timeout_exact_boundary() {
-    use chrono::{TimeZone, Utc};
     use std::time::Duration;
+
+    use chrono::{TimeZone, Utc};
 
     // Pattern with exactly 5 second window
     let pattern = SasePattern::Within(
@@ -1462,8 +1467,9 @@ fn test_within_timeout_exact_boundary() {
 
 #[test]
 fn test_within_timeout_just_before_boundary() {
-    use chrono::{TimeZone, Utc};
     use std::time::Duration;
+
+    use chrono::{TimeZone, Utc};
 
     let pattern = SasePattern::Within(
         Box::new(PatternBuilder::seq(vec![

@@ -25,8 +25,9 @@
 //! - Partitioned sliding count window
 //! - Partitioned tumbling window with aggregate
 
-use chrono::{TimeZone, Utc};
 use std::sync::Arc;
+
+use chrono::{TimeZone, Utc};
 use tokio::sync::mpsc;
 use varpulis_core::Value;
 use varpulis_parser::parse;

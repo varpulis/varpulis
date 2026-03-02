@@ -1,11 +1,12 @@
 //! REST API client and sink connector
 
-use super::component::{ConnectorComponentInfo, ConnectorFactory};
-use super::helpers::json_to_event;
-use super::types::{ConnectorConfig, ConnectorError, SinkConnector};
 use async_trait::async_trait;
 use indexmap::IndexMap;
 use varpulis_core::Event;
+
+use super::component::{ConnectorComponentInfo, ConnectorFactory};
+use super::helpers::json_to_event;
+use super::types::{ConnectorConfig, ConnectorError, SinkConnector};
 
 // ---------------------------------------------------------------------------
 // Declarative registration

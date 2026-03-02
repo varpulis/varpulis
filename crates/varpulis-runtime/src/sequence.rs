@@ -2,9 +2,11 @@
 //!
 //! Implements the runtime support for the `->` (followed-by) operator.
 
-use crate::event::Event;
-use rustc_hash::FxHashMap;
 use std::time::{Duration, Instant};
+
+use rustc_hash::FxHashMap;
+
+use crate::event::Event;
 
 /// Type alias for sequence filter functions
 pub type SequenceFilter = Box<dyn Fn(&Event, &SequenceContext) -> bool + Send + Sync>;
@@ -382,8 +384,9 @@ impl SequenceTracker {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use varpulis_core::Value;
+
+    use super::*;
 
     fn make_event(event_type: &str, fields: Vec<(&str, Value)>) -> Event {
         let mut event = Event::new(event_type);

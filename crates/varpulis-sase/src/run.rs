@@ -1,14 +1,16 @@
 //! Active pattern run (partial match in progress)
 
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use chrono::{DateTime, Utc};
+use rustc_hash::FxHashMap;
+use varpulis_core::Value;
+
 use super::and_op::AndState;
 use super::kleene::KleeneCapture;
 use super::negation::NegationConstraint;
 use super::types::{SharedEvent, StackEntry};
-use chrono::{DateTime, Utc};
-use rustc_hash::FxHashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use varpulis_core::Value;
 
 /// An active pattern run (partial match in progress)
 #[derive(Debug, Clone)]

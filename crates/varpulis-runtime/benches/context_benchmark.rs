@@ -11,10 +11,11 @@
 //!
 //! Run with: cargo bench -p varpulis-runtime --bench context_benchmark
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 use varpulis_core::ast::Program;

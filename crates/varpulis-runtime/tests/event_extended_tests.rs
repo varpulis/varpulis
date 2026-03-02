@@ -1,6 +1,7 @@
 //! Extended coverage tests for event.rs and event_file.rs uncovered paths.
 
 use std::io::Cursor;
+
 use varpulis_core::Value;
 use varpulis_runtime::event::Event;
 use varpulis_runtime::event_file::EventFileParser;
@@ -36,9 +37,10 @@ fn event_new_at() {
 
 #[test]
 fn event_from_fields() {
+    use std::sync::Arc;
+
     use indexmap::IndexMap;
     use rustc_hash::FxBuildHasher;
-    use std::sync::Arc;
 
     let mut data: IndexMap<Arc<str>, Value, FxBuildHasher> = IndexMap::with_hasher(FxBuildHasher);
     data.insert("x".into(), Value::Int(1));
@@ -67,9 +69,10 @@ fn event_from_string_fields() {
 
 #[test]
 fn event_from_fields_with_timestamp() {
+    use std::sync::Arc;
+
     use indexmap::IndexMap;
     use rustc_hash::FxBuildHasher;
-    use std::sync::Arc;
 
     let ts = chrono::DateTime::UNIX_EPOCH;
     let mut data: IndexMap<Arc<str>, Value, FxBuildHasher> = IndexMap::with_hasher(FxBuildHasher);

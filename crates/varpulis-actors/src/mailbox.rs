@@ -1,9 +1,11 @@
 //! Typed mailbox backed by a bounded `tokio::sync::mpsc` channel.
 
-use crate::actor::Actor;
 use std::fmt;
+
 use tokio::sync::{mpsc, oneshot};
 use tracing::warn;
+
+use crate::actor::Actor;
 
 /// A command sent through the mailbox, wrapping either a plain message
 /// or a request-reply pair.

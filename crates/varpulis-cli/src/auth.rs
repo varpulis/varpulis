@@ -2,11 +2,12 @@
 //!
 //! Provides API key authentication for WebSocket connections.
 
+use std::sync::Arc;
+
 use axum::extract::Request;
 use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use std::sync::Arc;
 
 /// Authentication configuration
 #[derive(Debug, Clone)]

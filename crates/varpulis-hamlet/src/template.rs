@@ -7,9 +7,10 @@
 //!
 //! This is constructed at compile-time from the VPL program.
 
-use crate::greta::QueryId;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
+
+use crate::greta::QueryId;
 
 /// State in the merged template FSA
 pub type TemplateState = u16;

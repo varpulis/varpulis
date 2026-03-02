@@ -29,8 +29,9 @@
 //! }
 //! ```
 
-use rustc_hash::FxHashMap;
 use std::sync::Arc;
+
+use rustc_hash::FxHashMap;
 use varpulis_core::{Type, Value};
 
 /// Type constraint for a function parameter.

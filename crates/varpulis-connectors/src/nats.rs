@@ -4,14 +4,15 @@
 //! connectivity via `async-nats`.  When the feature is disabled, stub
 //! implementations return `ConnectorError::NotAvailable`.
 
-use super::component::{ConnectorComponentInfo, ConnectorFactory};
-use super::types::{ConnectorConfig, ConnectorError, SinkConnector, SourceConnector};
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 #[cfg(feature = "nats")]
 use tracing::{info, warn};
 use varpulis_core::security::SecretString;
 use varpulis_core::Event;
+
+use super::component::{ConnectorComponentInfo, ConnectorFactory};
+use super::types::{ConnectorConfig, ConnectorError, SinkConnector, SourceConnector};
 
 // ---------------------------------------------------------------------------
 // Declarative registration
@@ -142,13 +143,15 @@ impl NatsConfig {
 // -----------------------------------------------------------------------------
 #[cfg(feature = "nats")]
 mod nats_impl {
-    use super::*;
-    use futures_util::StreamExt;
-    use rustc_hash::FxBuildHasher;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
+
+    use futures_util::StreamExt;
+    use rustc_hash::FxBuildHasher;
     use varpulis_core::event::{FieldKey, FxIndexMap};
+
+    use super::*;
 
     /// NATS source connector with async-nats
     #[derive(Debug)]

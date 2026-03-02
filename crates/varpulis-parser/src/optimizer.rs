@@ -317,9 +317,10 @@ fn is_timestamp_reference(expr: &Expr) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use varpulis_core::ast::{BinOp, Expr, SelectItem, WindowArgs};
     use varpulis_core::plan::{LogicalOp, LogicalPlan, LogicalSource, LogicalStream};
+
+    use super::*;
 
     fn make_plan(ops: Vec<LogicalOp>) -> LogicalPlan {
         LogicalPlan {

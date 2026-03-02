@@ -1,11 +1,13 @@
 //! SIGMOD 2014: Deferred predicate enumeration
 
+use std::sync::Arc;
+
+use rustc_hash::FxHashMap;
+
 use super::predicate::eval_predicate;
 use super::run::Run;
 use super::types::{MatchResult, Predicate, SharedEvent, StackEntry};
 use crate::ExprEvaluator;
-use rustc_hash::FxHashMap;
-use std::sync::Arc;
 
 /// Evaluate the deferred predicate against a specific combination of Kleene events.
 ///

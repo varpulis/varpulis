@@ -1,8 +1,9 @@
 //! Typed error hierarchy for the Varpulis engine.
 
+use varpulis_connectors::SinkError;
+
 use crate::enrichment::EnrichmentError;
 use crate::persistence::StoreError;
-use varpulis_connectors::SinkError;
 
 /// Top-level error type returned by engine public methods.
 #[derive(Debug, thiserror::Error)]

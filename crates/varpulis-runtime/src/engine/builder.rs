@@ -12,14 +12,15 @@
 //!     .build();
 //! ```
 
-use crate::dead_letter::DlqConfig;
-use crate::metrics::Metrics;
-use crate::udf::UdfRegistry;
 use std::sync::Arc;
+
 use tokio::sync::mpsc;
 
 use super::{Engine, OutputChannel};
+use crate::dead_letter::DlqConfig;
 use crate::event::{Event, SharedEvent};
+use crate::metrics::Metrics;
+use crate::udf::UdfRegistry;
 
 /// Builder for constructing an [`Engine`] with a fluent API.
 ///

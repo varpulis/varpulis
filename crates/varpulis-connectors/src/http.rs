@@ -1,8 +1,7 @@
 //! HTTP connector: webhook source and HTTP sink
 
-use super::component::{ConnectorComponentInfo, ConnectorFactory};
-use super::helpers::json_to_value;
-use super::types::{ConnectorConfig, ConnectorError, SinkConnector, SourceConnector};
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
@@ -10,11 +9,14 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use indexmap::IndexMap;
-use std::sync::Arc;
 use tokio::sync::mpsc;
 use tower_http::limit::RequestBodyLimitLayer;
 use tracing::{error, info, warn};
 use varpulis_core::Event;
+
+use super::component::{ConnectorComponentInfo, ConnectorFactory};
+use super::helpers::json_to_value;
+use super::types::{ConnectorConfig, ConnectorError, SinkConnector, SourceConnector};
 
 // ---------------------------------------------------------------------------
 // Declarative registration

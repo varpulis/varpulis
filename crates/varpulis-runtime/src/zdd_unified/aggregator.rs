@@ -20,13 +20,15 @@
 //! - Less control over sharing granularity
 //! - May not be optimal for all workloads
 
+use std::sync::Arc;
+
+use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
+
 use super::nfa_zdd::{NfaZdd, ZddState};
 use super::propagation::{PropagationMode, ZddPropagator};
 use crate::event::SharedEvent;
 use crate::greta::{GretaAggregate, QueryId};
-use rustc_hash::FxHashMap;
-use smallvec::SmallVec;
-use std::sync::Arc;
 
 /// Result of aggregation
 #[derive(Debug, Clone)]

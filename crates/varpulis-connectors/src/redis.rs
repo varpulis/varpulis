@@ -1,12 +1,13 @@
 //! Redis connector
 
+use async_trait::async_trait;
+use tokio::sync::mpsc;
+use varpulis_core::Event;
+
 use super::component::{ConnectorComponentInfo, ConnectorFactory};
 #[cfg(feature = "redis")]
 use super::helpers::json_to_event;
 use super::types::{ConnectorConfig, ConnectorError, SinkConnector, SourceConnector};
-use async_trait::async_trait;
-use tokio::sync::mpsc;
-use varpulis_core::Event;
 
 // ---------------------------------------------------------------------------
 // Declarative registration
@@ -84,12 +85,14 @@ impl RedisConfig {
 
 #[cfg(feature = "redis")]
 mod redis_impl {
-    use super::*;
-    use redis::aio::ConnectionManager;
-    use redis::AsyncCommands;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+
+    use redis::aio::ConnectionManager;
+    use redis::AsyncCommands;
     use tracing::{info, warn};
+
+    use super::*;
 
     /// Redis source that subscribes to a channel
     #[derive(Debug)]
@@ -442,12 +445,14 @@ impl RedisStreamConfig {
 
 #[cfg(feature = "redis")]
 mod redis_stream_impl {
-    use super::*;
-    use redis::aio::ConnectionManager;
-    use redis::Value as RedisValue;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+
+    use redis::aio::ConnectionManager;
+    use redis::Value as RedisValue;
     use tracing::{info, warn};
+
+    use super::*;
 
     /// Redis Streams source using XREADGROUP for consumer-group processing
     #[derive(Debug)]

@@ -9,9 +9,9 @@
 #![cfg(feature = "cdc")]
 
 use std::time::Duration;
+
 use tokio::sync::mpsc;
 use uuid::Uuid;
-
 use varpulis_core::Value;
 use varpulis_runtime::connector::postgres_cdc::{PostgresCdcConfig, PostgresCdcSource};
 use varpulis_runtime::connector::SourceConnector;

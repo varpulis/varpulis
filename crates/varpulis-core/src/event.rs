@@ -4,13 +4,15 @@
 //! streaming analytics engine. Events are the fundamental unit of data
 //! processed by streams, pattern matchers, and connectors.
 
-pub use crate::value::FxIndexMap;
-use crate::Value;
+use std::sync::Arc;
+
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+
+pub use crate::value::FxIndexMap;
+use crate::Value;
 
 /// Type alias for field name keys using `Arc<str>` for O(1) cloning.
 pub type FieldKey = Arc<str>;
@@ -165,8 +167,9 @@ impl Event {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use chrono::TimeZone;
+
+    use super::*;
 
     #[test]
     fn test_event_new() {

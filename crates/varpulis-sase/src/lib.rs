@@ -52,20 +52,17 @@ pub use kleene::KleeneCapture;
 pub use metrics::{LatencyHistogram, MetricsSummary, SaseMetrics};
 pub use negation::NegationConstraint;
 pub use nfa::{Nfa, NfaCompiler, State, StateType};
+pub use predicate::{classify_predicate, PredicateClass};
 pub use run::Run;
+// ---------------------------------------------------------------------------
+// Expression evaluator trait (abstraction for engine dependency)
+// ---------------------------------------------------------------------------
+use rustc_hash::FxHashMap;
 pub use types::{
     CompareOp, GlobalNegation, MatchResult, Predicate, RunSnapshot, SasePattern, SaseStats,
     SelectionStrategy, SharedEvent, StackEntry, TimeSemantics, MAX_ENUMERATION_RESULTS,
     MAX_KLEENE_EVENTS,
 };
-
-pub use predicate::{classify_predicate, PredicateClass};
-
-// ---------------------------------------------------------------------------
-// Expression evaluator trait (abstraction for engine dependency)
-// ---------------------------------------------------------------------------
-
-use rustc_hash::FxHashMap;
 use varpulis_core::{Event, Value};
 
 /// Context for evaluating sequence expressions within SASE predicates.

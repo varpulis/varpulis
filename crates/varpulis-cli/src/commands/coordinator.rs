@@ -1,8 +1,8 @@
-use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tracing::info;
 
+use anyhow::Result;
+use tracing::info;
 use varpulis_cli::{playground, websocket};
 
 // =============================================================================

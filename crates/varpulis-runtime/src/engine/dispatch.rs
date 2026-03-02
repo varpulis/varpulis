@@ -4,20 +4,19 @@
 //! `process()`, `process_shared()`, `process_inner()`, `process_batch()`,
 //! `process_batch_shared()`, `process_batch_sync()`, and their helpers.
 
-use crate::event::{Event, SharedEvent};
-use crate::sequence::SequenceContext;
-use chrono::{DateTime, Utc};
-use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
 use std::sync::Arc;
+
+use chrono::{DateTime, Utc};
+use rustc_hash::FxHashMap;
 use tracing::debug;
 
-use super::evaluator;
-use super::pipeline;
 use super::types::{
     RuntimeOp, RuntimeSource, StreamDefinition, StreamProcessResult, UserFunction, WindowType,
 };
-use super::Engine;
+use super::{evaluator, pipeline, Engine};
+use crate::event::{Event, SharedEvent};
+use crate::sequence::SequenceContext;
 
 impl Engine {
     /// Process an incoming event

@@ -3,11 +3,12 @@
 //! The product_with_optional operation is the key operation for Kleene pattern matching.
 //! It extends each set in the family with an optional new element.
 
+use rustc_hash::FxHashMap;
+
 use super::common::{get_node_info, remap_nodes, union_refs};
 use crate::refs::ZddRef;
 use crate::table::UniqueTable;
 use crate::zdd::Zdd;
-use rustc_hash::FxHashMap;
 
 impl Zdd {
     /// Extends each combination with an optional new element.
@@ -211,8 +212,9 @@ fn product_rec(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::collections::BTreeSet;
+
+    use super::*;
 
     #[test]
     fn test_product_with_optional_empty() {

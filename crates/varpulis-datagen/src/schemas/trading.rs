@@ -3,11 +3,13 @@
 //! Generates market events: trades, quotes, order book updates.
 //! Anomaly patterns: flash crashes, spoofing (large orders + cancels), momentum ignition.
 
-use crate::{EventSchema, GeneratedEvent};
+use std::collections::HashMap;
+
 use chrono::Utc;
 use rand::prelude::*;
 use serde_json::json;
-use std::collections::HashMap;
+
+use crate::{EventSchema, GeneratedEvent};
 
 const SYMBOLS: &[&str] = &[
     "AAPL", "GOOGL", "MSFT", "TSLA", "AMZN", "META", "NVDA", "JPM",

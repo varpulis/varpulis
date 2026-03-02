@@ -1,12 +1,12 @@
 //! MCP server implementation for Varpulis.
 
-use crate::client::CoordinatorClient;
-use crate::prompts;
-use crate::resources;
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::model::*;
 use rmcp::service::RequestContext;
 use rmcp::{tool_handler, ErrorData as McpError, RoleServer, ServerHandler};
+
+use crate::client::CoordinatorClient;
+use crate::{prompts, resources};
 
 /// The Varpulis MCP server.
 #[derive(Debug, Clone)]

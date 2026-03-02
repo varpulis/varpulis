@@ -4,9 +4,10 @@
 //! The first row is expected to contain column headers that map to event field names.
 
 #[cfg(feature = "csv-converter")]
-use super::{Converter, ConverterError};
-#[cfg(feature = "csv-converter")]
 use varpulis_core::Event;
+
+#[cfg(feature = "csv-converter")]
+use super::{Converter, ConverterError};
 
 /// CSV converter that parses CSV data into Events.
 ///

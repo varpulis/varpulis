@@ -1,16 +1,18 @@
 //! Rebalancing, migration, failover, and scaling operations.
 
-use super::{CheckpointResponsePayload, DeployResponse, MigratePipelinePlan, ScalingAction};
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
+
+use tracing::{error, info, warn};
+
+use super::{
+    CheckpointResponsePayload, Coordinator, DeployResponse, MigratePipelinePlan, ScalingAction,
+};
 use crate::connector_config::{self, ClusterConnector};
 use crate::migration::{MigrationReason, MigrationStatus, MigrationTask};
 use crate::pipeline_group::{GroupStatus, PipelineDeployment, PipelineDeploymentStatus};
 use crate::worker::{WorkerId, WorkerNode, WorkerStatus};
 use crate::{ClusterError, LeastLoadedPlacement, PlacementStrategy};
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
-use tracing::{error, info, warn};
-
-use super::Coordinator;
 
 impl Coordinator {
     /// Reconcile pipeline placements: re-deploy pipelines to workers that

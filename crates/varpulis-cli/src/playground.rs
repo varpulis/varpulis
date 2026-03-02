@@ -3,6 +3,10 @@
 //! Provides ephemeral sessions with no authentication required.
 //! Sessions auto-expire after inactivity and have conservative resource quotas.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
 use axum::extract::{Json, Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -11,9 +15,6 @@ use axum::Router;
 use indexmap::IndexMap;
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 use varpulis_core::Value;

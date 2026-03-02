@@ -4,22 +4,14 @@
 //! into runtime stream definitions, including SASE+ pattern compilation, Hamlet
 //! aggregator setup, and PST forecaster construction.
 
-use crate::aggregation::Aggregator;
-use crate::join::JoinBuffer;
-use crate::sase::SaseEngine;
-use crate::window::{
-    CountWindow, PartitionedSessionWindow, PartitionedSlidingWindow, PartitionedTumblingWindow,
-    SessionWindow, SlidingCountWindow, SlidingWindow, TumblingWindow,
-};
-use chrono::Duration;
-use rustc_hash::FxHashMap;
 use std::collections::HashMap;
 use std::sync::Arc;
+
+use chrono::Duration;
+use rustc_hash::FxHashMap;
 use tracing::{debug, info, warn};
 use varpulis_core::ast::{StreamOp, StreamSource};
 
-use super::compiler;
-use super::pattern_analyzer;
 use super::types::{
     ConcurrentConfig, DistinctState, EmitConfig, EmitExprConfig, EnrichConfig, ForecastConfig,
     LimitState, LogConfig, MergeSource, PartitionedAggregatorState,
@@ -27,7 +19,14 @@ use super::types::{
     RuntimeOp, RuntimeSource, SelectConfig, SourceBinding, StreamDefinition, TimerConfig, ToConfig,
     TrendAggregateConfig, WindowType,
 };
-use super::Engine;
+use super::{compiler, pattern_analyzer, Engine};
+use crate::aggregation::Aggregator;
+use crate::join::JoinBuffer;
+use crate::sase::SaseEngine;
+use crate::window::{
+    CountWindow, PartitionedSessionWindow, PartitionedSlidingWindow, PartitionedTumblingWindow,
+    SessionWindow, SlidingCountWindow, SlidingWindow, TumblingWindow,
+};
 
 impl Engine {
     pub(super) fn register_stream(

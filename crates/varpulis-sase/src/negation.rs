@@ -1,12 +1,14 @@
 //! Temporal negation support (NEG-01)
 
+use std::time::Instant;
+
+use chrono::{DateTime, Utc};
+use rustc_hash::FxHashMap;
+use varpulis_core::Event;
+
 use super::predicate::eval_predicate;
 use super::types::{Predicate, SharedEvent};
 use crate::ExprEvaluator;
-use chrono::{DateTime, Utc};
-use rustc_hash::FxHashMap;
-use std::time::Instant;
-use varpulis_core::Event;
 
 /// Constraint for temporal negation that must be confirmed via timeout
 #[derive(Debug, Clone)]

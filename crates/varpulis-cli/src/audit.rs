@@ -3,6 +3,9 @@
 //! Records security-relevant events as JSON-lines to a dedicated audit log file
 //! and exposes a read-only API endpoint for Admin users.
 
+use std::path::PathBuf;
+use std::sync::Arc;
+
 use axum::extract::{Json, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
@@ -10,8 +13,6 @@ use axum::routing::get;
 use axum::Router;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
-use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, RwLock};
 
@@ -234,10 +235,11 @@ pub fn audit_routes(logger: Option<SharedAuditLogger>) -> Router {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use axum::body::Body;
     use axum::http::Request;
     use tower::ServiceExt;
+
+    use super::*;
 
     #[test]
     fn test_audit_entry_serialization() {

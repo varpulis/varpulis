@@ -19,8 +19,9 @@ pub mod security;
 pub mod users;
 pub mod websocket;
 
-use anyhow::Result;
 use std::path::PathBuf;
+
+use anyhow::Result;
 use varpulis_core::ast::{Program, Stmt};
 use varpulis_parser::parse;
 

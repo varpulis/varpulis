@@ -12,10 +12,9 @@
 
 use std::sync::Arc;
 use std::time::Duration;
+
 use tokio::sync::RwLock;
 use uuid::Uuid;
-use varpulis_core::security::SecretString;
-
 use varpulis_cluster::coordinator::Coordinator;
 use varpulis_cluster::nats_coordinator::run_coordinator_nats_handler;
 use varpulis_cluster::nats_transport::{
@@ -30,6 +29,7 @@ use varpulis_cluster::{
     PipelineDeploymentStatus, PipelineGroupSpec, PipelinePlacement, RegisterWorkerRequest,
     RegisterWorkerResponse, SharedCoordinator, WorkerCapacity, WorkerId,
 };
+use varpulis_core::security::SecretString;
 
 const NATS_URL: &str = "nats://localhost:4222";
 

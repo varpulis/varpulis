@@ -3,14 +3,15 @@
 //! Provides OAuth 2.0 flow with GitHub as the identity provider,
 //! optional generic OIDC support, JWT session management, and axum route handlers.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use axum::extract::{Json, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::Router;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::audit::{AuditAction, AuditEntry, SharedAuditLogger};
@@ -1339,10 +1340,11 @@ pub fn spawn_session_cleanup(state: SharedOAuthState) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use axum::body::Body;
     use axum::http::Request;
     use tower::ServiceExt;
+
+    use super::*;
 
     fn get_req(uri: &str) -> Request<Body> {
         Request::builder()

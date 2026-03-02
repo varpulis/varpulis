@@ -15,7 +15,6 @@ use rumqttc::{AsyncClient, MqttOptions, QoS};
 use rustc_hash::FxHashMap;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
-
 use varpulis_runtime::connector::{ConnectorConfig, ManagedConnectorRegistry};
 use varpulis_runtime::event::Event;
 use varpulis_runtime::sink::Sink;

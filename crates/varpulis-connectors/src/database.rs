@@ -1,13 +1,14 @@
 //! Database connector (PostgreSQL/MySQL/SQLite with sqlx)
 
-use super::component::{ConnectorComponentInfo, ConnectorFactory};
-#[cfg(feature = "database")]
-use super::helpers::json_to_value;
-use super::types::{ConnectorError, SinkConnector, SourceConnector};
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 use varpulis_core::security::SecretString;
 use varpulis_core::Event;
+
+use super::component::{ConnectorComponentInfo, ConnectorFactory};
+#[cfg(feature = "database")]
+use super::helpers::json_to_value;
+use super::types::{ConnectorError, SinkConnector, SourceConnector};
 
 // ---------------------------------------------------------------------------
 // Declarative registration
@@ -88,10 +89,11 @@ impl DatabaseConfig {
 
 #[cfg(feature = "database")]
 mod database_impl {
-    use super::*;
     use sqlx::pool::PoolOptions;
     use sqlx::{AnyPool, Row};
     use tracing::{error, info};
+
+    use super::*;
 
     /// Ensure default Any drivers are installed (idempotent).
     fn ensure_drivers() {

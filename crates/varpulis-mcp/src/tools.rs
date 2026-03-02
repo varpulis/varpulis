@@ -1,11 +1,12 @@
 //! MCP tool implementations for Varpulis.
 
-use crate::server::VarpulisMcpServer;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, Content};
 use rmcp::{tool, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
+
+use crate::server::VarpulisMcpServer;
 
 // ─── Tool parameter types ────────────────────────────────────────────
 

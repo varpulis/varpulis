@@ -15,19 +15,20 @@
 //! engine.enable_persistence(store, config);
 //! ```
 
-use crate::event::Event;
+use std::collections::HashMap;
+#[cfg(feature = "persistence")]
+use std::path::Path;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
 use indexmap::IndexMap;
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tracing::info;
-
-#[cfg(feature = "persistence")]
-use std::path::Path;
 #[cfg(feature = "persistence")]
 use tracing::debug;
+use tracing::info;
+
+use crate::event::Event;
 
 /// Configuration for checkpointing
 #[derive(Debug, Clone)]

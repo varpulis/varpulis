@@ -3,14 +3,16 @@
 //! This module provides functionality to create sinks from connector configurations
 //! and manage a registry of active sinks.
 
+use std::sync::Arc;
+
+use indexmap::IndexMap;
+use rustc_hash::{FxHashMap, FxHashSet};
+use tracing::{debug, warn};
+use varpulis_core::ast::ConnectorParam;
+
 use crate::connector;
 #[cfg(feature = "kafka")]
 use crate::connector::SinkConnector;
-use indexmap::IndexMap;
-use rustc_hash::{FxHashMap, FxHashSet};
-use std::sync::Arc;
-use tracing::{debug, warn};
-use varpulis_core::ast::ConnectorParam;
 
 /// Convert AST ConnectorParams to a runtime ConnectorConfig
 pub fn connector_params_to_config(

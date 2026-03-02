@@ -2,8 +2,9 @@
 //!
 //! Run with: cargo bench -p varpulis-zdd
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::collections::{BTreeSet, HashSet};
+
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use varpulis_zdd::{Zdd, ZddArena};
 
 // ============================================================================

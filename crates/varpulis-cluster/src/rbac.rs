@@ -19,9 +19,10 @@
 //! }
 //! ```
 
-use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
+
+use serde::Deserialize;
 use varpulis_core::security::SecretString;
 use zeroize::Zeroize;
 

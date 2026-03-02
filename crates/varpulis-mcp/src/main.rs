@@ -5,7 +5,8 @@
 
 use clap::Parser;
 use rmcp::ServiceExt;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 use varpulis_mcp::{CoordinatorClient, VarpulisMcpServer};
 
 #[derive(Parser, Debug)]

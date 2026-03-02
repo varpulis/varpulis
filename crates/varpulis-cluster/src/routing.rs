@@ -1,8 +1,10 @@
 //! Event routing and pattern matching for inter-pipeline communication.
 
-use crate::pipeline_group::{DeployedPipelineGroup, InterPipelineRoute};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
+
+use crate::pipeline_group::{DeployedPipelineGroup, InterPipelineRoute};
 
 /// Routing table for inter-pipeline event routing.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]

@@ -1,9 +1,10 @@
 //! HTTP client for interacting with a remote Varpulis server.
 
+use thiserror::Error;
+
 use crate::api::{
     DeployPipelineRequest, DeployPipelineResponse, PipelineListResponse, UsageResponse,
 };
-use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ClientError {
@@ -142,11 +143,13 @@ impl VarpulisClient {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::api;
     use std::sync::Arc;
+
     use tokio::sync::RwLock;
     use varpulis_runtime::tenant::{TenantManager, TenantQuota};
+
+    use super::*;
+    use crate::api;
 
     async fn start_test_server() -> (String, String) {
         let mut mgr = TenantManager::new();

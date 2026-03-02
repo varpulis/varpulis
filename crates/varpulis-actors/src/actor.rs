@@ -1,8 +1,9 @@
 //! Core actor traits defining lifecycle and message handling.
 
+use std::fmt::Debug;
+
 use async_trait::async_trait;
 use serde::Serialize;
-use std::fmt::Debug;
 
 use crate::context::ActorContext;
 

@@ -119,8 +119,7 @@ pub mod health;
 pub mod join;
 pub mod metrics;
 pub mod persistence;
-pub use varpulis_pst as pst;
-pub use varpulis_sase as sase;
+pub use {varpulis_pst as pst, varpulis_sase as sase};
 pub mod sase_persistence;
 pub mod scoring;
 pub mod sequence;
@@ -139,11 +138,8 @@ pub mod worker_pool;
 pub mod zdd_unified;
 
 // Re-export from varpulis-connectors for backwards compatibility
-pub use varpulis_connectors as connector;
-pub use varpulis_connectors::circuit_breaker;
-pub use varpulis_connectors::converter;
-pub use varpulis_connectors::limits;
-
+// Columnar storage for SIMD-optimized aggregations
+pub use columnar::{Column, ColumnarAccess, ColumnarBuffer, ColumnarCheckpoint};
 pub use context::{
     CheckpointAck, CheckpointBarrier, CheckpointCoordinator, ContextConfig, ContextMap,
     ContextMessage, ContextOrchestrator, ContextRuntime, DispatchError, EventTypeRouter,
@@ -153,34 +149,30 @@ pub use engine::{Engine, EngineBuilder, ReloadReport, SourceBinding};
 pub use event::{Event, SharedEvent};
 pub use event_file::StreamingEventReader;
 pub use metrics::Metrics;
+// Persistence exports (always available, RocksDB impl requires "persistence" feature)
+#[cfg(feature = "persistence")]
+pub use persistence::RocksDbStore;
+pub use persistence::{
+    Checkpoint, CheckpointConfig, CheckpointManager, FileStore, MemoryStore, StateStore, StoreError,
+};
 pub use sink::{ConsoleSink, FileSink, HttpSink, MultiSink};
 pub use stream::Stream;
-pub use timer::{spawn_timer, TimerManager};
-pub use varpulis_connectors::{Sink, SinkError};
-pub use window::{
-    CountWindow, DelayBuffer, IncrementalAggregates, IncrementalSlidingWindow,
-    PartitionedDelayBuffer, PartitionedPreviousValueTracker, PartitionedSessionWindow,
-    PartitionedSlidingWindow, PartitionedTumblingWindow, PreviousValueTracker, SessionWindow,
-    SlidingCountWindow, SlidingWindow, TumblingWindow,
-};
-
-// Columnar storage for SIMD-optimized aggregations
-pub use columnar::{Column, ColumnarAccess, ColumnarBuffer, ColumnarCheckpoint};
-pub use worker_pool::{
-    BackpressureStrategy, PoolBackpressureError, WorkerPool, WorkerPoolConfig, WorkerPoolMetrics,
-    WorkerState, WorkerStatus,
-};
-
 // Multi-tenant SaaS support
 pub use tenant::{
     shared_tenant_manager, shared_tenant_manager_with_store, Pipeline, PipelineSnapshot,
     PipelineStatus, SharedTenantManager, Tenant, TenantError, TenantId, TenantManager, TenantQuota,
     TenantSnapshot, TenantUsage,
 };
-
-// Persistence exports (always available, RocksDB impl requires "persistence" feature)
-#[cfg(feature = "persistence")]
-pub use persistence::RocksDbStore;
-pub use persistence::{
-    Checkpoint, CheckpointConfig, CheckpointManager, FileStore, MemoryStore, StateStore, StoreError,
+pub use timer::{spawn_timer, TimerManager};
+pub use varpulis_connectors as connector;
+pub use varpulis_connectors::{circuit_breaker, converter, limits, Sink, SinkError};
+pub use window::{
+    CountWindow, DelayBuffer, IncrementalAggregates, IncrementalSlidingWindow,
+    PartitionedDelayBuffer, PartitionedPreviousValueTracker, PartitionedSessionWindow,
+    PartitionedSlidingWindow, PartitionedTumblingWindow, PreviousValueTracker, SessionWindow,
+    SlidingCountWindow, SlidingWindow, TumblingWindow,
+};
+pub use worker_pool::{
+    BackpressureStrategy, PoolBackpressureError, WorkerPool, WorkerPoolConfig, WorkerPoolMetrics,
+    WorkerState, WorkerStatus,
 };

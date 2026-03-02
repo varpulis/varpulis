@@ -1,7 +1,8 @@
 //! Event type indexing (IDX-01)
 
-use super::nfa::{Nfa, StateType};
 use rustc_hash::FxHashMap;
+
+use super::nfa::{Nfa, StateType};
 
 /// Index mapping event types to states that expect them
 #[derive(Debug, Clone)]

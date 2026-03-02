@@ -3,9 +3,11 @@
 //! Named connectors (e.g., `mqtt_market`, `kafka_signals`) are stored at the
 //! coordinator level and automatically injected into VPL source before parsing.
 
-use crate::ClusterError;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
+
+use crate::ClusterError;
 
 /// A cluster-level named connector.
 #[derive(Debug, Clone, Serialize, Deserialize)]

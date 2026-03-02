@@ -15,9 +15,10 @@
 //! This allows O(sp × n² + k × sp) complexity instead of O(k × n²),
 //! where sp << k when queries share Kleene sub-patterns.
 
-use crate::greta::QueryId;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
+
+use crate::greta::QueryId;
 
 /// Unique identifier for a snapshot
 pub type SnapshotId = u32;

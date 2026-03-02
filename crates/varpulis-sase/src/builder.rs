@@ -1,8 +1,10 @@
 //! Builder API for SASE patterns
 
-use super::types::{CompareOp, Predicate, SasePattern};
 use std::time::Duration;
+
 use varpulis_core::Value;
+
+use super::types::{CompareOp, Predicate, SasePattern};
 
 /// Builder for SASE patterns
 #[derive(Debug)]
