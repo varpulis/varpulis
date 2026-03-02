@@ -53,7 +53,7 @@ federation = ["nats-transport"]
 otel = ["opentelemetry", "tracing-opentelemetry"]
 
 [dependencies.kube]
-version = "0.98"
+version = "0.99"
 features = ["runtime", "client"]
 optional = true
 

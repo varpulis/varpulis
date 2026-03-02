@@ -2,8 +2,25 @@
 # See: https://github.com/rustsec/rustsec/tree/main/cargo-audit
 
 [advisories]
-# RUSTSEC-2023-0071: rsa timing side-channel (Marvin Attack)
-# Transitive dependency via sqlx-mysql -> rsa 0.9.x
-# No fix available upstream. Low risk: only applies to RSA PKCS#1 v1.5
-# decryption in MySQL TLS connections, requires attacker on same network.
-ignore = ["RUSTSEC-2023-0071"]
+ignore = [
+    # RUSTSEC-2023-0071: rsa timing side-channel (Marvin Attack)
+    # Transitive dependency via sqlx-mysql -> rsa 0.9.x
+    # No fix available upstream. Low risk: only applies to RSA PKCS#1 v1.5
+    # decryption in MySQL TLS connections, requires attacker on same network.
+    "RUSTSEC-2023-0071",
+
+    # RUSTSEC-2025-0052: async-std is unmaintained
+    # Transitive dependency via pulsar 6.7.0 (optional, feature-gated).
+    # No upstream fix: pulsar-rs has not released a version without async-std.
+    "RUSTSEC-2025-0052",
+
+    # RUSTSEC-2025-0141: bincode is unmaintained
+    # Transitive dependency via iai-callgrind (dev-only benchmarking framework).
+    # bincode is embedded in the benchmark runner; no alternative available.
+    "RUSTSEC-2025-0141",
+
+    # RUSTSEC-2025-0134: rustls-pemfile is unmaintained
+    # Still pulled by rumqttc 0.25.x (latest available) and async-nats 0.38.x.
+    # No upstream fix for these consumers yet.
+    "RUSTSEC-2025-0134",
+]

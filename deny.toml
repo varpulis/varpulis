@@ -12,25 +12,16 @@ all-features = true
 # Fail on any vulnerability, but allow specific unmaintained crates that we've
 # evaluated and accepted the risk for (transitive dependencies we can't control).
 ignore = [
-    # lru 0.12/0.13: IterMut unsoundness (Stacked Borrows violation).
-    # Only reachable via aws-sdk-s3 → S3 connector feature. We never iterate
-    # mutably over the LRU cache ourselves.
-    { id = "RUSTSEC-2026-0002", reason = "we never use IterMut on the LRU cache" },
+    # bincode 1.x: unmaintained. Transitive via iai-callgrind (dev-only benchmarks).
+    # No alternative available — bincode is embedded in the benchmark runner.
+    { id = "RUSTSEC-2025-0141", reason = "dev-only transitive via iai-callgrind benchmarks" },
 
-    # bincode 1.x: unmaintained. Used for internal serialization only (no
-    # untrusted input). Will migrate to bincode2/postcard when stable.
-    { id = "RUSTSEC-2025-0141", reason = "internal serialization only, no untrusted input" },
-
-    # backoff 0.4: unmaintained. Transitive dep from kube-runtime (k8s feature only).
-    { id = "RUSTSEC-2025-0012", reason = "transitive via kube-runtime, k8s feature only" },
-
-    # instant 0.1: unmaintained. Transitive via backoff -> kube-runtime.
-    { id = "RUSTSEC-2024-0384", reason = "transitive via backoff, k8s feature only" },
-
-    # rustls-pemfile 2.x: unmaintained. Cert parsing only, low attack surface.
-    { id = "RUSTSEC-2025-0134", reason = "cert parsing only, low attack surface" },
+    # rustls-pemfile 2.x: unmaintained. Still pulled by rumqttc 0.25 and async-nats 0.38.
+    # Cert parsing only, low attack surface. No upstream fix available yet.
+    { id = "RUSTSEC-2025-0134", reason = "cert parsing only, no upstream fix for rumqttc/async-nats" },
 
     # async-std 1.x: unmaintained. Transitive via pulsar crate (pulsar feature only).
+    # No upstream fix: pulsar-rs has not released a version without async-std.
     { id = "RUSTSEC-2025-0052", reason = "transitive via pulsar crate, pulsar feature only" },
 
     # rsa 0.9: Marvin Attack timing side-channel. Transitive via sqlx-mysql.
