@@ -21,6 +21,7 @@ varpulis-runtime = { version = "0.5.0", path = "../varpulis-runtime", features =
 tokio = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
+miette = { workspace = true, features = ["fancy"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 serde_json = { workspace = true }

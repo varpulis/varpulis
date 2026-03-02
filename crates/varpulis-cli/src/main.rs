@@ -573,7 +573,7 @@ async fn main() -> Result<()> {
 
         Commands::Parse { file } => {
             let source = std::fs::read_to_string(&file)?;
-            commands::validate::parse_and_show(&source)?;
+            commands::validate::parse_and_show(&source, &file.to_string_lossy())?;
         }
 
         Commands::Demo {
@@ -589,7 +589,7 @@ async fn main() -> Result<()> {
 
         Commands::Check { file } => {
             let source = std::fs::read_to_string(&file)?;
-            commands::validate::check_syntax(&source)?;
+            commands::validate::check_syntax(&source, &file.to_string_lossy())?;
         }
 
         Commands::Server {

@@ -9,6 +9,7 @@ mod checks;
 pub mod scope;
 mod suggest;
 
+use miette::NamedSource;
 use scope::SymbolTable;
 
 use crate::ast::Program;
@@ -87,6 +88,113 @@ impl ValidationResult {
             }
         }
         out
+    }
+}
+
+/// A semantic [`Diagnostic`] bundled with source text for rich terminal
+/// rendering via [`miette`].
+#[derive(Debug)]
+pub struct RichDiagnostic {
+    message: String,
+    src: NamedSource<String>,
+    span: miette::SourceSpan,
+    help: Option<String>,
+    code_str: Option<String>,
+    related: Vec<RichRelatedSpan>,
+}
+
+impl std::fmt::Display for RichDiagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for RichDiagnostic {}
+
+impl miette::Diagnostic for RichDiagnostic {
+    fn code<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
+        self.code_str
+            .as_ref()
+            .map(|c| Box::new(c.clone()) as Box<dyn std::fmt::Display>)
+    }
+
+    fn help<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
+        self.help
+            .as_ref()
+            .map(|h| Box::new(h.clone()) as Box<dyn std::fmt::Display>)
+    }
+
+    fn source_code(&self) -> Option<&dyn miette::SourceCode> {
+        Some(&self.src)
+    }
+
+    fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
+        Some(Box::new(std::iter::once(
+            miette::LabeledSpan::new_primary_with_span(Some("here".to_string()), self.span),
+        )))
+    }
+
+    fn related<'a>(&'a self) -> Option<Box<dyn Iterator<Item = &'a dyn miette::Diagnostic> + 'a>> {
+        if self.related.is_empty() {
+            None
+        } else {
+            Some(Box::new(
+                self.related.iter().map(|r| r as &dyn miette::Diagnostic),
+            ))
+        }
+    }
+}
+
+/// A related span for [`RichDiagnostic`].
+#[derive(Debug)]
+struct RichRelatedSpan {
+    message: String,
+    src: NamedSource<String>,
+    span: miette::SourceSpan,
+}
+
+impl std::fmt::Display for RichRelatedSpan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for RichRelatedSpan {}
+
+impl miette::Diagnostic for RichRelatedSpan {
+    fn source_code(&self) -> Option<&dyn miette::SourceCode> {
+        Some(&self.src)
+    }
+
+    fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
+        Some(Box::new(std::iter::once(
+            miette::LabeledSpan::new_with_span(Some("related".to_string()), self.span),
+        )))
+    }
+}
+
+impl RichDiagnostic {
+    /// Wrap a semantic [`Diagnostic`] with the source text and filename so
+    /// that `miette` can render a rich diagnostic.
+    pub fn from_diagnostic(d: &Diagnostic, source: &str, filename: &str) -> Self {
+        let named = NamedSource::new(filename, source.to_string());
+        let related = d
+            .related
+            .iter()
+            .map(|r| RichRelatedSpan {
+                message: r.message.clone(),
+                src: named.clone(),
+                span: r.span.into(),
+            })
+            .collect();
+        Self {
+            message: d.message.clone(),
+            src: named,
+            span: d.span.into(),
+            help: d.hint.clone(),
+            code_str: d.code.map(String::from),
+            related,
+        }
     }
 }
 
