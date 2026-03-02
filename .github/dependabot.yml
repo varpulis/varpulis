@@ -6,6 +6,13 @@ updates:
       interval: weekly
     commit-message:
       prefix: "chore(deps):"
+    groups:
+      rust-patch:
+        update-types: ["version-update:semver-patch"]
+      rust-minor:
+        update-types: ["version-update:semver-minor"]
+      rust-major:
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: /
@@ -13,6 +20,9 @@ updates:
       interval: weekly
     commit-message:
       prefix: "ci(deps):"
+    groups:
+      actions:
+        patterns: ["*"]
 
   - package-ecosystem: npm
     directory: /web-ui
@@ -20,3 +30,10 @@ updates:
       interval: weekly
     commit-message:
       prefix: "chore(deps):"
+    groups:
+      npm-patch:
+        update-types: ["version-update:semver-patch"]
+      npm-minor:
+        update-types: ["version-update:semver-minor"]
+      npm-major:
+        update-types: ["version-update:semver-major"]
