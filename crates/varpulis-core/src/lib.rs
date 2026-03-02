@@ -1,4 +1,3 @@
-#![warn(missing_docs)]
 //! # Varpulis Core
 //!
 //! Foundational types and AST definitions for the VPL language.

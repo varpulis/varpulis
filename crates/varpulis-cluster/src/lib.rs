@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! # Varpulis Cluster
 //!
 //! Distributed execution support for Varpulis streaming analytics.

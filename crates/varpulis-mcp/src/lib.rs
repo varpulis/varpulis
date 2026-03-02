@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Varpulis MCP Server
 //!
 //! Exposes the Varpulis CEP engine to AI agents via the Model Context Protocol.

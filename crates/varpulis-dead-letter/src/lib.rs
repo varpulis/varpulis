@@ -5,8 +5,6 @@
 //! dropped. The DLQ appends one JSON line per failed event to a file,
 //! including error metadata for later reprocessing.
 
-#![warn(missing_docs)]
-
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};

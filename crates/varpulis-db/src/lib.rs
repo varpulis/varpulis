@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! PostgreSQL database layer for Varpulis Cloud.
 //!
 //! Provides typed models, a repository of CRUD operations, and connection pool

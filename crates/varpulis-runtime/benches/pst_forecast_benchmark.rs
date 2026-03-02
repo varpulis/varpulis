@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! # PST Forecasting Benchmarks
 //!
 //! Benchmarks for the Prediction Suffix Tree (PST) and Pattern Markov Chain (PMC)

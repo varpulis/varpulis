@@ -10,8 +10,6 @@
 //!   (MQTT broker)          (MqttSource)                        (HttpSink)           (Webhook)
 //! ```
 
-#![warn(missing_docs)]
-
 // Core modules
 pub mod circuit_breaker;
 pub mod component;

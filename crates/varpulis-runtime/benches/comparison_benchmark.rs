@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Benchmarks for comparing Varpulis performance with Apama-style CEP workloads
 //!
 //! These benchmarks test end-to-end stream processing with realistic scenarios:

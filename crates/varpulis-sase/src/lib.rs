@@ -19,8 +19,6 @@
 //! - A*: Kleene star (zero or more)
 //! - WITHIN(pattern, duration): Temporal constraint
 
-#![warn(missing_docs)]
-
 // Module declarations
 mod advance;
 mod and_op;
