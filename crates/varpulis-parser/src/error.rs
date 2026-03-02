@@ -1,6 +1,7 @@
 //! Parser error types
 
-use thiserror::Error;
+use miette::{Diagnostic, NamedSource, SourceSpan};
+use thiserror::Error as ThisError;
 use varpulis_core::Span;
 
 /// Location in source code with line and column
@@ -41,7 +42,7 @@ impl SourceLocation {
 }
 
 /// Errors that can occur during VPL parsing.
-#[derive(Debug, Error, Clone)]
+#[derive(Debug, ThisError, Clone)]
 pub enum ParseError {
     /// Error with precise source location and an optional hint for the user.
     #[error("Line {line}, column {column}: {message}")]
@@ -138,6 +139,99 @@ impl ParseError {
             position,
             message: message.into(),
             hint,
+        }
+    }
+
+    /// Extract the byte offset and length for highlighting in the source.
+    ///
+    /// Returns `(offset, length)` where length defaults to 1 when only a
+    /// point position is available.
+    pub fn source_span(&self, source: &str) -> (usize, usize) {
+        match self {
+            Self::Located { position, .. }
+            | Self::UnexpectedToken { position, .. }
+            | Self::InvalidToken { position, .. }
+            | Self::UnterminatedString(position) => {
+                let pos = (*position).min(source.len());
+                // Highlight at least 1 char, or to end-of-line
+                let rest = &source[pos..];
+                let len = rest.find(['\n', '\r']).unwrap_or(rest.len()).max(1);
+                (pos, len)
+            }
+            Self::Custom { span, .. } => {
+                let start = span.start.min(source.len());
+                let end = span.end.min(source.len());
+                (start, (end - start).max(1))
+            }
+            // No position info — highlight the first character
+            Self::UnexpectedEof
+            | Self::InvalidNumber(_)
+            | Self::InvalidDuration(_)
+            | Self::InvalidTimestamp(_)
+            | Self::InvalidEscape(_) => (source.len().saturating_sub(1), 1),
+        }
+    }
+
+    /// Return the hint text, if the variant carries one.
+    pub fn hint(&self) -> Option<&str> {
+        match self {
+            Self::Located { hint, .. } => hint.as_deref(),
+            _ => None,
+        }
+    }
+}
+
+/// A [`ParseError`] bundled with source text for rich terminal rendering
+/// via [`miette`].
+///
+/// Consumers that only need the plain error can continue to use [`ParseError`]
+/// directly. The CLI wraps errors in this type to get coloured,
+/// source-highlighted diagnostics.
+#[derive(Debug)]
+pub struct RichParseError {
+    inner: ParseError,
+    src: NamedSource<String>,
+    span: SourceSpan,
+    help: Option<String>,
+}
+
+impl std::fmt::Display for RichParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.inner)
+    }
+}
+
+impl std::error::Error for RichParseError {}
+
+impl Diagnostic for RichParseError {
+    fn help<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
+        self.help
+            .as_ref()
+            .map(|h| Box::new(h.clone()) as Box<dyn std::fmt::Display>)
+    }
+
+    fn source_code(&self) -> Option<&dyn miette::SourceCode> {
+        Some(&self.src)
+    }
+
+    fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
+        Some(Box::new(std::iter::once(
+            miette::LabeledSpan::new_primary_with_span(Some("here".to_string()), self.span),
+        )))
+    }
+}
+
+impl RichParseError {
+    /// Wrap a [`ParseError`] with the source text and filename so that
+    /// `miette` can render a rich diagnostic.
+    pub fn new(error: ParseError, source: &str, filename: &str) -> Self {
+        let (offset, len) = error.source_span(source);
+        let help = error.hint().map(String::from);
+        Self {
+            src: NamedSource::new(filename, source.to_string()),
+            span: SourceSpan::new(offset.into(), len),
+            help,
+            inner: error,
         }
     }
 }

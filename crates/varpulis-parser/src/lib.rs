@@ -95,7 +95,7 @@ pub mod optimizer;
 #[allow(missing_docs)]
 pub mod pest_parser;
 
-pub use error::ParseError;
+pub use error::{ParseError, RichParseError};
 pub use lexer::Token;
 pub use optimizer::optimize_plan;
 pub use pest_parser::parse;

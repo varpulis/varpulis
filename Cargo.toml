@@ -46,6 +46,7 @@ schemars = { version = "0.8", features = ["indexmap2"] }
 # Error handling
 thiserror = "1.0"
 anyhow = "1.0"
+miette = "7"
 
 # Logging & tracing
 tracing = "0.1"
