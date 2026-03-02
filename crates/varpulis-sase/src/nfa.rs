@@ -1,9 +1,10 @@
 //! NFA state machine and compiler
 
+use std::time::Duration;
+
 use super::and_op::{AndBranch, AndConfig, NegationInfo};
 use super::predicate::{classify_predicate, PredicateClass};
 use super::types::{Predicate, SasePattern};
-use std::time::Duration;
 
 // ============================================================================
 // NFA STATE MACHINE

@@ -7,6 +7,7 @@
 //! - Maintains backward compatibility with no-context programs
 
 use std::sync::Arc;
+
 use tokio::sync::mpsc;
 use varpulis_parser::parse;
 use varpulis_runtime::engine::Engine;

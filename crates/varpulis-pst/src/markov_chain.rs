@@ -6,12 +6,13 @@
 //! Includes Hawkes process intensity modulation for temporal density awareness
 //! and conformal prediction intervals for calibrated uncertainty bounds.
 
+use hashlink::LruCache;
+use rustc_hash::FxHashMap;
+
 use super::conformal::ConformalCalibrator;
 use super::hawkes::HawkesIntensity;
 use super::online::OnlinePSTLearner;
 use super::tree::{PSTConfig, PredictionSuffixTree, SymbolId};
-use hashlink::LruCache;
-use rustc_hash::FxHashMap;
 
 /// Configuration for the Pattern Markov Chain.
 #[derive(Debug, Clone)]

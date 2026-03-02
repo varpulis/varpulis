@@ -1,6 +1,7 @@
 //! Tests for periodic timer functionality
 
 use std::time::Duration;
+
 use tokio::sync::mpsc;
 use varpulis_parser::parse;
 use varpulis_runtime::engine::Engine;

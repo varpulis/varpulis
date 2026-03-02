@@ -1,8 +1,10 @@
 //! Performance-oriented chaos tests — failover latency, migration throughput.
 
-use super::ProcessCluster;
 use std::time::{Duration, Instant};
+
 use tokio::time::sleep;
+
+use super::ProcessCluster;
 
 // =============================================================================
 // Test 13: Failover latency

@@ -1,10 +1,10 @@
 //! Varpulis CLI - Command line interface for Varpulis streaming analytics engine
 
+use std::path::PathBuf;
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
 use tracing::info;
-
 use varpulis_cli::auth::{self, AuthConfig};
 use varpulis_cli::client::VarpulisClient;
 use varpulis_cli::config::Config;

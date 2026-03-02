@@ -1,12 +1,14 @@
 //! ZDD-Kleene: Compact Kleene capture using ZDD
 
+use std::sync::Arc;
+use std::time::Instant;
+
+use rustc_hash::FxHashMap;
+use varpulis_zdd::{ZddArena, ZddHandle};
+
 use super::types::{
     Predicate, SharedEvent, StackEntry, MAX_ENUMERATION_RESULTS, MAX_KLEENE_EVENTS,
 };
-use rustc_hash::FxHashMap;
-use std::sync::Arc;
-use std::time::Instant;
-use varpulis_zdd::{ZddArena, ZddHandle};
 
 /// Compact representation of Kleene captures using Zero-suppressed Decision Diagrams.
 ///

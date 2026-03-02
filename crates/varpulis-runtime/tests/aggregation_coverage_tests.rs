@@ -6,6 +6,7 @@
 //! null values, large inputs), `apply_shared`, and binary expressions.
 
 use std::sync::Arc;
+
 use varpulis_core::Value;
 use varpulis_runtime::aggregation::*;
 use varpulis_runtime::columnar::ColumnarBuffer;

@@ -9,9 +9,10 @@ mod checks;
 pub mod scope;
 mod suggest;
 
+use scope::SymbolTable;
+
 use crate::ast::Program;
 use crate::span::Span;
-use scope::SymbolTable;
 
 /// Severity of a diagnostic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

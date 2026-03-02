@@ -3,22 +3,21 @@
 mod deployment;
 mod rebalance;
 
+use std::collections::HashMap;
+#[cfg(feature = "raft")]
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use serde::{Deserialize, Serialize};
+use tracing::info;
+
 use crate::connector_config::{self, ClusterConnector};
 use crate::health::{self, HealthSweepResult};
 use crate::metrics::ClusterPrometheusMetrics;
 use crate::migration::{MigrationReason, MigrationTask};
 use crate::pipeline_group::{DeployedPipelineGroup, PipelineDeployment, PipelineGroupSpec};
-use crate::worker::{HeartbeatRequest, WorkerId, WorkerNode, WorkerStatus};
+use crate::worker::{HeartbeatRequest, PipelineMetrics, WorkerId, WorkerNode, WorkerStatus};
 use crate::{ClusterError, PlacementStrategy, RoundRobinPlacement};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
-use tracing::info;
-
-use crate::worker::PipelineMetrics;
-
-#[cfg(feature = "raft")]
-use std::sync::Arc;
 
 /// Aggregated cluster metrics.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

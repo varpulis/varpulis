@@ -1,5 +1,19 @@
 //! Coordinator REST API routes (axum-based).
 
+use std::sync::Arc;
+
+use axum::extract::{ConnectInfo, Path, Query, State};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use axum::routing::{delete, get, post, put};
+use axum::{Json, Router};
+use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
+use varpulis_core::pagination::{PaginationParams, MAX_LIMIT};
+use varpulis_core::security::{JSON_BODY_LIMIT, LARGE_BODY_LIMIT};
+#[allow(unused_imports)]
+use varpulis_parser::ParseError;
+
 use crate::connector_config::{self, ClusterConnector};
 use crate::coordinator::{Coordinator, InjectBatchRequest, InjectEventRequest};
 use crate::migration::MigrationReason;
@@ -15,20 +29,6 @@ use crate::worker::{
     WorkerInfo, WorkerNode,
 };
 use crate::ClusterError;
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use tokio::sync::RwLock;
-#[allow(unused_imports)]
-use varpulis_parser::ParseError;
-
-use axum::extract::{ConnectInfo, Path, Query, State};
-use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post, put};
-use axum::{Json, Router};
-
-use varpulis_core::pagination::{PaginationParams, MAX_LIMIT};
-use varpulis_core::security::{JSON_BODY_LIMIT, LARGE_BODY_LIMIT};
 
 /// Query parameters for DLQ listing.
 #[derive(Debug, Deserialize)]
@@ -2788,11 +2788,12 @@ async fn handle_health_detailed(State(state): State<AppState>) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::worker::WorkerCapacity;
     use axum::body::Body;
     use axum::http::Request;
     use tower::ServiceExt;
+
+    use super::*;
+    use crate::worker::WorkerCapacity;
 
     fn setup_routes() -> (SharedCoordinator, Router) {
         let coord = shared_coordinator();

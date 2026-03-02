@@ -77,11 +77,13 @@
 //! }
 //! ```
 
+use std::hash::{Hash, Hasher};
+
+use indexmap::IndexMap;
+use varpulis_core::Value;
+
 use crate::columnar::ColumnarBuffer;
 use crate::event::{Event, SharedEvent};
-use indexmap::IndexMap;
-use std::hash::{Hash, Hasher};
-use varpulis_core::Value;
 
 /// Result type for aggregation outputs.
 ///
@@ -1392,8 +1394,9 @@ mod tests {
     // Columnar Aggregation Tests
     // ==========================================================================
 
-    use crate::columnar::ColumnarBuffer;
     use std::sync::Arc;
+
+    use crate::columnar::ColumnarBuffer;
 
     fn make_columnar_buffer() -> ColumnarBuffer {
         let events = vec![

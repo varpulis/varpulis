@@ -1,11 +1,12 @@
 //! Elasticsearch sink connector
 
-use super::component::{ConnectorComponentInfo, ConnectorFactory};
-use super::types::{ConnectorConfig, ConnectorError, SinkConnector};
 use async_trait::async_trait;
 use tracing::warn;
 use varpulis_core::security::SecretString;
 use varpulis_core::Event;
+
+use super::component::{ConnectorComponentInfo, ConnectorFactory};
+use super::types::{ConnectorConfig, ConnectorError, SinkConnector};
 
 // ---------------------------------------------------------------------------
 // Declarative registration
@@ -171,15 +172,17 @@ impl SinkConnector for ElasticsearchSink {
 // -----------------------------------------------------------------------------
 #[cfg(feature = "elasticsearch")]
 mod elasticsearch_impl {
-    use super::*;
+    use std::sync::Arc;
+    use std::time::Instant;
+
     use elasticsearch::auth::Credentials;
     use elasticsearch::http::request::JsonBody;
     use elasticsearch::http::transport::{SingleNodeConnectionPool, TransportBuilder};
     use elasticsearch::{BulkParts, Elasticsearch};
-    use std::sync::Arc;
-    use std::time::Instant;
     use tokio::sync::Mutex;
     use tracing::info;
+
+    use super::*;
 
     struct BulkBuffer {
         operations: Vec<serde_json::Value>,

@@ -1,10 +1,11 @@
 //! AWS S3 sink connector
 
-use super::component::{ConnectorComponentInfo, ConnectorFactory};
-use super::types::{ConnectorConfig, ConnectorError, SinkConnector};
 use async_trait::async_trait;
 use tracing::warn;
 use varpulis_core::Event;
+
+use super::component::{ConnectorComponentInfo, ConnectorFactory};
+use super::types::{ConnectorConfig, ConnectorError, SinkConnector};
 
 // ---------------------------------------------------------------------------
 // Declarative registration
@@ -199,14 +200,16 @@ impl SinkConnector for S3Sink {
 // -----------------------------------------------------------------------------
 #[cfg(feature = "s3")]
 mod s3_impl {
-    use super::*;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
     use aws_config::BehaviorVersion;
     use aws_sdk_s3::primitives::ByteStream;
     use aws_sdk_s3::Client as S3Client;
-    use std::sync::Arc;
-    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
     use tokio::sync::Mutex;
     use tracing::info;
+
+    use super::*;
 
     struct BufferState {
         buffer: Vec<u8>,

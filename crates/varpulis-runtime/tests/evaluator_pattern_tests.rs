@@ -5,9 +5,10 @@
 //! eval_filter_expr, eval_expr_with_functions, eval_stmts, eval_stmt,
 //! call_user_function, eval_expr_ctx.
 
+use std::sync::Arc;
+
 use indexmap::IndexMap;
 use rustc_hash::{FxBuildHasher, FxHashMap};
-use std::sync::Arc;
 use varpulis_core::ast::{Arg, BinOp, Expr, NamedArg};
 use varpulis_core::span::Spanned;
 use varpulis_core::{Stmt, Type, Value};

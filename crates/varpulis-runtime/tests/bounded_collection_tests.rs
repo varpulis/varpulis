@@ -2,6 +2,9 @@
 //!
 //! Validates LRU eviction, arena compaction, graphlet caps, and snapshot caps.
 
+use std::sync::Arc;
+
+use rustc_hash::FxHashMap;
 use varpulis_runtime::event::Event;
 use varpulis_runtime::hamlet::aggregator::HamletConfig;
 use varpulis_runtime::hamlet::graph::HamletGraph;
@@ -9,9 +12,6 @@ use varpulis_runtime::pst::{
     OnlinePSTLearner, PMCConfig, PSTConfig, PatternMarkovChain, PredictionSuffixTree,
     PruningStrategy, RunSnapshot,
 };
-
-use rustc_hash::FxHashMap;
-use std::sync::Arc;
 
 // --- PMC LRU eviction tests ---
 

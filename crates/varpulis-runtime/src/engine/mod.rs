@@ -20,15 +20,23 @@ pub mod topology_builder;
 mod types;
 
 // Re-export public types
-pub use builder::EngineBuilder;
-pub use sink_factory::SinkConnectorAdapter;
-pub use types::{EngineConfig, EngineMetrics, ReloadReport, SourceBinding, UserFunction};
+use std::sync::Arc;
 
+pub use builder::EngineBuilder;
+use chrono::{DateTime, Duration, Utc};
 // Re-export evaluator for use by other modules (e.g., SASE+)
 pub use evaluator::eval_filter_expr;
-
+use rustc_hash::{FxHashMap, FxHashSet};
+pub use sink_factory::SinkConnectorAdapter;
+use tokio::sync::mpsc;
+use tracing::{info, warn};
+// Re-export NamedPattern from types
+pub use types::NamedPattern;
+pub use types::{EngineConfig, EngineMetrics, ReloadReport, SourceBinding, UserFunction};
 // Re-export internal types for use within the engine module
 use types::{RuntimeOp, RuntimeSource, StreamDefinition, WindowType};
+use varpulis_core::ast::{ConfigItem, Program, Stmt};
+use varpulis_core::Value;
 
 use crate::connector;
 use crate::context::ContextMap;
@@ -39,17 +47,6 @@ use crate::sequence::SequenceContext;
 use crate::udf::UdfRegistry;
 use crate::watermark::PerSourceWatermarkTracker;
 use crate::window::CountWindow;
-use chrono::Duration;
-use chrono::{DateTime, Utc};
-use rustc_hash::{FxHashMap, FxHashSet};
-use std::sync::Arc;
-use tokio::sync::mpsc;
-use tracing::{info, warn};
-use varpulis_core::ast::{ConfigItem, Program, Stmt};
-use varpulis_core::Value;
-
-// Re-export NamedPattern from types
-pub use types::NamedPattern;
 
 /// Output channel type enumeration for zero-copy or owned event sending
 #[derive(Debug)]

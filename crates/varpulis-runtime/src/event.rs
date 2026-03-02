@@ -5,10 +5,9 @@
 //! defined locally.
 
 // Re-export everything from varpulis-core's event module
-pub use varpulis_core::event::*;
-
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+pub use varpulis_core::event::*;
 
 /// Temperature reading event for HVAC demo
 #[derive(Debug, Clone, Serialize, Deserialize)]

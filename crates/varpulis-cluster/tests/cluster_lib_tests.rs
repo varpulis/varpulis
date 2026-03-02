@@ -7,6 +7,7 @@
 //! and health module coverage.
 
 use std::collections::HashMap;
+
 use varpulis_cluster::*;
 
 // =============================================================================

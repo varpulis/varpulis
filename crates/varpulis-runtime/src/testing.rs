@@ -19,11 +19,13 @@
 //! # }
 //! ```
 
+use std::time::Duration;
+
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use tokio::sync::mpsc;
+
 use crate::engine::Engine;
 use crate::event::Event;
-use chrono::{DateTime, Duration as ChronoDuration, Utc};
-use std::time::Duration;
-use tokio::sync::mpsc;
 
 /// Internal timer state for the simulated scheduler.
 #[derive(Debug)]

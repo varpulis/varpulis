@@ -1,37 +1,34 @@
 //! Legacy connector registry for source/sink management
 
+use indexmap::IndexMap;
+
 use super::console::ConsoleSink;
 use super::database::{DatabaseConfig, DatabaseSink};
+use super::elasticsearch::ElasticsearchConfig;
+#[cfg(not(feature = "elasticsearch"))]
+use super::elasticsearch::ElasticsearchSink;
+#[cfg(feature = "elasticsearch")]
+use super::elasticsearch::ElasticsearchSinkFull;
 use super::http::HttpSink;
 use super::kafka::{KafkaConfig, KafkaSink};
 use super::kinesis::KinesisConfig;
 #[cfg(not(feature = "kinesis"))]
 use super::kinesis::KinesisSink;
+#[cfg(feature = "kinesis")]
+use super::kinesis::KinesisSinkFull;
 use super::mqtt::{MqttConfig, MqttSink};
 use super::redis::RedisConfig;
 #[cfg(not(feature = "redis"))]
 use super::redis::RedisSink;
-use super::rest_api::{RestApiConfig, RestApiSink};
-use super::types::{ConnectorConfig, ConnectorError, SinkConnector, SourceConnector};
-use indexmap::IndexMap;
-
-#[cfg(feature = "kinesis")]
-use super::kinesis::KinesisSinkFull;
 #[cfg(feature = "redis")]
 use super::redis::RedisSink as RedisSinkReal;
-#[cfg(feature = "s3")]
-use super::s3::S3SinkFull;
-
-use super::elasticsearch::ElasticsearchConfig;
+use super::rest_api::{RestApiConfig, RestApiSink};
 use super::s3::S3Config;
-
-#[cfg(feature = "elasticsearch")]
-use super::elasticsearch::ElasticsearchSinkFull;
-
-#[cfg(not(feature = "elasticsearch"))]
-use super::elasticsearch::ElasticsearchSink;
 #[cfg(not(feature = "s3"))]
 use super::s3::S3Sink;
+#[cfg(feature = "s3")]
+use super::s3::S3SinkFull;
+use super::types::{ConnectorConfig, ConnectorError, SinkConnector, SourceConnector};
 
 /// Registry of available connectors
 pub struct ConnectorRegistry {

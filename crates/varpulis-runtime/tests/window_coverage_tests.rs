@@ -11,8 +11,9 @@
 //! - SlidingCountWindow: count-based sliding windows
 //! - Edge cases: zero-size windows, single-event, empty partitions, watermark at exact boundary
 
-use chrono::Duration;
 use std::sync::Arc;
+
+use chrono::Duration;
 use varpulis_core::Value;
 use varpulis_runtime::event::Event;
 use varpulis_runtime::window::*;

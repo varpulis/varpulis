@@ -1,7 +1,8 @@
 //! Type system for VPL
 
-use serde::{Deserialize, Serialize};
 use std::fmt;
+
+use serde::{Deserialize, Serialize};
 
 /// VPL type
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

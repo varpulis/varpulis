@@ -3,19 +3,20 @@
 //! The `Sink` trait and `SinkError` are defined in `varpulis-connectors` and
 //! re-exported here. This module provides the built-in sink implementations.
 
-pub use varpulis_connectors::sink::{Sink, SinkConnectorAdapter, SinkError};
-
-use crate::event::Event;
-use async_trait::async_trait;
-use indexmap::IndexMap;
-use serde_json;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+
+use async_trait::async_trait;
+use indexmap::IndexMap;
+use serde_json;
 use tokio::sync::Mutex;
 use tracing::{error, warn};
+pub use varpulis_connectors::sink::{Sink, SinkConnectorAdapter, SinkError};
+
+use crate::event::Event;
 
 /// Console sink - prints to stdout
 #[derive(Debug)]
@@ -639,8 +640,9 @@ impl Sink for ResilientSink {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::NamedTempFile;
+
+    use super::*;
 
     // ==========================================================================
     // ConsoleSink Tests

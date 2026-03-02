@@ -9,6 +9,7 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+
 use varpulis_parser::parse;
 use varpulis_runtime::event_file::EventFileParser;
 use varpulis_runtime::{Engine, Event};

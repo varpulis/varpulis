@@ -1,13 +1,14 @@
 //! AWS Kinesis connector
 
-use super::component::{ConnectorComponentInfo, ConnectorFactory};
-use super::types::{ConnectorConfig, ConnectorError, SinkConnector, SourceConnector};
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 use tracing::warn;
 #[cfg(feature = "kinesis")]
 use tracing::{error, info};
 use varpulis_core::Event;
+
+use super::component::{ConnectorComponentInfo, ConnectorFactory};
+use super::types::{ConnectorConfig, ConnectorError, SinkConnector, SourceConnector};
 
 // ---------------------------------------------------------------------------
 // Declarative registration
@@ -246,15 +247,17 @@ impl SinkConnector for KinesisSink {
 // -----------------------------------------------------------------------------
 #[cfg(feature = "kinesis")]
 mod kinesis_impl {
-    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+
     use aws_config::BehaviorVersion;
     use aws_sdk_kinesis::primitives::Blob;
     use aws_sdk_kinesis::types::ShardIteratorType;
     use aws_sdk_kinesis::Client as KinesisClient;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
-    use std::time::Duration;
     use tokio::sync::Mutex;
+
+    use super::*;
 
     /// Full Kinesis source implementation with AWS SDK
     pub struct KinesisSourceImpl {

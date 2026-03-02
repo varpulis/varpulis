@@ -1,11 +1,11 @@
-use anyhow::Result;
-use rayon::prelude::*;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+
+use anyhow::Result;
+use rayon::prelude::*;
 use tokio::sync::{mpsc, RwLock};
 use tracing::info;
-
 use varpulis_parser::parse;
 use varpulis_runtime::engine::Engine;
 use varpulis_runtime::event::Event;

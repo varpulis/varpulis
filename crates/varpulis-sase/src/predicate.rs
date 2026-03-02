@@ -1,10 +1,11 @@
 //! Predicate evaluation and classification
 
+use rustc_hash::FxHashMap;
+use varpulis_core::{Event, Value};
+
 use super::nfa::{Nfa, State};
 use super::types::{CompareOp, Predicate, SharedEvent};
 use crate::ExprEvaluator;
-use rustc_hash::FxHashMap;
-use varpulis_core::{Event, Value};
 
 // ============================================================================
 // PREDICATE EVALUATION

@@ -8,9 +8,9 @@
 
 use std::sync::Arc;
 use std::time::Duration;
+
 use tokio::sync::RwLock;
 use uuid::Uuid;
-
 use varpulis_cluster::nats_coordinator::run_coordinator_nats_handler;
 use varpulis_cluster::nats_transport::{
     connect_nats, nats_publish, nats_request, subject_heartbeat, subject_register,

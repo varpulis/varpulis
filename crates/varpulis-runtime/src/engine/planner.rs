@@ -231,9 +231,10 @@ fn translate_ops(ops: &[StreamOp]) -> Result<Vec<LogicalOp>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use varpulis_core::ast::{Expr, SelectItem, StreamSource};
     use varpulis_core::span::{Span, Spanned};
+
+    use super::*;
 
     fn spanned<T>(node: T) -> Spanned<T> {
         Spanned {

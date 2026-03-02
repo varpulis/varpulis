@@ -4,8 +4,9 @@
 //! region health and pipeline catalogs via gossip. Cross-region event routing
 //! uses NATS super-cluster subjects.
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 /// Configuration for the federation layer.

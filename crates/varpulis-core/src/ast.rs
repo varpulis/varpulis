@@ -1,8 +1,9 @@
 //! Abstract Syntax Tree for VPL
 
+use serde::{Deserialize, Serialize};
+
 use crate::span::Spanned;
 use crate::types::Type;
-use serde::{Deserialize, Serialize};
 
 /// A complete VPL program
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -37,10 +37,13 @@ impl Default for GpuConfig {
 
 #[cfg(feature = "onnx")]
 mod inner {
+    use std::sync::Arc;
+
+    use ort::session::Session;
+    use ort::value::Tensor;
+
     use super::{GpuConfig, GpuProvider};
     use crate::event::Event;
-    use ort::{session::Session, value::Tensor};
-    use std::sync::Arc;
 
     /// An ONNX model loaded into ONNX Runtime for per-event or batch inference.
     pub struct OnnxModel {

@@ -13,18 +13,19 @@
 //! - Return statements for early exit
 //! - Variable declarations and assignments
 
-use crate::event::SharedEvent;
-use crate::sequence::SequenceContext;
-use crate::Event;
+use std::cell::RefCell;
+
 use indexmap::IndexMap;
 use rustc_hash::{FxBuildHasher, FxHashMap};
-use std::cell::RefCell;
 use tracing::debug;
 use varpulis_core::ast::Expr;
 use varpulis_core::span::Spanned;
 use varpulis_core::{Stmt, Value};
 
 use super::UserFunction;
+use crate::event::SharedEvent;
+use crate::sequence::SequenceContext;
+use crate::Event;
 
 // =============================================================================
 // Evaluation Context

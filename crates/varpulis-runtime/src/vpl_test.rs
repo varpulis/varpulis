@@ -38,10 +38,11 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::event_file::EventFileParser;
-use crate::Engine;
 use varpulis_core::Value;
 use varpulis_parser::parse;
+
+use crate::event_file::EventFileParser;
+use crate::Engine;
 
 /// A parsed `.vpl.test` fixture.
 #[derive(Debug)]
@@ -820,8 +821,9 @@ fn format_events_indented(events: &[OutputEvent]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::path::PathBuf;
+
+    use super::*;
 
     #[test]
     fn test_parse_section_header() {

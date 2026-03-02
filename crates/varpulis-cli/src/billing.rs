@@ -3,21 +3,21 @@
 //! Provides usage tracking, tier management, and Stripe Checkout/Portal
 //! integration via REST endpoints.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use axum::extract::{Json, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
+#[cfg(feature = "saas")]
+use chrono::Datelike;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::audit::{AuditAction, AuditEntry, SharedAuditLogger};
-
-#[cfg(feature = "saas")]
-use chrono::Datelike;
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -914,10 +914,11 @@ pub fn billing_routes(state: Option<SharedBillingState>) -> Router {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use axum::body::Body;
     use axum::http::Request;
     use tower::ServiceExt;
+
+    use super::*;
 
     fn get_req(uri: &str) -> Request<Body> {
         Request::builder()

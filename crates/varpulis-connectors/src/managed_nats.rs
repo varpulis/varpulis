@@ -1,27 +1,31 @@
 //! Managed NATS connector — single connection shared across all sources and sinks
 
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use tokio::sync::mpsc;
+use varpulis_core::Event;
+
 #[cfg(feature = "nats")]
 use super::managed::ConnectorHealthReport;
 use super::managed::ManagedConnector;
 use super::nats::NatsConfig;
 use super::types::ConnectorError;
 use crate::sink::Sink;
-use async_trait::async_trait;
-use std::sync::Arc;
-use tokio::sync::mpsc;
-use varpulis_core::Event;
 
 #[cfg(feature = "nats")]
 mod nats_managed_impl {
-    use super::*;
-    use crate::sink::SinkError;
-    use futures_util::StreamExt;
-    use rustc_hash::FxBuildHasher;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::time::{Duration, Instant};
+
+    use futures_util::StreamExt;
+    use rustc_hash::FxBuildHasher;
     use tokio::sync::Mutex;
     use tracing::{info, warn};
     use varpulis_core::event::{FieldKey, FxIndexMap};
+
+    use super::*;
+    use crate::sink::SinkError;
 
     /// Managed NATS connector with a single shared client.
     ///

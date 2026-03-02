@@ -1,9 +1,10 @@
 //! Actor handle for external observation and health checking.
 
-use crate::actor::{Actor, ActorExitStatus};
-use crate::mailbox::{MailboxError, MailboxSender};
 use serde::Serialize;
 use tokio::sync::watch;
+
+use crate::actor::{Actor, ActorExitStatus};
+use crate::mailbox::{MailboxError, MailboxSender};
 
 /// Health status of an actor.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

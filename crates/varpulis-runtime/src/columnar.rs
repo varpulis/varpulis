@@ -36,10 +36,12 @@
 //! assert_eq!(prices_again.len(), 2);
 //! ```
 
+use std::sync::Arc;
+
+use rustc_hash::FxHashMap;
+
 use crate::event::{Event, SharedEvent};
 use crate::persistence::SerializableEvent;
-use rustc_hash::FxHashMap;
-use std::sync::Arc;
 
 /// Type-specific column storage for SIMD operations.
 ///
@@ -381,9 +383,10 @@ pub trait ColumnarAccess {
 
 #[cfg(test)]
 mod tests {
+    use chrono::{Duration, Utc};
+
     use super::*;
     use crate::Event;
-    use chrono::{Duration, Utc};
 
     #[test]
     fn test_columnar_buffer_push() {

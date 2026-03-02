@@ -3,14 +3,16 @@
 //! This module contains functions for converting VPL AST elements into
 //! runtime structures (aggregators, SASE+ patterns, sequence filters).
 
+use std::time::Duration;
+
+use tracing::warn;
+use varpulis_core::ast::{FollowedByClause, SequenceStepDecl, StreamSource};
+
 use crate::aggregation::{
     AggBinOp, Avg, Count, CountDistinct, Ema, ExprAggregate, First, Last, Max, Median, Min,
     Percentile, StdDev, Sum, P50, P95, P99,
 };
 use crate::sase::{CompareOp, Predicate, SasePattern};
-use std::time::Duration;
-use tracing::warn;
-use varpulis_core::ast::{FollowedByClause, SequenceStepDecl, StreamSource};
 
 /// Compile an aggregate expression into an AggregateFunc
 pub fn compile_agg_expr(

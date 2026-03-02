@@ -15,11 +15,12 @@
 //!     → PhysicalPlanner → PhysicalPlan → Engine materialization
 //! ```
 
+use serde::{Deserialize, Serialize};
+
 use crate::ast::{
     AggItem, ConnectorParam, EnrichSpec, Expr, ForecastSpec, JoinClause, NamedArg, PatternDef,
     ScoreSpec, SelectItem, TrendAggItem, WindowArgs,
 };
-use serde::{Deserialize, Serialize};
 
 /// Top-level logical plan for a VPL program.
 #[derive(Debug, Clone, Serialize, Deserialize)]

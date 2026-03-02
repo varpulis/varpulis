@@ -4,10 +4,12 @@
 //! watermark as the minimum across all sources. This ensures correct event-time
 //! processing when events arrive from multiple sources with different latencies.
 
-use crate::persistence::{SourceWatermarkCheckpoint, WatermarkCheckpoint};
+use std::time::Instant;
+
 use chrono::{DateTime, Duration, Utc};
 use rustc_hash::FxHashMap;
-use std::time::Instant;
+
+use crate::persistence::{SourceWatermarkCheckpoint, WatermarkCheckpoint};
 
 /// Tracks watermarks for multiple event sources.
 ///

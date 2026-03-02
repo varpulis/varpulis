@@ -1,22 +1,21 @@
 //! Deployment, teardown, and event injection for pipeline groups.
 
+use std::collections::HashMap;
+use std::time::Instant;
+
+use tracing::{error, info, warn};
+
 use super::{
-    DeployGroupPlan, DeployResponse, DeployTask, DeployTaskResult, InjectBatchRequest,
+    Coordinator, DeployGroupPlan, DeployResponse, DeployTask, DeployTaskResult, InjectBatchRequest,
     InjectBatchResponse, InjectEventRequest, InjectResponse, InjectTarget, TeardownPlan,
 };
-use crate::connector_config;
 use crate::pipeline_group::{
     DeployedPipelineGroup, GroupStatus, PipelineDeployment, PipelineDeploymentStatus,
     PipelineGroupSpec,
 };
 use crate::routing::find_target_pipeline;
 use crate::worker::{WorkerId, WorkerNode};
-use crate::ClusterError;
-use std::collections::HashMap;
-use std::time::Instant;
-use tracing::{error, info, warn};
-
-use super::Coordinator;
+use crate::{connector_config, ClusterError};
 
 impl Coordinator {
     /// Phase 1: Build a deployment plan without holding the lock during HTTP I/O.
@@ -787,9 +786,11 @@ impl Coordinator {
         group_id: &str,
         request: InjectBatchRequest,
     ) -> Result<InjectBatchResponse, ClusterError> {
-        use crate::routing::find_target_pipeline;
         use std::time::Instant;
+
         use varpulis_runtime::event_file::EventFileParser;
+
+        use crate::routing::find_target_pipeline;
 
         let group = self
             .pipeline_groups

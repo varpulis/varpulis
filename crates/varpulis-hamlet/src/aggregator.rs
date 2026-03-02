@@ -17,15 +17,16 @@
 //! 3. Snapshots capture intermediate state at graphlet boundaries
 //! 4. Final counts are computed at window boundaries
 
+use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
+use varpulis_core::SharedEvent;
+
 use super::graph::HamletGraph;
 use super::graphlet::GraphletId;
 use super::optimizer::{HamletOptimizer, OptimizerConfig, SharingDecision};
 use super::snapshot::{PropagationCoefficients, Snapshot};
 use super::template::MergedTemplate;
 use crate::greta::{GretaAggregate, QueryId};
-use rustc_hash::FxHashMap;
-use smallvec::SmallVec;
-use varpulis_core::SharedEvent;
 
 /// Result of processing an event
 #[derive(Debug, Clone)]
@@ -494,10 +495,12 @@ impl Default for HamletAggregator {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use varpulis_core::Event;
+
     use super::*;
     use crate::template::TemplateBuilder;
-    use std::sync::Arc;
-    use varpulis_core::Event;
 
     fn create_test_aggregator() -> HamletAggregator {
         let mut builder = TemplateBuilder::new();

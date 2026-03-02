@@ -1,8 +1,10 @@
 //! Heartbeat protocol and failure detection.
 
-use crate::worker::{WorkerId, WorkerStatus};
 use std::time::Duration;
+
 use tracing::warn;
+
+use crate::worker::{WorkerId, WorkerStatus};
 
 /// Default heartbeat interval (workers send heartbeats this often).
 pub const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
@@ -55,10 +57,11 @@ pub fn health_sweep(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::worker::{WorkerNode, WorkerStatus};
     use std::collections::HashMap;
     use std::time::Instant;
+
+    use super::*;
+    use crate::worker::{WorkerNode, WorkerStatus};
 
     #[test]
     fn test_health_sweep_healthy_workers() {

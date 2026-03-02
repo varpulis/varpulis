@@ -10,11 +10,13 @@
 //! - [`WhenFull::DropOldest`] — drop the oldest buffered event to make room
 //! - [`WhenFull::Overflow`] — spill into a secondary buffer
 
-use crate::event::SharedEvent;
-use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
+
+use crate::event::SharedEvent;
 
 /// Strategy applied when a stage buffer is full.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

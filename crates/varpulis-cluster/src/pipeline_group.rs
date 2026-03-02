@@ -1,12 +1,14 @@
 //! Pipeline group abstraction for deploying related pipelines together.
 
-use crate::worker::WorkerId;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
+
+use serde::{Deserialize, Serialize};
 use tracing::warn;
+
+use crate::worker::WorkerId;
 
 /// Specification for a group of related pipelines to be deployed together.
 #[derive(Debug, Clone, Serialize, Deserialize)]

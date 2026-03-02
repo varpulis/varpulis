@@ -3,11 +3,13 @@
 //! This module provides functionality for spawning timer tasks that
 //! periodically generate events, similar to Apama's `on wait(period)`.
 
-use crate::event::Event;
 use std::time::Duration;
+
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tracing::debug;
+
+use crate::event::Event;
 
 /// Spawn a timer task that periodically sends timer events
 ///

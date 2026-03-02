@@ -10,9 +10,10 @@
 //! - **Startup** (`/health/started`): 200 once the engine has started
 //! - **Detailed** (`/health`): full JSON with per-component status
 
-use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+
+use serde::Serialize;
 
 /// Health status of a component.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

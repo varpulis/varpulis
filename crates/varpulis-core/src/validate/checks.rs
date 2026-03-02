@@ -2,9 +2,6 @@
 
 use std::collections::HashMap;
 
-use crate::ast::*;
-use crate::span::Span;
-
 use super::builtins::{
     self, ParamContext, AGGREGATE_FUNCTIONS, AGGREGATE_REQUIRES_FIELD, AGGREGATE_REQUIRES_TWO_ARGS,
     LOG_PARAMS, WATERMARK_PARAMS,
@@ -12,6 +9,8 @@ use super::builtins::{
 use super::scope::*;
 use super::suggest::{did_you_mean, suggest};
 use super::{RelatedSpan, Severity, Validator};
+use crate::ast::*;
+use crate::span::Span;
 
 // ---------------------------------------------------------------------------
 // Pass 1: Declaration Collection

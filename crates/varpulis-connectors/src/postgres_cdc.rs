@@ -8,10 +8,11 @@
 //! PostgreSQL logical replication via `tokio-postgres`. When disabled,
 //! stub implementations return `ConnectorError::NotAvailable`.
 
-use super::types::{ConnectorError, SourceConnector};
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 use varpulis_core::Event;
+
+use super::types::{ConnectorError, SourceConnector};
 
 // =============================================================================
 // PostgreSQL CDC Configuration (always available, not feature-gated)
@@ -199,6 +200,7 @@ impl SourceConnector for PostgresCdcSource {
 
     async fn start(&mut self, tx: mpsc::Sender<Event>) -> Result<(), ConnectorError> {
         use std::sync::atomic::Ordering;
+
         use tokio_postgres::NoTls;
         use tracing::{error, info, warn};
 
@@ -585,8 +587,9 @@ fn parse_tuple_data(data: &[u8]) -> Vec<(String, varpulis_core::Value)> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use varpulis_core::Value;
+
+    use super::*;
 
     #[test]
     fn test_cdc_config_builder() {

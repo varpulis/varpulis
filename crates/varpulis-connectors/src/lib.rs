@@ -45,62 +45,24 @@ mod managed_nats;
 mod managed_registry;
 
 // Core types and traits
-pub use types::{ConnectorConfig, ConnectorError, ConnectorHealth, SinkConnector, SourceConnector};
-
-// Sink trait, error, and adapter
-pub use sink::{Sink, SinkConnectorAdapter, SinkError};
-
 // Console connectors
 pub use console::{ConsoleSink, ConsoleSource};
-
-// HTTP connectors
-pub use http::{HttpSink, HttpWebhookConfig, HttpWebhookSource};
-
-// Kafka connectors
-pub use kafka::{KafkaConfig, KafkaSink, KafkaSource};
-#[cfg(feature = "kafka")]
-pub use kafka::{KafkaSinkFull, KafkaSourceFull};
-
-// MQTT connectors
-pub use mqtt::{MqttConfig, MqttSink, MqttSource};
-
-// NATS connectors
-pub use nats::{NatsConfig, NatsSink, NatsSource};
-
-// Kinesis connectors
-pub use kinesis::{KinesisConfig, KinesisSink, KinesisSource};
-#[cfg(feature = "kinesis")]
-pub use kinesis::{KinesisSinkFull, KinesisSourceFull};
-
-// S3 connectors
-#[cfg(feature = "s3")]
-pub use s3::S3SinkFull;
-pub use s3::{S3Config, S3OutputFormat, S3Sink};
-
+// Database connectors
+pub use database::{DatabaseConfig, DatabaseSink, DatabaseSource};
 // Elasticsearch connectors
 #[cfg(feature = "elasticsearch")]
 pub use elasticsearch::ElasticsearchSinkFull;
 pub use elasticsearch::{ElasticsearchConfig, ElasticsearchSink};
-
-// REST API connectors
-pub use rest_api::{RestApiClient, RestApiConfig, RestApiSink};
-
-// Database connectors
-pub use database::{DatabaseConfig, DatabaseSink, DatabaseSource};
-
-// Redis connectors
-pub use redis::{RedisConfig, RedisSink, RedisSource};
-pub use redis::{RedisStreamConfig, RedisStreamSink, RedisStreamSinkStub, RedisStreamSource};
-
-// PostgreSQL CDC connector
-pub use postgres_cdc::{CdcOperation, PostgresCdcConfig, PostgresCdcSource};
-
-// Pulsar connectors
-pub use pulsar::{PulsarConfig, PulsarSink, PulsarSource};
-
-// Legacy ConnectorRegistry
-pub use registry::ConnectorRegistry;
-
+// HTTP connectors
+pub use http::{HttpSink, HttpWebhookConfig, HttpWebhookSource};
+// Kafka connectors
+pub use kafka::{KafkaConfig, KafkaSink, KafkaSource};
+#[cfg(feature = "kafka")]
+pub use kafka::{KafkaSinkFull, KafkaSourceFull};
+// Kinesis connectors
+pub use kinesis::{KinesisConfig, KinesisSink, KinesisSource};
+#[cfg(feature = "kinesis")]
+pub use kinesis::{KinesisSinkFull, KinesisSourceFull};
 // Managed connector abstractions
 pub use managed::{ConnectorHealthReport, ManagedConnector};
 #[cfg(feature = "kafka")]
@@ -108,11 +70,34 @@ pub use managed_kafka::ManagedKafkaConnector;
 pub use managed_mqtt::ManagedMqttConnector;
 pub use managed_nats::ManagedNatsConnector;
 pub use managed_registry::ManagedConnectorRegistry;
+// MQTT connectors
+pub use mqtt::{MqttConfig, MqttSink, MqttSource};
+// NATS connectors
+pub use nats::{NatsConfig, NatsSink, NatsSource};
+// PostgreSQL CDC connector
+pub use postgres_cdc::{CdcOperation, PostgresCdcConfig, PostgresCdcSource};
+// Pulsar connectors
+pub use pulsar::{PulsarConfig, PulsarSink, PulsarSource};
+// Redis connectors
+pub use redis::{RedisConfig, RedisSink, RedisSource};
+pub use redis::{RedisStreamConfig, RedisStreamSink, RedisStreamSinkStub, RedisStreamSource};
+// Legacy ConnectorRegistry
+pub use registry::ConnectorRegistry;
+// REST API connectors
+pub use rest_api::{RestApiClient, RestApiConfig, RestApiSink};
+// S3 connectors
+#[cfg(feature = "s3")]
+pub use s3::S3SinkFull;
+pub use s3::{S3Config, S3OutputFormat, S3Sink};
+// Sink trait, error, and adapter
+pub use sink::{Sink, SinkConnectorAdapter, SinkError};
+pub use types::{ConnectorConfig, ConnectorError, ConnectorHealth, SinkConnector, SourceConnector};
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use varpulis_core::Event;
+
+    use super::*;
 
     #[tokio::test]
     async fn test_console_sink() {

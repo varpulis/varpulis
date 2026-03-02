@@ -1,5 +1,8 @@
 //! Run advancement logic (hot path)
 
+use std::sync::Arc;
+use std::time::Instant;
+
 use super::and_op::AndState;
 use super::enumeration::enumerate_with_filter;
 use super::kleene::{KleeneCapture, KleeneLimits};
@@ -8,8 +11,6 @@ use super::predicate::{eval_predicate, event_matches_state};
 use super::run::Run;
 use super::types::{MatchResult, SelectionStrategy, SharedEvent};
 use crate::ExprEvaluator;
-use std::sync::Arc;
-use std::time::Instant;
 
 #[derive(Debug)]
 pub(crate) enum RunAdvanceResult {

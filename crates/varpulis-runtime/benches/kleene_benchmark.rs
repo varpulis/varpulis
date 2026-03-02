@@ -12,8 +12,9 @@
 //!
 //! These benchmarks validate that ZDD provides polynomial memory vs exponential
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::time::Duration;
+
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use varpulis_runtime::event::Event;
 use varpulis_runtime::sase::{SaseEngine, SasePattern, SelectionStrategy};
 

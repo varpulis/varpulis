@@ -1,8 +1,9 @@
 //! MCP resource implementations for Varpulis.
 
-use crate::client::CoordinatorClient;
 use rmcp::model::{RawResource, ReadResourceResult, Resource, ResourceContents, ResourceTemplate};
 use serde_json::Value;
+
+use crate::client::CoordinatorClient;
 
 /// Embedded VPL language reference (static resource).
 pub const VPL_REFERENCE: &str = include_str!("vpl_reference.md");

@@ -2,10 +2,12 @@
 //!
 //! Provides DOT export for visualization and debugging.
 
+use std::fmt::Write;
+
+use rustc_hash::FxHashSet;
+
 use crate::refs::ZddRef;
 use crate::zdd::Zdd;
-use rustc_hash::FxHashSet;
-use std::fmt::Write;
 
 impl Zdd {
     /// Export the ZDD to DOT format for visualization with Graphviz.

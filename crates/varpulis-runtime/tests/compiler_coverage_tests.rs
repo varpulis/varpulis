@@ -8,6 +8,7 @@
 //! - `compile_to_sase_pattern_with_resolver`: full SASE pattern compilation with stream resolution
 
 use std::time::Duration;
+
 use varpulis_core::ast::*;
 use varpulis_core::Value;
 use varpulis_runtime::engine::compiler::*;

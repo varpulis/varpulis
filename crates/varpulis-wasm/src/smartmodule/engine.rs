@@ -1,9 +1,10 @@
 //! SmartModule execution engine backed by wasmtime.
 
-use super::error::SmartModuleError;
-use super::SmartModuleKind;
 use varpulis_core::Event;
 use wasmtime::*;
+
+use super::error::SmartModuleError;
+use super::SmartModuleKind;
 
 /// Configuration for loading and running a SmartModule.
 #[derive(Debug, Clone)]
@@ -290,8 +291,9 @@ impl SmartModuleInstance {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use varpulis_core::Event;
+
+    use super::*;
 
     /// WAT module: filter that keeps all events.
     const FILTER_KEEP_ALL: &str = r#"

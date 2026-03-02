@@ -14,10 +14,11 @@
 //! - **Lazy**: Batch events, propagate periodically (higher latency, lower cost)
 //! - **Hybrid**: Eager for small ZDDs, lazy when ZDD grows large
 
-use super::nfa_zdd::{NfaZdd, ZddVar};
-use crate::greta::QueryId;
 use rustc_hash::FxHashMap;
 use varpulis_zdd::Zdd;
+
+use super::nfa_zdd::{NfaZdd, ZddVar};
+use crate::greta::QueryId;
 
 /// Propagation mode for count computation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

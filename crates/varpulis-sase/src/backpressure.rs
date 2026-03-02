@@ -1,7 +1,8 @@
 //! Backpressure strategies (BP-01)
 
-use super::types::MatchResult;
 use std::time::Duration;
+
+use super::types::MatchResult;
 
 /// Strategy when the maximum number of runs is reached
 #[derive(Debug, Clone, Default)]

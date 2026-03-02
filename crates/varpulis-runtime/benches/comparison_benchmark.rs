@@ -8,8 +8,9 @@
 //!
 //! Run with: cargo bench -p varpulis-runtime --bench comparison_benchmark
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::time::Duration;
+
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 use varpulis_core::Program;

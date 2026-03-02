@@ -1,12 +1,13 @@
 //! Organization and API key management endpoints for Varpulis Cloud (saas feature).
 
+use std::sync::Arc;
+
 use axum::extract::{Json, Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::Router;
 use serde::Deserialize;
-use std::sync::Arc;
 
 use crate::oauth::{self, SharedOAuthState};
 

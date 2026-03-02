@@ -1,8 +1,10 @@
 //! Stream abstraction for the runtime
 
-use crate::event::Event;
 use std::collections::VecDeque;
+
 use tokio::sync::mpsc;
+
+use crate::event::Event;
 
 /// A stream of events
 #[derive(Debug)]

@@ -3,13 +3,14 @@
 //! Provides both stub implementations (always available) and full implementations
 //! (requires the `kafka` feature flag with rdkafka).
 
-use super::component::{ConfigParamInfo, ConnectorComponentInfo, ConnectorFactory};
-use super::types::{ConnectorConfig, ConnectorError, SinkConnector, SourceConnector};
 use async_trait::async_trait;
 use indexmap::IndexMap;
 use tokio::sync::mpsc;
 use tracing::warn;
 use varpulis_core::Event;
+
+use super::component::{ConfigParamInfo, ConnectorComponentInfo, ConnectorFactory};
+use super::types::{ConnectorConfig, ConnectorError, SinkConnector, SourceConnector};
 
 // ---------------------------------------------------------------------------
 // Declarative registration
@@ -275,16 +276,18 @@ impl SinkConnector for KafkaSink {
 
 #[cfg(feature = "kafka")]
 mod kafka_impl {
-    use super::*;
-    use crate::helpers::json_to_event;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+
     use rdkafka::config::ClientConfig;
     use rdkafka::consumer::{CommitMode, Consumer, StreamConsumer};
     use rdkafka::producer::{FutureProducer, FutureRecord, Producer};
     use rdkafka::Message;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
-    use std::time::Duration;
     use tracing::{error, info, warn};
+
+    use super::*;
+    use crate::helpers::json_to_event;
 
     /// Apply user-provided properties to a ClientConfig, skipping keys
     /// that are already explicitly set by our code.
@@ -359,8 +362,9 @@ mod kafka_impl {
             tokio::spawn(async move {
                 info!("Kafka source {} started, consuming from topic", name);
 
-                use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
                 use futures_util::StreamExt;
+
+                use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
                 let mut stream = consumer.stream();
                 let cb = CircuitBreaker::new(CircuitBreakerConfig {
                     failure_threshold: 10,

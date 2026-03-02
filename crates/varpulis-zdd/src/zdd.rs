@@ -2,10 +2,11 @@
 //!
 //! The Zdd struct provides the public API for working with ZDDs.
 
+use rustc_hash::FxHashMap;
+
 use crate::node::ZddNode;
 use crate::refs::ZddRef;
 use crate::table::UniqueTable;
-use rustc_hash::FxHashMap;
 
 /// Zero-suppressed Decision Diagram
 ///

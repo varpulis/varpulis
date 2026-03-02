@@ -12,6 +12,7 @@ use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+
 use varpulis_core::Event;
 
 /// Configuration for dead letter queue behavior.

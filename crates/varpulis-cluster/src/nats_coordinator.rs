@@ -4,6 +4,9 @@
 //! messages received over NATS.
 
 #[cfg(feature = "nats-transport")]
+use tracing::{error, info, warn};
+
+#[cfg(feature = "nats-transport")]
 use crate::api::SharedCoordinator;
 #[cfg(feature = "nats-transport")]
 use crate::nats_transport;
@@ -12,8 +15,6 @@ use crate::worker::{
     HeartbeatRequest, RegisterWorkerRequest, RegisterWorkerResponse, WorkerId, WorkerNode,
     WorkerStatus,
 };
-#[cfg(feature = "nats-transport")]
-use tracing::{error, info, warn};
 
 /// Run the coordinator-side NATS handler.
 ///

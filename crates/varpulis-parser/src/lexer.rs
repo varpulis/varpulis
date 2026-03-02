@@ -1,7 +1,8 @@
 //! Lexer for VPL using Logos
 
-use logos::Logos;
 use std::fmt;
+
+use logos::Logos;
 
 /// Token type for VPL
 #[derive(Logos, Debug, Clone, PartialEq)]

@@ -20,9 +20,10 @@
 
 #[cfg(feature = "oidc")]
 mod inner {
-    use crate::oauth::{AuthProvider, OAuthError, UserInfo};
     use openidconnect::core::CoreProviderMetadata;
     use openidconnect::{AuthorizationCode, ClientId, ClientSecret, IssuerUrl, Nonce, RedirectUrl};
+
+    use crate::oauth::{AuthProvider, OAuthError, UserInfo};
 
     /// OIDC configuration loaded from environment variables.
     #[derive(Debug, Clone)]

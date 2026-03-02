@@ -4,8 +4,9 @@
 //! visualization, metrics collection, and execution ordering. Intra-stream
 //! operations remain as linear `Vec<RuntimeOp>` to preserve the hot path.
 
-use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+
+use serde::{Deserialize, Serialize};
 
 /// The stream processing topology — a DAG of nodes and edges.
 #[derive(Debug, Clone, Serialize, Deserialize)]

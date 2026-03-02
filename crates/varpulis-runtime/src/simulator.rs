@@ -1,11 +1,12 @@
 //! HVAC Building Simulator for demo purposes
 
-use crate::event::{Event, HVACStatus, HumidityReading, TemperatureReading};
 use chrono::Utc;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use tokio::sync::mpsc;
 use tokio::time;
+
+use crate::event::{Event, HVACStatus, HumidityReading, TemperatureReading};
 
 /// Configuration for the HVAC simulator
 #[derive(Debug, Clone)]

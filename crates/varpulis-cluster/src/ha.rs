@@ -10,8 +10,9 @@
 //!
 //! Requires the `k8s` feature flag.
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
 use tracing::{error, info, warn};
 
 use crate::connector_config::ClusterConnector;

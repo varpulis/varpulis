@@ -9,10 +9,11 @@ pub mod functional;
 pub mod perf;
 pub mod sustained;
 
-use serde_json::Value as Json;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Duration;
+
+use serde_json::Value as Json;
 
 /// Starting port for test clusters. Each cluster consumes 1 (coordinator) + N (workers).
 static NEXT_PORT: AtomicU16 = AtomicU16::new(19100);

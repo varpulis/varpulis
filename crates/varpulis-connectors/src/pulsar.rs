@@ -1,12 +1,13 @@
 //! Apache Pulsar connector
 
+use async_trait::async_trait;
+use tokio::sync::mpsc;
+use varpulis_core::Event;
+
 use super::component::{ConnectorComponentInfo, ConnectorFactory};
 #[cfg(feature = "pulsar")]
 use super::helpers::json_to_event;
 use super::types::{ConnectorConfig, ConnectorError, SinkConnector, SourceConnector};
-use async_trait::async_trait;
-use tokio::sync::mpsc;
-use varpulis_core::Event;
 
 // ---------------------------------------------------------------------------
 // Declarative registration
@@ -101,15 +102,18 @@ impl PulsarConfig {
 
 #[cfg(feature = "pulsar")]
 mod pulsar_impl {
-    use super::*;
-    use futures_util::TryStreamExt;
-    use pulsar::{
-        proto::command_subscribe::SubType, Authentication, Consumer, DeserializeMessage, Payload,
-        Producer, Pulsar, SerializeMessage, TokioExecutor,
-    };
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+
+    use futures_util::TryStreamExt;
+    use pulsar::proto::command_subscribe::SubType;
+    use pulsar::{
+        Authentication, Consumer, DeserializeMessage, Payload, Producer, Pulsar, SerializeMessage,
+        TokioExecutor,
+    };
     use tracing::{info, warn};
+
+    use super::*;
 
     /// Message wrapper for Pulsar deserialization.
     /// We access the raw payload bytes via `msg.payload.data` directly.

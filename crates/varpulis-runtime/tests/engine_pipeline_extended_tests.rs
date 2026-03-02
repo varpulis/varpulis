@@ -1108,6 +1108,7 @@ async fn sync_sliding_count_window() {
 #[tokio::test]
 async fn process_batch_shared_works() {
     use std::sync::Arc;
+
     use varpulis_runtime::event::SharedEvent;
 
     let code = r"
