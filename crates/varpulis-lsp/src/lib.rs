@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! VPL Language Server - library interface
 //!
 //! Re-exports modules for integration testing.

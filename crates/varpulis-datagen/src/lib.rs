@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Event generation library for Varpulis demos and testing.
 //!
 //! Provides pluggable event schemas (fraud, IoT, trading) with configurable

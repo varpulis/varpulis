@@ -3,8 +3,6 @@
 //! This crate provides the [`EnrichmentProvider`] trait and concrete implementations
 //! for HTTP, SQL, and Redis connectors, plus a [`EnrichmentCache`] for TTL-based caching.
 
-#![warn(missing_docs)]
-
 mod cache;
 mod http;
 #[cfg(feature = "redis")]

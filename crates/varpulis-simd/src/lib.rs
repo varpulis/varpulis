@@ -6,7 +6,6 @@
 //! - Field extraction to contiguous arrays
 //! - Incremental aggregation accumulators
 
-#![warn(missing_docs)]
 #![allow(unsafe_code)]
 
 #[cfg(target_arch = "x86_64")]

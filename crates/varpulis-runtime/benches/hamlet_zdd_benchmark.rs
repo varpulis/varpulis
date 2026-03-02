@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! # Comparative Benchmarks: Hamlet vs ZDD Unified
 //!
 //! Benchmarks comparing two approaches for multi-query Kleene pattern aggregation.

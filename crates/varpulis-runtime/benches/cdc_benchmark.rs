@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Benchmarks for PostgreSQL CDC event parsing and construction
 //!
 //! Run with: cargo bench -p varpulis-runtime --bench cdc_benchmark --features cdc

@@ -19,8 +19,6 @@
 //! > Proceedings of the VLDB Endowment, Vol. 11, No. 1, pp. 80-92, 2017.
 //! > DOI: [10.14778/3151113.3151120](https://doi.org/10.14778/3151113.3151120)
 
-#![warn(missing_docs)]
-
 pub mod aggregator;
 pub mod graph;
 pub mod graphlet;

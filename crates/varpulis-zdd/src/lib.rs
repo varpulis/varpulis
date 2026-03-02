@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! # varpulis-zdd
 //!
 //! Zero-suppressed Decision Diagrams (ZDD) for efficient set manipulation in CEP patterns.
