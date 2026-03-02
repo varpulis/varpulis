@@ -8,16 +8,16 @@ description = "Runtime execution engine for Varpulis"
 
 [dependencies]
 varpulis-actors = { workspace = true }
-varpulis-connectors = { version = "0.4.1", path = "../varpulis-connectors" }
-varpulis-core = { version = "0.4.1", path = "../varpulis-core" }
-varpulis-parser = { version = "0.4.1", path = "../varpulis-parser" }
-varpulis-sase = { version = "0.4.1", path = "../varpulis-sase" }
-varpulis-zdd = { version = "0.4.1", path = "../varpulis-zdd" }
-varpulis-pst = { version = "0.4.1", path = "../varpulis-pst" }
-varpulis-hamlet = { version = "0.4.1", path = "../varpulis-hamlet" }
-varpulis-enrichment = { version = "0.4.1", path = "../varpulis-enrichment" }
-varpulis-simd = { version = "0.4.1", path = "../varpulis-simd" }
-varpulis-dead-letter = { version = "0.4.1", path = "../varpulis-dead-letter" }
+varpulis-connectors = { version = "0.5.0", path = "../varpulis-connectors" }
+varpulis-core = { version = "0.5.0", path = "../varpulis-core" }
+varpulis-parser = { version = "0.5.0", path = "../varpulis-parser" }
+varpulis-sase = { version = "0.5.0", path = "../varpulis-sase" }
+varpulis-zdd = { version = "0.5.0", path = "../varpulis-zdd" }
+varpulis-pst = { version = "0.5.0", path = "../varpulis-pst" }
+varpulis-hamlet = { version = "0.5.0", path = "../varpulis-hamlet" }
+varpulis-enrichment = { version = "0.5.0", path = "../varpulis-enrichment" }
+varpulis-simd = { version = "0.5.0", path = "../varpulis-simd" }
+varpulis-dead-letter = { version = "0.5.0", path = "../varpulis-dead-letter" }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

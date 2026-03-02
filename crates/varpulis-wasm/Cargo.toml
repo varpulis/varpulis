@@ -10,8 +10,8 @@ description = "WASM bindings for VPL parser and validator"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-varpulis-core = { version = "0.4.1", path = "../varpulis-core" }
-varpulis-parser = { version = "0.4.1", path = "../varpulis-parser" }
+varpulis-core = { version = "0.5.0", path = "../varpulis-core" }
+varpulis-parser = { version = "0.5.0", path = "../varpulis-parser" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 wasm-bindgen = "0.2"

@@ -15,9 +15,9 @@ name = "varpulis"
 path = "src/main.rs"
 
 [dependencies]
-varpulis-core = { version = "0.4.1", path = "../varpulis-core" }
-varpulis-parser = { version = "0.4.1", path = "../varpulis-parser" }
-varpulis-runtime = { version = "0.4.1", path = "../varpulis-runtime", features = ["mqtt"] }
+varpulis-core = { version = "0.5.0", path = "../varpulis-core" }
+varpulis-parser = { version = "0.5.0", path = "../varpulis-parser" }
+varpulis-runtime = { version = "0.5.0", path = "../varpulis-runtime", features = ["mqtt"] }
 tokio = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
@@ -42,8 +42,8 @@ thiserror = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
 reqwest = { workspace = true }
 async-trait = "0.1"
-varpulis-cluster = { version = "0.4.1", path = "../varpulis-cluster" }
-varpulis-datagen = { version = "0.4.1", path = "../varpulis-datagen" }
+varpulis-cluster = { version = "0.5.0", path = "../varpulis-cluster" }
+varpulis-datagen = { version = "0.5.0", path = "../varpulis-datagen" }
 jsonwebtoken = { workspace = true }
 urlencoding = "2"
 bytes = "1"
@@ -56,7 +56,7 @@ argon2 = "0.5"
 openidconnect = { version = "4", optional = true }
 
 # SaaS layer (optional, behind "saas" feature)
-varpulis-db = { version = "0.4.1", path = "../varpulis-db", optional = true }
+varpulis-db = { version = "0.5.0", path = "../varpulis-db", optional = true }
 
 # OpenTelemetry (optional, behind "otel" feature)
 opentelemetry = { workspace = true, optional = true }

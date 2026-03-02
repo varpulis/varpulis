@@ -7,8 +7,8 @@ repository.workspace = true
 description = "External connector enrichment providers for VPL streams"
 
 [dependencies]
-varpulis-core = { version = "0.4.1", path = "../varpulis-core" }
-varpulis-connectors = { version = "0.4.1", path = "../varpulis-connectors" }
+varpulis-core = { version = "0.5.0", path = "../varpulis-core" }
+varpulis-connectors = { version = "0.5.0", path = "../varpulis-connectors" }
 async-trait = "0.1"
 reqwest = { workspace = true }
 thiserror = { workspace = true }
