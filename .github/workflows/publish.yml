@@ -125,7 +125,21 @@ jobs:
               fi
             fi
 
-            cargo publish -p "$crate" --no-verify $DRY_RUN
+            local retries=0
+            local max_retries=3
+            while [ $retries -le $max_retries ]; do
+              if cargo publish -p "$crate" --no-verify $DRY_RUN 2>&1; then
+                break
+              else
+                retries=$((retries + 1))
+                if [ $retries -gt $max_retries ]; then
+                  echo "  FAILED after $max_retries retries"
+                  return 1
+                fi
+                echo "  Publish failed (attempt $retries/$max_retries), waiting 90s before retry..."
+                sleep 90
+              fi
+            done
 
             if [ -z "$DRY_RUN" ]; then
               echo "  Waiting ${PUBLISH_DELAY}s for crates.io index update..."
