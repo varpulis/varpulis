@@ -1,13 +1,18 @@
 //! SIMD-optimized operations for high-performance event processing
 //!
-//! This module provides vectorized implementations of common operations:
+//! This crate provides vectorized implementations of common operations:
 //! - Aggregations (sum, min, max, avg)
 //! - Batch comparisons for filtering
-#![allow(unsafe_code)]
 //! - Field extraction to contiguous arrays
+//! - Incremental aggregation accumulators
+
+#![warn(missing_docs)]
+#![allow(unsafe_code)]
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
+
+use varpulis_core::Event;
 
 // =============================================================================
 // SIMD Aggregations (f64)
@@ -351,8 +356,6 @@ unsafe fn compare_lt_f64_avx2(values: &[f64], threshold: f64, result: &mut [bool
 // Field Extraction
 // =============================================================================
 
-use crate::event::Event;
-
 /// Extract float field values from events into a contiguous array
 /// Returns None values as NaN for SIMD processing
 #[inline]
@@ -430,10 +433,12 @@ pub struct IncrementalSum {
 }
 
 impl IncrementalSum {
+    /// Create a new incremental sum accumulator.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Add a value to the accumulator.
     #[inline]
     pub fn add(&mut self, value: f64) {
         if !value.is_nan() {
@@ -442,6 +447,7 @@ impl IncrementalSum {
         }
     }
 
+    /// Remove a value from the accumulator.
     #[inline]
     pub fn remove(&mut self, value: f64) {
         if !value.is_nan() {
@@ -450,16 +456,19 @@ impl IncrementalSum {
         }
     }
 
+    /// Current sum value.
     #[inline]
     pub const fn sum(&self) -> f64 {
         self.sum
     }
 
+    /// Number of values added.
     #[inline]
     pub const fn count(&self) -> usize {
         self.count
     }
 
+    /// Current average, or None if empty.
     #[inline]
     pub fn avg(&self) -> Option<f64> {
         if self.count == 0 {
@@ -469,6 +478,7 @@ impl IncrementalSum {
         }
     }
 
+    /// Reset the accumulator to zero.
     pub const fn reset(&mut self) {
         self.sum = 0.0;
         self.count = 0;
@@ -515,12 +525,14 @@ impl Default for IncrementalMinMax {
 }
 
 impl IncrementalMinMax {
+    /// Create a new incremental min/max tracker.
     pub const fn new() -> Self {
         Self {
             values: std::collections::BTreeMap::new(),
         }
     }
 
+    /// Add a value to the tracker.
     #[inline]
     pub fn add(&mut self, value: f64) {
         if !value.is_nan() {
@@ -528,6 +540,7 @@ impl IncrementalMinMax {
         }
     }
 
+    /// Remove a value from the tracker.
     #[inline]
     pub fn remove(&mut self, value: f64) {
         if !value.is_nan() {
@@ -544,14 +557,17 @@ impl IncrementalMinMax {
         }
     }
 
+    /// Current minimum value, or None if empty.
     pub fn min(&mut self) -> Option<f64> {
         self.values.first_key_value().map(|(k, _)| k.0)
     }
 
+    /// Current maximum value, or None if empty.
     pub fn max(&mut self) -> Option<f64> {
         self.values.last_key_value().map(|(k, _)| k.0)
     }
 
+    /// Clear all tracked values.
     pub fn reset(&mut self) {
         self.values.clear();
     }

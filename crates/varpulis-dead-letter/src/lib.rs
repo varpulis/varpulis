@@ -5,12 +5,14 @@
 //! dropped. The DLQ appends one JSON line per failed event to a file,
 //! including error metadata for later reprocessing.
 
-use crate::event::Event;
+#![warn(missing_docs)]
+
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+use varpulis_core::Event;
 
 /// Configuration for dead letter queue behavior.
 #[derive(Debug, Clone)]
@@ -41,9 +43,13 @@ struct DlqEntry<'a> {
 /// Owned version of a DLQ entry for reading entries back.
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 pub struct DlqEntryOwned {
+    /// ISO-8601 timestamp when the event was dead-lettered.
     pub timestamp: String,
+    /// Original sink connector name.
     pub connector: String,
+    /// Error message from the failed delivery attempt.
     pub error: String,
+    /// The event payload as JSON.
     pub event: serde_json::Value,
 }
 
@@ -255,7 +261,6 @@ impl DeadLetterQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::event::Event;
 
     #[test]
     fn test_dlq_write_and_count() {

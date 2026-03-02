@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use varpulis_core::Value;
 
-use super::{EnrichmentError, EnrichmentProvider, EnrichmentResult};
+use crate::{EnrichmentError, EnrichmentProvider, EnrichmentResult};
 
 /// SQL-based enrichment provider.
 ///
@@ -16,7 +16,7 @@ pub struct SqlEnrichmentProvider {
 }
 
 impl SqlEnrichmentProvider {
-    pub fn new(config: &crate::connector::ConnectorConfig) -> Result<Self, String> {
+    pub fn new(config: &varpulis_connectors::ConnectorConfig) -> Result<Self, String> {
         let query = config.properties.get("query").cloned().ok_or_else(|| {
             "database connector for .enrich() requires a 'query' property".to_string()
         })?;

@@ -1,0 +1,29 @@
+[package]
+name = "varpulis-enrichment"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "External connector enrichment providers for VPL streams"
+
+[dependencies]
+varpulis-core = { version = "0.4.1", path = "../varpulis-core" }
+varpulis-connectors = { version = "0.4.1", path = "../varpulis-connectors" }
+async-trait = "0.1"
+reqwest = { workspace = true }
+thiserror = { workspace = true }
+rustc-hash = { workspace = true }
+tracing = { workspace = true }
+serde_json = { workspace = true }
+
+# Optional enrichment providers
+sqlx = { version = "0.8", features = ["runtime-tokio", "any", "postgres", "mysql", "sqlite"], optional = true }
+redis = { version = "0.25", features = ["tokio-comp", "connection-manager"], optional = true }
+
+[features]
+default = []
+database = ["sqlx", "varpulis-connectors/database"]
+redis = ["dep:redis", "varpulis-connectors/redis"]
+
+[lints]
+workspace = true

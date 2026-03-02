@@ -7818,6 +7818,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "varpulis-dead-letter"
+version = "0.4.1"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "tracing",
+ "varpulis-core",
+]
+
+[[package]]
+name = "varpulis-enrichment"
+version = "0.4.1"
+dependencies = [
+ "async-trait",
+ "redis",
+ "reqwest",
+ "rustc-hash 2.1.1",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tracing",
+ "varpulis-connectors",
+ "varpulis-core",
+]
+
+[[package]]
 name = "varpulis-hamlet"
 version = "0.4.1"
 dependencies = [
@@ -7933,10 +7960,13 @@ dependencies = [
  "varpulis-actors",
  "varpulis-connectors",
  "varpulis-core",
+ "varpulis-dead-letter",
+ "varpulis-enrichment",
  "varpulis-hamlet",
  "varpulis-parser",
  "varpulis-pst",
  "varpulis-sase",
+ "varpulis-simd",
  "varpulis-zdd",
  "zeroize",
 ]
@@ -7949,6 +7979,13 @@ dependencies = [
  "rustc-hash 2.1.1",
  "varpulis-core",
  "varpulis-zdd",
+]
+
+[[package]]
+name = "varpulis-simd"
+version = "0.4.1"
+dependencies = [
+ "varpulis-core",
 ]
 
 [[package]]
