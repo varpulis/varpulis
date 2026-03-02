@@ -7,7 +7,7 @@
 //!
 //! With the `smartmodule` feature enabled, this crate also provides a host
 //! runtime for executing user-defined WASM filter and map functions. See the
-//! [`smartmodule`] module for details.
+//! `smartmodule` module for details.
 
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
