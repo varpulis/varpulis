@@ -16,6 +16,14 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 wasm-bindgen = "0.2"
 
+# SmartModule host runtime (native targets only)
+wasmtime = { version = "42", optional = true }
+thiserror = { workspace = true, optional = true }
+
+[features]
+default = []
+smartmodule = ["wasmtime", "thiserror"]
+
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
 
