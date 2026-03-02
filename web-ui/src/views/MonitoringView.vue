@@ -80,6 +80,7 @@ async function fetchData(): Promise<void> {
 
     // Fetch metrics independently — don't let worker/group fetch failures block the chart
     const metricsData = await fetchClusterMetrics()
+    if (!metricsData.pipelines) metricsData.pipelines = []
 
     // Fire-and-forget: these are for sidebar info, not critical for the chart
     clusterStore.fetchWorkers().catch(() => {})

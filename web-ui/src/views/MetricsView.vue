@@ -44,13 +44,14 @@ async function fetchMetrics(): Promise<void> {
   try {
     fetchError.value = null
     const clusterMetrics = await fetchClusterMetrics()
-    pipelineActivity.value = clusterMetrics.pipelines
+    const pipelines = clusterMetrics.pipelines || []
+    pipelineActivity.value = pipelines
     const workers = clusterStore.workers
     const totalPipelines = workers.reduce((sum, w) => sum + w.pipelines_running, 0)
 
     // Aggregate events_in and events_out across all pipelines
-    const totalEventsIn = clusterMetrics.pipelines.reduce((sum, p) => sum + p.events_in, 0)
-    const totalEventsOut = clusterMetrics.pipelines.reduce((sum, p) => sum + p.events_out, 0)
+    const totalEventsIn = pipelines.reduce((sum, p) => sum + p.events_in, 0)
+    const totalEventsOut = pipelines.reduce((sum, p) => sum + p.events_out, 0)
 
     // Calculate throughput from delta between polls
     const now = Date.now()
@@ -73,7 +74,7 @@ async function fetchMetrics(): Promise<void> {
 
     // Aggregate per-worker metrics from pipeline-level data
     const workerAgg = new Map<string, { events_in: number; events_out: number }>()
-    for (const p of clusterMetrics.pipelines) {
+    for (const p of pipelines) {
       const existing = workerAgg.get(p.worker_id) || { events_in: 0, events_out: 0 }
       existing.events_in += p.events_in
       existing.events_out += p.events_out

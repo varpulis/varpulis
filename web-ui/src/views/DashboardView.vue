@@ -76,10 +76,11 @@ async function fetchData(): Promise<void> {
     pipelinesStore.fetchGroups(),
     fetchClusterMetrics()
       .then((m) => {
-        pipelineActivity.value = m.pipelines
+        const pipelines = m.pipelines || []
+        pipelineActivity.value = pipelines
         // Update metricsStore with throughput from pipeline data
-        const totalIn = m.pipelines.reduce((s, p) => s + p.events_in, 0)
-        const totalOut = m.pipelines.reduce((s, p) => s + p.events_out, 0)
+        const totalIn = pipelines.reduce((s, p) => s + p.events_in, 0)
+        const totalOut = pipelines.reduce((s, p) => s + p.events_out, 0)
         const now = Date.now()
         const dtSecs = (now - prevTimestamp) / 1000
         // Only compute throughput when we have a valid previous sample
