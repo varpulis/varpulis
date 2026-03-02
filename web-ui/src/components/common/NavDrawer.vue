@@ -17,6 +17,8 @@ const emit = defineEmits<{
   navigate: [path: string]
 }>()
 
+const appVersion = __APP_VERSION__
+
 function isActive(path: string): boolean {
   if (path === '/') {
     return props.currentRoute === '/'
@@ -55,7 +57,7 @@ function isActive(path: string): boolean {
         />
       </v-list>
       <div v-if="!rail" class="pa-3 text-caption text-medium-emphasis">
-        Varpulis v0.4.0
+        Varpulis v{{ appVersion }}
       </div>
     </template>
   </v-navigation-drawer>

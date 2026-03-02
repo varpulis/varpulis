@@ -18,6 +18,10 @@ COPY . .
 ARG VITE_API_KEY=""
 ENV VITE_API_KEY=$VITE_API_KEY
 
+# Version: defaults to package.json version, can be overridden
+ARG VITE_APP_VERSION=""
+ENV VITE_APP_VERSION=$VITE_APP_VERSION
+
 # Build the application
 RUN npm run build
 

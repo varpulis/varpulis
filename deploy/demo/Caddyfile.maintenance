@@ -1,0 +1,8 @@
+demo.varpulis-cep.com {
+    tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin-key.pem
+
+    # Serve maintenance page for all requests
+    root * /srv/maintenance
+    file_server
+    try_files /maintenance.html
+}
