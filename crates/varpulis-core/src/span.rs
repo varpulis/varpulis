@@ -37,6 +37,12 @@ impl Default for Span {
     }
 }
 
+impl From<Span> for miette::SourceSpan {
+    fn from(span: Span) -> Self {
+        miette::SourceSpan::new(span.start.into(), span.end.saturating_sub(span.start))
+    }
+}
+
 /// A value with an associated span
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "T: Serialize + for<'a> Deserialize<'a>")]
