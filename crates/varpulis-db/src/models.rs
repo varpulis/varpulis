@@ -20,10 +20,19 @@ pub struct Organization {
     pub id: Uuid,
     pub owner_id: Uuid,
     pub name: String,
-    /// One of "free", "pro", "enterprise".
+    /// One of "free", "pro", "business", "enterprise".
     pub tier: String,
     pub stripe_customer_id: Option<String>,
+    /// NULL for paid orgs, set to now()+30d for free trial signups.
+    pub trial_expires_at: Option<DateTime<Utc>>,
+    /// One of "active", "trial", "suspended", "revoked".
+    pub status: String,
+    pub pipeline_limit: i32,
+    pub events_per_second_limit: i32,
+    pub monthly_event_limit: i64,
+    pub notes: String,
     pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 /// A hashed API key belonging to an organization.
@@ -79,14 +88,21 @@ mod tests {
 
     #[test]
     fn test_organization_tiers() {
-        for tier in &["free", "pro", "enterprise"] {
+        for tier in &["free", "pro", "business", "enterprise"] {
             let org = Organization {
                 id: Uuid::new_v4(),
                 owner_id: Uuid::new_v4(),
                 name: "Test Org".to_string(),
                 tier: tier.to_string(),
                 stripe_customer_id: None,
+                trial_expires_at: None,
+                status: "active".to_string(),
+                pipeline_limit: 5,
+                events_per_second_limit: 500,
+                monthly_event_limit: 100_000,
+                notes: String::new(),
                 created_at: Utc::now(),
+                updated_at: Utc::now(),
             };
             assert_eq!(&org.tier, tier);
         }

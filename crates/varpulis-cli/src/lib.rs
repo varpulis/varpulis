@@ -4,6 +4,8 @@
 //! This library provides the core functionality for the Varpulis CLI,
 //! organized into dedicated modules for security, WebSocket handling, and more.
 
+#[cfg(feature = "saas")]
+pub mod admin;
 pub mod api;
 pub mod audit;
 pub mod auth;

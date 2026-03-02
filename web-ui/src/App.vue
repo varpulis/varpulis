@@ -88,6 +88,7 @@ const navItems = [
   { title: 'Models', icon: 'mdi-brain', to: '/models' },
   { title: 'Metrics', icon: 'mdi-chart-line', to: '/metrics' },
   { title: 'Settings', icon: 'mdi-cog', to: '/settings' },
+  { title: 'Admin', icon: 'mdi-shield-crown', to: '/admin' },
 ]
 
 const chatDrawer = ref(false)

@@ -35,9 +35,18 @@
               color="primary"
               variant="elevated"
               :loading="upgrading"
-              @click="upgradeToPro"
+              @click="upgradeToTier('pro')"
             >
               Upgrade to Pro
+            </v-btn>
+            <v-btn
+              v-if="plan.tier === 'pro'"
+              color="primary"
+              variant="elevated"
+              :loading="upgrading"
+              @click="upgradeToTier('business')"
+            >
+              Upgrade to Business
             </v-btn>
             <v-btn
               v-if="plan.tier !== 'free'"
@@ -83,7 +92,7 @@
         <h2 class="text-h5 mb-4">Plans</h2>
       </v-col>
 
-      <v-col v-for="tier in tiers" :key="tier.name" cols="12" md="4">
+      <v-col v-for="tier in tiers" :key="tier.name" cols="12" md="3">
         <v-card
           :variant="tier.name === plan.tier ? 'outlined' : 'elevated'"
           :color="tier.name === plan.tier ? 'primary' : undefined"
@@ -106,7 +115,16 @@
               color="primary"
               variant="elevated"
               block
-              @click="upgradeToPro"
+              @click="upgradeToTier('pro')"
+            >
+              Upgrade
+            </v-btn>
+            <v-btn
+              v-if="tier.name === 'business' && (plan.tier === 'free' || plan.tier === 'pro')"
+              color="primary"
+              variant="elevated"
+              block
+              @click="upgradeToTier('business')"
             >
               Upgrade
             </v-btn>
@@ -138,7 +156,7 @@ interface Plan {
   display_name: string
 }
 
-const plan = ref<Plan>({ tier: 'free', event_limit: 10000, display_name: 'Free' })
+const plan = ref<Plan>({ tier: 'free', event_limit: 100000, display_name: 'Free' })
 const totalEvents = ref(0)
 const upgrading = ref(false)
 const loadingPortal = ref(false)
@@ -154,19 +172,25 @@ const tiers = [
     name: 'free',
     display: 'Free',
     price: '$0/month',
-    features: ['10,000 events/month', '1 pipeline', 'Community support'],
+    features: ['100K events/month', '5 pipelines', '500 events/sec', 'Community support'],
   },
   {
     name: 'pro',
     display: 'Pro',
     price: '$49/month',
-    features: ['10M events/month', 'Unlimited pipelines', 'Priority support', 'Custom connectors'],
+    features: ['10M events/month', '20 pipelines', '50K events/sec', 'All connectors'],
+  },
+  {
+    name: 'business',
+    display: 'Business',
+    price: '$199/month',
+    features: ['100M events/month', '100 pipelines', '200K events/sec', 'Advanced analytics'],
   },
   {
     name: 'enterprise',
     display: 'Enterprise',
     price: 'Custom',
-    features: ['Unlimited events', 'Dedicated cluster', 'SLA guarantee', '24/7 support', 'SSO/SAML'],
+    features: ['Unlimited events', '1000 pipelines', 'Dedicated cluster', 'SLA guarantee'],
   },
 ]
 
@@ -199,10 +223,11 @@ async function fetchUsage() {
   }
 }
 
-async function upgradeToPro() {
+async function upgradeToTier(tier: string) {
   upgrading.value = true
   try {
     const res = await axios.post('/api/v1/billing/checkout', {
+      tier,
       success_url: window.location.origin + '/billing?success=true',
       cancel_url: window.location.origin + '/billing',
     })

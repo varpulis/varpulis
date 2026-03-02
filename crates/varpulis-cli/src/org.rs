@@ -1,7 +1,5 @@
 //! Organization and API key management endpoints for Varpulis Cloud (saas feature).
 
-use std::sync::Arc;
-
 use axum::extract::{Json, Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -15,7 +13,7 @@ use crate::oauth::{self, SharedOAuthState};
 // State
 // ---------------------------------------------------------------------------
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct OrgState {
     pub db_pool: Option<varpulis_db::PgPool>,
     pub oauth_state: Option<SharedOAuthState>,

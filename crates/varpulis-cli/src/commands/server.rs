@@ -528,10 +528,25 @@ pub async fn run_server(
         org::org_routes(org_pool, org_oauth)
     };
 
+    // Admin routes (saas only)
+    #[cfg(feature = "saas")]
+    let admin_r = {
+        use varpulis_cli::admin;
+        let admin_pool = db_pool.clone();
+        let admin_oauth = oauth_state.clone();
+        admin::admin_routes(admin_pool, admin_oauth)
+    };
+
     // Usage flush task (saas only)
     #[cfg(feature = "saas")]
     if let (Some(ref bs), Some(ref pool)) = (&billing_state, &db_pool) {
         billing::spawn_usage_flush(bs.clone(), pool.clone());
+    }
+
+    // Trial expiration checker (saas only)
+    #[cfg(feature = "saas")]
+    if let Some(ref pool) = db_pool {
+        varpulis_cli::admin::spawn_trial_expiry_checker(pool.clone());
     }
 
     // Build API routes (after billing_state so inject handlers can check usage limits)
@@ -569,6 +584,9 @@ pub async fn run_server(
 
     #[cfg(feature = "saas")]
     let app = app.merge(org_r);
+
+    #[cfg(feature = "saas")]
+    let app = app.merge(admin_r);
 
     let app = app.merge(api_routes);
 

@@ -19,6 +19,10 @@ pub struct Metrics {
     pub active_streams: Gauge,
     pub dlq_events_total: prometheus::Counter,
     pub queue_pressure_ratio: GaugeVec,
+    // Per-tenant metrics (SaaS)
+    pub tenant_events_total: CounterVec,
+    pub tenant_events_rate: GaugeVec,
+    pub tenant_pipelines_active: GaugeVec,
 }
 
 impl Metrics {
@@ -82,6 +86,33 @@ impl Metrics {
         )
         .expect("failed to create queue_pressure_ratio gauge");
 
+        let tenant_events_total = CounterVec::new(
+            Opts::new(
+                "varpulis_tenant_events_total",
+                "Total events processed per tenant",
+            ),
+            &["tenant_id"],
+        )
+        .expect("failed to create tenant_events_total counter");
+
+        let tenant_events_rate = GaugeVec::new(
+            Opts::new(
+                "varpulis_tenant_events_rate",
+                "Current events per second per tenant",
+            ),
+            &["tenant_id"],
+        )
+        .expect("failed to create tenant_events_rate gauge");
+
+        let tenant_pipelines_active = GaugeVec::new(
+            Opts::new(
+                "varpulis_tenant_pipelines_active",
+                "Number of active pipelines per tenant",
+            ),
+            &["tenant_id"],
+        )
+        .expect("failed to create tenant_pipelines_active gauge");
+
         registry
             .register(Box::new(events_total.clone()))
             .expect("failed to register events_total");
@@ -106,6 +137,15 @@ impl Metrics {
         registry
             .register(Box::new(queue_pressure_ratio.clone()))
             .expect("failed to register queue_pressure_ratio");
+        registry
+            .register(Box::new(tenant_events_total.clone()))
+            .expect("failed to register tenant_events_total");
+        registry
+            .register(Box::new(tenant_events_rate.clone()))
+            .expect("failed to register tenant_events_rate");
+        registry
+            .register(Box::new(tenant_pipelines_active.clone()))
+            .expect("failed to register tenant_pipelines_active");
 
         Self {
             registry: Arc::new(registry),
@@ -117,6 +157,9 @@ impl Metrics {
             active_streams,
             dlq_events_total,
             queue_pressure_ratio,
+            tenant_events_total,
+            tenant_events_rate,
+            tenant_pipelines_active,
         }
     }
 
@@ -143,6 +186,27 @@ impl Metrics {
     /// Set stream count
     pub fn set_stream_count(&self, count: usize) {
         self.active_streams.set(count as f64);
+    }
+
+    /// Record a tenant event (SaaS per-tenant metrics)
+    pub fn record_tenant_event(&self, tenant_id: &str) {
+        self.tenant_events_total
+            .with_label_values(&[tenant_id])
+            .inc();
+    }
+
+    /// Set tenant event rate
+    pub fn set_tenant_event_rate(&self, tenant_id: &str, rate: f64) {
+        self.tenant_events_rate
+            .with_label_values(&[tenant_id])
+            .set(rate);
+    }
+
+    /// Set tenant active pipeline count
+    pub fn set_tenant_pipelines(&self, tenant_id: &str, count: usize) {
+        self.tenant_pipelines_active
+            .with_label_values(&[tenant_id])
+            .set(count as f64);
     }
 
     /// Get Prometheus text output

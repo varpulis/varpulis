@@ -10,7 +10,7 @@
     </v-row>
 
     <v-row justify="center">
-      <v-col v-for="tier in tiers" :key="tier.name" cols="12" md="4">
+      <v-col v-for="tier in tiers" :key="tier.name" cols="12" md="3">
         <v-card :variant="tier.highlighted ? 'outlined' : 'elevated'" :color="tier.highlighted ? 'primary' : undefined">
           <v-card-title class="text-h5">{{ tier.display }}</v-card-title>
           <v-card-subtitle class="text-h6">{{ tier.price }}</v-card-subtitle>
@@ -44,6 +44,15 @@
               Start Free Trial
             </v-btn>
             <v-btn
+              v-if="tier.name === 'business'"
+              color="primary"
+              variant="elevated"
+              block
+              href="/login"
+            >
+              Start Free Trial
+            </v-btn>
+            <v-btn
               v-if="tier.name === 'enterprise'"
               variant="outlined"
               block
@@ -65,7 +74,7 @@ const tiers = [
     display: 'Free',
     price: '$0/month',
     highlighted: false,
-    features: ['10,000 events/month', '1 pipeline', 'Community support', 'Playground access'],
+    features: ['100K events/month', '5 pipelines', '500 events/sec', 'Community support', '30-day trial'],
   },
   {
     name: 'pro',
@@ -74,10 +83,25 @@ const tiers = [
     highlighted: true,
     features: [
       '10M events/month',
-      'Unlimited pipelines',
+      '20 pipelines',
+      '50K events/sec',
       'Priority support',
-      'Custom connectors',
+      'All connectors',
       'API key management',
+    ],
+  },
+  {
+    name: 'business',
+    display: 'Business',
+    price: '$199/month',
+    highlighted: false,
+    features: [
+      '100M events/month',
+      '100 pipelines',
+      '200K events/sec',
+      'Priority support',
+      'All connectors',
+      'Advanced analytics',
     ],
   },
   {
@@ -87,11 +111,12 @@ const tiers = [
     highlighted: false,
     features: [
       'Unlimited events',
+      '1000 pipelines',
+      '500K events/sec',
       'Dedicated cluster',
       'SLA guarantee',
       '24/7 support',
       'SSO/SAML',
-      'On-premise deployment',
     ],
   },
 ]

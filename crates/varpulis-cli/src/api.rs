@@ -566,10 +566,18 @@ async fn handle_inject(
     let billing_state = &state.billing_state;
     // Check usage limit (SaaS mode only)
     #[cfg(feature = "saas")]
+    let mut usage_warning: Option<f64> = None;
+    #[cfg(feature = "saas")]
     if let Some(ref bs) = billing_state {
         if let Some(org_id) = bs.org_id_for_api_key(&api_key).await {
-            if let Err(err) = bs.check_usage_limit(org_id, 1).await {
-                return crate::billing::usage_limit_response(&err);
+            match bs.check_usage_limit(org_id, 1).await {
+                crate::billing::UsageCheckResult::Exceeded(err) => {
+                    return crate::billing::usage_limit_response(&err);
+                }
+                crate::billing::UsageCheckResult::ApproachingLimit { usage_percent } => {
+                    usage_warning = Some(usage_percent);
+                }
+                crate::billing::UsageCheckResult::Ok => {}
             }
             // Record the event for usage tracking
             bs.usage.write().await.record_events(org_id, 1);
@@ -624,6 +632,15 @@ async fn handle_inject(
                 "accepted": true,
                 "output_events": events_json,
             });
+            #[cfg(feature = "saas")]
+            if let Some(pct) = usage_warning {
+                return (
+                    StatusCode::OK,
+                    [("X-Usage-Warning", format!("approaching_limit ({pct:.0}%)"))],
+                    axum::Json(response),
+                )
+                    .into_response();
+            }
             axum::Json(response).into_response()
         }
         Err(e) => tenant_error_response(e),
@@ -644,8 +661,12 @@ async fn handle_inject_batch(
     #[cfg(feature = "saas")]
     if let Some(ref bs) = billing_state {
         if let Some(org_id) = bs.org_id_for_api_key(&api_key).await {
-            if let Err(err) = bs.check_usage_limit(org_id, event_count).await {
-                return crate::billing::usage_limit_response(&err);
+            match bs.check_usage_limit(org_id, event_count).await {
+                crate::billing::UsageCheckResult::Exceeded(err) => {
+                    return crate::billing::usage_limit_response(&err);
+                }
+                crate::billing::UsageCheckResult::ApproachingLimit { .. }
+                | crate::billing::UsageCheckResult::Ok => {}
             }
             // Record the batch for usage tracking
             bs.usage.write().await.record_events(org_id, event_count);
@@ -2034,7 +2055,7 @@ mod tests {
             .reply(&routes)
             .await;
         let body: TenantResponse = serde_json::from_slice(resp.body()).unwrap();
-        assert_eq!(body.quota.max_pipelines, 2); // free tier
+        assert_eq!(body.quota.max_pipelines, 5); // free tier
 
         // Enterprise tier
         let resp = test_request()

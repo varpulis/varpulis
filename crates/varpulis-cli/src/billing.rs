@@ -29,6 +29,7 @@ pub struct BillingConfig {
     pub stripe_secret_key: String,
     pub stripe_webhook_secret: String,
     pub pro_price_id: String,
+    pub business_price_id: String,
     pub frontend_url: String,
 }
 
@@ -40,6 +41,8 @@ impl BillingConfig {
         let webhook_secret =
             std::env::var("STRIPE_WEBHOOK_SECRET").unwrap_or_else(|_| String::new());
         let pro_price_id = std::env::var("STRIPE_PRO_PRICE_ID").unwrap_or_else(|_| String::new());
+        let business_price_id =
+            std::env::var("STRIPE_BUSINESS_PRICE_ID").unwrap_or_else(|_| String::new());
         let frontend_url =
             std::env::var("FRONTEND_URL").unwrap_or_else(|_| "http://localhost:5173".to_string());
 
@@ -47,8 +50,29 @@ impl BillingConfig {
             stripe_secret_key: secret_key,
             stripe_webhook_secret: webhook_secret,
             pro_price_id,
+            business_price_id,
             frontend_url,
         })
+    }
+
+    /// Get the Stripe price ID for a given tier.
+    pub fn price_id_for_tier(&self, tier: &Tier) -> Option<&str> {
+        match tier {
+            Tier::Pro if !self.pro_price_id.is_empty() => Some(&self.pro_price_id),
+            Tier::Business if !self.business_price_id.is_empty() => Some(&self.business_price_id),
+            _ => None,
+        }
+    }
+
+    /// Determine tier from a Stripe price ID.
+    pub fn tier_for_price_id(&self, price_id: &str) -> Option<Tier> {
+        if !self.pro_price_id.is_empty() && price_id == self.pro_price_id {
+            Some(Tier::Pro)
+        } else if !self.business_price_id.is_empty() && price_id == self.business_price_id {
+            Some(Tier::Business)
+        } else {
+            None
+        }
     }
 }
 
@@ -61,14 +85,16 @@ impl BillingConfig {
 pub enum Tier {
     Free,
     Pro,
+    Business,
     Enterprise,
 }
 
 impl Tier {
     pub const fn event_limit(&self) -> Option<i64> {
         match self {
-            Self::Free => Some(10_000),
+            Self::Free => Some(100_000),
             Self::Pro => Some(10_000_000),
+            Self::Business => Some(100_000_000),
             Self::Enterprise => None,
         }
     }
@@ -77,6 +103,7 @@ impl Tier {
         match self {
             Self::Free => "Free",
             Self::Pro => "Pro ($49/mo)",
+            Self::Business => "Business ($199/mo)",
             Self::Enterprise => "Enterprise",
         }
     }
@@ -87,6 +114,7 @@ impl std::fmt::Display for Tier {
         match self {
             Self::Free => write!(f, "free"),
             Self::Pro => write!(f, "pro"),
+            Self::Business => write!(f, "business"),
             Self::Enterprise => write!(f, "enterprise"),
         }
     }
@@ -99,6 +127,7 @@ impl std::str::FromStr for Tier {
         match s {
             "free" => Ok(Self::Free),
             "pro" => Ok(Self::Pro),
+            "business" => Ok(Self::Business),
             "enterprise" => Ok(Self::Enterprise),
             other => Err(format!("unknown tier: {other}")),
         }
@@ -113,6 +142,10 @@ impl std::str::FromStr for Tier {
 #[derive(Debug)]
 pub struct UsageTracker {
     buffer: HashMap<Uuid, i64>,
+    /// Cached DB monthly totals (reloaded every 60s during flush cycle).
+    monthly_totals: HashMap<Uuid, i64>,
+    /// Cached per-org monthly limits (loaded from DB).
+    monthly_limits: HashMap<Uuid, i64>,
 }
 
 impl Default for UsageTracker {
@@ -125,6 +158,8 @@ impl UsageTracker {
     pub fn new() -> Self {
         Self {
             buffer: HashMap::new(),
+            monthly_totals: HashMap::new(),
+            monthly_limits: HashMap::new(),
         }
     }
 
@@ -139,6 +174,35 @@ impl UsageTracker {
 
     pub fn get(&self, org_id: &Uuid) -> i64 {
         self.buffer.get(org_id).copied().unwrap_or(0)
+    }
+
+    /// Update the cached monthly total for an org (from DB).
+    pub fn set_monthly_total(&mut self, org_id: Uuid, total: i64) {
+        self.monthly_totals.insert(org_id, total);
+    }
+
+    /// Get the cached monthly total.
+    pub fn get_monthly_total(&self, org_id: &Uuid) -> Option<i64> {
+        self.monthly_totals.get(org_id).copied()
+    }
+
+    /// Update the cached monthly limit for an org.
+    pub fn set_monthly_limit(&mut self, org_id: Uuid, limit: i64) {
+        self.monthly_limits.insert(org_id, limit);
+    }
+
+    /// Get the cached monthly limit.
+    pub fn get_monthly_limit(&self, org_id: &Uuid) -> Option<i64> {
+        self.monthly_limits.get(org_id).copied()
+    }
+
+    /// Fast-path check: can this org process `additional` more events?
+    /// Returns None if cache miss (caller should fall through to DB query).
+    pub fn check_cached_limit(&self, org_id: &Uuid, additional: i64) -> Option<bool> {
+        let total = self.monthly_totals.get(org_id)?;
+        let limit = self.monthly_limits.get(org_id)?;
+        let buffered = self.buffer.get(org_id).copied().unwrap_or(0);
+        Some(total + buffered + additional <= *limit)
     }
 }
 
@@ -195,15 +259,27 @@ pub struct UsageLimitExceeded {
     pub message: String,
 }
 
+/// Result of a usage limit check: Ok with optional warning, or Err if exceeded.
+#[derive(Debug)]
+pub enum UsageCheckResult {
+    /// Within limits, no warning.
+    Ok,
+    /// Within limits but approaching (>80%).
+    ApproachingLimit { usage_percent: f64 },
+    /// Over limit.
+    Exceeded(UsageLimitExceeded),
+}
+
 impl BillingState {
     /// Check if the org can process `additional_events` more events this month.
-    /// Returns `Ok(())` if within limit, `Err(UsageLimitExceeded)` if over.
+    /// Returns `UsageCheckResult::Ok` or `::ApproachingLimit` if within limit,
+    /// `::Exceeded` if over.
     #[cfg(feature = "saas")]
     pub async fn check_usage_limit(
         &self,
         org_id: Uuid,
         additional_events: i64,
-    ) -> Result<(), UsageLimitExceeded> {
+    ) -> UsageCheckResult {
         // 1. Get org tier from DB
         let tier = if let Some(ref pool) = self.db_pool {
             if let Ok(Some(org)) = varpulis_db::repo::get_organization(pool, org_id).await {
@@ -218,7 +294,7 @@ impl BillingState {
         // Enterprise = no limit
         let limit = match tier.event_limit() {
             Some(l) => l,
-            None => return Ok(()),
+            None => return UsageCheckResult::Ok,
         };
 
         // 2. Get current month usage from DB
@@ -240,7 +316,7 @@ impl BillingState {
         let total = db_usage + buffered + additional_events;
 
         if total > limit {
-            Err(UsageLimitExceeded {
+            UsageCheckResult::Exceeded(UsageLimitExceeded {
                 tier: tier.clone(),
                 limit,
                 current_usage: db_usage + buffered,
@@ -252,7 +328,12 @@ impl BillingState {
                 ),
             })
         } else {
-            Ok(())
+            let usage_percent = (total as f64 / limit as f64) * 100.0;
+            if usage_percent >= 80.0 {
+                UsageCheckResult::ApproachingLimit { usage_percent }
+            } else {
+                UsageCheckResult::Ok
+            }
         }
     }
 
@@ -293,7 +374,8 @@ pub fn usage_limit_response(err: &UsageLimitExceeded) -> Response {
 // Usage flush task
 // ---------------------------------------------------------------------------
 
-/// Spawn a background task that flushes in-memory usage counters to the DB every 60s.
+/// Spawn a background task that flushes in-memory usage counters to the DB every 60s
+/// and reloads cached monthly totals/limits.
 #[cfg(feature = "saas")]
 pub fn spawn_usage_flush(state: SharedBillingState, pool: varpulis_db::PgPool) {
     tokio::spawn(async move {
@@ -301,18 +383,30 @@ pub fn spawn_usage_flush(state: SharedBillingState, pool: varpulis_db::PgPool) {
         loop {
             interval.tick().await;
             let entries = state.usage.write().await.drain();
-            if entries.is_empty() {
-                continue;
-            }
             let today = chrono::Utc::now().date_naive();
-            for (org_id, count) in entries {
+            for (org_id, count) in &entries {
                 if let Err(e) =
-                    varpulis_db::repo::record_usage(&pool, org_id, today, count, 0).await
+                    varpulis_db::repo::record_usage(&pool, *org_id, today, *count, 0).await
                 {
                     tracing::error!("Failed to flush usage for org {}: {}", org_id, e);
                 }
             }
-            tracing::debug!("Usage flush complete");
+
+            // Reload monthly totals and limits from DB for cache
+            if let Ok(orgs) = varpulis_db::repo::list_all_organizations(&pool).await {
+                let mut tracker = state.usage.write().await;
+                for org in &orgs {
+                    if let Ok(total) = varpulis_db::repo::get_org_usage_summary(&pool, org.id).await
+                    {
+                        tracker.set_monthly_total(org.id, total);
+                    }
+                    tracker.set_monthly_limit(org.id, org.monthly_event_limit);
+                }
+            }
+
+            if !entries.is_empty() {
+                tracing::debug!("Usage flush complete ({} orgs)", entries.len());
+            }
         }
     });
 }
@@ -504,6 +598,8 @@ async fn handle_plan(
 
 #[derive(Debug, Deserialize)]
 struct CheckoutRequest {
+    /// Target tier: "pro" or "business". Defaults to "pro".
+    tier: Option<String>,
     success_url: Option<String>,
     cancel_url: Option<String>,
 }
@@ -521,15 +617,26 @@ async fn handle_checkout(
 
     match state {
         Some(s) => {
-            if s.config.pro_price_id.is_empty() {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({
-                        "error": "Stripe Price ID not configured"
-                    })),
-                )
-                    .into_response();
-            }
+            // Determine target tier from request body
+            let target_tier: Tier = body
+                .tier
+                .as_deref()
+                .unwrap_or("pro")
+                .parse()
+                .unwrap_or(Tier::Pro);
+
+            let price_id = match s.config.price_id_for_tier(&target_tier) {
+                Some(id) => id.to_string(),
+                None => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({
+                            "error": format!("Stripe Price ID not configured for {} tier", target_tier)
+                        })),
+                    )
+                        .into_response();
+                }
+            };
 
             let success_url = body
                 .success_url
@@ -543,7 +650,7 @@ async fn handle_checkout(
 
             let mut params: Vec<(&str, &str)> = vec![
                 ("mode", "subscription"),
-                ("line_items[0][price]", &s.config.pro_price_id),
+                ("line_items[0][price]", &price_id),
                 ("line_items[0][quantity]", "1"),
                 ("success_url", &success_url),
                 ("cancel_url", &cancel_url),
@@ -778,12 +885,48 @@ async fn handle_webhook(
                         {
                             tracing::error!("Failed to save Stripe customer: {}", e);
                         }
+
+                        // Determine tier from subscription price_id
+                        let subscription_id = obj["subscription"].as_str().unwrap_or("");
+                        let new_tier = if !subscription_id.is_empty() {
+                            // Fetch subscription to get price_id
+                            if let Ok(sub) = stripe_post(
+                                &s.http_client,
+                                &s.config.stripe_secret_key,
+                                &format!("subscriptions/{subscription_id}"),
+                                &[],
+                            )
+                            .await
+                            {
+                                let price_id = sub["items"]["data"][0]["price"]["id"]
+                                    .as_str()
+                                    .unwrap_or("");
+                                s.config.tier_for_price_id(price_id).unwrap_or(Tier::Pro)
+                            } else {
+                                Tier::Pro
+                            }
+                        } else {
+                            Tier::Pro
+                        };
+
+                        let tier_str = new_tier.to_string();
                         if let Err(e) =
-                            varpulis_db::repo::update_org_tier(pool, org_id, "pro").await
+                            varpulis_db::repo::update_org_tier(pool, org_id, &tier_str).await
                         {
                             tracing::error!("Failed to update tier: {}", e);
                         }
-                        tracing::info!("Org {} upgraded to pro (customer: {})", org_id, customer);
+                        // Clear trial status on paid upgrade
+                        if let Err(e) =
+                            varpulis_db::repo::update_org_status(pool, org_id, "active").await
+                        {
+                            tracing::error!("Failed to update org status: {}", e);
+                        }
+                        tracing::info!(
+                            "Org {} upgraded to {} (customer: {})",
+                            org_id,
+                            tier_str,
+                            customer
+                        );
                         // Audit log: tier upgrade
                         if let Some(ref logger) = s.audit_logger {
                             logger
@@ -793,7 +936,7 @@ async fn handle_webhook(
                                         AuditAction::TierChange,
                                         "/api/v1/billing/webhook",
                                     )
-                                    .with_detail("upgraded to pro"),
+                                    .with_detail(format!("upgraded to {tier_str}")),
                                 )
                                 .await;
                         }
@@ -829,8 +972,38 @@ async fn handle_webhook(
                 }
             }
             "customer.subscription.updated" => {
-                // Could check for plan changes; for now just log
-                tracing::info!("Subscription updated (no-op)");
+                let obj = &event["data"]["object"];
+                let customer = obj["customer"].as_str().unwrap_or("");
+                let price_id = obj["items"]["data"][0]["price"]["id"]
+                    .as_str()
+                    .unwrap_or("");
+
+                if !customer.is_empty() && !price_id.is_empty() {
+                    if let Some(new_tier) = s.config.tier_for_price_id(price_id) {
+                        if let Ok(Some(org)) =
+                            varpulis_db::repo::get_org_by_stripe_customer(pool, customer).await
+                        {
+                            let tier_str = new_tier.to_string();
+                            if org.tier != tier_str {
+                                if let Err(e) =
+                                    varpulis_db::repo::update_org_tier(pool, org.id, &tier_str)
+                                        .await
+                                {
+                                    tracing::error!(
+                                        "Failed to update tier on subscription change: {}",
+                                        e
+                                    );
+                                } else {
+                                    tracing::info!(
+                                        "Org {} tier changed to {} via subscription update",
+                                        org.id,
+                                        tier_str
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
             }
             "invoice.payment_failed" => {
                 let customer = event["data"]["object"]["customer"].as_str().unwrap_or("");
@@ -930,8 +1103,9 @@ mod tests {
 
     #[test]
     fn test_tier_event_limits() {
-        assert_eq!(Tier::Free.event_limit(), Some(10_000));
+        assert_eq!(Tier::Free.event_limit(), Some(100_000));
         assert_eq!(Tier::Pro.event_limit(), Some(10_000_000));
+        assert_eq!(Tier::Business.event_limit(), Some(100_000_000));
         assert_eq!(Tier::Enterprise.event_limit(), None);
     }
 
@@ -939,6 +1113,7 @@ mod tests {
     fn test_tier_display_name() {
         assert_eq!(Tier::Free.display_name(), "Free");
         assert_eq!(Tier::Pro.display_name(), "Pro ($49/mo)");
+        assert_eq!(Tier::Business.display_name(), "Business ($199/mo)");
         assert_eq!(Tier::Enterprise.display_name(), "Enterprise");
     }
 
@@ -946,16 +1121,17 @@ mod tests {
     fn test_tier_from_str() {
         assert_eq!("free".parse::<Tier>(), Ok(Tier::Free));
         assert_eq!("pro".parse::<Tier>(), Ok(Tier::Pro));
+        assert_eq!("business".parse::<Tier>(), Ok(Tier::Business));
         assert_eq!("enterprise".parse::<Tier>(), Ok(Tier::Enterprise));
         assert!("invalid".parse::<Tier>().is_err());
     }
 
     #[test]
     fn test_tier_serialization() {
-        let json = serde_json::to_string(&Tier::Pro).unwrap();
-        assert_eq!(json, "\"pro\"");
+        let json = serde_json::to_string(&Tier::Business).unwrap();
+        assert_eq!(json, "\"business\"");
         let deserialized: Tier = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized, Tier::Pro);
+        assert_eq!(deserialized, Tier::Business);
     }
 
     #[test]
@@ -1026,6 +1202,7 @@ mod tests {
             stripe_secret_key: "sk_test_xxx".to_string(),
             stripe_webhook_secret: "whsec_xxx".to_string(),
             pro_price_id: "price_xxx".to_string(),
+            business_price_id: "price_biz_xxx".to_string(),
             frontend_url: "http://localhost:5173".to_string(),
         };
         let state = Arc::new(BillingState::new(config));
@@ -1042,6 +1219,7 @@ mod tests {
             stripe_secret_key: "sk_test_xxx".to_string(),
             stripe_webhook_secret: "whsec_xxx".to_string(),
             pro_price_id: "price_xxx".to_string(),
+            business_price_id: "price_biz_xxx".to_string(),
             frontend_url: "http://localhost:5173".to_string(),
         };
         let state = Arc::new(BillingState::new(config));
@@ -1063,6 +1241,7 @@ mod tests {
             stripe_secret_key: "sk_test_xxx".to_string(),
             stripe_webhook_secret: "whsec_real_secret".to_string(),
             pro_price_id: "price_xxx".to_string(),
+            business_price_id: "price_biz_xxx".to_string(),
             frontend_url: "http://localhost:5173".to_string(),
         };
         let state = Arc::new(BillingState::new(config));
@@ -1084,22 +1263,22 @@ mod tests {
     fn test_usage_limit_exceeded_serialization() {
         let err = UsageLimitExceeded {
             tier: Tier::Free,
-            limit: 10_000,
-            current_usage: 10_500,
+            limit: 100_000,
+            current_usage: 100_500,
             message: "Usage limit exceeded for Free tier".to_string(),
         };
         let json = serde_json::to_value(&err).unwrap();
         assert_eq!(json["tier"], "free");
-        assert_eq!(json["limit"], 10_000);
-        assert_eq!(json["current_usage"], 10_500);
+        assert_eq!(json["limit"], 100_000);
+        assert_eq!(json["current_usage"], 100_500);
     }
 
     #[test]
     fn test_usage_limit_response_status() {
         let err = UsageLimitExceeded {
             tier: Tier::Free,
-            limit: 10_000,
-            current_usage: 11_000,
+            limit: 100_000,
+            current_usage: 110_000,
             message: "Limit exceeded".to_string(),
         };
         let resp = usage_limit_response(&err);
