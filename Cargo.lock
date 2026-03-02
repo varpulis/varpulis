@@ -7349,6 +7349,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "varpulis-hamlet"
+version = "0.4.1"
+dependencies = [
+ "rustc-hash 2.1.1",
+ "smallvec",
+ "tracing",
+ "varpulis-core",
+]
+
+[[package]]
 name = "varpulis-lsp"
 version = "0.4.1"
 dependencies = [
@@ -7402,6 +7412,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "varpulis-pst"
+version = "0.4.1"
+dependencies = [
+ "hashlink",
+ "rustc-hash 2.1.1",
+ "smallvec",
+]
+
+[[package]]
 name = "varpulis-runtime"
 version = "0.4.1"
 dependencies = [
@@ -7445,7 +7464,9 @@ dependencies = [
  "varpulis-actors",
  "varpulis-connectors",
  "varpulis-core",
+ "varpulis-hamlet",
  "varpulis-parser",
+ "varpulis-pst",
  "varpulis-sase",
  "varpulis-zdd",
  "zeroize",
