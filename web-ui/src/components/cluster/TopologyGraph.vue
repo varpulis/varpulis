@@ -26,16 +26,22 @@ const computedElements = computed(() => {
     return { nodes: [], edges: [] }
   }
 
+  const count = props.topology.workers.length
+  // Use horizontal layout: evenly spaced in a single row, or 2 rows if > 4
+  const cols = count <= 4 ? count : Math.ceil(count / 2)
+  const colWidth = 200
+  const rowHeight = 140
+
   const workerNodes: Node[] = props.topology.workers.map((worker, index) => {
-    const col = index % 3
-    const row = Math.floor(index / 3)
+    const col = index % cols
+    const row = Math.floor(index / cols)
 
     return {
       id: worker.id,
       type: 'custom',
-      position: { x: col * 300 + 50, y: row * 200 + 50 },
+      position: { x: col * colWidth + 40, y: row * rowHeight + 40 },
       data: {
-        label: worker.id.substring(0, 8),
+        label: worker.id,
         address: worker.address,
         status: worker.status,
         pipelineGroups: worker.pipeline_groups,
@@ -62,8 +68,7 @@ const computedElements = computed(() => {
 watch(computedElements, (newVal) => {
   nodes.value = newVal.nodes
   edges.value = newVal.edges
-  // Fit view after layout update
-  setTimeout(() => fitView({ padding: 0.2 }), 100)
+  setTimeout(() => fitView({ padding: 0.3 }), 100)
 }, { immediate: true })
 
 onMounted(() => {
@@ -77,7 +82,6 @@ onMounted(() => {
   })
 })
 
-// Status color helper
 function getStatusColor(status: string): string {
   switch (status.toLowerCase()) {
     case 'ready':
@@ -117,8 +121,8 @@ function getStatusColor(status: string): string {
       v-model:edges="edges"
       class="vue-flow-container"
       :default-viewport="{ zoom: 1 }"
-      :min-zoom="0.2"
-      :max-zoom="4"
+      :min-zoom="0.3"
+      :max-zoom="3"
       fit-view-on-init
     >
       <Background pattern-color="#333" :gap="20" />
@@ -127,17 +131,16 @@ function getStatusColor(status: string): string {
       <!-- Custom Node Template -->
       <template #node-custom="{ data }">
         <div
-          class="custom-node"
+          class="worker-node"
           :style="{ borderColor: getStatusColor(data.status) }"
         >
-          <div class="node-header" :style="{ backgroundColor: getStatusColor(data.status) }">
-            <v-icon size="16" color="white">mdi-server</v-icon>
-            <span class="ml-1 text-white">{{ data.label }}</span>
+          <div class="worker-header" :style="{ backgroundColor: getStatusColor(data.status) }">
+            <v-icon size="12" color="white">mdi-server</v-icon>
+            <span class="ml-1 text-white text-caption font-weight-medium">{{ data.label }}</span>
           </div>
-          <div class="node-body">
-            <div class="text-caption font-monospace">{{ data.address }}</div>
-            <div class="text-caption text-medium-emphasis mt-1">
-              {{ data.pipelineGroups?.length || 0 }} groups
+          <div class="worker-body">
+            <div class="text-caption text-medium-emphasis" style="font-size: 10px;">
+              {{ data.pipelineGroups?.length || 0 }} group(s)
             </div>
           </div>
         </div>
@@ -148,7 +151,7 @@ function getStatusColor(status: string): string {
 
 <style scoped>
 .topology-container {
-  height: 600px;
+  height: 400px;
   background: rgb(var(--v-theme-surface));
   border-radius: 4px;
 }
@@ -158,29 +161,29 @@ function getStatusColor(status: string): string {
   width: 100%;
 }
 
-.custom-node {
+.worker-node {
   background: rgb(var(--v-theme-surface));
   border: 2px solid;
-  border-radius: 8px;
-  min-width: 160px;
+  border-radius: 6px;
+  width: 130px;
   cursor: pointer;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
-.custom-node:hover {
+.worker-node:hover {
   transform: scale(1.05);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
 }
 
-.node-header {
+.worker-header {
   display: flex;
   align-items: center;
-  padding: 6px 10px;
-  border-radius: 6px 6px 0 0;
+  padding: 3px 8px;
+  border-radius: 4px 4px 0 0;
 }
 
-.node-body {
-  padding: 8px 10px;
+.worker-body {
+  padding: 4px 8px;
 }
 </style>
 
@@ -188,7 +191,7 @@ function getStatusColor(status: string): string {
 /* Vue Flow default styles */
 .vue-flow__node-custom {
   padding: 0;
-  border-radius: 8px;
+  border-radius: 6px;
   font-size: 12px;
 }
 

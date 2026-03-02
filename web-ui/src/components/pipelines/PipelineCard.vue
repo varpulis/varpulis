@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import type { PipelineGroup } from '@/types/pipeline'
+import type { PipelineTopology } from '@/api/pipelines'
+import { getPipelineTopology } from '@/api/pipelines'
 import StatusChip from '@/components/common/StatusChip.vue'
+import TopologyView from '@/components/pipelines/TopologyView.vue'
 
 const props = defineProps<{
   group: PipelineGroup
@@ -15,11 +18,53 @@ const emit = defineEmits<{
 
 const router = useRouter()
 
+const topology = ref<PipelineTopology | null>(null)
+const topologyLoading = ref(false)
+const showTopology = ref(false)
+
 // Get the first pipeline source (most groups have a single pipeline)
 const firstPipelineName = computed(() => {
   if (!props.group.sources) return null
   const names = Object.keys(props.group.sources)
   return names.length > 0 ? names[0] : null
+})
+
+// Get the first running placement for topology fetch
+const firstRunningPlacement = computed(() => {
+  return props.group.placements?.find(p => p.status === 'Running') || null
+})
+
+async function fetchTopology(): Promise<void> {
+  const placement = firstRunningPlacement.value
+  if (!placement) return
+
+  topologyLoading.value = true
+  try {
+    // Extract host from worker_address (e.g. "http://worker-0:9000" -> use via coordinator proxy)
+    topology.value = await getPipelineTopology(
+      placement.worker_address.replace('http://', ''),
+      placement.pipeline_id
+    )
+  } catch {
+    topology.value = null
+  } finally {
+    topologyLoading.value = false
+  }
+}
+
+// Fetch topology when expanded
+watch(showTopology, (show) => {
+  if (show && !topology.value) {
+    fetchTopology()
+  }
+})
+
+// Re-fetch when group changes
+watch(() => props.group.id, () => {
+  topology.value = null
+  if (showTopology.value) {
+    fetchTopology()
+  }
 })
 
 function editInEditor(pipelineName: string): void {
@@ -100,8 +145,25 @@ function editInEditor(pipelineName: string): void {
         No pipelines deployed yet
       </v-alert>
 
-      <!-- Details -->
-      <v-expansion-panels variant="accordion">
+      <!-- Topology DAG -->
+      <v-expansion-panels variant="accordion" class="mb-4">
+        <v-expansion-panel>
+          <v-expansion-panel-title
+            class="text-body-2"
+            @click="showTopology = !showTopology"
+          >
+            <v-icon size="small" class="mr-2">mdi-graph-outline</v-icon>
+            Pipeline Topology
+          </v-expansion-panel-title>
+          <v-expansion-panel-text>
+            <TopologyView
+              :topology="topology"
+              :loading="topologyLoading"
+            />
+          </v-expansion-panel-text>
+        </v-expansion-panel>
+
+        <!-- Details -->
         <v-expansion-panel>
           <v-expansion-panel-title class="text-body-2">
             <v-icon size="small" class="mr-2">mdi-information-outline</v-icon>
