@@ -1,3 +1,4 @@
+#![warn(clippy::unwrap_used)]
 //! # Varpulis Core
 //!
 //! Foundational types and AST definitions for the VPL language.

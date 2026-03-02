@@ -151,21 +151,27 @@ impl Event {
         use serde::Serializer;
         let mut buf = Vec::with_capacity(256);
         let mut ser = serde_json::Serializer::new(&mut buf);
-        let mut map = ser.serialize_map(Some(2 + self.data.len())).unwrap();
+        let mut map = ser
+            .serialize_map(Some(2 + self.data.len()))
+            .expect("serialize_map to Vec<u8> should not fail");
         map.serialize_entry("event_type", self.event_type.as_ref())
-            .unwrap();
-        map.serialize_entry("timestamp", &self.timestamp).unwrap();
+            .expect("serializing event_type entry should not fail");
+        map.serialize_entry("timestamp", &self.timestamp)
+            .expect("serializing timestamp entry should not fail");
         for (k, v) in &self.data {
             if k.as_ref() != "timestamp" {
-                map.serialize_entry(k.as_ref(), v).unwrap();
+                map.serialize_entry(k.as_ref(), v)
+                    .expect("serializing data field entry should not fail");
             }
         }
-        map.end().unwrap();
+        map.end()
+            .expect("finalizing JSON map serialization should not fail");
         buf
     }
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use chrono::TimeZone;
 
@@ -239,5 +245,66 @@ mod tests {
 
         assert_eq!(event.get_str("key"), Some("second"));
         assert_eq!(event.data.len(), 1);
+    }
+
+    #[test]
+    fn test_event_new_at_avoids_now() {
+        let ts = Utc.with_ymd_and_hms(2020, 6, 15, 12, 0, 0).unwrap();
+        let event = Event::new_at("Sensor", ts);
+        assert_eq!(&*event.event_type, "Sensor");
+        assert_eq!(event.timestamp, ts);
+        assert!(event.data.is_empty());
+    }
+
+    #[test]
+    fn test_event_with_capacity_preallocates() {
+        let event = Event::with_capacity("BigEvent", 10)
+            .with_field("a", 1i64)
+            .with_field("b", 2i64);
+        assert_eq!(event.data.len(), 2);
+        // Capacity should be at least 10 (may be rounded up by allocator)
+        assert!(event.data.capacity() >= 10);
+    }
+
+    #[test]
+    fn test_event_with_capacity_at() {
+        let ts = Utc.with_ymd_and_hms(2025, 3, 1, 0, 0, 0).unwrap();
+        let event = Event::with_capacity_at("Batch", 5, ts);
+        assert_eq!(&*event.event_type, "Batch");
+        assert_eq!(event.timestamp, ts);
+        assert!(event.data.capacity() >= 5);
+    }
+
+    #[test]
+    fn test_event_from_fields() {
+        let mut data: FxIndexMap<Arc<str>, Value> = IndexMap::with_hasher(FxBuildHasher);
+        data.insert(Arc::from("x"), Value::Float(1.5));
+        data.insert(Arc::from("y"), Value::Float(2.5));
+        let event = Event::from_fields("Point", data);
+        assert_eq!(&*event.event_type, "Point");
+        assert_eq!(event.get_float("x"), Some(1.5));
+        assert_eq!(event.get_float("y"), Some(2.5));
+    }
+
+    #[test]
+    fn test_event_from_string_fields_converts_keys() {
+        let mut data: FxIndexMap<String, Value> = IndexMap::with_hasher(FxBuildHasher);
+        data.insert("name".to_string(), Value::str("Alice"));
+        let event = Event::from_string_fields("User", data);
+        assert_eq!(event.get_str("name"), Some("Alice"));
+    }
+
+    #[test]
+    fn test_event_to_sink_payload_json() {
+        let ts = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
+        let event = Event::new("Order")
+            .with_timestamp(ts)
+            .with_field("amount", 99i64);
+        let payload = event.to_sink_payload();
+        let json: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(json["event_type"], "Order");
+        assert_eq!(json["amount"], 99);
+        // timestamp should be present in the output
+        assert!(json.get("timestamp").is_some());
     }
 }
