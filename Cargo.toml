@@ -17,6 +17,9 @@ members = [
     "crates/varpulis-db",
     "crates/varpulis-pst",
     "crates/varpulis-hamlet",
+    "crates/varpulis-enrichment",
+    "crates/varpulis-simd",
+    "crates/varpulis-dead-letter",
 ]
 
 [workspace.package]

@@ -1,4 +1,4 @@
-//! TTL-based enrichment cache using DashMap for concurrent access.
+//! TTL-based enrichment cache using `FxHashMap` for concurrent access.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
