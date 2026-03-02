@@ -1,5 +1,11 @@
 //! SASE+ Engine
 
+use std::sync::{Arc, LazyLock};
+use std::time::{Duration, Instant};
+
+use chrono::{DateTime, Utc};
+use rustc_hash::FxHashMap;
+
 use super::advance::{advance_run_shared, RunAdvanceResult};
 use super::and_op::AndState;
 use super::backpressure::{
@@ -17,10 +23,6 @@ use super::types::{
     TimeSemantics, MAX_ENUMERATION_RESULTS, MAX_KLEENE_EVENTS,
 };
 use crate::ExprEvaluator;
-use chrono::{DateTime, Utc};
-use rustc_hash::FxHashMap;
-use std::sync::{Arc, LazyLock};
-use std::time::{Duration, Instant};
 
 /// PERF: Static empty captured map to avoid allocations in try_start_run
 static EMPTY_CAPTURED: LazyLock<FxHashMap<String, SharedEvent>> = LazyLock::new(FxHashMap::default);

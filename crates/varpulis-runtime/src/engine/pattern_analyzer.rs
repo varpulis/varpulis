@@ -3,8 +3,9 @@
 //! Used by the Hamlet integration to build MergedTemplate and QueryRegistration
 //! from VPL stream definitions containing `.trend_aggregate()`.
 
-use crate::greta::GretaAggregate;
 use varpulis_core::ast::{Expr, FollowedByClause, StreamSource, TrendAggItem};
+
+use crate::greta::GretaAggregate;
 
 /// Extracted Kleene info: (position_index, event_type_name, is_match_all)
 pub struct KleeneInfo {

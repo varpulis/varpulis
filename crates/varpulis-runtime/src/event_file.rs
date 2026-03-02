@@ -24,19 +24,21 @@
 //! Payment { order_id: 1, amount: 15000.0 }
 //! ```
 
-use crate::event::Event;
-use indexmap::IndexMap;
-use rustc_hash::{FxBuildHasher, FxHashMap};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
+
+use indexmap::IndexMap;
+use rustc_hash::{FxBuildHasher, FxHashMap};
 use tokio::sync::mpsc;
 use tokio::time;
 use tracing::{debug, info};
 use varpulis_core::Value;
+
+use crate::event::Event;
 
 thread_local! {
     static FIELD_INTERNER: RefCell<FxHashMap<Box<str>, Arc<str>>> =

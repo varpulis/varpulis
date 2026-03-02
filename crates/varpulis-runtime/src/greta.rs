@@ -39,15 +39,16 @@
 //! [`hamlet`](crate::hamlet) and [`zdd_unified`](crate::zdd_unified) approaches
 //! build upon for multi-query optimization.
 
-use crate::event::SharedEvent;
-use rustc_hash::FxHashMap;
-use smallvec::SmallVec;
 use std::sync::Arc;
 use std::time::Instant;
 
+use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 // Re-export shared types from varpulis-hamlet::greta so that both crates
 // agree on the same concrete types (avoids "similar names but distinct types").
 pub use varpulis_hamlet::greta::{GretaAggregate, NodeId, QueryId};
+
+use crate::event::SharedEvent;
 
 /// Type alias for graphlet identifiers
 pub type GraphletId = u32;

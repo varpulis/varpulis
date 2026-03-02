@@ -6,14 +6,16 @@
 //! Connectors now integrate with the actor framework via [`ConnectorObservableState`],
 //! enabling health observation through the supervisor infrastructure.
 
-use super::types::ConnectorError;
-use crate::sink::Sink;
-use async_trait::async_trait;
-use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
+
+use async_trait::async_trait;
+use serde::Serialize;
 use tokio::sync::mpsc;
 use varpulis_core::Event;
+
+use super::types::ConnectorError;
+use crate::sink::Sink;
 
 /// Health report from a managed connector.
 ///

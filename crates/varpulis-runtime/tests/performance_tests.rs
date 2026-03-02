@@ -1,6 +1,7 @@
 //! Performance tests for the runtime engine
 
 use std::time::Instant;
+
 use tokio::sync::mpsc;
 use varpulis_runtime::{Engine, Event};
 

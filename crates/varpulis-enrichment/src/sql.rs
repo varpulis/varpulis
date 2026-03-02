@@ -1,7 +1,8 @@
 //! SQL enrichment provider — executes parameterized queries and maps rows to fields.
 
-use async_trait::async_trait;
 use std::collections::HashMap;
+
+use async_trait::async_trait;
 use varpulis_core::Value;
 
 use crate::{EnrichmentError, EnrichmentProvider, EnrichmentResult};

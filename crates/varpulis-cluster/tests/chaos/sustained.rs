@@ -1,8 +1,10 @@
 //! Sustained / soak chaos tests — long-running stability under random failures.
 
-use super::ProcessCluster;
 use std::time::{Duration, Instant};
+
 use tokio::time::sleep;
+
+use super::ProcessCluster;
 
 // =============================================================================
 // Test 16: Chaos monkey — random kills and adds for 30 seconds

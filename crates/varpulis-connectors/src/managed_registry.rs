@@ -3,6 +3,14 @@
 //! The registry wraps each connector with the actor framework's supervision
 //! infrastructure, providing automatic health observation and restart policies.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use rustc_hash::FxHashMap;
+use tokio::sync::mpsc;
+use tracing::{info, warn};
+use varpulis_core::Event;
+
 use super::managed::{ConnectorHealthReport, ManagedConnector};
 use super::managed_mqtt::ManagedMqttConnector;
 use super::managed_nats::ManagedNatsConnector;
@@ -10,12 +18,6 @@ use super::mqtt::MqttConfig;
 use super::nats::NatsConfig;
 use super::types::{ConnectorConfig, ConnectorError};
 use crate::sink::Sink;
-use rustc_hash::FxHashMap;
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::mpsc;
-use tracing::{info, warn};
-use varpulis_core::Event;
 
 /// Registry that owns one [`ManagedConnector`] per declared connector name.
 ///

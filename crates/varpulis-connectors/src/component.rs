@@ -22,10 +22,11 @@
 //! inventory::submit! { &MyConnectorFactory as &dyn ConnectorFactory }
 //! ```
 
+use std::sync::Arc;
+
 use crate::managed::ManagedConnector;
 use crate::sink::Sink;
 use crate::types::{ConnectorConfig, ConnectorError, SinkConnector};
-use std::sync::Arc;
 
 /// Metadata describing a connector component.
 #[derive(Debug, Clone)]

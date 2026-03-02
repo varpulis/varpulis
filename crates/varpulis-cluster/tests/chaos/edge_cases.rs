@@ -1,8 +1,10 @@
 //! Edge-case chaos tests — boundary conditions, error paths, idempotency.
 
-use super::ProcessCluster;
 use std::time::Duration;
+
 use tokio::time::sleep;
+
+use super::ProcessCluster;
 
 // =============================================================================
 // Test 8: All workers die

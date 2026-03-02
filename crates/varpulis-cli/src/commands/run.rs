@@ -1,8 +1,8 @@
-use anyhow::Result;
 use std::path::PathBuf;
+
+use anyhow::Result;
 use tokio::sync::mpsc;
 use tracing::info;
-
 use varpulis_parser::parse;
 use varpulis_runtime::engine::Engine;
 use varpulis_runtime::event::Event;

@@ -1,9 +1,11 @@
 //! Pipeline migration types and status tracking.
 
-use crate::worker::WorkerId;
-use serde::{Deserialize, Serialize};
 use std::time::Instant;
+
+use serde::{Deserialize, Serialize};
 use varpulis_runtime::persistence::EngineCheckpoint;
+
+use crate::worker::WorkerId;
 
 /// Status of a pipeline migration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

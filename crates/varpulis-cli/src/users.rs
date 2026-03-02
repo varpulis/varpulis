@@ -3,12 +3,13 @@
 //! Provides username/password authentication with argon2 password hashing,
 //! in-memory session tracking, and JSON file persistence for user records.
 
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 // ---------------------------------------------------------------------------
@@ -442,7 +443,8 @@ pub struct UserSummary {
 // ---------------------------------------------------------------------------
 
 fn hash_password(password: &str) -> Result<String, String> {
-    use argon2::password_hash::{rand_core::OsRng, SaltString};
+    use argon2::password_hash::rand_core::OsRng;
+    use argon2::password_hash::SaltString;
     use argon2::{Argon2, PasswordHasher};
 
     let salt = SaltString::generate(&mut OsRng);

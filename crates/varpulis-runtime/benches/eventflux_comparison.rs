@@ -23,8 +23,9 @@
 //!   - S13: Negation (NOT pattern)
 //!   - S16: Nested Kleene + OR
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::time::Duration;
+
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use tokio::runtime::Runtime;
 use varpulis_core::Program;
 use varpulis_parser::parse;

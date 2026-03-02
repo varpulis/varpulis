@@ -1,9 +1,10 @@
 //! Integration tests for multi-actor pipeline wiring and backpressure.
 
-use async_trait::async_trait;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+
+use async_trait::async_trait;
 use varpulis_actors::mailbox::Envelope;
 use varpulis_actors::*;
 

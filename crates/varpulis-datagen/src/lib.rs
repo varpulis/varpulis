@@ -5,9 +5,10 @@
 
 pub mod schemas;
 
+use std::collections::HashMap;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Configuration for the event generator.
 #[derive(Debug, Clone)]
@@ -108,8 +109,9 @@ pub fn generate_batch(config: &GeneratorConfig, count: usize) -> Vec<GeneratedEv
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::collections::HashSet;
+
+    use super::*;
 
     // =========================================================================
     // GeneratorConfig

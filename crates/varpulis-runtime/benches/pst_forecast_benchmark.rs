@@ -24,9 +24,10 @@
 //! - **online_learning**: Incremental update throughput
 //! - **alphabet_scaling**: PST with 5/10/50/100 event types
 
+use std::time::Duration;
+
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use rustc_hash::FxHashMap;
-use std::time::Duration;
 use varpulis_runtime::pst::{
     ConformalCalibrator, HawkesIntensity, OnlinePSTLearner, PMCConfig, PSTConfig,
     PatternMarkovChain, PredictionSuffixTree, PruningStrategy, RunSnapshot, SymbolId,

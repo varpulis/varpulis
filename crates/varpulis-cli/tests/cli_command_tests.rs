@@ -5,6 +5,7 @@
 //! All tests use tempfile for file I/O — no live services needed.
 
 use std::io::Write;
+
 use tempfile::NamedTempFile;
 use varpulis_cli::config::{Config, ConfigError, ProjectConfig};
 

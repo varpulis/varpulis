@@ -20,6 +20,7 @@
 //! find the Accept state. All predicate tests therefore use SEQ patterns.
 
 use std::time::Duration;
+
 use varpulis_core::Value;
 use varpulis_runtime::sase::{
     BackpressureStrategy, CompareOp, PatternBuilder, Predicate, SaseEngine, SasePattern,

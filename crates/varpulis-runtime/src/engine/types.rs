@@ -2,6 +2,14 @@
 //!
 //! This module contains all the structs, enums and type definitions used by the engine.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use indexmap::IndexMap;
+use rustc_hash::FxHashMap;
+use varpulis_core::ast::{ConfigValue, Expr, SasePatternExpr};
+use varpulis_core::Value;
+
 use crate::aggregation::Aggregator;
 use crate::event::SharedEvent;
 use crate::join::JoinBuffer;
@@ -10,12 +18,6 @@ use crate::window::{
     CountWindow, PartitionedSessionWindow, PartitionedSlidingWindow, PartitionedTumblingWindow,
     SessionWindow, SlidingCountWindow, SlidingWindow, TumblingWindow,
 };
-use indexmap::IndexMap;
-use rustc_hash::FxHashMap;
-use std::collections::HashMap;
-use std::sync::Arc;
-use varpulis_core::ast::{ConfigValue, Expr, SasePatternExpr};
-use varpulis_core::Value;
 
 // =============================================================================
 // Public Types (exported from crate)

@@ -3,8 +3,9 @@
 //! - engine/pattern_analyzer.rs: Kleene extraction, event types, within_ms, trend_item_to_greta
 //! - engine/sink_factory.rs: Console, file, http, unknown connector creation + registry ops
 
-use chrono::{TimeZone, Utc};
 use std::sync::Arc;
+
+use chrono::{TimeZone, Utc};
 use tokio::sync::mpsc;
 use varpulis_core::Value;
 use varpulis_parser::parse;

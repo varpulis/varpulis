@@ -12,10 +12,10 @@ mod redis_provider;
 #[cfg(feature = "database")]
 mod sql;
 
-pub use cache::EnrichmentCache;
+use std::collections::HashMap;
 
 use async_trait::async_trait;
-use std::collections::HashMap;
+pub use cache::EnrichmentCache;
 use varpulis_core::Value;
 
 /// Result of an enrichment lookup.

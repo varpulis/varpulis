@@ -4,14 +4,15 @@
 //! connectivity via `rumqttc`.  When the feature is disabled, stub
 //! implementations return `ConnectorError::NotAvailable`.
 
-use super::component::{ConfigParamInfo, ConnectorComponentInfo, ConnectorFactory};
-use super::types::{ConnectorConfig, ConnectorError, SinkConnector, SourceConnector};
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 #[cfg(feature = "mqtt")]
 use tracing::{info, warn};
 use varpulis_core::security::SecretString;
 use varpulis_core::Event;
+
+use super::component::{ConfigParamInfo, ConnectorComponentInfo, ConnectorFactory};
+use super::types::{ConnectorConfig, ConnectorError, SinkConnector, SourceConnector};
 
 // ---------------------------------------------------------------------------
 // Declarative registration
@@ -212,13 +213,15 @@ impl MqttConfig {
 // -----------------------------------------------------------------------------
 #[cfg(feature = "mqtt")]
 mod mqtt_impl {
-    use super::*;
-    use rumqttc::{AsyncClient, Event as MqttEvent, MqttOptions, Packet, QoS};
-    use rustc_hash::FxBuildHasher;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
+
+    use rumqttc::{AsyncClient, Event as MqttEvent, MqttOptions, Packet, QoS};
+    use rustc_hash::FxBuildHasher;
     use varpulis_core::event::{FieldKey, FxIndexMap};
+
+    use super::*;
 
     const fn qos_from_u8(qos: u8) -> QoS {
         match qos {

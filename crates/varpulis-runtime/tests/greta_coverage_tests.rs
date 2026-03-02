@@ -4,6 +4,7 @@
 //! count propagation, Kleene patterns, multiple queries, edge cases.
 
 use std::sync::Arc;
+
 use varpulis_runtime::event::Event;
 use varpulis_runtime::greta::*;
 

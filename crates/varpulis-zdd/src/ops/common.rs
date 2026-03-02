@@ -2,10 +2,11 @@
 //!
 //! These helpers are shared across union, intersection, difference, and product operations.
 
+use rustc_hash::FxHashMap;
+
 use crate::refs::ZddRef;
 use crate::table::UniqueTable;
 use crate::zdd::Zdd;
-use rustc_hash::FxHashMap;
 
 /// Extract node information from a ZddRef.
 ///

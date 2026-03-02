@@ -17,13 +17,15 @@
 //! println!("Metrics: {:?}", pool.metrics());
 //! ```
 
-use crate::event::Event;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tracing::{debug, info, warn};
+
+use crate::event::Event;
 
 /// Configuration for a worker pool
 #[derive(Debug, Clone)]
@@ -467,8 +469,9 @@ impl Drop for WorkerPool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::sync::atomic::AtomicUsize;
+
+    use super::*;
 
     #[tokio::test]
     async fn test_worker_pool_creation() {

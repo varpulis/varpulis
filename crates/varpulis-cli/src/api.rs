@@ -3,7 +3,8 @@
 //! Provides RESTful endpoints for deploying and managing CEP pipelines
 //! in a multi-tenant environment.
 
-use crate::auth::constant_time_compare;
+use std::convert::Infallible;
+
 use axum::extract::{Json, Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -13,13 +14,12 @@ use futures_util::stream;
 use indexmap::IndexMap;
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
-use std::convert::Infallible;
 use tower_http::cors::{Any, CorsLayer};
+use varpulis_core::pagination::{PaginationMeta, PaginationParams, MAX_LIMIT};
 use varpulis_runtime::tenant::{SharedTenantManager, TenantError, TenantQuota};
 use varpulis_runtime::Event;
 
-use varpulis_core::pagination::{PaginationMeta, PaginationParams, MAX_LIMIT};
-
+use crate::auth::constant_time_compare;
 use crate::billing::SharedBillingState;
 
 // =============================================================================
@@ -1566,13 +1566,15 @@ fn json_to_runtime_value(v: &serde_json::Value) -> varpulis_core::Value {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::sync::Arc;
+
     use axum::body::Body;
     use axum::http::Request;
-    use std::sync::Arc;
     use tokio::sync::RwLock;
     use tower::ServiceExt;
     use varpulis_runtime::tenant::{TenantManager, TenantQuota};
+
+    use super::*;
 
     /// Test response wrapper for axum integration tests.
     struct TestResponse {

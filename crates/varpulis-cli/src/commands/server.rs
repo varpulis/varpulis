@@ -1,16 +1,14 @@
-use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+use anyhow::Result;
 use tokio::sync::{mpsc, RwLock};
 use tracing::info;
-
 use varpulis_cli::auth::{self, AuthConfig};
 use varpulis_cli::websocket::{self, ServerState};
-use varpulis_cli::{billing, oauth, playground, rate_limit, users};
+use varpulis_cli::{audit, billing, oauth, playground, rate_limit, users};
 use varpulis_runtime::event::Event;
 use varpulis_runtime::metrics::{Metrics, MetricsServer};
-
-use varpulis_cli::audit;
 
 // =============================================================================
 // mTLS Client Configuration

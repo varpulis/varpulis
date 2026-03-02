@@ -1,25 +1,23 @@
 //! Managed Kafka connector — shares a single producer across all sinks
 
-use super::kafka::KafkaConfig;
-use super::managed::ManagedConnector;
-use super::types::ConnectorError;
-use crate::sink::Sink;
-use async_trait::async_trait;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::mpsc;
-use varpulis_core::Event;
+use std::time::Duration;
 
-use super::helpers::json_to_event;
-use crate::sink::SinkError;
-use tracing::info;
-
+use async_trait::async_trait;
 use rdkafka::config::ClientConfig;
 use rdkafka::consumer::{CommitMode, Consumer, StreamConsumer};
 use rdkafka::producer::{FutureProducer, FutureRecord, Producer};
 use rdkafka::Message;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
-use tracing::{error, warn};
+use tokio::sync::mpsc;
+use tracing::{error, info, warn};
+use varpulis_core::Event;
+
+use super::helpers::json_to_event;
+use super::kafka::KafkaConfig;
+use super::managed::ManagedConnector;
+use super::types::ConnectorError;
+use crate::sink::{Sink, SinkError};
 
 /// Managed Kafka connector that owns a single producer connection.
 ///
@@ -141,8 +139,9 @@ impl ManagedConnector for ManagedKafkaConnector {
         let topic_owned = topic.to_string();
 
         tokio::spawn(async move {
-            use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
             use futures_util::StreamExt;
+
+            use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
             info!(
                 "Managed Kafka {} consumer started on topic {}",
                 name, topic_owned

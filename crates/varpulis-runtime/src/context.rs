@@ -7,16 +7,18 @@
 //! When no contexts are declared, the engine runs in single-threaded mode with zero
 //! overhead (backward compatible).
 
-use crate::engine::Engine;
-use crate::event::{Event, SharedEvent};
-use crate::persistence::{CheckpointConfig, CheckpointManager, EngineCheckpoint, StoreError};
-use rustc_hash::FxHashMap;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
+
+use rustc_hash::FxHashMap;
 use tokio::sync::{mpsc, watch};
 use tracing::{error, info, warn};
 use varpulis_core::ast::{Program, Stmt, StreamSource};
+
+use crate::engine::Engine;
+use crate::event::{Event, SharedEvent};
+use crate::persistence::{CheckpointConfig, CheckpointManager, EngineCheckpoint, StoreError};
 
 /// Messages sent through context channels.
 ///

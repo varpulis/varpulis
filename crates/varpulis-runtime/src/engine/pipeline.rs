@@ -4,16 +4,17 @@
 //! the previously triplicated pipeline logic (process_stream, process_join_result,
 //! process_post_window).
 
-use crate::event::{Event, SharedEvent};
-use crate::sequence::SequenceContext;
+use std::sync::Arc;
+
 use indexmap::IndexMap;
 use rustc_hash::{FxBuildHasher, FxHashMap};
-use std::sync::Arc;
 use tracing::warn;
 use varpulis_core::Value;
 
 use super::evaluator;
 use super::types::*;
+use crate::event::{Event, SharedEvent};
+use crate::sequence::SequenceContext;
 
 /// PERF: Static empty variables map for read-only operations (avoids allocation per call)
 static EMPTY_VARS: std::sync::LazyLock<FxHashMap<String, Value>> =

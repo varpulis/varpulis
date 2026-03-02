@@ -1,7 +1,8 @@
 //! Worker node types and registration protocol.
 
-use serde::{Deserialize, Serialize};
 use std::time::Instant;
+
+use serde::{Deserialize, Serialize};
 use varpulis_core::security::SecretString;
 
 /// Unique identifier for a worker node.

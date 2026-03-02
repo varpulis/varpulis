@@ -5,11 +5,13 @@
 //!
 //! Requires the `k8s` feature flag.
 
-use crate::api::SharedCoordinator;
-use crate::worker::{WorkerId, WorkerStatus};
 use std::collections::BTreeMap;
 use std::path::Path;
+
 use tracing::{error, info, warn};
+
+use crate::api::SharedCoordinator;
+use crate::worker::{WorkerId, WorkerStatus};
 
 /// Configuration for the pod watcher.
 #[derive(Debug, Clone)]

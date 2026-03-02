@@ -1,8 +1,9 @@
 //! JSON converter — wraps existing `helpers::json_to_event()`.
 
+use varpulis_core::Event;
+
 use super::{Converter, ConverterError};
 use crate::helpers::json_to_event;
-use varpulis_core::Event;
 
 /// JSON converter that delegates to the existing `json_to_event` helper.
 #[derive(Debug)]

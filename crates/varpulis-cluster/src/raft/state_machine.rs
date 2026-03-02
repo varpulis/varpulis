@@ -4,9 +4,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::connector_config::ClusterConnector;
-
 use super::{ClusterCommand, ClusterResponse};
+use crate::connector_config::ClusterConnector;
 
 // ---------------------------------------------------------------------------
 // Replicated state

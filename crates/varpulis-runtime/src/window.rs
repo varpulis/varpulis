@@ -6,13 +6,15 @@
 //! - Partitioned windows
 //! - Delay buffers (rstream equivalent)
 
+use std::collections::VecDeque;
+use std::sync::Arc;
+
+use chrono::{DateTime, Duration, Utc};
+use rustc_hash::FxHashMap;
+
 use crate::columnar::{ColumnarAccess, ColumnarBuffer};
 use crate::event::{Event, SharedEvent};
 use crate::persistence::{PartitionedWindowCheckpoint, SerializableEvent, WindowCheckpoint};
-use chrono::{DateTime, Duration, Utc};
-use rustc_hash::FxHashMap;
-use std::collections::VecDeque;
-use std::sync::Arc;
 
 /// A tumbling window that collects events over a fixed duration.
 ///

@@ -36,10 +36,11 @@
 //! **Conclusion**: Hamlet's explicit graphlet-based sharing with O(1) transitions
 //! vastly outperforms ZDD's automatic canonical sharing with O(ZDD size) operations.
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use smallvec::smallvec;
 use std::sync::Arc;
 use std::time::Duration;
+
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use smallvec::smallvec;
 use varpulis_runtime::event::Event;
 use varpulis_runtime::greta::{GretaAggregate, QueryId};
 use varpulis_runtime::hamlet::template::TemplateBuilder;

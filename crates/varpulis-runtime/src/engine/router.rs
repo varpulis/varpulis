@@ -3,8 +3,9 @@
 //! This module provides the EventRouter which manages the mapping from
 //! event types to the streams that should receive those events.
 
-use rustc_hash::FxHashMap;
 use std::sync::Arc;
+
+use rustc_hash::FxHashMap;
 
 /// Event router that maps event types to stream names.
 ///

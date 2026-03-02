@@ -1,7 +1,8 @@
 //! HTTP client for the Varpulis coordinator API.
 
-use crate::error::CoordinatorError;
 use serde_json::Value;
+
+use crate::error::CoordinatorError;
 
 /// HTTP client that proxies requests to the Varpulis coordinator.
 #[derive(Debug, Clone)]

@@ -17,11 +17,13 @@
 //! When multiple queries have similar state patterns, the ZDD will
 //! share nodes, providing "free" structural sharing.
 
-use crate::greta::QueryId;
+use std::sync::Arc;
+
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
-use std::sync::Arc;
 use varpulis_zdd::Zdd;
+
+use crate::greta::QueryId;
 
 /// ZDD variable index representing an NFA state
 pub type ZddVar = u32;

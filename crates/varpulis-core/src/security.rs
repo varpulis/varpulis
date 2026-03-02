@@ -5,6 +5,7 @@
 
 use std::fmt;
 use std::hash::{Hash, Hasher};
+
 use zeroize::Zeroize;
 
 /// Maximum body size for normal JSON endpoints (1 MB).

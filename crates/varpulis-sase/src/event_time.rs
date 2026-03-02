@@ -1,9 +1,11 @@
 //! Robust event-time handling (ET-01)
 
-use super::types::SharedEvent;
-use chrono::{DateTime, Utc};
 use std::sync::Arc;
 use std::time::Duration;
+
+use chrono::{DateTime, Utc};
+
+use super::types::SharedEvent;
 
 /// Configuration for event-time processing
 #[derive(Debug, Clone)]

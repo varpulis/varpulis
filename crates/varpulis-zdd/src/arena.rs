@@ -23,10 +23,12 @@
 //! assert_eq!(arena.count(zdd), 8);
 //! ```
 
+use std::sync::{Arc, RwLock};
+
+use rustc_hash::{FxHashMap, FxHashSet};
+
 use crate::refs::ZddRef;
 use crate::table::UniqueTable;
-use rustc_hash::{FxHashMap, FxHashSet};
-use std::sync::{Arc, RwLock};
 
 /// A lightweight handle to a ZDD within an arena.
 ///

@@ -1,8 +1,9 @@
 //! Builder traits for type-safe actor wiring at construction time.
 
+use async_trait::async_trait;
+
 use crate::actor::Actor;
 use crate::mailbox::MailboxSender;
-use async_trait::async_trait;
 
 /// A sink that accepts messages of type `M`.
 ///

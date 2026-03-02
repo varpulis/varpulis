@@ -2,6 +2,7 @@
 //! Used by the Mandelbrot set demo
 
 use std::sync::Arc;
+
 use tokio::sync::mpsc;
 use varpulis_core::Value;
 use varpulis_parser::parse;

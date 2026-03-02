@@ -4,11 +4,13 @@
 //! Anomaly patterns: rapid transfers after login from new location, high-value
 //! transactions, account enumeration.
 
-use crate::{EventSchema, GeneratedEvent};
+use std::collections::HashMap;
+
 use chrono::Utc;
 use rand::prelude::*;
 use serde_json::json;
-use std::collections::HashMap;
+
+use crate::{EventSchema, GeneratedEvent};
 
 const CITIES: &[&str] = &[
     "New York",

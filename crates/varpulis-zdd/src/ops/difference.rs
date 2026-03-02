@@ -2,11 +2,12 @@
 //!
 //! Computes S₁ \ S₂ (set difference of families)
 
+use rustc_hash::FxHashMap;
+
 use super::common::{get_node_info, remap_nodes};
 use crate::refs::ZddRef;
 use crate::table::UniqueTable;
 use crate::zdd::Zdd;
-use rustc_hash::FxHashMap;
 
 impl Zdd {
     /// Compute the set difference of two ZDDs: S₁ \ S₂

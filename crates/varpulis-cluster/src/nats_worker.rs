@@ -7,11 +7,12 @@
 //! to control workers.
 
 #[cfg(feature = "nats-transport")]
-use crate::nats_transport::subject_cmd_wildcard;
-#[cfg(feature = "nats-transport")]
 use tracing::{error, info, warn};
 #[cfg(feature = "nats-transport")]
 use varpulis_runtime::SharedTenantManager;
+
+#[cfg(feature = "nats-transport")]
+use crate::nats_transport::subject_cmd_wildcard;
 
 /// Run the worker-side NATS command handler.
 ///

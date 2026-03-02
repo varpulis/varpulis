@@ -1,14 +1,15 @@
 //! Runtime values for VPL
 
-use chrono::{DateTime, Utc};
-use indexmap::IndexMap;
-use rustc_hash::FxBuildHasher;
-use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::Duration;
+
+use chrono::{DateTime, Utc};
+use indexmap::IndexMap;
+use rustc_hash::FxBuildHasher;
+use serde::{Deserialize, Serialize};
 
 /// Type alias for IndexMap with FxBuildHasher for faster key lookups.
 pub type FxIndexMap<K, V> = IndexMap<K, V, FxBuildHasher>;

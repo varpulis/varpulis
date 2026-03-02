@@ -6,6 +6,7 @@
 use std::net::IpAddr;
 use std::path::PathBuf;
 use std::time::Duration;
+
 use varpulis_cli::config::*;
 use varpulis_cli::rate_limit::*;
 

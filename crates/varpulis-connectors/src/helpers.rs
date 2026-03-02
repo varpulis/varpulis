@@ -1,10 +1,11 @@
 //! Helper functions for JSON-to-Event conversion with resource limits.
 
-use crate::limits;
 use indexmap::IndexMap;
 use rustc_hash::FxBuildHasher;
 use tracing::warn;
 use varpulis_core::Event;
+
+use crate::limits;
 
 /// Convert JSON value to Event with resource limits enforced.
 pub fn json_to_event(event_type: &str, json: &serde_json::Value) -> Event {

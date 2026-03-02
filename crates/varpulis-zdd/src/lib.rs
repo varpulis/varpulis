@@ -74,8 +74,9 @@ pub use zdd::Zdd;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::collections::{BTreeSet, HashSet};
+
+    use super::*;
 
     /// Test equivalence with naive HashSet<BTreeSet> implementation
     #[test]

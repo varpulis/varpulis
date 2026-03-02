@@ -3,9 +3,10 @@
 //! The UniqueTable ensures that each unique (var, lo, hi) triple maps to exactly
 //! one node, enabling maximal structure sharing and canonical form.
 
+use rustc_hash::FxHashMap;
+
 use crate::node::ZddNode;
 use crate::refs::ZddRef;
-use rustc_hash::FxHashMap;
 
 /// UniqueTable for ZDD node management
 ///

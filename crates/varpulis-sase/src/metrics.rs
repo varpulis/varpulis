@@ -1,8 +1,9 @@
 //! Comprehensive SASE+ metrics (MET-01)
 
-use chrono::{DateTime, Utc};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
+
+use chrono::{DateTime, Utc};
 
 /// Latency histogram with exponential buckets
 /// Buckets: <1µs, <10µs, <100µs, <1ms, <10ms, <100ms, <1s, >1s

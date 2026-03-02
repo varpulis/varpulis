@@ -188,9 +188,11 @@ pub fn generate_request_id() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::fs;
+
     use tempfile::TempDir;
+
+    use super::*;
 
     // -------------------------------------------------------------------------
     // validate_path tests
