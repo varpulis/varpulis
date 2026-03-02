@@ -75,6 +75,12 @@ These features add I/O connectors for external systems. They are defined in
 | `onnx` | ONNX ML inference | `ort 2.0.0-rc.11` |
 | `gpu` | GPU acceleration (implies `onnx`) | `ort` |
 
+### WASM Features
+
+| Feature | Description | Key Dependency |
+|---------|-------------|---------------|
+| `smartmodule` | SmartModule host runtime (filter/map) | `wasmtime 42` |
+
 ### Cluster Features
 
 These are defined in `varpulis-cluster` and exposed through `varpulis-cli`.

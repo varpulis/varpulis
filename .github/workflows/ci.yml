@@ -141,6 +141,7 @@ jobs:
           - cdc
           - encryption
           - oidc
+          - smartmodule
           - all-connectors
         include:
           - features: kafka
