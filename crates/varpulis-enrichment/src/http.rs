@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use varpulis_core::Value;
 
-use super::{EnrichmentError, EnrichmentProvider, EnrichmentResult};
+use crate::{EnrichmentError, EnrichmentProvider, EnrichmentResult};
 
 /// HTTP-based enrichment provider.
 ///
@@ -17,7 +17,7 @@ pub struct HttpEnrichmentProvider {
 }
 
 impl HttpEnrichmentProvider {
-    pub fn new(config: &crate::connector::ConnectorConfig) -> Self {
+    pub fn new(config: &varpulis_connectors::ConnectorConfig) -> Self {
         let method = config
             .properties
             .get("method")
@@ -99,5 +99,5 @@ impl EnrichmentProvider for HttpEnrichmentProvider {
 
 fn json_to_value(v: &serde_json::Value) -> Value {
     // Delegate to the centralized bounded converter
-    crate::connector::helpers::json_to_value(v).unwrap_or(Value::Null)
+    varpulis_connectors::helpers::json_to_value(v).unwrap_or(Value::Null)
 }

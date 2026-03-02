@@ -1,0 +1,13 @@
+[package]
+name = "varpulis-simd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "SIMD-optimized operations for high-performance event processing"
+
+[dependencies]
+varpulis-core = { version = "0.4.1", path = "../varpulis-core" }
+
+[lints]
+workspace = true

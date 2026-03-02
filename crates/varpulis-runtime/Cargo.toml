@@ -15,6 +15,9 @@ varpulis-sase = { version = "0.4.1", path = "../varpulis-sase" }
 varpulis-zdd = { version = "0.4.1", path = "../varpulis-zdd" }
 varpulis-pst = { version = "0.4.1", path = "../varpulis-pst" }
 varpulis-hamlet = { version = "0.4.1", path = "../varpulis-hamlet" }
+varpulis-enrichment = { version = "0.4.1", path = "../varpulis-enrichment" }
+varpulis-simd = { version = "0.4.1", path = "../varpulis-simd" }
+varpulis-dead-letter = { version = "0.4.1", path = "../varpulis-dead-letter" }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -64,8 +67,8 @@ kafka = ["varpulis-connectors/kafka"]
 postgres = ["sqlx", "varpulis-connectors/postgres"]
 mysql = ["sqlx", "varpulis-connectors/mysql"]
 sqlite = ["sqlx", "varpulis-connectors/sqlite"]
-database = ["sqlx", "varpulis-connectors/database"]
-redis = ["dep:redis", "varpulis-connectors/redis"]
+database = ["sqlx", "varpulis-connectors/database", "varpulis-enrichment/database"]
+redis = ["dep:redis", "varpulis-connectors/redis", "varpulis-enrichment/redis"]
 persistence = ["rocksdb"]
 kinesis = ["varpulis-connectors/kinesis"]
 s3 = ["varpulis-connectors/s3"]
