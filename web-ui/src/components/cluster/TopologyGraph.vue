@@ -20,36 +20,32 @@ const { fitView, onNodeClick } = useVueFlow()
 const nodes = ref<Node[]>([])
 const edges = ref<Edge[]>([])
 
-// Convert topology to Vue Flow nodes and edges
 const computedElements = computed(() => {
   if (!props.topology) {
     return { nodes: [], edges: [] }
   }
 
   const count = props.topology.workers.length
-  // Use horizontal layout: evenly spaced in a single row, or 2 rows if > 4
-  const cols = count <= 4 ? count : Math.ceil(count / 2)
-  const colWidth = 200
-  const rowHeight = 140
+  // Single row, evenly spaced horizontally, all at the same Y
+  const nodeWidth = 130
+  const gap = 40
+  const totalWidth = count * nodeWidth + (count - 1) * gap
+  const startX = Math.max(0, (800 - totalWidth) / 2)
+  const y = 60
 
-  const workerNodes: Node[] = props.topology.workers.map((worker, index) => {
-    const col = index % cols
-    const row = Math.floor(index / cols)
-
-    return {
-      id: worker.id,
-      type: 'custom',
-      position: { x: col * colWidth + 40, y: row * rowHeight + 40 },
-      data: {
-        label: worker.id,
-        address: worker.address,
-        status: worker.status,
-        pipelineGroups: worker.pipeline_groups,
-      },
-      sourcePosition: Position.Right,
-      targetPosition: Position.Left,
-    }
-  })
+  const workerNodes: Node[] = props.topology.workers.map((worker, index) => ({
+    id: worker.id,
+    type: 'custom',
+    position: { x: startX + index * (nodeWidth + gap), y },
+    data: {
+      label: worker.id,
+      address: worker.address,
+      status: worker.status,
+      pipelineGroups: worker.pipeline_groups,
+    },
+    sourcePosition: Position.Bottom,
+    targetPosition: Position.Top,
+  }))
 
   const routeEdges: Edge[] = props.topology.routes.map((route, index) => ({
     id: `route-${index}`,
@@ -98,12 +94,10 @@ function getStatusColor(status: string): string {
 
 <template>
   <div class="topology-container">
-    <!-- Loading State -->
     <div v-if="loading && !topology" class="d-flex justify-center align-center h-100">
       <v-progress-circular indeterminate size="64" />
     </div>
 
-    <!-- Empty State -->
     <div v-else-if="!topology || topology.workers.length === 0" class="d-flex flex-column justify-center align-center h-100">
       <v-icon size="64" color="grey-lighten-1" class="mb-4">
         mdi-graph-outline
@@ -114,21 +108,18 @@ function getStatusColor(status: string): string {
       </div>
     </div>
 
-    <!-- Vue Flow Graph -->
     <VueFlow
       v-else
       v-model:nodes="nodes"
       v-model:edges="edges"
       class="vue-flow-container"
-      :default-viewport="{ zoom: 1 }"
-      :min-zoom="0.3"
-      :max-zoom="3"
+      :min-zoom="0.5"
+      :max-zoom="2"
       fit-view-on-init
     >
       <Background pattern-color="#333" :gap="20" />
       <Controls />
 
-      <!-- Custom Node Template -->
       <template #node-custom="{ data }">
         <div
           class="worker-node"
@@ -151,7 +142,7 @@ function getStatusColor(status: string): string {
 
 <style scoped>
 .topology-container {
-  height: 400px;
+  height: 300px;
   background: rgb(var(--v-theme-surface));
   border-radius: 4px;
 }
@@ -188,7 +179,6 @@ function getStatusColor(status: string): string {
 </style>
 
 <style>
-/* Vue Flow default styles */
 .vue-flow__node-custom {
   padding: 0;
   border-radius: 6px;

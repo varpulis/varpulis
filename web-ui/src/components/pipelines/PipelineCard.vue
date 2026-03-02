@@ -29,22 +29,10 @@ const firstPipelineName = computed(() => {
   return names.length > 0 ? names[0] : null
 })
 
-// Get the first running placement for topology fetch
-const firstRunningPlacement = computed(() => {
-  return props.group.placements?.find(p => p.status === 'Running') || null
-})
-
 async function fetchTopology(): Promise<void> {
-  const placement = firstRunningPlacement.value
-  if (!placement) return
-
   topologyLoading.value = true
   try {
-    // Extract host from worker_address (e.g. "http://worker-0:9000" -> use via coordinator proxy)
-    topology.value = await getPipelineTopology(
-      placement.worker_address.replace('http://', ''),
-      placement.pipeline_id
-    )
+    topology.value = await getPipelineTopology(props.group.id)
   } catch {
     topology.value = null
   } finally {

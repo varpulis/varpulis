@@ -143,15 +143,13 @@ export interface PipelineTopology {
 }
 
 /**
- * Get pipeline topology for visualization
+ * Get pipeline topology for visualization (proxied via coordinator)
  */
 export async function getPipelineTopology(
-  workerAddress: string,
-  pipelineId: string
+  groupId: string
 ): Promise<PipelineTopology> {
   const response = await api.get<PipelineTopology>(
-    `/pipelines/${pipelineId}/topology`,
-    { baseURL: `http://${workerAddress}/api/v1` }
+    `/api/v1/cluster/pipeline-groups/${groupId}/topology`
   )
   return response.data
 }

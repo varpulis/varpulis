@@ -333,6 +333,10 @@ pub fn api_routes(
             get(handle_metrics),
         )
         .route(
+            "/api/v1/pipelines/{pipeline_id}/topology",
+            get(handle_topology),
+        )
+        .route(
             "/api/v1/pipelines/{pipeline_id}/reload",
             post(handle_reload),
         )
@@ -851,6 +855,52 @@ async fn handle_metrics(
         output_events_emitted: tenant.usage.output_events_emitted,
     };
     axum::Json(&resp).into_response()
+}
+
+async fn handle_topology(
+    State(state): State<ApiState>,
+    Path(pipeline_id): Path<String>,
+    ApiKey(api_key): ApiKey,
+) -> Response {
+    let manager = &state.manager;
+    let mgr = manager.read().await;
+
+    let tenant_id = match mgr.get_tenant_by_api_key(&api_key) {
+        Some(id) => id.clone(),
+        None => {
+            return error_response(
+                StatusCode::UNAUTHORIZED,
+                "invalid_api_key",
+                "Invalid API key",
+            )
+        }
+    };
+
+    let tenant = match mgr.get_tenant(&tenant_id) {
+        Some(t) => t,
+        None => {
+            return error_response(
+                StatusCode::NOT_FOUND,
+                "tenant_not_found",
+                "Tenant not found",
+            )
+        }
+    };
+
+    let pipeline = match tenant.pipelines.get(&pipeline_id) {
+        Some(p) => p,
+        None => {
+            return error_response(
+                StatusCode::NOT_FOUND,
+                "pipeline_not_found",
+                "Pipeline not found",
+            )
+        }
+    };
+
+    let engine = pipeline.engine.lock().await;
+    let topology = engine.topology();
+    axum::Json(&topology).into_response()
 }
 
 async fn handle_reload(
