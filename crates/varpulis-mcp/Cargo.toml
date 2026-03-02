@@ -21,7 +21,6 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
-chrono = { workspace = true }
 reqwest = { workspace = true }
 schemars = "1"
 varpulis-parser = { version = "0.5.0", path = "../varpulis-parser" }
