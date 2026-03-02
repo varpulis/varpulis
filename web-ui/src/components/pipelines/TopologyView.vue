@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { VueFlow, useVueFlow, Position } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import type { Node, Edge } from '@vue-flow/core'
 import type { PipelineTopology, TopologyNode } from '@/api/pipelines'
+import '@vue-flow/core/dist/style.css'
+import '@vue-flow/core/dist/theme-default.css'
+import '@vue-flow/controls/dist/style.css'
 
 const props = defineProps<{
   topology: PipelineTopology | null
@@ -92,10 +95,12 @@ const computedElements = computed(() => {
   return { nodes: flowNodes, edges: flowEdges }
 })
 
-watch(computedElements, (newVal) => {
+watch(computedElements, async (newVal) => {
   nodes.value = newVal.nodes
   edges.value = newVal.edges
-  setTimeout(() => fitView({ padding: 0.2 }), 100)
+  await nextTick()
+  // Allow time for expansion panel transition to complete
+  setTimeout(() => fitView({ padding: 0.2 }), 300)
 }, { immediate: true })
 
 onMounted(() => {
