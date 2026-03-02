@@ -35,7 +35,7 @@ async-nats = { version = "0.38", optional = true }
 # AWS connectors
 aws-config = { version = "1.5", optional = true }
 aws-sdk-kinesis = { version = "1.54", optional = true }
-aws-sdk-s3 = { version = "1.68", optional = true }
+aws-sdk-s3 = { version = "1.120", optional = true }
 
 # PostgreSQL CDC (logical replication)
 tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-serde_json-1"], optional = true }

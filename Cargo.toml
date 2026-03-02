@@ -84,7 +84,7 @@ axum = { version = "0.8", features = ["ws", "json", "macros"] }
 axum-extra = "0.10"
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "limit", "trace"] }
-axum-server = { version = "0.7", features = ["tls-rustls"] }
+axum-server = { version = "0.8", features = ["tls-rustls"] }
 futures-util = "0.3"
 
 # Actor framework
@@ -104,7 +104,7 @@ hex = "0.4"
 # Testing
 pretty_assertions = "1.4"
 insta = { version = "1", features = ["yaml"] }
-iai-callgrind = "0.14"
+iai-callgrind = "0.16"
 
 # ---------------------------------------------------------------------------
 # Duplicate dependency note
