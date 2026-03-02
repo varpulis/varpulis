@@ -1,4 +1,3 @@
-#![warn(missing_docs)]
 //! # VPL Parser
 //!
 //! Lexing and parsing for the VPL streaming analytics language.

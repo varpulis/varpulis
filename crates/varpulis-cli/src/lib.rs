@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Varpulis CLI library - testable functions and modules
 //!
 //! This library provides the core functionality for the Varpulis CLI,

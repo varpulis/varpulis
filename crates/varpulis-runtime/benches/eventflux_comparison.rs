@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Benchmark: Varpulis vs EventFlux comparison
 //!
 //! Tests workloads that both engines support (Tier 1) and workloads only

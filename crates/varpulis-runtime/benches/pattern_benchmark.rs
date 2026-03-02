@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Benchmarks for SASE+ pattern matching engine
 //!
 //! Run with: cargo bench -p varpulis-runtime

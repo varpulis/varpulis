@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Varpulis CLI - Command line interface for Varpulis streaming analytics engine
 
 use std::path::PathBuf;

@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Benchmarks for imperative programming features in VPL
 //!
 //! Tests performance of:

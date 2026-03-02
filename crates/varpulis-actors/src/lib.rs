@@ -1,4 +1,3 @@
-#![warn(missing_docs)]
 //! # varpulis-actors
 //!
 //! A lightweight actor framework for Varpulis providing:

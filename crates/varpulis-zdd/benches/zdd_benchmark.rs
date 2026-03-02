@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Benchmarks comparing ZDD implementations and naive approach
 //!
 //! Run with: cargo bench -p varpulis-zdd

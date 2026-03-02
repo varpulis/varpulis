@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Process-based chaos test harness for Varpulis cluster.
 //!
 //! Spawns REAL `varpulis` binary processes (coordinator + workers) and exercises

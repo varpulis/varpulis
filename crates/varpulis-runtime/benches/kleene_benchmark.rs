@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! Benchmarks for Kleene patterns (ZDD-based implementation)
 //!
 //! These benchmarks specifically test the ZDD optimization for Kleene+ patterns.

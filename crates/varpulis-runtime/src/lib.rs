@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! # Varpulis Runtime
 //!
 //! High-performance execution engine for VPL programs.

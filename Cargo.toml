@@ -124,6 +124,7 @@ insta = { version = "1", features = ["yaml"] }
 [workspace.lints.rust]
 unsafe_code = "deny"
 missing_debug_implementations = "warn"
+missing_docs = "warn"
 
 [workspace.lints.clippy]
 # Enable pedantic and nursery groups at warn (lower priority so individual
@@ -137,7 +138,8 @@ nursery = { level = "warn", priority = -1 }
 # These lints are from pedantic/nursery but have too many existing violations
 # to enable at once. Each should be addressed in a dedicated cleanup PR.
 
-# Safety & correctness (aspirational — 662 existing uses)
+# Safety & correctness (aspirational — ~2500 existing uses; see #102)
+# Cannot set to "warn" until unwrap→expect migration is done, since CI uses -D warnings.
 unwrap_used = "allow"
 
 # Style & readability — allowed pending dedicated cleanup

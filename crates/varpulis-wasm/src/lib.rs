@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 //! WASM bindings for the VPL parser and semantic validator.
 //!
 //! Provides `parse_vpl()` and `validate_vpl()` functions callable from JavaScript.

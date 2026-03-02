@@ -7,8 +7,6 @@
 //! SASE+ pattern will complete, and when. Combined with the NFA to form a
 //! Pattern Markov Chain (PMC).
 
-#![warn(missing_docs)]
-
 mod conformal;
 mod hawkes;
 mod markov_chain;

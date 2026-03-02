@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 // Build script for varpulis-parser
 // Will be updated for tree-sitter integration
 
