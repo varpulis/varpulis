@@ -84,8 +84,27 @@ def wait_for_workers(base_url: str, api_key: str, min_workers: int = 1, timeout:
     return False
 
 
+def pipeline_exists(base_url: str, api_key: str, name: str) -> bool:
+    """Check if a pipeline group with this name already exists."""
+    try:
+        resp = requests.get(
+            f"{base_url}/api/v1/cluster/pipeline-groups",
+            headers={"x-api-key": api_key},
+        )
+        if resp.status_code == 200:
+            groups = resp.json().get("pipeline_groups", [])
+            return any(g.get("name") == name for g in groups)
+    except requests.ConnectionError:
+        pass
+    return False
+
+
 def deploy_pipeline(base_url: str, api_key: str, name: str, source: str) -> bool:
-    """Deploy a pipeline group."""
+    """Deploy a pipeline group (skips if already deployed)."""
+    if pipeline_exists(base_url, api_key, name):
+        print(f"  Pipeline already deployed: {name} (skipping)")
+        return True
+
     spec = {
         "name": name,
         "pipelines": [{"name": name, "source": source}],
@@ -98,6 +117,9 @@ def deploy_pipeline(base_url: str, api_key: str, name: str, source: str) -> bool
     if resp.status_code == 201:
         group = resp.json()
         print(f"  Pipeline deployed: {group.get('name')} (id: {group.get('id')})")
+        return True
+    if resp.status_code == 400 and "already" in resp.text.lower():
+        print(f"  Pipeline already exists: {name}")
         return True
     print(f"  ERROR deploying pipeline: {resp.status_code} {resp.text}")
     return False
