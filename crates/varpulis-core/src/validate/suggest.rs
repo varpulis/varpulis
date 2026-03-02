@@ -41,7 +41,9 @@ pub fn suggest(name: &str, candidates: &[&str]) -> Option<String> {
     let mut best: Option<(&str, usize)> = None;
     for &candidate in candidates {
         let dist = levenshtein(&lower, &candidate.to_lowercase());
-        if dist <= threshold && (best.is_none() || dist < best.unwrap().1) {
+        if dist <= threshold
+            && (best.is_none() || dist < best.expect("best should be Some after is_none check").1)
+        {
             best = Some((candidate, dist));
         }
     }
