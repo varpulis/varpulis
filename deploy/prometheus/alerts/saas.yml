@@ -1,0 +1,56 @@
+groups:
+  - name: saas
+    rules:
+      # -- Tenant Approaching Monthly Quota --
+      - alert: TenantApproachingQuota
+        expr: >
+          varpulis_tenant_events_total
+            / on(tenant_id) group_left
+          varpulis_tenant_monthly_limit > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tenant {{ $labels.tenant_id }} approaching monthly event quota"
+          description: >
+            Tenant {{ $labels.tenant_id }} has consumed more than 80% of their
+            monthly event limit. Current usage ratio: {{ $value | humanizePercentage }}.
+            Consider notifying the tenant or suggesting an upgrade.
+          runbook: "docs/operations/alerting.md#tenantapproachingquota"
+
+      # -- Trial Expiring Within 48 Hours --
+      # NOTE: This alert requires the application to expose a gauge metric
+      # `varpulis_trial_expires_in_seconds` with label `tenant_id`, representing
+      # the number of seconds until the tenant's trial period expires.
+      # The metric should be set to 0 or removed once the trial has expired
+      # or the tenant has converted to a paid plan.
+      - alert: TrialExpiringIn48h
+        expr: >
+          varpulis_trial_expires_in_seconds > 0
+            and
+          varpulis_trial_expires_in_seconds < 172800
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Trial expiring soon for tenant {{ $labels.tenant_id }}"
+          description: >
+            Tenant {{ $labels.tenant_id }} has a trial expiring in less than
+            48 hours ({{ $value | humanizeDuration }} remaining). Trigger
+            conversion outreach or send a reminder notification.
+          runbook: "docs/operations/alerting.md#trialexpiringin48h"
+
+      # -- Tenant Pipeline in Error State --
+      - alert: TenantPipelineErrors
+        expr: >
+          varpulis_tenant_pipeline_status{status="error"} > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tenant {{ $labels.tenant_id }} has pipelines in error state"
+          description: >
+            {{ $value }} pipeline(s) for tenant {{ $labels.tenant_id }} have been
+            in error state for more than 5 minutes. Investigate pipeline logs and
+            connector health for this tenant.
+          runbook: "docs/operations/alerting.md#tenantpipelineerrors"
