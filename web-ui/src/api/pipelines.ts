@@ -149,7 +149,7 @@ export async function getPipelineTopology(
   groupId: string
 ): Promise<PipelineTopology> {
   const response = await api.get<PipelineTopology>(
-    `/api/v1/cluster/pipeline-groups/${groupId}/topology`
+    `/cluster/pipeline-groups/${groupId}/topology`
   )
   return response.data
 }
