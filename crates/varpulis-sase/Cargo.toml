@@ -12,5 +12,12 @@ varpulis-zdd = { version = "0.5.0", path = "../varpulis-zdd" }
 chrono = { workspace = true }
 rustc-hash = { workspace = true }
 
+[dev-dependencies]
+iai-callgrind.workspace = true
+
+[[bench]]
+name = "iai_sase"
+harness = false
+
 [lints]
 workspace = true
