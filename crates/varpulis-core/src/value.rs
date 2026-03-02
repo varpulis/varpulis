@@ -813,4 +813,59 @@ mod tests {
         // Should only have one zero value
         assert_eq!(set.len(), 1);
     }
+
+    // ==========================================================================
+    // Partition Key Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_partition_key_str_borrows() {
+        let v = Value::str("device-42");
+        let key = v.to_partition_key();
+        assert_eq!(&*key, "device-42");
+        // Str variant should borrow, not allocate
+        assert!(matches!(key, Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn test_partition_key_int_owned() {
+        let v = Value::Int(99);
+        let key = v.to_partition_key();
+        assert_eq!(&*key, "99");
+        assert!(matches!(key, Cow::Owned(_)));
+    }
+
+    #[test]
+    fn test_partition_key_bool_borrows() {
+        assert_eq!(&*Value::Bool(true).to_partition_key(), "true");
+        assert_eq!(&*Value::Bool(false).to_partition_key(), "false");
+        assert!(matches!(
+            Value::Bool(true).to_partition_key(),
+            Cow::Borrowed(_)
+        ));
+    }
+
+    // ==========================================================================
+    // Map Construction Helper Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_map_from_strings_converts_keys() {
+        let mut m: FxIndexMap<String, Value> = IndexMap::with_hasher(FxBuildHasher);
+        m.insert("alpha".to_string(), Value::Int(1));
+        m.insert("beta".to_string(), Value::Int(2));
+        let v = Value::map_from_strings(m);
+        assert_eq!(v.get("alpha"), Some(&Value::Int(1)));
+        assert_eq!(v.get("beta"), Some(&Value::Int(2)));
+        assert_eq!(v.type_name(), "map");
+    }
+
+    #[test]
+    fn test_cross_variant_inequality() {
+        // Different variant types should never be equal, even if inner values
+        // could be coerced (Int vs Float is handled, but Int vs Str is not)
+        assert_ne!(Value::Int(0), Value::Bool(false));
+        assert_ne!(Value::Int(0), Value::Null);
+        assert_ne!(Value::Str("1".into()), Value::Int(1));
+    }
 }

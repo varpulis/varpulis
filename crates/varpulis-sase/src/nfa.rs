@@ -408,3 +408,216 @@ fn extract_alias(pattern: &SasePattern) -> Option<String> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use varpulis_core::Value;
+
+    use super::*;
+    use crate::types::CompareOp;
+
+    #[test]
+    fn test_nfa_new_has_start_state() {
+        let nfa = Nfa::new();
+        assert_eq!(nfa.states.len(), 1);
+        assert_eq!(nfa.start_state, 0);
+        assert_eq!(nfa.states[0].state_type, StateType::Start);
+        assert!(nfa.accept_states.is_empty());
+    }
+
+    #[test]
+    fn test_nfa_add_state_assigns_sequential_ids() {
+        let mut nfa = Nfa::new();
+        let s1 = State::new(0, StateType::Normal).with_event("A".to_string());
+        let s2 = State::new(0, StateType::Normal).with_event("B".to_string());
+        let id1 = nfa.add_state(s1);
+        let id2 = nfa.add_state(s2);
+        assert_eq!(id1, 1);
+        assert_eq!(id2, 2);
+        // State ids should be corrected to their actual position
+        assert_eq!(nfa.states[id1].id, 1);
+        assert_eq!(nfa.states[id2].id, 2);
+        assert_eq!(nfa.states[id1].event_type.as_deref(), Some("A"));
+        assert_eq!(nfa.states[id2].event_type.as_deref(), Some("B"));
+    }
+
+    #[test]
+    fn test_nfa_add_transition_and_epsilon() {
+        let mut nfa = Nfa::new();
+        let id1 = nfa.add_state(State::new(0, StateType::Normal));
+        let id2 = nfa.add_state(State::new(0, StateType::Normal));
+
+        nfa.add_transition(0, id1);
+        nfa.add_epsilon(id1, id2);
+
+        assert_eq!(nfa.states[0].transitions, vec![id1]);
+        assert_eq!(nfa.states[id1].epsilon_transitions, vec![id2]);
+        // Ensure the other direction has no spurious transitions
+        assert!(nfa.states[id2].transitions.is_empty());
+        assert!(nfa.states[id2].epsilon_transitions.is_empty());
+    }
+
+    #[test]
+    fn test_nfa_set_accept_marks_state() {
+        let mut nfa = Nfa::new();
+        let id = nfa.add_state(State::new(0, StateType::Normal));
+        assert_eq!(nfa.states[id].state_type, StateType::Normal);
+
+        nfa.set_accept(id);
+        assert_eq!(nfa.states[id].state_type, StateType::Accept);
+        assert_eq!(nfa.accept_states, vec![id]);
+
+        // Calling set_accept again should not duplicate
+        nfa.set_accept(id);
+        assert_eq!(nfa.accept_states, vec![id]);
+    }
+
+    #[test]
+    fn test_state_builder_methods() {
+        let state = State::new(0, StateType::Normal)
+            .with_event("Trade".to_string())
+            .with_alias("t".to_string())
+            .with_self_loop();
+
+        assert_eq!(state.event_type.as_deref(), Some("Trade"));
+        assert_eq!(state.alias.as_deref(), Some("t"));
+        assert!(state.self_loop);
+        assert!(state.predicate.is_none());
+    }
+
+    #[test]
+    fn test_compile_simple_sequence() {
+        // SEQ(A, B) => start --transition--> A --transition--> B (accept)
+        let pattern = SasePattern::Seq(vec![
+            SasePattern::Event {
+                event_type: "A".to_string(),
+                predicate: None,
+                alias: Some("a".to_string()),
+            },
+            SasePattern::Event {
+                event_type: "B".to_string(),
+                predicate: None,
+                alias: Some("b".to_string()),
+            },
+        ]);
+
+        let nfa = NfaCompiler::new().compile(&pattern);
+
+        // Should have: start(0), A(1), B(2)
+        assert_eq!(nfa.states.len(), 3);
+        assert_eq!(nfa.start_state, 0);
+        assert_eq!(nfa.accept_states, vec![2]);
+        assert_eq!(nfa.states[1].event_type.as_deref(), Some("A"));
+        assert_eq!(nfa.states[1].alias.as_deref(), Some("a"));
+        assert_eq!(nfa.states[2].event_type.as_deref(), Some("B"));
+        assert_eq!(nfa.states[2].state_type, StateType::Accept);
+        // start -> A transition
+        assert!(nfa.states[0].transitions.contains(&1));
+        // A -> B transition
+        assert!(nfa.states[1].transitions.contains(&2));
+    }
+
+    #[test]
+    fn test_compile_kleene_plus_has_self_loop() {
+        // A+ => must match at least once, then loops
+        let pattern = SasePattern::KleenePlus(Box::new(SasePattern::Event {
+            event_type: "A".to_string(),
+            predicate: None,
+            alias: Some("a".to_string()),
+        }));
+
+        let nfa = NfaCompiler::new().compile(&pattern);
+
+        // Find the Kleene state
+        let kleene_states: Vec<_> = nfa
+            .states
+            .iter()
+            .filter(|s| s.state_type == StateType::Kleene)
+            .collect();
+        assert_eq!(
+            kleene_states.len(),
+            1,
+            "should have exactly one Kleene state"
+        );
+        assert!(
+            kleene_states[0].self_loop,
+            "Kleene state should have self-loop set"
+        );
+
+        // Kleene state should have an epsilon transition leading to the accept state
+        assert!(
+            nfa.accept_states.len() == 1,
+            "should have exactly one accept state"
+        );
+    }
+
+    #[test]
+    fn test_compile_within_stores_timeout() {
+        let pattern = SasePattern::Within(
+            Box::new(SasePattern::Event {
+                event_type: "A".to_string(),
+                predicate: None,
+                alias: None,
+            }),
+            Duration::from_secs(30),
+        );
+
+        let nfa = NfaCompiler::new().compile(&pattern);
+
+        // The first compiled state (state 1) should carry the timeout
+        let state_with_timeout = nfa.states.iter().find(|s| s.timeout.is_some());
+        assert!(
+            state_with_timeout.is_some(),
+            "should have a state with timeout"
+        );
+        assert_eq!(
+            state_with_timeout.unwrap().timeout,
+            Some(Duration::from_secs(30))
+        );
+    }
+
+    #[test]
+    fn test_extract_event_info_from_simple_event() {
+        let pattern = SasePattern::Event {
+            event_type: "Trade".to_string(),
+            predicate: Some(Predicate::Compare {
+                field: "price".to_string(),
+                op: CompareOp::Gt,
+                value: Value::Float(100.0),
+            }),
+            alias: Some("t".to_string()),
+        };
+        let (etype, pred) = extract_event_info(&pattern);
+        assert_eq!(etype.as_deref(), Some("Trade"));
+        assert!(pred.is_some());
+    }
+
+    #[test]
+    fn test_extract_event_info_from_seq() {
+        // For a Seq, extract_event_info returns info from the first element
+        let pattern = SasePattern::Seq(vec![
+            SasePattern::Event {
+                event_type: "First".to_string(),
+                predicate: None,
+                alias: None,
+            },
+            SasePattern::Event {
+                event_type: "Second".to_string(),
+                predicate: None,
+                alias: None,
+            },
+        ]);
+        let (etype, _) = extract_event_info(&pattern);
+        assert_eq!(etype.as_deref(), Some("First"));
+    }
+
+    #[test]
+    fn test_extract_alias_from_event() {
+        let pattern = SasePattern::Event {
+            event_type: "A".to_string(),
+            predicate: None,
+            alias: Some("myalias".to_string()),
+        };
+        assert_eq!(extract_alias(&pattern), Some("myalias".to_string()));
+    }
+}

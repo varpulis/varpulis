@@ -203,3 +203,320 @@ pub(crate) fn expr_references_alias(expr: &varpulis_core::ast::Expr, alias: &str
         _ => false,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::nfa::StateType;
+
+    /// Helper to build a simple event with one field.
+    fn make_event(event_type: &str, field: &str, value: Value) -> Event {
+        Event::new(event_type).with_field(field, value)
+    }
+
+    /// Helper to build a minimal NFA state for event_matches_state tests.
+    fn make_state(event_type: Option<&str>, predicate: Option<Predicate>) -> State {
+        let mut s = State::new(0, StateType::Normal);
+        if let Some(et) = event_type {
+            s.event_type = Some(et.to_string());
+        }
+        s.predicate = predicate;
+        s
+    }
+
+    // ======================================================================
+    // compare_values tests
+    // ======================================================================
+
+    #[test]
+    fn test_compare_values_eq_integers() {
+        assert!(compare_values(
+            &Value::Int(42),
+            &Value::Int(42),
+            CompareOp::Eq
+        ));
+        assert!(!compare_values(
+            &Value::Int(42),
+            &Value::Int(43),
+            CompareOp::Eq
+        ));
+    }
+
+    #[test]
+    fn test_compare_values_lt_floats() {
+        assert!(compare_values(
+            &Value::Float(1.0),
+            &Value::Float(2.0),
+            CompareOp::Lt
+        ));
+        assert!(!compare_values(
+            &Value::Float(2.0),
+            &Value::Float(1.0),
+            CompareOp::Lt
+        ));
+        assert!(!compare_values(
+            &Value::Float(1.0),
+            &Value::Float(1.0),
+            CompareOp::Lt
+        ));
+    }
+
+    #[test]
+    fn test_compare_values_ge_mixed_int_float() {
+        assert!(compare_values(
+            &Value::Int(10),
+            &Value::Float(9.5),
+            CompareOp::Ge
+        ));
+        assert!(compare_values(
+            &Value::Float(10.0),
+            &Value::Int(10),
+            CompareOp::Ge
+        ));
+        assert!(!compare_values(
+            &Value::Int(9),
+            &Value::Float(9.5),
+            CompareOp::Ge
+        ));
+    }
+
+    #[test]
+    fn test_compare_values_noteq_strings() {
+        let a = Value::str("hello");
+        let b = Value::str("world");
+        assert!(compare_values(&a, &b, CompareOp::NotEq));
+        assert!(!compare_values(&a, &a, CompareOp::NotEq));
+    }
+
+    #[test]
+    fn test_compare_values_le_strings() {
+        let a = Value::str("abc");
+        let b = Value::str("abd");
+        assert!(compare_values(&a, &b, CompareOp::Le));
+        assert!(compare_values(&a, &a, CompareOp::Le));
+        assert!(!compare_values(&b, &a, CompareOp::Lt));
+    }
+
+    // ======================================================================
+    // eval_predicate tests
+    // ======================================================================
+
+    #[test]
+    fn test_eval_predicate_simple_compare_match() {
+        let event = make_event("Trade", "price", Value::Float(150.0));
+        let pred = Predicate::Compare {
+            field: "price".to_string(),
+            op: CompareOp::Gt,
+            value: Value::Float(100.0),
+        };
+        let captured = FxHashMap::default();
+        assert!(eval_predicate(&pred, &event, &captured, None));
+    }
+
+    #[test]
+    fn test_eval_predicate_simple_compare_no_match() {
+        let event = make_event("Trade", "price", Value::Float(50.0));
+        let pred = Predicate::Compare {
+            field: "price".to_string(),
+            op: CompareOp::Gt,
+            value: Value::Float(100.0),
+        };
+        let captured = FxHashMap::default();
+        assert!(!eval_predicate(&pred, &event, &captured, None));
+    }
+
+    #[test]
+    fn test_eval_predicate_missing_field_returns_false() {
+        let event = make_event("Trade", "volume", Value::Int(500));
+        let pred = Predicate::Compare {
+            field: "price".to_string(),
+            op: CompareOp::Eq,
+            value: Value::Float(100.0),
+        };
+        let captured = FxHashMap::default();
+        assert!(!eval_predicate(&pred, &event, &captured, None));
+    }
+
+    #[test]
+    fn test_eval_predicate_and_both_true() {
+        let event = Event::new("Trade")
+            .with_field("price", Value::Float(150.0))
+            .with_field("volume", Value::Int(1000));
+        let pred = Predicate::And(
+            Box::new(Predicate::Compare {
+                field: "price".to_string(),
+                op: CompareOp::Gt,
+                value: Value::Float(100.0),
+            }),
+            Box::new(Predicate::Compare {
+                field: "volume".to_string(),
+                op: CompareOp::Ge,
+                value: Value::Int(500),
+            }),
+        );
+        let captured = FxHashMap::default();
+        assert!(eval_predicate(&pred, &event, &captured, None));
+    }
+
+    #[test]
+    fn test_eval_predicate_or_one_true() {
+        let event = make_event("Trade", "price", Value::Float(50.0));
+        let pred = Predicate::Or(
+            Box::new(Predicate::Compare {
+                field: "price".to_string(),
+                op: CompareOp::Gt,
+                value: Value::Float(100.0),
+            }),
+            Box::new(Predicate::Compare {
+                field: "price".to_string(),
+                op: CompareOp::Lt,
+                value: Value::Float(60.0),
+            }),
+        );
+        let captured = FxHashMap::default();
+        assert!(eval_predicate(&pred, &event, &captured, None));
+    }
+
+    #[test]
+    fn test_eval_predicate_not_inverts() {
+        let event = make_event("Trade", "price", Value::Float(150.0));
+        let pred = Predicate::Not(Box::new(Predicate::Compare {
+            field: "price".to_string(),
+            op: CompareOp::Lt,
+            value: Value::Float(100.0),
+        }));
+        let captured = FxHashMap::default();
+        // price=150 is NOT < 100, so Not(false) = true
+        assert!(eval_predicate(&pred, &event, &captured, None));
+    }
+
+    #[test]
+    fn test_eval_predicate_compare_ref() {
+        let event_b = make_event("Sell", "price", Value::Float(200.0));
+        let captured_a = Arc::new(make_event("Buy", "price", Value::Float(100.0)));
+        let mut captured: FxHashMap<String, SharedEvent> = FxHashMap::default();
+        captured.insert("a".to_string(), captured_a);
+
+        let pred = Predicate::CompareRef {
+            field: "price".to_string(),
+            op: CompareOp::Gt,
+            ref_alias: "a".to_string(),
+            ref_field: "price".to_string(),
+        };
+        // event_b.price (200) > captured_a.price (100) => true
+        assert!(eval_predicate(&pred, &event_b, &captured, None));
+    }
+
+    // ======================================================================
+    // event_matches_state tests
+    // ======================================================================
+
+    #[test]
+    fn test_event_matches_state_correct_type() {
+        let nfa = Nfa::new();
+        let event = make_event("Trade", "price", Value::Float(100.0));
+        let state = make_state(Some("Trade"), None);
+        let captured = FxHashMap::default();
+        assert!(event_matches_state(&nfa, &event, &state, &captured, None));
+    }
+
+    #[test]
+    fn test_event_matches_state_wrong_type() {
+        let nfa = Nfa::new();
+        let event = make_event("Quote", "price", Value::Float(100.0));
+        let state = make_state(Some("Trade"), None);
+        let captured = FxHashMap::default();
+        assert!(!event_matches_state(&nfa, &event, &state, &captured, None));
+    }
+
+    #[test]
+    fn test_event_matches_state_no_event_type_matches_anything() {
+        let nfa = Nfa::new();
+        let event = make_event("Anything", "x", Value::Int(1));
+        let state = make_state(None, None);
+        let captured = FxHashMap::default();
+        assert!(event_matches_state(&nfa, &event, &state, &captured, None));
+    }
+
+    // ======================================================================
+    // classify_predicate tests
+    // ======================================================================
+
+    #[test]
+    fn test_classify_simple_compare_is_consistent() {
+        let pred = Predicate::Compare {
+            field: "price".to_string(),
+            op: CompareOp::Gt,
+            value: Value::Float(100.0),
+        };
+        assert_eq!(
+            classify_predicate(&pred, Some("a")),
+            PredicateClass::Consistent
+        );
+    }
+
+    #[test]
+    fn test_classify_compare_ref_same_alias_is_inconsistent() {
+        let pred = Predicate::CompareRef {
+            field: "price".to_string(),
+            op: CompareOp::Gt,
+            ref_alias: "a".to_string(),
+            ref_field: "price".to_string(),
+        };
+        assert_eq!(
+            classify_predicate(&pred, Some("a")),
+            PredicateClass::Inconsistent
+        );
+    }
+
+    #[test]
+    fn test_classify_compare_ref_different_alias_is_consistent() {
+        let pred = Predicate::CompareRef {
+            field: "price".to_string(),
+            op: CompareOp::Gt,
+            ref_alias: "b".to_string(),
+            ref_field: "price".to_string(),
+        };
+        assert_eq!(
+            classify_predicate(&pred, Some("a")),
+            PredicateClass::Consistent
+        );
+    }
+
+    #[test]
+    fn test_classify_and_propagates_inconsistency() {
+        let consistent = Predicate::Compare {
+            field: "x".to_string(),
+            op: CompareOp::Eq,
+            value: Value::Int(1),
+        };
+        let inconsistent = Predicate::CompareRef {
+            field: "price".to_string(),
+            op: CompareOp::Gt,
+            ref_alias: "a".to_string(),
+            ref_field: "price".to_string(),
+        };
+        let combined = Predicate::And(Box::new(consistent), Box::new(inconsistent));
+        assert_eq!(
+            classify_predicate(&combined, Some("a")),
+            PredicateClass::Inconsistent
+        );
+    }
+
+    #[test]
+    fn test_classify_not_propagates_inner_class() {
+        let inner = Predicate::CompareRef {
+            field: "price".to_string(),
+            op: CompareOp::Gt,
+            ref_alias: "a".to_string(),
+            ref_field: "price".to_string(),
+        };
+        let pred = Predicate::Not(Box::new(inner));
+        assert_eq!(
+            classify_predicate(&pred, Some("a")),
+            PredicateClass::Inconsistent
+        );
+    }
+}
