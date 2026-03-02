@@ -9,7 +9,6 @@ edition = "2021"
 eventflux = { path = "/tmp/eventflux" }
 tokio = { version = "1", features = ["full"] }
 chrono = "0.4"
-serde_json = "1"
 
 [[bin]]
 name = "eventflux-bench"

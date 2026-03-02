@@ -15,7 +15,6 @@ indexmap = { workspace = true }
 rustc-hash = { workspace = true }
 zeroize = { workspace = true }
 miette = { workspace = true }
-thiserror = { workspace = true }
 
 [dev-dependencies]
 varpulis-parser = { path = "../varpulis-parser" }
