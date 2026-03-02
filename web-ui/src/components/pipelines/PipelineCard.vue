@@ -20,7 +20,8 @@ const router = useRouter()
 
 const topology = ref<PipelineTopology | null>(null)
 const topologyLoading = ref(false)
-const showTopology = ref(false)
+const topologyFetched = ref(false)
+const openPanels = ref<(string | number)[]>([])
 
 // Get the first pipeline source (most groups have a single pipeline)
 const firstPipelineName = computed(() => {
@@ -30,9 +31,11 @@ const firstPipelineName = computed(() => {
 })
 
 async function fetchTopology(): Promise<void> {
+  if (topologyFetched.value) return
   topologyLoading.value = true
   try {
     topology.value = await getPipelineTopology(props.group.id)
+    topologyFetched.value = true
   } catch {
     topology.value = null
   } finally {
@@ -40,19 +43,17 @@ async function fetchTopology(): Promise<void> {
   }
 }
 
-// Fetch topology when expanded
-watch(showTopology, (show) => {
-  if (show && !topology.value) {
+// Fetch topology when the topology panel is opened
+watch(openPanels, (panels) => {
+  if (panels.includes('0') || panels.includes(0)) {
     fetchTopology()
   }
 })
 
-// Re-fetch when group changes
+// Reset when group changes
 watch(() => props.group.id, () => {
   topology.value = null
-  if (showTopology.value) {
-    fetchTopology()
-  }
+  topologyFetched.value = false
 })
 
 function editInEditor(pipelineName: string): void {
@@ -133,13 +134,10 @@ function editInEditor(pipelineName: string): void {
         No pipelines deployed yet
       </v-alert>
 
-      <!-- Topology DAG -->
-      <v-expansion-panels variant="accordion" class="mb-4">
-        <v-expansion-panel>
-          <v-expansion-panel-title
-            class="text-body-2"
-            @click="showTopology = !showTopology"
-          >
+      <!-- Topology & Details -->
+      <v-expansion-panels v-model="openPanels" variant="accordion" multiple class="mb-4">
+        <v-expansion-panel value="0">
+          <v-expansion-panel-title class="text-body-2">
             <v-icon size="small" class="mr-2">mdi-graph-outline</v-icon>
             Pipeline Topology
           </v-expansion-panel-title>
@@ -151,8 +149,7 @@ function editInEditor(pipelineName: string): void {
           </v-expansion-panel-text>
         </v-expansion-panel>
 
-        <!-- Details -->
-        <v-expansion-panel>
+        <v-expansion-panel value="1">
           <v-expansion-panel-title class="text-body-2">
             <v-icon size="small" class="mr-2">mdi-information-outline</v-icon>
             Details
