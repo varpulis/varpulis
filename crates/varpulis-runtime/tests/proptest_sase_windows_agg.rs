@@ -13,8 +13,9 @@ use varpulis_runtime::event::Event;
 use varpulis_runtime::window::{CountWindow, SessionWindow, SlidingWindow, TumblingWindow};
 
 /// Strategy for generating finite f64 values suitable for aggregation.
+/// Restricted to ±1e300 to avoid overflow when summing/averaging.
 fn arb_finite_f64() -> impl Strategy<Value = f64> {
-    any::<f64>().prop_filter("must be finite", |f| f.is_finite())
+    prop::num::f64::NORMAL.prop_filter("must be in range", |f| f.is_finite() && f.abs() < 1e300)
 }
 
 /// Strategy for generating a Vec of events with a numeric "value" field.

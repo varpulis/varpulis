@@ -160,13 +160,15 @@ impl EventFileParser {
                 .trim_end_matches('s')
                 .parse::<u64>()
                 .map_err(|_| format!("Invalid timing value: {timing_str}"))?;
-            secs * 1000
+            secs.checked_mul(1000)
+                .ok_or_else(|| format!("Timing value overflow: {timing_str}"))?
         } else if timing_str.ends_with('m') {
             let mins = timing_str
                 .trim_end_matches('m')
                 .parse::<u64>()
                 .map_err(|_| format!("Invalid timing value: {timing_str}"))?;
-            mins * 60 * 1000
+            mins.checked_mul(60_000)
+                .ok_or_else(|| format!("Timing value overflow: {timing_str}"))?
         } else {
             // Assume milliseconds if no unit
             timing_str

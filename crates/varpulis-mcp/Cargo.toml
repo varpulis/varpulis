@@ -24,8 +24,8 @@ anyhow = { workspace = true }
 chrono = { workspace = true }
 reqwest = { workspace = true }
 schemars = "1"
-varpulis-parser = { version = "0.4.1", path = "../varpulis-parser" }
-varpulis-core = { version = "0.4.1", path = "../varpulis-core" }
+varpulis-parser = { version = "0.5.0", path = "../varpulis-parser" }
+varpulis-core = { version = "0.5.0", path = "../varpulis-core" }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
