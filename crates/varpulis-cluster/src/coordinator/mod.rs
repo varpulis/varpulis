@@ -1110,6 +1110,19 @@ mod tests {
     fn test_cleanup_completed_migrations_removes_old() {
         let mut coord = Coordinator::new();
 
+        // Use checked_sub to avoid panic on Windows when system uptime < 7200s
+        // (Instant on Windows starts from boot and cannot go below zero).
+        let old_instant = Instant::now()
+            .checked_sub(Duration::from_secs(7200))
+            .unwrap_or(Instant::now());
+
+        // If we couldn't actually go back in time, the "old" tasks won't be
+        // older than the TTL, so cleanup won't remove them. Skip the test.
+        if old_instant.elapsed() < Duration::from_secs(3600) {
+            // System uptime too short to represent a 2-hour-old instant.
+            return;
+        }
+
         // Insert a completed migration with old start time
         let mut task = MigrationTask {
             id: "m1".into(),
@@ -1118,7 +1131,7 @@ mod tests {
             source_worker: WorkerId("w1".into()),
             target_worker: WorkerId("w2".into()),
             status: MigrationStatus::Completed,
-            started_at: Instant::now() - Duration::from_secs(7200), // 2 hours ago
+            started_at: old_instant,
             checkpoint: None,
             reason: MigrationReason::Failover,
         };
@@ -1132,13 +1145,13 @@ mod tests {
         // Insert a failed migration that is old
         task.id = "m3".into();
         task.status = MigrationStatus::Failed("error".into());
-        task.started_at = Instant::now() - Duration::from_secs(7200);
+        task.started_at = old_instant;
         coord.active_migrations.insert("m3".into(), task.clone());
 
         // Insert an in-progress migration that is old (should NOT be cleaned)
         task.id = "m4".into();
         task.status = MigrationStatus::Deploying;
-        task.started_at = Instant::now() - Duration::from_secs(7200);
+        task.started_at = old_instant;
         coord.active_migrations.insert("m4".into(), task);
 
         assert_eq!(coord.active_migrations.len(), 4);
