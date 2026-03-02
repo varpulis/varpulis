@@ -13,14 +13,22 @@ on:
         options:
           - all
           - varpulis-core
+          - varpulis-actors
           - varpulis-zdd
-          - varpulis-parser
+          - varpulis-pst
           - varpulis-datagen
           - varpulis-db
-          - varpulis-runtime
+          - varpulis-parser
+          - varpulis-simd
+          - varpulis-hamlet
+          - varpulis-dead-letter
+          - varpulis-connectors
+          - varpulis-sase
+          - varpulis-enrichment
           - varpulis-lsp
-          - varpulis-wasm
           - varpulis-mcp
+          - varpulis-wasm
+          - varpulis-runtime
           - varpulis-cluster
           - varpulis-cli
         default: 'all'
@@ -71,16 +79,29 @@ jobs:
           SINGLE="${{ steps.filter.outputs.single }}"
 
           # Dependency-ordered list of all publishable crates
+          # Level 0: no internal deps
+          # Level 1: depends on level 0 only
+          # Level 2+: depends on lower levels
+          # Note: varpulis-core has a dev-dep on varpulis-parser (cycle),
+          # so we use --no-verify and rely on the workspace check above.
           CRATES=(
             "varpulis-core"
+            "varpulis-actors"
             "varpulis-zdd"
-            "varpulis-parser"
+            "varpulis-pst"
             "varpulis-datagen"
             "varpulis-db"
-            "varpulis-runtime"
+            "varpulis-parser"
+            "varpulis-simd"
+            "varpulis-hamlet"
+            "varpulis-dead-letter"
+            "varpulis-connectors"
+            "varpulis-sase"
+            "varpulis-enrichment"
             "varpulis-lsp"
-            "varpulis-wasm"
             "varpulis-mcp"
+            "varpulis-wasm"
+            "varpulis-runtime"
             "varpulis-cluster"
             "varpulis-cli"
           )
@@ -104,7 +125,7 @@ jobs:
               fi
             fi
 
-            cargo publish -p "$crate" $DRY_RUN
+            cargo publish -p "$crate" --no-verify $DRY_RUN
 
             if [ -z "$DRY_RUN" ]; then
               echo "  Waiting ${PUBLISH_DELAY}s for crates.io index update..."
