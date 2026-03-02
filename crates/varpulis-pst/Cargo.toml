@@ -11,5 +11,8 @@ hashlink = "0.10"
 rustc-hash = { workspace = true }
 smallvec = "1.13"
 
+[dev-dependencies]
+proptest = "1.5"
+
 [lints]
 workspace = true
