@@ -18,7 +18,7 @@ rustc-hash = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
-varpulis-parser = { version = "0.5.0", path = "../varpulis-parser" }
+varpulis-parser = { path = "../varpulis-parser" }
 serde_json = { workspace = true }
 
 [lints]
