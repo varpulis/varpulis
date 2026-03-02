@@ -17,73 +17,6 @@ struct CoordinatorAppState {
     expected_api_key: String,
 }
 
-/// Coordinator health endpoint — includes operational data.
-async fn coordinator_health_handler(
-    axum::extract::State(state): axum::extract::State<Arc<CoordinatorAppState>>,
-) -> axum::Json<serde_json::Value> {
-    let coord = state.coordinator.read().await;
-    let total_workers = coord.workers.len();
-    let healthy_workers = coord
-        .workers
-        .values()
-        .filter(|w| w.status == varpulis_cluster::WorkerStatus::Ready)
-        .count();
-    let unhealthy_workers = coord
-        .workers
-        .values()
-        .filter(|w| w.status == varpulis_cluster::WorkerStatus::Unhealthy)
-        .count();
-    let draining_workers = coord
-        .workers
-        .values()
-        .filter(|w| w.status == varpulis_cluster::WorkerStatus::Draining)
-        .count();
-    let active_migrations = coord
-        .active_migrations
-        .values()
-        .filter(|m| {
-            !matches!(
-                m.status,
-                varpulis_cluster::MigrationStatus::Completed
-                    | varpulis_cluster::MigrationStatus::Failed(_)
-            )
-        })
-        .count();
-    let total_events: u64 = coord.workers.values().map(|w| w.events_processed).sum();
-    let last_sweep = coord.last_health_sweep.as_ref().map(|s| {
-        serde_json::json!({
-            "workers_checked": s.workers_checked,
-            "workers_marked_unhealthy": s.workers_marked_unhealthy.len(),
-        })
-    });
-
-    let status = if unhealthy_workers == 0 && total_workers > 0 {
-        "healthy"
-    } else if unhealthy_workers > 0 && healthy_workers > 0 {
-        "degraded"
-    } else if total_workers == 0 {
-        "no_workers"
-    } else {
-        "critical"
-    };
-
-    axum::Json(serde_json::json!({
-        "status": status,
-        "role": "coordinator",
-        "version": env!("CARGO_PKG_VERSION"),
-        "workers": {
-            "total": total_workers,
-            "healthy": healthy_workers,
-            "unhealthy": unhealthy_workers,
-            "draining": draining_workers,
-        },
-        "pipeline_groups": coord.pipeline_groups.len(),
-        "active_migrations": active_migrations,
-        "total_events_processed": total_events,
-        "last_health_sweep": last_sweep,
-    }))
-}
-
 /// Coordinator readiness probe — returns 200 for standalone/leader coordinators.
 async fn coordinator_ready_handler() -> axum::Json<serde_json::Value> {
     axum::Json(serde_json::json!({
@@ -496,7 +429,6 @@ pub async fn run_coordinator(
 
     // Build coordinator-local routes (health, ready, metrics, ws, internal output-events)
     let coord_local_routes = axum::Router::new()
-        .route("/health", axum::routing::get(coordinator_health_handler))
         .route("/ready", axum::routing::get(coordinator_ready_handler))
         .route("/metrics", axum::routing::get(coordinator_metrics_handler))
         .route("/ws", axum::routing::get(coordinator_ws_handler))
