@@ -242,6 +242,10 @@ pub fn cluster_routes(
             get(handle_dlq_get),
         )
         .route("/api/v1/cluster/topology", get(handle_topology))
+        .route(
+            "/api/v1/cluster/pipeline-groups/{group_id}/topology",
+            get(handle_pipeline_topology),
+        )
         .route("/api/v1/cluster/migrations", get(handle_list_migrations))
         .route(
             "/api/v1/cluster/migrations/{migration_id}",
@@ -1565,6 +1569,72 @@ async fn handle_topology(State(state): State<AppState>, _auth: RbacViewer) -> Re
         groups,
     };
     reply_json_status(&topology, StatusCode::OK)
+}
+
+/// Proxy a pipeline topology request to the worker hosting it.
+async fn handle_pipeline_topology(
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    _auth: RbacViewer,
+) -> Response {
+    let coord = state.coordinator.read().await;
+
+    let group = match coord.pipeline_groups.values().find(|g| g.id == group_id) {
+        Some(g) => g,
+        None => {
+            return cluster_error_response(ClusterError::GroupNotFound(group_id));
+        }
+    };
+
+    // Find first running deployment
+    let deployment = match group
+        .placements
+        .values()
+        .find(|d| d.status == crate::pipeline_group::PipelineDeploymentStatus::Running)
+    {
+        Some(d) => d.clone(),
+        None => {
+            return reply_json_status(
+                &serde_json::json!({"nodes": [], "edges": [], "sources": [], "sinks": []}),
+                StatusCode::OK,
+            );
+        }
+    };
+
+    let client = coord.http_client.clone();
+    drop(coord);
+
+    let url = format!(
+        "{}/api/v1/pipelines/{}/topology",
+        deployment.worker_address, deployment.pipeline_id
+    );
+
+    match client
+        .get(&url)
+        .header("x-api-key", &deployment.worker_api_key)
+        .send()
+        .await
+    {
+        Ok(resp) => {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            let axum_status =
+                StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+            (
+                axum_status,
+                [("content-type", "application/json".to_string())],
+                body,
+            )
+                .into_response()
+        }
+        Err(e) => {
+            tracing::warn!("Cannot reach worker for topology: {e}");
+            reply_json_status(
+                &serde_json::json!({"nodes": [], "edges": [], "sources": [], "sinks": []}),
+                StatusCode::OK,
+            )
+        }
+    }
 }
 
 // =============================================================================

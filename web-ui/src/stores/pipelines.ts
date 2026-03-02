@@ -214,10 +214,10 @@ export const usePipelinesStore = defineStore('pipelines', () => {
     error.value = null
   }
 
-  async function fetchTopology(workerAddress: string, pipelineId: string): Promise<void> {
+  async function fetchTopology(groupId: string): Promise<void> {
     topologyLoading.value = true
     try {
-      topology.value = await pipelinesApi.getPipelineTopology(workerAddress, pipelineId)
+      topology.value = await pipelinesApi.getPipelineTopology(groupId)
     } catch (e) {
       error.value = e instanceof Error ? e.message : 'Failed to fetch topology'
     } finally {
