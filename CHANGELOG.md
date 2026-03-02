@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-03-02
+
+### Highlights
+
+Major architecture improvements: SmartModule WASM runtime, standalone crate extraction,
+VPL test DSL, comprehensive datagen tests, Raft simulation, and hardened CI across
+all platforms and feature flags. All 19 crates published to crates.io.
+
+### Added
+
+#### SmartModule WASM Runtime
+- **SmartModule host runtime** — user-defined WASM processing via `wasmtime`
+- Feature-gated: `--features smartmodule`
+
+#### Crate Extraction
+- **varpulis-pst** — PST forecasting as standalone crate
+- **varpulis-hamlet** — Hamlet trend aggregation as standalone crate
+- **varpulis-enrichment** — Event enrichment as standalone crate
+- **varpulis-simd** — SIMD acceleration as standalone crate
+- **varpulis-dead-letter** — Dead letter queue as standalone crate
+
+#### Testing Infrastructure
+- **VPL-driven test DSL** — `.vpl.test` fixture files with auto-discovery
+- **33 tests for varpulis-datagen** — comprehensive data generator coverage with serde roundtrip
+- **Raft simulation tests** — distributed consensus testing
+- **JSON Schema generation** — schema export for configuration validation
+- **Cross-platform CI** — Windows and macOS test targets
+
+#### Engine Improvements
+- **EngineBuilder** — fluent API for engine construction
+- **ConnectorHealth** — health monitoring for connectors
+- **Debug impls** — added `Debug` to all public types (`missing_debug_implementations`)
+- **Per-crate error hierarchy** — structured error types across all crates
+- **Workspace lints** — 17 additional centralized clippy checks
+- **cargo-semver-checks** — CI job for API compatibility validation
+- **Removed backward-compat shim** — `From<String> for EngineError` removed
+
+#### Architecture Improvements (Phases 1–4)
+- **Physical query plans** — wired `PhysicalPlan` into `Engine::load_program`
+- **Restructured test layout** — SASE and engine tests moved from `src/` to `tests/`
+- **Performance section** — README restructured with per-layer benchmarks
+
+### Fixed
+
+- **Multiply overflow in timing parser** — fuzz-discovered panic when parsing extreme timing values (e.g., `@999999999999999999s`), now returns error via `checked_mul`
+- **Proptest f64 range** — constrain test values to ±1e300 to avoid sum/avg overflow near `f64::MAX`
+- **Instant subtraction panic** — Windows-specific panic in migration cleanup test
+- **Intra-doc link** — broken link for feature-gated smartmodule module
+- **Feature-gated CI failures** — fixes across nats, pulsar, cdc, federation, persistent, encryption
+- **Clippy warnings** — raft feature-gated code, `ignored_unit_patterns`, `len_zero`
+- **Simulate default mode** — `simulate` defaults to fast mode, `.evt` timestamp parsing fixed
+- **cargo-deny and kafka** — CI failures in dependency auditing and kafka feature tests
+- **GenericArray deprecation** — replaced deprecated `from_slice` with array conversion in persistence
+- **Audit issues** — resolved issues #47–#57
+
+### Infrastructure
+
+- **crates.io publish workflow** — all 19 crates in correct topological order with retry logic and idempotent "already exists" handling
+
 ## [0.4.1] - 2026-02-27
 
 ### Highlights
