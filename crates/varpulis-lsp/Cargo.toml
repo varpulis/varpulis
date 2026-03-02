@@ -26,21 +26,12 @@ tokio = { workspace = true }
 varpulis-parser = { version = "0.5.0", path = "../varpulis-parser" }
 varpulis-core = { version = "0.5.0", path = "../varpulis-core" }
 
-# Serialization
-serde = { workspace = true }
-serde_json = { workspace = true }
-
 # Logging
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
-# Error handling
-thiserror = { workspace = true }
-
 # Utilities
 dashmap = "5.5"
-ropey = "1.6"
-once_cell = "1.19"
 
 [lints]
 workspace = true

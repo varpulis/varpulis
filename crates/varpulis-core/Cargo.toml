@@ -9,11 +9,9 @@ description = "Core types and AST for VPL"
 [dependencies]
 serde = { workspace = true }
 chrono = { workspace = true }
-thiserror = { workspace = true }
 serde_json = { workspace = true }
 schemars = { workspace = true }
 indexmap = { workspace = true }
-smallvec = { workspace = true }
 rustc-hash = { workspace = true }
 zeroize = { workspace = true }
 
