@@ -1,0 +1,28 @@
+# Terraform state — never commit (use remote backend in production)
+*.tfstate
+*.tfstate.backup
+*.tfstate.*.backup
+
+# Terraform working directory
+.terraform/
+.terraform.lock.hcl
+
+# Crash logs
+crash.log
+crash.*.log
+
+# Variable override files (may contain secrets)
+*.tfvars
+*.tfvars.json
+!example.tfvars
+
+# Generated kubeconfig
+kubeconfig.yaml
+kubeconfig
+
+# Plan output
+*.tfplan
+
+# OS junk
+.DS_Store
+Thumbs.db

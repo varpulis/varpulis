@@ -180,6 +180,12 @@ const router = createRouter({
       meta: { title: 'Pricing' },
     },
     {
+      path: '/admin',
+      name: 'admin',
+      component: () => import('@/views/AdminView.vue'),
+      meta: { title: 'Admin', requiresAdmin: true },
+    },
+    {
       path: '/:pathMatch(.*)*',
       redirect: '/',
     },

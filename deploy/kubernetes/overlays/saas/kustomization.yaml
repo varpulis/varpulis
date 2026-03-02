@@ -1,0 +1,28 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: varpulis
+
+namePrefix: saas-
+
+resources:
+  - ../../base
+  - postgres-statefulset.yaml
+  - ingress.yaml
+  - network-policies.yaml
+
+patches:
+  - path: coordinator-patch.yaml
+    target:
+      kind: StatefulSet
+      name: varpulis-coordinator
+
+images:
+  - name: varpulis/varpulis
+    newTag: latest
+
+labels:
+  - pairs:
+      environment: saas
+      app.kubernetes.io/part-of: varpulis-saas
+    includeSelectors: false

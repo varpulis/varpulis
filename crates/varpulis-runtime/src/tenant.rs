@@ -64,16 +64,16 @@ impl Default for TenantQuota {
 }
 
 impl TenantQuota {
-    /// Free tier limits
+    /// Free tier limits (30-day trial)
     pub const fn free() -> Self {
         Self {
-            max_pipelines: 2,
-            max_events_per_second: 100,
-            max_streams_per_pipeline: 5,
+            max_pipelines: 5,
+            max_events_per_second: 500,
+            max_streams_per_pipeline: 10,
         }
     }
 
-    /// Pro tier limits
+    /// Pro tier limits ($49/mo)
     pub const fn pro() -> Self {
         Self {
             max_pipelines: 20,
@@ -82,12 +82,31 @@ impl TenantQuota {
         }
     }
 
-    /// Enterprise tier limits
+    /// Business tier limits ($199/mo)
+    pub const fn business() -> Self {
+        Self {
+            max_pipelines: 100,
+            max_events_per_second: 200_000,
+            max_streams_per_pipeline: 200,
+        }
+    }
+
+    /// Enterprise tier limits (custom)
     pub const fn enterprise() -> Self {
         Self {
             max_pipelines: 1000,
             max_events_per_second: 500_000,
             max_streams_per_pipeline: 500,
+        }
+    }
+
+    /// Get quota for a tier name string.
+    pub fn for_tier(tier: &str) -> Self {
+        match tier {
+            "pro" => Self::pro(),
+            "business" => Self::business(),
+            "enterprise" => Self::enterprise(),
+            _ => Self::free(),
         }
     }
 }
@@ -761,6 +780,16 @@ impl TenantManager {
         self.api_key_index.insert(api_key, id.clone());
         self.persist_if_needed(&id);
         Ok(id)
+    }
+
+    /// Update a tenant's quota (e.g., after admin limit change).
+    pub fn update_tenant_quota(&mut self, id: &TenantId, quota: TenantQuota) -> bool {
+        if let Some(tenant) = self.tenants.get_mut(id) {
+            tenant.quota = quota;
+            true
+        } else {
+            false
+        }
     }
 
     /// Get a tenant by API key

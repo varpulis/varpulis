@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: varpulis-coordinator
+spec:
+  template:
+    spec:
+      containers:
+        - name: coordinator
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: RUST_LOG
+              value: "info,varpulis=debug"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: varpulis-saas-postgres
+                  key: database-url
+            - name: STRIPE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: varpulis-saas-stripe
+                  key: secret-key
+            - name: STRIPE_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: varpulis-saas-stripe
+                  key: webhook-secret
+            - name: STRIPE_PRO_PRICE_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: varpulis-saas-config
+                  key: stripe-pro-price-id
+            - name: STRIPE_BUSINESS_PRICE_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: varpulis-saas-config
+                  key: stripe-business-price-id
+            - name: GITHUB_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: varpulis-saas-github-oauth
+                  key: client-id
+            - name: GITHUB_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: varpulis-saas-github-oauth
+                  key: client-secret
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: varpulis-saas-jwt
+                  key: secret
+            - name: FRONTEND_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: varpulis-saas-config
+                  key: frontend-url
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "2000m"

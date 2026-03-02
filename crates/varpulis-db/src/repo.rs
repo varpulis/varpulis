@@ -1,4 +1,4 @@
-use chrono::{NaiveDate, Utc};
+use chrono::{Datelike, NaiveDate, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -57,35 +57,53 @@ pub async fn get_user_by_github_id(
 // Organizations
 // ---------------------------------------------------------------------------
 
+const ORG_COLUMNS: &str = "id, owner_id, name, tier, stripe_customer_id, trial_expires_at, status, pipeline_limit, events_per_second_limit, monthly_event_limit, notes, created_at, updated_at";
+
 /// Create a new organization owned by the given user.
 pub async fn create_organization(
     pool: &PgPool,
     owner_id: Uuid,
     name: &str,
 ) -> Result<Organization, DbError> {
-    let org = sqlx::query_as::<_, Organization>(
-        r"
-        INSERT INTO organizations (owner_id, name)
-        VALUES ($1, $2)
-        RETURNING id, owner_id, name, tier, stripe_customer_id, created_at
-        ",
-    )
-    .bind(owner_id)
-    .bind(name)
-    .fetch_one(pool)
-    .await?;
+    let query = format!(
+        "INSERT INTO organizations (owner_id, name) VALUES ($1, $2) RETURNING {ORG_COLUMNS}"
+    );
+    let org = sqlx::query_as::<_, Organization>(&query)
+        .bind(owner_id)
+        .bind(name)
+        .fetch_one(pool)
+        .await?;
+
+    Ok(org)
+}
+
+/// Create a new organization with trial status (30-day free trial).
+pub async fn create_trial_organization(
+    pool: &PgPool,
+    owner_id: Uuid,
+    name: &str,
+) -> Result<Organization, DbError> {
+    let query = format!(
+        "INSERT INTO organizations (owner_id, name, status, trial_expires_at) \
+         VALUES ($1, $2, 'trial', now() + interval '30 days') \
+         RETURNING {ORG_COLUMNS}"
+    );
+    let org = sqlx::query_as::<_, Organization>(&query)
+        .bind(owner_id)
+        .bind(name)
+        .fetch_one(pool)
+        .await?;
 
     Ok(org)
 }
 
 /// Get an organization by its ID.
 pub async fn get_organization(pool: &PgPool, id: Uuid) -> Result<Option<Organization>, DbError> {
-    let org = sqlx::query_as::<_, Organization>(
-        "SELECT id, owner_id, name, tier, stripe_customer_id, created_at FROM organizations WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await?;
+    let query = format!("SELECT {ORG_COLUMNS} FROM organizations WHERE id = $1");
+    let org = sqlx::query_as::<_, Organization>(&query)
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
 
     Ok(org)
 }
@@ -95,12 +113,12 @@ pub async fn get_user_organizations(
     pool: &PgPool,
     user_id: Uuid,
 ) -> Result<Vec<Organization>, DbError> {
-    let orgs = sqlx::query_as::<_, Organization>(
-        "SELECT id, owner_id, name, tier, stripe_customer_id, created_at FROM organizations WHERE owner_id = $1 ORDER BY created_at",
-    )
-    .bind(user_id)
-    .fetch_all(pool)
-    .await?;
+    let query =
+        format!("SELECT {ORG_COLUMNS} FROM organizations WHERE owner_id = $1 ORDER BY created_at");
+    let orgs = sqlx::query_as::<_, Organization>(&query)
+        .bind(user_id)
+        .fetch_all(pool)
+        .await?;
 
     Ok(orgs)
 }
@@ -121,7 +139,7 @@ pub async fn update_org_stripe_customer(
 
 /// Update the tier of an organization.
 pub async fn update_org_tier(pool: &PgPool, org_id: Uuid, tier: &str) -> Result<(), DbError> {
-    sqlx::query("UPDATE organizations SET tier = $1 WHERE id = $2")
+    sqlx::query("UPDATE organizations SET tier = $1, updated_at = now() WHERE id = $2")
         .bind(tier)
         .bind(org_id)
         .execute(pool)
@@ -134,13 +152,104 @@ pub async fn get_org_by_stripe_customer(
     pool: &PgPool,
     customer_id: &str,
 ) -> Result<Option<Organization>, DbError> {
-    let org = sqlx::query_as::<_, Organization>(
-        "SELECT id, owner_id, name, tier, stripe_customer_id, created_at FROM organizations WHERE stripe_customer_id = $1",
+    let query = format!("SELECT {ORG_COLUMNS} FROM organizations WHERE stripe_customer_id = $1");
+    let org = sqlx::query_as::<_, Organization>(&query)
+        .bind(customer_id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(org)
+}
+
+// ---------------------------------------------------------------------------
+// Admin organization management
+// ---------------------------------------------------------------------------
+
+/// List all organizations (admin query).
+pub async fn list_all_organizations(pool: &PgPool) -> Result<Vec<Organization>, DbError> {
+    let query = format!("SELECT {ORG_COLUMNS} FROM organizations ORDER BY created_at");
+    let orgs = sqlx::query_as::<_, Organization>(&query)
+        .fetch_all(pool)
+        .await?;
+    Ok(orgs)
+}
+
+/// Update the status of an organization (active, trial, suspended, revoked).
+pub async fn update_org_status(pool: &PgPool, org_id: Uuid, status: &str) -> Result<(), DbError> {
+    sqlx::query("UPDATE organizations SET status = $1, updated_at = now() WHERE id = $2")
+        .bind(status)
+        .bind(org_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Update per-tenant resource limits.
+pub async fn update_org_limits(
+    pool: &PgPool,
+    org_id: Uuid,
+    pipeline_limit: i32,
+    eps_limit: i32,
+    monthly_limit: i64,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE organizations SET pipeline_limit = $1, events_per_second_limit = $2, \
+         monthly_event_limit = $3, updated_at = now() WHERE id = $4",
     )
-    .bind(customer_id)
+    .bind(pipeline_limit)
+    .bind(eps_limit)
+    .bind(monthly_limit)
+    .bind(org_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Extend a trial expiration date.
+pub async fn extend_trial(
+    pool: &PgPool,
+    org_id: Uuid,
+    new_expiry: chrono::DateTime<Utc>,
+) -> Result<(), DbError> {
+    sqlx::query(
+        "UPDATE organizations SET trial_expires_at = $1, status = 'trial', updated_at = now() WHERE id = $2",
+    )
+    .bind(new_expiry)
+    .bind(org_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Get all trial orgs whose trial has expired (for background expiry task).
+pub async fn get_expiring_trials(
+    pool: &PgPool,
+    before: chrono::DateTime<Utc>,
+) -> Result<Vec<Organization>, DbError> {
+    let query = format!(
+        "SELECT {ORG_COLUMNS} FROM organizations \
+         WHERE status = 'trial' AND trial_expires_at IS NOT NULL AND trial_expires_at < $1"
+    );
+    let orgs = sqlx::query_as::<_, Organization>(&query)
+        .bind(before)
+        .fetch_all(pool)
+        .await?;
+    Ok(orgs)
+}
+
+/// Aggregated usage summary for an organization (current month).
+pub async fn get_org_usage_summary(pool: &PgPool, org_id: Uuid) -> Result<i64, DbError> {
+    let today = Utc::now().date_naive();
+    let start = chrono::NaiveDate::from_ymd_opt(today.year(), today.month(), 1).unwrap_or(today);
+    let row: Option<(i64,)> = sqlx::query_as(
+        "SELECT COALESCE(SUM(events_processed), 0) FROM usage_daily \
+         WHERE org_id = $1 AND date >= $2 AND date <= $3",
+    )
+    .bind(org_id)
+    .bind(start)
+    .bind(today)
     .fetch_optional(pool)
     .await?;
-    Ok(org)
+    Ok(row.map(|r| r.0).unwrap_or(0))
 }
 
 // ---------------------------------------------------------------------------
