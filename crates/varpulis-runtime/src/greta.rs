@@ -45,11 +45,9 @@ use smallvec::SmallVec;
 use std::sync::Arc;
 use std::time::Instant;
 
-/// Type alias for query identifiers
-pub type QueryId = u32;
-
-/// Type alias for event node identifiers within the graph
-pub type NodeId = u32;
+// Re-export shared types from varpulis-hamlet::greta so that both crates
+// agree on the same concrete types (avoids "similar names but distinct types").
+pub use varpulis_hamlet::greta::{GretaAggregate, NodeId, QueryId};
 
 /// Type alias for graphlet identifiers
 pub type GraphletId = u32;
@@ -230,23 +228,6 @@ impl EventGraph {
     pub const fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }
-}
-
-/// Aggregation function types supported by GRETA
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GretaAggregate {
-    /// COUNT(*) - number of trends
-    CountTrends,
-    /// COUNT(E) - number of events of type E in all trends
-    CountEvents(u16),
-    /// SUM(E.attr)
-    Sum { type_index: u16, field_index: u16 },
-    /// AVG(E.attr)
-    Avg { type_index: u16, field_index: u16 },
-    /// MIN(E.attr)
-    Min { type_index: u16, field_index: u16 },
-    /// MAX(E.attr)
-    Max { type_index: u16, field_index: u16 },
 }
 
 /// Pattern ID type alias

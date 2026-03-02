@@ -1,0 +1,16 @@
+[package]
+name = "varpulis-hamlet"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Hamlet shared online event trend aggregation (SIGMOD 2021)"
+
+[dependencies]
+varpulis-core = { version = "0.4.1", path = "../varpulis-core" }
+rustc-hash = { workspace = true }
+smallvec = "1.13"
+tracing = { workspace = true }
+
+[lints]
+workspace = true

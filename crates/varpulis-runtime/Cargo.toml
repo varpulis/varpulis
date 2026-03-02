@@ -13,6 +13,8 @@ varpulis-core = { version = "0.4.1", path = "../varpulis-core" }
 varpulis-parser = { version = "0.4.1", path = "../varpulis-parser" }
 varpulis-sase = { version = "0.4.1", path = "../varpulis-sase" }
 varpulis-zdd = { version = "0.4.1", path = "../varpulis-zdd" }
+varpulis-pst = { version = "0.4.1", path = "../varpulis-pst" }
+varpulis-hamlet = { version = "0.4.1", path = "../varpulis-hamlet" }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -1,0 +1,15 @@
+[package]
+name = "varpulis-pst"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Prediction Suffix Tree (PST) for complex event forecasting"
+
+[dependencies]
+hashlink = "0.10"
+rustc-hash = { workspace = true }
+smallvec = "1.13"
+
+[lints]
+workspace = true

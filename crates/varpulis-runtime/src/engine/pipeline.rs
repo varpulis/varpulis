@@ -773,11 +773,18 @@ fn execute_op_common(
 
         RuntimeOp::Forecast(config) => {
             if let Some(ref mut pmc) = pst_forecaster {
-                let run_snapshots = if let Some(ref sase) = sase_engine {
-                    sase.active_run_snapshots()
-                } else {
-                    Vec::new()
-                };
+                let run_snapshots: Vec<varpulis_pst::RunSnapshot> =
+                    if let Some(ref sase) = sase_engine {
+                        sase.active_run_snapshots()
+                            .into_iter()
+                            .map(|r| varpulis_pst::RunSnapshot {
+                                current_state: r.current_state,
+                                started_at_ns: r.started_at_ns,
+                            })
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
 
                 let mut forecast_results = Vec::new();
                 if let Some(ref raw) = last_raw_event {
