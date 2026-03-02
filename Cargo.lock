@@ -7642,7 +7642,7 @@ checksum = "7ba6f5989077681266825251a52748b8c1d8a4ad098cc37e440103d0ea717fc0"
 
 [[package]]
 name = "varpulis-actors"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -7656,7 +7656,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-cli"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "argon2",
@@ -7705,7 +7705,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-cluster"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "async-nats",
  "axum",
@@ -7740,7 +7740,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-connectors"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "async-nats",
  "async-trait",
@@ -7779,7 +7779,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-core"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "chrono",
  "indexmap 2.13.0",
@@ -7795,7 +7795,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-datagen"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "chrono",
  "rand 0.8.5",
@@ -7805,7 +7805,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-db"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "chrono",
  "serde",
@@ -7819,7 +7819,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-dead-letter"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "chrono",
  "serde",
@@ -7830,7 +7830,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-enrichment"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "redis",
@@ -7846,7 +7846,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-hamlet"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "rustc-hash 2.1.1",
  "smallvec",
@@ -7856,7 +7856,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-lsp"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "dashmap",
  "once_cell",
@@ -7874,7 +7874,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-mcp"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -7895,7 +7895,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-parser"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "insta",
  "logos",
@@ -7909,7 +7909,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-pst"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "hashlink",
  "rustc-hash 2.1.1",
@@ -7918,7 +7918,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-runtime"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -7973,7 +7973,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-sase"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "chrono",
  "rustc-hash 2.1.1",
@@ -7983,14 +7983,14 @@ dependencies = [
 
 [[package]]
 name = "varpulis-simd"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "varpulis-core",
 ]
 
 [[package]]
 name = "varpulis-wasm"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -8004,7 +8004,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-zdd"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "criterion",
  "rustc-hash 2.1.1",

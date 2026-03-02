@@ -7,7 +7,7 @@ repository.workspace = true
 description = "SIMD-optimized operations for high-performance event processing"
 
 [dependencies]
-varpulis-core = { version = "0.4.1", path = "../varpulis-core" }
+varpulis-core = { version = "0.5.0", path = "../varpulis-core" }
 
 [lints]
 workspace = true
