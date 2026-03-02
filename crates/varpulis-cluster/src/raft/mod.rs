@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 use std::io::Cursor;
 use std::sync::Arc;
 
+use openraft::network::RaftNetworkFactory;
 use serde::{Deserialize, Serialize};
 
 use crate::connector_config::ClusterConnector;
@@ -269,6 +270,32 @@ where
     } else {
         tracing::info!("Raft node {node_id}: waiting for cluster bootstrap from node 1");
     }
+
+    Ok(RaftBootstrapResult {
+        raft: Arc::new(raft),
+        shared_state,
+    })
+}
+
+/// Bootstrap a Raft node with a caller-supplied network factory.
+///
+/// Unlike [`bootstrap`], this does **not** call `raft.initialize()` — the
+/// caller (test harness) controls cluster initialization.  This enables
+/// deterministic simulation testing with [`sim_network::SimNetworkFactory`].
+pub async fn bootstrap_with_network<NF>(
+    node_id: NodeId,
+    config: Arc<openraft::Config>,
+    network: NF,
+) -> Result<RaftBootstrapResult, Box<dyn std::error::Error + Send + Sync>>
+where
+    NF: RaftNetworkFactory<TypeConfig>,
+{
+    let (mem_store, shared_state) = store::MemStore::with_shared_state();
+    let (log_store, state_machine) = openraft::storage::Adaptor::new(mem_store);
+
+    let raft = openraft::Raft::new(node_id, config, network, log_store, state_machine)
+        .await
+        .map_err(|e| format!("Failed to create Raft instance: {e}"))?;
 
     Ok(RaftBootstrapResult {
         raft: Arc::new(raft),

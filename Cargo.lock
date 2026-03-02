@@ -7881,6 +7881,7 @@ dependencies = [
  "opentelemetry",
  "pretty_assertions",
  "prometheus",
+ "rand 0.8.5",
  "reqwest",
  "rocksdb",
  "serde",
