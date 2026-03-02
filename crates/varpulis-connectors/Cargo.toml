@@ -8,7 +8,6 @@ description = "Connector implementations for Varpulis (MQTT, Kafka, NATS, HTTP, 
 
 [dependencies]
 varpulis-core = { version = "0.5.0", path = "../varpulis-core" }
-varpulis-actors = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -24,9 +23,7 @@ futures-util = { workspace = true }
 reqwest = { workspace = true }
 axum = { workspace = true }
 tower-http = { workspace = true }
-tower = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
-zeroize = { workspace = true }
 
 # Optional connectors
 rumqttc = { version = "0.25", optional = true }
@@ -39,11 +36,9 @@ async-nats = { version = "0.38", optional = true }
 aws-config = { version = "1.5", optional = true }
 aws-sdk-kinesis = { version = "1.54", optional = true }
 aws-sdk-s3 = { version = "1.68", optional = true }
-aws-credential-types = { version = "1.2", optional = true }
 
 # PostgreSQL CDC (logical replication)
 tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-serde_json-1"], optional = true }
-bytes = { version = "1", optional = true }
 
 # Elasticsearch
 elasticsearch = { version = "8.15.0-alpha.1", optional = true }
@@ -60,12 +55,12 @@ mysql = ["sqlx"]
 sqlite = ["sqlx"]
 database = ["sqlx"]
 redis = ["dep:redis"]
-kinesis = ["aws-config", "aws-sdk-kinesis", "aws-credential-types"]
-s3 = ["aws-config", "aws-sdk-s3", "aws-credential-types"]
+kinesis = ["aws-config", "aws-sdk-kinesis"]
+s3 = ["aws-config", "aws-sdk-s3"]
 nats = ["async-nats"]
 elasticsearch = ["dep:elasticsearch"]
 pulsar = ["dep:pulsar"]
-cdc = ["tokio-postgres", "bytes"]
+cdc = ["tokio-postgres"]
 csv-converter = []
 all-connectors = ["mqtt", "kafka", "nats", "database", "redis", "kinesis", "s3", "elasticsearch", "pulsar"]
 

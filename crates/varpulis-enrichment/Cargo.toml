@@ -13,7 +13,6 @@ async-trait = "0.1"
 reqwest = { workspace = true }
 thiserror = { workspace = true }
 rustc-hash = { workspace = true }
-tracing = { workspace = true }
 serde_json = { workspace = true }
 
 # Optional enrichment providers

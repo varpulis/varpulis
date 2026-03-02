@@ -26,7 +26,6 @@ tracing-subscriber = { workspace = true }
 serde_json = { workspace = true }
 serde = { workspace = true }
 axum = { workspace = true }
-axum-extra = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }
 axum-server = { workspace = true }
