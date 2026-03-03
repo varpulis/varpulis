@@ -6,26 +6,7 @@ Technical architecture of Varpulis's authentication system, covering the AuthPro
 
 Varpulis supports multiple authentication methods through the `AuthProvider` trait abstraction:
 
-```
-                    ┌─────────────────┐
-                    │  AuthProvider    │  (trait)
-                    │  trait           │
-                    └────┬────────┬───┘
-                         │        │
-              ┌──────────┘        └──────────┐
-              ▼                              ▼
-    ┌─────────────────┐            ┌─────────────────┐
-    │  GitHubProvider  │            │  OidcProvider    │
-    │  (default SaaS)  │            │  (--features     │
-    │                  │            │     oidc)         │
-    └────────┬────────┘            └────────┬────────┘
-             │                              │
-             ▼                              ▼
-    ┌─────────────────────────────────────────────────┐
-    │              JWT Session Layer                    │
-    │  (7-day expiry, HMAC-SHA256, HttpOnly cookie)    │
-    └─────────────────────────────────────────────────┘
-```
+![AuthProvider overview](../images/architecture/auth-provider-overview.svg)
 
 ## AuthProvider Trait
 
@@ -67,34 +48,7 @@ pub struct AuthUser {
 
 The default authentication method in SaaS mode.
 
-```
-Browser                Varpulis               GitHub
-  │                       │                      │
-  │  GET /auth/github     │                      │
-  │──────────────────────>│                      │
-  │  302 → github.com     │                      │
-  │<──────────────────────│                      │
-  │                       │                      │
-  │  User authenticates   │                      │
-  │──────────────────────────────────────────────>│
-  │                       │                      │
-  │  302 → /auth/callback?code=xxx               │
-  │<─────────────────────────────────────────────│
-  │                       │                      │
-  │  GET /auth/callback   │                      │
-  │──────────────────────>│                      │
-  │                       │  POST /access_token  │
-  │                       │─────────────────────>│
-  │                       │  { access_token }    │
-  │                       │<─────────────────────│
-  │                       │  GET /user           │
-  │                       │─────────────────────>│
-  │                       │  { id, email, ... }  │
-  │                       │<─────────────────────│
-  │                       │                      │
-  │  Set-Cookie: jwt=...  │                      │
-  │<──────────────────────│                      │
-```
+![GitHub OAuth flow](../images/architecture/auth-github-oauth-flow.svg)
 
 ### Configuration
 
@@ -109,45 +63,7 @@ export GITHUB_CLIENT_SECRET="your-github-app-client-secret"
 
 Enabled with `--features oidc`. Uses the standard Authorization Code flow with PKCE.
 
-```
-Browser                Varpulis               OIDC Provider
-  │                       │                      │
-  │  GET /auth/oidc/login │                      │
-  │──────────────────────>│                      │
-  │                       │  Discover endpoints  │
-  │                       │  GET /.well-known/   │
-  │                       │    openid-config     │
-  │                       │─────────────────────>│
-  │                       │  { authorization_    │
-  │                       │    endpoint, ... }   │
-  │                       │<─────────────────────│
-  │  302 → provider       │                      │
-  │<──────────────────────│                      │
-  │                       │                      │
-  │  User authenticates   │                      │
-  │──────────────────────────────────────────────>│
-  │                       │                      │
-  │  302 → /auth/oidc/callback?code=xxx          │
-  │<─────────────────────────────────────────────│
-  │                       │                      │
-  │  GET /auth/oidc/      │                      │
-  │       callback        │                      │
-  │──────────────────────>│                      │
-  │                       │  POST /token         │
-  │                       │─────────────────────>│
-  │                       │  { id_token,         │
-  │                       │    access_token }    │
-  │                       │<─────────────────────│
-  │                       │                      │
-  │                       │  Validate id_token:  │
-  │                       │  - Verify signature  │
-  │                       │  - Check issuer      │
-  │                       │  - Check audience    │
-  │                       │  - Check expiry      │
-  │                       │                      │
-  │  Set-Cookie: jwt=...  │                      │
-  │<──────────────────────│                      │
-```
+![OIDC flow](../images/architecture/auth-oidc-flow.svg)
 
 ### OIDC Discovery
 

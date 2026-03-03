@@ -1,12 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="750" height="380" viewBox="0 0 750 380">
   <defs>
-    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+    <marker id="arr" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
       <polygon points="0 0, 10 3.5, 0 7" fill="#616161"/>
     </marker>
-    <marker id="arrowhead-blue" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+    <marker id="arr-blue" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
       <polygon points="0 0, 10 3.5, 0 7" fill="#1A73E8"/>
     </marker>
-    <marker id="arrowhead-orange" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+    <marker id="arr-orange" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
       <polygon points="0 0, 10 3.5, 0 7" fill="#E65100"/>
     </marker>
   </defs>
@@ -29,25 +29,25 @@
   <text x="620" y="37" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#FFFFFF">Stripe</text>
   <line x1="620" y1="48" x2="620" y2="365" stroke="#BDBDBD" stroke-width="1" stroke-dasharray="4,3"/>
 
-  <!-- 1. Browser → Varpulis: POST /billing/checkout -->
-  <line x1="115" y1="80" x2="364" y2="80" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <!-- 1. Browser -> Varpulis -->
+  <line x1="115" y1="80" x2="364" y2="80" stroke="#616161" stroke-width="1.5" marker-end="url(#arr)"/>
   <text x="240" y="73" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#212121">POST /billing/checkout</text>
   <text x="240" y="86" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">{ tier: "pro" }</text>
 
-  <!-- 2. Varpulis → Stripe: Create Checkout Session -->
-  <line x1="375" y1="110" x2="614" y2="110" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <!-- 2. Varpulis -> Stripe -->
+  <line x1="375" y1="110" x2="614" y2="110" stroke="#616161" stroke-width="1.5" marker-end="url(#arr)"/>
   <text x="495" y="103" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#212121">Create Checkout Session</text>
 
-  <!-- 3. Stripe → Varpulis: { checkout_url } -->
-  <line x1="614" y1="135" x2="375" y2="135" stroke="#1A73E8" stroke-width="1.5" marker-end="url(#arrowhead-blue)"/>
+  <!-- 3. Stripe -> Varpulis -->
+  <line x1="614" y1="135" x2="375" y2="135" stroke="#1A73E8" stroke-width="1.5" marker-end="url(#arr-blue)"/>
   <text x="495" y="130" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#1A73E8">{ checkout_url }</text>
 
-  <!-- 4. Varpulis → Browser: 302 redirect -->
-  <line x1="364" y1="160" x2="115" y2="160" stroke="#1A73E8" stroke-width="1.5" marker-end="url(#arrowhead-blue)"/>
-  <text x="240" y="155" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#1A73E8">302 &rarr; checkout_url</text>
+  <!-- 4. Varpulis -> Browser -->
+  <line x1="364" y1="160" x2="115" y2="160" stroke="#1A73E8" stroke-width="1.5" marker-end="url(#arr-blue)"/>
+  <text x="240" y="155" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#1A73E8">302 &#x2192; checkout_url</text>
 
-  <!-- 5. Browser → Stripe: User completes payment -->
-  <line x1="115" y1="200" x2="614" y2="200" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <!-- 5. Browser -> Stripe -->
+  <line x1="115" y1="200" x2="614" y2="200" stroke="#616161" stroke-width="1.5" marker-end="url(#arr)"/>
   <text x="365" y="193" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#212121">User completes payment</text>
 
   <!-- Divider -->
@@ -55,14 +55,14 @@
   <rect x="330" y="222" width="80" height="16" rx="3" ry="3" fill="#FFFFFF"/>
   <text x="370" y="233" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" font-style="italic" fill="#9E9E9E">async</text>
 
-  <!-- 6. Stripe → Varpulis: webhook -->
-  <line x1="614" y1="260" x2="375" y2="260" stroke="#E65100" stroke-width="1.5" marker-end="url(#arrowhead-orange)"/>
+  <!-- 6. Stripe -> Varpulis webhook -->
+  <line x1="614" y1="260" x2="375" y2="260" stroke="#E65100" stroke-width="1.5" marker-end="url(#arr-orange)"/>
   <text x="495" y="253" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#E65100">POST /billing/webhook</text>
   <text x="495" y="273" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">checkout.session.completed</text>
 
   <!-- Server processing box -->
   <rect x="378" y="288" width="210" height="60" rx="4" ry="4" fill="#FFF3E0" stroke="#E65100" stroke-width="1"/>
   <text x="483" y="306" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#212121">save stripe_customer_id</text>
-  <text x="483" y="322" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#212121">update tier &rarr; "pro"</text>
-  <text x="483" y="338" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#212121">set status &rarr; "active"</text>
+  <text x="483" y="322" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#212121">update tier &#x2192; "pro"</text>
+  <text x="483" y="338" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#212121">set status &#x2192; "active"</text>
 </svg>

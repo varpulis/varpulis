@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="440" viewBox="0 0 720 440">
+  <defs>
+    <marker id="arr" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#616161"/>
+    </marker>
+    <marker id="arr-blue" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#1A73E8"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="720" height="440" fill="#FFFFFF"/>
+
+  <!-- Browser lifeline -->
+  <rect x="40" y="16" width="120" height="32" rx="6" ry="6" fill="#1A73E8"/>
+  <text x="100" y="37" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#FFFFFF">Browser</text>
+  <line x1="100" y1="48" x2="100" y2="425" stroke="#BDBDBD" stroke-width="1" stroke-dasharray="4,3"/>
+
+  <!-- Varpulis lifeline -->
+  <rect x="275" y="16" width="140" height="32" rx="6" ry="6" fill="#1A73E8"/>
+  <text x="345" y="37" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#FFFFFF">Varpulis</text>
+  <line x1="345" y1="48" x2="345" y2="425" stroke="#BDBDBD" stroke-width="1" stroke-dasharray="4,3"/>
+
+  <!-- GitHub lifeline -->
+  <rect x="540" y="16" width="120" height="32" rx="6" ry="6" fill="#24292F"/>
+  <text x="600" y="37" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#FFFFFF">GitHub</text>
+  <line x1="600" y1="48" x2="600" y2="425" stroke="#BDBDBD" stroke-width="1" stroke-dasharray="4,3"/>
+
+  <!-- 1. GET /auth/github -->
+  <line x1="105" y1="80" x2="339" y2="80" stroke="#616161" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="222" y="73" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#212121">GET /auth/github</text>
+
+  <!-- 2. 302 redirect -->
+  <line x1="339" y1="105" x2="105" y2="105" stroke="#1A73E8" stroke-width="1.5" marker-end="url(#arr-blue)"/>
+  <text x="222" y="100" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#1A73E8">302 &#x2192; github.com</text>
+
+  <!-- 3. User authenticates -->
+  <line x1="105" y1="140" x2="594" y2="140" stroke="#616161" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="350" y="133" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#212121">User authenticates</text>
+
+  <!-- 4. 302 callback -->
+  <line x1="594" y1="170" x2="105" y2="170" stroke="#1A73E8" stroke-width="1.5" marker-end="url(#arr-blue)"/>
+  <text x="350" y="165" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#1A73E8">302 &#x2192; /auth/callback?code=xxx</text>
+
+  <!-- 5. GET /auth/callback -->
+  <line x1="105" y1="205" x2="339" y2="205" stroke="#616161" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="222" y="198" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#212121">GET /auth/callback</text>
+
+  <!-- 6. POST /access_token -->
+  <line x1="350" y1="235" x2="594" y2="235" stroke="#616161" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="472" y="228" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#212121">POST /access_token</text>
+
+  <!-- 7. { access_token } -->
+  <line x1="594" y1="260" x2="350" y2="260" stroke="#1A73E8" stroke-width="1.5" marker-end="url(#arr-blue)"/>
+  <text x="472" y="255" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#1A73E8">{ access_token }</text>
+
+  <!-- 8. GET /user -->
+  <line x1="350" y1="290" x2="594" y2="290" stroke="#616161" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="472" y="283" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#212121">GET /user</text>
+
+  <!-- 9. { id, email, ... } -->
+  <line x1="594" y1="315" x2="350" y2="315" stroke="#1A73E8" stroke-width="1.5" marker-end="url(#arr-blue)"/>
+  <text x="472" y="310" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#1A73E8">{ id, email, ... }</text>
+
+  <!-- Varpulis processing note -->
+  <rect x="353" y="330" width="160" height="24" rx="4" ry="4" fill="#E8F0FE" stroke="#424242" stroke-width="1"/>
+  <text x="433" y="346" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">Issue JWT session</text>
+
+  <!-- 10. Set-Cookie: jwt=... -->
+  <line x1="339" y1="375" x2="105" y2="375" stroke="#1A73E8" stroke-width="1.5" marker-end="url(#arr-blue)"/>
+  <text x="222" y="370" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#1A73E8">Set-Cookie: jwt=...</text>
+</svg>
