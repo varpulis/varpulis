@@ -40,6 +40,11 @@ spec:
                 secretKeyRef:
                   name: varpulis-k3d-saas-secrets
                   key: jwt-secret
+            - name: VARPULIS_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: varpulis-k3d-saas-secrets
+                  key: admin-password
             - name: FRONTEND_URL
               valueFrom:
                 configMapKeyRef:

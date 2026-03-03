@@ -170,6 +170,12 @@ enum Commands {
         #[arg(long, env = "VARPULIS_USERS_FILE", default_value = "data/users.json")]
         users_file: PathBuf,
 
+        /// Default admin password for first-start bootstrapping.
+        /// If set and the user store is empty, the admin user is created with this password
+        /// instead of a random one. Useful for automated deployments.
+        #[arg(long, env = "VARPULIS_ADMIN_PASSWORD")]
+        admin_password: Option<String>,
+
         /// Session idle timeout in minutes (default: 30)
         #[arg(long, env = "VARPULIS_SESSION_IDLE_TIMEOUT", default_value = "30")]
         session_idle_timeout: u64,
@@ -613,6 +619,7 @@ async fn main() -> Result<()> {
             tls_client_key,
             max_queue_depth,
             users_file,
+            admin_password,
             session_idle_timeout,
             session_absolute_timeout,
             max_sessions,
@@ -638,16 +645,22 @@ async fn main() -> Result<()> {
 
             // Auto-create admin user on first start if user store is empty
             if user_store.is_empty() {
-                let admin_password = auth::generate_api_key();
-                match user_store.create_user("admin", &admin_password, "Administrator", "", "admin")
-                {
+                let (password, is_generated) = match admin_password {
+                    Some(ref pw) => (pw.clone(), false),
+                    None => (auth::generate_api_key(), true),
+                };
+                match user_store.create_user("admin", &password, "Administrator", "", "admin") {
                     Ok(_) => {
                         info!("Created default admin user");
                         info!("  Username: admin");
-                        info!("  Password: {}", admin_password);
-                        info!(
-                            "  Change this password immediately via POST /auth/users or the web UI"
-                        );
+                        if is_generated {
+                            info!("  Password: {}", password);
+                            info!("  Change this password immediately via POST /auth/users or the web UI");
+                        } else {
+                            info!(
+                                "  Password: (set via --admin-password / VARPULIS_ADMIN_PASSWORD)"
+                            );
+                        }
                     }
                     Err(e) => {
                         tracing::warn!("Failed to create default admin user: {}", e);
