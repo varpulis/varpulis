@@ -70,15 +70,23 @@ api.interceptors.response.use(
               return axios(originalRequest)
             }
           } catch {
-            // Renewal failed — let the 401 propagate
+            // Renewal failed — clear auth and redirect to login
           }
           isRenewing = false
+
+          // Clear auth state and redirect to login
+          localStorage.removeItem('varpulis_token')
+          localStorage.removeItem('varpulis_authenticated')
+          delete axios.defaults.headers.common['Authorization']
+          if (window.location.pathname !== '/login') {
+            window.location.href = '/login?redirect=' + encodeURIComponent(window.location.pathname)
+          }
         }
       }
 
       switch (status) {
         case 401:
-          console.error('Authentication failed. Please check your credentials.')
+          // Handled above — don't log for every failed health check
           break
         case 403:
           console.error('Access forbidden.')

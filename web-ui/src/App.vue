@@ -6,7 +6,7 @@ import AppBar from '@/components/common/AppBar.vue'
 import NavDrawer from '@/components/common/NavDrawer.vue'
 import ChatPanel from '@/components/chat/ChatPanel.vue'
 import { useWebSocketStore } from '@/stores/websocket'
-import { useSettingsStore } from '@/stores/settings'
+import { useAuthStore } from '@/stores/auth'
 import { getApiKey, setApiKey } from '@/api'
 import { getChatConfig } from '@/api/cluster'
 
@@ -14,52 +14,31 @@ const theme = useTheme()
 const router = useRouter()
 const route = useRoute()
 const wsStore = useWebSocketStore()
-const settingsStore = useSettingsStore()
+const authStore = useAuthStore()
 
 const drawer = ref(true)
 const rail = ref(false)
-const showApiKeyBanner = ref(false)
-const apiKeyInput = ref('')
 
 const isDark = computed(() => theme.global.current.value.dark)
+const isLoginPage = computed(() => route.name === 'login')
 
-// Check for API key on mount and start health check
+// Start health checks and validate auth on mount
 onMounted(() => {
-  // Skip API key banner if user is authenticated via cookie/session
-  const sessionAuth = localStorage.getItem('varpulis_authenticated')
   const hasToken = localStorage.getItem('varpulis_token')
-  if (sessionAuth || hasToken) {
-    wsStore.startHealthCheck(10000)
-    return
+  const sessionAuth = localStorage.getItem('varpulis_authenticated')
+  const apiKey = getApiKey()
+
+  // Auto-populate from build-time env var (for demo deployments)
+  if (!apiKey && import.meta.env.VITE_API_KEY) {
+    setApiKey(import.meta.env.VITE_API_KEY)
   }
 
-  let existingKey = getApiKey() || settingsStore.apiKey
-  // Auto-populate from build-time env var (for demo deployments)
-  if (!existingKey && import.meta.env.VITE_API_KEY) {
-    setApiKey(import.meta.env.VITE_API_KEY)
-    existingKey = import.meta.env.VITE_API_KEY
-  }
-  if (!existingKey) {
-    showApiKeyBanner.value = true
-  } else {
-    // Start API health check to update connection status
+  if (hasToken || sessionAuth || apiKey || import.meta.env.VITE_API_KEY) {
+    // Validate existing auth and start health checks
+    authStore.handleOAuthCallback()
     wsStore.startHealthCheck(10000)
   }
 })
-
-function saveApiKey(): void {
-  if (apiKeyInput.value.trim()) {
-    setApiKey(apiKeyInput.value.trim())
-    settingsStore.updateSetting('apiKey', apiKeyInput.value.trim())
-    showApiKeyBanner.value = false
-    // Reload the page to apply the new API key
-    window.location.reload()
-  }
-}
-
-function dismissBanner(): void {
-  showApiKeyBanner.value = false
-}
 
 function toggleTheme() {
   theme.global.name.value = isDark.value ? 'light' : 'dark'
@@ -115,52 +94,25 @@ onMounted(() => {
 
 <template>
   <v-app>
-    <AppBar
-      :is-dark="isDark"
-      :ws-connected="wsStore.connected"
-      @toggle-theme="toggleTheme"
-      @toggle-drawer="toggleDrawer"
-    />
+    <template v-if="!isLoginPage">
+      <AppBar
+        :is-dark="isDark"
+        :ws-connected="wsStore.connected"
+        @toggle-theme="toggleTheme"
+        @toggle-drawer="toggleDrawer"
+      />
 
-    <NavDrawer
-      v-model="drawer"
-      :rail="rail"
-      :items="navItems"
-      :current-route="route.path"
-      @navigate="router.push($event)"
-    />
+      <NavDrawer
+        v-model="drawer"
+        :rail="rail"
+        :items="navItems"
+        :current-route="route.path"
+        @navigate="router.push($event)"
+      />
+    </template>
 
     <v-main>
       <v-container fluid class="pa-4">
-        <!-- API Key Setup Banner -->
-        <v-alert
-          v-if="showApiKeyBanner"
-          type="warning"
-          variant="tonal"
-          closable
-          class="mb-4"
-          @click:close="dismissBanner"
-        >
-          <div class="d-flex flex-column gap-2">
-            <div>
-              <strong>API Key Required</strong>
-              <div class="text-body-2">Enter your coordinator API key to connect to the cluster.</div>
-            </div>
-            <div class="d-flex align-center gap-2">
-              <v-text-field
-                v-model="apiKeyInput"
-                label="API Key"
-                density="compact"
-                variant="outlined"
-                hide-details
-                style="max-width: 300px"
-                @keyup.enter="saveApiKey"
-              />
-              <v-btn color="primary" @click="saveApiKey">Save</v-btn>
-            </div>
-          </div>
-        </v-alert>
-
         <router-view v-slot="{ Component, route }">
           <transition name="fade" mode="out-in">
             <keep-alive :include="['EditorView']">
