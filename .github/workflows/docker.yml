@@ -25,7 +25,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build & push backend image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: deploy/docker/Dockerfile
@@ -40,7 +40,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build & push web-ui image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: web-ui
           file: web-ui/Dockerfile
