@@ -120,17 +120,9 @@ info "Waiting for web UI..."
 kubectl wait --for=condition=ready pod -l app=varpulis-webui -n "$NAMESPACE" --timeout=120s
 ok "Web UI ready"
 
-# ─── Extract admin password ────────────────────────────────────────────────
-info "Extracting admin credentials..."
-ADMIN_PASSWORD=""
-for i in $(seq 1 30); do
-    ADMIN_PASSWORD=$(kubectl logs -l app.kubernetes.io/component=worker -n "$NAMESPACE" --tail=-1 2>/dev/null \
-        | grep -oP 'Password: \K\S+' | head -1 || true)
-    if [[ -n "$ADMIN_PASSWORD" ]]; then
-        break
-    fi
-    sleep 2
-done
+# ─── Summary ──────────────────────────────────────────────────────────────
+ADMIN_PASSWORD=$(kubectl get secret varpulis-k3d-saas-secrets -n "$NAMESPACE" \
+    -o jsonpath='{.data.admin-password}' 2>/dev/null | base64 -d || echo "admin")
 
 echo ""
 echo -e "${BOLD}════════════════════════════════════════════════════════════${NC}"
@@ -141,13 +133,8 @@ echo -e "  ${GREEN}Web UI:${NC}      http://localhost:8080"
 echo -e "  ${GREEN}API:${NC}         http://localhost:9000"
 echo -e "  ${GREEN}Grafana:${NC}     http://localhost:3000  (admin/admin)"
 echo ""
-if [[ -n "$ADMIN_PASSWORD" ]]; then
-    echo -e "  ${GREEN}Admin user:${NC}  admin"
-    echo -e "  ${GREEN}Admin pass:${NC}  $ADMIN_PASSWORD"
-else
-    warn "Could not extract admin password from logs"
-    echo "  Check manually: kubectl logs -l app.kubernetes.io/component=worker -n $NAMESPACE | grep Password"
-fi
+echo -e "  ${GREEN}Admin user:${NC}  admin"
+echo -e "  ${GREEN}Admin pass:${NC}  $ADMIN_PASSWORD"
 echo ""
 echo -e "  ${BLUE}API key:${NC}     k3d-saas-test-key"
 echo -e "  ${BLUE}Namespace:${NC}   $NAMESPACE"
