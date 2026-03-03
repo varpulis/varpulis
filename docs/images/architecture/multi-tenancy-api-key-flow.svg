@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="280" viewBox="0 0 680 280">
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#616161"/>
+    </marker>
+    <marker id="arrowhead-blue" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#1A73E8"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="680" height="280" fill="#FFFFFF"/>
+
+  <!-- Client lifeline -->
+  <rect x="60" y="16" width="120" height="32" rx="6" ry="6" fill="#1A73E8"/>
+  <text x="120" y="37" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#FFFFFF">Client</text>
+  <line x1="120" y1="48" x2="120" y2="260" stroke="#BDBDBD" stroke-width="1" stroke-dasharray="4,3"/>
+
+  <!-- Server lifeline -->
+  <rect x="390" y="16" width="200" height="32" rx="6" ry="6" fill="#1A73E8"/>
+  <text x="490" y="37" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#FFFFFF">Varpulis Server</text>
+  <line x1="490" y1="48" x2="490" y2="260" stroke="#BDBDBD" stroke-width="1" stroke-dasharray="4,3"/>
+
+  <!-- Request arrow -->
+  <line x1="125" y1="80" x2="484" y2="80" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+  <text x="305" y="73" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#212121">X-API-Key: vpl_abc...</text>
+
+  <!-- Server processing box -->
+  <rect x="498" y="90" width="170" height="80" rx="4" ry="4" fill="#E8F0FE" stroke="#424242" stroke-width="1"/>
+  <text x="583" y="110" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#212121">ApiKey extractor</text>
+  <text x="583" y="124" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">(FromRequestParts)</text>
+  <line x1="510" y1="133" x2="656" y2="133" stroke="#E0E0E0" stroke-width="1"/>
+  <text x="583" y="149" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#212121">get_tenant_by_api_key()</text>
+  <text x="583" y="164" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">O(1) HashMap lookup</text>
+
+  <!-- Arrow from processing back to lifeline -->
+  <line x1="498" y1="135" x2="492" y2="135" stroke="#616161" stroke-width="1"/>
+
+  <!-- Server scoped ops -->
+  <rect x="498" y="180" width="170" height="32" rx="4" ry="4" fill="#E8F0FE" stroke="#424242" stroke-width="1"/>
+  <text x="583" y="200" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#212121">Scoped tenant operations</text>
+
+  <!-- Response arrow -->
+  <line x1="484" y1="230" x2="125" y2="230" stroke="#1A73E8" stroke-width="1.5" marker-end="url(#arrowhead-blue)"/>
+  <text x="305" y="223" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" fill="#1A73E8">200 OK / 401 Unauthorized</text>
+</svg>

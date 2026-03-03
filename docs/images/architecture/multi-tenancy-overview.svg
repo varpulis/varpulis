@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="520" viewBox="0 0 780 520">
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#616161"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="780" height="520" fill="#FFFFFF"/>
+
+  <!-- API Request box -->
+  <rect x="270" y="12" width="240" height="44" rx="6" ry="6" fill="none" stroke="#424242" stroke-width="1.5"/>
+  <rect x="270" y="12" width="240" height="26" rx="6" ry="6" fill="#424242"/>
+  <rect x="270" y="26" width="240" height="12" fill="#424242"/>
+  <text x="390" y="31" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" font-weight="bold" fill="#FFFFFF">API Request</text>
+  <text x="390" y="48" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">X-API-Key: vpl_abc...</text>
+
+  <!-- Arrow down -->
+  <line x1="390" y1="56" x2="390" y2="78" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- API Key Extraction box -->
+  <rect x="270" y="80" width="240" height="36" rx="6" ry="6" fill="#E8F0FE" stroke="#424242" stroke-width="1.5"/>
+  <text x="390" y="100" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="11" font-weight="bold" fill="#212121">API Key Extraction</text>
+  <text x="390" y="112" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">(Axum FromRequestParts)</text>
+
+  <!-- Arrow down -->
+  <line x1="390" y1="116" x2="390" y2="138" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- Runtime Layer outer box -->
+  <rect x="20" y="140" width="470" height="360" rx="6" ry="6" fill="none" stroke="#1A73E8" stroke-width="1.5" stroke-dasharray="6,3"/>
+  <text x="30" y="158" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#1A73E8">Runtime Layer</text>
+
+  <!-- SaaS Layer outer box -->
+  <rect x="510" y="140" width="250" height="360" rx="6" ry="6" fill="none" stroke="#E65100" stroke-width="1.5" stroke-dasharray="6,3"/>
+  <text x="520" y="158" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#E65100">SaaS Layer (--features saas)</text>
+
+  <!-- TenantManager box -->
+  <rect x="40" y="170" width="430" height="310" rx="6" ry="6" fill="none" stroke="#424242" stroke-width="1.5"/>
+  <rect x="40" y="170" width="430" height="28" rx="6" ry="6" fill="#1A73E8"/>
+  <rect x="40" y="186" width="430" height="12" fill="#1A73E8"/>
+  <text x="255" y="190" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="12" font-weight="bold" fill="#FFFFFF">TenantManager</text>
+
+  <!-- api_key_index -->
+  <rect x="60" y="208" width="200" height="40" rx="4" ry="4" fill="#E8F0FE" stroke="#424242" stroke-width="1"/>
+  <text x="160" y="225" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">api_key_index</text>
+  <text x="160" y="240" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">HashMap&lt;Key, TenantId&gt;</text>
+
+  <!-- Arrow from api_key_index to SHA-256 lookup -->
+  <line x1="260" y1="228" x2="527" y2="228" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- SHA-256 lookup box (SaaS) -->
+  <rect x="530" y="208" width="210" height="40" rx="4" ry="4" fill="#FFF3E0" stroke="#424242" stroke-width="1"/>
+  <text x="635" y="225" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">SHA-256 lookup</text>
+  <text x="635" y="240" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">in database</text>
+
+  <!-- tenants HashMap -->
+  <rect x="60" y="260" width="200" height="40" rx="4" ry="4" fill="#E8F0FE" stroke="#424242" stroke-width="1"/>
+  <text x="160" y="277" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">tenants</text>
+  <text x="160" y="292" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">HashMap&lt;TenantId, Tenant&gt;</text>
+
+  <!-- Arrow from tenants to PostgreSQL -->
+  <line x1="260" y1="280" x2="527" y2="300" stroke="#616161" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+  <!-- PostgreSQL box (SaaS) -->
+  <rect x="530" y="268" width="210" height="56" rx="4" ry="4" fill="#FFF3E0" stroke="#424242" stroke-width="1"/>
+  <text x="635" y="287" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">PostgreSQL</text>
+  <text x="635" y="301" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">organizations, api_keys,</text>
+  <text x="635" y="315" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">pipelines, usage_daily</text>
+
+  <!-- Per-Tenant Pipelines -->
+  <rect x="60" y="312" width="200" height="40" rx="4" ry="4" fill="#E8F0FE" stroke="#424242" stroke-width="1"/>
+  <text x="160" y="329" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">Per-Tenant Pipelines</text>
+  <text x="160" y="344" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">HashMap&lt;String, Pipeline&gt;</text>
+
+  <!-- Stripe billing box (SaaS) -->
+  <rect x="530" y="340" width="210" height="40" rx="4" ry="4" fill="#FFF3E0" stroke="#424242" stroke-width="1"/>
+  <text x="635" y="357" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">Stripe Billing</text>
+  <text x="635" y="372" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">checkout, webhooks, portal</text>
+
+  <!-- Quota & Rate Limit -->
+  <rect x="280" y="208" width="170" height="40" rx="4" ry="4" fill="#E8F0FE" stroke="#424242" stroke-width="1"/>
+  <text x="365" y="225" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">Quota &amp; Rate Limit</text>
+  <text x="365" y="240" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">1s sliding window</text>
+
+  <!-- Global Backpressure -->
+  <rect x="280" y="260" width="170" height="40" rx="4" ry="4" fill="#E8F0FE" stroke="#424242" stroke-width="1"/>
+  <text x="365" y="277" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">Global Backpressure</text>
+  <text x="365" y="292" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">AtomicU64 counter</text>
+
+  <!-- UsageTracker -->
+  <rect x="530" y="396" width="210" height="40" rx="4" ry="4" fill="#FFF3E0" stroke="#424242" stroke-width="1"/>
+  <text x="635" y="413" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">UsageTracker</text>
+  <text x="635" y="428" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">buffer &rarr; 60s flush &rarr; DB</text>
+
+  <!-- StateStore / FileStore -->
+  <rect x="60" y="364" width="200" height="40" rx="4" ry="4" fill="#E8F0FE" stroke="#424242" stroke-width="1"/>
+  <text x="160" y="381" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">StateStore</text>
+  <text x="160" y="396" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">FileStore / RocksDbStore</text>
+
+  <!-- Prometheus Metrics -->
+  <rect x="280" y="312" width="170" height="40" rx="4" ry="4" fill="#E8F0FE" stroke="#424242" stroke-width="1"/>
+  <text x="365" y="329" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">Prometheus Metrics</text>
+  <text x="365" y="344" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">per-tenant gauges</text>
+
+  <!-- Trial Lifecycle box (SaaS) -->
+  <rect x="530" y="448" width="210" height="40" rx="4" ry="4" fill="#FFF3E0" stroke="#424242" stroke-width="1"/>
+  <text x="635" y="465" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="10" font-weight="bold" fill="#212121">Trial Lifecycle</text>
+  <text x="635" y="480" text-anchor="middle" font-family="Segoe UI, Roboto, Arial, sans-serif" font-size="9" fill="#757575">30-day expiry, auto-suspend</text>
+</svg>
