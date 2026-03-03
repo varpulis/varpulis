@@ -2934,6 +2934,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hashlink"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ea0b22561a9c04a7cb1a302c013e0259cd3b4bb619f145b32f72b8b4bcbed230"
+dependencies = [
+ "hashbrown 0.16.1",
+]
+
+[[package]]
 name = "headers"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6671,7 +6680,7 @@ dependencies = [
  "futures-io",
  "futures-util",
  "hashbrown 0.15.5",
- "hashlink",
+ "hashlink 0.10.0",
  "indexmap 2.13.0",
  "log",
  "memchr",
@@ -8037,7 +8046,7 @@ dependencies = [
 name = "varpulis-pst"
 version = "0.5.0"
 dependencies = [
- "hashlink",
+ "hashlink 0.11.0",
  "proptest",
  "rustc-hash 2.1.1",
  "smallvec",
@@ -8055,7 +8064,7 @@ dependencies = [
  "core_affinity",
  "criterion",
  "futures",
- "hashlink",
+ "hashlink 0.11.0",
  "hex",
  "indexmap 2.13.0",
  "insta",
