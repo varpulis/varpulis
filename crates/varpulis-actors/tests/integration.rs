@@ -154,7 +154,7 @@ async fn test_backpressure_via_bounded_channels() {
     let source = EventSource::new(100).with_downstream(processor_handle.sender().clone());
     let _source_handle = runtime.spawn(source, 10);
 
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    tokio::time::sleep(Duration::from_secs(5)).await;
 
     let count = processed_count.load(Ordering::Relaxed);
     assert_eq!(

@@ -1051,13 +1051,8 @@ fn extract_org_id_str_from_header(
     }
 
     // Decode JWT without full verification (billing state doesn't have JWT secret).
-    // Use jsonwebtoken's dangerous_insecure_decode to read claims.
-    use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
-    let mut validation = Validation::new(Algorithm::HS256);
-    validation.insecure_disable_signature_validation();
-    validation.validate_exp = false;
-    let token_data =
-        decode::<serde_json::Value>(token, &DecodingKey::from_secret(b""), &validation).ok()?;
+    // Use jsonwebtoken's dangerous decode to read claims without signature check.
+    let token_data = jsonwebtoken::dangerous::insecure_decode::<serde_json::Value>(token).ok()?;
 
     let org_id = token_data.claims["org_id"].as_str()?;
     if org_id.is_empty() {

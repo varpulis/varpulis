@@ -27,7 +27,7 @@ base64 = "0.22"
 jsonwebtoken = { workspace = true }
 
 [dependencies.async-nats]
-version = "0.38"
+version = "0.46"
 optional = true
 
 [dependencies.opentelemetry]
@@ -53,13 +53,13 @@ federation = ["nats-transport"]
 otel = ["opentelemetry", "tracing-opentelemetry"]
 
 [dependencies.kube]
-version = "0.99"
+version = "3"
 features = ["runtime", "client"]
 optional = true
 
 [dependencies.k8s-openapi]
-version = "0.24"
-features = ["v1_30"]
+version = "0.27"
+features = ["v1_33"]
 optional = true
 
 [dependencies.openraft]
@@ -68,13 +68,13 @@ features = ["serde"]
 optional = true
 
 [dependencies.rocksdb]
-version = "0.22"
+version = "0.24"
 optional = true
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
 tokio-stream = { version = "0.1", features = ["net"] }
-async-nats = "0.38"
+async-nats = "0.46"
 futures-util = "0.3"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 tower = { version = "0.5", features = ["util"] }

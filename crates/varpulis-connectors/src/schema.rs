@@ -4,14 +4,12 @@
 //! covering all connector configurations. This can be used for IDE
 //! auto-completion and config validation.
 
-use schemars::schema::RootSchema;
-
 /// Generate a combined JSON Schema covering all connector configuration types.
 ///
 /// The returned schema uses `oneOf` to represent the choice between different
 /// connector configurations (Kafka, MQTT, NATS, Redis, etc.).
 pub fn generate_all_schemas() -> serde_json::Value {
-    let configs: Vec<(&str, RootSchema)> = vec![
+    let configs: Vec<(&str, schemars::Schema)> = vec![
         (
             "ConnectorConfig",
             schemars::schema_for!(crate::ConnectorConfig),
@@ -48,7 +46,7 @@ pub fn generate_all_schemas() -> serde_json::Value {
 
     let mut schemas = serde_json::Map::new();
     for (name, schema) in configs {
-        schemas.insert(name.to_string(), serde_json::to_value(schema).unwrap());
+        schemas.insert(name.to_string(), serde_json::to_value(&schema).unwrap());
     }
 
     serde_json::Value::Object(schemas)

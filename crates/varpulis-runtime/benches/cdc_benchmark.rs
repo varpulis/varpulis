@@ -8,7 +8,9 @@
 //! - cdc_event_construction: Pre-parsed fields → Event creation
 //! - column_scaling: Throughput across 1, 10, 100 columns per row
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use std::hint::black_box;
+
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use varpulis_core::Value;
 use varpulis_runtime::connector::postgres_cdc::{cdc_event, CdcOperation};
 

@@ -223,7 +223,7 @@ impl LeaderElector {
         use k8s_openapi::apimachinery::pkg::apis::meta::v1::MicroTime;
         use kube::api::{ObjectMeta, PostParams};
 
-        let now = chrono::Utc::now();
+        let now = k8s_openapi::jiff::Timestamp::now();
 
         match leases.get(&self.lease_name).await {
             Ok(existing) => {
@@ -250,7 +250,7 @@ impl LeaderElector {
                 let lease_duration_secs = spec.and_then(|s| s.lease_duration_seconds).unwrap_or(15);
 
                 if let Some(renew) = renew_time {
-                    let expiry = renew + chrono::Duration::seconds(lease_duration_secs as i64);
+                    let expiry = renew + std::time::Duration::from_secs(lease_duration_secs as u64);
                     if now > expiry {
                         // Expired — try to take over
                         let mut updated = existing.clone();

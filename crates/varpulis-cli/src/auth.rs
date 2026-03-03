@@ -232,17 +232,17 @@ pub fn constant_time_compare(a: &str, b: &str) -> bool {
 
 /// Generate a cryptographically random API key.
 ///
-/// Uses the OS CSPRNG (via `rand::thread_rng`) to produce a 32-character
+/// Uses the OS CSPRNG (via `rand::rng`) to produce a 32-character
 /// alphanumeric key with ~190 bits of entropy.
 pub fn generate_api_key() -> String {
     use rand::Rng;
 
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let mut key = String::with_capacity(32);
     const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
     for _ in 0..32 {
-        let idx = rng.gen_range(0..CHARSET.len());
+        let idx = rng.random_range(0..CHARSET.len());
         key.push(CHARSET[idx] as char);
     }
 

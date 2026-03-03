@@ -30,7 +30,7 @@ rustc-hash = { workspace = true }
 async-trait = "0.1"
 rayon = "1.10"
 smallvec = "1.13"
-hashlink = "0.10"
+hashlink = "0.11"
 reqwest = { workspace = true }
 futures = "0.3"
 uuid = { version = "1", features = ["v4"] }
@@ -40,7 +40,7 @@ core_affinity = "0.8"
 ort = { version = "=2.0.0-rc.11", features = ["load-dynamic"], optional = true }
 
 # State persistence
-rocksdb = { version = "0.22", optional = true }
+rocksdb = { version = "0.24", optional = true }
 
 # Encryption at rest
 aes-gcm = { version = "0.10", optional = true }
@@ -75,9 +75,9 @@ all-connectors = ["mqtt", "kafka", "nats", "database", "redis", "kinesis", "s3",
 
 [dev-dependencies]
 tempfile = "3"
-criterion = { version = "0.5", features = ["html_reports"] }
-proptest = "1.5"
-async-nats = "0.38"
+criterion = { version = "0.8", features = ["html_reports"] }
+proptest = "1.10"
+async-nats = "0.46"
 rumqttc = "0.25"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 tokio-postgres = { version = "0.7" }

@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: varpulis-config
+  namespace: varpulis
+data:
+  kafka.bootstrap.servers: "kafka:9092"

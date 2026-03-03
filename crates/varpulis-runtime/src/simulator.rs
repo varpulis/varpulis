@@ -93,7 +93,7 @@ impl Simulator {
             sender,
             tick_count: 0,
             degradation_factor: 1.0,
-            rng: StdRng::from_entropy(),
+            rng: StdRng::from_os_rng(),
         }
     }
 
@@ -125,13 +125,13 @@ impl Simulator {
 
         // Generate temperature readings for each zone
         for zone in &self.config.zones {
-            let is_anomaly = rng.gen::<f64>() < self.config.anomaly_probability;
+            let is_anomaly = rng.random::<f64>() < self.config.anomaly_probability;
 
             let temp = if is_anomaly {
                 // Anomaly: temperature spike
-                zone.target_temp + rng.gen_range(5.0..10.0)
+                zone.target_temp + rng.random_range(5.0..10.0)
             } else {
-                zone.target_temp + rng.gen_range(-zone.temp_variance..zone.temp_variance)
+                zone.target_temp + rng.random_range(-zone.temp_variance..zone.temp_variance)
             };
 
             let reading = TemperatureReading {
@@ -145,7 +145,7 @@ impl Simulator {
             // Generate humidity reading (less frequent)
             if self.tick_count.is_multiple_of(3) {
                 let humidity = zone.target_humidity
-                    + rng.gen_range(-zone.humidity_variance..zone.humidity_variance);
+                    + rng.random_range(-zone.humidity_variance..zone.humidity_variance);
 
                 let reading = HumidityReading {
                     sensor_id: format!("{}_hum_01", zone.id),
@@ -162,15 +162,15 @@ impl Simulator {
             for hvac in &self.config.hvac_units {
                 let power = hvac
                     .base_power
-                    .mul_add(self.degradation_factor, rng.gen_range(-0.5..0.5));
+                    .mul_add(self.degradation_factor, rng.random_range(-0.5..0.5));
                 let pressure =
-                    hvac.base_pressure / self.degradation_factor + rng.gen_range(-0.1..0.1);
+                    hvac.base_pressure / self.degradation_factor + rng.random_range(-0.1..0.1);
 
                 let status = HVACStatus {
                     unit_id: hvac.id.clone(),
                     mode: "cooling".to_string(),
                     power_consumption: power,
-                    fan_speed: 1200 + rng.gen_range(-50..50),
+                    fan_speed: 1200 + rng.random_range(-50..50),
                     compressor_pressure: pressure,
                     timestamp: now,
                 };
