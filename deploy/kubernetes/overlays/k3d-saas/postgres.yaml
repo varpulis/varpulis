@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: varpulis-postgres
+  labels:
+    app: varpulis-postgres
+spec:
+  serviceName: varpulis-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: varpulis-postgres
+  template:
+    metadata:
+      labels:
+        app: varpulis-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+              protocol: TCP
+          env:
+            - name: POSTGRES_USER
+              value: "varpulis"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: varpulis-k3d-saas-secrets
+                  key: postgres-password
+            - name: POSTGRES_DB
+              value: "varpulis_saas"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: init-sql
+              mountPath: /docker-entrypoint-initdb.d
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - varpulis
+                - -d
+                - varpulis_saas
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 5
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: init-sql
+          configMap:
+            name: varpulis-postgres-init
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: varpulis-postgres-init
+data:
+  init.sql: |
+    CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+    CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: varpulis-postgres
+  labels:
+    app: varpulis-postgres
+spec:
+  selector:
+    app: varpulis-postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+      protocol: TCP
+  type: ClusterIP

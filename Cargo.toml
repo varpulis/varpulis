@@ -33,18 +33,18 @@ description = "A modern streaming analytics engine with advanced pattern detecti
 
 [workspace.dependencies]
 # Parsing
-logos = "0.14"
+logos = "0.16"
 
 # Async runtime
-tokio = { version = "1.43", features = ["full"] }
+tokio = { version = "1.50", features = ["full"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
-schemars = { version = "0.8", features = ["indexmap2"] }
+schemars = { version = "1", features = ["indexmap2"] }
 
 # Error handling
-thiserror = "1.0"
+thiserror = "2"
 anyhow = "1.0"
 miette = "7"
 
@@ -53,12 +53,12 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # CLI
-clap = { version = "4.4", features = ["derive", "env"] }
+clap = { version = "4.5", features = ["derive", "env"] }
 
 # Collections
 indexmap = { version = "2.1", features = ["serde"] }
 inventory = "0.3"
-smallvec = "1.11"
+smallvec = "1.13"
 rustc-hash = "2"
 
 # Time
@@ -74,7 +74,7 @@ opentelemetry-otlp = { version = "0.31", features = ["tonic"] }
 tracing-opentelemetry = "0.32"
 
 # Random
-rand = "0.8"
+rand = "0.9"
 
 # HTTP client
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
@@ -91,7 +91,7 @@ futures-util = "0.3"
 varpulis-actors = { version = "0.5.0", path = "crates/varpulis-actors" }
 
 # OAuth & JWT
-jsonwebtoken = "9"
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 
 # Secrets
 zeroize = { version = "1.8", features = ["derive"] }
@@ -115,7 +115,7 @@ iai-callgrind = "0.16"
 #
 # 2. pulsar 6.7 brings in async-std (unmaintained). Feature-gated.
 #
-# 3. Dev-deps (proptest) pull rand 0.9 while production uses rand 0.8.
+# 3. (Resolved) Production and dev-deps now both use rand 0.9.
 #
 # These are all transitive and cannot be resolved without major crate migrations.
 

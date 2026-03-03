@@ -12,7 +12,7 @@ name = "varpulis-mcp"
 path = "src/main.rs"
 
 [dependencies]
-rmcp = { version = "0.16", features = ["server", "transport-io", "macros"] }
+rmcp = { version = "0.17", features = ["server", "transport-io", "macros"] }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -28,7 +28,7 @@ varpulis-core = { version = "0.5.0", path = "../varpulis-core" }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
-rmcp = { version = "0.16", features = ["client", "transport-child-process"] }
+rmcp = { version = "0.17", features = ["client", "transport-child-process"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 serde_json = { workspace = true }
 anyhow = { workspace = true }

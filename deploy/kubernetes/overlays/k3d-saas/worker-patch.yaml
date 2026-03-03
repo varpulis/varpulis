@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: varpulis
+  namespace: varpulis
+spec:
+  template:
+    spec:
+      containers:
+        - name: varpulis
+          args:
+            - "server"
+            - "--bind"
+            - "0.0.0.0"
+            - "--port"
+            - "9000"
+            - "--api-key"
+            - "k3d-saas-test-key"
+            - "--state-dir"
+            - "/app/state"
+            - "--metrics"
+            - "--users-file"
+            - "/app/data/users.json"
+            - "--coordinator"
+            - "http://varpulis-coordinator:9100"
+            - "--worker-id"
+            - "$(POD_NAME)"
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: varpulis-k3d-saas-secrets
+                  key: database-url
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: varpulis-k3d-saas-secrets
+                  key: jwt-secret
+            - name: FRONTEND_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: varpulis-k3d-saas-config
+                  key: frontend-url
+            - name: RUST_LOG
+              value: "info,varpulis=debug"
+          ports:
+            - name: http
+              containerPort: 9000
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 5
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "1000m"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL

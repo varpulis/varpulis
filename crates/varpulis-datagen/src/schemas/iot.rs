@@ -32,14 +32,14 @@ const ZONES: &[&str] = &["zone_a", "zone_b", "zone_c", "zone_d"];
 
 impl IotSchema {
     pub fn new(seed: Option<u64>) -> Self {
-        let mut rng = seed.map_or_else(StdRng::from_entropy, StdRng::seed_from_u64);
+        let mut rng = seed.map_or_else(StdRng::from_os_rng, StdRng::seed_from_u64);
         let sensors: Vec<SensorState> = (0..8)
             .map(|i| SensorState {
                 id: format!("sensor_{:03}", i + 1),
                 zone: ZONES[i % ZONES.len()].into(),
-                temperature: 20.0 + rng.gen_range(-5.0..5.0),
-                humidity: 50.0 + rng.gen_range(-10.0..10.0),
-                pressure: 1013.0 + rng.gen_range(-5.0..5.0),
+                temperature: 20.0 + rng.random_range(-5.0..5.0),
+                humidity: 50.0 + rng.random_range(-10.0..10.0),
+                pressure: 1013.0 + rng.random_range(-5.0..5.0),
                 drift: 0.0,
             })
             .collect();
@@ -54,29 +54,29 @@ impl IotSchema {
 impl EventSchema for IotSchema {
     fn next_event(&mut self) -> GeneratedEvent {
         self.event_count += 1;
-        let idx = self.rng.gen_range(0..self.sensors.len());
+        let idx = self.rng.random_range(0..self.sensors.len());
         let sensor = &mut self.sensors[idx];
         let is_anomaly;
 
         // ~3% chance of anomaly
-        if self.rng.gen_bool(0.03) {
+        if self.rng.random_bool(0.03) {
             is_anomaly = true;
             // Anomaly: temperature spike
-            sensor.temperature += self.rng.gen_range(15.0..40.0);
+            sensor.temperature += self.rng.random_range(15.0..40.0);
             sensor.drift += 0.5;
         } else {
             is_anomaly = false;
             // Normal: small random walk
-            sensor.temperature += sensor.drift.mul_add(0.1, self.rng.gen_range(-0.5..0.5));
-            sensor.humidity += self.rng.gen_range(-1.0..1.0);
-            sensor.pressure += self.rng.gen_range(-0.3..0.3);
+            sensor.temperature += sensor.drift.mul_add(0.1, self.rng.random_range(-0.5..0.5));
+            sensor.humidity += self.rng.random_range(-1.0..1.0);
+            sensor.pressure += self.rng.random_range(-0.3..0.3);
             // Decay drift back to normal
             sensor.drift *= 0.95;
             // Mean-revert temperature slowly
             sensor.temperature += (22.0 - sensor.temperature) * 0.01;
         }
 
-        let event_type = match self.rng.gen_range(0..10) {
+        let event_type = match self.rng.random_range(0..10) {
             0..=6 => "sensor_reading",
             7..=8 => "sensor_alert",
             _ => "sensor_heartbeat",

@@ -1,0 +1,26 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: varpulis-k3d-saas
+
+resources:
+  - ../../base
+  - secrets.yaml
+  - configmap.yaml
+  - postgres.yaml
+  - web-ui.yaml
+  # Reuse infra from k3d overlay (kafka, mosquitto, grafana, prometheus)
+  - ../k3d/infra
+
+patches:
+  - path: worker-patch.yaml
+  - path: coordinator-patch.yaml
+  - path: service-patch.yaml
+  - path: prometheus-config.yaml
+  - path: grafana-patch.yaml
+  - path: base-configmap-patch.yaml
+
+images:
+  - name: varpulis/varpulis
+    newName: varpulis-saas-local
+    newTag: latest

@@ -89,13 +89,13 @@ impl<'de> serde::Deserialize<'de> for SecretString {
 }
 
 impl schemars::JsonSchema for SecretString {
-    fn schema_name() -> String {
-        "SecretString".to_string()
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("SecretString")
     }
 
-    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
         // Appears as a plain string in the schema
-        String::json_schema(gen)
+        String::json_schema(generator)
     }
 }
 
