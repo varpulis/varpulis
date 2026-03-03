@@ -257,3 +257,4 @@ The server registers routes for all configured providers:
 - [SSO/OIDC Tutorial](../tutorials/sso-oidc-tutorial.md) -- Provider setup guides
 - [Configuration Guide](../guides/configuration.md) -- OIDC configuration reference
 - [Security Policy](../../SECURITY.md) -- Security measures and vulnerability reporting
+- [Multi-Tenancy Architecture](multi-tenancy.md) -- Tenant model, quota enforcement, and billing

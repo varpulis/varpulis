@@ -61,6 +61,7 @@ stream Alert = Events
 - [`architecture/state-management.md`](architecture/state-management.md) - State management
 - [`architecture/parallelism.md`](architecture/parallelism.md) - Parallelization
 - [`architecture/observability.md`](architecture/observability.md) - Metrics and traces
+- [`architecture/multi-tenancy.md`](architecture/multi-tenancy.md) - **Multi-tenancy and SaaS billing**
 
 ### Examples & Demos
 - [`examples/hvac-building.md`](examples/hvac-building.md) - HVAC monitoring
