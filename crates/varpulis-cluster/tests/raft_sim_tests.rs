@@ -113,7 +113,7 @@ impl SimRouter {
 
     fn should_drop(&mut self, src: NodeId, dst: NodeId) -> bool {
         if let Some(&rate) = self.drop_rates.get(&(src, dst)) {
-            self.rng.gen_bool(rate.clamp(0.0, 1.0))
+            self.rng.random_bool(rate.clamp(0.0, 1.0))
         } else {
             false
         }

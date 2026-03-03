@@ -57,22 +57,22 @@ enum AnomalyState {
 impl FraudSchema {
     pub fn new(seed: Option<u64>) -> Self {
         Self {
-            rng: seed.map_or_else(StdRng::from_entropy, StdRng::seed_from_u64),
+            rng: seed.map_or_else(StdRng::from_os_rng, StdRng::seed_from_u64),
             event_count: 0,
             anomaly_sequence: None,
         }
     }
 
     fn gen_user_id(&mut self) -> String {
-        format!("user_{:04}", self.rng.gen_range(1..=500))
+        format!("user_{:04}", self.rng.random_range(1..=500))
     }
 
     fn gen_account_id(&mut self) -> String {
-        format!("acct_{:06}", self.rng.gen_range(100000..=999999))
+        format!("acct_{:06}", self.rng.random_range(100000..=999999))
     }
 
     fn normal_event(&mut self) -> GeneratedEvent {
-        let event_type = match self.rng.gen_range(0..10) {
+        let event_type = match self.rng.random_range(0..10) {
             0..=3 => "login",
             4..=6 => "transaction",
             7..=8 => "transfer",
@@ -87,12 +87,12 @@ impl FraudSchema {
             "login" => {
                 fields.insert(
                     "city".into(),
-                    json!(CITIES[self.rng.gen_range(0..CITIES.len())]),
+                    json!(CITIES[self.rng.random_range(0..CITIES.len())]),
                 );
-                fields.insert("success".into(), json!(self.rng.gen_bool(0.95)));
+                fields.insert("success".into(), json!(self.rng.random_bool(0.95)));
                 fields.insert(
                     "device".into(),
-                    json!(if self.rng.gen_bool(0.7) {
+                    json!(if self.rng.random_bool(0.7) {
                         "mobile"
                     } else {
                         "desktop"
@@ -102,11 +102,11 @@ impl FraudSchema {
             "transaction" | "card_payment" => {
                 fields.insert(
                     "amount".into(),
-                    json!(self.rng.gen_range(5.0..500.0_f64).round()),
+                    json!(self.rng.random_range(5.0..500.0_f64).round()),
                 );
                 fields.insert(
                     "merchant".into(),
-                    json!(MERCHANTS[self.rng.gen_range(0..MERCHANTS.len())]),
+                    json!(MERCHANTS[self.rng.random_range(0..MERCHANTS.len())]),
                 );
                 fields.insert("account_id".into(), json!(self.gen_account_id()));
                 fields.insert("currency".into(), json!("USD"));
@@ -114,7 +114,7 @@ impl FraudSchema {
             "transfer" => {
                 fields.insert(
                     "amount".into(),
-                    json!(self.rng.gen_range(10.0..2000.0_f64).round()),
+                    json!(self.rng.random_range(10.0..2000.0_f64).round()),
                 );
                 fields.insert("from_account".into(), json!(self.gen_account_id()));
                 fields.insert("to_account".into(), json!(self.gen_account_id()));
@@ -144,7 +144,7 @@ impl FraudSchema {
                     fields.insert("user_id".into(), json!(user_id));
                     fields.insert(
                         "amount".into(),
-                        json!(self.rng.gen_range(5000.0..50000.0_f64).round()),
+                        json!(self.rng.random_range(5000.0..50000.0_f64).round()),
                     );
                     fields.insert("from_account".into(), json!(self.gen_account_id()));
                     fields.insert("to_account".into(), json!(self.gen_account_id()));
@@ -170,12 +170,12 @@ impl FraudSchema {
         } else {
             // Start new anomaly: login from unusual city, followed by rapid high-value transfers
             let user_id = self.gen_user_id();
-            let city = CITIES[self.rng.gen_range(0..CITIES.len())].to_string();
+            let city = CITIES[self.rng.random_range(0..CITIES.len())].to_string();
 
             self.anomaly_sequence = Some(AnomalyState::LoginFromNewCity {
                 user_id: user_id.clone(),
                 city: city.clone(),
-                remaining: self.rng.gen_range(2..=4),
+                remaining: self.rng.random_range(2..=4),
             });
 
             let mut fields = HashMap::new();
@@ -205,7 +205,7 @@ impl EventSchema for FraudSchema {
         }
 
         // ~5% chance to start a new anomaly
-        if self.rng.gen_bool(0.05) {
+        if self.rng.random_bool(0.05) {
             self.anomaly_event()
         } else {
             self.normal_event()

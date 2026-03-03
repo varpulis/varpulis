@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: varpulis-k3d-saas-config
+data:
+  frontend-url: "http://localhost:8080"
+  server-url: "http://localhost:9000"
