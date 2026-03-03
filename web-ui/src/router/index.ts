@@ -202,10 +202,9 @@ router.beforeEach((to) => {
   if (!PUBLIC_ROUTES.has(routeName)) {
     const token = localStorage.getItem('varpulis_token')
     const sessionAuth = localStorage.getItem('varpulis_authenticated')
-    if (!token && !sessionAuth) {
-      // Allow access without token when auth is not configured (self-hosted mode)
-      // No token + no session = allow through (for self-hosted without auth)
-      return // Allow through — auth guard only activates after first login
+    const apiKey = sessionStorage.getItem('varpulis_api_key')
+    if (!token && !sessionAuth && !apiKey) {
+      return { name: 'login', query: { redirect: to.fullPath } }
     }
   }
 })
