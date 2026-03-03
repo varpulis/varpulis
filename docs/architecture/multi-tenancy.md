@@ -6,49 +6,7 @@ Technical architecture of Varpulis's multi-tenancy system, covering the tenant m
 
 Varpulis uses a two-layer tenant isolation design: an in-memory runtime layer for lightweight and single-user deployments, and a PostgreSQL-backed database layer for full SaaS operation.
 
-```
-                         ┌──────────────────────────┐
-                         │      API Request          │
-                         │  X-API-Key: vpl_abc...    │
-                         └────────────┬─────────────┘
-                                      │
-                         ┌────────────▼─────────────┐
-                         │    API Key Extraction     │
-                         │  (Axum FromRequestParts)  │
-                         └────────────┬─────────────┘
-                                      │
-              ┌───────────────────────┼───────────────────────┐
-              │ Runtime Layer         │          SaaS Layer    │
-              │                       │          (--features   │
-              │                       │            saas)       │
-              │  ┌────────────────────▼──────┐                │
-              │  │     TenantManager         │                │
-              │  │  ┌─────────────────────┐  │   ┌──────────┐│
-              │  │  │ api_key_index       │──│──>│ SHA-256   ││
-              │  │  │ HashMap<Key,TenantId>│  │   │ lookup   ││
-              │  │  └─────────────────────┘  │   │ in DB    ││
-              │  │  ┌─────────────────────┐  │   └──────────┘│
-              │  │  │ tenants             │  │                │
-              │  │  │ HashMap<TenantId,   │  │   ┌──────────┐│
-              │  │  │         Tenant>     │  │   │PostgreSQL││
-              │  │  └────────┬────────────┘  │   │ orgs     ││
-              │  │           │               │   │ api_keys ││
-              │  │  ┌────────▼────────────┐  │   │ usage    ││
-              │  │  │ Per-Tenant Pipelines │  │   └──────────┘│
-              │  │  │ HashMap<String,     │  │                │
-              │  │  │         Pipeline>   │  │   ┌──────────┐│
-              │  │  └─────────────────────┘  │   │ Stripe   ││
-              │  │  ┌─────────────────────┐  │   │ billing  ││
-              │  │  │ Quota & Rate Limit  │  │   └──────────┘│
-              │  │  │ 1s sliding window   │  │                │
-              │  │  └─────────────────────┘  │                │
-              │  │  ┌─────────────────────┐  │                │
-              │  │  │ Global Backpressure │  │                │
-              │  │  │ AtomicU64 counter   │  │                │
-              │  │  └─────────────────────┘  │                │
-              │  └───────────────────────────┘                │
-              └───────────────────────────────────────────────┘
-```
+![Multi-tenancy overview](../images/architecture/multi-tenancy-overview.svg)
 
 ---
 
@@ -291,16 +249,7 @@ The counter is incremented before processing and decremented after. `queue_press
 
 The primary path for programmatic access:
 
-```
-Client                        Varpulis Server
-  │  X-API-Key: vpl_abc...        │
-  │───────────────────────────────>│
-  │                                │  ApiKey extractor (FromRequestParts)
-  │                                │  ──→ get_tenant_by_api_key()
-  │                                │  ──→ scoped tenant operations
-  │  200 OK / 401 Unauthorized     │
-  │<───────────────────────────────│
-```
+![API key authentication flow](../images/architecture/multi-tenancy-api-key-flow.svg)
 
 Supported header formats: `X-API-Key`, `Authorization: Bearer <key>`, `Authorization: ApiKey <key>`, `Sec-WebSocket-Protocol: varpulis-auth.<key>`, query parameter `?api_key=`.
 
@@ -329,29 +278,7 @@ API keys in SaaS mode are SHA-256 hashed before database storage — raw keys ar
 
 ### Stripe Checkout Flow
 
-```
-Browser                     Varpulis                    Stripe
-  │                            │                           │
-  │  POST /billing/checkout    │                           │
-  │  { tier: "pro" }           │                           │
-  │───────────────────────────>│                           │
-  │                            │  Create Checkout Session  │
-  │                            │──────────────────────────>│
-  │                            │  { checkout_url }         │
-  │                            │<──────────────────────────│
-  │  302 → checkout_url        │                           │
-  │<───────────────────────────│                           │
-  │                            │                           │
-  │  User completes payment    │                           │
-  │───────────────────────────────────────────────────────>│
-  │                            │                           │
-  │                            │  POST /billing/webhook    │
-  │                            │  checkout.session.completed│
-  │                            │<──────────────────────────│
-  │                            │  → save stripe_customer_id│
-  │                            │  → update tier to "pro"   │
-  │                            │  → set status = "active"  │
-```
+![Stripe checkout flow](../images/architecture/multi-tenancy-stripe-checkout.svg)
 
 ### Webhook Events
 
