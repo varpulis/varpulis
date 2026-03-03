@@ -103,21 +103,21 @@ jobs:
           cp target/${{ matrix.target }}/release/varpulis-lsp.exe artifacts/varpulis-lsp-${{ matrix.target }}.exe
 
       - name: Upload CLI artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.asset_name }}
           path: artifacts/${{ matrix.asset_name }}
 
       - name: Upload LSP artifact (Unix)
         if: runner.os != 'Windows'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: varpulis-lsp-${{ matrix.target }}
           path: artifacts/varpulis-lsp-${{ matrix.target }}
 
       - name: Upload LSP artifact (Windows)
         if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: varpulis-lsp-${{ matrix.target }}.exe
           path: artifacts/varpulis-lsp-${{ matrix.target }}.exe
