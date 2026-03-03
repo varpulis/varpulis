@@ -24,3 +24,6 @@ tree-sitter = "~0.20.10"
 
 [build-dependencies]
 cc = "1.0"
+
+[package.metadata.cargo-machete]
+ignored = ["tree-sitter"]
