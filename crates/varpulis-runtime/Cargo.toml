@@ -75,7 +75,7 @@ all-connectors = ["mqtt", "kafka", "nats", "database", "redis", "kinesis", "s3",
 
 [dev-dependencies]
 tempfile = "3"
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 proptest = "1.5"
 async-nats = "0.38"
 rumqttc = "0.25"
