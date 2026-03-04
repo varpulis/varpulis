@@ -697,9 +697,11 @@ impl Engine {
                 for op in &stream.operations {
                     if let RuntimeOp::TrendAggregate(_) = op {
                         if let Some(ref agg) = stream.hamlet_aggregator {
+                            let tmpl = agg.merged_template();
                             for query in agg.registered_queries() {
                                 for &kt in &query.kleene_types {
-                                    let type_name = format!("type_{kt}");
+                                    let type_name =
+                                        tmpl.type_name(kt).unwrap_or("unknown").to_string();
                                     if !kleene_types.contains(&type_name) {
                                         kleene_types.push(type_name);
                                     }
@@ -740,27 +742,34 @@ impl Engine {
             for stream_name in group_streams {
                 if let Some(stream) = self.streams.get(stream_name) {
                     if let Some(ref agg) = stream.hamlet_aggregator {
+                        let tmpl = agg.merged_template();
                         for query in agg.registered_queries() {
                             let new_id = next_query_id;
                             next_query_id += 1;
 
+                            // Resolve type indices to actual event type names
                             let event_names: Vec<String> = query
                                 .event_types
                                 .iter()
-                                .map(|&idx| format!("type_{idx}"))
+                                .map(|&idx| tmpl.type_name(idx).unwrap_or("unknown").to_string())
                                 .collect();
                             let name_strs: Vec<&str> =
-                                event_names.iter().map(|s| s.as_str()).collect();
+                                event_names.iter().map(String::as_str).collect();
 
+                            // Record base state before adding states for this query
+                            let base_state = builder.num_states() as u16;
                             builder.add_sequence(new_id, &name_strs);
 
                             for &kt in &query.kleene_types {
-                                let type_name = format!("type_{kt}");
+                                let type_name = tmpl.type_name(kt).unwrap_or("unknown").to_string();
                                 let position = event_names
                                     .iter()
                                     .position(|n| *n == type_name)
                                     .unwrap_or(0);
-                                builder.add_kleene(new_id, &type_name, position as u16);
+                                // Self-loop at target state (base + position + 1)
+                                // since add_sequence creates states starting at base_state
+                                let kleene_state = base_state + position as u16 + 1;
+                                builder.add_kleene(new_id, &type_name, kleene_state);
                             }
 
                             let fields: Vec<(String, crate::greta::GretaAggregate)> = stream

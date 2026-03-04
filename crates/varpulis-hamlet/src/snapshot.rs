@@ -225,7 +225,11 @@ impl PropagationCoefficients {
         self.coeffs[0] = 1;
         self.local_sums[0] = 0;
 
-        // Each subsequent event is preceded by all earlier events (Kleene)
+        // Each subsequent event can be reached from:
+        //   (a) the snapshot directly (fresh start, +1 to coefficient), OR
+        //   (b) any earlier event in the graphlet (extending a partial match)
+        //
+        // This gives coeffs[i] = 2^i, and total = 2^n - 1 (GRETA formula).
         for i in 1..self.coeffs.len() {
             let mut total_coeff = 0u64;
             let mut total_local = 0u64;
@@ -235,7 +239,8 @@ impl PropagationCoefficients {
                 total_local = total_local.saturating_add(self.local_sums[j]);
             }
 
-            self.coeffs[i] = total_coeff;
+            // +1 for the fresh start from the snapshot at this position
+            self.coeffs[i] = total_coeff.saturating_add(1);
             self.local_sums[i] = total_local;
         }
     }
@@ -396,21 +401,21 @@ mod tests {
         let mut coeffs = PropagationCoefficients::new(4);
         coeffs.compute_kleene();
 
-        // For Kleene with 4 events:
-        // e0: coeff=1, local=0
-        // e1: coeff=1 (sum of e0), local=0
-        // e2: coeff=2 (sum of e0+e1), local=0
-        // e3: coeff=4 (sum of e0+e1+e2), local=0
-        assert_eq!(coeffs.coeffs, vec![1, 1, 2, 4]);
+        // For Kleene with 4 events (GRETA formula):
+        // e0: coeff=1, local=0  (snapshot direct)
+        // e1: coeff=2, local=0  (1 fresh + 1 from e0)
+        // e2: coeff=4, local=0  (1 fresh + 1 + 2)
+        // e3: coeff=8, local=0  (1 fresh + 1 + 2 + 4)
+        assert_eq!(coeffs.coeffs, vec![1, 2, 4, 8]);
         assert_eq!(coeffs.local_sums, vec![0, 0, 0, 0]);
 
         // With snapshot value 1:
-        // Total count = 1*1 + 1*1 + 2*1 + 4*1 = 8
-        assert_eq!(coeffs.resolve_count(1), 8);
+        // Total = 1 + 2 + 4 + 8 = 15 = 2^4 - 1
+        assert_eq!(coeffs.resolve_count(1), 15);
 
         // With snapshot value 2:
-        // Total count = 1*2 + 1*2 + 2*2 + 4*2 = 16
-        assert_eq!(coeffs.resolve_count(2), 16);
+        // Total = 2 + 4 + 8 + 16 = 30 = 2*(2^4 - 1)
+        assert_eq!(coeffs.resolve_count(2), 30);
     }
 
     #[test]

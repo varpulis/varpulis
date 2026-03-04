@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useWebSocketStore } from '@/stores/websocket'
 import { useTheme } from 'vuetify'
@@ -8,6 +8,8 @@ import { setApiKey, clearApiKey, getApiKey } from '@/api'
 const settingsStore = useSettingsStore()
 const wsStore = useWebSocketStore()
 const theme = useTheme()
+
+const hasJwtAuth = computed(() => !!localStorage.getItem('varpulis_token'))
 
 const showApiKey = ref(false)
 const importDialog = ref(false)
@@ -333,6 +335,15 @@ onMounted(() => {
           </v-card-subtitle>
           <v-card-text>
             <v-alert
+              v-if="hasJwtAuth"
+              type="info"
+              variant="tonal"
+              class="mb-4"
+            >
+              Authenticated via login session. API key is only needed when connecting to an external coordinator.
+            </v-alert>
+
+            <v-alert
               v-if="connectionSaved"
               type="success"
               variant="tonal"
@@ -371,10 +382,10 @@ onMounted(() => {
 
             <v-text-field
               v-model="connectionForm.apiKey"
-              label="API Key"
+              label="API Key (optional with login)"
               :type="showApiKey ? 'text' : 'password'"
               :append-inner-icon="showApiKey ? 'mdi-eye-off' : 'mdi-eye'"
-              hint="Used for authenticating API requests to the coordinator"
+              hint="Only needed for external coordinator access or programmatic use"
               persistent-hint
               class="mt-4"
               @click:append-inner="showApiKey = !showApiKey"

@@ -17,6 +17,12 @@ spec:
             - "0.0.0.0"
             - "--api-key"
             - "k3d-saas-test-key"
+          env:
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: varpulis-k3d-saas-secrets
+                  key: jwt-secret
           resources:
             requests:
               memory: "64Mi"

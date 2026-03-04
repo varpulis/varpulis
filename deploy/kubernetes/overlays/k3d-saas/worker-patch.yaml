@@ -19,8 +19,6 @@ spec:
             - "--state-dir"
             - "/app/state"
             - "--metrics"
-            - "--users-file"
-            - "/app/data/users.json"
             - "--coordinator"
             - "http://varpulis-coordinator:9100"
             - "--worker-id"

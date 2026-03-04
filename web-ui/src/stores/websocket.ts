@@ -177,10 +177,10 @@ export const useWebSocketStore = defineStore('websocket', () => {
     error.value = null
   }
 
-  // REST API health check
+  // REST API health check — use /me endpoint (works with both JWT and API key auth)
   async function checkApiHealth(): Promise<boolean> {
     try {
-      await api.get('/cluster/workers')
+      await api.get('/me')
       const wasConnected = apiConnected.value
       apiConnected.value = true
 

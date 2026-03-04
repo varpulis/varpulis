@@ -1,0 +1,38 @@
+# Transaction Monitoring — Sample Event Data
+#
+# Simulates two multi-step transactions:
+#   TX-001: 4 processing steps (validation, enrichment, risk_check, settlement)
+#   TX-002: 2 processing steps (validation, enrichment) — faster transaction
+
+# === Transaction 1: Full pipeline (4 steps) ===
+
+TransactionOpen { tx_id: "TX-001", customer_id: "CUST-42", channel: "web" }
+
+BATCH 100
+ProcessingStep { tx_id: "TX-001", step_name: "validation", duration: 1200.0, error_count: 0, throughput: 850.0, status: "ok" }
+
+BATCH 200
+ProcessingStep { tx_id: "TX-001", step_name: "enrichment", duration: 3400.0, error_count: 1, throughput: 620.0, status: "ok" }
+
+BATCH 300
+ProcessingStep { tx_id: "TX-001", step_name: "risk_check", duration: 7800.0, error_count: 0, throughput: 340.0, status: "ok" }
+
+BATCH 400
+ProcessingStep { tx_id: "TX-001", step_name: "settlement", duration: 2100.0, error_count: 2, throughput: 710.0, status: "ok" }
+
+BATCH 500
+TransactionClose { tx_id: "TX-001", final_status: "completed" }
+
+# === Transaction 2: Quick pipeline (2 steps) ===
+
+BATCH 600
+TransactionOpen { tx_id: "TX-002", customer_id: "CUST-17", channel: "api" }
+
+BATCH 700
+ProcessingStep { tx_id: "TX-002", step_name: "validation", duration: 800.0, error_count: 0, throughput: 1200.0, status: "ok" }
+
+BATCH 800
+ProcessingStep { tx_id: "TX-002", step_name: "enrichment", duration: 1500.0, error_count: 0, throughput: 950.0, status: "ok" }
+
+BATCH 900
+TransactionClose { tx_id: "TX-002", final_status: "completed" }

@@ -9,6 +9,7 @@ use axum::routing::{get, post, put};
 use axum::Router;
 use serde::Deserialize;
 
+use crate::auth;
 use crate::oauth::{self, SharedOAuthState};
 
 // ---------------------------------------------------------------------------
@@ -19,6 +20,7 @@ use crate::oauth::{self, SharedOAuthState};
 pub struct AdminState {
     pub db_pool: Option<varpulis_db::PgPool>,
     pub oauth_state: Option<SharedOAuthState>,
+    pub tenant_manager: Option<varpulis_runtime::SharedTenantManager>,
 }
 
 // ---------------------------------------------------------------------------
@@ -589,6 +591,181 @@ async fn handle_revoke_tenant(
     (StatusCode::OK, Json(serde_json::json!({"ok": true}))).into_response()
 }
 
+#[derive(Debug, Deserialize)]
+struct CreateTenantRequest {
+    name: String,
+    admin_username: String,
+    admin_password: String,
+    admin_email: String,
+    tier: Option<String>,
+}
+
+/// POST /api/v1/admin/tenants — create a new tenant (org + user + API key).
+async fn handle_create_tenant(
+    State(state): State<AdminState>,
+    headers: HeaderMap,
+    Json(body): Json<CreateTenantRequest>,
+) -> Response {
+    let auth_header = headers.get("authorization").and_then(|v| v.to_str().ok());
+
+    if let Err(status) = extract_admin_claims(auth_header, &state.oauth_state).await {
+        return (status, Json(serde_json::json!({"error": "Unauthorized"}))).into_response();
+    }
+
+    let pool = match require_pool(&state) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+
+    let tier = body.tier.as_deref().unwrap_or("free");
+    let valid_tiers = ["free", "pro", "business", "enterprise"];
+    if !valid_tiers.contains(&tier) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Invalid tier", "valid": valid_tiers})),
+        )
+            .into_response();
+    }
+
+    // Validate password
+    if body.admin_password.len() < 8 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Password must be at least 8 characters"})),
+        )
+            .into_response();
+    }
+
+    // 1. Hash password and create local user in DB
+    let password_hash = match crate::users::hash_password(&body.admin_password) {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::error!("Password hashing failed: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Password hashing failed"})),
+            )
+                .into_response();
+        }
+    };
+
+    let db_user = match varpulis_db::repo::create_local_user(
+        &pool,
+        &body.admin_username,
+        &password_hash,
+        &body.name,
+        &body.admin_email,
+        "user",
+    )
+    .await
+    {
+        Ok(u) => u,
+        Err(e) => {
+            let msg = e.to_string();
+            let status = if msg.contains("duplicate") || msg.contains("unique") {
+                StatusCode::CONFLICT
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            tracing::error!("Failed to create DB user: {}", e);
+            return (
+                status,
+                Json(serde_json::json!({"error": format!("Failed to create user: {}", e)})),
+            )
+                .into_response();
+        }
+    };
+
+    let owner_uuid = db_user.id;
+
+    let org = if tier == "free" {
+        varpulis_db::repo::create_trial_organization(&pool, owner_uuid, &body.name).await
+    } else {
+        varpulis_db::repo::create_organization(&pool, owner_uuid, &body.name).await
+    };
+
+    let org = match org {
+        Ok(o) => o,
+        Err(e) => {
+            tracing::error!("Failed to create organization: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("Failed to create organization: {}", e)})),
+            )
+                .into_response();
+        }
+    };
+
+    // Set tier if not default
+    if tier != "free" {
+        if let Err(e) = varpulis_db::repo::update_org_tier(&pool, org.id, tier).await {
+            tracing::error!("Failed to set tier: {}", e);
+        }
+        // Set status to active for paid tiers
+        if let Err(e) = varpulis_db::repo::update_org_status(&pool, org.id, "active").await {
+            tracing::error!("Failed to set status: {}", e);
+        }
+    }
+
+    // 3. Generate API key and store in DB
+    let api_key = auth::generate_api_key();
+    let key_hash = {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        api_key.hash(&mut hasher);
+        format!("{:016x}", hasher.finish())
+    };
+
+    if let Err(e) = varpulis_db::repo::create_api_key(&pool, org.id, &key_hash, "default").await {
+        tracing::error!("Failed to create API key: {}", e);
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("Failed to create API key: {}", e)})),
+        )
+            .into_response();
+    }
+
+    // 4. Create runtime tenant so the API key works immediately
+    if let Some(ref tm) = state.tenant_manager {
+        let quota = match tier {
+            "pro" => varpulis_runtime::TenantQuota::pro(),
+            "business" => varpulis_runtime::TenantQuota::business(),
+            "enterprise" => varpulis_runtime::TenantQuota::enterprise(),
+            _ => varpulis_runtime::TenantQuota::free(),
+        };
+        let mut mgr = tm.write().await;
+        if let Err(e) = mgr.create_tenant(body.name.clone(), api_key.clone(), quota) {
+            tracing::warn!("Failed to create runtime tenant (non-fatal): {}", e);
+        }
+    }
+
+    tracing::info!(
+        "Admin created tenant '{}' (org={}, tier={})",
+        body.name,
+        org.id,
+        tier
+    );
+
+    (
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "tenant": {
+                "id": org.id.to_string(),
+                "name": body.name,
+                "tier": tier,
+                "status": if tier == "free" { "trial" } else { "active" },
+            },
+            "admin_user": {
+                "id": owner_uuid.to_string(),
+                "username": body.admin_username,
+            },
+            "api_key": api_key,
+        })),
+    )
+        .into_response()
+}
+
 // ---------------------------------------------------------------------------
 // Trial expiration background task
 // ---------------------------------------------------------------------------
@@ -630,14 +807,19 @@ pub fn spawn_trial_expiry_checker(pool: varpulis_db::PgPool) {
 pub fn admin_routes(
     db_pool: Option<varpulis_db::PgPool>,
     oauth_state: Option<SharedOAuthState>,
+    tenant_manager: Option<varpulis_runtime::SharedTenantManager>,
 ) -> Router {
     let state = AdminState {
         db_pool,
         oauth_state,
+        tenant_manager,
     };
 
     Router::new()
-        .route("/api/v1/admin/tenants", get(handle_list_tenants))
+        .route(
+            "/api/v1/admin/tenants",
+            get(handle_list_tenants).post(handle_create_tenant),
+        )
         .route("/api/v1/admin/tenants/{org_id}", get(handle_get_tenant))
         .route(
             "/api/v1/admin/tenants/{org_id}/tier",

@@ -7,34 +7,6 @@ const props = defineProps<{
   raftStatus: RaftClusterStatus | null
 }>()
 
-const raftRoleLabel = computed(() => {
-  if (!props.health || props.health.raft_role < 0) return 'Unknown'
-  switch (props.health.raft_role) {
-    case 0: return 'Follower'
-    case 1: return 'Candidate'
-    case 2: return 'Leader'
-    default: return 'Unknown'
-  }
-})
-
-const raftRoleColor = computed(() => {
-  if (!props.health || props.health.raft_role < 0) return 'grey'
-  switch (props.health.raft_role) {
-    case 2: return 'success'
-    case 1: return 'warning'
-    default: return 'info'
-  }
-})
-
-const raftRoleIcon = computed(() => {
-  if (!props.health || props.health.raft_role < 0) return 'mdi-help-circle'
-  switch (props.health.raft_role) {
-    case 2: return 'mdi-crown'
-    case 1: return 'mdi-account-clock'
-    default: return 'mdi-account'
-  }
-})
-
 const totalWorkers = computed(() => {
   if (!props.health) return 0
   return props.health.workers_ready + props.health.workers_unhealthy + props.health.workers_draining
@@ -113,14 +85,26 @@ function nodeRoleIcon(role: string): string {
       </v-col>
     </v-row>
 
-    <!-- Fallback: single-node view (no Raft status available) -->
+    <!-- Fallback: standalone coordinator (no Raft cluster) -->
     <v-row v-else>
-      <v-col cols="12" sm="6" md="3">
-        <v-card variant="tonal" :color="raftRoleColor">
+      <v-col cols="12" sm="6" md="4">
+        <v-card
+          variant="tonal"
+          color="success"
+          style="border: 2px solid currentColor"
+        >
           <v-card-text class="text-center">
-            <v-icon size="32" class="mb-1">{{ raftRoleIcon }}</v-icon>
-            <div class="text-h5 font-weight-bold">{{ raftRoleLabel }}</div>
-            <div class="text-caption">Raft Role</div>
+            <v-icon size="28" class="mb-1">mdi-crown</v-icon>
+            <div class="text-h6 font-weight-bold">Coordinator</div>
+            <div class="text-caption">Standalone Mode</div>
+            <v-chip
+              size="x-small"
+              color="success"
+              variant="flat"
+              class="mt-1"
+            >
+              connected
+            </v-chip>
           </v-card-text>
         </v-card>
       </v-col>

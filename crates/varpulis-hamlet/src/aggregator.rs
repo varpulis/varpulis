@@ -17,6 +17,8 @@
 //! 3. Snapshots capture intermediate state at graphlet boundaries
 //! 4. Final counts are computed at window boundaries
 
+use std::sync::Arc;
+
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use varpulis_core::SharedEvent;
@@ -24,7 +26,7 @@ use varpulis_core::SharedEvent;
 use super::graph::HamletGraph;
 use super::graphlet::GraphletId;
 use super::optimizer::{HamletOptimizer, OptimizerConfig, SharingDecision};
-use super::snapshot::{PropagationCoefficients, Snapshot};
+use super::snapshot::PropagationCoefficients;
 use super::template::MergedTemplate;
 use crate::greta::{GretaAggregate, QueryId};
 
@@ -33,10 +35,12 @@ use crate::greta::{GretaAggregate, QueryId};
 pub struct AggregationResult {
     /// Query ID
     pub query_id: QueryId,
-    /// Aggregation type
+    /// Aggregation type (primary aggregate for this query)
     pub aggregate: GretaAggregate,
-    /// Current value
-    pub value: u64,
+    /// Trend count value (number of matching trend combinations)
+    pub trend_count: u64,
+    /// Number of Kleene events consumed in this pattern match
+    pub kleene_event_count: u64,
     /// Whether this is a final result (window closed)
     pub is_final: bool,
 }
@@ -92,6 +96,8 @@ struct QueryState {
     in_trend: bool,
     /// Snapshot value from predecessor graphlets
     snapshot_value: u64,
+    /// Number of Kleene events consumed in the current pattern match
+    kleene_events: u64,
 }
 
 /// The Hamlet aggregator
@@ -117,6 +123,15 @@ pub struct HamletAggregator {
     coefficients_cache: FxHashMap<GraphletId, PropagationCoefficients>,
     /// Final trend counts per query (accumulated across graphlets)
     final_counts: FxHashMap<QueryId, u64>,
+    /// Pointer address of the last processed event (for dedup in shared mode).
+    /// When multiple pipelines share this aggregator via `Arc<Mutex<...>>`,
+    /// the second pipeline will pass `Arc::clone()` of the same event, which
+    /// has the same raw pointer. We detect this and return cached results.
+    /// Safety: the graph stores a clone of each processed event, so the
+    /// allocation stays alive and cannot be reused by the next event.
+    last_event_ptr: usize,
+    /// Cached results from the last processed event (for dedup)
+    last_results: Vec<AggregationResult>,
 }
 
 impl HamletAggregator {
@@ -134,6 +149,8 @@ impl HamletAggregator {
             pending_results: Vec::new(),
             coefficients_cache: FxHashMap::default(),
             final_counts: FxHashMap::default(),
+            last_event_ptr: 0,
+            last_results: Vec::new(),
         }
     }
 
@@ -150,6 +167,7 @@ impl HamletAggregator {
                 count: 0,
                 in_trend: false,
                 snapshot_value: 1, // Initial snapshot value is 1 (one way to reach start)
+                kleene_events: 0,
             },
         );
         self.final_counts.insert(id, 0);
@@ -171,13 +189,27 @@ impl HamletAggregator {
         self.queries.push(registration);
     }
 
-    /// Process an event
+    /// Process an event, returning aggregation results (if any).
+    ///
+    /// In shared mode (multiple streams sharing one aggregator via
+    /// `Arc<Mutex<...>>`), the same event may be passed from multiple
+    /// pipelines. Dedup is handled transparently: if the incoming event
+    /// has the same `Arc` allocation address as the last processed event,
+    /// cached results are returned without advancing the FSA.
     pub fn process(&mut self, event: SharedEvent) -> Vec<AggregationResult> {
         let event_type_name = &event.event_type;
         let type_index = match self.template.type_index(event_type_name) {
             Some(idx) => idx,
-            None => return Vec::new(), // Unknown event type
+            None => return Vec::new(),
         };
+
+        // Dedup: if this is the same Arc allocation as the last processed event
+        // (shared mode: multiple pipelines pass Arc::clone of the same event),
+        // return cached results instead of advancing the FSA again.
+        let event_ptr = Arc::as_ptr(&event) as usize;
+        if event_ptr == self.last_event_ptr && self.last_event_ptr != 0 {
+            return self.last_results.clone();
+        }
 
         // Check if we need to close the previous graphlet
         if let Some(last_type) = self.last_event_type {
@@ -190,7 +222,7 @@ impl HamletAggregator {
         }
         self.last_event_type = Some(type_index);
 
-        // Add event to graph
+        // Add event to graph (stores a clone, keeping the allocation alive)
         let (_node_id, graphlet_id, _local_index) = self.graph.add_event(event.clone(), type_index);
 
         // Set up sharing for this graphlet if needed
@@ -209,6 +241,10 @@ impl HamletAggregator {
         // Add any pending results
         results.append(&mut self.pending_results);
 
+        // Cache for dedup
+        self.last_event_ptr = event_ptr;
+        self.last_results = results.clone();
+
         results
     }
 
@@ -226,7 +262,13 @@ impl HamletAggregator {
         }
     }
 
-    /// Update a query's state based on the current event type
+    /// Update a query's state based on the current event type.
+    ///
+    /// The FSA tracks each query's position in its pattern. When a Kleene
+    /// self-loop fires, `snapshot_value` doubles to reflect the exponential
+    /// growth of trend combinations (each new Kleene event can be included
+    /// or excluded). When the final state is reached, a result is emitted
+    /// and the FSA resets so the next pattern instance can be matched.
     fn update_query_state(
         &mut self,
         query_id: QueryId,
@@ -246,33 +288,53 @@ impl HamletAggregator {
         // Update state
         state.current_state = transition.to;
 
+        let initial = self.template.initial(query_id).unwrap_or(0);
+
         // Check if this is the start of a trend
-        if transition.from == self.template.initial(query_id).unwrap_or(0) {
+        if transition.from == initial {
             state.in_trend = true;
             state.snapshot_value = 1;
+            state.count = 0;
+            state.kleene_events = 0;
         }
 
-        // For Kleene transitions, track the multiplication factor
-        if transition.is_kleene && state.in_trend {
-            // Each Kleene event doubles the number of possible trends
-            // (can include or exclude this event)
-            state.count = state.count.saturating_add(state.snapshot_value);
-        }
+        // Note: Kleene event counting is done at graphlet level in
+        // process_closed_graphlet(), not per-event. Trend counting also
+        // uses the GRETA propagation algorithm at graphlet boundaries.
 
         // Check if we reached a final state
         if self.template.is_final(query_id, transition.to) {
+            let trend_count;
+            let kleene_event_count;
             if state.in_trend {
-                // Complete a trend
+                // Trend count was accumulated by graphlet-level processing
+                // (process_closed_graphlet runs BEFORE update_query_state for
+                // events that trigger a type change).
+                // Ensure at least 1 trend if we matched a complete pattern.
+                trend_count = state.count.max(1);
+                kleene_event_count = state.kleene_events;
+
                 let final_count = self.final_counts.entry(query_id).or_insert(0);
-                *final_count = final_count.saturating_add(state.count.max(1));
+                *final_count = final_count.saturating_add(trend_count);
+            } else {
+                trend_count = 0;
+                kleene_event_count = 0;
             }
 
-            if self.config.incremental {
+            // Reset FSA for next pattern match (e.g., next transaction)
+            state.current_state = initial;
+            state.in_trend = false;
+            state.count = 0;
+            state.snapshot_value = 1;
+            state.kleene_events = 0;
+
+            if self.config.incremental && trend_count > 0 {
                 let query = self.queries.iter().find(|q| q.id == query_id)?;
                 return Some(AggregationResult {
                     query_id,
                     aggregate: query.aggregate,
-                    value: *self.final_counts.get(&query_id).unwrap_or(&0),
+                    trend_count,
+                    kleene_event_count,
                     is_final: false,
                 });
             }
@@ -332,23 +394,17 @@ impl HamletAggregator {
         let mut coeffs = PropagationCoefficients::new(graphlet_size);
         coeffs.compute_kleene();
 
-        // Create snapshot with each query's incoming value
-        let mut snapshot = Snapshot::new(0, graphlet_id, graphlet_id);
+        // Resolve total trend count for each query using their snapshot values.
+        // resolve_count sums across ALL graphlet positions, giving the total
+        // number of trends (2^n - 1 for snapshot_value=1).
         for &query_id in queries {
-            if let Some(state) = self.query_states.get(&query_id) {
-                snapshot.set_value(query_id, state.snapshot_value);
-            }
-        }
-
-        // Resolve counts for each query
-        let results = coeffs.resolve_final_counts(&[graphlet_size - 1], &snapshot);
-
-        // Update query states with resolved counts
-        for result in results {
-            if let Some(state) = self.query_states.get_mut(&result.query_id) {
-                state.count = state.count.saturating_add(result.count);
-                // Update snapshot value for next graphlet
-                state.snapshot_value = coeffs.resolve_count(state.snapshot_value);
+            if let Some(state) = self.query_states.get_mut(&query_id) {
+                if state.in_trend {
+                    let total = coeffs.resolve_count(state.snapshot_value);
+                    state.count = state.count.saturating_add(total);
+                    state.snapshot_value = total;
+                    state.kleene_events += graphlet_size as u64;
+                }
             }
         }
 
@@ -375,10 +431,10 @@ impl HamletAggregator {
                 if state.in_trend {
                     // For non-shared, compute Kleene count directly
                     // With n events in a Kleene pattern, there are 2^n - 1 non-empty combinations
-                    // But with count propagation, we sum up all paths
                     let kleene_count = compute_kleene_count(graphlet_size, state.snapshot_value);
                     state.count = state.count.saturating_add(kleene_count);
                     state.snapshot_value = kleene_count;
+                    state.kleene_events += graphlet_size as u64;
                 }
             }
         }
@@ -408,12 +464,17 @@ impl HamletAggregator {
                 let count = self.final_counts.get(&query.id).copied().unwrap_or(0);
                 let state_count = self.query_states.get(&query.id).map_or(0, |s| s.count);
                 let total = count.max(state_count);
+                let kleene_events = self
+                    .query_states
+                    .get(&query.id)
+                    .map_or(0, |s| s.kleene_events);
 
                 if total > 0 {
                     Some(AggregationResult {
                         query_id: query.id,
                         aggregate: query.aggregate,
-                        value: total,
+                        trend_count: total,
+                        kleene_event_count: kleene_events,
                         is_final: true,
                     })
                 } else {
@@ -435,6 +496,8 @@ impl HamletAggregator {
         self.optimizer.reset_stats();
         self.coefficients_cache.clear();
         self.final_counts.clear();
+        self.last_event_ptr = 0;
+        self.last_results.clear();
 
         // Reset query states to initial
         for query in &self.queries {
@@ -446,6 +509,7 @@ impl HamletAggregator {
                     count: 0,
                     in_trend: false,
                     snapshot_value: 1,
+                    kleene_events: 0,
                 },
             );
             self.final_counts.insert(query.id, 0);
@@ -465,6 +529,11 @@ impl HamletAggregator {
     /// Get registered queries (for sharing detection)
     pub fn registered_queries(&self) -> &[QueryRegistration] {
         &self.queries
+    }
+
+    /// Get the merged template (for resolving type indices to names during sharing setup)
+    pub fn merged_template(&self) -> &super::template::MergedTemplate {
+        &self.template
     }
 }
 
@@ -543,7 +612,7 @@ mod tests {
         let results = aggregator.flush();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].query_id, 0);
-        assert!(results[0].value > 0);
+        assert!(results[0].trend_count > 0);
     }
 
     #[test]

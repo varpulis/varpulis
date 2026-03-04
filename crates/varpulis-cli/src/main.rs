@@ -5,8 +5,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use tracing::info;
-use varpulis_cli::auth::{self, AuthConfig};
+use varpulis_cli::auth::AuthConfig;
 use varpulis_cli::client::VarpulisClient;
 use varpulis_cli::config::Config;
 use varpulis_cli::{rate_limit, security, users};
@@ -166,13 +165,8 @@ enum Commands {
         #[arg(long, env = "VARPULIS_MAX_QUEUE_DEPTH", default_value = "50000")]
         max_queue_depth: u64,
 
-        /// Path to users JSON file for local username/password authentication
-        #[arg(long, env = "VARPULIS_USERS_FILE", default_value = "data/users.json")]
-        users_file: PathBuf,
-
         /// Default admin password for first-start bootstrapping.
-        /// If set and the user store is empty, the admin user is created with this password
-        /// instead of a random one. Useful for automated deployments.
+        /// If set and no admin user exists in DB, the admin user is created with this password.
         #[arg(long, env = "VARPULIS_ADMIN_PASSWORD")]
         admin_password: Option<String>,
 
@@ -618,7 +612,6 @@ async fn main() -> Result<()> {
             tls_client_cert,
             tls_client_key,
             max_queue_depth,
-            users_file,
             admin_password,
             session_idle_timeout,
             session_absolute_timeout,
@@ -634,48 +627,21 @@ async fn main() -> Result<()> {
                 None => AuthConfig::disabled(),
             };
 
-            // Create user store for local auth
+            // Forward --admin-password to env var for server.rs DB bootstrap
+            if let Some(ref pw) = admin_password {
+                std::env::set_var("VARPULIS_ADMIN_PASSWORD", pw);
+            }
+
+            // Create session manager for local auth
             let session_config = users::SessionConfig {
                 idle_timeout: std::time::Duration::from_secs(session_idle_timeout * 60),
                 absolute_timeout: std::time::Duration::from_secs(session_absolute_timeout * 3600),
                 max_parallel_sessions: max_sessions,
                 ..Default::default()
             };
-            let mut user_store = users::UserStore::new(users_file.clone(), session_config);
-
-            // Auto-create admin user on first start if user store is empty
-            if user_store.is_empty() {
-                let (password, is_generated) = match admin_password {
-                    Some(ref pw) => (pw.clone(), false),
-                    None => (auth::generate_api_key(), true),
-                };
-                match user_store.create_user("admin", &password, "Administrator", "", "admin") {
-                    Ok(_) => {
-                        info!("Created default admin user");
-                        info!("  Username: admin");
-                        if is_generated {
-                            info!("  Password: {}", password);
-                            info!("  Change this password immediately via POST /auth/users or the web UI");
-                        } else {
-                            info!(
-                                "  Password: (set via --admin-password / VARPULIS_ADMIN_PASSWORD)"
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to create default admin user: {}", e);
-                    }
-                }
-            } else {
-                info!(
-                    "User store loaded: {} users from {}",
-                    user_store.list_users().len(),
-                    users_file.display()
-                );
-            }
-
-            let shared_user_store: users::SharedUserStore =
-                std::sync::Arc::new(tokio::sync::RwLock::new(user_store));
+            let session_manager = users::SessionManager::new(session_config);
+            let shared_session_manager: users::SharedSessionManager =
+                std::sync::Arc::new(tokio::sync::RwLock::new(session_manager));
 
             // Create rate limit config
             let rate_limit_config = if rate_limit > 0 {
@@ -720,7 +686,7 @@ async fn main() -> Result<()> {
                 nats,
                 mtls_client_config,
                 max_queue_depth,
-                Some(shared_user_store),
+                Some(shared_session_manager),
             )
             .await?;
         }
@@ -1078,15 +1044,20 @@ async fn main() -> Result<()> {
             };
             // Build RBAC config: --api-keys file takes priority over --api-key
             let rbac_config = if let Some(ref keys_path) = api_keys {
-                std::sync::Arc::new(
-                    varpulis_cluster::RbacConfig::from_file(keys_path)
-                        .map_err(|e| anyhow::anyhow!("{e}"))?,
-                )
+                varpulis_cluster::RbacConfig::from_file(keys_path)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?
             } else if let Some(ref key) = api_key {
-                std::sync::Arc::new(varpulis_cluster::RbacConfig::single_key(key.clone()))
+                varpulis_cluster::RbacConfig::single_key(key.clone())
             } else {
-                std::sync::Arc::new(varpulis_cluster::RbacConfig::disabled())
+                varpulis_cluster::RbacConfig::disabled()
             };
+            // Allow coordinator to validate JWTs issued by the worker's auth system
+            let rbac_config = if let Ok(jwt_secret) = std::env::var("JWT_SECRET") {
+                rbac_config.with_jwt_secret(jwt_secret)
+            } else {
+                rbac_config
+            };
+            let rbac_config = std::sync::Arc::new(rbac_config);
 
             // Validate TLS config: cert and key must come together
             let coordinator_tls = match (tls_cert, tls_key) {

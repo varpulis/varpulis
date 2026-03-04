@@ -1096,9 +1096,17 @@ impl Engine {
             builder.add_sequence(query_id, &type_strs);
 
             for ki in &kleene_info {
-                // The Kleene state in the template is at position ki.position
-                // (the state index after the transition for that event type)
-                let state = ki.position as u16;
+                // The Kleene self-loop must be at the state AFTER consuming the
+                // Kleene event type (the target of the forward transition), not
+                // the source state. For a pattern A -> B+ -> C with types
+                // [A, B, C], states are [s0, s1, s2, s3]:
+                //   (s0,A)->s1, (s1,B)->s2, (s2,C)->s3
+                // The B+ self-loop goes at s2: (s2,B)->s2
+                let type_idx_in_seq = type_strs
+                    .iter()
+                    .position(|&t| t == ki.event_type)
+                    .unwrap_or(0);
+                let state = (type_idx_in_seq + 1) as u16;
                 builder.add_kleene(query_id, &ki.event_type, state);
             }
 

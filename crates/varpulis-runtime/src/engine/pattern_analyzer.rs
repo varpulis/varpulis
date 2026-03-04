@@ -7,9 +7,8 @@ use varpulis_core::ast::{Expr, FollowedByClause, StreamSource, TrendAggItem};
 
 use crate::greta::GretaAggregate;
 
-/// Extracted Kleene info: (position_index, event_type_name, is_match_all)
+/// Extracted Kleene info for a Kleene closure in a pattern
 pub struct KleeneInfo {
-    pub position: usize,
     pub event_type: String,
 }
 
@@ -50,12 +49,10 @@ pub fn extract_kleene_info(
     followed_by: &[FollowedByClause],
 ) -> Vec<KleeneInfo> {
     let mut kleene = Vec::new();
-    let mut position = 1; // Position 0 is the source event
 
     // Check if source itself is AllWithAlias
     if let StreamSource::AllWithAlias { name, .. } = source {
         kleene.push(KleeneInfo {
-            position: 0,
             event_type: name.clone(),
         });
     }
@@ -63,11 +60,9 @@ pub fn extract_kleene_info(
     for clause in followed_by {
         if clause.match_all {
             kleene.push(KleeneInfo {
-                position,
                 event_type: clause.event_type.clone(),
             });
         }
-        position += 1;
     }
 
     kleene
