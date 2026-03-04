@@ -27,6 +27,12 @@ api.interceptors.request.use(
     // Update baseURL in case it changed
     config.baseURL = getBaseUrl()
 
+    // Add JWT Bearer token if available (set by auth store after login)
+    const token = localStorage.getItem('varpulis_token')
+    if (token) {
+      config.headers['Authorization'] = `Bearer ${token}`
+    }
+
     // Get API key from sessionStorage (not persisted across sessions for security)
     const apiKey = sessionStorage.getItem('varpulis_api_key')
     if (apiKey) {

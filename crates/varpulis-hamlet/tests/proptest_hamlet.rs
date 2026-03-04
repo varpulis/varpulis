@@ -85,28 +85,21 @@ proptest! {
     /// For a Kleene graphlet of size n with snapshot_value=1,
     /// resolve_count(1) should equal 2^n - 1 (for small n where no overflow occurs).
     ///
-    /// Derivation: coefficients are [1, 1, 2, 4, ..., 2^(n-2)] and their sum is 2^(n-1)
-    /// Wait — let's check more carefully.
+    /// Derivation (GRETA formula): each event e_i in the Kleene graphlet can be
+    /// reached from the snapshot directly (fresh start) or from any earlier event.
     ///   coeffs[0] = 1
-    ///   coeffs[1] = 1
-    ///   coeffs[2] = 1+1 = 2
-    ///   coeffs[3] = 1+1+2 = 4
-    ///   ...coeffs[i] = 2^(i-1) for i>=1, and coeffs[0]=1.
-    /// Sum = 1 + 1 + 2 + 4 + ... + 2^(n-2) = 1 + (2^(n-1) - 1) = 2^(n-1).
-    /// Wait, actually 1 + sum(2^k, k=0..n-2) = 1 + (2^(n-1) - 1) = 2^(n-1).
+    ///   coeffs[i] = sum(coeffs[0..i]) + 1 = 2^i  (for i >= 1)
+    /// Sum = 1 + 2 + 4 + ... + 2^(n-1) = 2^n - 1.
     ///
-    /// So resolve_count(1) == 2^(n-1) for n >= 1.
-    /// But for snapshot_value s, it's s * 2^(n-1) (since local_sums are all 0 for Kleene).
-    ///
-    /// Let's verify: for n=4, coeffs = [1,1,2,4], sum = 8 = 2^3 = 2^(4-1). Correct.
+    /// For snapshot_value s: resolve_count(s) = s * (2^n - 1).
     #[test]
     fn propagation_kleene_formula(n in 1usize..=30) {
         let mut coeffs = PropagationCoefficients::new(n);
         coeffs.compute_kleene();
 
-        let expected = 1u64.checked_shl(n as u32 - 1).unwrap_or(u64::MAX);
+        let expected = 1u64.checked_shl(n as u32).unwrap_or(u64::MAX).saturating_sub(1);
 
-        // With snapshot_value = 1, resolve_count should be 2^(n-1)
+        // With snapshot_value = 1, resolve_count should be 2^n - 1
         let resolved = coeffs.resolve_count(1);
         // For very large n, saturating arithmetic may differ, so cap at 62 bits
         if n <= 62 {

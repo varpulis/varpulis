@@ -3431,3 +3431,240 @@ fn test_builder_default() {
     // Default builder should be equivalent to EngineBuilder::new()
     let _engine: Engine = varpulis_runtime::EngineBuilder::default().build();
 }
+
+// =============================================================================
+// Transaction Monitoring: Kleene Closure + Trend Aggregation
+// =============================================================================
+
+#[tokio::test]
+async fn test_transaction_monitoring_trend_aggregate() {
+    // Multi-type Kleene pattern: TransactionOpen -> ProcessingStep+ -> TransactionClose
+    // with trend_aggregate computing statistics over the Kleene matches.
+    let source = r#"
+        stream TransactionStats = TransactionOpen as open
+            -> all ProcessingStep as steps
+            -> TransactionClose as close
+            .within(30m)
+            .partition_by(tx_id)
+            .trend_aggregate(
+                avg_dur: avg_trends(steps.duration),
+                max_errors: max_trends(steps.error_count),
+                step_count: count_events(steps),
+                trend_count: count_trends()
+            )
+            .emit(
+                event_type: "TransactionSummary",
+                tx_id: open.tx_id,
+                avg_duration: avg_dur,
+                max_error_count: max_errors,
+                steps: step_count,
+                trends: trend_count
+            )
+    "#;
+
+    let program = parse_program(source);
+    let (tx, _rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+
+    // Should load without error — Hamlet aggregator created for 3-type pattern
+    engine.load(&program).unwrap();
+    assert_eq!(engine.metrics().streams_count, 1);
+
+    // Transaction 1: Open -> 3 steps -> Close
+    engine
+        .process(
+            Event::new("TransactionOpen")
+                .with_field("tx_id", "TX-001")
+                .with_field("customer_id", "CUST-42"),
+        )
+        .await
+        .unwrap();
+
+    engine
+        .process(
+            Event::new("ProcessingStep")
+                .with_field("tx_id", "TX-001")
+                .with_field("step_name", "validation")
+                .with_field("duration", 1200.0)
+                .with_field("error_count", 0i64)
+                .with_field("throughput", 850.0),
+        )
+        .await
+        .unwrap();
+
+    engine
+        .process(
+            Event::new("ProcessingStep")
+                .with_field("tx_id", "TX-001")
+                .with_field("step_name", "enrichment")
+                .with_field("duration", 3400.0)
+                .with_field("error_count", 1i64)
+                .with_field("throughput", 620.0),
+        )
+        .await
+        .unwrap();
+
+    engine
+        .process(
+            Event::new("ProcessingStep")
+                .with_field("tx_id", "TX-001")
+                .with_field("step_name", "risk_check")
+                .with_field("duration", 7800.0)
+                .with_field("error_count", 0i64)
+                .with_field("throughput", 340.0),
+        )
+        .await
+        .unwrap();
+
+    engine
+        .process(
+            Event::new("TransactionClose")
+                .with_field("tx_id", "TX-001")
+                .with_field("final_status", "completed"),
+        )
+        .await
+        .unwrap();
+
+    // All 5 events processed without panics
+    assert_eq!(engine.metrics().events_processed, 5);
+}
+
+#[tokio::test]
+async fn test_transaction_monitoring_detection_mode() {
+    // Same Kleene pattern but WITHOUT trend_aggregate — uses SASE+ detection mode.
+    // Detects individual slow steps within a transaction.
+    let source = r#"
+        stream SlowStep = TransactionOpen as open
+            -> all ProcessingStep where duration > 5000.0 as slow_step
+            .within(30m)
+            .emit(
+                event_type: "SlowStepAlert",
+                tx_id: open.tx_id,
+                step_name: slow_step.step_name,
+                duration: slow_step.duration
+            )
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    // Open transaction
+    engine
+        .process(Event::new("TransactionOpen").with_field("tx_id", "TX-001"))
+        .await
+        .unwrap();
+
+    // Fast step (duration < 5000) — should NOT trigger
+    engine
+        .process(
+            Event::new("ProcessingStep")
+                .with_field("tx_id", "TX-001")
+                .with_field("step_name", "validation")
+                .with_field("duration", 1200.0),
+        )
+        .await
+        .unwrap();
+
+    // Slow step (duration > 5000) — should trigger match
+    engine
+        .process(
+            Event::new("ProcessingStep")
+                .with_field("tx_id", "TX-001")
+                .with_field("step_name", "risk_check")
+                .with_field("duration", 7800.0),
+        )
+        .await
+        .unwrap();
+
+    // Check for output — SASE+ should detect the slow step
+    let mut outputs = Vec::new();
+    while let Ok(output) = rx.try_recv() {
+        outputs.push(output);
+    }
+    // The SASE+ engine should match TransactionOpen -> slow ProcessingStep
+    assert!(
+        !outputs.is_empty(),
+        "Expected at least one SlowStepAlert output"
+    );
+    assert_eq!(&*outputs[0].event_type, "SlowStep");
+}
+
+#[tokio::test]
+async fn test_transaction_monitoring_multi_query_sharing() {
+    // Two trend_aggregate streams on overlapping Kleene patterns.
+    // Engine should detect sharing opportunity.
+    let source = r"
+        stream TxStatsByCustomer = TransactionOpen as open
+            -> all ProcessingStep as steps
+            -> TransactionClose as close
+            .within(30m)
+            .partition_by(customer_id)
+            .trend_aggregate(
+                trend_count: count_trends(),
+                step_count: count_events(steps)
+            )
+            .emit(
+                customer: open.customer_id,
+                trends: trend_count,
+                steps: step_count
+            )
+
+        stream TxStatsByChannel = TransactionOpen as open
+            -> all ProcessingStep as steps
+            -> TransactionClose as close
+            .within(30m)
+            .partition_by(channel)
+            .trend_aggregate(
+                trend_count: count_trends(),
+                step_count: count_events(steps)
+            )
+            .emit(
+                channel: open.channel,
+                trends: trend_count,
+                steps: step_count
+            )
+    ";
+
+    let program = parse_program(source);
+    let (tx, _rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+
+    // Both streams should load — sharing detected for ProcessingStep+ sub-pattern
+    engine.load(&program).unwrap();
+    assert_eq!(engine.metrics().streams_count, 2);
+
+    // Process events across both partitions
+    engine
+        .process(
+            Event::new("TransactionOpen")
+                .with_field("tx_id", "TX-001")
+                .with_field("customer_id", "CUST-42")
+                .with_field("channel", "web"),
+        )
+        .await
+        .unwrap();
+
+    engine
+        .process(
+            Event::new("ProcessingStep")
+                .with_field("tx_id", "TX-001")
+                .with_field("duration", 1200.0)
+                .with_field("error_count", 0i64),
+        )
+        .await
+        .unwrap();
+
+    engine
+        .process(
+            Event::new("TransactionClose")
+                .with_field("tx_id", "TX-001")
+                .with_field("final_status", "completed"),
+        )
+        .await
+        .unwrap();
+
+    // All 3 events processed without panics across both shared streams
+    assert_eq!(engine.metrics().events_processed, 3);
+}

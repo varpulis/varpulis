@@ -275,8 +275,25 @@ pub async fn worker_registration_loop_with_client(
         .map(std::time::Duration::from_secs)
         .unwrap_or(HEARTBEAT_INTERVAL);
 
+    // Build registration body for potential re-registration
+    let register_body = RegisterWorkerRequest {
+        worker_id: worker_id.clone(),
+        address: worker_address.clone(),
+        api_key: api_key.clone(),
+        capacity: WorkerCapacity::default(),
+    };
+
     // REST heartbeat loop (HTTP fallback when NATS transport is not used)
-    rest_heartbeat_loop(&client, &heartbeat_url, interval, &tenant_manager, &api_key).await;
+    rest_heartbeat_loop(
+        &client,
+        &heartbeat_url,
+        &register_url,
+        &register_body,
+        interval,
+        &tenant_manager,
+        &api_key,
+    )
+    .await;
 }
 
 /// Collect pipeline metrics from the tenant manager (async).
@@ -343,14 +360,19 @@ fn build_heartbeat(
 }
 
 /// REST heartbeat fallback loop.
+///
+/// If the coordinator returns 404 (worker unknown, e.g. after coordinator restart),
+/// re-register before continuing heartbeats.
 async fn rest_heartbeat_loop(
     client: &reqwest::Client,
     heartbeat_url: &str,
+    register_url: &str,
+    register_body: &RegisterWorkerRequest,
     interval: std::time::Duration,
     tenant_manager: &Option<varpulis_runtime::SharedTenantManager>,
     api_key: &str,
 ) {
-    use tracing::{debug, error, warn};
+    use tracing::{debug, error, info, warn};
 
     loop {
         tokio::time::sleep(interval).await;
@@ -374,6 +396,27 @@ async fn rest_heartbeat_loop(
         {
             Ok(resp) if resp.status().is_success() => {
                 // heartbeat acknowledged
+            }
+            Ok(resp) if resp.status() == reqwest::StatusCode::NOT_FOUND => {
+                // Worker unknown — coordinator may have restarted. Re-register.
+                warn!("Heartbeat returned 404, re-registering with coordinator");
+                match client
+                    .post(register_url)
+                    .header("x-api-key", api_key)
+                    .json(register_body)
+                    .send()
+                    .await
+                {
+                    Ok(r) if r.status().is_success() => {
+                        info!("Re-registered with coordinator successfully");
+                    }
+                    Ok(r) => {
+                        warn!("Re-registration failed (HTTP {})", r.status());
+                    }
+                    Err(e) => {
+                        error!("Re-registration failed: {}", e);
+                    }
+                }
             }
             Ok(resp) => {
                 warn!("Heartbeat rejected (HTTP {})", resp.status());

@@ -52,9 +52,18 @@
     <v-row class="mt-4">
       <v-col cols="12">
         <v-card>
-          <v-card-title>
+          <v-card-title class="d-flex align-center">
             Tenants
             <v-spacer />
+            <v-btn
+              color="primary"
+              variant="flat"
+              prepend-icon="mdi-plus"
+              class="mr-4"
+              @click="createDialogOpen = true"
+            >
+              New Tenant
+            </v-btn>
             <v-text-field
               v-model="search"
               density="compact"
@@ -234,6 +243,85 @@
       </v-card>
     </v-dialog>
 
+    <!-- Create Tenant Dialog -->
+    <v-dialog v-model="createDialogOpen" max-width="500">
+      <v-card>
+        <v-card-title>Create New Tenant</v-card-title>
+        <v-card-text>
+          <v-text-field
+            v-model="newTenant.name"
+            label="Tenant Name"
+            variant="outlined"
+            class="mb-2"
+          />
+          <v-text-field
+            v-model="newTenant.admin_username"
+            label="Admin Username"
+            variant="outlined"
+            class="mb-2"
+          />
+          <v-text-field
+            v-model="newTenant.admin_password"
+            label="Admin Password"
+            type="password"
+            variant="outlined"
+            class="mb-2"
+          />
+          <v-text-field
+            v-model="newTenant.admin_email"
+            label="Admin Email"
+            variant="outlined"
+            class="mb-2"
+          />
+          <v-select
+            v-model="newTenant.tier"
+            :items="['free', 'pro', 'business', 'enterprise']"
+            label="Tier"
+            variant="outlined"
+          />
+          <v-alert v-if="createError" type="error" density="compact" class="mt-2">
+            {{ createError }}
+          </v-alert>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn @click="createDialogOpen = false">Cancel</v-btn>
+          <v-btn color="primary" :loading="createLoading" @click="doCreateTenant">Create</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Create Success Dialog -->
+    <v-dialog v-model="createSuccessOpen" max-width="500" persistent>
+      <v-card>
+        <v-card-title>Tenant Created</v-card-title>
+        <v-card-text>
+          <v-alert type="success" density="compact" class="mb-4">
+            Tenant <strong>{{ createdResult?.tenant.name }}</strong> created successfully.
+          </v-alert>
+          <div class="text-body-2 mb-2">
+            <strong>Admin User:</strong> {{ createdResult?.admin_user.username }}
+          </div>
+          <div class="text-body-2 mb-1"><strong>API Key:</strong></div>
+          <v-text-field
+            :model-value="createdResult?.api_key"
+            variant="outlined"
+            readonly
+            density="compact"
+            append-inner-icon="mdi-content-copy"
+            @click:append-inner="copyApiKey"
+          />
+          <v-alert type="warning" density="compact" variant="tonal">
+            Save this API key now. It cannot be retrieved later.
+          </v-alert>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn color="primary" @click="createSuccessOpen = false">Done</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- Extend Trial Dialog -->
     <v-dialog v-model="extendDialogOpen" max-width="400">
       <v-card>
@@ -269,6 +357,23 @@ const extendDialogOpen = ref(false)
 const actionTarget = ref<Tenant | null>(null)
 const selectedTier = ref('free')
 const extendDays = ref(30)
+
+const createDialogOpen = ref(false)
+const createLoading = ref(false)
+const createError = ref<string | null>(null)
+const createSuccessOpen = ref(false)
+const createdResult = ref<{
+  tenant: { id: string; name: string; tier: string; status: string }
+  admin_user: { id: string; username: string }
+  api_key: string
+} | null>(null)
+const newTenant = ref({
+  name: '',
+  admin_username: '',
+  admin_password: '',
+  admin_email: '',
+  tier: 'free',
+})
 
 const headers = [
   { title: 'Name', key: 'name' },
@@ -357,6 +462,30 @@ async function reactivate(item: Tenant) {
 
 async function confirmRevoke(item: Tenant) {
   await adminStore.revokeTenant(item.id)
+}
+
+async function doCreateTenant() {
+  createError.value = null
+  createLoading.value = true
+  try {
+    const result = await adminStore.createTenant(newTenant.value)
+    createdResult.value = result
+    createDialogOpen.value = false
+    createSuccessOpen.value = true
+    // Reset form
+    newTenant.value = { name: '', admin_username: '', admin_password: '', admin_email: '', tier: 'free' }
+  } catch (e: unknown) {
+    const axiosErr = e as { response?: { data?: { error?: string } } }
+    createError.value = axiosErr.response?.data?.error || (e instanceof Error ? e.message : 'Failed to create tenant')
+  } finally {
+    createLoading.value = false
+  }
+}
+
+function copyApiKey() {
+  if (createdResult.value?.api_key) {
+    navigator.clipboard.writeText(createdResult.value.api_key)
+  }
 }
 
 onMounted(() => {

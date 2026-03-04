@@ -152,6 +152,12 @@ impl MergedTemplate {
         self.type_indices.get(name).copied()
     }
 
+    /// Get type name by index
+    #[inline]
+    pub fn type_name(&self, idx: u16) -> Option<&str> {
+        self.type_names.get(idx as usize).map(|s| s.as_str())
+    }
+
     /// Add a transition
     pub fn add_transition(&mut self, from: TemplateState, to: TemplateState, event_type: u16) {
         let key = (from, event_type);
@@ -326,6 +332,11 @@ impl TemplateBuilder {
         self.template.add_query_to_kleene(type_idx, query);
 
         self
+    }
+
+    /// Current number of states (useful for computing base state offsets)
+    pub fn num_states(&self) -> usize {
+        self.template.num_states()
     }
 
     /// Build the template

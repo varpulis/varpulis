@@ -9,6 +9,9 @@ use crate::DbError;
 // Users
 // ---------------------------------------------------------------------------
 
+const USER_COLUMNS: &str = "id, github_id, email, name, avatar_url, created_at, \
+                            username, password_hash, display_name, role, disabled, updated_at";
+
 /// Create a new user or update an existing one (upsert on `github_id`).
 pub async fn create_or_update_user(
     pool: &PgPool,
@@ -17,23 +20,22 @@ pub async fn create_or_update_user(
     name: &str,
     avatar_url: &str,
 ) -> Result<User, DbError> {
-    let user = sqlx::query_as::<_, User>(
-        r"
-        INSERT INTO users (github_id, email, name, avatar_url)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (github_id) DO UPDATE
-            SET email      = EXCLUDED.email,
-                name       = EXCLUDED.name,
-                avatar_url = EXCLUDED.avatar_url
-        RETURNING id, github_id, email, name, avatar_url, created_at
-        ",
-    )
-    .bind(github_id)
-    .bind(email)
-    .bind(name)
-    .bind(avatar_url)
-    .fetch_one(pool)
-    .await?;
+    let query = format!(
+        "INSERT INTO users (github_id, email, name, avatar_url)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (github_id) DO UPDATE
+             SET email      = EXCLUDED.email,
+                 name       = EXCLUDED.name,
+                 avatar_url = EXCLUDED.avatar_url
+         RETURNING {USER_COLUMNS}"
+    );
+    let user = sqlx::query_as::<_, User>(&query)
+        .bind(github_id)
+        .bind(email)
+        .bind(name)
+        .bind(avatar_url)
+        .fetch_one(pool)
+        .await?;
 
     Ok(user)
 }
@@ -43,14 +45,152 @@ pub async fn get_user_by_github_id(
     pool: &PgPool,
     github_id: &str,
 ) -> Result<Option<User>, DbError> {
-    let user = sqlx::query_as::<_, User>(
-        "SELECT id, github_id, email, name, avatar_url, created_at FROM users WHERE github_id = $1",
-    )
-    .bind(github_id)
-    .fetch_optional(pool)
-    .await?;
+    let query = format!("SELECT {USER_COLUMNS} FROM users WHERE github_id = $1");
+    let user = sqlx::query_as::<_, User>(&query)
+        .bind(github_id)
+        .fetch_optional(pool)
+        .await?;
 
     Ok(user)
+}
+
+/// Create a local user with username and password hash.
+pub async fn create_local_user(
+    pool: &PgPool,
+    username: &str,
+    password_hash: &str,
+    display_name: &str,
+    email: &str,
+    role: &str,
+) -> Result<User, DbError> {
+    let query = format!(
+        "INSERT INTO users (username, password_hash, display_name, email, role, name, avatar_url)
+         VALUES ($1, $2, $3, $4, $5, $3, '')
+         RETURNING {USER_COLUMNS}"
+    );
+    let user = sqlx::query_as::<_, User>(&query)
+        .bind(username)
+        .bind(password_hash)
+        .bind(display_name)
+        .bind(email)
+        .bind(role)
+        .fetch_one(pool)
+        .await?;
+
+    Ok(user)
+}
+
+/// Look up a user by username (for login).
+pub async fn get_user_by_username(pool: &PgPool, username: &str) -> Result<Option<User>, DbError> {
+    let query = format!("SELECT {USER_COLUMNS} FROM users WHERE username = $1");
+    let user = sqlx::query_as::<_, User>(&query)
+        .bind(username)
+        .fetch_optional(pool)
+        .await?;
+
+    Ok(user)
+}
+
+/// Look up a user by ID.
+pub async fn get_user_by_id(pool: &PgPool, id: Uuid) -> Result<Option<User>, DbError> {
+    let query = format!("SELECT {USER_COLUMNS} FROM users WHERE id = $1");
+    let user = sqlx::query_as::<_, User>(&query)
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
+
+    Ok(user)
+}
+
+/// Update a user's details (admin operation). Only non-None fields are updated.
+pub async fn update_user(
+    pool: &PgPool,
+    id: Uuid,
+    display_name: Option<&str>,
+    email: Option<&str>,
+    role: Option<&str>,
+    disabled: Option<bool>,
+) -> Result<Option<User>, DbError> {
+    // Build dynamic SET clause
+    let mut sets = Vec::new();
+    let mut bind_idx = 1u32;
+    if display_name.is_some() {
+        sets.push(format!("display_name = ${bind_idx}"));
+        bind_idx += 1;
+    }
+    if email.is_some() {
+        sets.push(format!("email = ${bind_idx}"));
+        bind_idx += 1;
+    }
+    if role.is_some() {
+        sets.push(format!("role = ${bind_idx}"));
+        bind_idx += 1;
+    }
+    if disabled.is_some() {
+        sets.push(format!("disabled = ${bind_idx}"));
+        bind_idx += 1;
+    }
+    if sets.is_empty() {
+        return get_user_by_id(pool, id).await;
+    }
+    sets.push("updated_at = now()".to_string());
+    let query = format!(
+        "UPDATE users SET {} WHERE id = ${bind_idx} RETURNING {USER_COLUMNS}",
+        sets.join(", "),
+    );
+
+    let mut q = sqlx::query_as::<_, User>(&query);
+    if let Some(v) = display_name {
+        q = q.bind(v);
+    }
+    if let Some(v) = email {
+        q = q.bind(v);
+    }
+    if let Some(v) = role {
+        q = q.bind(v);
+    }
+    if let Some(v) = disabled {
+        q = q.bind(v);
+    }
+    q = q.bind(id);
+
+    let user = q.fetch_optional(pool).await?;
+    Ok(user)
+}
+
+/// Update a user's password hash.
+pub async fn update_password_hash(pool: &PgPool, id: Uuid, new_hash: &str) -> Result<(), DbError> {
+    sqlx::query("UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2")
+        .bind(new_hash)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// List all users (for admin panel).
+pub async fn list_users(pool: &PgPool) -> Result<Vec<User>, DbError> {
+    let query = format!("SELECT {USER_COLUMNS} FROM users ORDER BY created_at");
+    let users = sqlx::query_as::<_, User>(&query).fetch_all(pool).await?;
+    Ok(users)
+}
+
+/// Delete a user by ID.
+pub async fn delete_user(pool: &PgPool, id: Uuid) -> Result<(), DbError> {
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Check if any user with admin role exists.
+pub async fn has_admin_user(pool: &PgPool) -> Result<bool, DbError> {
+    let row: Option<(i64,)> =
+        sqlx::query_as("SELECT COUNT(*) FROM users WHERE role = 'admin' AND username IS NOT NULL")
+            .fetch_optional(pool)
+            .await?;
+    Ok(row.map(|r| r.0).unwrap_or(0) > 0)
 }
 
 // ---------------------------------------------------------------------------

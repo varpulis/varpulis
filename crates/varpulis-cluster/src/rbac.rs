@@ -58,7 +58,7 @@ impl std::str::FromStr for Role {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "viewer" | "read" | "readonly" => Ok(Role::Viewer),
+            "viewer" | "read" | "readonly" | "user" => Ok(Role::Viewer),
             "operator" | "write" | "deploy" => Ok(Role::Operator),
             "admin" | "root" | "superadmin" => Ok(Role::Admin),
             other => Err(format!(

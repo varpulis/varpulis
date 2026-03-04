@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import axios from 'axios'
+import api from '@/api'
 
 export interface Tenant {
   id: string
@@ -48,7 +48,7 @@ export const useAdminStore = defineStore('admin', () => {
     loading.value = true
     error.value = null
     try {
-      const res = await axios.get('/api/v1/admin/tenants')
+      const res = await api.get('/admin/tenants')
       tenants.value = res.data.tenants ?? []
     } catch (e: unknown) {
       error.value = e instanceof Error ? e.message : 'Failed to load tenants'
@@ -62,7 +62,7 @@ export const useAdminStore = defineStore('admin', () => {
     loading.value = true
     error.value = null
     try {
-      const res = await axios.get(`/api/v1/admin/tenants/${orgId}`)
+      const res = await api.get(`/admin/tenants/${orgId}`)
       selectedTenant.value = res.data
     } catch (e: unknown) {
       error.value = e instanceof Error ? e.message : 'Failed to load tenant'
@@ -73,17 +73,17 @@ export const useAdminStore = defineStore('admin', () => {
   }
 
   async function changeTier(orgId: string, tier: string) {
-    await axios.put(`/api/v1/admin/tenants/${orgId}/tier`, { tier })
+    await api.put(`/admin/tenants/${orgId}/tier`, { tier })
     await fetchTenants()
   }
 
   async function changeStatus(orgId: string, status: string) {
-    await axios.put(`/api/v1/admin/tenants/${orgId}/status`, { status })
+    await api.put(`/admin/tenants/${orgId}/status`, { status })
     await fetchTenants()
   }
 
   async function extendTrial(orgId: string, expiresAt: string) {
-    await axios.put(`/api/v1/admin/tenants/${orgId}/trial`, { expires_at: expiresAt })
+    await api.put(`/admin/tenants/${orgId}/trial`, { expires_at: expiresAt })
     await fetchTenants()
   }
 
@@ -95,18 +95,35 @@ export const useAdminStore = defineStore('admin', () => {
       monthly_event_limit?: number
     },
   ) {
-    await axios.put(`/api/v1/admin/tenants/${orgId}/limits`, limits)
+    await api.put(`/admin/tenants/${orgId}/limits`, limits)
     await fetchTenants()
   }
 
   async function revokeTenant(orgId: string) {
-    await axios.post(`/api/v1/admin/tenants/${orgId}/revoke`)
+    await api.post(`/admin/tenants/${orgId}/revoke`)
     await fetchTenants()
+  }
+
+  async function createTenant(data: {
+    name: string
+    admin_username: string
+    admin_password: string
+    admin_email: string
+    tier?: string
+  }) {
+    const res = await api.post('/admin/tenants', data)
+    await fetchTenants()
+    await fetchUsageSummary()
+    return res.data as {
+      tenant: { id: string; name: string; tier: string; status: string }
+      admin_user: { id: string; username: string }
+      api_key: string
+    }
   }
 
   async function fetchUsageSummary() {
     try {
-      const res = await axios.get('/api/v1/admin/usage')
+      const res = await api.get('/admin/usage')
       usageSummary.value = res.data
     } catch {
       usageSummary.value = null
@@ -124,6 +141,7 @@ export const useAdminStore = defineStore('admin', () => {
     suspendedTenants,
     fetchTenants,
     fetchTenantDetail,
+    createTenant,
     changeTier,
     changeStatus,
     extendTrial,
