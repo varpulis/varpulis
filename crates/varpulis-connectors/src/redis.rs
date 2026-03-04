@@ -449,6 +449,8 @@ mod redis_stream_impl {
     use std::sync::Arc;
 
     use redis::aio::ConnectionManager;
+    #[allow(unused_imports)]
+    use redis::Commands;
     use redis::Value as RedisValue;
     use tracing::{info, warn};
 
@@ -558,21 +560,21 @@ mod redis_stream_impl {
                         .await;
 
                     match result {
-                        Ok(RedisValue::Bulk(streams)) => {
+                        Ok(RedisValue::Array(streams)) => {
                             for stream_entry in streams {
-                                if let RedisValue::Bulk(ref parts) = stream_entry {
+                                if let RedisValue::Array(ref parts) = stream_entry {
                                     if parts.len() < 2 {
                                         continue;
                                     }
                                     // parts[1] = array of message entries
-                                    if let RedisValue::Bulk(ref messages) = parts[1] {
+                                    if let RedisValue::Array(ref messages) = parts[1] {
                                         for msg in messages {
-                                            if let RedisValue::Bulk(ref msg_parts) = msg {
+                                            if let RedisValue::Array(ref msg_parts) = msg {
                                                 if msg_parts.len() < 2 {
                                                     continue;
                                                 }
                                                 let msg_id = match &msg_parts[0] {
-                                                    RedisValue::Data(b) => {
+                                                    RedisValue::BulkString(b) => {
                                                         String::from_utf8_lossy(b).to_string()
                                                     }
                                                     _ => continue,
@@ -629,20 +631,20 @@ mod redis_stream_impl {
 
     /// Parse Redis stream field-value pairs into an Event
     fn parse_stream_fields(fields_value: &RedisValue) -> Option<Event> {
-        if let RedisValue::Bulk(ref pairs) = fields_value {
+        if let RedisValue::Array(ref pairs) = fields_value {
             // Fields come as [key1, val1, key2, val2, ...]
             let mut json_map = serde_json::Map::new();
             let mut i = 0;
             while i + 1 < pairs.len() {
                 let key = match &pairs[i] {
-                    RedisValue::Data(b) => String::from_utf8_lossy(b).to_string(),
+                    RedisValue::BulkString(b) => String::from_utf8_lossy(b).to_string(),
                     _ => {
                         i += 2;
                         continue;
                     }
                 };
                 let val = match &pairs[i + 1] {
-                    RedisValue::Data(b) => {
+                    RedisValue::BulkString(b) => {
                         let s = String::from_utf8_lossy(b);
                         // Try to parse as JSON, fall back to string
                         serde_json::from_str::<serde_json::Value>(&s)
@@ -726,7 +728,7 @@ mod redis_stream_impl {
             cmd.arg("data").arg(&payload);
             cmd.arg("event_type").arg(event.event_type.as_ref());
 
-            cmd.query_async::<_, String>(&mut conn)
+            cmd.query_async::<String>(&mut conn)
                 .await
                 .map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
 
