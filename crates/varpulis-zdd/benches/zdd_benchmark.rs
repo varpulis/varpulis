@@ -4,7 +4,6 @@
 //! Run with: cargo bench -p varpulis-zdd
 
 use std::collections::{BTreeSet, HashSet};
-
 use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
