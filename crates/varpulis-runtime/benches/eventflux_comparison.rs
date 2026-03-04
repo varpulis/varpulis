@@ -24,9 +24,8 @@
 //!   - S13: Negation (NOT pattern)
 //!   - S16: Nested Kleene + OR
 
-use std::time::Duration;
-
 use std::hint::black_box;
+use std::time::Duration;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use tokio::runtime::Runtime;

@@ -37,10 +37,9 @@
 //! **Conclusion**: Hamlet's explicit graphlet-based sharing with O(1) transitions
 //! vastly outperforms ZDD's automatic canonical sharing with O(ZDD size) operations.
 
+use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
-
-use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use smallvec::smallvec;

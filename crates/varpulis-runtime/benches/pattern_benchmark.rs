@@ -13,9 +13,8 @@
 //! - throughput: Events per second measurement
 //! - scalability: Large event volumes (50K-100K)
 
-use std::time::Duration;
-
 use std::hint::black_box;
+use std::time::Duration;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use varpulis_runtime::event::Event;

@@ -25,9 +25,8 @@
 //! - **online_learning**: Incremental update throughput
 //! - **alphabet_scaling**: PST with 5/10/50/100 event types
 
-use std::time::Duration;
-
 use std::hint::black_box;
+use std::time::Duration;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use rustc_hash::FxHashMap;
