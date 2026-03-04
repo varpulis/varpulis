@@ -9,12 +9,16 @@ description = "Zero-suppressed Decision Diagrams for efficient set manipulation 
 [dependencies]
 rustc-hash = "2.1"
 
+[features]
+bench = []
+
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
 
 [[bench]]
 name = "zdd_benchmark"
 harness = false
+required-features = ["bench"]
 
 [lints]
 workspace = true

@@ -1,10 +1,9 @@
-//! Local user store with password authentication and session management.
+//! Session management and password hashing utilities for local authentication.
 //!
-//! Provides username/password authentication with argon2 password hashing,
-//! in-memory session tracking, and JSON file persistence for user records.
+//! Provides in-memory session tracking with idle/absolute timeouts,
+//! and argon2id password hashing for local username/password auth.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -15,20 +14,6 @@ use tokio::sync::RwLock;
 // ---------------------------------------------------------------------------
 // Data structures
 // ---------------------------------------------------------------------------
-
-/// Stored user record (serialized to JSON file).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StoredUser {
-    pub id: String,
-    pub username: String,
-    pub password_hash: String,
-    pub display_name: String,
-    pub email: String,
-    pub role: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    pub disabled: bool,
-}
 
 /// Session metadata for tracking parallel sessions.
 #[derive(Debug, Clone)]
@@ -62,162 +47,37 @@ impl Default for SessionConfig {
     }
 }
 
-/// In-memory user + session store backed by a JSON file.
+/// In-memory session manager (no file persistence).
 #[derive(Debug)]
-pub struct UserStore {
-    users: HashMap<String, StoredUser>,
+pub struct SessionManager {
     sessions: HashMap<String, SessionRecord>,
-    file_path: PathBuf,
     config: SessionConfig,
 }
 
-pub type SharedUserStore = Arc<RwLock<UserStore>>;
-
-// ---------------------------------------------------------------------------
-// Persistence format
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Serialize, Deserialize)]
-struct UsersFile {
-    users: Vec<StoredUser>,
-}
+pub type SharedSessionManager = Arc<RwLock<SessionManager>>;
 
 // ---------------------------------------------------------------------------
 // Implementation
 // ---------------------------------------------------------------------------
 
-impl UserStore {
-    /// Load from JSON file or create empty store.
-    pub fn new(file_path: PathBuf, config: SessionConfig) -> Self {
-        let users = if file_path.exists() {
-            match std::fs::read_to_string(&file_path) {
-                Ok(contents) => match serde_json::from_str::<UsersFile>(&contents) {
-                    Ok(data) => {
-                        let mut map = HashMap::new();
-                        for user in data.users {
-                            map.insert(user.username.clone(), user);
-                        }
-                        tracing::info!("Loaded {} users from {}", map.len(), file_path.display());
-                        map
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to parse users file: {}", e);
-                        HashMap::new()
-                    }
-                },
-                Err(e) => {
-                    tracing::error!("Failed to read users file: {}", e);
-                    HashMap::new()
-                }
-            }
-        } else {
-            HashMap::new()
-        };
-
+impl SessionManager {
+    /// Create a new session manager with the given configuration.
+    pub fn new(config: SessionConfig) -> Self {
         Self {
-            users,
             sessions: HashMap::new(),
-            file_path,
             config,
         }
     }
 
-    /// Save users to JSON file (atomic write via temp file + rename).
-    pub fn save(&self) -> Result<(), String> {
-        let data = UsersFile {
-            users: self.users.values().cloned().collect(),
-        };
-        let json =
-            serde_json::to_string_pretty(&data).map_err(|e| format!("Serialize error: {e}"))?;
-
-        // Ensure parent directory exists
-        if let Some(parent) = self.file_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-
-        // Atomic write: write to temp file, then rename
-        let tmp_path = self.file_path.with_extension("tmp");
-        std::fs::write(&tmp_path, &json).map_err(|e| format!("Write error: {e}"))?;
-        std::fs::rename(&tmp_path, &self.file_path).map_err(|e| format!("Rename error: {e}"))?;
-
-        Ok(())
-    }
-
-    /// Check if the store has any users.
-    pub fn is_empty(&self) -> bool {
-        self.users.is_empty()
-    }
-
-    /// Create a new user with argon2 password hashing.
-    pub fn create_user(
-        &mut self,
-        username: &str,
-        password: &str,
-        display_name: &str,
-        email: &str,
-        role: &str,
-    ) -> Result<StoredUser, String> {
-        if self.users.contains_key(username) {
-            return Err(format!("User '{username}' already exists"));
-        }
-
-        if username.is_empty() || username.len() > 64 {
-            return Err("Username must be 1-64 characters".to_string());
-        }
-
-        if password.len() < 8 {
-            return Err("Password must be at least 8 characters".to_string());
-        }
-
-        let password_hash = hash_password(password)?;
-
-        let now = Utc::now();
-        let user = StoredUser {
-            id: uuid::Uuid::new_v4().to_string(),
-            username: username.to_string(),
-            password_hash,
-            display_name: display_name.to_string(),
-            email: email.to_string(),
-            role: role.to_string(),
-            created_at: now,
-            updated_at: now,
-            disabled: false,
-        };
-
-        self.users.insert(username.to_string(), user.clone());
-        self.save()
-            .map_err(|e| format!("Failed to persist user: {e}"))?;
-
-        Ok(user)
-    }
-
-    /// Verify a username/password combination. Returns the user on success.
-    pub fn verify_password(&self, username: &str, password: &str) -> Result<StoredUser, String> {
-        let user = self
-            .users
-            .get(username)
-            .ok_or_else(|| "Invalid username or password".to_string())?;
-
-        if user.disabled {
-            return Err("Account is disabled".to_string());
-        }
-
-        if !verify_password(password, &user.password_hash)? {
-            return Err("Invalid username or password".to_string());
-        }
-
-        Ok(user.clone())
-    }
-
     /// Create a new session for a user. Evicts oldest session if max exceeded.
-    pub fn create_session(&mut self, user: &StoredUser) -> SessionRecord {
+    pub fn create_session(&mut self, user_id: &str, username: &str, role: &str) -> SessionRecord {
         let now = Instant::now();
 
         // Count existing sessions for this user
         let user_sessions: Vec<String> = self
             .sessions
             .iter()
-            .filter(|(_, s)| s.user_id == user.id)
+            .filter(|(_, s)| s.user_id == user_id)
             .map(|(id, _)| id.clone())
             .collect();
 
@@ -238,9 +98,9 @@ impl UserStore {
 
         let session = SessionRecord {
             session_id: uuid::Uuid::new_v4().to_string(),
-            user_id: user.id.clone(),
-            username: user.username.clone(),
-            role: user.role.clone(),
+            user_id: user_id.to_string(),
+            username: username.to_string(),
+            role: role.to_string(),
             created_at: now,
             last_activity: now,
             absolute_expiry: now + self.config.absolute_timeout,
@@ -321,102 +181,6 @@ impl UserStore {
         before - self.sessions.len()
     }
 
-    /// List all users (without password hashes).
-    pub fn list_users(&self) -> Vec<UserSummary> {
-        self.users
-            .values()
-            .map(|u| UserSummary {
-                id: u.id.clone(),
-                username: u.username.clone(),
-                display_name: u.display_name.clone(),
-                email: u.email.clone(),
-                role: u.role.clone(),
-                disabled: u.disabled,
-                created_at: u.created_at,
-            })
-            .collect()
-    }
-
-    /// Get a user by username.
-    pub fn get_user(&self, username: &str) -> Option<&StoredUser> {
-        self.users.get(username)
-    }
-
-    /// Get a user by ID.
-    pub fn get_user_by_id(&self, user_id: &str) -> Option<&StoredUser> {
-        self.users.values().find(|u| u.id == user_id)
-    }
-
-    /// Update a user's details (admin operation).
-    pub fn update_user(
-        &mut self,
-        user_id: &str,
-        display_name: Option<&str>,
-        email: Option<&str>,
-        role: Option<&str>,
-        disabled: Option<bool>,
-    ) -> Result<StoredUser, String> {
-        let user = self
-            .users
-            .values_mut()
-            .find(|u| u.id == user_id)
-            .ok_or_else(|| "User not found".to_string())?;
-
-        if let Some(name) = display_name {
-            user.display_name = name.to_string();
-        }
-        if let Some(email) = email {
-            user.email = email.to_string();
-        }
-        if let Some(role) = role {
-            user.role = role.to_string();
-        }
-        if let Some(disabled) = disabled {
-            user.disabled = disabled;
-        }
-        user.updated_at = Utc::now();
-
-        let updated = user.clone();
-        self.save().map_err(|e| format!("Failed to persist: {e}"))?;
-
-        Ok(updated)
-    }
-
-    /// Change a user's password.
-    pub fn change_password(&mut self, user_id: &str, new_password: &str) -> Result<(), String> {
-        if new_password.len() < 8 {
-            return Err("Password must be at least 8 characters".to_string());
-        }
-
-        let user = self
-            .users
-            .values_mut()
-            .find(|u| u.id == user_id)
-            .ok_or_else(|| "User not found".to_string())?;
-
-        user.password_hash = hash_password(new_password)?;
-        user.updated_at = Utc::now();
-
-        self.save().map_err(|e| format!("Failed to persist: {e}"))?;
-        Ok(())
-    }
-
-    /// Delete a user by ID.
-    pub fn delete_user(&mut self, user_id: &str) -> Result<(), String> {
-        let username = self
-            .users
-            .values()
-            .find(|u| u.id == user_id)
-            .map(|u| u.username.clone())
-            .ok_or_else(|| "User not found".to_string())?;
-
-        self.users.remove(&username);
-        self.revoke_all_user_sessions(user_id);
-        self.save().map_err(|e| format!("Failed to persist: {e}"))?;
-
-        Ok(())
-    }
-
     /// Get session config (for JWT TTL).
     pub const fn session_config(&self) -> &SessionConfig {
         &self.config
@@ -442,7 +206,7 @@ pub struct UserSummary {
 // Password hashing (argon2)
 // ---------------------------------------------------------------------------
 
-fn hash_password(password: &str) -> Result<String, String> {
+pub fn hash_password(password: &str) -> Result<String, String> {
     use argon2::password_hash::rand_core::OsRng;
     use argon2::password_hash::SaltString;
     use argon2::{Argon2, PasswordHasher};
@@ -456,7 +220,7 @@ fn hash_password(password: &str) -> Result<String, String> {
         .map_err(|e| format!("Password hashing failed: {e}"))
 }
 
-fn verify_password(password: &str, hash: &str) -> Result<bool, String> {
+pub fn verify_password(password: &str, hash: &str) -> Result<bool, String> {
     use argon2::password_hash::PasswordHash;
     use argon2::{Argon2, PasswordVerifier};
 
@@ -475,65 +239,18 @@ fn verify_password(password: &str, hash: &str) -> Result<bool, String> {
 mod tests {
     use super::*;
 
-    fn temp_store() -> UserStore {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("users.json");
-        let _ = dir.keep();
-        UserStore::new(path, SessionConfig::default())
-    }
-
-    #[test]
-    fn test_create_and_verify_user() {
-        let mut store = temp_store();
-        let user = store
-            .create_user("alice", "password123", "Alice", "alice@test.com", "admin")
-            .unwrap();
-        assert_eq!(user.username, "alice");
-        assert_eq!(user.role, "admin");
-
-        // Verify correct password
-        let verified = store.verify_password("alice", "password123").unwrap();
-        assert_eq!(verified.id, user.id);
-
-        // Verify wrong password
-        assert!(store.verify_password("alice", "wrong").is_err());
-    }
-
-    #[test]
-    fn test_duplicate_username() {
-        let mut store = temp_store();
-        store
-            .create_user("alice", "password123", "Alice", "alice@test.com", "admin")
-            .unwrap();
-        assert!(store
-            .create_user("alice", "other123456", "Alice2", "a2@test.com", "viewer")
-            .is_err());
-    }
-
-    #[test]
-    fn test_short_password_rejected() {
-        let mut store = temp_store();
-        assert!(store
-            .create_user("alice", "short", "Alice", "alice@test.com", "admin")
-            .is_err());
-    }
-
     #[test]
     fn test_session_lifecycle() {
-        let mut store = temp_store();
-        let user = store
-            .create_user("bob", "password123", "Bob", "bob@test.com", "operator")
-            .unwrap();
-
-        let session = store.create_session(&user);
+        let mut mgr = SessionManager::new(SessionConfig::default());
+        let session = mgr.create_session("user-1", "bob", "operator");
         assert!(!session.session_id.is_empty());
 
         // Validate session
-        assert!(store.validate_session(&session.session_id).is_some());
+        assert!(mgr.validate_session(&session.session_id).is_some());
 
         // Revoke session
-        assert!(store.revoke_session(&session.session_id));
-        assert!(store.validate_session(&session.session_id).is_none());
+        assert!(mgr.revoke_session(&session.session_id));
+        assert!(mgr.validate_session(&session.session_id).is_none());
     }
 
     #[test]
@@ -542,121 +259,40 @@ mod tests {
             max_parallel_sessions: 2,
             ..Default::default()
         };
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("users.json");
-        let _ = dir.keep();
-        let mut store = UserStore::new(path, config);
+        let mut mgr = SessionManager::new(config);
 
-        let user = store
-            .create_user("carol", "password123", "Carol", "carol@test.com", "viewer")
-            .unwrap();
-
-        let s1 = store.create_session(&user);
-        let s2 = store.create_session(&user);
-        let s3 = store.create_session(&user); // should evict s1
+        let s1 = mgr.create_session("user-1", "carol", "viewer");
+        let s2 = mgr.create_session("user-1", "carol", "viewer");
+        let s3 = mgr.create_session("user-1", "carol", "viewer"); // should evict s1
 
         // s1 should be evicted (oldest)
-        assert!(store.validate_session(&s1.session_id).is_none());
-        assert!(store.validate_session(&s2.session_id).is_some());
-        assert!(store.validate_session(&s3.session_id).is_some());
-    }
-
-    #[test]
-    fn test_list_users() {
-        let mut store = temp_store();
-        store
-            .create_user("alice", "password123", "Alice", "alice@test.com", "admin")
-            .unwrap();
-        store
-            .create_user("bob", "password456", "Bob", "bob@test.com", "viewer")
-            .unwrap();
-
-        let list = store.list_users();
-        assert_eq!(list.len(), 2);
-    }
-
-    #[test]
-    fn test_persistence_roundtrip() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("users.json");
-
-        // Create store with users
-        {
-            let mut store = UserStore::new(path.clone(), SessionConfig::default());
-            store
-                .create_user("alice", "password123", "Alice", "alice@test.com", "admin")
-                .unwrap();
-        }
-
-        // Load from same file
-        let store = UserStore::new(path, SessionConfig::default());
-        assert_eq!(store.list_users().len(), 1);
-        assert!(store.verify_password("alice", "password123").is_ok());
-    }
-
-    #[test]
-    fn test_update_user() {
-        let mut store = temp_store();
-        let user = store
-            .create_user("alice", "password123", "Alice", "alice@test.com", "admin")
-            .unwrap();
-
-        let updated = store
-            .update_user(&user.id, Some("Alice Updated"), None, Some("viewer"), None)
-            .unwrap();
-
-        assert_eq!(updated.display_name, "Alice Updated");
-        assert_eq!(updated.role, "viewer");
-    }
-
-    #[test]
-    fn test_delete_user() {
-        let mut store = temp_store();
-        let user = store
-            .create_user("alice", "password123", "Alice", "alice@test.com", "admin")
-            .unwrap();
-
-        store.delete_user(&user.id).unwrap();
-        assert!(store.list_users().is_empty());
-    }
-
-    #[test]
-    fn test_disabled_user_cannot_login() {
-        let mut store = temp_store();
-        let user = store
-            .create_user("alice", "password123", "Alice", "alice@test.com", "admin")
-            .unwrap();
-        store
-            .update_user(&user.id, None, None, None, Some(true))
-            .unwrap();
-
-        assert!(store.verify_password("alice", "password123").is_err());
-    }
-
-    #[test]
-    fn test_change_password() {
-        let mut store = temp_store();
-        let user = store
-            .create_user("alice", "password123", "Alice", "alice@test.com", "admin")
-            .unwrap();
-
-        store.change_password(&user.id, "newpassword456").unwrap();
-        assert!(store.verify_password("alice", "password123").is_err());
-        assert!(store.verify_password("alice", "newpassword456").is_ok());
+        assert!(mgr.validate_session(&s1.session_id).is_none());
+        assert!(mgr.validate_session(&s2.session_id).is_some());
+        assert!(mgr.validate_session(&s3.session_id).is_some());
     }
 
     #[test]
     fn test_revoke_all_user_sessions() {
-        let mut store = temp_store();
-        let user = store
-            .create_user("alice", "password123", "Alice", "alice@test.com", "admin")
-            .unwrap();
+        let mut mgr = SessionManager::new(SessionConfig::default());
+        mgr.create_session("user-1", "alice", "admin");
+        mgr.create_session("user-1", "alice", "admin");
+        mgr.create_session("user-1", "alice", "admin");
 
-        store.create_session(&user);
-        store.create_session(&user);
-        store.create_session(&user);
-
-        let revoked = store.revoke_all_user_sessions(&user.id);
+        let revoked = mgr.revoke_all_user_sessions("user-1");
         assert_eq!(revoked, 3);
+    }
+
+    #[test]
+    fn test_password_hash_and_verify() {
+        let hash = hash_password("password123").unwrap();
+        assert!(verify_password("password123", &hash).unwrap());
+        assert!(!verify_password("wrong", &hash).unwrap());
+    }
+
+    #[test]
+    fn test_short_password_still_hashes() {
+        // Validation of password length is the caller's responsibility
+        let hash = hash_password("short").unwrap();
+        assert!(verify_password("short", &hash).unwrap());
     }
 }

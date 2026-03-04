@@ -849,11 +849,11 @@ mod hamlet_snapshot_tests {
     fn test_propagation_coefficients_resolve_count_at() {
         let mut coeffs = PropagationCoefficients::new(3);
         coeffs.compute_kleene();
-        // coeffs: [1, 1, 2], local_sums: [0, 0, 0]
+        // coeffs: [1, 2, 4], local_sums: [0, 0, 0]
 
         assert_eq!(coeffs.resolve_count_at(0, 5), 5);
-        assert_eq!(coeffs.resolve_count_at(1, 5), 5);
-        assert_eq!(coeffs.resolve_count_at(2, 5), 10);
+        assert_eq!(coeffs.resolve_count_at(1, 5), 10);
+        assert_eq!(coeffs.resolve_count_at(2, 5), 20);
         // Out of bounds
         assert_eq!(coeffs.resolve_count_at(99, 5), 0);
     }
@@ -870,10 +870,10 @@ mod hamlet_snapshot_tests {
         // End indices at positions 1 and 2
         let results = coeffs.resolve_final_counts(&[1, 2], &snapshot);
         assert_eq!(results.len(), 2);
-        // Query 0 (snapshot=2): coeff[1]*2 + coeff[2]*2 = 1*2 + 2*2 = 6
-        assert_eq!(results[0].count, 6);
-        // Query 1 (snapshot=5): coeff[1]*5 + coeff[2]*5 = 1*5 + 2*5 = 15
-        assert_eq!(results[1].count, 15);
+        // Query 0 (snapshot=2): coeff[1]*2 + coeff[2]*2 = 2*2 + 4*2 = 12
+        assert_eq!(results[0].count, 12);
+        // Query 1 (snapshot=5): coeff[1]*5 + coeff[2]*5 = 2*5 + 4*5 = 30
+        assert_eq!(results[1].count, 30);
     }
 
     #[test]

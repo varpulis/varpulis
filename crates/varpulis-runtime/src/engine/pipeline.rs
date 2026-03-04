@@ -687,6 +687,10 @@ fn execute_op_common(
                 for event in current_events.iter() {
                     let results = hamlet.process(Arc::clone(event));
                     for agg_result in results {
+                        // Only handle results for THIS stream's query
+                        if agg_result.query_id != config.query_id {
+                            continue;
+                        }
                         let mut trend_event = Event::new("TrendAggregateResult");
                         trend_event.timestamp = event.timestamp;
                         trend_event
@@ -695,13 +699,23 @@ fn execute_op_common(
                         trend_event
                             .data
                             .insert("query_id".into(), Value::Int(agg_result.query_id as i64));
+                        // Populate ALL configured aggregate fields from the result.
+                        // The aggregator provides trend_count and kleene_event_count;
+                        // field-based aggregates (avg/sum/min/max) are not yet supported
+                        // and fall back to trend_count.
                         for (alias, agg_type) in &config.fields {
-                            if agg_result.aggregate == *agg_type {
-                                trend_event.data.insert(
-                                    alias.clone().into(),
-                                    Value::Int(agg_result.value as i64),
-                                );
-                            }
+                            let value = match agg_type {
+                                crate::greta::GretaAggregate::CountTrends => {
+                                    Value::Int(agg_result.trend_count as i64)
+                                }
+                                crate::greta::GretaAggregate::CountEvents(_) => {
+                                    Value::Int(agg_result.kleene_event_count as i64)
+                                }
+                                // Field-based aggregates: not yet tracked in Hamlet.
+                                // Output trend_count as placeholder.
+                                _ => Value::Int(agg_result.trend_count as i64),
+                            };
+                            trend_event.data.insert(alias.clone().into(), value);
                         }
                         trend_event
                             .data

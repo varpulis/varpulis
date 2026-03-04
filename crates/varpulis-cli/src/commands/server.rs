@@ -227,7 +227,7 @@ pub async fn run_server(
     nats_url: Option<String>,
     mtls_client: Option<reqwest::Client>,
     max_queue_depth: u64,
-    user_store: Option<users::SharedUserStore>,
+    session_manager: Option<users::SharedSessionManager>,
 ) -> Result<()> {
     let tls_enabled = tls_config.is_some();
     let protocol = if tls_enabled { "wss" } else { "ws" };
@@ -404,6 +404,57 @@ pub async fn run_server(
                         tracing::error!("Database migration failed: {}", e);
                     }
                     info!("SaaS database connected");
+
+                    // Bootstrap admin user if none exists in DB
+                    match varpulis_db::repo::has_admin_user(&pool).await {
+                        Ok(false) => {
+                            let (password, is_generated) =
+                                match std::env::var("VARPULIS_ADMIN_PASSWORD") {
+                                    Ok(pw) if !pw.is_empty() => (pw, false),
+                                    _ => (auth::generate_api_key(), true),
+                                };
+                            match users::hash_password(&password) {
+                                Ok(hash) => {
+                                    match varpulis_db::repo::create_local_user(
+                                        &pool,
+                                        "admin",
+                                        &hash,
+                                        "Administrator",
+                                        "",
+                                        "admin",
+                                    )
+                                    .await
+                                    {
+                                        Ok(_) => {
+                                            info!("Created default admin user in database");
+                                            info!("  Username: admin");
+                                            if is_generated {
+                                                info!("  Password: {}", password);
+                                                info!("  Change this password immediately");
+                                            } else {
+                                                info!(
+                                                    "  Password: (set via VARPULIS_ADMIN_PASSWORD)"
+                                                );
+                                            }
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!("Failed to create admin user: {}", e);
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::warn!("Failed to hash admin password: {}", e);
+                                }
+                            }
+                        }
+                        Ok(true) => {
+                            info!("Admin user exists in database");
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to check for admin user: {}", e);
+                        }
+                    }
+
                     Some(pool)
                 }
                 Err(e) => {
@@ -432,12 +483,12 @@ pub async fn run_server(
     };
     let audit_r = audit::audit_routes(audit_logger.clone());
 
-    // OAuth routes — enabled when GITHUB_CLIENT_ID is set OR user_store is provided.
+    // OAuth routes — enabled when GITHUB_CLIENT_ID is set OR session_manager is provided.
     // Both GitHub OAuth and local auth share the same JWT infrastructure.
     let oauth_state: Option<oauth::SharedOAuthState> = {
         let github_config = oauth::OAuthConfig::from_env();
         let has_github = github_config.is_some();
-        let has_local = user_store.is_some();
+        let has_local = session_manager.is_some();
 
         if has_github || has_local {
             // If no GitHub config, create a minimal config for JWT operations only
@@ -470,8 +521,8 @@ pub async fn run_server(
             let mut oauth =
                 oauth::OAuthState::new(oauth_config).with_audit_logger(audit_logger.clone());
 
-            if let Some(ref store) = user_store {
-                oauth = oauth.with_user_store(store.clone());
+            if let Some(ref mgr) = session_manager {
+                oauth = oauth.with_session_manager(mgr.clone());
             }
 
             #[cfg(feature = "saas")]
@@ -482,14 +533,14 @@ pub async fn run_server(
             let state = std::sync::Arc::new(oauth);
             oauth::spawn_session_cleanup(state.clone());
 
-            // Spawn periodic user session cleanup
-            if let Some(ref store) = user_store {
-                let store_cleanup = store.clone();
+            // Spawn periodic session cleanup
+            if let Some(ref mgr) = session_manager {
+                let mgr_cleanup = mgr.clone();
                 tokio::spawn(async move {
                     let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
                     loop {
                         interval.tick().await;
-                        let removed = store_cleanup.write().await.cleanup_expired();
+                        let removed = mgr_cleanup.write().await.cleanup_expired();
                         if removed > 0 {
                             tracing::debug!("Cleaned up {} expired sessions", removed);
                         }
@@ -534,7 +585,8 @@ pub async fn run_server(
         use varpulis_cli::admin;
         let admin_pool = db_pool.clone();
         let admin_oauth = oauth_state.clone();
-        admin::admin_routes(admin_pool, admin_oauth)
+        let admin_tm = Some(api_tenant_manager.clone());
+        admin::admin_routes(admin_pool, admin_oauth, admin_tm)
     };
 
     // Usage flush task (saas only)

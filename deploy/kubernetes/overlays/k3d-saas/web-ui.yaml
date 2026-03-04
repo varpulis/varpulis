@@ -34,7 +34,20 @@ data:
             }
         }
 
-        # Proxy API and auth to worker (SaaS routes live on the server command)
+        # Proxy cluster API to coordinator (cluster management endpoints)
+        location /api/v1/cluster/ {
+            proxy_pass http://varpulis-coordinator:9100;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_connect_timeout 60s;
+            proxy_send_timeout 60s;
+            proxy_read_timeout 60s;
+        }
+
+        # Proxy remaining API and auth to worker (SaaS routes live on the server command)
         location /api/ {
             proxy_pass http://varpulis:9000;
             proxy_http_version 1.1;

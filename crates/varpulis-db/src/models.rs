@@ -3,15 +3,21 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
 
-/// A registered user, linked to a GitHub identity.
+/// A registered user (GitHub OAuth, local username/password, or both).
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct User {
     pub id: Uuid,
-    pub github_id: String,
+    pub github_id: Option<String>,
     pub email: String,
     pub name: String,
     pub avatar_url: String,
     pub created_at: DateTime<Utc>,
+    pub username: Option<String>,
+    pub password_hash: Option<String>,
+    pub display_name: String,
+    pub role: String,
+    pub disabled: bool,
+    pub updated_at: DateTime<Utc>,
 }
 
 /// An organization that owns pipelines and API keys.
@@ -76,13 +82,19 @@ mod tests {
     fn test_user_fields() {
         let user = User {
             id: Uuid::new_v4(),
-            github_id: "12345".to_string(),
+            github_id: Some("12345".to_string()),
             email: "test@example.com".to_string(),
             name: "Test User".to_string(),
             avatar_url: "https://example.com/avatar.png".to_string(),
             created_at: Utc::now(),
+            username: None,
+            password_hash: None,
+            display_name: String::new(),
+            role: "viewer".to_string(),
+            disabled: false,
+            updated_at: Utc::now(),
         };
-        assert_eq!(user.github_id, "12345");
+        assert_eq!(user.github_id.as_deref(), Some("12345"));
         assert_eq!(user.email, "test@example.com");
     }
 
@@ -153,11 +165,17 @@ mod tests {
     fn test_model_serialization() {
         let user = User {
             id: Uuid::new_v4(),
-            github_id: "99999".to_string(),
+            github_id: Some("99999".to_string()),
             email: "ser@test.com".to_string(),
             name: "Serialize Test".to_string(),
             avatar_url: String::new(),
             created_at: Utc::now(),
+            username: None,
+            password_hash: None,
+            display_name: String::new(),
+            role: "viewer".to_string(),
+            disabled: false,
+            updated_at: Utc::now(),
         };
         let json = serde_json::to_string(&user).unwrap();
         let deserialized: User = serde_json::from_str(&json).unwrap();

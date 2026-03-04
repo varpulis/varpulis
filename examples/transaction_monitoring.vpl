@@ -1,0 +1,113 @@
+# Transaction Monitoring with Kleene Closure + Trend Aggregation
+#
+# Demonstrates monitoring multi-step transactions where:
+# - TransactionOpen starts a transaction
+# - ProcessingStep+ captures one or more intermediate steps (Kleene closure)
+# - TransactionClose completes the transaction
+#
+# Using .trend_aggregate() with the Hamlet engine, we efficiently compute
+# aggregate statistics over all possible matching trends without enumerating
+# each one individually — O(n) per event instead of O(2^n).
+
+# =============================================================================
+# Event Definitions
+# =============================================================================
+
+event TransactionOpen:
+    tx_id: str
+    customer_id: str
+    channel: str
+    ts: timestamp
+
+event ProcessingStep:
+    tx_id: str
+    step_name: str
+    duration: float
+    error_count: int
+    throughput: float
+    status: str
+    ts: timestamp
+
+event TransactionClose:
+    tx_id: str
+    final_status: str
+    ts: timestamp
+
+# =============================================================================
+# Stream 1: Trend Aggregation — Aggregate Step Statistics per Transaction
+# =============================================================================
+#
+# Pattern: TransactionOpen -> ProcessingStep+ -> TransactionClose
+#
+# The Kleene closure (all) captures every intermediate processing step.
+# Hamlet computes aggregates over all matching trends efficiently:
+#   - avg_dur:     average duration across all step trends
+#   - max_errors:  maximum error count across all step trends
+#   - total_tput:  sum of throughput across all step trends
+#   - step_count:  number of processing step events
+#   - trend_count: number of unique trend combinations (2^n - 1)
+
+stream TransactionStats = TransactionOpen as open
+    -> all ProcessingStep as steps
+    -> TransactionClose as close
+    .within(30m)
+    .partition_by(tx_id)
+    .trend_aggregate(
+        avg_dur: avg_trends(steps.duration),
+        max_errors: max_trends(steps.error_count),
+        total_tput: sum_trends(steps.throughput),
+        step_count: count_events(steps),
+        trend_count: count_trends()
+    )
+    .emit(
+        event_type: "TransactionSummary",
+        tx_id: open.tx_id,
+        avg_duration: avg_dur,
+        max_error_count: max_errors,
+        total_throughput: total_tput,
+        steps: step_count,
+        trends: trend_count
+    )
+
+# =============================================================================
+# Stream 2: Detection — Slow Transaction Step Detection (SASE+)
+# =============================================================================
+#
+# This companion stream uses the SASE+ engine (no .trend_aggregate()) to
+# detect individual slow processing steps within a transaction. This shows
+# how the same Kleene pattern can be used for both detection and aggregation.
+
+stream SlowTransactionStep = TransactionOpen as open
+    -> all ProcessingStep where duration > 5000.0 as slow_step
+    .within(30m)
+    .emit(
+        event_type: "SlowStepAlert",
+        tx_id: open.tx_id,
+        step_name: slow_step.step_name,
+        duration: slow_step.duration,
+        severity: "warning"
+    )
+
+# =============================================================================
+# Stream 3: Multi-Query Sharing — Aggregation by Channel
+# =============================================================================
+#
+# Shares the same Kleene sub-pattern (ProcessingStep+) with TransactionStats.
+# The engine automatically detects this overlap and uses a single shared
+# Hamlet graph, dispatching results per-query.
+
+stream ChannelStats = TransactionOpen as open
+    -> all ProcessingStep as steps
+    -> TransactionClose as close
+    .within(30m)
+    .partition_by(channel)
+    .trend_aggregate(
+        trend_count: count_trends(),
+        step_count: count_events(steps)
+    )
+    .emit(
+        event_type: "ChannelSummary",
+        channel: open.channel,
+        trends: trend_count,
+        steps: step_count
+    )
