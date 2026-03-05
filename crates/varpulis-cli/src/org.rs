@@ -17,6 +17,7 @@ use crate::oauth::{self, SharedOAuthState};
 pub struct OrgState {
     pub db_pool: Option<varpulis_db::PgPool>,
     pub oauth_state: Option<SharedOAuthState>,
+    pub tenant_manager: Option<varpulis_runtime::SharedTenantManager>,
 }
 
 // ---------------------------------------------------------------------------
@@ -41,13 +42,7 @@ async fn extract_claims(
     }
 
     // Check revocation
-    let hash = {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        let mut hasher = DefaultHasher::new();
-        token.hash(&mut hasher);
-        format!("{:016x}", hasher.finish())
-    };
+    let hash = crate::oauth::token_hash(&token);
     if state.sessions.read().await.is_revoked(&hash) {
         return Err(StatusCode::UNAUTHORIZED);
     }
@@ -61,6 +56,53 @@ async fn extract_claims(
     .map_err(|_| StatusCode::UNAUTHORIZED)?;
 
     Ok(token_data.claims)
+}
+
+/// Verify the authenticated user owns (or is admin of) the given org.
+async fn verify_org_ownership(
+    pool: &varpulis_db::PgPool,
+    claims: &oauth::Claims,
+    org_uuid: uuid::Uuid,
+) -> Result<(), Response> {
+    // Global admins can access any org
+    if claims.role == "admin" {
+        return Ok(());
+    }
+
+    let user_uuid: uuid::Uuid = claims.user_id.parse().map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Invalid user_id in token"})),
+        )
+            .into_response()
+    })?;
+
+    let org = varpulis_db::repo::get_organization(pool, org_uuid)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Internal error"})),
+            )
+                .into_response()
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "Organization not found"})),
+            )
+                .into_response()
+        })?;
+
+    if org.owner_id != user_uuid {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error": "Forbidden"})),
+        )
+            .into_response());
+    }
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -100,16 +142,19 @@ async fn handle_list_orgs(State(state): State<OrgState>, headers: HeaderMap) -> 
         }
     };
 
-    match varpulis_db::repo::get_user_organizations(&pool, user_id).await {
-        Ok(orgs) => {
-            let orgs_json: Vec<serde_json::Value> = orgs
+    // Get orgs with membership roles
+    let memberships = varpulis_db::repo::get_user_memberships(&pool, user_id).await;
+    match memberships {
+        Ok(membership_list) => {
+            let orgs_json: Vec<serde_json::Value> = membership_list
                 .iter()
-                .map(|o| {
+                .map(|(member, org)| {
                     serde_json::json!({
-                        "id": o.id.to_string(),
-                        "name": o.name,
-                        "tier": o.tier,
-                        "created_at": o.created_at.to_rfc3339(),
+                        "id": org.id.to_string(),
+                        "name": org.name,
+                        "tier": org.tier,
+                        "role": member.role,
+                        "created_at": org.created_at.to_rfc3339(),
                     })
                 })
                 .collect();
@@ -119,13 +164,36 @@ async fn handle_list_orgs(State(state): State<OrgState>, headers: HeaderMap) -> 
             )
                 .into_response()
         }
-        Err(e) => {
-            tracing::error!("Failed to list orgs: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": "Internal error"})),
-            )
-                .into_response()
+        Err(_) => {
+            // Fallback to legacy endpoint without roles
+            match varpulis_db::repo::get_user_organizations(&pool, user_id).await {
+                Ok(orgs) => {
+                    let orgs_json: Vec<serde_json::Value> = orgs
+                        .iter()
+                        .map(|o| {
+                            serde_json::json!({
+                                "id": o.id.to_string(),
+                                "name": o.name,
+                                "tier": o.tier,
+                                "created_at": o.created_at.to_rfc3339(),
+                            })
+                        })
+                        .collect();
+                    (
+                        StatusCode::OK,
+                        Json(serde_json::json!({"organizations": orgs_json})),
+                    )
+                        .into_response()
+                }
+                Err(e) => {
+                    tracing::error!("Failed to list orgs: {}", e);
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({"error": "Internal error"})),
+                    )
+                        .into_response()
+                }
+            }
         }
     }
 }
@@ -133,6 +201,8 @@ async fn handle_list_orgs(State(state): State<OrgState>, headers: HeaderMap) -> 
 #[derive(Debug, Deserialize)]
 struct CreateApiKeyRequest {
     name: Option<String>,
+    scopes: Option<String>,
+    expires_in: Option<String>,
 }
 
 /// POST /api/v1/orgs/{org_id}/api-keys — generate a new API key.
@@ -174,49 +244,83 @@ async fn handle_create_api_key(
         }
     };
 
-    if claims.org_id != org_id && !claims.org_id.is_empty() {
-        // Verify ownership
-        if let Ok(Some(org)) = varpulis_db::repo::get_organization(&pool, org_uuid).await {
-            let user_uuid: uuid::Uuid = match claims.user_id.parse() {
-                Ok(id) => id,
-                Err(_) => {
-                    return (
-                        StatusCode::BAD_REQUEST,
-                        Json(serde_json::json!({"error": "Invalid user_id"})),
-                    )
-                        .into_response();
-                }
-            };
-            if org.owner_id != user_uuid {
-                return (
-                    StatusCode::FORBIDDEN,
-                    Json(serde_json::json!({"error": "Forbidden"})),
-                )
-                    .into_response();
-            }
-        }
+    // Always verify ownership via DB lookup
+    if let Err(resp) = verify_org_ownership(&pool, &claims, org_uuid).await {
+        return resp;
     }
 
     // Generate 32 random bytes, hex encode with vpl_ prefix
     let raw_bytes: [u8; 32] = rand::random();
     let raw_key = format!("vpl_{}", hex::encode(raw_bytes));
+    let key_prefix = raw_key[..12].to_string(); // "vpl_" + 8 hex chars
 
     // SHA-256 hash for storage
     use sha2::Digest;
     let hash = hex::encode(sha2::Sha256::digest(raw_key.as_bytes()));
 
     let key_name = body.name.unwrap_or_else(|| "default".to_string());
-    match varpulis_db::repo::create_api_key(&pool, org_uuid, &hash, &key_name).await {
-        Ok(api_key) => (
-            StatusCode::CREATED,
-            Json(serde_json::json!({
-                "id": api_key.id.to_string(),
-                "key": raw_key,
-                "name": api_key.name,
-                "created_at": api_key.created_at.to_rfc3339(),
-            })),
-        )
-            .into_response(),
+    let scopes = body.scopes.unwrap_or_else(|| "*".to_string());
+
+    // Parse expiry duration
+    let expires_at = body.expires_in.as_deref().and_then(|dur| {
+        let days: i64 = dur.strip_suffix('d').and_then(|n| n.parse().ok())?;
+        Some(chrono::Utc::now() + chrono::Duration::days(days))
+    });
+
+    // Parse user_id for created_by
+    let created_by: Option<uuid::Uuid> = claims.user_id.parse().ok();
+
+    match varpulis_db::repo::create_api_key_extended(
+        &pool,
+        org_uuid,
+        &hash,
+        &key_name,
+        &key_prefix,
+        &scopes,
+        expires_at,
+        created_by,
+    )
+    .await
+    {
+        Ok(api_key) => {
+            // Auto-provision runtime tenant if not already registered
+            if let Some(ref tm) = state.tenant_manager {
+                let tid = varpulis_runtime::TenantId::new(org_uuid.to_string());
+                let mut mgr = tm.write().await;
+                if mgr.get_tenant(&tid).is_none() {
+                    // Look up org tier for quota
+                    let tier = match varpulis_db::repo::get_organization(&pool, org_uuid).await {
+                        Ok(Some(org)) => org.tier,
+                        _ => "free".to_string(),
+                    };
+                    let org_name = match varpulis_db::repo::get_organization(&pool, org_uuid).await
+                    {
+                        Ok(Some(org)) => org.name,
+                        _ => "unknown".to_string(),
+                    };
+                    let quota = varpulis_runtime::TenantQuota::for_tier(&tier);
+                    if let Err(e) = mgr.create_tenant_with_id(tid, org_name, hash.clone(), quota) {
+                        tracing::warn!("Failed to auto-provision runtime tenant: {}", e);
+                    } else {
+                        tracing::info!("Auto-provisioned runtime tenant for org {}", org_uuid);
+                    }
+                }
+            }
+
+            (
+                StatusCode::CREATED,
+                Json(serde_json::json!({
+                    "id": api_key.id.to_string(),
+                    "api_key": raw_key,
+                    "name": api_key.name,
+                    "key_prefix": key_prefix,
+                    "scopes": scopes,
+                    "expires_at": expires_at.map(|t| t.to_rfc3339()),
+                    "created_at": api_key.created_at.to_rfc3339(),
+                })),
+            )
+                .into_response()
+        }
         Err(e) => {
             tracing::error!("Failed to create API key: {}", e);
             (
@@ -236,7 +340,7 @@ async fn handle_list_api_keys(
 ) -> Response {
     let auth_header = headers.get("authorization").and_then(|v| v.to_str().ok());
 
-    let _claims = match extract_claims(auth_header, &state.oauth_state).await {
+    let claims = match extract_claims(auth_header, &state.oauth_state).await {
         Ok(c) => c,
         Err(status) => {
             return (status, Json(serde_json::json!({"error": "Unauthorized"}))).into_response();
@@ -265,6 +369,11 @@ async fn handle_list_api_keys(
         }
     };
 
+    // Verify the authenticated user owns this org
+    if let Err(resp) = verify_org_ownership(&pool, &claims, org_uuid).await {
+        return resp;
+    }
+
     match varpulis_db::repo::list_api_keys(&pool, org_uuid).await {
         Ok(keys) => {
             let keys_json: Vec<serde_json::Value> = keys
@@ -273,7 +382,10 @@ async fn handle_list_api_keys(
                     serde_json::json!({
                         "id": k.id.to_string(),
                         "name": k.name,
+                        "key_prefix": k.key_prefix,
+                        "scopes": k.scopes,
                         "created_at": k.created_at.to_rfc3339(),
+                        "expires_at": k.expires_at.map(|t| t.to_rfc3339()),
                         "last_used_at": k.last_used_at.map(|t| t.to_rfc3339()),
                     })
                 })
@@ -303,7 +415,7 @@ async fn handle_delete_api_key(
 ) -> Response {
     let auth_header = headers.get("authorization").and_then(|v| v.to_str().ok());
 
-    let _claims = match extract_claims(auth_header, &state.oauth_state).await {
+    let claims = match extract_claims(auth_header, &state.oauth_state).await {
         Ok(c) => c,
         Err(status) => {
             return (status, Json(serde_json::json!({"error": "Unauthorized"}))).into_response();
@@ -321,7 +433,7 @@ async fn handle_delete_api_key(
         }
     };
 
-    let _org_uuid: uuid::Uuid = match org_id.parse() {
+    let org_uuid: uuid::Uuid = match org_id.parse() {
         Ok(id) => id,
         Err(_) => {
             return (
@@ -331,6 +443,11 @@ async fn handle_delete_api_key(
                 .into_response();
         }
     };
+
+    // Verify the authenticated user owns this org
+    if let Err(resp) = verify_org_ownership(&pool, &claims, org_uuid).await {
+        return resp;
+    }
 
     let key_uuid: uuid::Uuid = match key_id.parse() {
         Ok(id) => id,
@@ -343,10 +460,330 @@ async fn handle_delete_api_key(
         }
     };
 
-    match varpulis_db::repo::delete_api_key(&pool, key_uuid).await {
+    match varpulis_db::repo::delete_api_key(&pool, key_uuid, org_uuid).await {
         Ok(()) => (StatusCode::OK, Json(serde_json::json!({"ok": true}))).into_response(),
         Err(e) => {
             tracing::error!("Failed to delete API key: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Internal error"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Member management endpoints
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+struct InviteMemberRequest {
+    email: String,
+    role: Option<String>,
+}
+
+/// POST /api/v1/orgs/{org_id}/members — invite a member.
+async fn handle_invite_member(
+    State(state): State<OrgState>,
+    Path(org_id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<InviteMemberRequest>,
+) -> Response {
+    let auth_header = headers.get("authorization").and_then(|v| v.to_str().ok());
+    let claims = match extract_claims(auth_header, &state.oauth_state).await {
+        Ok(c) => c,
+        Err(status) => {
+            return (status, Json(serde_json::json!({"error": "Unauthorized"}))).into_response();
+        }
+    };
+
+    let pool = match state.db_pool {
+        Some(ref p) => p.clone(),
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": "Database not configured"})),
+            )
+                .into_response();
+        }
+    };
+
+    let org_uuid: uuid::Uuid = match org_id.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Invalid org_id"})),
+            )
+                .into_response();
+        }
+    };
+
+    if let Err(resp) = verify_org_ownership(&pool, &claims, org_uuid).await {
+        return resp;
+    }
+
+    // Lookup user by email
+    let user = match varpulis_db::repo::get_user_by_email(&pool, &body.email).await {
+        Ok(Some(u)) => u,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "User not found with that email"})),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            tracing::error!("Failed to lookup user: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Internal error"})),
+            )
+                .into_response();
+        }
+    };
+
+    let role = body.role.unwrap_or_else(|| "member".to_string());
+    match varpulis_db::repo::add_org_member(&pool, org_uuid, user.id, &role).await {
+        Ok(_) => (
+            StatusCode::CREATED,
+            Json(serde_json::json!({"ok": true, "user_id": user.id.to_string()})),
+        )
+            .into_response(),
+        Err(e) => {
+            tracing::error!("Failed to add org member: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Internal error"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// GET /api/v1/orgs/{org_id}/members — list members.
+async fn handle_list_members(
+    State(state): State<OrgState>,
+    Path(org_id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let auth_header = headers.get("authorization").and_then(|v| v.to_str().ok());
+    let claims = match extract_claims(auth_header, &state.oauth_state).await {
+        Ok(c) => c,
+        Err(status) => {
+            return (status, Json(serde_json::json!({"error": "Unauthorized"}))).into_response();
+        }
+    };
+
+    let pool = match state.db_pool {
+        Some(ref p) => p.clone(),
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": "Database not configured"})),
+            )
+                .into_response();
+        }
+    };
+
+    let org_uuid: uuid::Uuid = match org_id.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Invalid org_id"})),
+            )
+                .into_response();
+        }
+    };
+
+    if let Err(resp) = verify_org_ownership(&pool, &claims, org_uuid).await {
+        return resp;
+    }
+
+    match varpulis_db::repo::list_org_members(&pool, org_uuid).await {
+        Ok(members) => {
+            let members_json: Vec<serde_json::Value> = members
+                .iter()
+                .map(|(member, user)| {
+                    serde_json::json!({
+                        "user_id": user.id.to_string(),
+                        "name": user.name,
+                        "email": user.email,
+                        "role": member.role,
+                        "status": member.status,
+                        "accepted_at": member.accepted_at.map(|t| t.to_rfc3339()),
+                    })
+                })
+                .collect();
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({"members": members_json})),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            tracing::error!("Failed to list org members: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Internal error"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// DELETE /api/v1/orgs/{org_id}/members/{user_id} — remove a member.
+async fn handle_remove_member(
+    State(state): State<OrgState>,
+    Path((org_id, user_id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Response {
+    let auth_header = headers.get("authorization").and_then(|v| v.to_str().ok());
+    let claims = match extract_claims(auth_header, &state.oauth_state).await {
+        Ok(c) => c,
+        Err(status) => {
+            return (status, Json(serde_json::json!({"error": "Unauthorized"}))).into_response();
+        }
+    };
+
+    let pool = match state.db_pool {
+        Some(ref p) => p.clone(),
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": "Database not configured"})),
+            )
+                .into_response();
+        }
+    };
+
+    let org_uuid: uuid::Uuid = match org_id.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Invalid org_id"})),
+            )
+                .into_response();
+        }
+    };
+
+    if let Err(resp) = verify_org_ownership(&pool, &claims, org_uuid).await {
+        return resp;
+    }
+
+    let member_uuid: uuid::Uuid = match user_id.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Invalid user_id"})),
+            )
+                .into_response();
+        }
+    };
+
+    match varpulis_db::repo::remove_org_member(&pool, org_uuid, member_uuid).await {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({"ok": true}))).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to remove org member: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Internal error"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateMemberRoleRequest {
+    role: String,
+}
+
+/// PUT /api/v1/orgs/{org_id}/members/{user_id} — change member role.
+async fn handle_update_member_role(
+    State(state): State<OrgState>,
+    Path((org_id, user_id)): Path<(String, String)>,
+    headers: HeaderMap,
+    Json(body): Json<UpdateMemberRoleRequest>,
+) -> Response {
+    let auth_header = headers.get("authorization").and_then(|v| v.to_str().ok());
+    let claims = match extract_claims(auth_header, &state.oauth_state).await {
+        Ok(c) => c,
+        Err(status) => {
+            return (status, Json(serde_json::json!({"error": "Unauthorized"}))).into_response();
+        }
+    };
+
+    let pool = match state.db_pool {
+        Some(ref p) => p.clone(),
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": "Database not configured"})),
+            )
+                .into_response();
+        }
+    };
+
+    let org_uuid: uuid::Uuid = match org_id.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Invalid org_id"})),
+            )
+                .into_response();
+        }
+    };
+
+    if let Err(resp) = verify_org_ownership(&pool, &claims, org_uuid).await {
+        return resp;
+    }
+
+    let member_uuid: uuid::Uuid = match user_id.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Invalid user_id"})),
+            )
+                .into_response();
+        }
+    };
+
+    // Prevent removing the last owner
+    if body.role != "owner" {
+        if let Ok(Some(current)) =
+            varpulis_db::repo::get_user_org_membership(&pool, member_uuid, org_uuid).await
+        {
+            if current.role == "owner" {
+                // Check if there's another owner
+                if let Ok(members) = varpulis_db::repo::list_org_members(&pool, org_uuid).await {
+                    let owner_count = members.iter().filter(|(m, _)| m.role == "owner").count();
+                    if owner_count <= 1 {
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            Json(serde_json::json!({
+                                "error": "Cannot remove the last owner. Transfer ownership first."
+                            })),
+                        )
+                            .into_response();
+                    }
+                }
+            }
+        }
+    }
+
+    // Update via remove + re-add (simple approach)
+    let _ = varpulis_db::repo::remove_org_member(&pool, org_uuid, member_uuid).await;
+    match varpulis_db::repo::add_org_member(&pool, org_uuid, member_uuid, &body.role).await {
+        Ok(_) => (StatusCode::OK, Json(serde_json::json!({"ok": true}))).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to update member role: {}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({"error": "Internal error"})),
@@ -363,10 +800,12 @@ async fn handle_delete_api_key(
 pub fn org_routes(
     db_pool: Option<varpulis_db::PgPool>,
     oauth_state: Option<SharedOAuthState>,
+    tenant_manager: Option<varpulis_runtime::SharedTenantManager>,
 ) -> Router {
     let state = OrgState {
         db_pool,
         oauth_state,
+        tenant_manager,
     };
 
     Router::new()
@@ -381,6 +820,15 @@ pub fn org_routes(
         .route(
             "/api/v1/orgs/{org_id}/api-keys/{key_id}",
             delete(handle_delete_api_key),
+        )
+        // Member management
+        .route(
+            "/api/v1/orgs/{org_id}/members",
+            post(handle_invite_member).get(handle_list_members),
+        )
+        .route(
+            "/api/v1/orgs/{org_id}/members/{user_id}",
+            delete(handle_remove_member).put(handle_update_member_role),
         )
         .with_state(state)
 }
