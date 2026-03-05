@@ -12,6 +12,8 @@ pub mod auth;
 pub mod billing;
 pub mod client;
 pub mod config;
+#[cfg(feature = "saas")]
+pub mod email;
 pub mod oauth;
 pub mod oidc;
 #[cfg(feature = "saas")]
@@ -19,6 +21,8 @@ pub mod org;
 pub mod playground;
 pub mod rate_limit;
 pub mod security;
+#[cfg(feature = "saas")]
+pub mod tenant_context;
 pub mod users;
 pub mod websocket;
 

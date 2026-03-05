@@ -31,10 +31,22 @@ export interface UsageSummary {
   total_events_this_month: number
 }
 
+export interface GlobalPipeline {
+  id: string
+  name: string
+  vpl_source: string
+  status: string
+  tenant_count: number
+  deployed_by: string | null
+  created_at: string
+  updated_at: string
+}
+
 export const useAdminStore = defineStore('admin', () => {
   const tenants = ref<Tenant[]>([])
   const selectedTenant = ref<TenantDetail | null>(null)
   const usageSummary = ref<UsageSummary | null>(null)
+  const globalPipelines = ref<GlobalPipeline[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
 
@@ -130,10 +142,36 @@ export const useAdminStore = defineStore('admin', () => {
     }
   }
 
+  async function fetchGlobalPipelines() {
+    try {
+      const res = await api.get('/admin/global-pipelines')
+      globalPipelines.value = res.data.global_pipelines ?? []
+    } catch {
+      globalPipelines.value = []
+    }
+  }
+
+  async function deployGlobalPipeline(name: string, vplSource: string) {
+    const res = await api.post('/admin/global-pipelines', { name, vpl_source: vplSource })
+    await fetchGlobalPipelines()
+    return res.data as { template_id: string; name: string; copies_created: number }
+  }
+
+  async function updateGlobalPipeline(id: string, vplSource: string) {
+    await api.put(`/admin/global-pipelines/${id}`, { vpl_source: vplSource })
+    await fetchGlobalPipelines()
+  }
+
+  async function undeployGlobalPipeline(id: string) {
+    await api.delete(`/admin/global-pipelines/${id}`)
+    await fetchGlobalPipelines()
+  }
+
   return {
     tenants,
     selectedTenant,
     usageSummary,
+    globalPipelines,
     loading,
     error,
     activeTenants,
@@ -148,5 +186,9 @@ export const useAdminStore = defineStore('admin', () => {
     updateLimits,
     revokeTenant,
     fetchUsageSummary,
+    fetchGlobalPipelines,
+    deployGlobalPipeline,
+    updateGlobalPipeline,
+    undeployGlobalPipeline,
   }
 })

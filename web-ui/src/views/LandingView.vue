@@ -81,9 +81,6 @@ function goToPlayground(exampleId?: string) {
   }
 }
 
-function goToDashboard() {
-  router.push('/')
-}
 </script>
 
 <template>
@@ -319,14 +316,14 @@ function goToDashboard() {
           Get started in seconds with the interactive playground, or install the CLI.
         </p>
         <div class="d-flex justify-center ga-4 flex-wrap">
-          <v-btn color="primary" size="large" @click="goToPlayground()" prepend-icon="mdi-play-circle">
+          <v-btn color="primary" size="large" href="/signup" prepend-icon="mdi-rocket-launch">
+            Start Free Trial
+          </v-btn>
+          <v-btn variant="outlined" size="large" @click="goToPlayground()" prepend-icon="mdi-play-circle">
             Try the Playground
           </v-btn>
           <v-btn variant="outlined" size="large" href="https://github.com/varpulis/varpulis" target="_blank" prepend-icon="mdi-star-outline">
             Star on GitHub
-          </v-btn>
-          <v-btn variant="text" size="large" @click="goToDashboard()" prepend-icon="mdi-view-dashboard">
-            Go to Dashboard
           </v-btn>
         </div>
         <div class="mt-6">

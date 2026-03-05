@@ -29,7 +29,10 @@ fn create_tenant_basic() {
 
     let tenant = mgr.get_tenant(&id).unwrap();
     assert_eq!(tenant.name, "Acme Corp");
-    assert_eq!(tenant.api_key, "acme-key");
+    assert_eq!(
+        tenant.api_key_hash,
+        varpulis_runtime::tenant::hash_api_key("acme-key")
+    );
 }
 
 #[test]
@@ -575,7 +578,10 @@ async fn tenant_snapshot_round_trip() {
 
     assert_eq!(restored.id, id.0);
     assert_eq!(restored.name, "Snap");
-    assert_eq!(restored.api_key, "snap-key");
+    assert_eq!(
+        restored.api_key_hash,
+        varpulis_runtime::tenant::hash_api_key("snap-key")
+    );
     assert_eq!(restored.events_processed, 42);
     assert_eq!(restored.output_events_emitted, 7);
     assert_eq!(restored.pipelines.len(), 1);

@@ -57,6 +57,7 @@ openidconnect = { version = "4", optional = true }
 
 # SaaS layer (optional, behind "saas" feature)
 varpulis-db = { version = "0.5.0", path = "../varpulis-db", optional = true }
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "tokio1-rustls-tls", "builder"], optional = true }
 
 # OpenTelemetry (optional, behind "otel" feature)
 opentelemetry = { workspace = true, optional = true }
@@ -72,7 +73,7 @@ onnx = ["varpulis-runtime/onnx"]
 k8s = ["varpulis-cluster/k8s"]
 raft = ["varpulis-cluster/raft"]
 persistent = ["raft", "varpulis-cluster/persistent"]
-saas = ["varpulis-db"]
+saas = ["varpulis-db", "lettre"]
 oidc = ["openidconnect"]
 otel = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "tracing-opentelemetry", "varpulis-cluster/otel"]
 

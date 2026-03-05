@@ -45,13 +45,7 @@ async fn extract_admin_claims(
     }
 
     // Check revocation
-    let hash = {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        let mut hasher = DefaultHasher::new();
-        token.hash(&mut hasher);
-        format!("{:016x}", hasher.finish())
-    };
+    let hash = oauth::token_hash(&token);
     if state.sessions.read().await.is_revoked(&hash) {
         return Err(StatusCode::UNAUTHORIZED);
     }
@@ -284,6 +278,14 @@ async fn handle_change_tier(
             .into_response();
     }
 
+    // Sync runtime quota
+    if let Some(ref tm) = state.tenant_manager {
+        let tid = varpulis_runtime::TenantId::new(org_id.clone());
+        let quota = varpulis_runtime::TenantQuota::for_tier(&body.tier);
+        let mut mgr = tm.write().await;
+        mgr.update_tenant_quota(&tid, quota);
+    }
+
     tracing::info!("Admin changed org {} tier to {}", org_id, body.tier);
     (StatusCode::OK, Json(serde_json::json!({"ok": true}))).into_response()
 }
@@ -338,6 +340,17 @@ async fn handle_change_status(
             Json(serde_json::json!({"error": "Internal error"})),
         )
             .into_response();
+    }
+
+    // When suspending/revoking, remove tenant from runtime (stops all pipelines)
+    if body.status == "suspended" || body.status == "revoked" {
+        if let Some(ref tm) = state.tenant_manager {
+            let tid = varpulis_runtime::TenantId::new(org_id.clone());
+            let mut mgr = tm.write().await;
+            if let Err(e) = mgr.remove_tenant(&tid) {
+                tracing::warn!("Failed to remove runtime tenant on status change: {}", e);
+            }
+        }
     }
 
     tracing::info!("Admin changed org {} status to {}", org_id, body.status);
@@ -480,6 +493,18 @@ async fn handle_update_limits(
             Json(serde_json::json!({"error": "Internal error"})),
         )
             .into_response();
+    }
+
+    // Sync runtime quota
+    if let Some(ref tm) = state.tenant_manager {
+        let tid = varpulis_runtime::TenantId::new(org_id.clone());
+        let quota = varpulis_runtime::TenantQuota {
+            max_pipelines: pipeline_limit as usize,
+            max_events_per_second: eps_limit as u64,
+            max_streams_per_pipeline: 100, // keep default
+        };
+        let mut mgr = tm.write().await;
+        mgr.update_tenant_quota(&tid, quota);
     }
 
     tracing::info!(
@@ -709,13 +734,7 @@ async fn handle_create_tenant(
 
     // 3. Generate API key and store in DB
     let api_key = auth::generate_api_key();
-    let key_hash = {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        let mut hasher = DefaultHasher::new();
-        api_key.hash(&mut hasher);
-        format!("{:016x}", hasher.finish())
-    };
+    let key_hash = oauth::token_hash(&api_key);
 
     if let Err(e) = varpulis_db::repo::create_api_key(&pool, org.id, &key_hash, "default").await {
         tracing::error!("Failed to create API key: {}", e);
@@ -728,15 +747,52 @@ async fn handle_create_tenant(
 
     // 4. Create runtime tenant so the API key works immediately
     if let Some(ref tm) = state.tenant_manager {
-        let quota = match tier {
-            "pro" => varpulis_runtime::TenantQuota::pro(),
-            "business" => varpulis_runtime::TenantQuota::business(),
-            "enterprise" => varpulis_runtime::TenantQuota::enterprise(),
-            _ => varpulis_runtime::TenantQuota::free(),
-        };
+        let quota = varpulis_runtime::TenantQuota::for_tier(tier);
+        let tid = varpulis_runtime::TenantId::new(org.id.to_string());
         let mut mgr = tm.write().await;
-        if let Err(e) = mgr.create_tenant(body.name.clone(), api_key.clone(), quota) {
+        if let Err(e) = mgr.create_tenant_with_id(tid, body.name.clone(), key_hash.clone(), quota) {
             tracing::warn!("Failed to create runtime tenant (non-fatal): {}", e);
+        }
+    }
+
+    // 5. Auto-copy deployed global pipeline templates to the new tenant
+    if let Ok(templates) = varpulis_db::repo::list_deployed_global_templates(&pool).await {
+        for t in &templates {
+            if let Err(e) = varpulis_db::repo::create_global_pipeline_copy(
+                &pool,
+                org.id,
+                t.id,
+                &t.name,
+                &t.vpl_source,
+            )
+            .await
+            {
+                tracing::warn!(
+                    "Failed to copy global pipeline '{}' to new tenant {}: {}",
+                    t.name,
+                    org.id,
+                    e
+                );
+            }
+
+            // Deploy in runtime
+            if let Some(ref tm) = state.tenant_manager {
+                let tid = varpulis_runtime::TenantId::new(org.id.to_string());
+                let mut mgr = tm.write().await;
+                if mgr.get_tenant(&tid).is_some() {
+                    if let Err(e) = mgr
+                        .deploy_global_pipeline_on_tenant(
+                            &tid,
+                            t.name.clone(),
+                            t.vpl_source.clone(),
+                            t.id.to_string(),
+                        )
+                        .await
+                    {
+                        tracing::warn!("Failed to deploy global pipeline to runtime: {}", e);
+                    }
+                }
+            }
         }
     }
 
@@ -801,6 +857,390 @@ pub fn spawn_trial_expiry_checker(pool: varpulis_db::PgPool) {
 }
 
 // ---------------------------------------------------------------------------
+// Global Pipeline handlers
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+struct DeployGlobalPipelineRequest {
+    name: String,
+    vpl_source: String,
+}
+
+/// POST /api/v1/admin/global-pipelines — deploy a global pipeline to all tenants.
+async fn handle_deploy_global_pipeline(
+    State(state): State<AdminState>,
+    headers: HeaderMap,
+    Json(body): Json<DeployGlobalPipelineRequest>,
+) -> Response {
+    let auth_header = headers.get("authorization").and_then(|v| v.to_str().ok());
+
+    let claims = match extract_admin_claims(auth_header, &state.oauth_state).await {
+        Ok(c) => c,
+        Err(status) => {
+            return (status, Json(serde_json::json!({"error": "Unauthorized"}))).into_response()
+        }
+    };
+
+    let pool = match require_pool(&state) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+
+    // Validate VPL source parses
+    if let Err(e) = varpulis_parser::parse(&body.vpl_source) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": format!("VPL parse error: {e}")})),
+        )
+            .into_response();
+    }
+
+    // Parse deployer UUID from claims
+    let deployed_by = claims.user_id.parse::<uuid::Uuid>().ok();
+
+    // Create global template
+    let template = match varpulis_db::repo::create_global_template(
+        &pool,
+        &body.name,
+        &body.vpl_source,
+        deployed_by,
+    )
+    .await
+    {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!("Failed to create global template: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Failed to create template"})),
+            )
+                .into_response();
+        }
+    };
+
+    // Copy to all active orgs
+    let orgs = varpulis_db::repo::list_all_organizations(&pool)
+        .await
+        .unwrap_or_default();
+
+    let mut copies_created = 0u32;
+    for org in &orgs {
+        if org.status == "revoked" {
+            continue;
+        }
+        match varpulis_db::repo::create_global_pipeline_copy(
+            &pool,
+            org.id,
+            template.id,
+            &body.name,
+            &body.vpl_source,
+        )
+        .await
+        {
+            Ok(_) => copies_created += 1,
+            Err(e) => tracing::warn!("Failed to copy global pipeline to org {}: {}", org.id, e),
+        }
+
+        // Deploy in runtime
+        if let Some(ref tm) = state.tenant_manager {
+            let tid = varpulis_runtime::TenantId::new(org.id.to_string());
+            let mut mgr = tm.write().await;
+            if mgr.get_tenant(&tid).is_some() {
+                if let Err(e) = mgr
+                    .deploy_global_pipeline_on_tenant(
+                        &tid,
+                        body.name.clone(),
+                        body.vpl_source.clone(),
+                        template.id.to_string(),
+                    )
+                    .await
+                {
+                    tracing::warn!(
+                        "Failed to deploy global pipeline to runtime tenant {}: {}",
+                        org.id,
+                        e
+                    );
+                }
+            }
+        }
+    }
+
+    tracing::info!(
+        "Admin deployed global pipeline '{}' (template={}, copies={})",
+        body.name,
+        template.id,
+        copies_created
+    );
+
+    (
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "template_id": template.id.to_string(),
+            "name": body.name,
+            "copies_created": copies_created,
+        })),
+    )
+        .into_response()
+}
+
+/// GET /api/v1/admin/global-pipelines — list all global pipeline templates.
+async fn handle_list_global_pipelines(
+    State(state): State<AdminState>,
+    headers: HeaderMap,
+) -> Response {
+    let auth_header = headers.get("authorization").and_then(|v| v.to_str().ok());
+
+    if let Err(status) = extract_admin_claims(auth_header, &state.oauth_state).await {
+        return (status, Json(serde_json::json!({"error": "Unauthorized"}))).into_response();
+    }
+
+    let pool = match require_pool(&state) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+
+    let templates = match varpulis_db::repo::list_global_templates(&pool).await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!("Failed to list global templates: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Internal error"})),
+            )
+                .into_response();
+        }
+    };
+
+    let mut items = Vec::with_capacity(templates.len());
+    for t in &templates {
+        let copies = varpulis_db::repo::list_global_template_copies(&pool, t.id)
+            .await
+            .unwrap_or_default();
+        items.push(serde_json::json!({
+            "id": t.id.to_string(),
+            "name": t.name,
+            "vpl_source": t.vpl_source,
+            "status": t.status,
+            "tenant_count": copies.len(),
+            "deployed_by": t.deployed_by.map(|u| u.to_string()),
+            "created_at": t.created_at.to_rfc3339(),
+            "updated_at": t.updated_at.to_rfc3339(),
+        }));
+    }
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({"global_pipelines": items})),
+    )
+        .into_response()
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateGlobalPipelineRequest {
+    vpl_source: String,
+}
+
+/// PUT /api/v1/admin/global-pipelines/{id} — update VPL source for all copies.
+async fn handle_update_global_pipeline(
+    State(state): State<AdminState>,
+    Path(template_id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<UpdateGlobalPipelineRequest>,
+) -> Response {
+    let auth_header = headers.get("authorization").and_then(|v| v.to_str().ok());
+
+    if let Err(status) = extract_admin_claims(auth_header, &state.oauth_state).await {
+        return (status, Json(serde_json::json!({"error": "Unauthorized"}))).into_response();
+    }
+
+    let pool = match require_pool(&state) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+
+    let template_uuid: uuid::Uuid = match template_id.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Invalid template ID"})),
+            )
+                .into_response();
+        }
+    };
+
+    // Validate VPL
+    if let Err(e) = varpulis_parser::parse(&body.vpl_source) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": format!("VPL parse error: {e}")})),
+        )
+            .into_response();
+    }
+
+    // Check template exists
+    match varpulis_db::repo::get_global_template(&pool, template_uuid).await {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "Template not found"})),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            tracing::error!("Failed to get template: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Internal error"})),
+            )
+                .into_response();
+        }
+    }
+
+    // Update template
+    if let Err(e) =
+        varpulis_db::repo::update_global_template_source(&pool, template_uuid, &body.vpl_source)
+            .await
+    {
+        tracing::error!("Failed to update template: {}", e);
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "Failed to update template"})),
+        )
+            .into_response();
+    }
+
+    // Update all copies
+    let copies_updated = varpulis_db::repo::update_global_template_copies_source(
+        &pool,
+        template_uuid,
+        &body.vpl_source,
+    )
+    .await
+    .unwrap_or(0);
+
+    // Reload in runtime tenants
+    if let Some(ref tm) = state.tenant_manager {
+        let copies = varpulis_db::repo::list_global_template_copies(&pool, template_uuid)
+            .await
+            .unwrap_or_default();
+        for copy in &copies {
+            let tid = varpulis_runtime::TenantId::new(copy.org_id.to_string());
+            let mut mgr = tm.write().await;
+            if let Some(tenant) = mgr.get_tenant_mut(&tid) {
+                // Find the pipeline by global_template_id
+                let pipeline_id = tenant
+                    .pipelines
+                    .values()
+                    .find(|p| {
+                        p.global_template_id.as_deref() == Some(template_uuid.to_string().as_str())
+                    })
+                    .map(|p| p.id.clone());
+                if let Some(pid) = pipeline_id {
+                    if let Err(e) = tenant.reload_pipeline(&pid, body.vpl_source.clone()).await {
+                        tracing::warn!(
+                            "Failed to reload global pipeline {} on tenant {}: {}",
+                            pid,
+                            copy.org_id,
+                            e
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    tracing::info!(
+        "Admin updated global pipeline template {} ({} copies updated)",
+        template_id,
+        copies_updated
+    );
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({"ok": true, "copies_updated": copies_updated})),
+    )
+        .into_response()
+}
+
+/// DELETE /api/v1/admin/global-pipelines/{id} — undeploy from all tenants.
+async fn handle_undeploy_global_pipeline(
+    State(state): State<AdminState>,
+    Path(template_id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let auth_header = headers.get("authorization").and_then(|v| v.to_str().ok());
+
+    if let Err(status) = extract_admin_claims(auth_header, &state.oauth_state).await {
+        return (status, Json(serde_json::json!({"error": "Unauthorized"}))).into_response();
+    }
+
+    let pool = match require_pool(&state) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+
+    let template_uuid: uuid::Uuid = match template_id.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Invalid template ID"})),
+            )
+                .into_response();
+        }
+    };
+
+    // Get copies before deletion (for runtime cleanup)
+    let copies = varpulis_db::repo::list_global_template_copies(&pool, template_uuid)
+        .await
+        .unwrap_or_default();
+
+    // Remove from runtime tenants
+    if let Some(ref tm) = state.tenant_manager {
+        for copy in &copies {
+            let tid = varpulis_runtime::TenantId::new(copy.org_id.to_string());
+            let mut mgr = tm.write().await;
+            if let Some(tenant) = mgr.get_tenant_mut(&tid) {
+                let pipeline_id = tenant
+                    .pipelines
+                    .values()
+                    .find(|p| {
+                        p.global_template_id.as_deref() == Some(template_uuid.to_string().as_str())
+                    })
+                    .map(|p| p.id.clone());
+                if let Some(pid) = pipeline_id {
+                    let _ = tenant.remove_pipeline(&pid);
+                }
+            }
+        }
+    }
+
+    // Delete template (CASCADE removes all DB copies)
+    if let Err(e) = varpulis_db::repo::delete_global_template(&pool, template_uuid).await {
+        tracing::error!("Failed to delete global template: {}", e);
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "Failed to delete template"})),
+        )
+            .into_response();
+    }
+
+    tracing::info!(
+        "Admin undeployed global pipeline template {} ({} copies removed)",
+        template_id,
+        copies.len()
+    );
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({"ok": true, "copies_removed": copies.len()})),
+    )
+        .into_response()
+}
+
+// ---------------------------------------------------------------------------
 // Route assembly
 // ---------------------------------------------------------------------------
 
@@ -841,6 +1281,14 @@ pub fn admin_routes(
         .route(
             "/api/v1/admin/tenants/{org_id}/revoke",
             post(handle_revoke_tenant),
+        )
+        .route(
+            "/api/v1/admin/global-pipelines",
+            post(handle_deploy_global_pipeline).get(handle_list_global_pipelines),
+        )
+        .route(
+            "/api/v1/admin/global-pipelines/{id}",
+            put(handle_update_global_pipeline).delete(handle_undeploy_global_pipeline),
         )
         .with_state(state)
 }

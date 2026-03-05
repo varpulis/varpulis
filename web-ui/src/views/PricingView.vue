@@ -30,7 +30,7 @@
               color="primary"
               variant="outlined"
               block
-              href="/login"
+              href="/signup"
             >
               Get Started
             </v-btn>
@@ -39,7 +39,7 @@
               color="primary"
               variant="elevated"
               block
-              href="/login"
+              href="/signup"
             >
               Start Free Trial
             </v-btn>
@@ -48,7 +48,7 @@
               color="primary"
               variant="elevated"
               block
-              href="/login"
+              href="/signup"
             >
               Start Free Trial
             </v-btn>

@@ -176,6 +176,8 @@ pub struct Pipeline {
     pub orchestrator: Option<ContextOrchestrator>,
     /// Managed connector registry (keeps source connections alive)
     pub connector_registry: Option<crate::connector::ManagedConnectorRegistry>,
+    /// If set, this pipeline is a copy of a global template (admin-managed, read-only).
+    pub global_template_id: Option<String>,
 }
 
 /// Pipeline status
@@ -230,6 +232,12 @@ pub enum TenantError {
     AlreadyExists(String),
 }
 
+/// Compute a SHA-256 hex hash of a raw API key.
+pub fn hash_api_key(raw: &str) -> String {
+    use sha2::Digest;
+    hex::encode(sha2::Sha256::digest(raw.as_bytes()))
+}
+
 /// A single tenant with its pipelines and quotas
 #[derive(Debug)]
 pub struct Tenant {
@@ -237,8 +245,8 @@ pub struct Tenant {
     pub id: TenantId,
     /// Display name
     pub name: String,
-    /// API key for authentication
-    pub api_key: String,
+    /// SHA-256 hash of the API key (plaintext is never stored)
+    pub api_key_hash: String,
     /// Resource quotas
     pub quota: TenantQuota,
     /// Usage statistics
@@ -256,7 +264,26 @@ impl Tenant {
         Self {
             id,
             name,
-            api_key,
+            api_key_hash: hash_api_key(&api_key),
+            quota,
+            usage: TenantUsage::default(),
+            pipelines: HashMap::new(),
+            created_at: Instant::now(),
+            ws_broadcast: None,
+        }
+    }
+
+    /// Create a tenant with a pre-computed hash (e.g. loaded from DB).
+    pub fn new_with_hash(
+        id: TenantId,
+        name: String,
+        api_key_hash: String,
+        quota: TenantQuota,
+    ) -> Self {
+        Self {
+            id,
+            name,
+            api_key_hash,
             quota,
             usage: TenantUsage::default(),
             pipelines: HashMap::new(),
@@ -478,6 +505,7 @@ impl Tenant {
                 status: PipelineStatus::Running,
                 orchestrator,
                 connector_registry,
+                global_template_id: None,
             };
 
             self.pipelines.insert(id.clone(), pipeline);
@@ -501,6 +529,7 @@ impl Tenant {
             status: PipelineStatus::Running,
             orchestrator,
             connector_registry,
+            global_template_id: None,
         };
 
         self.pipelines.insert(id.clone(), pipeline);
@@ -649,7 +678,7 @@ impl Tenant {
 /// Manages all tenants in the system
 pub struct TenantManager {
     tenants: HashMap<TenantId, Tenant>,
-    /// API key → TenantId lookup
+    /// API key hash → TenantId lookup (plaintext keys are never stored)
     api_key_index: HashMap<String, TenantId>,
     /// Optional persistent state store
     store: Option<Arc<dyn StateStore>>,
@@ -760,26 +789,48 @@ impl TenantManager {
         self.pending_events.load(Ordering::Relaxed) as f64 / self.max_queue_depth as f64
     }
 
-    /// Create a new tenant
+    /// Create a new tenant. The raw API key is hashed before storage.
     pub fn create_tenant(
         &mut self,
         name: String,
         api_key: String,
         quota: TenantQuota,
     ) -> Result<TenantId, TenantError> {
-        if self.api_key_index.contains_key(&api_key) {
+        let key_hash = hash_api_key(&api_key);
+        if self.api_key_index.contains_key(&key_hash) {
             return Err(TenantError::AlreadyExists(
                 "API key already in use".to_string(),
             ));
         }
 
         let id = TenantId::generate();
-        let mut tenant = Tenant::new(id.clone(), name, api_key.clone(), quota);
+        let mut tenant = Tenant::new_with_hash(id.clone(), name, key_hash.clone(), quota);
         tenant.ws_broadcast = self.ws_broadcast.clone();
         self.tenants.insert(id.clone(), tenant);
-        self.api_key_index.insert(api_key, id.clone());
+        self.api_key_index.insert(key_hash, id.clone());
         self.persist_if_needed(&id);
         Ok(id)
+    }
+
+    /// Create a tenant with a specific ID (e.g. DB org UUID) and pre-hashed API key.
+    pub fn create_tenant_with_id(
+        &mut self,
+        id: TenantId,
+        name: String,
+        api_key_hash: String,
+        quota: TenantQuota,
+    ) -> Result<(), TenantError> {
+        if self.api_key_index.contains_key(&api_key_hash) {
+            return Err(TenantError::AlreadyExists(
+                "API key already in use".to_string(),
+            ));
+        }
+
+        let mut tenant = Tenant::new_with_hash(id.clone(), name, api_key_hash.clone(), quota);
+        tenant.ws_broadcast = self.ws_broadcast.clone();
+        self.tenants.insert(id.clone(), tenant);
+        self.api_key_index.insert(api_key_hash, id);
+        Ok(())
     }
 
     /// Update a tenant's quota (e.g., after admin limit change).
@@ -792,9 +843,10 @@ impl TenantManager {
         }
     }
 
-    /// Get a tenant by API key
+    /// Get a tenant by raw API key (hashes internally before lookup).
     pub fn get_tenant_by_api_key(&self, api_key: &str) -> Option<&TenantId> {
-        self.api_key_index.get(api_key)
+        let key_hash = hash_api_key(api_key);
+        self.api_key_index.get(&key_hash)
     }
 
     /// Get a tenant by ID
@@ -827,6 +879,26 @@ impl TenantManager {
         tenant
             .deploy_pipeline_with_metrics(name, source, metrics)
             .await
+    }
+
+    /// Deploy a global pipeline copy on a tenant (sets global_template_id).
+    pub async fn deploy_global_pipeline_on_tenant(
+        &mut self,
+        tenant_id: &TenantId,
+        name: String,
+        source: String,
+        template_id: String,
+    ) -> Result<String, TenantError> {
+        let pipeline_id = self
+            .deploy_pipeline_on_tenant(tenant_id, name, source)
+            .await?;
+        // Set the global_template_id on the newly deployed pipeline
+        if let Some(tenant) = self.tenants.get_mut(tenant_id) {
+            if let Some(pipeline) = tenant.pipelines.get_mut(&pipeline_id) {
+                pipeline.global_template_id = Some(template_id);
+            }
+        }
+        Ok(pipeline_id)
     }
 
     /// Process an event through a pipeline with backpressure checking.
@@ -866,7 +938,7 @@ impl TenantManager {
             .tenants
             .remove(id)
             .ok_or_else(|| TenantError::NotFound(id.to_string()))?;
-        self.api_key_index.remove(&tenant.api_key);
+        self.api_key_index.remove(&tenant.api_key_hash);
         if let Some(ref store) = self.store {
             if let Err(e) = Self::delete_tenant_state(store.as_ref(), id) {
                 warn!("Failed to delete persisted state for tenant {}: {}", id, e);
@@ -983,7 +1055,7 @@ impl TenantManager {
                 Ok(tenant) => {
                     let tenant_id = tenant.id.clone();
                     self.api_key_index
-                        .insert(tenant.api_key.clone(), tenant_id.clone());
+                        .insert(tenant.api_key_hash.clone(), tenant_id.clone());
                     let pipeline_count = tenant.pipelines.len();
                     self.tenants.insert(tenant_id.clone(), tenant);
                     info!(
@@ -1064,7 +1136,12 @@ impl TenantManager {
     fn restore_tenant_from_snapshot(snapshot: TenantSnapshot) -> Result<Tenant, TenantError> {
         let tenant_id = TenantId::new(&snapshot.id);
 
-        let mut tenant = Tenant::new(tenant_id, snapshot.name, snapshot.api_key, snapshot.quota);
+        let mut tenant = Tenant::new_with_hash(
+            tenant_id,
+            snapshot.name,
+            snapshot.api_key_hash,
+            snapshot.quota,
+        );
         tenant.usage.events_processed = snapshot.events_processed;
         tenant.usage.output_events_emitted = snapshot.output_events_emitted;
         tenant.usage.events_in_window = snapshot.events_in_window;
@@ -1106,6 +1183,7 @@ impl TenantManager {
             status: snapshot.status,
             orchestrator: None,
             connector_registry: None,
+            global_template_id: snapshot.global_template_id,
         })
     }
 }
@@ -1150,7 +1228,9 @@ pub fn shared_tenant_manager_with_store(store: Arc<dyn StateStore>) -> SharedTen
 pub struct TenantSnapshot {
     pub id: String,
     pub name: String,
-    pub api_key: String,
+    /// SHA-256 hash of the API key (never stores plaintext)
+    #[serde(alias = "api_key")]
+    pub api_key_hash: String,
     pub quota: TenantQuota,
     pub events_processed: u64,
     #[serde(alias = "alerts_generated")]
@@ -1169,6 +1249,8 @@ pub struct PipelineSnapshot {
     pub name: String,
     pub source: String,
     pub status: PipelineStatus,
+    #[serde(default)]
+    pub global_template_id: Option<String>,
 }
 
 impl Pipeline {
@@ -1179,6 +1261,7 @@ impl Pipeline {
             name: self.name.clone(),
             source: self.source.clone(),
             status: self.status.clone(),
+            global_template_id: self.global_template_id.clone(),
         }
     }
 }
@@ -1189,7 +1272,7 @@ impl Tenant {
         TenantSnapshot {
             id: self.id.0.clone(),
             name: self.name.clone(),
-            api_key: self.api_key.clone(),
+            api_key_hash: self.api_key_hash.clone(),
             quota: self.quota.clone(),
             events_processed: self.usage.events_processed,
             output_events_emitted: self.usage.output_events_emitted,
@@ -1513,7 +1596,7 @@ mod tests {
 
         assert_eq!(restored.id, id.0);
         assert_eq!(restored.name, "Snap Corp");
-        assert_eq!(restored.api_key, "snap-key");
+        assert_eq!(restored.api_key_hash, hash_api_key("snap-key"));
         assert_eq!(restored.events_processed, 42);
         assert_eq!(restored.output_events_emitted, 7);
         assert_eq!(restored.pipelines.len(), 1);
@@ -1566,7 +1649,7 @@ mod tests {
         let tid = TenantId::new(&tenant_id);
         let tenant = mgr2.get_tenant(&tid).unwrap();
         assert_eq!(tenant.name, "Persisted Corp");
-        assert_eq!(tenant.api_key, "persist-key");
+        assert_eq!(tenant.api_key_hash, hash_api_key("persist-key"));
         assert_eq!(tenant.usage.events_processed, 100);
         assert_eq!(tenant.usage.output_events_emitted, 5);
         assert_eq!(tenant.pipelines.len(), 1);
@@ -1716,7 +1799,7 @@ mod tests {
         let snapshot = TenantSnapshot {
             id: "bad-tenant".into(),
             name: "Bad Corp".into(),
-            api_key: "bad-key".into(),
+            api_key_hash: hash_api_key("bad-key"),
             quota: TenantQuota::default(),
             events_processed: 0,
             output_events_emitted: 0,
@@ -1725,6 +1808,7 @@ mod tests {
                 name: "Bad Pipeline".into(),
                 source: "this is not valid VPL {{{{".into(),
                 status: PipelineStatus::Running,
+                global_template_id: None,
             }],
             created_at_ms: None,
             events_in_window: 0,

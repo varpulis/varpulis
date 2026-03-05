@@ -18,6 +18,9 @@ pub struct User {
     pub role: String,
     pub disabled: bool,
     pub updated_at: DateTime<Utc>,
+    pub email_verified: bool,
+    pub verification_token: Option<String>,
+    pub verification_expires_at: Option<DateTime<Utc>>,
 }
 
 /// An organization that owns pipelines and API keys.
@@ -39,6 +42,23 @@ pub struct Organization {
     pub notes: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// URL-safe slug (optional, set post-migration).
+    #[serde(default)]
+    pub slug: Option<String>,
+}
+
+/// A membership row linking a user to an organization with a role.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct OrgMember {
+    pub id: Uuid,
+    pub org_id: Uuid,
+    pub user_id: Uuid,
+    /// One of "owner", "admin", "member", "viewer".
+    pub role: String,
+    /// One of "active", "invited", "suspended".
+    pub status: String,
+    pub invited_at: DateTime<Utc>,
+    pub accepted_at: Option<DateTime<Utc>>,
 }
 
 /// A hashed API key belonging to an organization.
@@ -50,6 +70,22 @@ pub struct ApiKey {
     pub name: String,
     pub created_at: DateTime<Utc>,
     pub last_used_at: Option<DateTime<Utc>>,
+    /// First 8 chars of the raw key for display (e.g. "vpl_a1b2").
+    #[serde(default)]
+    pub key_prefix: String,
+    /// Comma-separated scopes or "*" for full access.
+    #[serde(default = "default_scopes")]
+    pub scopes: String,
+    /// When the key expires (None = never).
+    pub expires_at: Option<DateTime<Utc>>,
+    /// When the key was soft-deleted (None = active).
+    pub revoked_at: Option<DateTime<Utc>>,
+    /// User who created this key.
+    pub created_by: Option<Uuid>,
+}
+
+fn default_scopes() -> String {
+    "*".to_string()
 }
 
 /// A deployed VPL pipeline belonging to an organization.
@@ -61,6 +97,21 @@ pub struct Pipeline {
     pub vpl_source: String,
     /// One of "deployed", "stopped", "error".
     pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    /// If set, this pipeline is a copy of a global template (admin-managed).
+    pub global_template_id: Option<Uuid>,
+}
+
+/// A global pipeline template deployed by admin to all tenants.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct GlobalPipelineTemplate {
+    pub id: Uuid,
+    pub name: String,
+    pub vpl_source: String,
+    /// One of "deployed", "undeployed".
+    pub status: String,
+    pub deployed_by: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -93,6 +144,9 @@ mod tests {
             role: "viewer".to_string(),
             disabled: false,
             updated_at: Utc::now(),
+            email_verified: true,
+            verification_token: None,
+            verification_expires_at: None,
         };
         assert_eq!(user.github_id.as_deref(), Some("12345"));
         assert_eq!(user.email, "test@example.com");
@@ -115,6 +169,7 @@ mod tests {
                 notes: String::new(),
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
+                slug: None,
             };
             assert_eq!(&org.tier, tier);
         }
@@ -131,6 +186,7 @@ mod tests {
                 status: status.to_string(),
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
+                global_template_id: None,
             };
             assert_eq!(&pipeline.status, status);
         }
@@ -145,6 +201,11 @@ mod tests {
             name: "production".to_string(),
             created_at: Utc::now(),
             last_used_at: None,
+            key_prefix: String::new(),
+            scopes: "*".to_string(),
+            expires_at: None,
+            revoked_at: None,
+            created_by: None,
         };
         assert!(key.last_used_at.is_none());
     }
@@ -176,6 +237,9 @@ mod tests {
             role: "viewer".to_string(),
             disabled: false,
             updated_at: Utc::now(),
+            email_verified: true,
+            verification_token: None,
+            verification_expires_at: None,
         };
         let json = serde_json::to_string(&user).unwrap();
         let deserialized: User = serde_json::from_str(&json).unwrap();

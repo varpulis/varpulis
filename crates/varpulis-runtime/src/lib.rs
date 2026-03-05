@@ -161,9 +161,9 @@ pub use sink::{ConsoleSink, FileSink, HttpSink, MultiSink};
 pub use stream::Stream;
 // Multi-tenant SaaS support
 pub use tenant::{
-    shared_tenant_manager, shared_tenant_manager_with_store, Pipeline, PipelineSnapshot,
-    PipelineStatus, SharedTenantManager, Tenant, TenantError, TenantId, TenantManager, TenantQuota,
-    TenantSnapshot, TenantUsage,
+    hash_api_key, shared_tenant_manager, shared_tenant_manager_with_store, Pipeline,
+    PipelineSnapshot, PipelineStatus, SharedTenantManager, Tenant, TenantError, TenantId,
+    TenantManager, TenantQuota, TenantSnapshot, TenantUsage,
 };
 pub use timer::{spawn_timer, TimerManager};
 pub use varpulis_connectors as connector;

@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
+const isK3dSaas = !!process.env.K3D_SAAS
+
 export default defineConfig({
   testDir: './tests',
   fullyParallel: false, // Run tests sequentially since they share backend state
@@ -20,19 +22,28 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     video: 'on-first-retry',
   },
-  webServer: {
-    command: 'npm run dev',
-    url: 'http://localhost:5173',
-    reuseExistingServer: !process.env.CI,
-    timeout: 120 * 1000,
-    env: {
-      VITE_COORDINATOR_PORT: '19100',
-    },
-  },
+  webServer: isK3dSaas
+    ? undefined
+    : {
+        command: 'npm run dev',
+        url: 'http://localhost:5173',
+        reuseExistingServer: !process.env.CI,
+        timeout: 120 * 1000,
+        env: {
+          VITE_COORDINATOR_PORT: '19100',
+        },
+      },
   projects: [
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'k3d-saas',
+      use: {
+        ...devices['Desktop Chrome'],
+        baseURL: 'http://localhost:8080',
+      },
     },
   ],
 })

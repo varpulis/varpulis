@@ -9,6 +9,7 @@ resources:
   - configmap.yaml
   - postgres.yaml
   - web-ui.yaml
+  - mailpit.yaml
   # Reuse infra from k3d overlay (kafka, mosquitto, grafana, prometheus)
   - ../k3d/infra
 
