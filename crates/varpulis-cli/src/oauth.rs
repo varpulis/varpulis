@@ -129,6 +129,8 @@ pub struct Claims {
     pub session_id: String, // For session revocation
     #[serde(default)]
     pub auth_method: String, // "local" | "github" | "oidc" | "apikey"
+    #[serde(default)]
+    pub org_role: String, // Per-org role from org_members: "owner" | "admin" | "member" | "viewer"
 }
 
 // ---------------------------------------------------------------------------
@@ -292,6 +294,8 @@ pub struct OAuthState {
     pub db_pool: Option<varpulis_db::PgPool>,
     pub audit_logger: Option<SharedAuditLogger>,
     pub session_manager: Option<SharedSessionManager>,
+    #[cfg(feature = "saas")]
+    pub email_sender: Option<crate::email::SharedEmailSender>,
 }
 
 impl OAuthState {
@@ -304,6 +308,8 @@ impl OAuthState {
             db_pool: None,
             audit_logger: None,
             session_manager: None,
+            #[cfg(feature = "saas")]
+            email_sender: None,
         }
     }
 
@@ -322,6 +328,12 @@ impl OAuthState {
         self.db_pool = Some(pool);
         self
     }
+
+    #[cfg(feature = "saas")]
+    pub fn with_email_sender(mut self, sender: Option<crate::email::SharedEmailSender>) -> Self {
+        self.email_sender = sender;
+        self
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -333,6 +345,7 @@ fn create_jwt(
     user: &GitHubUser,
     user_id: &str,
     org_id: &str,
+    org_role: &str,
 ) -> Result<String, jsonwebtoken::errors::Error> {
     use jsonwebtoken::{encode, EncodingKey, Header};
 
@@ -350,6 +363,7 @@ fn create_jwt(
         role: String::new(),
         session_id: String::new(),
         auth_method: "github".to_string(),
+        org_role: org_role.to_string(),
     };
 
     encode(
@@ -388,6 +402,7 @@ pub fn create_jwt_for_local_user(
         role: role.to_string(),
         session_id: session_id.to_string(),
         auth_method: "local".to_string(),
+        org_role: String::new(),
     };
 
     encode(
@@ -412,13 +427,10 @@ pub fn verify_jwt(
     Ok(token_data.claims)
 }
 
-/// Simple hash for token revocation tracking (not cryptographic, just for lookup).
+/// SHA-256 hash for token revocation tracking and API key storage.
 pub fn token_hash(token: &str) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut hasher = DefaultHasher::new();
-    token.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
+    use sha2::Digest;
+    hex::encode(sha2::Sha256::digest(token.as_bytes()))
 }
 
 // ---------------------------------------------------------------------------
@@ -596,8 +608,8 @@ async fn handle_github_callback(
         }
     };
 
-    // Create JWT
-    let jwt = match create_jwt(&state.config, &user, &db_user_id, &db_org_id) {
+    // Create JWT (org_role defaults to "owner" for OAuth auto-created orgs)
+    let jwt = match create_jwt(&state.config, &user, &db_user_id, &db_org_id, "owner") {
         Ok(token) => token,
         Err(e) => {
             tracing::error!("JWT creation failed: {}", e);
@@ -919,6 +931,15 @@ async fn handle_login(
             return (
                 StatusCode::UNAUTHORIZED,
                 Json(serde_json::json!({ "error": "Account is disabled" })),
+            )
+                .into_response();
+        }
+
+        // Check email verification
+        if !db_user.email_verified {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({ "error": "Please verify your email before logging in" })),
             )
                 .into_response();
         }
@@ -1504,6 +1525,351 @@ async fn extract_and_verify_claims(
 }
 
 // ---------------------------------------------------------------------------
+// Self-service registration
+// ---------------------------------------------------------------------------
+
+/// Registration request body.
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct RegisterRequest {
+    username: String,
+    email: String,
+    password: String,
+    org_name: String,
+}
+
+/// POST /auth/register — self-service signup with email verification.
+#[allow(unused_variables)]
+async fn handle_register(
+    State(state): State<Option<SharedOAuthState>>,
+    Json(body): Json<RegisterRequest>,
+) -> Response {
+    let state = match state {
+        Some(s) => s,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({ "error": "OAuth not configured" })),
+            )
+                .into_response();
+        }
+    };
+
+    // Validate input
+    if body.username.is_empty() || body.username.len() > 64 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "Username must be 1-64 characters" })),
+        )
+            .into_response();
+    }
+    if body.password.len() < 8 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "Password must be at least 8 characters" })),
+        )
+            .into_response();
+    }
+    if !body.email.contains('@') || body.email.len() < 3 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "Invalid email address" })),
+        )
+            .into_response();
+    }
+
+    #[cfg(feature = "saas")]
+    {
+        let pool = match &state.db_pool {
+            Some(p) => p,
+            None => {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(serde_json::json!({ "error": "Database not configured" })),
+                )
+                    .into_response();
+            }
+        };
+
+        // Check duplicate email
+        match varpulis_db::repo::get_user_by_email(pool, &body.email).await {
+            Ok(Some(_)) => {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(serde_json::json!({ "error": "Email already registered" })),
+                )
+                    .into_response();
+            }
+            Err(e) => {
+                tracing::error!("DB error checking email: {}", e);
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": "Internal server error" })),
+                )
+                    .into_response();
+            }
+            Ok(None) => {}
+        }
+
+        // Check duplicate username
+        match varpulis_db::repo::get_user_by_username(pool, &body.username).await {
+            Ok(Some(_)) => {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(serde_json::json!({ "error": "Username already taken" })),
+                )
+                    .into_response();
+            }
+            Err(e) => {
+                tracing::error!("DB error checking username: {}", e);
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": "Internal server error" })),
+                )
+                    .into_response();
+            }
+            Ok(None) => {}
+        }
+
+        // Hash password
+        let password_hash = match crate::users::hash_password(&body.password) {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::error!("Password hashing failed: {}", e);
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": "Internal server error" })),
+                )
+                    .into_response();
+            }
+        };
+
+        // Generate verification token
+        let token = crate::email::generate_verification_token();
+        let expires_at = chrono::Utc::now() + chrono::Duration::hours(24);
+
+        // Create user with verification pending
+        let user = match varpulis_db::repo::create_local_user_with_verification(
+            pool,
+            &body.username,
+            &password_hash,
+            &body.username,
+            &body.email,
+            "operator",
+            &token,
+            expires_at,
+        )
+        .await
+        {
+            Ok(u) => u,
+            Err(e) => {
+                let msg = e.to_string();
+                let status = if msg.contains("duplicate") || msg.contains("unique") {
+                    StatusCode::CONFLICT
+                } else {
+                    StatusCode::BAD_REQUEST
+                };
+                return (status, Json(serde_json::json!({ "error": msg }))).into_response();
+            }
+        };
+
+        // Create trial organization
+        let org_name = if body.org_name.is_empty() {
+            format!("{}'s org", body.username)
+        } else {
+            body.org_name.clone()
+        };
+        let new_org = varpulis_db::repo::create_trial_organization(pool, user.id, &org_name).await;
+        match &new_org {
+            Ok(org) => {
+                // Auto-copy deployed global pipeline templates to the new org
+                if let Ok(templates) = varpulis_db::repo::list_deployed_global_templates(pool).await
+                {
+                    for t in &templates {
+                        if let Err(e) = varpulis_db::repo::create_global_pipeline_copy(
+                            pool,
+                            org.id,
+                            t.id,
+                            &t.name,
+                            &t.vpl_source,
+                        )
+                        .await
+                        {
+                            tracing::warn!(
+                                "Failed to copy global pipeline '{}' to new org {}: {}",
+                                t.name,
+                                org.id,
+                                e
+                            );
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to create org for new user: {}", e);
+            }
+        }
+
+        // Send verification email (or log if SMTP not configured)
+        match &state.email_sender {
+            Some(sender) => {
+                if let Err(e) = sender
+                    .send_verification_email(&body.email, &body.username, &token)
+                    .await
+                {
+                    tracing::error!("Failed to send verification email: {}", e);
+                }
+            }
+            None => {
+                let frontend_url = &state.config.frontend_url;
+                tracing::info!(
+                    "Verification URL (SMTP not configured): {}/verify-email?token={}",
+                    frontend_url,
+                    token
+                );
+            }
+        }
+
+        // Audit log
+        if let Some(ref logger) = state.audit_logger {
+            logger
+                .log(
+                    crate::audit::AuditEntry::new(
+                        &body.username,
+                        crate::audit::AuditAction::UserCreate,
+                        "/auth/register",
+                    )
+                    .with_detail("Self-service signup".to_string()),
+                )
+                .await;
+        }
+
+        (
+            StatusCode::CREATED,
+            Json(serde_json::json!({
+                "ok": true,
+                "message": "Check your email to verify your account",
+            })),
+        )
+            .into_response()
+    }
+
+    #[cfg(not(feature = "saas"))]
+    {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": "Registration requires saas feature" })),
+        )
+            .into_response()
+    }
+}
+
+/// Query params for email verification.
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct VerifyQuery {
+    token: String,
+}
+
+/// GET /auth/verify?token=... — verify email address.
+#[allow(unused_variables)]
+async fn handle_verify_email(
+    State(state): State<Option<SharedOAuthState>>,
+    Query(query): Query<VerifyQuery>,
+) -> Response {
+    let state = match state {
+        Some(s) => s,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({ "error": "OAuth not configured" })),
+            )
+                .into_response();
+        }
+    };
+
+    #[cfg(feature = "saas")]
+    {
+        let pool = match &state.db_pool {
+            Some(p) => p,
+            None => {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(serde_json::json!({ "error": "Database not configured" })),
+                )
+                    .into_response();
+            }
+        };
+
+        let user = match varpulis_db::repo::get_user_by_verification_token(pool, &query.token).await
+        {
+            Ok(Some(u)) => u,
+            Ok(None) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": "Invalid or expired verification token" })),
+                )
+                    .into_response();
+            }
+            Err(e) => {
+                tracing::error!("DB error looking up verification token: {}", e);
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": "Internal server error" })),
+                )
+                    .into_response();
+            }
+        };
+
+        // Check expiration
+        if let Some(expires_at) = user.verification_expires_at {
+            if chrono::Utc::now() > expires_at {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": "Verification token has expired" })),
+                )
+                    .into_response();
+            }
+        }
+
+        // Mark as verified
+        if let Err(e) = varpulis_db::repo::verify_user_email(pool, user.id).await {
+            tracing::error!("Failed to verify user email: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "Internal server error" })),
+            )
+                .into_response();
+        }
+
+        tracing::info!(
+            "Email verified for user: {} ({})",
+            user.username.as_deref().unwrap_or("?"),
+            user.email
+        );
+
+        (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "ok": true,
+                "message": "Email verified. You can now log in.",
+            })),
+        )
+            .into_response()
+    }
+
+    #[cfg(not(feature = "saas"))]
+    {
+        let _ = query;
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": "Requires saas feature" })),
+        )
+            .into_response()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Route assembly
 // ---------------------------------------------------------------------------
 
@@ -1516,6 +1882,10 @@ pub fn oauth_routes(state: Option<SharedOAuthState>) -> Router {
         .route("/auth/github/callback", get(handle_github_callback))
         // POST /auth/login
         .route("/auth/login", post(handle_login))
+        // POST /auth/register (self-service signup)
+        .route("/auth/register", post(handle_register))
+        // GET /auth/verify?token=... (email verification)
+        .route("/auth/verify", get(handle_verify_email))
         // POST /auth/renew
         .route("/auth/renew", post(handle_renew))
         // POST /auth/logout
@@ -1580,7 +1950,7 @@ mod tests {
             email: Some("test@example.com".to_string()),
         };
 
-        let token = create_jwt(&config, &user, "", "").expect("JWT creation should succeed");
+        let token = create_jwt(&config, &user, "", "", "").expect("JWT creation should succeed");
         let claims = verify_jwt(&config, &token).expect("JWT verification should succeed");
 
         assert_eq!(claims.sub, "12345");
@@ -1607,7 +1977,7 @@ mod tests {
             email: None,
         };
 
-        let token = create_jwt(&config, &user, "", "").unwrap();
+        let token = create_jwt(&config, &user, "", "", "").unwrap();
 
         // Verify with different secret should fail
         let config2 = OAuthConfig {
@@ -1676,7 +2046,7 @@ mod tests {
             email: Some("octocat@github.com".to_string()),
         };
 
-        let token = create_jwt(&config, &user, "", "").unwrap();
+        let token = create_jwt(&config, &user, "", "", "").unwrap();
         let state = Arc::new(OAuthState::new(config));
         let app = oauth_routes(Some(state));
 
@@ -1715,7 +2085,7 @@ mod tests {
             email: Some("octocat@github.com".to_string()),
         };
 
-        let token = create_jwt(&config, &user, "", "").unwrap();
+        let token = create_jwt(&config, &user, "", "", "").unwrap();
         let state = Arc::new(OAuthState::new(config));
 
         // Revoke the token

@@ -103,6 +103,11 @@
           <v-card-text class="text-center text-caption mt-4 text-medium-emphasis">
             By signing in, you agree to the terms of service.
           </v-card-text>
+
+          <v-card-text class="text-center text-body-2 pt-0">
+            Don't have an account?
+            <router-link to="/signup" class="text-primary">Create one</router-link>
+          </v-card-text>
         </v-card>
       </v-col>
     </v-row>

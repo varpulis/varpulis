@@ -467,6 +467,51 @@ pub async fn run_server(
         }
     };
 
+    // Sync DB orgs → runtime TenantManager so self-service signups get runtime tenants
+    #[cfg(feature = "saas")]
+    if let Some(ref pool) = db_pool {
+        match varpulis_db::repo::list_all_organizations(pool).await {
+            Ok(orgs) => {
+                let mut mgr = api_tenant_manager.write().await;
+                let mut synced = 0usize;
+                for org in &orgs {
+                    if org.status != "active" && org.status != "trial" {
+                        continue;
+                    }
+                    let tid = varpulis_runtime::TenantId::new(org.id.to_string());
+                    if mgr.get_tenant(&tid).is_some() {
+                        continue; // already registered (e.g. from state persistence)
+                    }
+                    // Find the first active API key for this org
+                    if let Ok(keys) = varpulis_db::repo::list_api_keys(pool, org.id).await {
+                        if let Some(key) = keys.iter().find(|k| k.revoked_at.is_none()) {
+                            let quota = varpulis_runtime::TenantQuota::for_tier(&org.tier);
+                            if let Err(e) = mgr.create_tenant_with_id(
+                                tid,
+                                org.name.clone(),
+                                key.key_hash.clone(),
+                                quota,
+                            ) {
+                                tracing::warn!("Failed to sync org {} to runtime: {}", org.id, e);
+                            } else {
+                                synced += 1;
+                            }
+                        }
+                    }
+                }
+                if synced > 0 {
+                    info!(
+                        "Synced {} DB organizations to runtime TenantManager",
+                        synced
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to list orgs for runtime sync: {}", e);
+            }
+        }
+    }
+
     // Audit log (created early so OAuth and billing can reference it)
     let audit_logger: Option<audit::SharedAuditLogger> = {
         let audit_path = std::path::PathBuf::from("data/audit.jsonl");
@@ -530,6 +575,24 @@ pub async fn run_server(
                 oauth = oauth.with_db_pool(pool.clone());
             }
 
+            #[cfg(feature = "saas")]
+            {
+                let email_sender: Option<varpulis_cli::email::SharedEmailSender> =
+                    varpulis_cli::email::SmtpConfig::from_env().and_then(|smtp_config| {
+                        match varpulis_cli::email::EmailSender::new(smtp_config) {
+                            Ok(sender) => {
+                                info!("SMTP email sender configured");
+                                Some(std::sync::Arc::new(sender))
+                            }
+                            Err(e) => {
+                                tracing::warn!("SMTP configuration failed: {} — verification emails will be logged to stdout", e);
+                                None
+                            }
+                        }
+                    });
+                oauth = oauth.with_email_sender(email_sender);
+            }
+
             let state = std::sync::Arc::new(oauth);
             oauth::spawn_session_cleanup(state.clone());
 
@@ -576,7 +639,8 @@ pub async fn run_server(
         use varpulis_cli::org;
         let org_pool = db_pool.clone();
         let org_oauth = oauth_state.clone();
-        org::org_routes(org_pool, org_oauth)
+        let org_tm = Some(api_tenant_manager.clone());
+        org::org_routes(org_pool, org_oauth, org_tm)
     };
 
     // Admin routes (saas only)

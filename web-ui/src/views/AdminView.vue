@@ -151,6 +151,103 @@
       </v-col>
     </v-row>
 
+    <!-- Global Pipelines Table -->
+    <v-row class="mt-4">
+      <v-col cols="12">
+        <v-card>
+          <v-card-title class="d-flex align-center">
+            Global Pipelines
+            <v-spacer />
+            <v-btn
+              color="primary"
+              variant="flat"
+              prepend-icon="mdi-plus"
+              @click="globalDeployOpen = true"
+            >
+              Deploy Global Pipeline
+            </v-btn>
+          </v-card-title>
+          <v-data-table
+            :headers="globalHeaders"
+            :items="adminStore.globalPipelines"
+            :loading="adminStore.loading"
+            item-value="id"
+            density="comfortable"
+          >
+            <template #item.status="{ item }">
+              <v-chip :color="item.status === 'deployed' ? 'success' : 'default'" size="small">
+                {{ item.status }}
+              </v-chip>
+            </template>
+
+            <template #item.created_at="{ item }">
+              {{ formatDate(item.created_at) }}
+            </template>
+
+            <template #item.actions="{ item }">
+              <v-btn size="small" variant="text" icon="mdi-pencil" @click="openGlobalEdit(item)" />
+              <v-btn size="small" variant="text" icon="mdi-delete" color="error" @click="confirmGlobalUndeploy(item)" />
+            </template>
+          </v-data-table>
+        </v-card>
+      </v-col>
+    </v-row>
+
+    <!-- Deploy Global Pipeline Dialog -->
+    <v-dialog v-model="globalDeployOpen" max-width="600">
+      <v-card>
+        <v-card-title>Deploy Global Pipeline</v-card-title>
+        <v-card-text>
+          <v-text-field
+            v-model="globalForm.name"
+            label="Pipeline Name"
+            variant="outlined"
+            class="mb-2"
+          />
+          <v-textarea
+            v-model="globalForm.vpl_source"
+            label="VPL Source"
+            variant="outlined"
+            rows="6"
+            monospace
+          />
+          <v-alert v-if="globalError" type="error" density="compact" class="mt-2">
+            {{ globalError }}
+          </v-alert>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn @click="globalDeployOpen = false">Cancel</v-btn>
+          <v-btn color="primary" :loading="globalLoading" @click="doDeployGlobal">Deploy</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- Edit Global Pipeline Dialog -->
+    <v-dialog v-model="globalEditOpen" max-width="600">
+      <v-card>
+        <v-card-title>Update Global Pipeline</v-card-title>
+        <v-card-text>
+          <p class="mb-4">Updating <strong>{{ globalEditTarget?.name }}</strong> — changes apply to all tenants.</p>
+          <v-textarea
+            v-model="globalEditSource"
+            label="VPL Source"
+            variant="outlined"
+            rows="6"
+            monospace
+          />
+          <v-alert v-if="globalError" type="error" density="compact" class="mt-2">
+            {{ globalError }}
+          </v-alert>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn @click="globalEditOpen = false">Cancel</v-btn>
+          <v-btn color="primary" :loading="globalLoading" @click="doUpdateGlobal">Update</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- Detail Dialog -->
     <v-dialog v-model="detailOpen" max-width="700">
       <v-card v-if="adminStore.selectedTenant">
@@ -347,7 +444,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { useAdminStore, type Tenant } from '@/stores/admin'
+import { useAdminStore, type Tenant, type GlobalPipeline } from '@/stores/admin'
 
 const adminStore = useAdminStore()
 const search = ref('')
@@ -375,12 +472,29 @@ const newTenant = ref({
   tier: 'free',
 })
 
+// Global pipeline state
+const globalDeployOpen = ref(false)
+const globalEditOpen = ref(false)
+const globalLoading = ref(false)
+const globalError = ref<string | null>(null)
+const globalForm = ref({ name: '', vpl_source: '' })
+const globalEditTarget = ref<GlobalPipeline | null>(null)
+const globalEditSource = ref('')
+
 const headers = [
   { title: 'Name', key: 'name' },
   { title: 'Tier', key: 'tier' },
   { title: 'Status', key: 'status' },
   { title: 'Usage', key: 'usage', sortable: false },
   { title: 'Trial Expires', key: 'trial_expires_at' },
+  { title: 'Actions', key: 'actions', sortable: false },
+]
+
+const globalHeaders = [
+  { title: 'Name', key: 'name' },
+  { title: 'Status', key: 'status' },
+  { title: 'Tenants', key: 'tenant_count' },
+  { title: 'Created', key: 'created_at' },
   { title: 'Actions', key: 'actions', sortable: false },
 ]
 
@@ -488,8 +602,52 @@ function copyApiKey() {
   }
 }
 
+async function doDeployGlobal() {
+  globalError.value = null
+  globalLoading.value = true
+  try {
+    await adminStore.deployGlobalPipeline(globalForm.value.name, globalForm.value.vpl_source)
+    globalDeployOpen.value = false
+    globalForm.value = { name: '', vpl_source: '' }
+  } catch (e: unknown) {
+    const axiosErr = e as { response?: { data?: { error?: string } } }
+    globalError.value = axiosErr.response?.data?.error || (e instanceof Error ? e.message : 'Failed to deploy')
+  } finally {
+    globalLoading.value = false
+  }
+}
+
+function openGlobalEdit(item: GlobalPipeline) {
+  globalEditTarget.value = item
+  globalEditSource.value = item.vpl_source
+  globalError.value = null
+  globalEditOpen.value = true
+}
+
+async function doUpdateGlobal() {
+  if (!globalEditTarget.value) return
+  globalError.value = null
+  globalLoading.value = true
+  try {
+    await adminStore.updateGlobalPipeline(globalEditTarget.value.id, globalEditSource.value)
+    globalEditOpen.value = false
+  } catch (e: unknown) {
+    const axiosErr = e as { response?: { data?: { error?: string } } }
+    globalError.value = axiosErr.response?.data?.error || (e instanceof Error ? e.message : 'Failed to update')
+  } finally {
+    globalLoading.value = false
+  }
+}
+
+async function confirmGlobalUndeploy(item: GlobalPipeline) {
+  if (confirm(`Undeploy global pipeline "${item.name}" from all tenants?`)) {
+    await adminStore.undeployGlobalPipeline(item.id)
+  }
+}
+
 onMounted(() => {
   adminStore.fetchTenants()
   adminStore.fetchUsageSummary()
+  adminStore.fetchGlobalPipelines()
 })
 </script>

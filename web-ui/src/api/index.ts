@@ -33,6 +33,12 @@ api.interceptors.request.use(
       config.headers['Authorization'] = `Bearer ${token}`
     }
 
+    // Add active org ID for multi-tenancy
+    const activeOrgId = localStorage.getItem('varpulis_active_org')
+    if (activeOrgId) {
+      config.headers['X-Org-Id'] = activeOrgId
+    }
+
     // Get API key from sessionStorage (not persisted across sessions for security)
     const apiKey = sessionStorage.getItem('varpulis_api_key')
     if (apiKey) {
@@ -80,11 +86,13 @@ api.interceptors.response.use(
           }
           isRenewing = false
 
-          // Clear auth state and redirect to login
+          // Clear auth state and redirect to login (skip for public pages)
           localStorage.removeItem('varpulis_token')
           localStorage.removeItem('varpulis_authenticated')
           delete axios.defaults.headers.common['Authorization']
-          if (window.location.pathname !== '/login') {
+          const publicPaths = ['/login', '/signup', '/verify-email', '/landing', '/playground', '/pricing', '/scenarios']
+          const isPublicPage = publicPaths.some(p => window.location.pathname === p || window.location.pathname.startsWith('/scenarios/'))
+          if (!isPublicPage) {
             window.location.href = '/login?redirect=' + encodeURIComponent(window.location.pathname)
           }
         }

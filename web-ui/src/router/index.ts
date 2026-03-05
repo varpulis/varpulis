@@ -4,6 +4,8 @@ import { createRouter, createWebHistory } from 'vue-router'
 const PUBLIC_ROUTES = new Set([
   'landing',
   'login',
+  'signup',
+  'verify-email',
   'playground',
   'pricing',
   'fraud-demo',
@@ -166,6 +168,18 @@ const router = createRouter({
       name: 'login',
       component: () => import('@/views/LoginView.vue'),
       meta: { title: 'Sign In' },
+    },
+    {
+      path: '/signup',
+      name: 'signup',
+      component: () => import('@/views/SignupView.vue'),
+      meta: { title: 'Create Account' },
+    },
+    {
+      path: '/verify-email',
+      name: 'verify-email',
+      component: () => import('@/views/VerifyEmailView.vue'),
+      meta: { title: 'Verify Email' },
     },
     {
       path: '/billing',

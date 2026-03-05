@@ -46,6 +46,8 @@ pub struct PipelineInfo {
     pub status: String,
     pub source: String,
     pub uptime_secs: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub global_template_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -452,6 +454,7 @@ async fn handle_list(
             status: p.status.to_string(),
             source: p.source.clone(),
             uptime_secs: p.created_at.elapsed().as_secs(),
+            global_template_id: p.global_template_id.clone(),
         })
         .collect();
 
@@ -503,6 +506,7 @@ async fn handle_get(
                 status: p.status.to_string(),
                 source: p.source.clone(),
                 uptime_secs: p.created_at.elapsed().as_secs(),
+                global_template_id: p.global_template_id.clone(),
             };
             axum::Json(&info).into_response()
         }
@@ -544,6 +548,18 @@ async fn handle_delete(
                 )
             }
         };
+
+        // Protect global pipelines from tenant deletion
+        if let Some(pipeline) = tenant.pipelines.get(&pipeline_id) {
+            if pipeline.global_template_id.is_some() {
+                return error_response(
+                    StatusCode::FORBIDDEN,
+                    "global_pipeline_protected",
+                    "Global pipelines can only be managed by admin",
+                );
+            }
+        }
+
         tenant.remove_pipeline(&pipeline_id)
     };
 
@@ -955,6 +971,18 @@ async fn handle_reload(
                 )
             }
         };
+
+        // Protect global pipelines from tenant reload
+        if let Some(pipeline) = tenant.pipelines.get(&pipeline_id) {
+            if pipeline.global_template_id.is_some() {
+                return error_response(
+                    StatusCode::FORBIDDEN,
+                    "global_pipeline_protected",
+                    "Global pipelines can only be managed by admin",
+                );
+            }
+        }
+
         tenant.reload_pipeline(&pipeline_id, body.source).await
     };
 
@@ -1438,7 +1466,7 @@ async fn handle_list_tenants(
         .map(|t| TenantResponse {
             id: t.id.as_str().to_string(),
             name: t.name.clone(),
-            api_key: t.api_key.clone(),
+            api_key: format!("{}...", &t.api_key_hash[..8]),
             quota: QuotaInfo {
                 max_pipelines: t.quota.max_pipelines,
                 max_events_per_second: t.quota.max_events_per_second,
@@ -1474,7 +1502,7 @@ async fn handle_get_tenant(
             let resp = TenantDetailResponse {
                 id: t.id.as_str().to_string(),
                 name: t.name.clone(),
-                api_key: t.api_key.clone(),
+                api_key: format!("{}...", &t.api_key_hash[..8]),
                 quota: QuotaInfo {
                     max_pipelines: t.quota.max_pipelines,
                     max_events_per_second: t.quota.max_events_per_second,

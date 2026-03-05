@@ -12,7 +12,9 @@
     "test": "playwright test tests/e2e.spec.ts",
     "test:unit": "vitest run",
     "test:e2e": "playwright test tests/e2e.spec.ts",
-    "test:headed": "playwright test tests/e2e.spec.ts --headed"
+    "test:headed": "playwright test tests/e2e.spec.ts --headed",
+    "test:auth": "K3D_SAAS=1 playwright test tests/auth.spec.ts --project=k3d-saas",
+    "test:auth:headed": "K3D_SAAS=1 playwright test tests/auth.spec.ts --project=k3d-saas --headed"
   },
   "dependencies": {
     "@guolao/vue-monaco-editor": "^1.6.0",

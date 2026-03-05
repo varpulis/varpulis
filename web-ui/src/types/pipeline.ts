@@ -33,6 +33,7 @@ export interface PipelineInfo {
   vpl_source?: string
   affinity?: AffinityRule
   metrics?: PipelineMetrics
+  global_template_id?: string
 }
 
 // Pipeline metrics

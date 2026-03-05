@@ -2,14 +2,170 @@
 import { ref, computed, onMounted } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useWebSocketStore } from '@/stores/websocket'
+import { useOrgStore } from '@/stores/org'
 import { useTheme } from 'vuetify'
 import { setApiKey, clearApiKey, getApiKey } from '@/api'
+import api from '@/api'
 
 const settingsStore = useSettingsStore()
 const wsStore = useWebSocketStore()
+const orgStore = useOrgStore()
 const theme = useTheme()
 
 const hasJwtAuth = computed(() => !!localStorage.getItem('varpulis_token'))
+
+// ---- API Key Management ----
+interface OrgApiKey {
+  id: string
+  name: string
+  key_prefix: string
+  scopes: string
+  created_at: string
+  expires_at: string | null
+}
+
+const orgApiKeys = ref<OrgApiKey[]>([])
+const orgKeysLoading = ref(false)
+const newKeyName = ref('')
+const newKeyScopes = ref('*')
+const newKeyExpiresIn = ref('')
+const newKeyCreating = ref(false)
+const newKeyResult = ref<string | null>(null)
+const showNewKey = ref(false)
+const revokeConfirmId = ref<string | null>(null)
+
+const expiryOptions = [
+  { title: 'Never', value: '' },
+  { title: '30 days', value: '30d' },
+  { title: '90 days', value: '90d' },
+  { title: '1 year', value: '365d' },
+]
+
+async function loadOrgApiKeys() {
+  if (!orgStore.currentOrg) return
+  orgKeysLoading.value = true
+  try {
+    const res = await api.get(`/orgs/${orgStore.currentOrg.id}/api-keys`)
+    orgApiKeys.value = res.data.api_keys ?? []
+  } catch {
+    orgApiKeys.value = []
+  } finally {
+    orgKeysLoading.value = false
+  }
+}
+
+async function createOrgApiKey() {
+  if (!orgStore.currentOrg || !newKeyName.value.trim()) return
+  newKeyCreating.value = true
+  try {
+    const body: Record<string, string> = { name: newKeyName.value.trim(), scopes: newKeyScopes.value }
+    if (newKeyExpiresIn.value) body.expires_in = newKeyExpiresIn.value
+    const res = await api.post(`/orgs/${orgStore.currentOrg.id}/api-keys`, body)
+    newKeyResult.value = res.data.api_key
+    showNewKey.value = true
+    newKeyName.value = ''
+    newKeyScopes.value = '*'
+    newKeyExpiresIn.value = ''
+    await loadOrgApiKeys()
+  } catch (e) {
+    console.error('Failed to create API key', e)
+  } finally {
+    newKeyCreating.value = false
+  }
+}
+
+async function revokeOrgApiKey(keyId: string) {
+  if (!orgStore.currentOrg) return
+  try {
+    await api.delete(`/orgs/${orgStore.currentOrg.id}/api-keys/${keyId}`)
+    await loadOrgApiKeys()
+  } catch (e) {
+    console.error('Failed to revoke API key', e)
+  } finally {
+    revokeConfirmId.value = null
+  }
+}
+
+// ---- Team Members ----
+interface OrgMember {
+  user_id: string
+  name: string
+  email: string
+  role: string
+  status: string
+  accepted_at: string | null
+}
+
+const orgMembers = ref<OrgMember[]>([])
+const membersLoading = ref(false)
+const inviteEmail = ref('')
+const inviteRole = ref('member')
+const inviting = ref(false)
+const removeMemberConfirmId = ref<string | null>(null)
+
+const roleOptions = [
+  { title: 'Viewer', value: 'viewer' },
+  { title: 'Member', value: 'member' },
+  { title: 'Admin', value: 'admin' },
+]
+
+const canManageMembers = computed(() => {
+  const org = orgStore.currentOrg
+  return org && (org.role === 'owner' || org.role === 'admin')
+})
+
+async function loadOrgMembers() {
+  if (!orgStore.currentOrg) return
+  membersLoading.value = true
+  try {
+    const res = await api.get(`/orgs/${orgStore.currentOrg.id}/members`)
+    orgMembers.value = res.data.members ?? []
+  } catch {
+    orgMembers.value = []
+  } finally {
+    membersLoading.value = false
+  }
+}
+
+async function inviteMember() {
+  if (!orgStore.currentOrg || !inviteEmail.value.trim()) return
+  inviting.value = true
+  try {
+    await api.post(`/orgs/${orgStore.currentOrg.id}/members`, {
+      email: inviteEmail.value.trim(),
+      role: inviteRole.value,
+    })
+    inviteEmail.value = ''
+    inviteRole.value = 'member'
+    await loadOrgMembers()
+  } catch (e) {
+    console.error('Failed to invite member', e)
+  } finally {
+    inviting.value = false
+  }
+}
+
+async function removeMember(userId: string) {
+  if (!orgStore.currentOrg) return
+  try {
+    await api.delete(`/orgs/${orgStore.currentOrg.id}/members/${userId}`)
+    await loadOrgMembers()
+  } catch (e) {
+    console.error('Failed to remove member', e)
+  } finally {
+    removeMemberConfirmId.value = null
+  }
+}
+
+async function changeMemberRole(userId: string, newRole: string) {
+  if (!orgStore.currentOrg) return
+  try {
+    await api.put(`/orgs/${orgStore.currentOrg.id}/members/${userId}`, { role: newRole })
+    await loadOrgMembers()
+  } catch (e) {
+    console.error('Failed to change role', e)
+  }
+}
 
 const showApiKey = ref(false)
 const importDialog = ref(false)
@@ -262,6 +418,10 @@ async function saveLlmConfig() {
 
 onMounted(() => {
   loadLlmConfig()
+  if (orgStore.currentOrg) {
+    loadOrgApiKeys()
+    loadOrgMembers()
+  }
 })
 </script>
 
@@ -566,6 +726,192 @@ onMounted(() => {
               Save
             </v-btn>
           </v-card-actions>
+        </v-card>
+
+        <!-- API Keys -->
+        <v-card v-if="orgStore.currentOrg" class="mb-4">
+          <v-card-title>
+            <v-icon class="mr-2">mdi-key-variant</v-icon>
+            API Keys
+          </v-card-title>
+          <v-card-subtitle>Manage API keys for {{ orgStore.currentOrg.name }}</v-card-subtitle>
+          <v-card-text>
+            <!-- New key result -->
+            <v-alert v-if="showNewKey && newKeyResult" type="success" variant="tonal" closable class="mb-4" @click:close="showNewKey = false">
+              <div class="text-subtitle-2 mb-1">API key created! Copy it now — it won't be shown again.</div>
+              <code class="d-block pa-2 bg-surface rounded text-body-2" style="word-break: break-all">{{ newKeyResult }}</code>
+            </v-alert>
+
+            <!-- Create new key -->
+            <div class="d-flex align-end gap-2 mb-4">
+              <v-text-field
+                v-model="newKeyName"
+                label="Key name"
+                density="compact"
+                hide-details
+                style="max-width: 200px"
+              />
+              <v-select
+                v-model="newKeyExpiresIn"
+                :items="expiryOptions"
+                label="Expires"
+                density="compact"
+                hide-details
+                style="max-width: 140px"
+              />
+              <v-btn
+                color="primary"
+                size="small"
+                :loading="newKeyCreating"
+                :disabled="!newKeyName.trim()"
+                @click="createOrgApiKey"
+              >
+                Create Key
+              </v-btn>
+            </div>
+
+            <!-- Key list -->
+            <v-table v-if="orgApiKeys.length > 0" density="compact">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Prefix</th>
+                  <th>Scopes</th>
+                  <th>Created</th>
+                  <th>Expires</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="key in orgApiKeys" :key="key.id">
+                  <td class="text-body-2">{{ key.name }}</td>
+                  <td><code class="text-body-2">{{ key.key_prefix }}...</code></td>
+                  <td class="text-body-2">{{ key.scopes }}</td>
+                  <td class="text-body-2">{{ new Date(key.created_at).toLocaleDateString() }}</td>
+                  <td class="text-body-2">{{ key.expires_at ? new Date(key.expires_at).toLocaleDateString() : 'Never' }}</td>
+                  <td>
+                    <v-btn
+                      v-if="revokeConfirmId !== key.id"
+                      icon
+                      size="x-small"
+                      variant="text"
+                      color="error"
+                      @click="revokeConfirmId = key.id"
+                    >
+                      <v-icon size="small">mdi-delete</v-icon>
+                      <v-tooltip activator="parent" location="top">Revoke</v-tooltip>
+                    </v-btn>
+                    <div v-else class="d-flex align-center gap-1">
+                      <v-btn size="x-small" color="error" variant="flat" @click="revokeOrgApiKey(key.id)">Revoke</v-btn>
+                      <v-btn size="x-small" variant="text" @click="revokeConfirmId = null">Cancel</v-btn>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </v-table>
+            <div v-else-if="!orgKeysLoading" class="text-medium-emphasis text-body-2">
+              No API keys yet. Create one above.
+            </div>
+            <v-progress-linear v-if="orgKeysLoading" indeterminate class="mt-2" />
+          </v-card-text>
+        </v-card>
+
+        <!-- Team Members -->
+        <v-card v-if="orgStore.currentOrg" class="mb-4">
+          <v-card-title>
+            <v-icon class="mr-2">mdi-account-group</v-icon>
+            Team Members
+          </v-card-title>
+          <v-card-subtitle>Manage members of {{ orgStore.currentOrg.name }}</v-card-subtitle>
+          <v-card-text>
+            <!-- Invite form -->
+            <div v-if="canManageMembers" class="d-flex align-end gap-2 mb-4">
+              <v-text-field
+                v-model="inviteEmail"
+                label="Email address"
+                density="compact"
+                hide-details
+                style="max-width: 240px"
+              />
+              <v-select
+                v-model="inviteRole"
+                :items="roleOptions"
+                label="Role"
+                density="compact"
+                hide-details
+                style="max-width: 130px"
+              />
+              <v-btn
+                color="primary"
+                size="small"
+                :loading="inviting"
+                :disabled="!inviteEmail.trim()"
+                @click="inviteMember"
+              >
+                Invite
+              </v-btn>
+            </div>
+
+            <!-- Members list -->
+            <v-table v-if="orgMembers.length > 0" density="compact">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Email</th>
+                  <th>Role</th>
+                  <th>Status</th>
+                  <th v-if="canManageMembers"></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="member in orgMembers" :key="member.user_id">
+                  <td class="text-body-2">{{ member.name || '—' }}</td>
+                  <td class="text-body-2">{{ member.email }}</td>
+                  <td>
+                    <v-select
+                      v-if="canManageMembers && member.role !== 'owner'"
+                      :model-value="member.role"
+                      :items="[...roleOptions, { title: 'Owner', value: 'owner' }]"
+                      density="compact"
+                      hide-details
+                      variant="plain"
+                      style="max-width: 120px"
+                      @update:model-value="changeMemberRole(member.user_id, $event)"
+                    />
+                    <v-chip v-else size="x-small" variant="tonal">{{ member.role }}</v-chip>
+                  </td>
+                  <td>
+                    <v-chip :color="member.status === 'active' ? 'success' : 'warning'" size="x-small" variant="tonal">
+                      {{ member.status }}
+                    </v-chip>
+                  </td>
+                  <td v-if="canManageMembers">
+                    <template v-if="member.role !== 'owner'">
+                      <v-btn
+                        v-if="removeMemberConfirmId !== member.user_id"
+                        icon
+                        size="x-small"
+                        variant="text"
+                        color="error"
+                        @click="removeMemberConfirmId = member.user_id"
+                      >
+                        <v-icon size="small">mdi-account-remove</v-icon>
+                        <v-tooltip activator="parent" location="top">Remove</v-tooltip>
+                      </v-btn>
+                      <div v-else class="d-flex align-center gap-1">
+                        <v-btn size="x-small" color="error" variant="flat" @click="removeMember(member.user_id)">Remove</v-btn>
+                        <v-btn size="x-small" variant="text" @click="removeMemberConfirmId = null">Cancel</v-btn>
+                      </div>
+                    </template>
+                  </td>
+                </tr>
+              </tbody>
+            </v-table>
+            <div v-else-if="!membersLoading" class="text-medium-emphasis text-body-2">
+              No team members found.
+            </div>
+            <v-progress-linear v-if="membersLoading" indeterminate class="mt-2" />
+          </v-card-text>
         </v-card>
 
         <!-- Import/Export -->

@@ -48,6 +48,12 @@ spec:
                 configMapKeyRef:
                   name: varpulis-k3d-saas-config
                   key: frontend-url
+            - name: SMTP_HOST
+              value: "mailpit"
+            - name: SMTP_PORT
+              value: "1025"
+            - name: SMTP_FROM
+              value: "noreply@varpulis.test"
             - name: RUST_LOG
               value: "info,varpulis=debug"
           ports:
