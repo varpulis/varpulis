@@ -41,27 +41,53 @@ impl<'a> IteratorExt<'a> for pest::iterators::Pairs<'a, Rule> {
 #[grammar = "varpulis.pest"]
 pub struct VarpulisParser;
 
+/// Maximum wall-clock time the parser is allowed to run before being aborted.
+///
+/// PEG recursive-descent parsers can exhibit exponential backtracking on
+/// adversarial inputs even after bracket-depth and unmatched-bracket pre-scans.
+/// A hard timeout protects callers (CLI, LSP, fuzz targets) from hangs.
+/// 10 seconds is orders of magnitude more than any real VPL program needs
+/// (typical parse time is <5 ms for a 1000-line file).
+const PARSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Parse a VPL source string into a Program AST.
 ///
-/// Runs pest parsing in a thread with a 16 MB stack to prevent stack overflow
-/// from deeply nested or adversarial inputs that trigger deep recursion in the
-/// PEG recursive descent parser.
+/// Runs pest parsing in a dedicated thread with a 16 MB stack and a wall-clock
+/// timeout to guard against stack overflow and exponential backtracking on
+/// adversarial inputs.
 pub fn parse(source: &str) -> ParseResult<Program> {
     let source = source.to_string();
-    std::thread::Builder::new()
+    let handle = std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)
         .spawn(move || parse_inner(&source))
         .map_err(|e| ParseError::InvalidToken {
             position: 0,
             message: format!("Failed to spawn parser thread: {e}"),
-        })?
-        .join()
-        .unwrap_or_else(|_| {
-            Err(ParseError::InvalidToken {
+        })?;
+
+    // Park the current thread until the parser finishes or the timeout fires.
+    let deadline = std::time::Instant::now() + PARSE_TIMEOUT;
+    loop {
+        if handle.is_finished() {
+            return handle.join().unwrap_or_else(|_| {
+                Err(ParseError::InvalidToken {
+                    position: 0,
+                    message: "Parser stack overflow on deeply nested input".to_string(),
+                })
+            });
+        }
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(ParseError::InvalidToken {
                 position: 0,
-                message: "Parser stack overflow on deeply nested input".to_string(),
-            })
-        })
+                message: format!(
+                    "Parser timed out after {}s on pathological input",
+                    PARSE_TIMEOUT.as_secs()
+                ),
+            });
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5).min(remaining));
+    }
 }
 
 /// Maximum bracket nesting depth allowed before pest parsing.
