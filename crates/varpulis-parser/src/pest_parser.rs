@@ -74,9 +74,19 @@ pub fn parse(source: &str) -> ParseResult<Program> {
 /// real-world is about 8) while keeping worst-case parse time under 1 second.
 const MAX_NESTING_DEPTH: usize = 10;
 
+/// Maximum number of unmatched open brackets allowed.
+///
+/// Even when nesting depth stays within limits, many unmatched open brackets
+/// at different positions (e.g. `a[b[c[d[` with no closing `]`) cause
+/// combinatorial explosion as pest tries each `[` as a potential array_literal,
+/// index_access, or slice_access start. 6 is generous for real VPL programs
+/// (unmatched brackets are always parse errors anyway).
+const MAX_UNMATCHED_OPEN_BRACKETS: usize = 6;
+
 /// O(n) pre-scan that rejects inputs with bracket nesting deeper than
-/// `MAX_NESTING_DEPTH`. Respects string literals and comments so that
-/// brackets inside `"..."`, `# ...`, or `/* ... */` are ignored.
+/// `MAX_NESTING_DEPTH` or too many unmatched open brackets. Respects string
+/// literals and comments so that brackets inside `"..."`, `# ...`, or
+/// `/* ... */` are ignored.
 fn check_nesting_depth(source: &str) -> ParseResult<()> {
     let mut depth: usize = 0;
     let mut max_depth: usize = 0;
@@ -84,6 +94,14 @@ fn check_nesting_depth(source: &str) -> ParseResult<()> {
     let bytes = source.as_bytes();
     let len = bytes.len();
     let mut i = 0;
+
+    // Per-bracket-type counters for unmatched detection
+    let mut paren_open: usize = 0;
+    let mut paren_close: usize = 0;
+    let mut square_open: usize = 0;
+    let mut square_close: usize = 0;
+    let mut curly_open: usize = 0;
+    let mut curly_close: usize = 0;
 
     while i < len {
         let b = bytes[i];
@@ -128,14 +146,37 @@ fn check_nesting_depth(source: &str) -> ParseResult<()> {
         }
 
         // Track bracket depth
-        if b == b'(' || b == b'[' || b == b'{' {
-            depth += 1;
-            if depth > max_depth {
-                max_depth = depth;
-                max_depth_pos = i;
+        match b {
+            b'(' => {
+                depth += 1;
+                paren_open += 1;
             }
-        } else if b == b')' || b == b']' || b == b'}' {
-            depth = depth.saturating_sub(1);
+            b'[' => {
+                depth += 1;
+                square_open += 1;
+            }
+            b'{' => {
+                depth += 1;
+                curly_open += 1;
+            }
+            b')' => {
+                depth = depth.saturating_sub(1);
+                paren_close += 1;
+            }
+            b']' => {
+                depth = depth.saturating_sub(1);
+                square_close += 1;
+            }
+            b'}' => {
+                depth = depth.saturating_sub(1);
+                curly_close += 1;
+            }
+            _ => {}
+        }
+
+        if depth > max_depth {
+            max_depth = depth;
+            max_depth_pos = i;
         }
 
         if max_depth > MAX_NESTING_DEPTH {
@@ -146,6 +187,21 @@ fn check_nesting_depth(source: &str) -> ParseResult<()> {
         }
 
         i += 1;
+    }
+
+    // Reject inputs with too many unmatched open brackets.
+    // Unmatched brackets are always parse errors, but they cause exponential
+    // backtracking in pest before it can report the error.
+    let unmatched = paren_open.saturating_sub(paren_close)
+        + square_open.saturating_sub(square_close)
+        + curly_open.saturating_sub(curly_close);
+    if unmatched > MAX_UNMATCHED_OPEN_BRACKETS {
+        return Err(ParseError::InvalidToken {
+            position: max_depth_pos,
+            message: format!(
+                "Too many unmatched open brackets ({unmatched}); maximum is {MAX_UNMATCHED_OPEN_BRACKETS}"
+            ),
+        });
     }
 
     Ok(())
