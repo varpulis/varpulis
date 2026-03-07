@@ -157,7 +157,14 @@ mod tests {
         mgr.create_tenant("Test".into(), api_key.clone(), TenantQuota::default())
             .unwrap();
         let manager = Arc::new(RwLock::new(mgr));
-        let app = api::api_routes(manager, None, None, None);
+        let app = api::api_routes(
+            manager,
+            None,
+            None,
+            None,
+            #[cfg(feature = "saas")]
+            None,
+        );
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
