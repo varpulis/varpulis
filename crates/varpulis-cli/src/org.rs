@@ -58,8 +58,14 @@ async fn extract_claims(
     Ok(token_data.claims)
 }
 
-/// Verify the authenticated user owns (or is admin of) the given org.
-async fn verify_org_ownership(
+/// Verify the authenticated user has admin access to the given org.
+///
+/// Access is granted if any of:
+/// 1. User has global admin role
+/// 2. User is a member of the org with owner/admin role
+/// 3. User owns the org (legacy owner_id check)
+/// 4. **Hierarchy**: the org is a sub-tenant and the user is admin of its parent tenant
+async fn verify_org_access(
     pool: &varpulis_db::PgPool,
     claims: &oauth::Claims,
     org_uuid: uuid::Uuid,
@@ -94,15 +100,48 @@ async fn verify_org_ownership(
                 .into_response()
         })?;
 
-    if org.owner_id != user_uuid {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({"error": "Forbidden"})),
-        )
-            .into_response());
+    // Check direct membership (owner/admin role)
+    if let Ok(Some(member)) =
+        varpulis_db::repo::get_user_org_membership(pool, user_uuid, org_uuid).await
+    {
+        if member.status == "active" && (member.role == "owner" || member.role == "admin") {
+            return Ok(());
+        }
     }
 
-    Ok(())
+    // Legacy: direct owner_id check
+    if org.owner_id == user_uuid {
+        return Ok(());
+    }
+
+    // Hierarchy check: if this is a sub-tenant, check if user is admin of the parent tenant
+    if org.org_type == "sub_tenant" {
+        if let Some(parent_id) = org.parent_org_id {
+            // Check parent org membership
+            if let Ok(Some(parent_member)) =
+                varpulis_db::repo::get_user_org_membership(pool, user_uuid, parent_id).await
+            {
+                if parent_member.status == "active"
+                    && (parent_member.role == "owner" || parent_member.role == "admin")
+                {
+                    return Ok(());
+                }
+            }
+            // Legacy: parent org owner_id check
+            if let Ok(Some(parent_org)) = varpulis_db::repo::get_organization(pool, parent_id).await
+            {
+                if parent_org.owner_id == user_uuid {
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    Err((
+        StatusCode::FORBIDDEN,
+        Json(serde_json::json!({"error": "Forbidden"})),
+    )
+        .into_response())
 }
 
 // ---------------------------------------------------------------------------
@@ -249,7 +288,7 @@ async fn handle_create_api_key(
     };
 
     // Always verify ownership via DB lookup
-    if let Err(resp) = verify_org_ownership(&pool, &claims, org_uuid).await {
+    if let Err(resp) = verify_org_access(&pool, &claims, org_uuid).await {
         return resp;
     }
 
@@ -374,7 +413,7 @@ async fn handle_list_api_keys(
     };
 
     // Verify the authenticated user owns this org
-    if let Err(resp) = verify_org_ownership(&pool, &claims, org_uuid).await {
+    if let Err(resp) = verify_org_access(&pool, &claims, org_uuid).await {
         return resp;
     }
 
@@ -449,7 +488,7 @@ async fn handle_delete_api_key(
     };
 
     // Verify the authenticated user owns this org
-    if let Err(resp) = verify_org_ownership(&pool, &claims, org_uuid).await {
+    if let Err(resp) = verify_org_access(&pool, &claims, org_uuid).await {
         return resp;
     }
 
@@ -524,7 +563,7 @@ async fn handle_invite_member(
         }
     };
 
-    if let Err(resp) = verify_org_ownership(&pool, &claims, org_uuid).await {
+    if let Err(resp) = verify_org_access(&pool, &claims, org_uuid).await {
         return resp;
     }
 
@@ -602,7 +641,7 @@ async fn handle_list_members(
         }
     };
 
-    if let Err(resp) = verify_org_ownership(&pool, &claims, org_uuid).await {
+    if let Err(resp) = verify_org_access(&pool, &claims, org_uuid).await {
         return resp;
     }
 
@@ -674,7 +713,7 @@ async fn handle_remove_member(
         }
     };
 
-    if let Err(resp) = verify_org_ownership(&pool, &claims, org_uuid).await {
+    if let Err(resp) = verify_org_access(&pool, &claims, org_uuid).await {
         return resp;
     }
 
@@ -744,7 +783,7 @@ async fn handle_update_member_role(
         }
     };
 
-    if let Err(resp) = verify_org_ownership(&pool, &claims, org_uuid).await {
+    if let Err(resp) = verify_org_access(&pool, &claims, org_uuid).await {
         return resp;
     }
 
@@ -844,7 +883,7 @@ async fn handle_create_sub_tenant(
     };
 
     // Verify the authenticated user is an admin of this org
-    if let Err(resp) = verify_org_ownership(&pool, &claims, org_uuid).await {
+    if let Err(resp) = verify_org_access(&pool, &claims, org_uuid).await {
         return resp;
     }
 
@@ -949,7 +988,7 @@ async fn handle_list_sub_tenants(
         }
     };
 
-    if let Err(resp) = verify_org_ownership(&pool, &claims, org_uuid).await {
+    if let Err(resp) = verify_org_access(&pool, &claims, org_uuid).await {
         return resp;
     }
 
@@ -1028,7 +1067,7 @@ async fn handle_get_schema_info(
         }
     };
 
-    if let Err(resp) = verify_org_ownership(&pool, &claims, org_uuid).await {
+    if let Err(resp) = verify_org_access(&pool, &claims, org_uuid).await {
         return resp;
     }
 

@@ -70,6 +70,29 @@ impl TenantContext {
     pub fn can_create_sub_tenants(&self) -> bool {
         self.org_type == "tenant" && self.is_org_admin()
     }
+
+    /// Returns true if the user can deploy global pipelines (global admin only).
+    pub fn can_deploy_global_pipelines(&self) -> bool {
+        self.is_global_admin()
+    }
+
+    /// Returns true if the user can manage the current org's settings.
+    /// Sub-tenant viewers/members cannot manage settings.
+    pub fn can_manage_org(&self) -> bool {
+        self.is_org_admin()
+    }
+
+    /// Returns true if the user can view pipelines (any authenticated member).
+    pub fn can_view_pipelines(&self) -> bool {
+        self.is_org_active()
+    }
+
+    /// Returns true if the user can deploy/modify pipelines.
+    /// Viewers cannot deploy pipelines.
+    pub fn can_deploy_pipelines(&self) -> bool {
+        self.is_org_active()
+            && (self.org_role == "owner" || self.org_role == "admin" || self.org_role == "member")
+    }
 }
 
 /// Shared state required for `TenantContext` extraction.
@@ -203,7 +226,7 @@ where
                 .into_response()
         })?;
 
-        // Look up org membership
+        // Look up org membership (with hierarchy support)
         let org_role = if claims.role == "admin" {
             // Global admins get implicit owner access to all orgs
             "owner".to_string()
@@ -214,6 +237,47 @@ where
                     // Fall back to legacy owner_id check
                     match varpulis_db::repo::get_organization(pool, org_id).await {
                         Ok(Some(org)) if org.owner_id == user_id => "owner".to_string(),
+                        Ok(Some(org)) if org.org_type == "sub_tenant" => {
+                            // Hierarchy: parent tenant admin gets admin access to sub-tenants
+                            if let Some(parent_id) = org.parent_org_id {
+                                match varpulis_db::repo::get_user_org_membership(
+                                    pool, user_id, parent_id,
+                                )
+                                .await
+                                {
+                                    Ok(Some(parent_member))
+                                        if parent_member.status == "active"
+                                            && (parent_member.role == "owner"
+                                                || parent_member.role == "admin") =>
+                                    {
+                                        "admin".to_string()
+                                    }
+                                    _ => {
+                                        // Legacy: parent org owner_id
+                                        match varpulis_db::repo::get_organization(pool, parent_id)
+                                            .await
+                                        {
+                                            Ok(Some(parent)) if parent.owner_id == user_id => {
+                                                "admin".to_string()
+                                            }
+                                            _ => {
+                                                return Err((
+                                                    StatusCode::FORBIDDEN,
+                                                    axum::Json(serde_json::json!({"error": "Not a member of this organization"})),
+                                                )
+                                                    .into_response());
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                return Err((
+                                    StatusCode::FORBIDDEN,
+                                    axum::Json(serde_json::json!({"error": "Not a member of this organization"})),
+                                )
+                                    .into_response());
+                            }
+                        }
                         _ => {
                             return Err((
                                 StatusCode::FORBIDDEN,
