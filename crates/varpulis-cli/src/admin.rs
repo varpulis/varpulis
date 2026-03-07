@@ -1680,6 +1680,15 @@ async fn handle_configure_kafka(
             .into_response();
     }
 
+    // Update runtime tenant's topic prefix
+    if let Some(ref tm) = state.tenant_manager {
+        let tid = varpulis_runtime::TenantId::new(org_uuid.to_string());
+        let mut mgr = tm.write().await;
+        if let Some(tenant) = mgr.get_tenant_mut(&tid) {
+            tenant.topic_prefix = Some(prefix.clone());
+        }
+    }
+
     tracing::info!(
         "Configured Kafka topic prefix '{}' for org {}",
         prefix,

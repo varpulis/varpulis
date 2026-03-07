@@ -70,6 +70,21 @@ const navItems = [
   { title: 'Admin', icon: 'mdi-shield-crown', to: '/admin' },
 ]
 
+const breadcrumbs = computed(() => {
+  const path = route.path
+  if (path === '/' || path === '/login' || path === '/landing') return []
+  const items = [{ title: 'Home', to: '/' }]
+  const segments = path.split('/').filter(Boolean)
+  let current = ''
+  for (const seg of segments) {
+    current += '/' + seg
+    const matched = router.getRoutes().find(r => r.path === current)
+    const title = (matched?.meta?.title as string) || seg.charAt(0).toUpperCase() + seg.slice(1)
+    items.push({ title, to: current })
+  }
+  return items
+})
+
 const chatDrawer = ref(false)
 const chatConfigured = ref(false)
 
@@ -113,6 +128,11 @@ onMounted(() => {
 
     <v-main>
       <v-container fluid class="pa-4">
+        <v-breadcrumbs v-if="breadcrumbs.length > 1" :items="breadcrumbs" density="compact" class="px-0 pt-0 pb-2">
+          <template #divider>
+            <v-icon size="small">mdi-chevron-right</v-icon>
+          </template>
+        </v-breadcrumbs>
         <router-view v-slot="{ Component, route }">
           <transition name="fade" mode="out-in">
             <keep-alive :include="['EditorView']">
@@ -196,5 +216,10 @@ onMounted(() => {
 
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(128, 128, 128, 0.7);
+}
+
+/* Mobile table overflow fix */
+.v-table {
+  overflow-x: auto;
 }
 </style>
