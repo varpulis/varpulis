@@ -1254,6 +1254,20 @@ pub async fn delete_pipeline(pool: &PgPool, id: Uuid, org_id: Uuid) -> Result<()
     Ok(())
 }
 
+/// Delete a pipeline by name for a given org (used to sync runtime deletions to DB).
+pub async fn delete_pipeline_by_name(
+    pool: &PgPool,
+    org_id: Uuid,
+    name: &str,
+) -> Result<(), DbError> {
+    sqlx::query("DELETE FROM pipelines WHERE org_id = $1 AND name = $2")
+        .bind(org_id)
+        .bind(name)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Global Pipeline Templates
 // ---------------------------------------------------------------------------
@@ -1359,15 +1373,18 @@ pub async fn create_global_pipeline_copy(
     name: &str,
     vpl_source: &str,
 ) -> Result<Pipeline, DbError> {
+    // Find the global org to set inherited_from_org_id
+    let global_org_id = get_global_org(pool).await?.map(|o| o.id);
     let query = format!(
-        "INSERT INTO pipelines (org_id, name, vpl_source, global_template_id) \
-         VALUES ($1, $2, $3, $4) RETURNING {PIPELINE_COLUMNS}"
+        "INSERT INTO pipelines (org_id, name, vpl_source, global_template_id, scope_level, inherited_from_org_id) \
+         VALUES ($1, $2, $3, $4, 'global', $5) RETURNING {PIPELINE_COLUMNS}"
     );
     let pipeline = sqlx::query_as::<_, Pipeline>(&query)
         .bind(org_id)
         .bind(name)
         .bind(vpl_source)
         .bind(template_id)
+        .bind(global_org_id)
         .fetch_one(pool)
         .await?;
 
