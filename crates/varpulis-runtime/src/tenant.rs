@@ -257,6 +257,8 @@ pub struct Tenant {
     pub created_at: Instant,
     /// Optional WebSocket broadcast for output event relay
     pub(crate) ws_broadcast: Option<Arc<tokio::sync::broadcast::Sender<String>>>,
+    /// Optional topic prefix for Kafka/MQTT/NATS topic isolation
+    pub topic_prefix: Option<String>,
 }
 
 impl Tenant {
@@ -270,6 +272,7 @@ impl Tenant {
             pipelines: HashMap::new(),
             created_at: Instant::now(),
             ws_broadcast: None,
+            topic_prefix: None,
         }
     }
 
@@ -289,6 +292,7 @@ impl Tenant {
             pipelines: HashMap::new(),
             created_at: Instant::now(),
             ws_broadcast: None,
+            topic_prefix: None,
         }
     }
 
@@ -337,6 +341,9 @@ impl Tenant {
         let mut engine = Engine::new(output_tx);
         if let Some(m) = prometheus_metrics {
             engine = engine.with_metrics(m);
+        }
+        if let Some(ref prefix) = self.topic_prefix {
+            engine.set_topic_prefix(prefix);
         }
         engine.load(&program)?;
 

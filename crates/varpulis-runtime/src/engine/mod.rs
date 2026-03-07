@@ -96,6 +96,8 @@ pub struct Engine {
     pub(super) late_data_configs: FxHashMap<String, types::LateDataConfig>,
     /// Context name when running inside a context thread (used for unique connector IDs)
     pub(super) context_name: Option<String>,
+    /// Topic prefix for multi-tenant Kafka/MQTT isolation (prepended to all topic names)
+    pub(super) topic_prefix: Option<String>,
     /// Shared Hamlet aggregators for multi-query optimization
     pub(super) shared_hamlet_aggregators:
         Vec<std::sync::Arc<std::sync::Mutex<crate::hamlet::HamletAggregator>>>,
@@ -125,6 +127,7 @@ impl std::fmt::Debug for Engine {
             .field("output_events_emitted", &self.output_events_emitted)
             .field("context_map", &self.context_map)
             .field("context_name", &self.context_name)
+            .field("topic_prefix", &self.topic_prefix)
             .finish_non_exhaustive()
     }
 }
@@ -168,6 +171,7 @@ impl Engine {
             last_applied_watermark: None,
             late_data_configs: FxHashMap::default(),
             context_name: None,
+            topic_prefix: None,
             shared_hamlet_aggregators: Vec::new(),
             checkpoint_manager: None,
             dlq_path: None,
@@ -215,6 +219,7 @@ impl Engine {
             last_applied_watermark: None,
             late_data_configs: FxHashMap::default(),
             context_name: None,
+            topic_prefix: None,
             shared_hamlet_aggregators: Vec::new(),
             checkpoint_manager: None,
             dlq_path: None,
@@ -284,6 +289,14 @@ impl Engine {
     /// Set the context name for this engine instance.
     pub fn set_context_name(&mut self, name: &str) {
         self.context_name = Some(name.to_string());
+    }
+
+    /// Set a topic prefix for multi-tenant isolation (call before `load()`).
+    ///
+    /// When set, all Kafka and MQTT topic names will be prefixed with
+    /// `{prefix}.` to enforce per-tenant topic isolation.
+    pub fn set_topic_prefix(&mut self, prefix: &str) {
+        self.topic_prefix = Some(prefix.to_string());
     }
 
     /// Set a custom DLQ file path (call before `load()`).
@@ -607,6 +620,7 @@ impl Engine {
             &referenced_sink_keys,
             &topic_overrides,
             self.context_name.as_deref(),
+            self.topic_prefix.as_deref(),
         );
 
         // Wrap sinks with circuit breaker + DLQ when sink operations exist
