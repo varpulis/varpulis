@@ -486,14 +486,20 @@ pub async fn run_server(
                     if let Ok(keys) = varpulis_db::repo::list_api_keys(pool, org.id).await {
                         if let Some(key) = keys.iter().find(|k| k.revoked_at.is_none()) {
                             let quota = varpulis_runtime::TenantQuota::for_tier(&org.tier);
+                            let topic_prefix = org.kafka_topic_prefix.clone();
                             if let Err(e) = mgr.create_tenant_with_id(
-                                tid,
+                                tid.clone(),
                                 org.name.clone(),
                                 key.key_hash.clone(),
                                 quota,
                             ) {
                                 tracing::warn!("Failed to sync org {} to runtime: {}", org.id, e);
                             } else {
+                                if let Some(prefix) = topic_prefix {
+                                    if let Some(tenant) = mgr.get_tenant_mut(&tid) {
+                                        tenant.topic_prefix = Some(prefix);
+                                    }
+                                }
                                 synced += 1;
                             }
                         }

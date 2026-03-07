@@ -241,6 +241,7 @@ pub fn create_sink_from_config(
     config: &connector::ConnectorConfig,
     topic_override: Option<&str>,
     context_name: Option<&str>,
+    topic_prefix: Option<&str>,
 ) -> Option<Arc<dyn crate::sink::Sink>> {
     // Try inventory-based factory first
     if let Some(factory) = connector::component::find_factory(&config.connector_type) {
@@ -294,10 +295,15 @@ pub fn create_sink_from_config(
                     .get("brokers")
                     .cloned()
                     .unwrap_or_else(|| config.url.clone());
-                let topic = topic_override
+                let base_topic = topic_override
                     .map(|s| s.to_string())
                     .or_else(|| config.topic.clone())
                     .unwrap_or_else(|| format!("{}-output", name));
+                // Apply tenant topic prefix for multi-tenant isolation
+                let topic = match topic_prefix {
+                    Some(prefix) => format!("{prefix}.{base_topic}"),
+                    None => base_topic,
+                };
 
                 // Extract transactional_id from properties or auto-generate when
                 // exactly_once is requested
@@ -372,10 +378,15 @@ pub fn create_sink_from_config(
                     .get("port")
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(1883);
-                let topic = topic_override
+                let base_topic = topic_override
                     .map(|s| s.to_string())
                     .or_else(|| config.topic.clone())
                     .unwrap_or_else(|| format!("{name}-output"));
+                // Apply tenant topic prefix for multi-tenant isolation
+                let topic = match topic_prefix {
+                    Some(prefix) => format!("{prefix}.{base_topic}"),
+                    None => base_topic,
+                };
                 let base_id = config
                     .properties
                     .get("client_id")
@@ -412,10 +423,14 @@ pub fn create_sink_from_config(
                 } else {
                     config.url.clone()
                 };
-                let subject = topic_override
+                let base_subject = topic_override
                     .map(|s| s.to_string())
                     .or_else(|| config.topic.clone())
                     .unwrap_or_else(|| format!("{}-output", name));
+                let subject = match topic_prefix {
+                    Some(prefix) => format!("{prefix}.{base_subject}"),
+                    None => base_subject,
+                };
                 let nats_config = connector::NatsConfig::new(&servers, &subject);
                 let sink = connector::NatsSink::new(name, nats_config);
                 Some(Arc::new(SinkConnectorAdapter {
@@ -441,10 +456,14 @@ pub fn create_sink_from_config(
                 } else {
                     config.url.clone()
                 };
-                let topic = topic_override
+                let base_topic = topic_override
                     .map(|s| s.to_string())
                     .or_else(|| config.topic.clone())
                     .unwrap_or_else(|| format!("{}-output", name));
+                let topic = match topic_prefix {
+                    Some(prefix) => format!("{prefix}.{base_topic}"),
+                    None => base_topic,
+                };
 
                 let mut pulsar_config = connector::PulsarConfig::new(&service_url, &topic);
                 if let Some(token) = config.properties.get("token") {
@@ -558,11 +577,14 @@ impl SinkRegistry {
         referenced_keys: &FxHashSet<String>,
         topic_overrides: &[(String, String, String)],
         context_name: Option<&str>,
+        topic_prefix: Option<&str>,
     ) {
         // Create sinks for directly referenced connectors
         for (name, config) in connectors {
             if referenced_keys.contains(name) {
-                if let Some(sink) = create_sink_from_config(name, config, None, context_name) {
+                if let Some(sink) =
+                    create_sink_from_config(name, config, None, context_name, topic_prefix)
+                {
                     self.cache.insert(name.clone(), sink);
                 }
             }
@@ -572,9 +594,13 @@ impl SinkRegistry {
         for (sink_key, connector_name, topic) in topic_overrides {
             if !self.cache.contains_key(sink_key) {
                 if let Some(config) = connectors.get(connector_name) {
-                    if let Some(sink) =
-                        create_sink_from_config(connector_name, config, Some(topic), context_name)
-                    {
+                    if let Some(sink) = create_sink_from_config(
+                        connector_name,
+                        config,
+                        Some(topic),
+                        context_name,
+                        topic_prefix,
+                    ) {
                         self.cache.insert(sink_key.clone(), sink);
                     }
                 }
@@ -647,14 +673,14 @@ mod tests {
     #[test]
     fn test_console_sink_creation() {
         let config = connector::ConnectorConfig::new("console", "");
-        let sink = create_sink_from_config("test_console", &config, None, None);
+        let sink = create_sink_from_config("test_console", &config, None, None, None);
         assert!(sink.is_some());
     }
 
     #[test]
     fn test_unknown_connector_returns_none() {
         let config = connector::ConnectorConfig::new("unknown_type", "");
-        let sink = create_sink_from_config("test", &config, None, None);
+        let sink = create_sink_from_config("test", &config, None, None, None);
         assert!(sink.is_none());
     }
 
