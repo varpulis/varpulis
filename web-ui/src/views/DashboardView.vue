@@ -5,6 +5,7 @@ import { useClusterStore } from '@/stores/cluster'
 import { usePipelinesStore } from '@/stores/pipelines'
 import { useMetricsStore } from '@/stores/metrics'
 import ThroughputChart from '@/components/metrics/ThroughputChart.vue'
+import OnboardingWizard from '@/components/onboarding/OnboardingWizard.vue'
 import { formatDistanceToNow } from 'date-fns'
 import { fetchClusterMetrics, type PipelineWorkerMetrics } from '@/api/cluster'
 
@@ -14,6 +15,7 @@ const pipelinesStore = usePipelinesStore()
 const metricsStore = useMetricsStore()
 
 const loading = ref(true)
+const showOnboarding = ref(!localStorage.getItem('varpulis_onboarding_complete'))
 const pipelineActivity = ref<PipelineWorkerMetrics[]>([])
 let pollInterval: ReturnType<typeof setInterval> | null = null
 let prevEventsIn = -1  // -1 signals first poll (no previous data)
@@ -405,6 +407,9 @@ onUnmounted(() => {
         </v-card>
       </v-col>
     </v-row>
+
+    <!-- Onboarding Wizard -->
+    <OnboardingWizard v-if="showOnboarding" @dismiss="showOnboarding = false" />
 
     <!-- Loading overlay -->
     <v-overlay
