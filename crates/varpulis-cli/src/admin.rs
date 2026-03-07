@@ -110,6 +110,7 @@ async fn handle_list_tenants(State(state): State<AdminState>, headers: HeaderMap
                     "org_type": o.org_type,
                     "parent_org_id": o.parent_org_id.map(|id| id.to_string()),
                     "db_schema": o.db_schema,
+                    "k8s_namespace": o.k8s_namespace,
                     "trial_expires_at": o.trial_expires_at.map(|t| t.to_rfc3339()),
                     "pipeline_limit": o.pipeline_limit,
                     "events_per_second_limit": o.events_per_second_limit,
@@ -211,6 +212,7 @@ async fn handle_get_tenant(
             "org_type": org.org_type,
             "parent_org_id": org.parent_org_id.map(|id| id.to_string()),
             "db_schema": org.db_schema,
+            "k8s_namespace": org.k8s_namespace,
             "stripe_customer_id": org.stripe_customer_id,
             "trial_expires_at": org.trial_expires_at.map(|t| t.to_rfc3339()),
             "pipeline_limit": org.pipeline_limit,
@@ -1265,6 +1267,321 @@ async fn handle_undeploy_global_pipeline(
 }
 
 // ---------------------------------------------------------------------------
+// Namespace provisioning (Phase 3)
+// ---------------------------------------------------------------------------
+
+/// POST /api/v1/admin/tenants/{org_id}/namespace — provision a k8s namespace.
+async fn handle_provision_namespace(
+    State(state): State<AdminState>,
+    Path(org_id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let auth_header = headers.get("authorization").and_then(|v| v.to_str().ok());
+    let _claims = match extract_admin_claims(auth_header, &state.oauth_state).await {
+        Ok(c) => c,
+        Err(status) => {
+            return (status, Json(serde_json::json!({"error": "Unauthorized"}))).into_response()
+        }
+    };
+
+    let pool = match require_pool(&state) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+
+    let org_uuid: uuid::Uuid = match org_id.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Invalid org_id"})),
+            )
+                .into_response()
+        }
+    };
+
+    let org = match varpulis_db::repo::get_organization(&pool, org_uuid).await {
+        Ok(Some(o)) => o,
+        _ => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "Tenant not found"})),
+            )
+                .into_response()
+        }
+    };
+
+    // Sub-tenants share parent namespace
+    if org.org_type == "sub_tenant" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Sub-tenants share parent namespace"})),
+        )
+            .into_response();
+    }
+
+    // Already provisioned?
+    if org.k8s_namespace.is_some() {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({"error": "Namespace already provisioned", "namespace": org.k8s_namespace})),
+        )
+            .into_response();
+    }
+
+    let slug = org.slug.as_deref().unwrap_or("unknown");
+    let namespace = format!("varpulis-tenant-{}", slug);
+
+    // Create k8s namespace
+    let ns_manifest = format!(
+        "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: {}\n  labels:\n    varpulis.io/tenant: \"{}\"\n    varpulis.io/org-id: \"{}\"\n",
+        namespace, slug, org_uuid
+    );
+
+    if !apply_manifest(&ns_manifest).await {
+        tracing::warn!(
+            "kubectl apply for namespace {} may have failed (continuing)",
+            namespace
+        );
+    }
+
+    // Apply NetworkPolicy
+    let netpol_manifest = format!(
+        r#"apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tenant-isolation
+  namespace: {}
+spec:
+  podSelector: {{}}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              varpulis.io/tenant: "{}"
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              varpulis.io/tenant: "{}"
+    - to:
+        - namespaceSelector: {{}}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+"#,
+        namespace, slug, slug
+    );
+
+    let _ = apply_manifest(&netpol_manifest).await;
+
+    // Record in DB
+    if let Err(e) = varpulis_db::repo::set_k8s_namespace(&pool, org_uuid, &namespace).await {
+        tracing::error!("Failed to record namespace in DB: {}", e);
+    }
+
+    tracing::info!(
+        "Provisioned namespace {} for tenant {}",
+        namespace,
+        org.name
+    );
+
+    (
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "namespace": namespace,
+            "org_id": org_uuid.to_string(),
+            "status": "provisioned",
+        })),
+    )
+        .into_response()
+}
+
+/// GET /api/v1/admin/tenants/{org_id}/namespace — get namespace info.
+async fn handle_get_namespace(
+    State(state): State<AdminState>,
+    Path(org_id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let auth_header = headers.get("authorization").and_then(|v| v.to_str().ok());
+    let _claims = match extract_admin_claims(auth_header, &state.oauth_state).await {
+        Ok(c) => c,
+        Err(status) => {
+            return (status, Json(serde_json::json!({"error": "Unauthorized"}))).into_response()
+        }
+    };
+
+    let pool = match require_pool(&state) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+
+    let org_uuid: uuid::Uuid = match org_id.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Invalid org_id"})),
+            )
+                .into_response()
+        }
+    };
+
+    match varpulis_db::repo::get_effective_namespace(&pool, org_uuid).await {
+        Ok(Some(ns)) => {
+            // Check if namespace exists in k8s
+            let exists = check_namespace_exists(&ns).await;
+
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "namespace": ns,
+                    "org_id": org_id,
+                    "exists_in_cluster": exists,
+                })),
+            )
+                .into_response()
+        }
+        Ok(None) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "namespace": serde_json::Value::Null,
+                "org_id": org_id,
+                "exists_in_cluster": false,
+            })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("DB error: {}", e)})),
+        )
+            .into_response(),
+    }
+}
+
+/// DELETE /api/v1/admin/tenants/{org_id}/namespace — deprovision namespace.
+async fn handle_deprovision_namespace(
+    State(state): State<AdminState>,
+    Path(org_id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let auth_header = headers.get("authorization").and_then(|v| v.to_str().ok());
+    let _claims = match extract_admin_claims(auth_header, &state.oauth_state).await {
+        Ok(c) => c,
+        Err(status) => {
+            return (status, Json(serde_json::json!({"error": "Unauthorized"}))).into_response()
+        }
+    };
+
+    let pool = match require_pool(&state) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+
+    let org_uuid: uuid::Uuid = match org_id.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Invalid org_id"})),
+            )
+                .into_response()
+        }
+    };
+
+    let org = match varpulis_db::repo::get_organization(&pool, org_uuid).await {
+        Ok(Some(o)) => o,
+        _ => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "Tenant not found"})),
+            )
+                .into_response()
+        }
+    };
+
+    let namespace = match org.k8s_namespace {
+        Some(ns) => ns,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "No namespace provisioned"})),
+            )
+                .into_response()
+        }
+    };
+
+    // Delete k8s namespace
+    let result = tokio::process::Command::new("kubectl")
+        .args(["delete", "namespace", &namespace, "--ignore-not-found"])
+        .output()
+        .await;
+
+    if let Ok(output) = result {
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::warn!("kubectl delete namespace failed: {}", stderr);
+        }
+    }
+
+    // Clear from DB
+    if let Err(e) = varpulis_db::repo::clear_k8s_namespace(&pool, org_uuid).await {
+        tracing::error!("Failed to clear namespace in DB: {}", e);
+    }
+
+    tracing::info!(
+        "Deprovisioned namespace {} for tenant {}",
+        namespace,
+        org.name
+    );
+
+    Json(serde_json::json!({
+        "deleted": true,
+        "namespace": namespace,
+    }))
+    .into_response()
+}
+
+/// Helper: apply a YAML manifest via kubectl.
+async fn apply_manifest(manifest: &str) -> bool {
+    let result = tokio::process::Command::new("kubectl")
+        .args(["apply", "-f", "-"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn();
+
+    match result {
+        Ok(mut child) => {
+            if let Some(ref mut stdin) = child.stdin {
+                use tokio::io::AsyncWriteExt;
+                let _ = stdin.write_all(manifest.as_bytes()).await;
+            }
+            drop(child.stdin.take());
+            matches!(child.wait().await, Ok(s) if s.success())
+        }
+        Err(_) => false,
+    }
+}
+
+/// Helper: check if a k8s namespace exists.
+async fn check_namespace_exists(namespace: &str) -> bool {
+    match tokio::process::Command::new("kubectl")
+        .args(["get", "namespace", namespace, "--no-headers"])
+        .output()
+        .await
+    {
+        Ok(output) => output.status.success(),
+        Err(_) => false,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Route assembly
 // ---------------------------------------------------------------------------
 
@@ -1313,6 +1630,12 @@ pub fn admin_routes(
         .route(
             "/api/v1/admin/global-pipelines/{id}",
             put(handle_update_global_pipeline).delete(handle_undeploy_global_pipeline),
+        )
+        .route(
+            "/api/v1/admin/tenants/{org_id}/namespace",
+            post(handle_provision_namespace)
+                .get(handle_get_namespace)
+                .delete(handle_deprovision_namespace),
         )
         .with_state(state)
 }
