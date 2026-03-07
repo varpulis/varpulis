@@ -1183,7 +1183,9 @@ async fn handle_list_org_pipelines(
             let pipelines_json: Vec<serde_json::Value> = pipelines
                 .iter()
                 .map(|p| {
-                    let is_inherited = p.inherited_from_org_id.is_some() || p.org_id != org_uuid;
+                    let is_inherited = p.inherited_from_org_id.is_some()
+                        || p.org_id != org_uuid
+                        || p.scope_level != "own";
                     serde_json::json!({
                         "id": p.id.to_string(),
                         "name": p.name,
