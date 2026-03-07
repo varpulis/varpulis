@@ -165,7 +165,7 @@ onUnmounted(() => {
       <h1 class="text-h4">Pipeline Groups</h1>
       <v-spacer />
       <v-btn-group variant="outlined" density="compact">
-        <v-btn color="primary" @click="openQuickDeploy">
+        <v-btn color="primary" data-testid="quick-deploy-btn" @click="openQuickDeploy">
           <v-icon start>mdi-rocket-launch</v-icon>
           Quick Deploy
         </v-btn>
@@ -185,6 +185,17 @@ onUnmounted(() => {
       @click:close="pipelinesStore.clearError"
     >
       {{ error }}
+      <template #append>
+        <v-btn
+          v-if="pipelinesStore.lastFailedAction"
+          variant="outlined"
+          size="small"
+          class="ml-2"
+          @click="pipelinesStore.retry()"
+        >
+          Retry
+        </v-btn>
+      </template>
     </v-alert>
 
     <!-- Group Builder (inline, not popup) -->

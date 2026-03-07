@@ -49,6 +49,7 @@ export const usePipelinesStore = defineStore('pipelines', () => {
   const deploying = ref(false)
   const error = ref<string | null>(null)
   const deployDialogOpen = ref(false)
+  const lastFailedAction = ref<(() => Promise<void>) | null>(null)
 
   // Topology & Explain state
   const topology = ref<PipelineTopology | null>(null)
@@ -100,13 +101,21 @@ export const usePipelinesStore = defineStore('pipelines', () => {
   })
 
   // Actions
+  async function retry(): Promise<void> {
+    if (lastFailedAction.value) {
+      await lastFailedAction.value()
+    }
+  }
+
   async function fetchGroups(): Promise<void> {
     loading.value = true
     error.value = null
+    lastFailedAction.value = null
     try {
       groups.value = await clusterApi.listPipelineGroups()
     } catch (e) {
       error.value = e instanceof Error ? e.message : 'Failed to fetch pipeline groups'
+      lastFailedAction.value = fetchGroups
     } finally {
       loading.value = false
     }
@@ -268,7 +277,11 @@ export const usePipelinesStore = defineStore('pipelines', () => {
     explainLoading,
     availableConnectors,
 
+    // Retry
+    lastFailedAction,
+
     // Actions
+    retry,
     fetchGroups,
     fetchGroupDetail,
     deploy,

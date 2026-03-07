@@ -45,7 +45,7 @@ async function handleLogout() {
 
 <template>
   <v-app-bar elevation="1" density="comfortable">
-    <v-app-bar-nav-icon @click="emit('toggleDrawer')" />
+    <v-app-bar-nav-icon aria-label="Toggle navigation drawer" @click="emit('toggleDrawer')" />
 
     <v-toolbar-title class="d-flex align-center">
       <v-icon class="mr-2" color="primary">mdi-lightning-bolt</v-icon>
@@ -131,6 +131,7 @@ async function handleLogout() {
     <v-btn
       icon
       variant="text"
+      :aria-label="isDark ? 'Switch to light mode' : 'Switch to dark mode'"
       @click="emit('toggleTheme')"
     >
       <v-icon>{{ isDark ? 'mdi-weather-sunny' : 'mdi-weather-night' }}</v-icon>
@@ -143,8 +144,9 @@ async function handleLogout() {
     <v-btn
       icon
       variant="text"
-      href="https://github.com/your-org/varpulis"
+      href="https://github.com/varpulis/varpulis"
       target="_blank"
+      aria-label="View documentation on GitHub"
     >
       <v-icon>mdi-github</v-icon>
       <v-tooltip activator="parent" location="bottom">

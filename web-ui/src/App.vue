@@ -130,6 +130,7 @@ onMounted(() => {
       size="large"
       class="chat-fab"
       :disabled="!chatConfigured"
+      :aria-label="chatDrawer ? 'Close AI assistant' : 'Open AI assistant'"
       @click="chatDrawer = !chatDrawer"
     >
       <v-icon>{{ chatDrawer ? 'mdi-close' : 'mdi-robot' }}</v-icon>
@@ -152,6 +153,8 @@ onMounted(() => {
       v-model="wsStore.showConnectionSnackbar"
       :color="wsStore.connected ? 'success' : 'error'"
       :timeout="3000"
+      role="status"
+      aria-live="polite"
     >
       {{ wsStore.connected ? 'Connected to server' : 'Disconnected from server' }}
     </v-snackbar>
