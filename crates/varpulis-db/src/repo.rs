@@ -267,7 +267,7 @@ pub async fn has_admin_user(pool: &PgPool) -> Result<bool, DbError> {
 // Organizations
 // ---------------------------------------------------------------------------
 
-const ORG_COLUMNS: &str = "id, owner_id, name, tier, stripe_customer_id, trial_expires_at, status, pipeline_limit, events_per_second_limit, monthly_event_limit, notes, created_at, updated_at, slug, org_type, parent_org_id, db_schema, k8s_namespace";
+const ORG_COLUMNS: &str = "id, owner_id, name, tier, stripe_customer_id, trial_expires_at, status, pipeline_limit, events_per_second_limit, monthly_event_limit, notes, created_at, updated_at, slug, org_type, parent_org_id, db_schema, k8s_namespace, kafka_topic_prefix";
 
 /// Create a new organization owned by the given user.
 /// Also inserts an `org_members` row with role `owner`.
@@ -1312,6 +1312,56 @@ pub async fn get_effective_namespace(
     if let Some(parent_id) = org.parent_org_id {
         if let Some(parent) = get_organization(pool, parent_id).await? {
             return Ok(parent.k8s_namespace);
+        }
+    }
+
+    Ok(None)
+}
+
+// ---------------------------------------------------------------------------
+// Kafka Topic Prefix Management
+// ---------------------------------------------------------------------------
+
+/// Set the kafka_topic_prefix for a tenant org.
+pub async fn set_kafka_topic_prefix(
+    pool: &PgPool,
+    org_id: Uuid,
+    prefix: &str,
+) -> Result<(), DbError> {
+    sqlx::query("UPDATE organizations SET kafka_topic_prefix = $1 WHERE id = $2")
+        .bind(prefix)
+        .bind(org_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Clear the kafka_topic_prefix for a tenant org.
+pub async fn clear_kafka_topic_prefix(pool: &PgPool, org_id: Uuid) -> Result<(), DbError> {
+    sqlx::query("UPDATE organizations SET kafka_topic_prefix = NULL WHERE id = $1")
+        .bind(org_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Get the effective Kafka topic prefix for an org (own or parent's).
+pub async fn get_effective_topic_prefix(
+    pool: &PgPool,
+    org_id: Uuid,
+) -> Result<Option<String>, DbError> {
+    let org = get_organization(pool, org_id)
+        .await?
+        .ok_or_else(|| DbError::Pool("Organization not found".to_string()))?;
+
+    if let Some(prefix) = org.kafka_topic_prefix {
+        return Ok(Some(prefix));
+    }
+
+    // Sub-tenants inherit parent's topic prefix
+    if let Some(parent_id) = org.parent_org_id {
+        if let Some(parent) = get_organization(pool, parent_id).await? {
+            return Ok(parent.kafka_topic_prefix);
         }
     }
 

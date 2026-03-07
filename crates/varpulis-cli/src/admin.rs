@@ -111,6 +111,7 @@ async fn handle_list_tenants(State(state): State<AdminState>, headers: HeaderMap
                     "parent_org_id": o.parent_org_id.map(|id| id.to_string()),
                     "db_schema": o.db_schema,
                     "k8s_namespace": o.k8s_namespace,
+                    "kafka_topic_prefix": o.kafka_topic_prefix,
                     "trial_expires_at": o.trial_expires_at.map(|t| t.to_rfc3339()),
                     "pipeline_limit": o.pipeline_limit,
                     "events_per_second_limit": o.events_per_second_limit,
@@ -213,6 +214,7 @@ async fn handle_get_tenant(
             "parent_org_id": org.parent_org_id.map(|id| id.to_string()),
             "db_schema": org.db_schema,
             "k8s_namespace": org.k8s_namespace,
+            "kafka_topic_prefix": org.kafka_topic_prefix,
             "stripe_customer_id": org.stripe_customer_id,
             "trial_expires_at": org.trial_expires_at.map(|t| t.to_rfc3339()),
             "pipeline_limit": org.pipeline_limit,
@@ -1569,6 +1571,220 @@ async fn apply_manifest(manifest: &str) -> bool {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Kafka Topic Isolation
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+struct ConfigureKafkaRequest {
+    prefix: Option<String>,
+}
+
+/// POST /api/v1/admin/tenants/{org_id}/kafka — configure Kafka topic prefix.
+async fn handle_configure_kafka(
+    State(state): State<AdminState>,
+    Path(org_id): Path<String>,
+    headers: HeaderMap,
+    body: Option<Json<ConfigureKafkaRequest>>,
+) -> Response {
+    let auth_header = headers.get("authorization").and_then(|v| v.to_str().ok());
+
+    if let Err(status) = extract_admin_claims(auth_header, &state.oauth_state).await {
+        return (status, Json(serde_json::json!({"error": "Unauthorized"}))).into_response();
+    }
+
+    let pool = match require_pool(&state) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+
+    let org_uuid: uuid::Uuid = match org_id.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Invalid org_id"})),
+            )
+                .into_response();
+        }
+    };
+
+    // Get org to validate
+    let org = match varpulis_db::repo::get_organization(&pool, org_uuid).await {
+        Ok(Some(o)) => o,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "Tenant not found"})),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            tracing::error!("Failed to get org: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Internal error"})),
+            )
+                .into_response();
+        }
+    };
+
+    // Sub-tenants cannot have their own prefix
+    if org.org_type == "sub_tenant" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Sub-tenants share parent Kafka topic prefix"})),
+        )
+            .into_response();
+    }
+
+    // Check for duplicate
+    if org.kafka_topic_prefix.is_some() {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({"error": "Kafka topic prefix already configured"})),
+        )
+            .into_response();
+    }
+
+    // Generate prefix from slug or use provided
+    let prefix = body
+        .and_then(|b| b.prefix.clone())
+        .unwrap_or_else(|| {
+            let slug = org.slug.as_deref().unwrap_or(&org.name);
+            slug.to_lowercase()
+                .chars()
+                .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '-' })
+                .collect::<String>()
+        });
+
+    // Validate prefix
+    if prefix.is_empty() || prefix.len() > 64 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Prefix must be 1-64 characters"})),
+        )
+            .into_response();
+    }
+
+    if let Err(e) = varpulis_db::repo::set_kafka_topic_prefix(&pool, org_uuid, &prefix).await {
+        tracing::error!("Failed to set Kafka topic prefix: {}", e);
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "Internal error"})),
+        )
+            .into_response();
+    }
+
+    tracing::info!(
+        "Configured Kafka topic prefix '{}' for org {}",
+        prefix,
+        org_id
+    );
+    (
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "kafka_topic_prefix": prefix,
+            "org_id": org_id,
+            "topic_pattern": format!("{prefix}.*"),
+            "status": "configured",
+        })),
+    )
+        .into_response()
+}
+
+/// GET /api/v1/admin/tenants/{org_id}/kafka — get Kafka topic prefix info.
+async fn handle_get_kafka(
+    State(state): State<AdminState>,
+    Path(org_id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let auth_header = headers.get("authorization").and_then(|v| v.to_str().ok());
+
+    if let Err(status) = extract_admin_claims(auth_header, &state.oauth_state).await {
+        return (status, Json(serde_json::json!({"error": "Unauthorized"}))).into_response();
+    }
+
+    let pool = match require_pool(&state) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+
+    let org_uuid: uuid::Uuid = match org_id.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Invalid org_id"})),
+            )
+                .into_response();
+        }
+    };
+
+    let effective = varpulis_db::repo::get_effective_topic_prefix(&pool, org_uuid)
+        .await
+        .ok()
+        .flatten();
+
+    let org = varpulis_db::repo::get_organization(&pool, org_uuid).await;
+    let own_prefix = org.ok().flatten().and_then(|o| o.kafka_topic_prefix);
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "org_id": org_id,
+            "kafka_topic_prefix": own_prefix,
+            "effective_prefix": effective,
+        })),
+    )
+        .into_response()
+}
+
+/// DELETE /api/v1/admin/tenants/{org_id}/kafka — remove Kafka topic prefix.
+async fn handle_remove_kafka(
+    State(state): State<AdminState>,
+    Path(org_id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let auth_header = headers.get("authorization").and_then(|v| v.to_str().ok());
+
+    if let Err(status) = extract_admin_claims(auth_header, &state.oauth_state).await {
+        return (status, Json(serde_json::json!({"error": "Unauthorized"}))).into_response();
+    }
+
+    let pool = match require_pool(&state) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+
+    let org_uuid: uuid::Uuid = match org_id.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Invalid org_id"})),
+            )
+                .into_response();
+        }
+    };
+
+    if let Err(e) = varpulis_db::repo::clear_kafka_topic_prefix(&pool, org_uuid).await {
+        tracing::error!("Failed to clear Kafka topic prefix: {}", e);
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "Internal error"})),
+        )
+            .into_response();
+    }
+
+    tracing::info!("Removed Kafka topic prefix for org {}", org_id);
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({"deleted": true})),
+    )
+        .into_response()
+}
+
 /// Helper: check if a k8s namespace exists.
 async fn check_namespace_exists(namespace: &str) -> bool {
     match tokio::process::Command::new("kubectl")
@@ -1636,6 +1852,12 @@ pub fn admin_routes(
             post(handle_provision_namespace)
                 .get(handle_get_namespace)
                 .delete(handle_deprovision_namespace),
+        )
+        .route(
+            "/api/v1/admin/tenants/{org_id}/kafka",
+            post(handle_configure_kafka)
+                .get(handle_get_kafka)
+                .delete(handle_remove_kafka),
         )
         .with_state(state)
 }
