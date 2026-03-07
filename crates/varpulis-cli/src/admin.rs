@@ -1382,6 +1382,48 @@ spec:
 
     let _ = apply_manifest(&netpol_manifest).await;
 
+    // Apply ResourceQuota for resource isolation
+    let quota_manifest = format!(
+        r#"apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: tenant-quota
+  namespace: {}
+spec:
+  hard:
+    requests.cpu: "4"
+    requests.memory: 8Gi
+    limits.cpu: "8"
+    limits.memory: 16Gi
+    pods: "20"
+    services: "10"
+    persistentvolumeclaims: "5"
+"#,
+        namespace
+    );
+    let _ = apply_manifest(&quota_manifest).await;
+
+    // Apply LimitRange for default pod resource limits
+    let limitrange_manifest = format!(
+        r#"apiVersion: v1
+kind: LimitRange
+metadata:
+  name: tenant-limits
+  namespace: {}
+spec:
+  limits:
+    - default:
+        cpu: "1"
+        memory: 2Gi
+      defaultRequest:
+        cpu: 250m
+        memory: 512Mi
+      type: Container
+"#,
+        namespace
+    );
+    let _ = apply_manifest(&limitrange_manifest).await;
+
     // Record in DB
     if let Err(e) = varpulis_db::repo::set_k8s_namespace(&pool, org_uuid, &namespace).await {
         tracing::error!("Failed to record namespace in DB: {}", e);

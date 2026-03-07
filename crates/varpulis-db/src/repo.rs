@@ -816,6 +816,53 @@ pub async fn list_schema_tables(pool: &PgPool, schema_name: &str) -> Result<Vec<
     Ok(rows.into_iter().map(|r| r.0).collect())
 }
 
+/// Acquire a connection with `search_path` set to the tenant's schema.
+///
+/// Returns a `PoolConnection` whose session has `SET search_path TO "tenant_slug", public`.
+/// This allows queries to resolve unqualified table names to the tenant schema first,
+/// falling back to `public` for shared tables (organizations, users, etc.).
+///
+/// The search_path reverts when the connection is returned to the pool (PostgreSQL
+/// resets session state on connection reuse in sqlx).
+pub async fn with_tenant_schema(
+    pool: &PgPool,
+    org_id: Uuid,
+) -> Result<sqlx::pool::PoolConnection<sqlx::Postgres>, DbError> {
+    let schema = get_effective_schema(pool, org_id).await?;
+
+    let schema_name = match schema {
+        Some(s) => s,
+        None => {
+            return pool
+                .acquire()
+                .await
+                .map_err(|e| DbError::Pool(e.to_string()))
+        }
+    };
+
+    // Validate schema name (prevent SQL injection)
+    if !schema_name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return Err(DbError::Pool(format!(
+            "Invalid schema name: {}",
+            schema_name
+        )));
+    }
+
+    let mut conn = pool
+        .acquire()
+        .await
+        .map_err(|e| DbError::Pool(e.to_string()))?;
+
+    sqlx::query(&format!("SET search_path TO \"{schema_name}\", public"))
+        .execute(conn.as_mut())
+        .await?;
+
+    Ok(conn)
+}
+
 // ---------------------------------------------------------------------------
 // Organization Members
 // ---------------------------------------------------------------------------
