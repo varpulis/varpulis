@@ -561,11 +561,10 @@ pub async fn list_visible_pipelines(pool: &PgPool, org_id: Uuid) -> Result<Vec<P
             list_pipelines(pool, org_id).await
         }
         "tenant" => {
-            // Tenant sees own pipelines + global-scoped pipelines inherited to it
+            // Tenant sees own pipelines (includes inherited global copies with org_id = tenant)
             let query = format!(
                 "SELECT {PIPELINE_COLUMNS} FROM pipelines \
-                 WHERE (org_id = $1) \
-                    OR (org_id = $1 AND scope_level = 'global') \
+                 WHERE org_id = $1 \
                  ORDER BY scope_level DESC, created_at"
             );
             let pipelines = sqlx::query_as::<_, Pipeline>(&query)
@@ -575,20 +574,15 @@ pub async fn list_visible_pipelines(pool: &PgPool, org_id: Uuid) -> Result<Vec<P
             Ok(pipelines)
         }
         "sub_tenant" => {
-            // Sub-tenant sees own + tenant-scoped from parent + global-scoped
-            let parent_id = org
-                .parent_org_id
-                .ok_or_else(|| DbError::Pool("Sub-tenant has no parent_org_id".to_string()))?;
+            // Sub-tenant sees own pipelines (includes inherited copies with org_id = sub_tenant)
+            // Inherited pipelines are copied to sub-tenant via propagate_pipeline_to_sub_tenants
             let query = format!(
                 "SELECT {PIPELINE_COLUMNS} FROM pipelines \
                  WHERE org_id = $1 \
-                    OR (org_id = $2 AND scope_level IN ('tenant', 'global')) \
-                    OR scope_level = 'global' \
                  ORDER BY scope_level DESC, created_at"
             );
             let pipelines = sqlx::query_as::<_, Pipeline>(&query)
                 .bind(org_id)
-                .bind(parent_id)
                 .fetch_all(pool)
                 .await?;
             Ok(pipelines)
