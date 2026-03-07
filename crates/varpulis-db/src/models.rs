@@ -54,6 +54,8 @@ pub struct Organization {
     pub db_schema: Option<String>,
     /// Kubernetes namespace for this tenant (NULL for sub-tenants = inherit parent).
     pub k8s_namespace: Option<String>,
+    /// Kafka topic prefix for this tenant (NULL for sub-tenants = inherit parent).
+    pub kafka_topic_prefix: Option<String>,
 }
 
 fn default_org_type() -> String {
@@ -195,6 +197,8 @@ mod tests {
                 org_type: "tenant".to_string(),
                 parent_org_id: None,
                 db_schema: None,
+                k8s_namespace: None,
+                kafka_topic_prefix: None,
             };
             assert_eq!(&org.tier, tier);
         }
