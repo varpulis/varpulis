@@ -267,7 +267,7 @@ pub async fn has_admin_user(pool: &PgPool) -> Result<bool, DbError> {
 // Organizations
 // ---------------------------------------------------------------------------
 
-const ORG_COLUMNS: &str = "id, owner_id, name, tier, stripe_customer_id, trial_expires_at, status, pipeline_limit, events_per_second_limit, monthly_event_limit, notes, created_at, updated_at, slug, org_type, parent_org_id, db_schema";
+const ORG_COLUMNS: &str = "id, owner_id, name, tier, stripe_customer_id, trial_expires_at, status, pipeline_limit, events_per_second_limit, monthly_event_limit, notes, created_at, updated_at, slug, org_type, parent_org_id, db_schema, k8s_namespace";
 
 /// Create a new organization owned by the given user.
 /// Also inserts an `org_members` row with role `owner`.
@@ -1266,6 +1266,56 @@ pub async fn delete_pipeline_by_name(
         .execute(pool)
         .await?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Kubernetes Namespace Management
+// ---------------------------------------------------------------------------
+
+/// Set the k8s_namespace for a tenant org.
+pub async fn set_k8s_namespace(
+    pool: &PgPool,
+    org_id: Uuid,
+    namespace: &str,
+) -> Result<(), DbError> {
+    sqlx::query("UPDATE organizations SET k8s_namespace = $1 WHERE id = $2")
+        .bind(namespace)
+        .bind(org_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Clear the k8s_namespace for a tenant org.
+pub async fn clear_k8s_namespace(pool: &PgPool, org_id: Uuid) -> Result<(), DbError> {
+    sqlx::query("UPDATE organizations SET k8s_namespace = NULL WHERE id = $1")
+        .bind(org_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Get the effective k8s namespace for an org (own or parent's).
+pub async fn get_effective_namespace(
+    pool: &PgPool,
+    org_id: Uuid,
+) -> Result<Option<String>, DbError> {
+    let org = get_organization(pool, org_id)
+        .await?
+        .ok_or_else(|| DbError::Pool("Organization not found".to_string()))?;
+
+    if let Some(ns) = org.k8s_namespace {
+        return Ok(Some(ns));
+    }
+
+    // Sub-tenants inherit parent's namespace
+    if let Some(parent_id) = org.parent_org_id {
+        if let Some(parent) = get_organization(pool, parent_id).await? {
+            return Ok(parent.k8s_namespace);
+        }
+    }
+
+    Ok(None)
 }
 
 // ---------------------------------------------------------------------------

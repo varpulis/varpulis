@@ -52,6 +52,8 @@ pub struct Organization {
     pub parent_org_id: Option<Uuid>,
     /// PostgreSQL schema name for data isolation (NULL for sub-tenants = inherit parent).
     pub db_schema: Option<String>,
+    /// Kubernetes namespace for this tenant (NULL for sub-tenants = inherit parent).
+    pub k8s_namespace: Option<String>,
 }
 
 fn default_org_type() -> String {
