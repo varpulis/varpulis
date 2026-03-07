@@ -29,6 +29,14 @@ const userRole = computed(() => authStore.user?.role || '')
 const orgName = computed(() => orgStore.currentOrg?.name || '')
 const orgTier = computed(() => orgStore.currentOrg?.tier || '')
 
+function orgTypeIcon(orgType?: string): string {
+  switch (orgType) {
+    case 'global': return 'mdi-earth'
+    case 'sub_tenant': return 'mdi-subdirectory-arrow-right'
+    default: return 'mdi-domain'
+  }
+}
+
 async function handleLogout() {
   await authStore.logout()
   window.location.href = '/login'
@@ -47,7 +55,7 @@ async function handleLogout() {
 
     <v-spacer />
 
-    <!-- Org Switcher -->
+    <!-- Org Switcher (hierarchy-aware tree) -->
     <v-menu v-if="orgStore.organizations.length > 1" offset-y>
       <template #activator="{ props: orgMenuProps }">
         <v-chip
@@ -57,7 +65,7 @@ async function handleLogout() {
           class="mr-2"
           style="cursor: pointer"
         >
-          <v-icon start size="small">mdi-domain</v-icon>
+          <v-icon start size="small">{{ orgTypeIcon(orgStore.currentOrg?.org_type) }}</v-icon>
           {{ orgName }}
           <v-chip
             v-if="orgTier"
@@ -69,20 +77,21 @@ async function handleLogout() {
           <v-icon end size="small">mdi-chevron-down</v-icon>
         </v-chip>
       </template>
-      <v-list density="compact" min-width="220">
+      <v-list density="compact" min-width="260">
         <v-list-subheader>Switch Organization</v-list-subheader>
         <v-list-item
-          v-for="org in orgStore.organizations"
-          :key="org.id"
-          :active="org.id === orgStore.currentOrg?.id"
-          @click="orgStore.switchOrg(org.id)"
+          v-for="node in orgStore.flatOrgTree"
+          :key="node.org.id"
+          :active="node.org.id === orgStore.currentOrg?.id"
+          :style="{ paddingLeft: (16 + node.depth * 24) + 'px' }"
+          @click="orgStore.switchOrg(node.org.id)"
         >
           <template #prepend>
-            <v-icon size="small">mdi-domain</v-icon>
+            <v-icon size="small">{{ orgTypeIcon(node.org.org_type) }}</v-icon>
           </template>
-          <v-list-item-title class="text-body-2">{{ org.name }}</v-list-item-title>
+          <v-list-item-title class="text-body-2">{{ node.org.name }}</v-list-item-title>
           <template #append>
-            <v-chip size="x-small" variant="tonal">{{ org.tier }}</v-chip>
+            <v-chip size="x-small" variant="tonal">{{ node.org.tier }}</v-chip>
           </template>
         </v-list-item>
       </v-list>

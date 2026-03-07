@@ -12,6 +12,8 @@ export interface PipelineGroup {
   pipeline_count: number
   placements: PipelinePlacementInfo[]
   sources?: Record<string, string>
+  scope_level?: string
+  read_only?: boolean
 }
 
 // Pipeline placement info from coordinator
@@ -34,6 +36,8 @@ export interface PipelineInfo {
   affinity?: AffinityRule
   metrics?: PipelineMetrics
   global_template_id?: string
+  scope_level?: string
+  read_only?: boolean
 }
 
 // Pipeline metrics

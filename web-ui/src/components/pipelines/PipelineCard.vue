@@ -67,7 +67,23 @@ function editInEditor(pipelineName: string): void {
 <template>
   <v-card>
     <v-toolbar flat density="compact">
-      <v-toolbar-title>{{ group.name }}</v-toolbar-title>
+      <v-toolbar-title class="d-flex align-center">
+        {{ group.name }}
+        <v-chip
+          v-if="group.read_only && group.scope_level === 'global'"
+          size="x-small"
+          variant="flat"
+          color="grey"
+          class="ml-2"
+        >GLOBAL</v-chip>
+        <v-chip
+          v-else-if="group.read_only && group.scope_level === 'tenant'"
+          size="x-small"
+          variant="flat"
+          color="blue"
+          class="ml-2"
+        >INHERITED</v-chip>
+      </v-toolbar-title>
       <v-spacer />
       <v-btn icon @click="emit('close')">
         <v-icon>mdi-close</v-icon>
@@ -174,15 +190,20 @@ function editInEditor(pipelineName: string): void {
 
     <v-card-actions>
       <v-btn
-        v-if="firstPipelineName"
+        v-if="firstPipelineName && !group.read_only"
         variant="outlined"
         prepend-icon="mdi-pencil"
         @click="editInEditor(firstPipelineName)"
       >
         Edit in Editor
       </v-btn>
+      <v-chip v-else-if="group.read_only" variant="tonal" size="small">
+        <v-icon start size="small">mdi-lock</v-icon>
+        Read-only
+      </v-chip>
       <v-spacer />
       <v-btn
+        v-if="!group.read_only"
         color="error"
         variant="outlined"
         prepend-icon="mdi-delete"

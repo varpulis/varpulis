@@ -84,8 +84,22 @@ function getStatusColor(status: string): string {
             </v-avatar>
           </template>
 
-          <v-list-item-title class="font-weight-medium">
+          <v-list-item-title class="font-weight-medium d-flex align-center">
             {{ group.name }}
+            <v-chip
+              v-if="group.read_only && group.scope_level === 'global'"
+              size="x-small"
+              variant="flat"
+              color="grey"
+              class="ml-2"
+            >GLOBAL</v-chip>
+            <v-chip
+              v-else-if="group.read_only && group.scope_level === 'tenant'"
+              size="x-small"
+              variant="flat"
+              color="blue"
+              class="ml-2"
+            >INHERITED</v-chip>
           </v-list-item-title>
 
           <v-list-item-subtitle>
@@ -121,6 +135,7 @@ function getStatusColor(status: string): string {
                   <v-list-item-title>View Details</v-list-item-title>
                 </v-list-item>
                 <v-list-item
+                  v-if="!group.read_only"
                   class="text-error"
                   @click="emit('teardown', group.id)"
                 >
@@ -128,6 +143,12 @@ function getStatusColor(status: string): string {
                     <v-icon color="error">mdi-delete</v-icon>
                   </template>
                   <v-list-item-title>Teardown</v-list-item-title>
+                </v-list-item>
+                <v-list-item v-else disabled>
+                  <template #prepend>
+                    <v-icon>mdi-lock</v-icon>
+                  </template>
+                  <v-list-item-title class="text-medium-emphasis">Read-only</v-list-item-title>
                 </v-list-item>
               </v-list>
             </v-menu>

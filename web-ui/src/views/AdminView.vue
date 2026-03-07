@@ -82,6 +82,17 @@
             item-value="id"
             density="comfortable"
           >
+            <template #item.org_type="{ item }">
+              <v-chip
+                :color="item.org_type === 'sub_tenant' ? 'info' : item.org_type === 'global' ? 'purple' : 'default'"
+                size="small"
+                variant="tonal"
+              >
+                <v-icon start size="x-small">{{ item.org_type === 'global' ? 'mdi-earth' : item.org_type === 'sub_tenant' ? 'mdi-subdirectory-arrow-right' : 'mdi-domain' }}</v-icon>
+                {{ item.org_type === 'sub_tenant' ? 'sub-tenant' : item.org_type || 'tenant' }}
+              </v-chip>
+            </template>
+
             <template #item.tier="{ item }">
               <v-chip :color="tierColor(item.tier)" size="small">
                 {{ item.tier }}
@@ -280,14 +291,51 @@
             </v-col>
           </v-row>
 
+          <!-- Sub-tenants -->
+          <template v-if="adminStore.selectedTenant.sub_tenants && adminStore.selectedTenant.sub_tenants.length">
+            <h3 class="text-subtitle-1 mt-4 mb-2">Sub-tenants ({{ adminStore.selectedTenant.sub_tenants.length }})</h3>
+            <v-list density="compact">
+              <v-list-item
+                v-for="st in adminStore.selectedTenant.sub_tenants"
+                :key="st.id"
+                @click="openDetailById(st.id)"
+              >
+                <template #prepend>
+                  <v-icon size="small">mdi-subdirectory-arrow-right</v-icon>
+                </template>
+                <v-list-item-title>{{ st.name }}</v-list-item-title>
+                <template #append>
+                  <v-chip :color="statusColor(st.status)" size="x-small" class="mr-1">{{ st.status }}</v-chip>
+                </template>
+              </v-list-item>
+            </v-list>
+          </template>
+
           <h3 class="text-subtitle-1 mt-4 mb-2">Pipelines ({{ adminStore.selectedTenant.pipelines.length }})</h3>
           <v-list v-if="adminStore.selectedTenant.pipelines.length" density="compact">
             <v-list-item
               v-for="p in adminStore.selectedTenant.pipelines"
               :key="p.id"
             >
-              <v-list-item-title>{{ p.name }}</v-list-item-title>
+              <v-list-item-title>
+                {{ p.name }}
+                <v-chip
+                  v-if="p.read_only && p.scope_level === 'global'"
+                  size="x-small"
+                  variant="flat"
+                  color="grey"
+                  class="ml-1"
+                >GLOBAL</v-chip>
+                <v-chip
+                  v-else-if="p.read_only"
+                  size="x-small"
+                  variant="flat"
+                  color="blue"
+                  class="ml-1"
+                >INHERITED</v-chip>
+              </v-list-item-title>
               <template #append>
+                <v-icon v-if="p.read_only" size="x-small" color="grey" class="mr-1">mdi-lock</v-icon>
                 <v-chip :color="p.status === 'deployed' ? 'success' : 'default'" size="x-small">
                   {{ p.status }}
                 </v-chip>
@@ -483,6 +531,7 @@ const globalEditSource = ref('')
 
 const headers = [
   { title: 'Name', key: 'name' },
+  { title: 'Type', key: 'org_type' },
   { title: 'Tier', key: 'tier' },
   { title: 'Status', key: 'status' },
   { title: 'Usage', key: 'usage', sortable: false },
@@ -535,6 +584,11 @@ function formatDate(iso: string): string {
 
 async function openDetail(item: Tenant) {
   await adminStore.fetchTenantDetail(item.id)
+  detailOpen.value = true
+}
+
+async function openDetailById(orgId: string) {
+  await adminStore.fetchTenantDetail(orgId)
   detailOpen.value = true
 }
 
