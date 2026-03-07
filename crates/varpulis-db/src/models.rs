@@ -45,6 +45,17 @@ pub struct Organization {
     /// URL-safe slug (optional, set post-migration).
     #[serde(default)]
     pub slug: Option<String>,
+    /// One of "global", "tenant", "sub_tenant".
+    #[serde(default = "default_org_type")]
+    pub org_type: String,
+    /// Parent org ID (NULL for global, global_id for tenants, tenant_id for sub-tenants).
+    pub parent_org_id: Option<Uuid>,
+    /// PostgreSQL schema name for data isolation (NULL for sub-tenants = inherit parent).
+    pub db_schema: Option<String>,
+}
+
+fn default_org_type() -> String {
+    "tenant".to_string()
 }
 
 /// A membership row linking a user to an organization with a role.
@@ -101,6 +112,15 @@ pub struct Pipeline {
     pub updated_at: DateTime<Utc>,
     /// If set, this pipeline is a copy of a global template (admin-managed).
     pub global_template_id: Option<Uuid>,
+    /// One of "global", "tenant", "own".
+    #[serde(default = "default_scope_level")]
+    pub scope_level: String,
+    /// Source org for inherited pipelines (NULL = belongs to org_id).
+    pub inherited_from_org_id: Option<Uuid>,
+}
+
+fn default_scope_level() -> String {
+    "own".to_string()
 }
 
 /// A global pipeline template deployed by admin to all tenants.
@@ -170,6 +190,9 @@ mod tests {
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
                 slug: None,
+                org_type: "tenant".to_string(),
+                parent_org_id: None,
+                db_schema: None,
             };
             assert_eq!(&org.tier, tier);
         }
@@ -187,6 +210,8 @@ mod tests {
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
                 global_template_id: None,
+                scope_level: "own".to_string(),
+                inherited_from_org_id: None,
             };
             assert_eq!(&pipeline.status, status);
         }

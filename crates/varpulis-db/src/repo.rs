@@ -267,50 +267,77 @@ pub async fn has_admin_user(pool: &PgPool) -> Result<bool, DbError> {
 // Organizations
 // ---------------------------------------------------------------------------
 
-const ORG_COLUMNS: &str = "id, owner_id, name, tier, stripe_customer_id, trial_expires_at, status, pipeline_limit, events_per_second_limit, monthly_event_limit, notes, created_at, updated_at, slug";
+const ORG_COLUMNS: &str = "id, owner_id, name, tier, stripe_customer_id, trial_expires_at, status, pipeline_limit, events_per_second_limit, monthly_event_limit, notes, created_at, updated_at, slug, org_type, parent_org_id, db_schema";
 
 /// Create a new organization owned by the given user.
 /// Also inserts an `org_members` row with role `owner`.
+/// Auto-generates a slug and provisions a tenant schema.
 pub async fn create_organization(
     pool: &PgPool,
     owner_id: Uuid,
     name: &str,
 ) -> Result<Organization, DbError> {
+    let base_slug = generate_slug(name);
+    let slug = ensure_unique_slug(pool, &base_slug).await?;
+
     let query = format!(
-        "INSERT INTO organizations (owner_id, name) VALUES ($1, $2) RETURNING {ORG_COLUMNS}"
+        "INSERT INTO organizations (owner_id, name, slug) \
+         VALUES ($1, $2, $3) RETURNING {ORG_COLUMNS}"
     );
     let org = sqlx::query_as::<_, Organization>(&query)
         .bind(owner_id)
         .bind(name)
+        .bind(&slug)
         .fetch_one(pool)
         .await?;
 
     // Ensure the owner is also a member
     let _ = add_org_member(pool, org.id, owner_id, "owner").await;
+
+    // Provision tenant schema (best-effort, log error)
+    if let Err(e) = provision_tenant_schema(pool, org.id).await {
+        tracing::error!("Failed to provision schema for org {}: {}", org.id, e);
+    }
+
+    // Re-read to get updated db_schema
+    let org = get_organization(pool, org.id).await?.unwrap_or(org);
 
     Ok(org)
 }
 
 /// Create a new organization with trial status (30-day free trial).
 /// Also inserts an `org_members` row with role `owner`.
+/// Auto-generates a slug and provisions a tenant schema.
 pub async fn create_trial_organization(
     pool: &PgPool,
     owner_id: Uuid,
     name: &str,
 ) -> Result<Organization, DbError> {
+    let base_slug = generate_slug(name);
+    let slug = ensure_unique_slug(pool, &base_slug).await?;
+
     let query = format!(
-        "INSERT INTO organizations (owner_id, name, status, trial_expires_at) \
-         VALUES ($1, $2, 'trial', now() + interval '30 days') \
+        "INSERT INTO organizations (owner_id, name, slug, status, trial_expires_at) \
+         VALUES ($1, $2, $3, 'trial', now() + interval '30 days') \
          RETURNING {ORG_COLUMNS}"
     );
     let org = sqlx::query_as::<_, Organization>(&query)
         .bind(owner_id)
         .bind(name)
+        .bind(&slug)
         .fetch_one(pool)
         .await?;
 
     // Ensure the owner is also a member
     let _ = add_org_member(pool, org.id, owner_id, "owner").await;
+
+    // Provision tenant schema (best-effort, log error)
+    if let Err(e) = provision_tenant_schema(pool, org.id).await {
+        tracing::error!("Failed to provision schema for org {}: {}", org.id, e);
+    }
+
+    // Re-read to get updated db_schema
+    let org = get_organization(pool, org.id).await?.unwrap_or(org);
 
     Ok(org)
 }
@@ -383,6 +410,416 @@ pub async fn get_org_by_stripe_customer(
         .fetch_optional(pool)
         .await?;
     Ok(org)
+}
+
+// ---------------------------------------------------------------------------
+// Tenant Hierarchy
+// ---------------------------------------------------------------------------
+
+/// Create a sub-tenant under a parent tenant.
+/// The parent must be org_type 'tenant' (no sub-sub-tenants allowed).
+/// Sub-tenants inherit the parent's db_schema (shared schema, isolated by org_id).
+pub async fn create_sub_tenant(
+    pool: &PgPool,
+    parent_org_id: Uuid,
+    owner_id: Uuid,
+    name: &str,
+) -> Result<Organization, DbError> {
+    // Verify parent is a tenant (not global, not sub_tenant)
+    let parent = get_organization(pool, parent_org_id)
+        .await?
+        .ok_or_else(|| DbError::Pool("Parent organization not found".to_string()))?;
+    if parent.org_type != "tenant" {
+        return Err(DbError::Pool(
+            "Sub-tenants can only be created under tenant-type organizations".to_string(),
+        ));
+    }
+
+    let base_slug = generate_slug(name);
+    let slug = ensure_unique_slug(pool, &base_slug).await?;
+
+    // Sub-tenant inherits parent's db_schema (shared schema, RLS isolation)
+    let inherited_schema = parent.db_schema.as_deref();
+
+    let query = format!(
+        "INSERT INTO organizations (owner_id, name, slug, org_type, parent_org_id, db_schema, status) \
+         VALUES ($1, $2, $3, 'sub_tenant', $4, $5, 'active') \
+         RETURNING {ORG_COLUMNS}"
+    );
+    let org = sqlx::query_as::<_, Organization>(&query)
+        .bind(owner_id)
+        .bind(name)
+        .bind(&slug)
+        .bind(parent_org_id)
+        .bind(inherited_schema)
+        .fetch_one(pool)
+        .await?;
+
+    // Ensure the owner is also a member
+    let _ = add_org_member(pool, org.id, owner_id, "owner").await;
+
+    Ok(org)
+}
+
+/// Get or create the singleton global organization.
+pub async fn get_or_create_global_org(
+    pool: &PgPool,
+    owner_id: Uuid,
+) -> Result<Organization, DbError> {
+    let query =
+        format!("SELECT {ORG_COLUMNS} FROM organizations WHERE org_type = 'global' LIMIT 1");
+    if let Some(org) = sqlx::query_as::<_, Organization>(&query)
+        .fetch_optional(pool)
+        .await?
+    {
+        return Ok(org);
+    }
+
+    let query = format!(
+        "INSERT INTO organizations (owner_id, name, slug, org_type, tier, status, db_schema) \
+         VALUES ($1, 'Global', 'global', 'global', 'enterprise', 'active', 'tenant_global') \
+         RETURNING {ORG_COLUMNS}"
+    );
+    let org = sqlx::query_as::<_, Organization>(&query)
+        .bind(owner_id)
+        .fetch_one(pool)
+        .await?;
+
+    let _ = add_org_member(pool, org.id, owner_id, "owner").await;
+
+    // Provision global schema (best-effort)
+    if let Err(e) = provision_tenant_schema(pool, org.id).await {
+        tracing::error!("Failed to provision global schema: {}", e);
+    }
+
+    Ok(org)
+}
+
+/// Get the global organization (if it exists).
+pub async fn get_global_org(pool: &PgPool) -> Result<Option<Organization>, DbError> {
+    let query =
+        format!("SELECT {ORG_COLUMNS} FROM organizations WHERE org_type = 'global' LIMIT 1");
+    let org = sqlx::query_as::<_, Organization>(&query)
+        .fetch_optional(pool)
+        .await?;
+    Ok(org)
+}
+
+/// List direct child organizations of a parent.
+pub async fn list_child_organizations(
+    pool: &PgPool,
+    parent_id: Uuid,
+) -> Result<Vec<Organization>, DbError> {
+    let query = format!(
+        "SELECT {ORG_COLUMNS} FROM organizations WHERE parent_org_id = $1 ORDER BY created_at"
+    );
+    let orgs = sqlx::query_as::<_, Organization>(&query)
+        .bind(parent_id)
+        .fetch_all(pool)
+        .await?;
+    Ok(orgs)
+}
+
+/// List all tenants (org_type = 'tenant'). For global admin view.
+pub async fn list_tenants(pool: &PgPool) -> Result<Vec<Organization>, DbError> {
+    let query = format!(
+        "SELECT {ORG_COLUMNS} FROM organizations WHERE org_type = 'tenant' ORDER BY created_at"
+    );
+    let orgs = sqlx::query_as::<_, Organization>(&query)
+        .fetch_all(pool)
+        .await?;
+    Ok(orgs)
+}
+
+/// List all sub-tenants of a given tenant.
+pub async fn list_sub_tenants(
+    pool: &PgPool,
+    tenant_id: Uuid,
+) -> Result<Vec<Organization>, DbError> {
+    let query = format!(
+        "SELECT {ORG_COLUMNS} FROM organizations \
+         WHERE parent_org_id = $1 AND org_type = 'sub_tenant' ORDER BY created_at"
+    );
+    let orgs = sqlx::query_as::<_, Organization>(&query)
+        .bind(tenant_id)
+        .fetch_all(pool)
+        .await?;
+    Ok(orgs)
+}
+
+/// List pipelines visible to an org, including inherited ones from parent and global.
+/// Returns own pipelines + inherited from parent tenant + inherited from global org.
+pub async fn list_visible_pipelines(pool: &PgPool, org_id: Uuid) -> Result<Vec<Pipeline>, DbError> {
+    // Get the org to determine its type and parent
+    let org = get_organization(pool, org_id)
+        .await?
+        .ok_or_else(|| DbError::Pool("Organization not found".to_string()))?;
+
+    match org.org_type.as_str() {
+        "global" => {
+            // Global sees only its own pipelines
+            list_pipelines(pool, org_id).await
+        }
+        "tenant" => {
+            // Tenant sees own pipelines + global-scoped pipelines inherited to it
+            let query = format!(
+                "SELECT {PIPELINE_COLUMNS} FROM pipelines \
+                 WHERE (org_id = $1) \
+                    OR (org_id = $1 AND scope_level = 'global') \
+                 ORDER BY scope_level DESC, created_at"
+            );
+            let pipelines = sqlx::query_as::<_, Pipeline>(&query)
+                .bind(org_id)
+                .fetch_all(pool)
+                .await?;
+            Ok(pipelines)
+        }
+        "sub_tenant" => {
+            // Sub-tenant sees own + tenant-scoped from parent + global-scoped
+            let parent_id = org
+                .parent_org_id
+                .ok_or_else(|| DbError::Pool("Sub-tenant has no parent_org_id".to_string()))?;
+            let query = format!(
+                "SELECT {PIPELINE_COLUMNS} FROM pipelines \
+                 WHERE org_id = $1 \
+                    OR (org_id = $2 AND scope_level IN ('tenant', 'global')) \
+                    OR scope_level = 'global' \
+                 ORDER BY scope_level DESC, created_at"
+            );
+            let pipelines = sqlx::query_as::<_, Pipeline>(&query)
+                .bind(org_id)
+                .bind(parent_id)
+                .fetch_all(pool)
+                .await?;
+            Ok(pipelines)
+        }
+        _ => list_pipelines(pool, org_id).await,
+    }
+}
+
+/// Create a pipeline with scope level and optional inheritance.
+pub async fn create_scoped_pipeline(
+    pool: &PgPool,
+    org_id: Uuid,
+    name: &str,
+    vpl_source: &str,
+    scope_level: &str,
+) -> Result<Pipeline, DbError> {
+    let query = format!(
+        "INSERT INTO pipelines (org_id, name, vpl_source, scope_level) \
+         VALUES ($1, $2, $3, $4) RETURNING {PIPELINE_COLUMNS}"
+    );
+    let pipeline = sqlx::query_as::<_, Pipeline>(&query)
+        .bind(org_id)
+        .bind(name)
+        .bind(vpl_source)
+        .bind(scope_level)
+        .fetch_one(pool)
+        .await?;
+    Ok(pipeline)
+}
+
+/// Propagate a tenant-scoped pipeline to all sub-tenants as inherited.
+pub async fn propagate_pipeline_to_sub_tenants(
+    pool: &PgPool,
+    pipeline: &Pipeline,
+) -> Result<u64, DbError> {
+    let sub_tenants = list_sub_tenants(pool, pipeline.org_id).await?;
+    let mut count = 0u64;
+    for sub in &sub_tenants {
+        let query = format!(
+            "INSERT INTO pipelines (org_id, name, vpl_source, scope_level, inherited_from_org_id) \
+             VALUES ($1, $2, $3, $4, $5) \
+             ON CONFLICT DO NOTHING \
+             RETURNING {PIPELINE_COLUMNS}"
+        );
+        let result = sqlx::query_as::<_, Pipeline>(&query)
+            .bind(sub.id)
+            .bind(&pipeline.name)
+            .bind(&pipeline.vpl_source)
+            .bind(&pipeline.scope_level)
+            .bind(pipeline.org_id)
+            .fetch_optional(pool)
+            .await?;
+        if result.is_some() {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+// ---------------------------------------------------------------------------
+// Slug Generation & Schema Provisioning
+// ---------------------------------------------------------------------------
+
+/// Generate a URL-safe slug from an org name.
+/// Lowercases, replaces non-alphanumeric with underscore, collapses runs.
+pub fn generate_slug(name: &str) -> String {
+    let mut result = String::with_capacity(name.len());
+    let mut prev_underscore = true; // start true to skip leading underscores
+    for c in name.chars() {
+        if c.is_ascii_alphanumeric() {
+            result.push(c.to_ascii_lowercase());
+            prev_underscore = false;
+        } else if !prev_underscore {
+            result.push('_');
+            prev_underscore = true;
+        }
+    }
+    result.trim_end_matches('_').to_string()
+}
+
+/// Ensure a slug is unique in the organizations table, appending a numeric suffix if needed.
+pub async fn ensure_unique_slug(pool: &PgPool, base_slug: &str) -> Result<String, DbError> {
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM organizations WHERE slug = $1")
+        .bind(base_slug)
+        .fetch_one(pool)
+        .await?;
+    if count.0 == 0 {
+        return Ok(base_slug.to_string());
+    }
+    for i in 1..1000 {
+        let candidate = format!("{base_slug}_{i}");
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM organizations WHERE slug = $1")
+            .bind(&candidate)
+            .fetch_one(pool)
+            .await?;
+        if count.0 == 0 {
+            return Ok(candidate);
+        }
+    }
+    Err(DbError::Pool("Could not generate unique slug".to_string()))
+}
+
+/// Provision a PostgreSQL schema for a tenant organization.
+/// Creates `tenant_{slug}` schema with data plane tables (pipelines, usage_daily).
+/// Updates the org's `db_schema` column.
+pub async fn provision_tenant_schema(pool: &PgPool, org_id: Uuid) -> Result<String, DbError> {
+    let org = get_organization(pool, org_id)
+        .await?
+        .ok_or_else(|| DbError::Pool("Organization not found".to_string()))?;
+
+    let slug = org
+        .slug
+        .as_ref()
+        .ok_or_else(|| DbError::Pool("Organization has no slug".to_string()))?;
+
+    let schema_name = format!("tenant_{slug}");
+
+    // Validate schema name characters (prevent SQL injection)
+    if !schema_name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return Err(DbError::Pool("Invalid schema name".to_string()));
+    }
+
+    // Create schema
+    sqlx::query(&format!("CREATE SCHEMA IF NOT EXISTS \"{schema_name}\""))
+        .execute(pool)
+        .await?;
+
+    // Create data plane tables in tenant schema
+    sqlx::query(&format!(
+        "CREATE TABLE IF NOT EXISTS \"{schema_name}\".pipelines ( \
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(), \
+            org_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE, \
+            name TEXT NOT NULL, \
+            vpl_source TEXT NOT NULL DEFAULT '', \
+            status TEXT NOT NULL DEFAULT 'stopped', \
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(), \
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), \
+            global_template_id UUID, \
+            scope_level TEXT NOT NULL DEFAULT 'own', \
+            inherited_from_org_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE \
+        )"
+    ))
+    .execute(pool)
+    .await?;
+
+    sqlx::query(&format!(
+        "CREATE TABLE IF NOT EXISTS \"{schema_name}\".usage_daily ( \
+            org_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE, \
+            date DATE NOT NULL, \
+            events_processed BIGINT NOT NULL DEFAULT 0, \
+            output_events BIGINT NOT NULL DEFAULT 0, \
+            PRIMARY KEY (org_id, date) \
+        )"
+    ))
+    .execute(pool)
+    .await?;
+
+    // Create indexes
+    sqlx::query(&format!(
+        "CREATE INDEX IF NOT EXISTS idx_pipelines_org ON \"{schema_name}\".pipelines(org_id)"
+    ))
+    .execute(pool)
+    .await?;
+
+    sqlx::query(&format!(
+        "CREATE INDEX IF NOT EXISTS idx_usage_daily_org_date \
+         ON \"{schema_name}\".usage_daily(org_id, date)"
+    ))
+    .execute(pool)
+    .await?;
+
+    // Update org with schema name
+    sqlx::query("UPDATE organizations SET db_schema = $1 WHERE id = $2")
+        .bind(&schema_name)
+        .bind(org_id)
+        .execute(pool)
+        .await?;
+
+    tracing::info!(
+        "Provisioned tenant schema '{}' for org {}",
+        schema_name,
+        org_id
+    );
+    Ok(schema_name)
+}
+
+/// Verify that a PostgreSQL schema exists.
+pub async fn verify_schema_exists(pool: &PgPool, schema_name: &str) -> Result<bool, DbError> {
+    let result: Option<(String,)> = sqlx::query_as(
+        "SELECT schema_name FROM information_schema.schemata WHERE schema_name = $1",
+    )
+    .bind(schema_name)
+    .fetch_optional(pool)
+    .await?;
+    Ok(result.is_some())
+}
+
+/// Get the effective schema for an org (own db_schema or parent's).
+pub async fn get_effective_schema(pool: &PgPool, org_id: Uuid) -> Result<Option<String>, DbError> {
+    let org = get_organization(pool, org_id)
+        .await?
+        .ok_or_else(|| DbError::Pool("Organization not found".to_string()))?;
+
+    if let Some(ref schema) = org.db_schema {
+        return Ok(Some(schema.clone()));
+    }
+
+    // Sub-tenant: inherit from parent
+    if let Some(parent_id) = org.parent_org_id {
+        let parent = get_organization(pool, parent_id)
+            .await?
+            .ok_or_else(|| DbError::Pool("Parent organization not found".to_string()))?;
+        return Ok(parent.db_schema);
+    }
+
+    Ok(None)
+}
+
+/// List tables in a tenant schema.
+pub async fn list_schema_tables(pool: &PgPool, schema_name: &str) -> Result<Vec<String>, DbError> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT table_name FROM information_schema.tables \
+         WHERE table_schema = $1 ORDER BY table_name",
+    )
+    .bind(schema_name)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|r| r.0).collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -713,7 +1150,7 @@ pub async fn touch_api_key(pool: &PgPool, id: Uuid) -> Result<(), DbError> {
 // ---------------------------------------------------------------------------
 
 const PIPELINE_COLUMNS: &str =
-    "id, org_id, name, vpl_source, status, created_at, updated_at, global_template_id";
+    "id, org_id, name, vpl_source, status, created_at, updated_at, global_template_id, scope_level, inherited_from_org_id";
 
 /// Create a new pipeline for an organization.
 pub async fn create_pipeline(
