@@ -12,6 +12,10 @@ app.use(createPinia())
 app.use(router)
 app.use(vuetify)
 
+app.config.errorHandler = (err, _instance, info) => {
+  console.error(`[Varpulis] Unhandled error in ${info}:`, err)
+}
+
 app.mount('#app')
 
 // Initialize auth state after mount (validate stored token/session)

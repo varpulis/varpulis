@@ -1648,15 +1648,19 @@ async fn handle_configure_kafka(
     }
 
     // Generate prefix from slug or use provided
-    let prefix = body
-        .and_then(|b| b.prefix.clone())
-        .unwrap_or_else(|| {
-            let slug = org.slug.as_deref().unwrap_or(&org.name);
-            slug.to_lowercase()
-                .chars()
-                .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '-' })
-                .collect::<String>()
-        });
+    let prefix = body.and_then(|b| b.prefix.clone()).unwrap_or_else(|| {
+        let slug = org.slug.as_deref().unwrap_or(&org.name);
+        slug.to_lowercase()
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' {
+                    c
+                } else {
+                    '-'
+                }
+            })
+            .collect::<String>()
+    });
 
     // Validate prefix
     if prefix.is_empty() || prefix.len() > 64 {
@@ -1778,11 +1782,7 @@ async fn handle_remove_kafka(
     }
 
     tracing::info!("Removed Kafka topic prefix for org {}", org_id);
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({"deleted": true})),
-    )
-        .into_response()
+    (StatusCode::OK, Json(serde_json::json!({"deleted": true}))).into_response()
 }
 
 /// Helper: check if a k8s namespace exists.

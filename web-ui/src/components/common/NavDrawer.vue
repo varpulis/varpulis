@@ -41,6 +41,7 @@ function isActive(path: string): boolean {
         :active="isActive(item.to)"
         :prepend-icon="item.icon"
         :title="item.title"
+        :data-testid="`nav-${item.title.toLowerCase()}`"
         color="primary"
         @click="emit('navigate', item.to)"
       />
@@ -52,7 +53,7 @@ function isActive(path: string): boolean {
         <v-list-item
           prepend-icon="mdi-help-circle-outline"
           title="Help"
-          href="https://github.com/your-org/varpulis/wiki"
+          href="https://github.com/varpulis/varpulis/wiki"
           target="_blank"
         />
       </v-list>

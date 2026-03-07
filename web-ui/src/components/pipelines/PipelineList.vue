@@ -122,6 +122,7 @@ function getStatusColor(status: string): string {
                   variant="text"
                   size="small"
                   v-bind="menuProps"
+                  aria-label="Pipeline group actions"
                   @click.stop
                 >
                   <v-icon>mdi-dots-vertical</v-icon>
