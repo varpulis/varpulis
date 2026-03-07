@@ -32,6 +32,12 @@ pub struct TenantContext {
     pub org_status: String,
     /// How the request was authenticated (jwt, api_key).
     pub auth_method: String,
+    /// Organization type (global, tenant, sub_tenant).
+    pub org_type: String,
+    /// Parent organization ID (for tenants/sub-tenants).
+    pub parent_org_id: Option<Uuid>,
+    /// PostgreSQL schema for data isolation (e.g. "tenant_acme").
+    pub db_schema: Option<String>,
 }
 
 impl TenantContext {
@@ -48,6 +54,21 @@ impl TenantContext {
     /// Returns true if the org is in a usable state (active or trial).
     pub fn is_org_active(&self) -> bool {
         self.org_status == "active" || self.org_status == "trial"
+    }
+
+    /// Returns true if this org is the global tenant.
+    pub fn is_global_org(&self) -> bool {
+        self.org_type == "global"
+    }
+
+    /// Returns true if this org is a sub-tenant.
+    pub fn is_sub_tenant(&self) -> bool {
+        self.org_type == "sub_tenant"
+    }
+
+    /// Returns true if the user can create sub-tenants (must be tenant-level admin).
+    pub fn can_create_sub_tenants(&self) -> bool {
+        self.org_type == "tenant" && self.is_org_admin()
     }
 }
 
@@ -205,11 +226,12 @@ where
             }
         };
 
-        // Get org status
-        let org_status = match varpulis_db::repo::get_organization(pool, org_id).await {
-            Ok(Some(org)) => org.status,
-            _ => "unknown".to_string(),
-        };
+        // Get org details (status, type, parent, schema)
+        let (org_status, org_type, parent_org_id, db_schema) =
+            match varpulis_db::repo::get_organization(pool, org_id).await {
+                Ok(Some(org)) => (org.status, org.org_type, org.parent_org_id, org.db_schema),
+                _ => ("unknown".to_string(), "tenant".to_string(), None, None),
+            };
 
         Ok(TenantContext {
             user_id,
@@ -218,6 +240,9 @@ where
             global_role: claims.role,
             org_status,
             auth_method: "jwt".to_string(),
+            org_type,
+            parent_org_id,
+            db_schema,
         })
     }
 }
@@ -276,7 +301,10 @@ async fn resolve_from_api_key(
         org_id: api_key.org_id,
         org_role: "owner".to_string(), // API keys imply full org access
         global_role: "user".to_string(),
-        org_status: org.status,
+        org_status: org.status.clone(),
         auth_method: "api_key".to_string(),
+        org_type: org.org_type,
+        parent_org_id: org.parent_org_id,
+        db_schema: org.db_schema,
     })
 }

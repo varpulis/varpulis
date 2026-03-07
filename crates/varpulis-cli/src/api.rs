@@ -48,6 +48,16 @@ pub struct PipelineInfo {
     pub uptime_secs: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub global_template_id: Option<String>,
+    /// Pipeline scope: "global", "tenant", or "own".
+    #[serde(default = "default_scope")]
+    pub scope_level: String,
+    /// Source org for inherited pipelines (None = belongs to current org).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inherited_from_org_id: Option<String>,
+}
+
+fn default_scope() -> String {
+    "own".to_string()
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -455,6 +465,12 @@ async fn handle_list(
             source: p.source.clone(),
             uptime_secs: p.created_at.elapsed().as_secs(),
             global_template_id: p.global_template_id.clone(),
+            scope_level: if p.global_template_id.is_some() {
+                "global".to_string()
+            } else {
+                "own".to_string()
+            },
+            inherited_from_org_id: None,
         })
         .collect();
 
@@ -507,6 +523,12 @@ async fn handle_get(
                 source: p.source.clone(),
                 uptime_secs: p.created_at.elapsed().as_secs(),
                 global_template_id: p.global_template_id.clone(),
+                scope_level: if p.global_template_id.is_some() {
+                    "global".to_string()
+                } else {
+                    "own".to_string()
+                },
+                inherited_from_org_id: None,
             };
             axum::Json(&info).into_response()
         }

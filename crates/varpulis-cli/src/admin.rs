@@ -104,8 +104,12 @@ async fn handle_list_tenants(State(state): State<AdminState>, headers: HeaderMap
                 tenants.push(serde_json::json!({
                     "id": o.id.to_string(),
                     "name": o.name,
+                    "slug": o.slug,
                     "tier": o.tier,
                     "status": o.status,
+                    "org_type": o.org_type,
+                    "parent_org_id": o.parent_org_id.map(|id| id.to_string()),
+                    "db_schema": o.db_schema,
                     "trial_expires_at": o.trial_expires_at.map(|t| t.to_rfc3339()),
                     "pipeline_limit": o.pipeline_limit,
                     "events_per_second_limit": o.events_per_second_limit,
@@ -192,13 +196,21 @@ async fn handle_get_tenant(
         .await
         .unwrap_or_default();
 
+    let sub_tenants = varpulis_db::repo::list_child_organizations(&pool, org_uuid)
+        .await
+        .unwrap_or_default();
+
     (
         StatusCode::OK,
         Json(serde_json::json!({
             "id": org.id.to_string(),
             "name": org.name,
+            "slug": org.slug,
             "tier": org.tier,
             "status": org.status,
+            "org_type": org.org_type,
+            "parent_org_id": org.parent_org_id.map(|id| id.to_string()),
+            "db_schema": org.db_schema,
             "stripe_customer_id": org.stripe_customer_id,
             "trial_expires_at": org.trial_expires_at.map(|t| t.to_rfc3339()),
             "pipeline_limit": org.pipeline_limit,
@@ -212,6 +224,8 @@ async fn handle_get_tenant(
                 "id": p.id.to_string(),
                 "name": p.name,
                 "status": p.status,
+                "scope_level": p.scope_level,
+                "inherited_from_org_id": p.inherited_from_org_id.map(|id| id.to_string()),
                 "created_at": p.created_at.to_rfc3339(),
             })).collect::<Vec<_>>(),
             "api_keys": api_keys.iter().map(|k| serde_json::json!({
@@ -219,6 +233,15 @@ async fn handle_get_tenant(
                 "name": k.name,
                 "created_at": k.created_at.to_rfc3339(),
                 "last_used_at": k.last_used_at.map(|t| t.to_rfc3339()),
+            })).collect::<Vec<_>>(),
+            "sub_tenants": sub_tenants.iter().map(|s| serde_json::json!({
+                "id": s.id.to_string(),
+                "name": s.name,
+                "slug": s.slug,
+                "status": s.status,
+                "org_type": s.org_type,
+                "db_schema": s.db_schema,
+                "created_at": s.created_at.to_rfc3339(),
             })).collect::<Vec<_>>(),
         })),
     )
