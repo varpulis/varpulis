@@ -154,6 +154,10 @@ async fn handle_list_orgs(State(state): State<OrgState>, headers: HeaderMap) -> 
                         "name": org.name,
                         "tier": org.tier,
                         "role": member.role,
+                        "slug": org.slug,
+                        "org_type": org.org_type,
+                        "parent_org_id": org.parent_org_id.map(|id| id.to_string()),
+                        "db_schema": org.db_schema,
                         "created_at": org.created_at.to_rfc3339(),
                     })
                 })
@@ -794,6 +798,304 @@ async fn handle_update_member_role(
 }
 
 // ---------------------------------------------------------------------------
+// Sub-tenant management endpoints
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+struct CreateSubTenantRequest {
+    name: String,
+}
+
+/// POST /api/v1/orgs/{org_id}/sub-tenants — create a sub-tenant under a tenant.
+async fn handle_create_sub_tenant(
+    State(state): State<OrgState>,
+    Path(org_id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<CreateSubTenantRequest>,
+) -> Response {
+    let auth_header = headers.get("authorization").and_then(|v| v.to_str().ok());
+    let claims = match extract_claims(auth_header, &state.oauth_state).await {
+        Ok(c) => c,
+        Err(status) => {
+            return (status, Json(serde_json::json!({"error": "Unauthorized"}))).into_response();
+        }
+    };
+
+    let pool = match state.db_pool {
+        Some(ref p) => p.clone(),
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": "Database not configured"})),
+            )
+                .into_response();
+        }
+    };
+
+    let org_uuid: uuid::Uuid = match org_id.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Invalid org_id"})),
+            )
+                .into_response();
+        }
+    };
+
+    // Verify the authenticated user is an admin of this org
+    if let Err(resp) = verify_org_ownership(&pool, &claims, org_uuid).await {
+        return resp;
+    }
+
+    // Verify the parent org is a tenant (not global, not sub_tenant)
+    let parent_org = match varpulis_db::repo::get_organization(&pool, org_uuid).await {
+        Ok(Some(org)) => org,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "Organization not found"})),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            tracing::error!("Failed to get org: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Internal error"})),
+            )
+                .into_response();
+        }
+    };
+
+    if parent_org.org_type != "tenant" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Sub-tenants can only be created under tenant-type organizations"})),
+        )
+            .into_response();
+    }
+
+    let owner_uuid: uuid::Uuid = match claims.user_id.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Invalid user_id in token"})),
+            )
+                .into_response();
+        }
+    };
+
+    match varpulis_db::repo::create_sub_tenant(&pool, org_uuid, owner_uuid, &body.name).await {
+        Ok(sub_tenant) => (
+            StatusCode::CREATED,
+            Json(serde_json::json!({
+                "id": sub_tenant.id.to_string(),
+                "name": sub_tenant.name,
+                "slug": sub_tenant.slug,
+                "org_type": sub_tenant.org_type,
+                "parent_org_id": sub_tenant.parent_org_id.map(|id| id.to_string()),
+                "db_schema": sub_tenant.db_schema,
+                "status": sub_tenant.status,
+                "created_at": sub_tenant.created_at.to_rfc3339(),
+            })),
+        )
+            .into_response(),
+        Err(e) => {
+            tracing::error!("Failed to create sub-tenant: {}", e);
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// GET /api/v1/orgs/{org_id}/sub-tenants — list sub-tenants of a tenant.
+async fn handle_list_sub_tenants(
+    State(state): State<OrgState>,
+    Path(org_id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let auth_header = headers.get("authorization").and_then(|v| v.to_str().ok());
+    let claims = match extract_claims(auth_header, &state.oauth_state).await {
+        Ok(c) => c,
+        Err(status) => {
+            return (status, Json(serde_json::json!({"error": "Unauthorized"}))).into_response();
+        }
+    };
+
+    let pool = match state.db_pool {
+        Some(ref p) => p.clone(),
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": "Database not configured"})),
+            )
+                .into_response();
+        }
+    };
+
+    let org_uuid: uuid::Uuid = match org_id.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Invalid org_id"})),
+            )
+                .into_response();
+        }
+    };
+
+    if let Err(resp) = verify_org_ownership(&pool, &claims, org_uuid).await {
+        return resp;
+    }
+
+    match varpulis_db::repo::list_sub_tenants(&pool, org_uuid).await {
+        Ok(subs) => {
+            let subs_json: Vec<serde_json::Value> = subs
+                .iter()
+                .map(|s| {
+                    serde_json::json!({
+                        "id": s.id.to_string(),
+                        "name": s.name,
+                        "slug": s.slug,
+                        "org_type": s.org_type,
+                        "parent_org_id": s.parent_org_id.map(|id| id.to_string()),
+                        "db_schema": s.db_schema,
+                        "status": s.status,
+                        "tier": s.tier,
+                        "created_at": s.created_at.to_rfc3339(),
+                    })
+                })
+                .collect();
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({"sub_tenants": subs_json})),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            tracing::error!("Failed to list sub-tenants: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Internal error"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Schema info endpoint
+// ---------------------------------------------------------------------------
+
+/// GET /api/v1/orgs/{org_id}/schema — get schema isolation info for an org.
+async fn handle_get_schema_info(
+    State(state): State<OrgState>,
+    Path(org_id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let auth_header = headers.get("authorization").and_then(|v| v.to_str().ok());
+    let claims = match extract_claims(auth_header, &state.oauth_state).await {
+        Ok(c) => c,
+        Err(status) => {
+            return (status, Json(serde_json::json!({"error": "Unauthorized"}))).into_response();
+        }
+    };
+
+    let pool = match state.db_pool {
+        Some(ref p) => p.clone(),
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": "Database not configured"})),
+            )
+                .into_response();
+        }
+    };
+
+    let org_uuid: uuid::Uuid = match org_id.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Invalid org_id"})),
+            )
+                .into_response();
+        }
+    };
+
+    if let Err(resp) = verify_org_ownership(&pool, &claims, org_uuid).await {
+        return resp;
+    }
+
+    let org = match varpulis_db::repo::get_organization(&pool, org_uuid).await {
+        Ok(Some(o)) => o,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "Organization not found"})),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            tracing::error!("Failed to get org: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Internal error"})),
+            )
+                .into_response();
+        }
+    };
+
+    // Get effective schema (own or inherited from parent)
+    let effective_schema = match varpulis_db::repo::get_effective_schema(&pool, org_uuid).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!("Failed to get effective schema: {}", e);
+            None
+        }
+    };
+
+    // Verify schema exists in PostgreSQL
+    let schema_exists = if let Some(ref schema_name) = effective_schema {
+        varpulis_db::repo::verify_schema_exists(&pool, schema_name)
+            .await
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
+    // List tables in schema
+    let tables = if let Some(ref schema_name) = effective_schema {
+        varpulis_db::repo::list_schema_tables(&pool, schema_name)
+            .await
+            .unwrap_or_default()
+    } else {
+        vec![]
+    };
+
+    let is_inherited = org.db_schema.is_none() && effective_schema.is_some();
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "org_id": org_uuid.to_string(),
+            "slug": org.slug,
+            "db_schema": org.db_schema,
+            "effective_schema": effective_schema,
+            "schema_exists": schema_exists,
+            "is_inherited": is_inherited,
+            "tables": tables,
+        })),
+    )
+        .into_response()
+}
+
+// ---------------------------------------------------------------------------
 // Route assembly
 // ---------------------------------------------------------------------------
 
@@ -830,5 +1132,12 @@ pub fn org_routes(
             "/api/v1/orgs/{org_id}/members/{user_id}",
             delete(handle_remove_member).put(handle_update_member_role),
         )
+        // Sub-tenant management
+        .route(
+            "/api/v1/orgs/{org_id}/sub-tenants",
+            post(handle_create_sub_tenant).get(handle_list_sub_tenants),
+        )
+        // Schema info
+        .route("/api/v1/orgs/{org_id}/schema", get(handle_get_schema_info))
         .with_state(state)
 }
