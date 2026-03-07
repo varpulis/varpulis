@@ -66,6 +66,7 @@ const navItems = [
   { title: 'Demos', icon: 'mdi-presentation-play', to: '/scenarios' },
   { title: 'Models', icon: 'mdi-brain', to: '/models' },
   { title: 'Metrics', icon: 'mdi-chart-line', to: '/metrics' },
+  { title: 'Usage', icon: 'mdi-gauge', to: '/usage' },
   { title: 'Settings', icon: 'mdi-cog', to: '/settings' },
   { title: 'Admin', icon: 'mdi-shield-crown', to: '/admin' },
 ]

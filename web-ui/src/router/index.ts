@@ -194,6 +194,12 @@ const router = createRouter({
       meta: { title: 'Pricing' },
     },
     {
+      path: '/usage',
+      name: 'usage',
+      component: () => import('@/views/UsageView.vue'),
+      meta: { title: 'Usage' },
+    },
+    {
       path: '/admin',
       name: 'admin',
       component: () => import('@/views/AdminView.vue'),

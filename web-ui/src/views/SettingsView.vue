@@ -22,6 +22,7 @@ interface OrgApiKey {
   scopes: string
   created_at: string
   expires_at: string | null
+  last_used_at: string | null
 }
 
 const orgApiKeys = ref<OrgApiKey[]>([])
@@ -83,6 +84,25 @@ async function revokeOrgApiKey(keyId: string) {
     console.error('Failed to revoke API key', e)
   } finally {
     revokeConfirmId.value = null
+  }
+}
+
+const rotatingKeyId = ref<string | null>(null)
+
+async function rotateOrgApiKey(key: OrgApiKey) {
+  if (!orgStore.currentOrg) return
+  rotatingKeyId.value = key.id
+  try {
+    const body: Record<string, string> = { name: key.name, scopes: key.scopes }
+    const res = await api.post(`/orgs/${orgStore.currentOrg.id}/api-keys`, body)
+    await api.delete(`/orgs/${orgStore.currentOrg.id}/api-keys/${key.id}`)
+    newKeyResult.value = res.data.api_key
+    showNewKey.value = true
+    await loadOrgApiKeys()
+  } catch (e) {
+    console.error('Failed to rotate API key', e)
+  } finally {
+    rotatingKeyId.value = null
   }
 }
 
@@ -778,6 +798,7 @@ onMounted(() => {
                   <th>Prefix</th>
                   <th>Scopes</th>
                   <th>Created</th>
+                  <th>Last Used</th>
                   <th>Expires</th>
                   <th></th>
                 </tr>
@@ -788,22 +809,37 @@ onMounted(() => {
                   <td><code class="text-body-2">{{ key.key_prefix }}...</code></td>
                   <td class="text-body-2">{{ key.scopes }}</td>
                   <td class="text-body-2">{{ new Date(key.created_at).toLocaleDateString() }}</td>
+                  <td class="text-body-2">{{ key.last_used_at ? new Date(key.last_used_at).toLocaleDateString() : 'Never' }}</td>
                   <td class="text-body-2">{{ key.expires_at ? new Date(key.expires_at).toLocaleDateString() : 'Never' }}</td>
                   <td>
-                    <v-btn
-                      v-if="revokeConfirmId !== key.id"
-                      icon
-                      size="x-small"
-                      variant="text"
-                      color="error"
-                      @click="revokeConfirmId = key.id"
-                    >
-                      <v-icon size="small">mdi-delete</v-icon>
-                      <v-tooltip activator="parent" location="top">Revoke</v-tooltip>
-                    </v-btn>
-                    <div v-else class="d-flex align-center gap-1">
-                      <v-btn size="x-small" color="error" variant="flat" @click="revokeOrgApiKey(key.id)">Revoke</v-btn>
-                      <v-btn size="x-small" variant="text" @click="revokeConfirmId = null">Cancel</v-btn>
+                    <div class="d-flex align-center gap-1">
+                      <v-btn
+                        v-if="revokeConfirmId !== key.id"
+                        icon
+                        size="x-small"
+                        variant="text"
+                        color="primary"
+                        :loading="rotatingKeyId === key.id"
+                        @click="rotateOrgApiKey(key)"
+                      >
+                        <v-icon size="small">mdi-refresh</v-icon>
+                        <v-tooltip activator="parent" location="top">Rotate (create new &amp; revoke)</v-tooltip>
+                      </v-btn>
+                      <v-btn
+                        v-if="revokeConfirmId !== key.id"
+                        icon
+                        size="x-small"
+                        variant="text"
+                        color="error"
+                        @click="revokeConfirmId = key.id"
+                      >
+                        <v-icon size="small">mdi-delete</v-icon>
+                        <v-tooltip activator="parent" location="top">Revoke</v-tooltip>
+                      </v-btn>
+                      <template v-if="revokeConfirmId === key.id">
+                        <v-btn size="x-small" color="error" variant="flat" @click="revokeOrgApiKey(key.id)">Revoke</v-btn>
+                        <v-btn size="x-small" variant="text" @click="revokeConfirmId = null">Cancel</v-btn>
+                      </template>
                     </div>
                   </td>
                 </tr>
