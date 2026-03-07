@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 300" font-family="Inter, system-ui, sans-serif" font-size="13">
+  <defs>
+    <filter id="shadow" x="-4%" y="-4%" width="108%" height="108%">
+      <feDropShadow dx="1" dy="1" stdDeviation="2" flood-opacity="0.1"/>
+    </filter>
+  </defs>
+
+  <!-- Kafka cluster box -->
+  <rect x="10" y="10" width="700" height="270" rx="10" fill="none" stroke="#e57a00" stroke-width="2" stroke-dasharray="6,3"/>
+  <text x="30" y="32" fill="#e57a00" font-weight="600" font-size="12">Shared Kafka Cluster</text>
+
+  <!-- Tenant A topics -->
+  <rect x="30" y="50" width="210" height="180" rx="8" fill="#1a1a2e" stroke="#1a508b" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="135" y="72" text-anchor="middle" fill="#64b5f6" font-weight="600" font-size="12">acme.* (Tenant A)</text>
+
+  <rect x="45" y="82" width="180" height="28" rx="4" fill="#0a2a4a"/>
+  <text x="135" y="100" text-anchor="middle" fill="#90caf9" font-size="11">acme.raw-events</text>
+
+  <rect x="45" y="116" width="180" height="28" rx="4" fill="#0a2a4a"/>
+  <text x="135" y="134" text-anchor="middle" fill="#90caf9" font-size="11">acme.processed</text>
+
+  <rect x="45" y="150" width="180" height="28" rx="4" fill="#0a2a4a"/>
+  <text x="135" y="168" text-anchor="middle" fill="#90caf9" font-size="11">acme.alerts</text>
+
+  <!-- Sub-tenant shares prefix -->
+  <rect x="45" y="190" width="180" height="28" rx="4" fill="#1b4332" stroke="#2d6a4f"/>
+  <text x="135" y="208" text-anchor="middle" fill="#81c784" font-size="10">Sub-tenant A1: acme.sub1-*</text>
+
+  <!-- Tenant B topics -->
+  <rect x="255" y="50" width="210" height="150" rx="8" fill="#1a1a2e" stroke="#1a508b" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="360" y="72" text-anchor="middle" fill="#64b5f6" font-weight="600" font-size="12">bigco.* (Tenant B)</text>
+
+  <rect x="270" y="82" width="180" height="28" rx="4" fill="#0a2a4a"/>
+  <text x="360" y="100" text-anchor="middle" fill="#90caf9" font-size="11">bigco.raw-events</text>
+
+  <rect x="270" y="116" width="180" height="28" rx="4" fill="#0a2a4a"/>
+  <text x="360" y="134" text-anchor="middle" fill="#90caf9" font-size="11">bigco.processed</text>
+
+  <rect x="270" y="150" width="180" height="28" rx="4" fill="#0a2a4a"/>
+  <text x="360" y="168" text-anchor="middle" fill="#90caf9" font-size="11">bigco.alerts</text>
+
+  <!-- Tenant C topics -->
+  <rect x="480" y="50" width="210" height="150" rx="8" fill="#1a1a2e" stroke="#1a508b" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="585" y="72" text-anchor="middle" fill="#64b5f6" font-weight="600" font-size="12">corp.* (Tenant C)</text>
+
+  <rect x="495" y="82" width="180" height="28" rx="4" fill="#0a2a4a"/>
+  <text x="585" y="100" text-anchor="middle" fill="#90caf9" font-size="11">corp.raw-events</text>
+
+  <rect x="495" y="116" width="180" height="28" rx="4" fill="#0a2a4a"/>
+  <text x="585" y="134" text-anchor="middle" fill="#90caf9" font-size="11">corp.processed</text>
+
+  <rect x="495" y="150" width="180" height="28" rx="4" fill="#0a2a4a"/>
+  <text x="585" y="168" text-anchor="middle" fill="#90caf9" font-size="11">corp.alerts</text>
+
+  <!-- Legend -->
+  <rect x="255" y="220" width="435" height="45" rx="6" fill="#111" stroke="#333" stroke-width="1"/>
+  <text x="275" y="240" fill="#e57a00" font-size="11" font-weight="500">Topic naming:</text>
+  <text x="275" y="256" fill="#aaa" font-size="11">{kafka_topic_prefix}.{topic_name} | Sub-tenants inherit parent prefix</text>
+</svg>

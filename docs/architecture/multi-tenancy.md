@@ -1,16 +1,40 @@
 # Multi-Tenancy Architecture
 
-Technical architecture of Varpulis's multi-tenancy system, covering the tenant model, quota enforcement, billing integration, and deployment modes.
+Technical architecture of Varpulis's multi-tenancy system, covering the hierarchical tenant model, quota enforcement, billing integration, data isolation, and deployment modes.
 
 ## Overview
 
-Varpulis uses a two-layer tenant isolation design: an in-memory runtime layer for lightweight and single-user deployments, and a PostgreSQL-backed database layer for full SaaS operation.
+Varpulis uses a three-tier hierarchical tenant model with isolation at every layer:
+
+![Tenant hierarchy](../images/architecture/tenant-hierarchy.svg)
+
+Isolation is enforced across five dimensions:
+1. **Database** — per-tenant PostgreSQL schemas (data plane), shared `public` schema (control plane)
+2. **Kubernetes** — per-tenant namespaces with NetworkPolicies
+3. **Kafka** — per-tenant topic prefixes (`{slug}.*`)
+4. **Pipelines** — hierarchical inheritance (global → tenant → sub-tenant) with read-only enforcement
+5. **RBAC** — hierarchical roles with parent-tenant admin access to sub-tenants
 
 ![Multi-tenancy overview](../images/architecture/multi-tenancy-overview.svg)
 
 ---
 
 ## Tenant Model
+
+### Hierarchy
+
+The organization model supports a strict 3-level hierarchy:
+
+| Level | `org_type` | `parent_org_id` | Infrastructure |
+|-------|-----------|-----------------|----------------|
+| Global | `global` | NULL | Dedicated namespace, manages all tenants |
+| Tenant | `tenant` | Global org ID | Own namespace, schema, coordinators, Kafka prefix |
+| Sub-tenant | `sub_tenant` | Tenant org ID | Shares parent's namespace, schema, Kafka prefix |
+
+Constraints:
+- Maximum 3 levels — sub-tenants cannot create sub-sub-tenants
+- One global org per deployment (seeded at first startup)
+- Sub-tenants inherit parent's `db_schema`, `k8s_namespace`, and `kafka_topic_prefix`
 
 ### Runtime Layer
 
@@ -66,13 +90,26 @@ When the `saas` feature is enabled and `DATABASE_URL` is set, Varpulis uses Post
 
 | Table | Purpose | Key columns |
 |-------|---------|-------------|
-| `users` | OAuth user accounts | `id`, `github_id`, `email`, `name` |
-| `organizations` | Tenant/org records | `id`, `owner_id`, `name`, `tier`, `status`, `stripe_customer_id`, `trial_expires_at`, limits |
-| `api_keys` | Hashed API keys | `id`, `org_id`, `key_hash` (SHA-256), `name`, `last_used_at` |
-| `pipelines` | Deployed pipelines | `id`, `org_id`, `name`, `vpl_source`, `status` |
+| `users` | User accounts (OAuth + local) | `id`, `github_id`, `email`, `username`, `role`, `email_verified` |
+| `organizations` | Tenant hierarchy | `id`, `owner_id`, `name`, `tier`, `status`, `org_type`, `parent_org_id`, `db_schema`, `k8s_namespace`, `kafka_topic_prefix` |
+| `org_members` | User-org membership | `org_id`, `user_id`, `role` (owner/admin/member/viewer), `status` |
+| `api_keys` | Hashed API keys | `id`, `org_id`, `key_hash` (SHA-256), `scopes`, `expires_at`, `revoked_at` |
+| `pipelines` | Deployed pipelines | `id`, `org_id`, `name`, `vpl_source`, `status`, `scope_level`, `inherited_from_org_id` |
+| `global_pipeline_templates` | Admin-managed global pipelines | `id`, `name`, `vpl_source`, `status`, `deployed_by` |
 | `usage_daily` | Per-day event counts | `org_id`, `date`, `events_processed`, `output_events` |
 
 All tables with `org_id` use `ON DELETE CASCADE` so removing an organization cleans up all related data.
+
+**Organization columns for isolation:**
+
+| Column | Purpose | Example |
+|--------|---------|---------|
+| `org_type` | Hierarchy level | `global`, `tenant`, `sub_tenant` |
+| `parent_org_id` | Parent org reference | UUID of parent tenant/global |
+| `slug` | URL-safe identifier | `acme-corp` |
+| `db_schema` | PostgreSQL schema name | `tenant_acme_corp` |
+| `k8s_namespace` | Kubernetes namespace | `varpulis-tenant-a1b2c3d4` |
+| `kafka_topic_prefix` | Kafka topic prefix | `acme-corp` |
 
 ---
 
@@ -139,7 +176,77 @@ Each pipeline has its own `Arc<Mutex<Engine>>`, `mpsc::Receiver<Event>`, and `br
 
 ### Database-Level Isolation
 
-All tenant-scoped tables carry an `org_id` foreign key to `organizations(id)` with `ON DELETE CASCADE`. Queries always filter by `org_id`.
+#### Shared Schema (Control Plane)
+
+The `public` schema stores cross-tenant data: `users`, `organizations`, `org_members`, `api_keys`, `global_pipeline_templates`. All queries filter by `org_id`.
+
+#### Per-Tenant Schema (Data Plane)
+
+Each tenant gets a dedicated PostgreSQL schema (e.g., `tenant_acme_corp`) containing tenant-specific data plane tables: `pipelines`, `usage_daily`. Sub-tenants share their parent's schema, scoped by `org_id` within the schema.
+
+Schema provisioning flow:
+1. Admin creates tenant → `org_type = 'tenant'` row in `organizations`
+2. System creates schema: `CREATE SCHEMA tenant_{slug}`
+3. Runs data plane migrations within the new schema
+4. Sets `organizations.db_schema = 'tenant_{slug}'`
+
+Repo functions: `set_tenant_schema()`, `get_organization()` returns `db_schema`.
+
+### Pipeline Inheritance
+
+![Pipeline inheritance](../images/architecture/pipeline-inheritance.svg)
+
+Pipelines follow a hierarchical visibility model:
+
+| Pipeline Owner | Visible At | Editable At | `scope_level` |
+|---------------|------------|-------------|---------------|
+| Global org | Global + All tenants + All sub-tenants | Global only | `global` |
+| Tenant org | Tenant + Its sub-tenants | Tenant only | `tenant` |
+| Sub-tenant | Sub-tenant only | Sub-tenant only | `own` |
+
+**Key columns on `pipelines`:**
+- `scope_level` — `'global'`, `'tenant'`, or `'own'`
+- `inherited_from_org_id` — source org for inherited (read-only) pipelines
+
+**API enforcement:**
+- `visible_pipelines()` returns own + parent + global pipelines
+- Inherited pipelines are marked `read_only: true` in API responses
+- Delete/update operations are rejected for read-only pipelines
+- Global pipeline templates are copied to all tenants via `create_global_pipeline_copy()`
+
+**DB sync (saas feature):** Pipeline deploy/delete in the runtime `TenantManager` syncs to PostgreSQL via `ApiState.db_pool`, ensuring the hierarchy-aware API can query all pipelines.
+
+### Kubernetes Per-Tenant Namespaces
+
+Each tenant gets a dedicated Kubernetes namespace. Sub-tenants share their parent tenant's namespace.
+
+![Kubernetes namespace isolation](../images/architecture/k8s-namespace-isolation.svg)
+
+**Admin API endpoints:**
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/admin/tenants/{id}/namespace` | POST | Provision k8s namespace + NetworkPolicy |
+| `/api/v1/admin/tenants/{id}/namespace` | GET | Get namespace info with cluster status |
+| `/api/v1/admin/tenants/{id}/namespace` | DELETE | Deprovision namespace |
+
+Provisioning creates the namespace and applies a default-deny NetworkPolicy via `kubectl`. Sub-tenants cannot provision their own namespace (returns 400).
+
+### Kafka Topic Isolation
+
+Shared Kafka cluster with per-tenant topic prefixes. Sub-tenants use their parent's topic prefix.
+
+![Kafka topic isolation](../images/architecture/kafka-topic-isolation.svg)
+
+**Admin API endpoints:**
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/admin/tenants/{id}/kafka` | POST | Configure topic prefix (auto-generates from slug if omitted) |
+| `/api/v1/admin/tenants/{id}/kafka` | GET | Get prefix info with effective prefix (own or inherited) |
+| `/api/v1/admin/tenants/{id}/kafka` | DELETE | Remove topic prefix |
+
+Repo functions: `set_kafka_topic_prefix()`, `clear_kafka_topic_prefix()`, `get_effective_topic_prefix()`.
 
 ### Network-Level Isolation (Kubernetes)
 
@@ -352,16 +459,29 @@ All admin endpoints require JWT with `role: "admin"`. Defined in `crates/varpuli
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/v1/admin/tenants` | GET | List all organizations with usage |
-| `/api/v1/admin/tenants/{id}` | GET | Org details with pipelines and API keys |
+| `/api/v1/admin/tenants` | GET | List all organizations with usage, hierarchy, isolation info |
+| `/api/v1/admin/tenants` | POST | Create tenant or sub-tenant |
+| `/api/v1/admin/tenants/{id}` | GET | Org details with pipelines, API keys, sub-tenants |
 | `/api/v1/admin/tenants/{id}/tier` | PUT | Change tier (free/pro/business/enterprise) |
 | `/api/v1/admin/tenants/{id}/status` | PUT | Change status (active/trial/suspended/revoked) |
 | `/api/v1/admin/tenants/{id}/trial` | PUT | Extend trial expiration date |
 | `/api/v1/admin/tenants/{id}/limits` | PUT | Override pipeline/EPS/monthly limits |
 | `/api/v1/admin/tenants/{id}/revoke` | POST | Revoke tenant (sets status="revoked") |
+| `/api/v1/admin/tenants/{id}/namespace` | POST/GET/DELETE | Provision/query/deprovision k8s namespace |
+| `/api/v1/admin/tenants/{id}/kafka` | POST/GET/DELETE | Configure/query/remove Kafka topic prefix |
+| `/api/v1/admin/global-pipelines` | POST/GET | Deploy/list global pipeline templates |
+| `/api/v1/admin/global-pipelines/{id}` | PUT/DELETE | Update/undeploy global pipeline template |
 | `/api/v1/admin/usage` | GET | Aggregate usage across all tenants |
 
-The web UI includes an admin panel for managing tenants without direct API calls.
+### Tenant-Level Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/orgs` | GET | List user's organizations (hierarchy-aware) |
+| `/api/v1/orgs/{id}/sub-tenants` | POST | Create sub-tenant under a tenant |
+| `/api/v1/orgs/{id}/pipelines` | GET | List visible pipelines (own + inherited, with `read_only` flag) |
+
+The web UI includes an admin panel and org switcher with hierarchy tree for managing tenants without direct API calls.
 
 ---
 
@@ -444,16 +564,36 @@ PostgreSQL stores the authoritative tenant state in SaaS mode. Migrations auto-r
 |-----------|------|
 | TenantManager, Tenant, TenantQuota | `crates/varpulis-runtime/src/tenant.rs` |
 | StateStore, FileStore, RocksDbStore | `crates/varpulis-runtime/src/persistence.rs` |
-| API routes & ApiKey extractor | `crates/varpulis-cli/src/api.rs` |
-| Admin API endpoints | `crates/varpulis-cli/src/admin.rs` |
+| API routes, DB sync, ApiKey extractor | `crates/varpulis-cli/src/api.rs` |
+| Admin API (tenants, namespaces, kafka, global pipelines) | `crates/varpulis-cli/src/admin.rs` |
+| Auth (registration, login, verification) | `crates/varpulis-cli/src/auth.rs` |
 | Billing & UsageTracker | `crates/varpulis-cli/src/billing.rs` |
 | OAuth & JWT sessions | `crates/varpulis-cli/src/oauth.rs` |
-| Organization & API key routes | `crates/varpulis-cli/src/org.rs` |
+| Organization, sub-tenant, pipeline routes | `crates/varpulis-cli/src/org.rs` |
 | Local user store & sessions | `crates/varpulis-cli/src/users.rs` |
-| DB models & repo queries | `crates/varpulis-db/src/models.rs`, `crates/varpulis-db/src/repo.rs` |
-| DB migrations | `crates/varpulis-db/migrations/` |
+| DB models (Organization, Pipeline, etc.) | `crates/varpulis-db/src/models.rs` |
+| DB repo queries (hierarchy, isolation) | `crates/varpulis-db/src/repo.rs` |
+| DB migrations (hierarchy, schema, namespace, kafka) | `crates/varpulis-db/migrations/` |
+| Kafka connector & managed connector | `crates/varpulis-connectors/src/kafka.rs`, `managed_kafka.rs` |
+| Sink factory (topic resolution) | `crates/varpulis-runtime/src/engine/sink_factory.rs` |
+| Cluster connector config & injection | `crates/varpulis-cluster/src/connector_config.rs` |
+| Vue 3 org store (hierarchy tree) | `web-ui/src/stores/org.ts` |
+| Vue 3 admin store (tenant detail) | `web-ui/src/stores/admin.ts` |
 | Kubernetes NetworkPolicies | `deploy/kubernetes/overlays/saas/network-policies.yaml` |
 | SaaS Docker Compose | `deploy/docker/docker-compose.saas.yml` |
+| E2E tests (all phases) | `web-ui/tests/*.spec.ts` |
+
+---
+
+## RBAC Hierarchy
+
+| Level | Roles | Capabilities |
+|-------|-------|-------------|
+| Global (system admin) | `admin` | CRUD all tenants, deploy global pipelines, monitor all, provision namespaces/kafka |
+| Tenant | `owner`, `admin`, `member`, `viewer` | Manage own + sub-tenant pipelines, create sub-tenants |
+| Sub-tenant | `admin`, `member`, `viewer` | Manage own pipelines only |
+
+Tenant admins can access sub-tenant data via `parent_org_id` lookup. Sub-tenants cannot create sub-sub-tenants (enforced at API level).
 
 ---
 
