@@ -7,6 +7,10 @@ export interface Tenant {
   name: string
   tier: string
   status: string
+  org_type?: string
+  parent_org_id?: string | null
+  slug?: string
+  db_schema?: string | null
   trial_expires_at: string | null
   pipeline_limit: number
   events_per_second_limit: number
@@ -17,9 +21,18 @@ export interface Tenant {
   updated_at: string
 }
 
+export interface SubTenantInfo {
+  id: string
+  name: string
+  slug?: string
+  status: string
+  org_type: string
+}
+
 export interface TenantDetail extends Tenant {
   stripe_customer_id: string | null
-  pipelines: { id: string; name: string; status: string; created_at: string }[]
+  sub_tenants?: SubTenantInfo[]
+  pipelines: { id: string; name: string; status: string; read_only?: boolean; scope_level?: string; created_at: string }[]
   api_keys: { id: string; name: string; created_at: string; last_used_at: string | null }[]
 }
 
