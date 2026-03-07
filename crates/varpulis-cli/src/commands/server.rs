@@ -671,6 +671,8 @@ pub async fn run_server(
         api_admin_key,
         cors_origins,
         billing_state.clone(),
+        #[cfg(feature = "saas")]
+        db_pool.clone(),
     );
 
     // Combined routes using axum Router

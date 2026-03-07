@@ -188,7 +188,7 @@ async fn handle_get_tenant(
         .await
         .unwrap_or(0);
 
-    let pipelines = varpulis_db::repo::list_pipelines(&pool, org_uuid)
+    let pipelines = varpulis_db::repo::list_visible_pipelines(&pool, org_uuid)
         .await
         .unwrap_or_default();
 
@@ -226,6 +226,7 @@ async fn handle_get_tenant(
                 "status": p.status,
                 "scope_level": p.scope_level,
                 "inherited_from_org_id": p.inherited_from_org_id.map(|id| id.to_string()),
+                "read_only": p.inherited_from_org_id.is_some() || (p.org_id != org_uuid && p.scope_level != "own"),
                 "created_at": p.created_at.to_rfc3339(),
             })).collect::<Vec<_>>(),
             "api_keys": api_keys.iter().map(|k| serde_json::json!({

@@ -1135,6 +1135,88 @@ async fn handle_get_schema_info(
 }
 
 // ---------------------------------------------------------------------------
+// Pipeline visibility (hierarchy-aware)
+// ---------------------------------------------------------------------------
+
+/// GET /api/v1/orgs/{org_id}/pipelines — list visible pipelines (own + inherited).
+async fn handle_list_org_pipelines(
+    State(state): State<OrgState>,
+    Path(org_id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let auth_header = headers.get("authorization").and_then(|v| v.to_str().ok());
+    let claims = match extract_claims(auth_header, &state.oauth_state).await {
+        Ok(c) => c,
+        Err(status) => {
+            return (status, Json(serde_json::json!({"error": "Unauthorized"}))).into_response();
+        }
+    };
+
+    let pool = match state.db_pool {
+        Some(ref p) => p.clone(),
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": "Database not configured"})),
+            )
+                .into_response();
+        }
+    };
+
+    let org_uuid: uuid::Uuid = match org_id.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Invalid org_id"})),
+            )
+                .into_response();
+        }
+    };
+
+    if let Err(resp) = verify_org_access(&pool, &claims, org_uuid).await {
+        return resp;
+    }
+
+    match varpulis_db::repo::list_visible_pipelines(&pool, org_uuid).await {
+        Ok(pipelines) => {
+            let pipelines_json: Vec<serde_json::Value> = pipelines
+                .iter()
+                .map(|p| {
+                    let is_inherited = p.inherited_from_org_id.is_some() || p.org_id != org_uuid;
+                    serde_json::json!({
+                        "id": p.id.to_string(),
+                        "name": p.name,
+                        "status": p.status,
+                        "vpl_source": p.vpl_source,
+                        "scope_level": p.scope_level,
+                        "inherited_from_org_id": p.inherited_from_org_id.map(|id| id.to_string()),
+                        "read_only": is_inherited,
+                        "created_at": p.created_at.to_rfc3339(),
+                    })
+                })
+                .collect();
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "pipelines": pipelines_json,
+                    "total": pipelines_json.len(),
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            tracing::error!("Failed to list pipelines: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Internal error"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Route assembly
 // ---------------------------------------------------------------------------
 
@@ -1178,5 +1260,10 @@ pub fn org_routes(
         )
         // Schema info
         .route("/api/v1/orgs/{org_id}/schema", get(handle_get_schema_info))
+        // Pipeline visibility (hierarchy-aware)
+        .route(
+            "/api/v1/orgs/{org_id}/pipelines",
+            get(handle_list_org_pipelines),
+        )
         .with_state(state)
 }

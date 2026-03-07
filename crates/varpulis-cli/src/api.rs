@@ -54,6 +54,9 @@ pub struct PipelineInfo {
     /// Source org for inherited pipelines (None = belongs to current org).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inherited_from_org_id: Option<String>,
+    /// Whether the pipeline is read-only (inherited from parent/global).
+    #[serde(default)]
+    pub read_only: bool,
 }
 
 fn default_scope() -> String {
@@ -241,6 +244,8 @@ pub struct ApiState {
     pub manager: SharedTenantManager,
     pub admin_key: Option<String>,
     pub billing_state: Option<SharedBillingState>,
+    #[cfg(feature = "saas")]
+    pub db_pool: Option<varpulis_db::PgPool>,
 }
 
 /// Axum extractor for X-API-Key header.
@@ -307,11 +312,14 @@ pub fn api_routes(
     admin_key: Option<String>,
     cors_origins: Option<Vec<String>>,
     billing_state: Option<SharedBillingState>,
+    #[cfg(feature = "saas")] db_pool: Option<varpulis_db::PgPool>,
 ) -> Router {
     let state = ApiState {
         manager,
         admin_key,
         billing_state,
+        #[cfg(feature = "saas")]
+        db_pool,
     };
 
     let cors = build_cors(cors_origins);
@@ -399,16 +407,39 @@ async fn handle_deploy(
         }
     };
 
+    let pipeline_name = body.name.clone();
+    #[cfg(feature = "saas")]
+    let vpl_source = body.source.clone();
+
     let result = mgr
-        .deploy_pipeline_on_tenant(&tenant_id, body.name.clone(), body.source)
+        .deploy_pipeline_on_tenant(&tenant_id, body.name, body.source)
         .await;
 
     match result {
         Ok(id) => {
             mgr.persist_if_needed(&tenant_id);
+
+            // Sync pipeline to DB for hierarchy-aware views
+            #[cfg(feature = "saas")]
+            if let Some(ref pool) = state.db_pool {
+                if let Ok(org_uuid) = tenant_id.0.parse::<uuid::Uuid>() {
+                    if let Err(e) = varpulis_db::repo::create_scoped_pipeline(
+                        pool,
+                        org_uuid,
+                        &pipeline_name,
+                        &vpl_source,
+                        "own",
+                    )
+                    .await
+                    {
+                        tracing::warn!("Failed to sync pipeline to DB: {}", e);
+                    }
+                }
+            }
+
             let resp = DeployPipelineResponse {
                 id,
-                name: body.name,
+                name: pipeline_name,
                 status: "running".to_string(),
             };
             (StatusCode::CREATED, axum::Json(&resp)).into_response()
@@ -458,19 +489,23 @@ async fn handle_list(
     let all_pipelines: Vec<PipelineInfo> = tenant
         .pipelines
         .values()
-        .map(|p| PipelineInfo {
-            id: p.id.clone(),
-            name: p.name.clone(),
-            status: p.status.to_string(),
-            source: p.source.clone(),
-            uptime_secs: p.created_at.elapsed().as_secs(),
-            global_template_id: p.global_template_id.clone(),
-            scope_level: if p.global_template_id.is_some() {
-                "global".to_string()
-            } else {
-                "own".to_string()
-            },
-            inherited_from_org_id: None,
+        .map(|p| {
+            let is_global = p.global_template_id.is_some();
+            PipelineInfo {
+                id: p.id.clone(),
+                name: p.name.clone(),
+                status: p.status.to_string(),
+                source: p.source.clone(),
+                uptime_secs: p.created_at.elapsed().as_secs(),
+                global_template_id: p.global_template_id.clone(),
+                scope_level: if is_global {
+                    "global".to_string()
+                } else {
+                    "own".to_string()
+                },
+                inherited_from_org_id: None,
+                read_only: is_global,
+            }
         })
         .collect();
 
@@ -516,6 +551,7 @@ async fn handle_get(
 
     match tenant.pipelines.get(&pipeline_id) {
         Some(p) => {
+            let is_global = p.global_template_id.is_some();
             let info = PipelineInfo {
                 id: p.id.clone(),
                 name: p.name.clone(),
@@ -523,12 +559,13 @@ async fn handle_get(
                 source: p.source.clone(),
                 uptime_secs: p.created_at.elapsed().as_secs(),
                 global_template_id: p.global_template_id.clone(),
-                scope_level: if p.global_template_id.is_some() {
+                scope_level: if is_global {
                     "global".to_string()
                 } else {
                     "own".to_string()
                 },
                 inherited_from_org_id: None,
+                read_only: is_global,
             };
             axum::Json(&info).into_response()
         }
@@ -559,6 +596,9 @@ async fn handle_delete(
         }
     };
 
+    #[cfg(feature = "saas")]
+    let mut pipeline_name_for_db = None;
+
     let result = {
         let tenant = match mgr.get_tenant_mut(&tenant_id) {
             Some(t) => t,
@@ -580,6 +620,10 @@ async fn handle_delete(
                     "Global pipelines can only be managed by admin",
                 );
             }
+            #[cfg(feature = "saas")]
+            {
+                pipeline_name_for_db = Some(pipeline.name.clone());
+            }
         }
 
         tenant.remove_pipeline(&pipeline_id)
@@ -588,6 +632,17 @@ async fn handle_delete(
     match result {
         Ok(()) => {
             mgr.persist_if_needed(&tenant_id);
+
+            // Sync deletion to DB
+            #[cfg(feature = "saas")]
+            if let Some(ref pool) = state.db_pool {
+                if let (Ok(org_uuid), Some(name)) =
+                    (tenant_id.0.parse::<uuid::Uuid>(), &pipeline_name_for_db)
+                {
+                    let _ = varpulis_db::repo::delete_pipeline_by_name(pool, org_uuid, name).await;
+                }
+            }
+
             axum::Json(serde_json::json!({"deleted": true})).into_response()
         }
         Err(e) => tenant_error_response(e),
