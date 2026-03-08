@@ -813,11 +813,8 @@ fn execute_op_common(
                 };
 
             if let Some(hamlet) = effective_hamlet {
-                // Accumulate events for field-based aggregates (sum/avg/min/max)
-                let mut accumulated: Vec<SharedEvent> = Vec::new();
-
                 for event in current_events.iter() {
-                    accumulated.push(Arc::clone(event));
+                    config.accumulated.push(Arc::clone(event));
                     let results = hamlet.process(Arc::clone(event));
                     for agg_result in results {
                         // Only handle results for THIS stream's query
@@ -833,14 +830,26 @@ fn execute_op_common(
                             .data
                             .insert("query_id".into(), Value::Int(agg_result.query_id as i64));
 
-                        // Populate count-based fields from Hamlet
+                        // Populate count-based fields
                         for (alias, agg_type) in &config.fields {
                             let value = match agg_type {
                                 crate::greta::GretaAggregate::CountTrends => {
                                     Some(Value::Int(agg_result.trend_count as i64))
                                 }
-                                crate::greta::GretaAggregate::CountEvents(_) => {
-                                    Some(Value::Int(agg_result.kleene_event_count as i64))
+                                crate::greta::GretaAggregate::CountEvents(type_idx) => {
+                                    // Count from accumulated events using type index → name map
+                                    let count = if let Some(type_name) =
+                                        config.type_index_to_name.get(*type_idx as usize)
+                                    {
+                                        config
+                                            .accumulated
+                                            .iter()
+                                            .filter(|e| *e.event_type == *type_name)
+                                            .count()
+                                    } else {
+                                        config.accumulated.len()
+                                    };
+                                    Some(Value::Int(count as i64))
                                 }
                                 // Field-based aggregates handled below
                                 _ => None,
@@ -852,7 +861,8 @@ fn execute_op_common(
 
                         // Compute field-based aggregates from accumulated events
                         for info in &config.field_aggregates {
-                            let values: Vec<f64> = accumulated
+                            let values: Vec<f64> = config
+                                .accumulated
                                 .iter()
                                 .filter(|e| *e.event_type == info.event_type)
                                 .filter_map(|e| e.get(&info.field_name))
@@ -883,7 +893,6 @@ fn execute_op_common(
                             .data
                             .insert("is_final".into(), Value::Bool(agg_result.is_final));
                         trend_results.push(Arc::new(trend_event));
-                        accumulated.clear();
                     }
                 }
             }

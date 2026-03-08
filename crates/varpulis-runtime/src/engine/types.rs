@@ -275,6 +275,10 @@ pub struct TrendAggregateConfig {
     pub query_id: crate::greta::QueryId,
     /// Field-based aggregate info for runtime computation (sum/avg/min/max)
     pub field_aggregates: Vec<FieldAggregateInfo>,
+    /// Maps type index (u16) to event type name (for count_events resolution)
+    pub type_index_to_name: Vec<String>,
+    /// Accumulated events across invocations (persists between execute_op calls)
+    pub accumulated: Vec<SharedEvent>,
 }
 
 /// Info for computing field-based aggregates at runtime.

@@ -256,9 +256,10 @@ fn builtin_examples() -> Vec<PlaygroundExampleDetail> {
             description: "Detect repeated failed logins followed by a success — uses 'all' for Kleene+ matching with match_count threshold.".into(),
             category: "Security".into(),
             vpl: r#"# Kleene pattern: match ALL failed logins, then a successful login
-# match_count = total events in the sequence (failures + success)
+# partition_by(user_id) isolates each user's login sequence
 # Filter: at least 3 failed attempts (match_count >= 4)
 stream BruteForce = failed_login -> all failed_login as f -> successful_login as s .within(5m)
+    .partition_by(user_id)
     .where(match_count >= 4)
     .emit(alert: "Brute force detected", user: s.user_id, failed_attempts: match_count - 1)"#.into(),
             events: r#"# Admin: 3 failed logins then success — triggers alert (3 failures >= 3)
@@ -302,8 +303,9 @@ stream AllAlerts = merge(TempAlerts, HumidAlerts)
             description: "Detect a flood of requests to the same target — Kleene+ with match_count threshold.".into(),
             category: "Security".into(),
             vpl: r#"# Detect 5+ requests to the same host within 10 seconds
-# match_count includes all events in the matched sequence
+# partition_by(host) isolates per-target detection
 stream DDoS = http_request -> all http_request as flood .within(10s)
+    .partition_by(host)
     .where(match_count >= 5)
     .emit(alert: "DDoS detected", target: flood.host, request_count: match_count)"#.into(),
             events: r#"# Burst of 6 requests to api.example.com — triggers alert
@@ -324,8 +326,9 @@ stream DDoS = http_request -> all http_request as flood .within(10s)
             description: "Detect cascading errors in microservices — repeated errors followed by a timeout.".into(),
             category: "IoT".into(),
             vpl: r#"# Cascading failure: 3+ errors then a timeout event
-# match_count - 1 = number of errors (subtract the timeout at the end)
+# partition_by(service) isolates per-service detection
 stream ErrorStorm = service_error -> all service_error as errors -> timeout as t .within(30s)
+    .partition_by(service)
     .where(match_count >= 4)
     .emit(alert: "Error storm", service: t.service, error_count: match_count - 1)"#.into(),
             events: r#"# 4 errors then timeout — triggers (4 errors >= 3)
@@ -446,8 +449,9 @@ stream TxStats = TxOpen as open
             description: "Inline aggregates on Kleene matches — sum, avg, min, max, count without trend_aggregate.".into(),
             category: "Advanced".into(),
             vpl: r"# Detect large cumulative transfers after login
-# sum(t.amount) computes the total across all Kleene-matched transfers
+# partition_by(user_id) isolates per-user sequences
 stream LargeTransfers = login as l -> all transfer as t .within(10m)
+    .partition_by(user_id)
     .where(sum(t.amount) > 500)
     .emit(
         user: l.user_id,
@@ -457,11 +461,14 @@ stream LargeTransfers = login as l -> all transfer as t .within(10m)
         smallest: min(t.amount),
         num_transfers: count(t)
     )".into(),
-            events: r#"# Login then 3 transfers totaling 1500 — triggers alert (1500 > 500)
+            events: r#"# Alice: login then 3 transfers totaling 1500 — triggers (1500 > 500)
 @0s login { user_id: "alice", city: "NYC" }
 @10s transfer { user_id: "alice", amount: 200.0, to: "ext_001" }
 @20s transfer { user_id: "alice", amount: 800.0, to: "ext_002" }
-@30s transfer { user_id: "alice", amount: 500.0, to: "ext_003" }"#.into(),
+@30s transfer { user_id: "alice", amount: 500.0, to: "ext_003" }
+# Bob: login then 1 small transfer — no alert (100 < 500)
+@60s login { user_id: "bob", city: "London" }
+@70s transfer { user_id: "bob", amount: 100.0, to: "ext_010" }"#.into(),
             expected_output_count: None,
         },
         PlaygroundExampleDetail {
@@ -470,8 +477,9 @@ stream LargeTransfers = login as l -> all transfer as t .within(10m)
             description: "Access the first and last events in a Kleene match — detect location changes.".into(),
             category: "Security".into(),
             vpl: r"# Detect when a user roams across cities
-# l.city = origin (trigger event), first(f)/last(f) = Kleene range
+# partition_by(user_id) isolates per-user login sequences
 stream LocationChange = login as l -> all login as f .within(1h)
+    .partition_by(user_id)
     .where(count(f) >= 2 and l.city != last(f).city)
     .emit(
         user: l.user_id,
@@ -480,11 +488,14 @@ stream LocationChange = login as l -> all login as f .within(1h)
         latest: last(f).city,
         roam_count: count(f)
     )".into(),
-            events: r#"# Alice: NYC then 3 roaming logins — origin=NYC, latest=Berlin
+            events: r#"# Alice: NYC then roams to London, Tokyo, Berlin — triggers
 @0s login { user_id: "alice", city: "NYC", device: "mobile" }
 @60s login { user_id: "alice", city: "London", device: "laptop" }
 @120s login { user_id: "alice", city: "Tokyo", device: "desktop" }
-@180s login { user_id: "alice", city: "Berlin", device: "tablet" }"#.into(),
+@180s login { user_id: "alice", city: "Berlin", device: "tablet" }
+# Bob: stays in Berlin — no location change
+@200s login { user_id: "bob", city: "Berlin", device: "mobile" }
+@260s login { user_id: "bob", city: "Berlin", device: "tablet" }"#.into(),
             expected_output_count: None,
         },
         PlaygroundExampleDetail {
@@ -493,19 +504,24 @@ stream LocationChange = login as l -> all login as f .within(1h)
             description: "Count unique values across Kleene matches — detect distributed attacks from many IPs.".into(),
             category: "Security".into(),
             vpl: r"# Detect attacks from 3+ distinct source IPs
+# partition_by(target_ip) isolates per-target detection
 stream DistributedAttack = scan -> all scan as s .within(1m)
+    .partition_by(target_ip)
     .where(distinct_count(s.source_ip) >= 3)
     .emit(
         target: s.target_ip,
         unique_sources: distinct_count(s.source_ip),
         total_scans: count(s)
     )".into(),
-            events: r#"# 5 scans from 4 distinct IPs targeting same host — triggers (4 >= 3)
+            events: r#"# Server .100: 5 scans from 4 distinct IPs — triggers (4 >= 3)
 @0s scan { source_ip: "10.0.0.1", target_ip: "192.168.1.100", port: 22 }
 @1s scan { source_ip: "10.0.0.2", target_ip: "192.168.1.100", port: 80 }
 @2s scan { source_ip: "10.0.0.3", target_ip: "192.168.1.100", port: 443 }
 @3s scan { source_ip: "10.0.0.1", target_ip: "192.168.1.100", port: 8080 }
-@4s scan { source_ip: "10.0.0.4", target_ip: "192.168.1.100", port: 3306 }"#.into(),
+@4s scan { source_ip: "10.0.0.4", target_ip: "192.168.1.100", port: 3306 }
+# Server .200: 2 scans from 1 IP — no alert (1 < 3)
+@20s scan { source_ip: "10.0.0.5", target_ip: "192.168.1.200", port: 22 }
+@21s scan { source_ip: "10.0.0.5", target_ip: "192.168.1.200", port: 80 }"#.into(),
             expected_output_count: None,
         },
         PlaygroundExampleDetail {
@@ -536,21 +552,26 @@ stream OrderCancelled = order as o -> shipment as s .within(5m)
             description: "Detect high event rates using match_rate — events per second within a pattern match.".into(),
             category: "Security".into(),
             vpl: r"# Alert when request rate exceeds 2 events/second
-# match_rate = match_count / match_duration_seconds
+# partition_by(endpoint) isolates per-endpoint rate monitoring
 stream HighRate = request -> all request as r .within(30s)
+    .partition_by(endpoint)
     .where(match_count >= 3 and match_rate > 2.0)
     .emit(
         endpoint: r.endpoint,
         rate: match_rate,
         total: match_count
     )".into(),
-            events: r#"# Burst: 6 requests in 2 seconds — triggers (match_rate > 2.0)
+            events: r#"# /api/login: 6 requests in 2 seconds — triggers (rate > 2.0)
 @0s request { endpoint: "/api/login", ip: "10.0.0.1" }
 @0s request { endpoint: "/api/login", ip: "10.0.0.1" }
 @1s request { endpoint: "/api/login", ip: "10.0.0.1" }
 @1s request { endpoint: "/api/login", ip: "10.0.0.1" }
 @2s request { endpoint: "/api/login", ip: "10.0.0.1" }
-@2s request { endpoint: "/api/login", ip: "10.0.0.1" }"#.into(),
+@2s request { endpoint: "/api/login", ip: "10.0.0.1" }
+# /api/data: 3 requests over 10 seconds — no alert (rate < 2.0)
+@20s request { endpoint: "/api/data", ip: "10.0.0.2" }
+@25s request { endpoint: "/api/data", ip: "10.0.0.2" }
+@30s request { endpoint: "/api/data", ip: "10.0.0.2" }"#.into(),
             expected_output_count: None,
         },
     ]
