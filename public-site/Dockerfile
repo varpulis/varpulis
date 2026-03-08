@@ -17,6 +17,10 @@ COPY public-site/ .
 # Copy shared web-ui source (imported via @ alias → ../web-ui/src)
 COPY web-ui/src/ /app/web-ui/src/
 
+# Symlink node_modules to /app/ so TypeScript can resolve modules
+# from web-ui source files (it walks up: /app/web-ui/src → /app/)
+RUN ln -s /app/public-site/node_modules /app/node_modules
+
 # Optional: pre-populate API key at build time (for demos)
 ARG VITE_API_KEY=""
 ENV VITE_API_KEY=$VITE_API_KEY
