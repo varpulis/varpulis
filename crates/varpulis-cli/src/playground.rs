@@ -469,17 +469,18 @@ stream LargeTransfers = login as l -> all transfer as t .within(10m)
             name: "First/Last Access".into(),
             description: "Access the first and last events in a Kleene match — detect location changes.".into(),
             category: "Security".into(),
-            vpl: r"# Detect when a user logs in from different cities
-# first(f).city = city of first login, last(f).city = city of most recent
-stream LocationChange = login -> all login as f .within(1h)
-    .where(match_count >= 2 and first(f).city != last(f).city)
+            vpl: r"# Detect when a user roams across cities
+# l.city = origin (trigger event), first(f)/last(f) = Kleene range
+stream LocationChange = login as l -> all login as f .within(1h)
+    .where(count(f) >= 2 and l.city != last(f).city)
     .emit(
-        user: f.user_id,
-        first_city: first(f).city,
-        last_city: last(f).city,
-        login_count: count(f)
+        user: l.user_id,
+        origin: l.city,
+        first_roam: first(f).city,
+        latest: last(f).city,
+        roam_count: count(f)
     )".into(),
-            events: r#"# 4 logins from different cities — triggers when first != last city
+            events: r#"# Alice: NYC then 3 roaming logins — origin=NYC, latest=Berlin
 @0s login { user_id: "alice", city: "NYC", device: "mobile" }
 @60s login { user_id: "alice", city: "London", device: "laptop" }
 @120s login { user_id: "alice", city: "Tokyo", device: "desktop" }
