@@ -9,7 +9,8 @@ import ExampleSelector from '@/components/playground/ExampleSelector.vue'
 import EventPanel from '@/components/playground/EventPanel.vue'
 import ResultsPanel from '@/components/playground/ResultsPanel.vue'
 import ShareButton from '@/components/playground/ShareButton.vue'
-import { playgroundRun, type PlaygroundRunResponse, type PlaygroundExampleDetail } from '@/api/playground'
+import VplEditor from '@/components/editor/VplEditor.vue'
+import { playgroundRun, playgroundValidate, type PlaygroundRunResponse, type PlaygroundExampleDetail } from '@/api/playground'
 
 const route = useRoute()
 
@@ -45,6 +46,21 @@ function onSelectExample(example: PlaygroundExampleDetail) {
   events.value = example.events
   currentExample.value = example.name
   result.value = null
+}
+
+/** Adapter: playground validate API → VplEditor's expected shape */
+async function pgValidate(source: string) {
+  const resp = await playgroundValidate(source)
+  return {
+    valid: resp.ok,
+    diagnostics: resp.diagnostics.map(d => ({
+      severity: d.severity,
+      line: d.start_line,
+      column: d.start_col,
+      message: d.message,
+      hint: d.hint,
+    })),
+  }
 }
 
 async function runPipeline() {
@@ -112,15 +128,10 @@ async function runPipeline() {
           </v-chip>
         </div>
         <div class="editor-content">
-          <v-textarea
+          <VplEditor
             v-model="vplSource"
-            variant="solo-filled"
-            density="compact"
-            auto-grow
-            rows="20"
-            hide-details
-            class="mono-editor"
-            placeholder="Write your VPL code here..."
+            height="100%"
+            :validate-fn="pgValidate"
           />
         </div>
       </div>
@@ -179,7 +190,8 @@ async function runPipeline() {
 
 .editor-content {
   flex: 1;
-  overflow: auto;
+  overflow: hidden;
+  min-height: 0;
 }
 
 .right-panels {
@@ -200,14 +212,8 @@ async function runPipeline() {
   overflow-y: auto;
 }
 
-.mono-editor :deep(textarea) {
-  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace !important;
-  font-size: 0.85rem !important;
-  line-height: 1.5 !important;
-  tab-size: 4;
-}
-
-.mono-editor :deep(.v-field) {
-  border-radius: 0;
+.editor-content :deep(.vpl-editor) {
+  height: 100% !important;
+  min-height: 0;
 }
 </style>

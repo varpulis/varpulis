@@ -10,6 +10,8 @@ const props = defineProps<{
   modelValue: string
   height?: number | string
   readOnly?: boolean
+  /** Optional custom validation function (e.g. playground uses its own endpoint) */
+  validateFn?: (source: string) => Promise<{ valid: boolean; diagnostics: Array<{ severity: string; line: number; column: number; message: string; hint?: string }> }>
 }>()
 
 const emit = defineEmits<{
@@ -133,7 +135,9 @@ async function validate(isAuto = false): Promise<void> {
   isValidating.value = true
 
   try {
-    const result = await validateVpl(source)
+    const result = props.validateFn
+      ? await props.validateFn(source)
+      : await validateVpl(source)
 
     // Update Monaco editor markers
     setMarkers(result.diagnostics)
