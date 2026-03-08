@@ -457,14 +457,11 @@ stream LargeTransfers = login as l -> all transfer as t .within(10m)
         smallest: min(t.amount),
         num_transfers: count(t)
     )".into(),
-            events: r#"# Alice: login then 3 transfers totaling 1500 — triggers alert
+            events: r#"# Login then 3 transfers totaling 1500 — triggers alert (1500 > 500)
 @0s login { user_id: "alice", city: "NYC" }
 @10s transfer { user_id: "alice", amount: 200.0, to: "ext_001" }
 @20s transfer { user_id: "alice", amount: 800.0, to: "ext_002" }
-@30s transfer { user_id: "alice", amount: 500.0, to: "ext_003" }
-# Bob: login then 1 small transfer — no alert (100 < 500)
-@60s login { user_id: "bob", city: "London" }
-@70s transfer { user_id: "bob", amount: 100.0, to: "ext_010" }"#.into(),
+@30s transfer { user_id: "alice", amount: 500.0, to: "ext_003" }"#.into(),
             expected_output_count: None,
         },
         PlaygroundExampleDetail {
@@ -475,20 +472,18 @@ stream LargeTransfers = login as l -> all transfer as t .within(10m)
             vpl: r"# Detect when a user logs in from different cities
 # first(f).city = city of first login, last(f).city = city of most recent
 stream LocationChange = login -> all login as f .within(1h)
-    .where(match_count >= 2)
+    .where(match_count >= 2 and first(f).city != last(f).city)
     .emit(
         user: f.user_id,
         first_city: first(f).city,
         last_city: last(f).city,
         login_count: count(f)
     )".into(),
-            events: r#"# Alice: 3 logins from different cities — triggers
+            events: r#"# 4 logins from different cities — triggers when first != last city
 @0s login { user_id: "alice", city: "NYC", device: "mobile" }
 @60s login { user_id: "alice", city: "London", device: "laptop" }
 @120s login { user_id: "alice", city: "Tokyo", device: "desktop" }
-# Bob: 2 logins from same city — still triggers (match_count >= 2)
-@200s login { user_id: "bob", city: "Berlin", device: "mobile" }
-@260s login { user_id: "bob", city: "Berlin", device: "tablet" }"#.into(),
+@180s login { user_id: "alice", city: "Berlin", device: "tablet" }"#.into(),
             expected_output_count: None,
         },
         PlaygroundExampleDetail {
@@ -504,15 +499,12 @@ stream DistributedAttack = scan -> all scan as s .within(1m)
         unique_sources: distinct_count(s.source_ip),
         total_scans: count(s)
     )".into(),
-            events: r#"# 5 scans from 4 distinct IPs — triggers (4 >= 3)
+            events: r#"# 5 scans from 4 distinct IPs targeting same host — triggers (4 >= 3)
 @0s scan { source_ip: "10.0.0.1", target_ip: "192.168.1.100", port: 22 }
 @1s scan { source_ip: "10.0.0.2", target_ip: "192.168.1.100", port: 80 }
 @2s scan { source_ip: "10.0.0.3", target_ip: "192.168.1.100", port: 443 }
 @3s scan { source_ip: "10.0.0.1", target_ip: "192.168.1.100", port: 8080 }
-@4s scan { source_ip: "10.0.0.4", target_ip: "192.168.1.100", port: 3306 }
-# 2 scans from 1 IP — no alert (1 < 3)
-@20s scan { source_ip: "10.0.0.5", target_ip: "192.168.1.200", port: 22 }
-@21s scan { source_ip: "10.0.0.5", target_ip: "192.168.1.200", port: 80 }"#.into(),
+@4s scan { source_ip: "10.0.0.4", target_ip: "192.168.1.100", port: 3306 }"#.into(),
             expected_output_count: None,
         },
         PlaygroundExampleDetail {
@@ -551,16 +543,13 @@ stream HighRate = request -> all request as r .within(30s)
         rate: match_rate,
         total: match_count
     )".into(),
-            events: r#"# Burst: 5 requests in 2 seconds = 2.5/s — triggers
+            events: r#"# Burst: 6 requests in 2 seconds — triggers (match_rate > 2.0)
 @0s request { endpoint: "/api/login", ip: "10.0.0.1" }
 @0s request { endpoint: "/api/login", ip: "10.0.0.1" }
 @1s request { endpoint: "/api/login", ip: "10.0.0.1" }
 @1s request { endpoint: "/api/login", ip: "10.0.0.1" }
 @2s request { endpoint: "/api/login", ip: "10.0.0.1" }
-# Slow: 3 requests over 10 seconds = 0.3/s — no alert
-@20s request { endpoint: "/api/data", ip: "10.0.0.2" }
-@25s request { endpoint: "/api/data", ip: "10.0.0.2" }
-@30s request { endpoint: "/api/data", ip: "10.0.0.2" }"#.into(),
+@2s request { endpoint: "/api/login", ip: "10.0.0.1" }"#.into(),
             expected_output_count: None,
         },
     ]
