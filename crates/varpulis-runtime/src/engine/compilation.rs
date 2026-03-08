@@ -10,11 +10,11 @@ use std::sync::Arc;
 use chrono::Duration;
 use rustc_hash::FxHashMap;
 use tracing::{debug, info, warn};
-use varpulis_core::ast::{StreamOp, StreamSource};
+use varpulis_core::ast::{Expr, StreamOp, StreamSource};
 
 use super::types::{
-    ConcurrentConfig, DistinctState, EmitConfig, EmitExprConfig, EnrichConfig, ForecastConfig,
-    LimitState, LogConfig, MergeSource, PartitionedAggregatorState,
+    ConcurrentConfig, DistinctState, EmitConfig, EmitExprConfig, EnrichConfig, FieldAggregateInfo,
+    ForecastConfig, LimitState, LogConfig, MergeSource, PartitionedAggregatorState,
     PartitionedSlidingCountWindowState, PartitionedWindowState, PatternConfig, PrintConfig,
     RuntimeOp, RuntimeSource, SelectConfig, SourceBinding, StreamDefinition, TimerConfig, ToConfig,
     TrendAggregateConfig, WindowType,
@@ -1153,10 +1153,64 @@ impl Engine {
                 aggregate: primary_aggregate,
             });
 
+            // Build field aggregate info for runtime computation
+            // Resolves alias.field references from sum_trends(alias.field) etc.
+            let mut alias_to_event_type: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
+            match source {
+                StreamSource::IdentWithAlias { name, alias } => {
+                    alias_to_event_type.insert(alias.clone(), name.clone());
+                }
+                StreamSource::AllWithAlias {
+                    name,
+                    alias: Some(alias),
+                } => {
+                    alias_to_event_type.insert(alias.clone(), name.clone());
+                }
+                _ => {}
+            }
+            for clause in &followed_by_clauses {
+                if let Some(ref alias) = clause.alias {
+                    alias_to_event_type.insert(alias.clone(), clause.event_type.clone());
+                }
+            }
+
+            let field_aggregates: Vec<FieldAggregateInfo> = agg_items
+                .iter()
+                .filter_map(|item| {
+                    let func = match item.func.as_str() {
+                        "sum_trends" => "sum",
+                        "avg_trends" => "avg",
+                        "min_trends" => "min",
+                        "max_trends" => "max",
+                        _ => return None,
+                    };
+                    if let Some(Expr::Member { expr, member }) = &item.arg {
+                        if let Expr::Ident(alias) = expr.as_ref() {
+                            let event_type = alias_to_event_type
+                                .get(alias)
+                                .cloned()
+                                .unwrap_or_else(|| alias.clone());
+                            return Some(FieldAggregateInfo {
+                                output_alias: item.alias.clone(),
+                                func: func.to_string(),
+                                event_type,
+                                field_name: member.clone(),
+                            });
+                        }
+                    }
+                    None
+                })
+                .collect();
+
             // Insert TrendAggregate op at the beginning (replaces Sequence)
             runtime_ops.insert(
                 0,
-                RuntimeOp::TrendAggregate(TrendAggregateConfig { fields, query_id }),
+                RuntimeOp::TrendAggregate(TrendAggregateConfig {
+                    fields,
+                    query_id,
+                    field_aggregates,
+                }),
             );
 
             info!(
