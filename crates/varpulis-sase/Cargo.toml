@@ -7,8 +7,8 @@ repository.workspace = true
 description = "SASE+ pattern matching engine for Complex Event Processing"
 
 [dependencies]
-varpulis-core = { version = "0.5.0", path = "../varpulis-core" }
-varpulis-zdd = { version = "0.5.0", path = "../varpulis-zdd" }
+varpulis-core = { version = "0.6.0", path = "../varpulis-core" }
+varpulis-zdd = { version = "0.6.0", path = "../varpulis-zdd" }
 chrono = { workspace = true }
 rustc-hash = { workspace = true }
 

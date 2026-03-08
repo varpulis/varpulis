@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-03-08
+
+### Highlights
+
+Full **multi-tenant SaaS platform** with hierarchical organizations, per-tenant
+isolation (PostgreSQL schemas, Kubernetes namespaces, Kafka topic prefixes), and
+an onboarding wizard. The **playground** switches to native `.evt` format for a
+better user experience, and the **landing page** is polished for public visitors.
+
+### Added
+
+#### Multi-Tenant SaaS (7-Phase Buildout)
+- **Tenant hierarchy** — parent/child organizations with tree-based navigation
+- **Per-tenant PostgreSQL schemas** — automatic schema provisioning and RLS isolation
+- **Hierarchical RBAC** — parent tenant admins inherit access to child organizations
+- **Pipeline inheritance engine** — global pipelines with per-tenant overrides and DB sync
+- **Kubernetes namespace provisioning** — per-tenant namespace with resource quotas via Capsule
+- **Kafka topic isolation** — per-tenant topic prefix enforcement at runtime
+- **UI hierarchy support** — organization tree, pipeline badges, breadcrumbs
+- **Onboarding wizard** — guided tenant setup with usage dashboard
+- **API key management** — enhanced key generation and lifecycle management
+- **Tenant schema middleware** — automatic schema switching per request
+
+#### Playground Improvements
+- **Native `.evt` format** — events displayed and edited in Varpulis's native event
+  file format instead of JSON, with `@<time> EventType { field: value }` syntax
+- **8 built-in examples** — all converted to `.evt` format with correct VPL syntax
+- **EventFileParser integration** — backend uses `EventFileParser::parse()` for events
+
+#### Landing Page & Navigation
+- **Polished landing page** — own app bar with nav links, feature grid with
+  Multi-Tenant SaaS card, footer with product links
+- **Full-screen page routing** — landing, login, signup, playground render without
+  app chrome (nav drawer, breadcrumbs)
+- **Auth redirect** — unauthenticated visitors land on `/landing` instead of login
+
+#### Infrastructure
+- **Worker advertise address** — `POD_IP` and `VARPULIS_ADVERTISE_ADDRESS` env vars
+  in k3d-saas worker overlay
+- **Admin bootstrapping** — `--admin-password` flag for deterministic admin setup
+- **Multi-tenancy architecture docs** — SVG diagrams replacing ASCII art
+
+### Fixed
+
+- **Playground IoT anomaly producing 0 matches** — event fields were silently
+  dropped due to `#[serde(default)]` instead of `#[serde(flatten)]`; fully resolved
+  by switching to `.evt` format
+- **VPL examples using `&&` instead of `and`** — fraud-detection and cyber-killchain
+  examples now use correct VPL logical operators
+- **Parser exponential backtracking** — 10s timeout guard for malicious inputs
+- **Parser bracket bomb** — reject inputs with too many unmatched open brackets
+- **Pipeline visibility queries** — correct tenant scoping in pipeline list API
+- **Redis connector API** — updated for redis crate 1.x breaking changes
+- **GRETA Kleene propagation** — correct coefficient computation in multi-query sharing
+- **Web UI auth flow** — redirect to login page instead of API key popup
+- **k3d-saas admin login** — fix service routing for admin bootstrapping
+- **Nightly `rustfmt` import ordering** — stable across CI environments
+- **`partition_by` missing field** — added to `SlowTransactionStep` for correct partitioning
+- **License audit** — allow 0BSD license for `quoted_printable` dependency
+- **SVG rendering** — fix broken diagrams in authentication docs
+
 ## [0.5.0] - 2026-03-02
 
 ### Highlights
@@ -446,7 +507,10 @@ runtime performance optimizations. A live public demo is available at
 - CLI with `run`, `simulate`, `check` commands
 - ZDD-based multi-query optimization (research baseline)
 
-[Unreleased]: https://github.com/varpulis/varpulis/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/varpulis/varpulis/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/varpulis/varpulis/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/varpulis/varpulis/compare/v0.4.1...v0.5.0
+[0.4.1]: https://github.com/varpulis/varpulis/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/varpulis/varpulis/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/varpulis/varpulis/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/varpulis/varpulis/compare/v0.1.0...v0.2.0
