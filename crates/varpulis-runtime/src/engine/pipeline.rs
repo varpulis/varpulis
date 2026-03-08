@@ -650,6 +650,10 @@ fn execute_op_common(
                             "match_duration_ms".into(),
                             Value::Int(match_result.duration.as_millis() as i64),
                         );
+                        seq_event.data.insert(
+                            "match_count".into(),
+                            Value::Int(match_result.stack.len() as i64),
+                        );
                         for (alias, captured) in &match_result.captured {
                             for (k, v) in &captured.data {
                                 seq_event
