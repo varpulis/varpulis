@@ -23,7 +23,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 rust-version = "1.93"
 authors = ["Varpulis Contributors"]
@@ -88,7 +88,7 @@ axum-server = { version = "0.8", features = ["tls-rustls"] }
 futures-util = "0.3"
 
 # Actor framework
-varpulis-actors = { version = "0.5.0", path = "crates/varpulis-actors" }
+varpulis-actors = { version = "0.6.0", path = "crates/varpulis-actors" }
 
 # OAuth & JWT
 jsonwebtoken = { version = "10", features = ["rust_crypto"] }
