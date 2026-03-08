@@ -48,13 +48,13 @@ export interface PlaygroundExample {
 
 export interface PlaygroundExampleDetail extends PlaygroundExample {
   vpl: string
-  events: Record<string, unknown>[]
+  events: string
   expected_output_count?: number
 }
 
 export async function playgroundRun(
   vpl: string,
-  events: Record<string, unknown>[]
+  events: string
 ): Promise<PlaygroundRunResponse> {
   const resp = await pgApi.post(`${getPlaygroundBaseUrl()}/run`, { vpl, events })
   return resp.data

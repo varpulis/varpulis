@@ -21,12 +21,12 @@ stream HighTemp = TempReading
     .emit(alert: "High temperature", sensor: sensor_id, temp: temperature)
 `)
 
-const events = ref<Record<string, unknown>[]>([
-  { event_type: 'TempReading', sensor_id: 'HVAC-01', temperature: 22 },
-  { event_type: 'TempReading', sensor_id: 'HVAC-02', temperature: 35 },
-  { event_type: 'TempReading', sensor_id: 'HVAC-03', temperature: 28 },
-  { event_type: 'TempReading', sensor_id: 'HVAC-01', temperature: 41 },
-])
+const events = ref(`# Welcome events — edit or select an example
+@0s TempReading { sensor_id: "HVAC-01", temperature: 22 }
+@1s TempReading { sensor_id: "HVAC-02", temperature: 35 }
+@2s TempReading { sensor_id: "HVAC-03", temperature: 28 }
+@3s TempReading { sensor_id: "HVAC-01", temperature: 41 }
+`)
 
 const result = ref<PlaygroundRunResponse | null>(null)
 const running = ref(false)
@@ -42,7 +42,7 @@ onMounted(() => {
 
 function onSelectExample(example: PlaygroundExampleDetail) {
   vplSource.value = example.vpl
-  events.value = example.events as Record<string, unknown>[]
+  events.value = example.events
   currentExample.value = example.name
   result.value = null
 }
@@ -129,10 +129,7 @@ async function runPipeline() {
       <div class="right-panels">
         <!-- Events panel -->
         <div class="events-section pa-3">
-          <EventPanel
-            :events="events"
-            @update:events="(v: Record<string, unknown>[]) => events = v"
-          />
+          <EventPanel v-model="events" />
         </div>
 
         <!-- Divider -->

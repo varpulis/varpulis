@@ -108,6 +108,10 @@
             Don't have an account?
             <router-link to="/signup" class="text-primary">Create one</router-link>
           </v-card-text>
+
+          <v-card-text class="text-center text-caption pt-0">
+            <router-link to="/landing" class="text-medium-emphasis">&larr; Back to home</router-link>
+          </v-card-text>
         </v-card>
       </v-col>
     </v-row>
