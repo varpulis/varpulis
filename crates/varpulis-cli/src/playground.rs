@@ -252,21 +252,27 @@ fn builtin_examples() -> Vec<PlaygroundExampleDetail> {
         },
         PlaygroundExampleDetail {
             id: "kleene-pattern".into(),
-            name: "Brute Force Detection".into(),
-            description: "Detect 3 failed logins followed by a successful login — multi-step sequence pattern.".into(),
+            name: "Brute Force (Kleene)".into(),
+            description: "Detect repeated failed logins followed by a success — uses 'all' for Kleene+ matching with match_count threshold.".into(),
             category: "Security".into(),
-            vpl: r#"# Detect 3 failed logins followed by a successful login within 5 minutes
-stream BruteForce = failed_login as f1 -> failed_login as f2 -> failed_login as f3 -> successful_login as s .within(5m)
-    .where(f1.user_id == s.user_id)
-    .emit(alert: "Brute force detected", user: s.user_id, ip: f1.ip)"#.into(),
-            events: r#"# 3 failed logins from admin, then a successful one — triggers alert
+            vpl: r#"# Kleene pattern: match ALL failed logins, then a successful login
+# match_count = total events in the sequence (failures + success)
+# Filter: at least 3 failed attempts (match_count >= 4)
+stream BruteForce = failed_login -> all failed_login as f -> successful_login as s .within(5m)
+    .where(match_count >= 4)
+    .emit(alert: "Brute force detected", user: s.user_id, failed_attempts: match_count - 1)"#.into(),
+            events: r#"# Admin: 3 failed logins then success — triggers alert (3 failures >= 3)
 @0s failed_login { user_id: "admin", ip: "10.0.0.5" }
 @1s failed_login { user_id: "admin", ip: "10.0.0.5" }
 @2s failed_login { user_id: "admin", ip: "10.0.0.5" }
 @3s successful_login { user_id: "admin", ip: "10.0.0.5" }
-# Bob succeeds without failed attempts — no alert
-@4s successful_login { user_id: "bob", ip: "10.0.0.9" }"#.into(),
-            expected_output_count: Some(1),
+# Eve: 2 failed logins then success — no alert (2 failures < 3)
+@10s failed_login { user_id: "eve", ip: "10.0.0.7" }
+@11s failed_login { user_id: "eve", ip: "10.0.0.7" }
+@12s successful_login { user_id: "eve", ip: "10.0.0.7" }
+# Bob: just logs in — no alert (no failed logins)
+@20s successful_login { user_id: "bob", ip: "10.0.0.9" }"#.into(),
+            expected_output_count: None,
         },
         PlaygroundExampleDetail {
             id: "merge-stream".into(),
@@ -288,6 +294,118 @@ stream AllAlerts = merge(TempAlerts, HumidAlerts)
 @2s TempReading { sensor_id: "S3", temperature: 22 }
 @3s HumidityReading { sensor_id: "S4", humidity: 45 }
 @4s TempReading { sensor_id: "S5", temperature: 38 }"#.into(),
+            expected_output_count: None,
+        },
+        PlaygroundExampleDetail {
+            id: "ddos-detection".into(),
+            name: "DDoS Detection (Kleene)".into(),
+            description: "Detect a flood of requests to the same target — Kleene+ with match_count threshold.".into(),
+            category: "Security".into(),
+            vpl: r#"# Detect 5+ requests to the same host within 10 seconds
+# match_count includes all events in the matched sequence
+stream DDoS = http_request -> all http_request as flood .within(10s)
+    .where(match_count >= 5)
+    .emit(alert: "DDoS detected", target: flood.host, request_count: match_count)"#.into(),
+            events: r#"# Burst of 6 requests to api.example.com — triggers alert
+@0s http_request { host: "api.example.com", method: "GET", ip: "10.0.0.1" }
+@1s http_request { host: "api.example.com", method: "POST", ip: "10.0.0.2" }
+@2s http_request { host: "api.example.com", method: "GET", ip: "10.0.0.3" }
+@3s http_request { host: "api.example.com", method: "GET", ip: "10.0.0.1" }
+@4s http_request { host: "api.example.com", method: "DELETE", ip: "10.0.0.4" }
+@5s http_request { host: "api.example.com", method: "GET", ip: "10.0.0.2" }
+# Normal traffic — 2 requests, won't trigger
+@20s http_request { host: "cdn.example.com", method: "GET", ip: "10.0.0.5" }
+@21s http_request { host: "cdn.example.com", method: "GET", ip: "10.0.0.6" }"#.into(),
+            expected_output_count: None,
+        },
+        PlaygroundExampleDetail {
+            id: "error-storm".into(),
+            name: "Error Storm (Kleene)".into(),
+            description: "Detect cascading errors in microservices — repeated errors followed by a timeout.".into(),
+            category: "IoT".into(),
+            vpl: r#"# Cascading failure: 3+ errors then a timeout event
+# match_count - 1 = number of errors (subtract the timeout at the end)
+stream ErrorStorm = service_error -> all service_error as errors -> timeout as t .within(30s)
+    .where(match_count >= 4)
+    .emit(alert: "Error storm", service: t.service, error_count: match_count - 1)"#.into(),
+            events: r#"# 4 errors then timeout — triggers (4 errors >= 3)
+@0s service_error { service: "payments", code: 500, msg: "DB connection lost" }
+@2s service_error { service: "payments", code: 503, msg: "Circuit breaker open" }
+@4s service_error { service: "payments", code: 500, msg: "DB connection lost" }
+@6s service_error { service: "payments", code: 502, msg: "Bad gateway" }
+@8s timeout { service: "payments", duration_ms: 30000 }
+# 1 error then timeout — no alert (1 error < 3)
+@20s service_error { service: "auth", code: 401, msg: "Token expired" }
+@22s timeout { service: "auth", duration_ms: 5000 }"#.into(),
+            expected_output_count: None,
+        },
+        PlaygroundExampleDetail {
+            id: "stock-trend".into(),
+            name: "Stock Trend Count".into(),
+            description: "Count rising stock price trends using Hamlet trend aggregation — efficient multi-pattern counting.".into(),
+            category: "Finance".into(),
+            vpl: r"# Count how many rising trends appear in a stock's price series
+stream RisingTrends = StockTick as first
+    -> all StockTick as rising
+    .within(60s)
+    .trend_aggregate(count: count_trends())
+    .emit(trends: count)".into(),
+            events: r#"@0s StockTick { symbol: "AAPL", price: 150.0 }
+@1s StockTick { symbol: "AAPL", price: 152.0 }
+@2s StockTick { symbol: "AAPL", price: 155.0 }
+@3s StockTick { symbol: "AAPL", price: 153.0 }
+@4s StockTick { symbol: "AAPL", price: 158.0 }
+@5s StockTick { symbol: "AAPL", price: 160.0 }
+@6s StockTick { symbol: "AAPL", price: 162.0 }"#.into(),
+            expected_output_count: None,
+        },
+        PlaygroundExampleDetail {
+            id: "sensor-stats".into(),
+            name: "Sensor Statistics".into(),
+            description: "Compute sum, average, and count over sensor readings using trend aggregation.".into(),
+            category: "IoT".into(),
+            vpl: r"# Multiple aggregation functions on a Kleene sequence
+stream SensorStats = sensor_reading as first
+    -> all sensor_reading as readings
+    .within(60s)
+    .trend_aggregate(
+        total: sum_trends(readings.temperature),
+        avg_temp: avg_trends(readings.temperature),
+        reading_count: count_events(readings)
+    )
+    .emit(sum: total, average: avg_temp, count: reading_count)".into(),
+            events: r#"@0s sensor_reading { sensor_id: "S1", temperature: 20.5, zone: "A" }
+@1s sensor_reading { sensor_id: "S1", temperature: 22.0, zone: "A" }
+@2s sensor_reading { sensor_id: "S1", temperature: 24.5, zone: "A" }
+@3s sensor_reading { sensor_id: "S1", temperature: 21.0, zone: "A" }
+@4s sensor_reading { sensor_id: "S1", temperature: 26.0, zone: "A" }
+@5s sensor_reading { sensor_id: "S1", temperature: 28.5, zone: "A" }"#.into(),
+            expected_output_count: None,
+        },
+        PlaygroundExampleDetail {
+            id: "transaction-analysis".into(),
+            name: "Transaction Analysis".into(),
+            description: "Multi-type Kleene: track processing steps between transaction open and close, with aggregated stats.".into(),
+            category: "Advanced".into(),
+            vpl: r"# Open -> multiple steps -> Close, with aggregated statistics
+stream TxStats = TxOpen as open
+    -> all TxStep as steps
+    -> TxClose as close
+    .within(30m)
+    .trend_aggregate(
+        avg_dur: avg_trends(steps.duration),
+        max_errors: max_trends(steps.error_count),
+        step_count: count_events(steps),
+        trend_count: count_trends()
+    )
+    .emit(tx: open.tx_id, steps: step_count, avg_duration: avg_dur, max_err: max_errors)".into(),
+            events: r#"# Transaction TX-001: open, 4 processing steps, close
+@0s TxOpen { tx_id: "TX-001", customer: "acme_corp" }
+@1s TxStep { tx_id: "TX-001", step: "validate", duration: 120.0, error_count: 0.0 }
+@2s TxStep { tx_id: "TX-001", step: "enrich", duration: 350.0, error_count: 1.0 }
+@3s TxStep { tx_id: "TX-001", step: "transform", duration: 90.0, error_count: 0.0 }
+@4s TxStep { tx_id: "TX-001", step: "persist", duration: 200.0, error_count: 2.0 }
+@5s TxClose { tx_id: "TX-001", status: "completed" }"#.into(),
             expected_output_count: None,
         },
         PlaygroundExampleDetail {
