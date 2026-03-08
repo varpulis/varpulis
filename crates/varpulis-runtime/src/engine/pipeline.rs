@@ -646,14 +646,130 @@ fn execute_op_common(
                         seq_event
                             .data
                             .insert("stream".into(), Value::str(stream_name.as_ref()));
-                        seq_event.data.insert(
-                            "match_duration_ms".into(),
-                            Value::Int(match_result.duration.as_millis() as i64),
-                        );
-                        seq_event.data.insert(
-                            "match_count".into(),
-                            Value::Int(match_result.stack.len() as i64),
-                        );
+                        let match_count = match_result.stack.len() as i64;
+                        let duration_ms = match_result.duration.as_millis() as i64;
+                        seq_event
+                            .data
+                            .insert("match_duration_ms".into(), Value::Int(duration_ms));
+                        seq_event
+                            .data
+                            .insert("match_count".into(), Value::Int(match_count));
+
+                        // match_rate: events per second
+                        let duration_secs = match_result.duration.as_secs_f64();
+                        if duration_secs > 0.0 {
+                            seq_event.data.insert(
+                                "match_rate".into(),
+                                Value::Float(match_count as f64 / duration_secs),
+                            );
+                        }
+
+                        // Group stack entries by alias for Kleene aggregates
+                        let mut alias_events: FxHashMap<&str, Vec<&Event>> = FxHashMap::default();
+                        for entry in &match_result.stack {
+                            if let Some(ref alias) = entry.alias {
+                                alias_events
+                                    .entry(alias.as_str())
+                                    .or_default()
+                                    .push(entry.event.as_ref());
+                            }
+                        }
+
+                        // For each alias group, inject first/last maps and aggregates
+                        for (alias, events) in &alias_events {
+                            let count = events.len();
+                            seq_event
+                                .data
+                                .insert(format!("_count_{alias}").into(), Value::Int(count as i64));
+
+                            // first(alias) and last(alias) as Value::Map
+                            if let Some(first_ev) = events.first() {
+                                let mut map = IndexMap::with_hasher(FxBuildHasher);
+                                for (k, v) in &first_ev.data {
+                                    map.insert(k.clone(), v.clone());
+                                }
+                                seq_event.data.insert(
+                                    format!("_first_{alias}").into(),
+                                    Value::Map(Box::new(map)),
+                                );
+                            }
+                            if let Some(last_ev) = events.last() {
+                                let mut map = IndexMap::with_hasher(FxBuildHasher);
+                                for (k, v) in &last_ev.data {
+                                    map.insert(k.clone(), v.clone());
+                                }
+                                seq_event.data.insert(
+                                    format!("_last_{alias}").into(),
+                                    Value::Map(Box::new(map)),
+                                );
+                            }
+
+                            // Collect all unique field names across events
+                            let mut all_fields: Vec<Arc<str>> = Vec::new();
+                            for ev in events {
+                                for (k, _) in &ev.data {
+                                    if !all_fields.iter().any(|f| f == k) {
+                                        all_fields.push(k.clone());
+                                    }
+                                }
+                            }
+
+                            // Pre-compute aggregates for each field
+                            for field in &all_fields {
+                                // Numeric aggregates (sum, avg, min, max)
+                                let numeric_vals: Vec<f64> = events
+                                    .iter()
+                                    .filter_map(|ev| ev.get(field.as_ref()))
+                                    .filter_map(|v| match v {
+                                        Value::Float(f) => Some(*f),
+                                        Value::Int(i) => Some(*i as f64),
+                                        _ => None,
+                                    })
+                                    .collect();
+
+                                if !numeric_vals.is_empty() {
+                                    let sum: f64 = numeric_vals.iter().sum();
+                                    let avg = sum / numeric_vals.len() as f64;
+                                    let min =
+                                        numeric_vals.iter().copied().fold(f64::INFINITY, f64::min);
+                                    let max = numeric_vals
+                                        .iter()
+                                        .copied()
+                                        .fold(f64::NEG_INFINITY, f64::max);
+
+                                    seq_event.data.insert(
+                                        format!("_agg_sum_{alias}_{field}").into(),
+                                        Value::Float(sum),
+                                    );
+                                    seq_event.data.insert(
+                                        format!("_agg_avg_{alias}_{field}").into(),
+                                        Value::Float(avg),
+                                    );
+                                    seq_event.data.insert(
+                                        format!("_agg_min_{alias}_{field}").into(),
+                                        Value::Float(min),
+                                    );
+                                    seq_event.data.insert(
+                                        format!("_agg_max_{alias}_{field}").into(),
+                                        Value::Float(max),
+                                    );
+                                }
+
+                                // Distinct count (works for all value types)
+                                let mut distinct = std::collections::HashSet::new();
+                                for ev in events {
+                                    if let Some(v) = ev.get(field.as_ref()) {
+                                        distinct.insert(format!("{v:?}"));
+                                    }
+                                }
+                                seq_event.data.insert(
+                                    format!("_agg_distinct_{alias}_{field}").into(),
+                                    Value::Int(distinct.len() as i64),
+                                );
+                            }
+                        }
+
+                        // Flatten captured events (backward-compatible alias_field access)
                         for (alias, captured) in &match_result.captured {
                             for (k, v) in &captured.data {
                                 seq_event
@@ -688,7 +804,11 @@ fn execute_op_common(
                 };
 
             if let Some(hamlet) = effective_hamlet {
+                // Accumulate events for field-based aggregates (sum/avg/min/max)
+                let mut accumulated: Vec<SharedEvent> = Vec::new();
+
                 for event in current_events.iter() {
+                    accumulated.push(Arc::clone(event));
                     let results = hamlet.process(Arc::clone(event));
                     for agg_result in results {
                         // Only handle results for THIS stream's query
@@ -703,28 +823,58 @@ fn execute_op_common(
                         trend_event
                             .data
                             .insert("query_id".into(), Value::Int(agg_result.query_id as i64));
-                        // Populate ALL configured aggregate fields from the result.
-                        // The aggregator provides trend_count and kleene_event_count;
-                        // field-based aggregates (avg/sum/min/max) are not yet supported
-                        // and fall back to trend_count.
+
+                        // Populate count-based fields from Hamlet
                         for (alias, agg_type) in &config.fields {
                             let value = match agg_type {
                                 crate::greta::GretaAggregate::CountTrends => {
-                                    Value::Int(agg_result.trend_count as i64)
+                                    Some(Value::Int(agg_result.trend_count as i64))
                                 }
                                 crate::greta::GretaAggregate::CountEvents(_) => {
-                                    Value::Int(agg_result.kleene_event_count as i64)
+                                    Some(Value::Int(agg_result.kleene_event_count as i64))
                                 }
-                                // Field-based aggregates: not yet tracked in Hamlet.
-                                // Output trend_count as placeholder.
-                                _ => Value::Int(agg_result.trend_count as i64),
+                                // Field-based aggregates handled below
+                                _ => None,
                             };
-                            trend_event.data.insert(alias.clone().into(), value);
+                            if let Some(v) = value {
+                                trend_event.data.insert(alias.clone().into(), v);
+                            }
                         }
+
+                        // Compute field-based aggregates from accumulated events
+                        for info in &config.field_aggregates {
+                            let values: Vec<f64> = accumulated
+                                .iter()
+                                .filter(|e| *e.event_type == info.event_type)
+                                .filter_map(|e| e.get(&info.field_name))
+                                .filter_map(|v| match v {
+                                    Value::Float(f) => Some(*f),
+                                    Value::Int(i) => Some(*i as f64),
+                                    _ => None,
+                                })
+                                .collect();
+
+                            if !values.is_empty() {
+                                let result = match info.func.as_str() {
+                                    "sum" => values.iter().sum::<f64>(),
+                                    "avg" => values.iter().sum::<f64>() / values.len() as f64,
+                                    "min" => values.iter().copied().fold(f64::INFINITY, f64::min),
+                                    "max" => {
+                                        values.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+                                    }
+                                    _ => 0.0,
+                                };
+                                trend_event
+                                    .data
+                                    .insert(info.output_alias.clone().into(), Value::Float(result));
+                            }
+                        }
+
                         trend_event
                             .data
                             .insert("is_final".into(), Value::Bool(agg_result.is_final));
                         trend_results.push(Arc::new(trend_event));
+                        accumulated.clear();
                     }
                 }
             }

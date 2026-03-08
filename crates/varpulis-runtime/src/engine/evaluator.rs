@@ -1030,10 +1030,72 @@ pub fn eval_expr_with_functions(
                     return event.get(member).cloned();
                 }
             }
+            // General case: evaluate object, extract member from Map
+            // Enables first(f).ip, last(f).field patterns
+            let obj_val = eval_expr_with_functions(object, event, ctx, functions, bindings)?;
+            if let Value::Map(map) = obj_val {
+                return map.get(member.as_str()).cloned();
+            }
             None
         }
         Expr::Call { func, args } => {
             if let Expr::Ident(func_name) = func.as_ref() {
+                // Kleene aggregate functions: sum(f.field), avg(f.field), etc.
+                // These are pre-computed in pipeline.rs and stored as _agg_{func}_{alias}_{field}
+                if let Some(first_arg) = args.first() {
+                    let arg_expr = match first_arg {
+                        varpulis_core::ast::Arg::Positional(e) => e,
+                        varpulis_core::ast::Arg::Named(_, e) => e,
+                    };
+                    match func_name.as_str() {
+                        "sum" | "avg" | "min" | "max" => {
+                            if let Expr::Member {
+                                expr: obj,
+                                member: field,
+                            } = arg_expr
+                            {
+                                if let Expr::Ident(alias) = obj.as_ref() {
+                                    let key = format!("_agg_{}_{alias}_{field}", func_name);
+                                    if let Some(val) = event.get(&key) {
+                                        return Some(val.clone());
+                                    }
+                                }
+                            }
+                        }
+                        "count" => {
+                            if let Expr::Ident(alias) = arg_expr {
+                                let key = format!("_count_{alias}");
+                                if let Some(val) = event.get(&key) {
+                                    return Some(val.clone());
+                                }
+                            }
+                        }
+                        "distinct_count" => {
+                            if let Expr::Member {
+                                expr: obj,
+                                member: field,
+                            } = arg_expr
+                            {
+                                if let Expr::Ident(alias) = obj.as_ref() {
+                                    let key = format!("_agg_distinct_{alias}_{field}");
+                                    if let Some(val) = event.get(&key) {
+                                        return Some(val.clone());
+                                    }
+                                }
+                            }
+                        }
+                        "first" | "last" => {
+                            if let Expr::Ident(alias) = arg_expr {
+                                let key = format!("_{}_{alias}", func_name);
+                                if let Some(val) = event.get(&key) {
+                                    return Some(val.clone());
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
                 // Evaluate arguments
                 let arg_values: Vec<Value> = args
                     .iter()

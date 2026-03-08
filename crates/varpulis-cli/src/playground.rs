@@ -440,6 +440,129 @@ stream TxStats = TxOpen as open
             },
             expected_output_count: None, // Depends on PST learning convergence
         },
+        PlaygroundExampleDetail {
+            id: "kleene-aggregates".into(),
+            name: "Kleene Aggregates".into(),
+            description: "Inline aggregates on Kleene matches — sum, avg, min, max, count without trend_aggregate.".into(),
+            category: "Advanced".into(),
+            vpl: r"# Detect large cumulative transfers after login
+# sum(t.amount) computes the total across all Kleene-matched transfers
+stream LargeTransfers = login as l -> all transfer as t .within(10m)
+    .where(sum(t.amount) > 500)
+    .emit(
+        user: l.user_id,
+        total: sum(t.amount),
+        avg_amount: avg(t.amount),
+        largest: max(t.amount),
+        smallest: min(t.amount),
+        num_transfers: count(t)
+    )".into(),
+            events: r#"# Alice: login then 3 transfers totaling 1500 — triggers alert
+@0s login { user_id: "alice", city: "NYC" }
+@10s transfer { user_id: "alice", amount: 200.0, to: "ext_001" }
+@20s transfer { user_id: "alice", amount: 800.0, to: "ext_002" }
+@30s transfer { user_id: "alice", amount: 500.0, to: "ext_003" }
+# Bob: login then 1 small transfer — no alert (100 < 500)
+@60s login { user_id: "bob", city: "London" }
+@70s transfer { user_id: "bob", amount: 100.0, to: "ext_010" }"#.into(),
+            expected_output_count: None,
+        },
+        PlaygroundExampleDetail {
+            id: "first-last".into(),
+            name: "First/Last Access".into(),
+            description: "Access the first and last events in a Kleene match — detect location changes.".into(),
+            category: "Security".into(),
+            vpl: r"# Detect when a user logs in from different cities
+# first(f).city = city of first login, last(f).city = city of most recent
+stream LocationChange = login -> all login as f .within(1h)
+    .where(match_count >= 2)
+    .emit(
+        user: f.user_id,
+        first_city: first(f).city,
+        last_city: last(f).city,
+        login_count: count(f)
+    )".into(),
+            events: r#"# Alice: 3 logins from different cities — triggers
+@0s login { user_id: "alice", city: "NYC", device: "mobile" }
+@60s login { user_id: "alice", city: "London", device: "laptop" }
+@120s login { user_id: "alice", city: "Tokyo", device: "desktop" }
+# Bob: 2 logins from same city — still triggers (match_count >= 2)
+@200s login { user_id: "bob", city: "Berlin", device: "mobile" }
+@260s login { user_id: "bob", city: "Berlin", device: "tablet" }"#.into(),
+            expected_output_count: None,
+        },
+        PlaygroundExampleDetail {
+            id: "distinct-count".into(),
+            name: "Distinct Count".into(),
+            description: "Count unique values across Kleene matches — detect distributed attacks from many IPs.".into(),
+            category: "Security".into(),
+            vpl: r"# Detect attacks from 3+ distinct source IPs
+stream DistributedAttack = scan -> all scan as s .within(1m)
+    .where(distinct_count(s.source_ip) >= 3)
+    .emit(
+        target: s.target_ip,
+        unique_sources: distinct_count(s.source_ip),
+        total_scans: count(s)
+    )".into(),
+            events: r#"# 5 scans from 4 distinct IPs — triggers (4 >= 3)
+@0s scan { source_ip: "10.0.0.1", target_ip: "192.168.1.100", port: 22 }
+@1s scan { source_ip: "10.0.0.2", target_ip: "192.168.1.100", port: 80 }
+@2s scan { source_ip: "10.0.0.3", target_ip: "192.168.1.100", port: 443 }
+@3s scan { source_ip: "10.0.0.1", target_ip: "192.168.1.100", port: 8080 }
+@4s scan { source_ip: "10.0.0.4", target_ip: "192.168.1.100", port: 3306 }
+# 2 scans from 1 IP — no alert (1 < 3)
+@20s scan { source_ip: "10.0.0.5", target_ip: "192.168.1.200", port: 22 }
+@21s scan { source_ip: "10.0.0.5", target_ip: "192.168.1.200", port: 80 }"#.into(),
+            expected_output_count: None,
+        },
+        PlaygroundExampleDetail {
+            id: "absence-detection".into(),
+            name: "Absence Detection".into(),
+            description: "Detect when an expected event does NOT occur — order without shipment.".into(),
+            category: "Getting Started".into(),
+            vpl: r"# Alert if an order is placed but a cancellation arrives before shipment
+# .not(cancellation) invalidates the run if cancellation appears
+stream OrderCancelled = order as o -> shipment as s .within(5m)
+    .not(cancellation)
+    .emit(order_id: o.order_id, status: s.status)".into(),
+            events: r#"# Order 1: order -> shipment (no cancellation) — matches
+@0s order { order_id: "ORD-001", customer: "alice", total: 99.99 }
+@30s shipment { order_id: "ORD-001", status: "shipped", carrier: "ups" }
+# Order 2: order -> cancellation -> shipment — no match (cancellation kills run)
+@60s order { order_id: "ORD-002", customer: "bob", total: 50.00 }
+@70s cancellation { order_id: "ORD-002", reason: "changed mind" }
+@90s shipment { order_id: "ORD-002", status: "shipped", carrier: "fedex" }
+# Order 3: order -> shipment (no cancellation) — matches
+@120s order { order_id: "ORD-003", customer: "charlie", total: 200.00 }
+@150s shipment { order_id: "ORD-003", status: "shipped", carrier: "dhl" }"#.into(),
+            expected_output_count: None,
+        },
+        PlaygroundExampleDetail {
+            id: "rate-detection".into(),
+            name: "Rate Detection".into(),
+            description: "Detect high event rates using match_rate — events per second within a pattern match.".into(),
+            category: "Security".into(),
+            vpl: r"# Alert when request rate exceeds 2 events/second
+# match_rate = match_count / match_duration_seconds
+stream HighRate = request -> all request as r .within(30s)
+    .where(match_count >= 3 and match_rate > 2.0)
+    .emit(
+        endpoint: r.endpoint,
+        rate: match_rate,
+        total: match_count
+    )".into(),
+            events: r#"# Burst: 5 requests in 2 seconds = 2.5/s — triggers
+@0s request { endpoint: "/api/login", ip: "10.0.0.1" }
+@0s request { endpoint: "/api/login", ip: "10.0.0.1" }
+@1s request { endpoint: "/api/login", ip: "10.0.0.1" }
+@1s request { endpoint: "/api/login", ip: "10.0.0.1" }
+@2s request { endpoint: "/api/login", ip: "10.0.0.1" }
+# Slow: 3 requests over 10 seconds = 0.3/s — no alert
+@20s request { endpoint: "/api/data", ip: "10.0.0.2" }
+@25s request { endpoint: "/api/data", ip: "10.0.0.2" }
+@30s request { endpoint: "/api/data", ip: "10.0.0.2" }"#.into(),
+            expected_output_count: None,
+        },
     ]
 }
 

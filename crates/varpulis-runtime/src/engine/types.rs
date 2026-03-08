@@ -273,6 +273,21 @@ pub struct TrendAggregateConfig {
     pub fields: Vec<(String, crate::greta::GretaAggregate)>,
     /// Query ID in the Hamlet aggregator
     pub query_id: crate::greta::QueryId,
+    /// Field-based aggregate info for runtime computation (sum/avg/min/max)
+    pub field_aggregates: Vec<FieldAggregateInfo>,
+}
+
+/// Info for computing field-based aggregates at runtime.
+/// Populated at compile time from `sum_trends(alias.field)` etc.
+pub struct FieldAggregateInfo {
+    /// Output alias in the emitted event (e.g., "total")
+    pub output_alias: String,
+    /// Aggregate function name: "sum", "avg", "min", "max"
+    pub func: String,
+    /// Event type to filter on (e.g., "sensor_reading")
+    pub event_type: String,
+    /// Field name to aggregate (e.g., "temperature")
+    pub field_name: String,
 }
 
 /// Configuration for PST-based pattern forecasting
