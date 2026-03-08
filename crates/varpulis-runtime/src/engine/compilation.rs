@@ -1203,6 +1203,24 @@ impl Engine {
                 })
                 .collect();
 
+            // Build reverse map: type index → event type name
+            let max_idx = type_indices_map.values().copied().max().unwrap_or(0) as usize;
+            let mut type_index_to_name = vec![String::new(); max_idx + 1];
+            // First pass: set aliases as fallback
+            for (name, &idx) in &type_indices_map {
+                let i = idx as usize;
+                if i < type_index_to_name.len() && type_index_to_name[i].is_empty() {
+                    type_index_to_name[i] = name.clone();
+                }
+            }
+            // Second pass: overwrite with real event type names
+            for (name, &idx) in &type_indices_map {
+                let i = idx as usize;
+                if i < type_index_to_name.len() && event_types.contains(name) {
+                    type_index_to_name[i] = name.clone();
+                }
+            }
+
             // Insert TrendAggregate op at the beginning (replaces Sequence)
             runtime_ops.insert(
                 0,
@@ -1210,6 +1228,8 @@ impl Engine {
                     fields,
                     query_id,
                     field_aggregates,
+                    type_index_to_name,
+                    accumulated: Vec::new(),
                 }),
             );
 
