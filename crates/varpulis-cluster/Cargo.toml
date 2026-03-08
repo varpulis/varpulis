@@ -7,9 +7,9 @@ repository.workspace = true
 description = "Distributed execution cluster for Varpulis streaming analytics"
 
 [dependencies]
-varpulis-core = { version = "0.5.0", path = "../varpulis-core" }
-varpulis-runtime = { version = "0.5.0", path = "../varpulis-runtime", features = ["mqtt"] }
-varpulis-parser = { version = "0.5.0", path = "../varpulis-parser" }
+varpulis-core = { version = "0.6.0", path = "../varpulis-core" }
+varpulis-runtime = { version = "0.6.0", path = "../varpulis-runtime", features = ["mqtt"] }
+varpulis-parser = { version = "0.6.0", path = "../varpulis-parser" }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
