@@ -252,18 +252,21 @@ fn builtin_examples() -> Vec<PlaygroundExampleDetail> {
         },
         PlaygroundExampleDetail {
             id: "kleene-pattern".into(),
-            name: "Kleene Pattern".into(),
-            description: "Match one or more failed logins followed by a successful login — brute force detection.".into(),
+            name: "Brute Force Detection".into(),
+            description: "Detect 3 failed logins followed by a successful login — multi-step sequence pattern.".into(),
             category: "Security".into(),
-            vpl: r#"stream BruteForce = failed_login+ as fails -> successful_login as success .within(5m)
-    .where(fails.user_id == success.user_id)
-    .emit(alert: "Possible brute force", user: success.user_id)"#.into(),
-            events: r#"@0s failed_login { user_id: "admin", ip: "10.0.0.5" }
+            vpl: r#"# Detect 3 failed logins followed by a successful login within 5 minutes
+stream BruteForce = failed_login as f1 -> failed_login as f2 -> failed_login as f3 -> successful_login as s .within(5m)
+    .where(f1.user_id == s.user_id)
+    .emit(alert: "Brute force detected", user: s.user_id, ip: f1.ip)"#.into(),
+            events: r#"# 3 failed logins from admin, then a successful one — triggers alert
+@0s failed_login { user_id: "admin", ip: "10.0.0.5" }
 @1s failed_login { user_id: "admin", ip: "10.0.0.5" }
 @2s failed_login { user_id: "admin", ip: "10.0.0.5" }
 @3s successful_login { user_id: "admin", ip: "10.0.0.5" }
+# Bob succeeds without failed attempts — no alert
 @4s successful_login { user_id: "bob", ip: "10.0.0.9" }"#.into(),
-            expected_output_count: None,
+            expected_output_count: Some(1),
         },
         PlaygroundExampleDetail {
             id: "merge-stream".into(),
@@ -279,7 +282,7 @@ stream HumidAlerts = HumidityReading
     .emit(alert: "High humidity", source: "humidity", value: humidity)
 
 stream AllAlerts = merge(TempAlerts, HumidAlerts)
-    .emit()"#.into(),
+    .emit(alert: alert, source: source, value: value)"#.into(),
             events: r#"@0s TempReading { sensor_id: "S1", temperature: 35 }
 @1s HumidityReading { sensor_id: "S2", humidity: 85 }
 @2s TempReading { sensor_id: "S3", temperature: 22 }
@@ -482,9 +485,12 @@ async fn handle_validate(
         Ok(program) => {
             let ast = serde_json::to_value(&program).ok();
             let validation = varpulis_core::validate::validate(&body.vpl, &program);
+            // Filter out E033 (undefined event type) — playground events are
+            // provided at runtime via .evt format, not declared in VPL.
             let diagnostics: Vec<PlaygroundDiagnostic> = validation
                 .diagnostics
                 .iter()
+                .filter(|d| d.code != Some("E033"))
                 .map(|d| {
                     let (sl, sc) = position_to_line_col(&body.vpl, d.span.start);
                     let (el, ec) = position_to_line_col(&body.vpl, d.span.end);
