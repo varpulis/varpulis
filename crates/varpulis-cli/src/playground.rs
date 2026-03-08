@@ -12,12 +12,9 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
-use indexmap::IndexMap;
-use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use uuid::Uuid;
-use varpulis_core::Value;
 use varpulis_runtime::event::Event;
 
 // =============================================================================
@@ -98,15 +95,9 @@ pub struct SessionResponse {
 #[derive(Debug, Deserialize)]
 pub struct PlaygroundRunRequest {
     pub vpl: String,
+    /// Events in .evt text format (e.g., `sensor_reading { temperature: 65.3, zone: "A" }`)
     #[serde(default)]
-    pub events: Vec<PlaygroundEvent>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct PlaygroundEvent {
-    pub event_type: String,
-    #[serde(default)]
-    pub fields: serde_json::Map<String, serde_json::Value>,
+    pub events: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -163,7 +154,8 @@ pub struct PlaygroundExampleDetail {
     pub description: String,
     pub category: String,
     pub vpl: String,
-    pub events: Vec<serde_json::Value>,
+    /// Events in .evt text format
+    pub events: String,
     pub expected_output_count: Option<usize>,
 }
 
@@ -187,14 +179,12 @@ fn builtin_examples() -> Vec<PlaygroundExampleDetail> {
             vpl: r#"stream HighTemp = TempReading
     .where(temperature > 30)
     .emit(alert: "High temperature detected", sensor: sensor_id, temp: temperature)"#.into(),
-            events: vec![
-                serde_json::json!({"event_type": "TempReading", "sensor_id": "HVAC-01", "temperature": 22}),
-                serde_json::json!({"event_type": "TempReading", "sensor_id": "HVAC-02", "temperature": 35}),
-                serde_json::json!({"event_type": "TempReading", "sensor_id": "HVAC-03", "temperature": 28}),
-                serde_json::json!({"event_type": "TempReading", "sensor_id": "HVAC-01", "temperature": 41}),
-                serde_json::json!({"event_type": "TempReading", "sensor_id": "HVAC-04", "temperature": 19}),
-                serde_json::json!({"event_type": "TempReading", "sensor_id": "HVAC-02", "temperature": 33}),
-            ],
+            events: r#"@0s TempReading { sensor_id: "HVAC-01", temperature: 22 }
+@1s TempReading { sensor_id: "HVAC-02", temperature: 35 }
+@2s TempReading { sensor_id: "HVAC-03", temperature: 28 }
+@3s TempReading { sensor_id: "HVAC-01", temperature: 41 }
+@4s TempReading { sensor_id: "HVAC-04", temperature: 19 }
+@5s TempReading { sensor_id: "HVAC-02", temperature: 33 }"#.into(),
             expected_output_count: Some(3),
         },
         PlaygroundExampleDetail {
@@ -203,17 +193,17 @@ fn builtin_examples() -> Vec<PlaygroundExampleDetail> {
             description: "Detect login followed by large transfer within 5 minutes — sequence pattern matching.".into(),
             category: "Finance".into(),
             vpl: r#"stream FraudAlert = login as l -> transfer as t .within(5m)
-    .where(l.user_id == t.user_id && t.amount > 5000)
+    .where(l.user_id == t.user_id and t.amount > 5000)
     .emit(alert: "Suspicious transfer after login", user: l.user_id, amount: t.amount, city: l.city)"#.into(),
-            events: vec![
-                serde_json::json!({"event_type": "login", "user_id": "alice", "city": "New York", "device": "mobile"}),
-                serde_json::json!({"event_type": "transfer", "user_id": "bob", "amount": 200, "to_account": "ext_001"}),
-                serde_json::json!({"event_type": "transfer", "user_id": "alice", "amount": 15000, "to_account": "ext_099"}),
-                serde_json::json!({"event_type": "login", "user_id": "charlie", "city": "London", "device": "desktop"}),
-                serde_json::json!({"event_type": "transfer", "user_id": "charlie", "amount": 8500, "to_account": "ext_042"}),
-                serde_json::json!({"event_type": "transfer", "user_id": "alice", "amount": 100, "to_account": "ext_005"}),
-            ],
-            expected_output_count: Some(2),
+            events: r#"# Alice logs in, then makes a large transfer — triggers alert
+@0s  login { user_id: "alice", city: "New York", device: "mobile" }
+@10s transfer { user_id: "bob", amount: 200, to_account: "ext_001" }
+@30s transfer { user_id: "alice", amount: 15000, to_account: "ext_099" }
+# Charlie scenario
+@60s login { user_id: "charlie", city: "London", device: "desktop" }
+@90s transfer { user_id: "charlie", amount: 8500, to_account: "ext_042" }
+@120s transfer { user_id: "alice", amount: 100, to_account: "ext_005" }"#.into(),
+            expected_output_count: None,
         },
         PlaygroundExampleDetail {
             id: "iot-anomaly".into(),
@@ -223,13 +213,11 @@ fn builtin_examples() -> Vec<PlaygroundExampleDetail> {
             vpl: r#"stream TempSpike = sensor_reading
     .where(temperature > 50)
     .emit(alert: "Temperature spike", sensor: sensor_id, temp: temperature, zone: zone)"#.into(),
-            events: vec![
-                serde_json::json!({"event_type": "sensor_reading", "sensor_id": "S001", "zone": "zone_a", "temperature": 22.5}),
-                serde_json::json!({"event_type": "sensor_reading", "sensor_id": "S002", "zone": "zone_b", "temperature": 65.3}),
-                serde_json::json!({"event_type": "sensor_reading", "sensor_id": "S001", "zone": "zone_a", "temperature": 23.1}),
-                serde_json::json!({"event_type": "sensor_reading", "sensor_id": "S003", "zone": "zone_c", "temperature": 55.0}),
-                serde_json::json!({"event_type": "sensor_reading", "sensor_id": "S002", "zone": "zone_b", "temperature": 24.0}),
-            ],
+            events: r#"@0s sensor_reading { sensor_id: "S001", zone: "zone_a", temperature: 22.5 }
+@1s sensor_reading { sensor_id: "S002", zone: "zone_b", temperature: 65.3 }
+@2s sensor_reading { sensor_id: "S001", zone: "zone_a", temperature: 23.1 }
+@3s sensor_reading { sensor_id: "S003", zone: "zone_c", temperature: 55.0 }
+@4s sensor_reading { sensor_id: "S002", zone: "zone_b", temperature: 24.0 }"#.into(),
             expected_output_count: Some(2),
         },
         PlaygroundExampleDetail {
@@ -240,13 +228,11 @@ fn builtin_examples() -> Vec<PlaygroundExampleDetail> {
             vpl: r#"stream VolumeSpike = trade
     .where(volume > 10000)
     .emit(alert: "Large trade detected", symbol: symbol, vol: volume, price: price, side: side)"#.into(),
-            events: vec![
-                serde_json::json!({"event_type": "trade", "symbol": "AAPL", "price": 185.50, "volume": 500, "side": "buy"}),
-                serde_json::json!({"event_type": "trade", "symbol": "GOOGL", "price": 142.30, "volume": 25000, "side": "sell"}),
-                serde_json::json!({"event_type": "trade", "symbol": "AAPL", "price": 185.60, "volume": 15000, "side": "buy"}),
-                serde_json::json!({"event_type": "trade", "symbol": "TSLA", "price": 250.10, "volume": 800, "side": "sell"}),
-                serde_json::json!({"event_type": "trade", "symbol": "MSFT", "price": 420.00, "volume": 50000, "side": "buy"}),
-            ],
+            events: r#"@0s trade { symbol: "AAPL", price: 185.50, volume: 500, side: "buy" }
+@1s trade { symbol: "GOOGL", price: 142.30, volume: 25000, side: "sell" }
+@2s trade { symbol: "AAPL", price: 185.60, volume: 15000, side: "buy" }
+@3s trade { symbol: "TSLA", price: 250.10, volume: 800, side: "sell" }
+@4s trade { symbol: "MSFT", price: 420.00, volume: 50000, side: "buy" }"#.into(),
             expected_output_count: Some(3),
         },
         PlaygroundExampleDetail {
@@ -255,16 +241,14 @@ fn builtin_examples() -> Vec<PlaygroundExampleDetail> {
             description: "Detect a 3-stage attack sequence: scan → exploit → exfiltrate within 10 minutes.".into(),
             category: "Security".into(),
             vpl: r#"stream KillChain = scan as s -> exploit as e -> exfiltrate as x .within(10m)
-    .where(s.target_ip == e.target_ip && e.target_ip == x.source_ip)
+    .where(s.target_ip == e.target_ip and e.target_ip == x.source_ip)
     .emit(alert: "Kill chain detected", target: s.target_ip, attacker: s.source_ip)"#.into(),
-            events: vec![
-                serde_json::json!({"event_type": "scan", "source_ip": "10.0.0.5", "target_ip": "192.168.1.100", "port": 443}),
-                serde_json::json!({"event_type": "exploit", "source_ip": "10.0.0.5", "target_ip": "192.168.1.100", "cve": "CVE-2024-1234"}),
-                serde_json::json!({"event_type": "exfiltrate", "source_ip": "192.168.1.100", "dest_ip": "10.0.0.5", "bytes": 50000000}),
-                serde_json::json!({"event_type": "scan", "source_ip": "10.0.0.9", "target_ip": "192.168.1.200", "port": 80}),
-                serde_json::json!({"event_type": "login", "user_id": "admin", "ip": "192.168.1.200"}),
-            ],
-            expected_output_count: Some(1),
+            events: r#"@0s  scan { source_ip: "10.0.0.5", target_ip: "192.168.1.100", port: 443 }
+@30s exploit { source_ip: "10.0.0.5", target_ip: "192.168.1.100", cve: "CVE-2024-1234" }
+@60s exfiltrate { source_ip: "192.168.1.100", dest_ip: "10.0.0.5", bytes: 50000000 }
+@120s scan { source_ip: "10.0.0.9", target_ip: "192.168.1.200", port: 80 }
+@180s login { user_id: "admin", ip: "192.168.1.200" }"#.into(),
+            expected_output_count: None,
         },
         PlaygroundExampleDetail {
             id: "kleene-pattern".into(),
@@ -274,13 +258,11 @@ fn builtin_examples() -> Vec<PlaygroundExampleDetail> {
             vpl: r#"stream BruteForce = failed_login+ as fails -> successful_login as success .within(5m)
     .where(fails.user_id == success.user_id)
     .emit(alert: "Possible brute force", user: success.user_id)"#.into(),
-            events: vec![
-                serde_json::json!({"event_type": "failed_login", "user_id": "admin", "ip": "10.0.0.5"}),
-                serde_json::json!({"event_type": "failed_login", "user_id": "admin", "ip": "10.0.0.5"}),
-                serde_json::json!({"event_type": "failed_login", "user_id": "admin", "ip": "10.0.0.5"}),
-                serde_json::json!({"event_type": "successful_login", "user_id": "admin", "ip": "10.0.0.5"}),
-                serde_json::json!({"event_type": "successful_login", "user_id": "bob", "ip": "10.0.0.9"}),
-            ],
+            events: r#"@0s failed_login { user_id: "admin", ip: "10.0.0.5" }
+@1s failed_login { user_id: "admin", ip: "10.0.0.5" }
+@2s failed_login { user_id: "admin", ip: "10.0.0.5" }
+@3s successful_login { user_id: "admin", ip: "10.0.0.5" }
+@4s successful_login { user_id: "bob", ip: "10.0.0.9" }"#.into(),
             expected_output_count: None,
         },
         PlaygroundExampleDetail {
@@ -298,14 +280,12 @@ stream HumidAlerts = HumidityReading
 
 stream AllAlerts = merge(TempAlerts, HumidAlerts)
     .emit()"#.into(),
-            events: vec![
-                serde_json::json!({"event_type": "TempReading", "sensor_id": "S1", "temperature": 35}),
-                serde_json::json!({"event_type": "HumidityReading", "sensor_id": "S2", "humidity": 85}),
-                serde_json::json!({"event_type": "TempReading", "sensor_id": "S3", "temperature": 22}),
-                serde_json::json!({"event_type": "HumidityReading", "sensor_id": "S4", "humidity": 45}),
-                serde_json::json!({"event_type": "TempReading", "sensor_id": "S5", "temperature": 38}),
-            ],
-            expected_output_count: Some(3),
+            events: r#"@0s TempReading { sensor_id: "S1", temperature: 35 }
+@1s HumidityReading { sensor_id: "S2", humidity: 85 }
+@2s TempReading { sensor_id: "S3", temperature: 22 }
+@3s HumidityReading { sensor_id: "S4", humidity: 45 }
+@4s TempReading { sensor_id: "S5", temperature: 38 }"#.into(),
+            expected_output_count: None,
         },
         PlaygroundExampleDetail {
             id: "forecast-fraud".into(),
@@ -318,14 +298,24 @@ stream AllAlerts = merge(TempAlerts, HumidAlerts)
     .emit(probability: forecast_probability, state: forecast_state)".into(),
             events: {
                 // Generate a training sequence: alternating login/transfer pairs
-                let mut events = Vec::new();
+                let mut lines = Vec::new();
                 for i in 0..60 {
-                    events.push(serde_json::json!({"event_type": "login", "user_id": format!("user_{}", i % 10), "city": "NYC"}));
-                    events.push(serde_json::json!({"event_type": "transfer", "user_id": format!("user_{}", i % 10), "amount": 100 + i * 10}));
+                    let t = i * 2;
+                    lines.push(format!(
+                        "@{}s login {{ user_id: \"user_{}\", city: \"NYC\" }}",
+                        t,
+                        i % 10
+                    ));
+                    lines.push(format!(
+                        "@{}s transfer {{ user_id: \"user_{}\", amount: {} }}",
+                        t + 1,
+                        i % 10,
+                        100 + i * 10
+                    ));
                 }
                 // Add a final login to trigger forecast
-                events.push(serde_json::json!({"event_type": "login", "user_id": "user_0", "city": "NYC"}));
-                events
+                lines.push("@120s login { user_id: \"user_0\", city: \"NYC\" }".into());
+                lines.join("\n")
             },
             expected_output_count: None, // Depends on PST learning convergence
         },
@@ -379,14 +369,6 @@ async fn handle_run(
         );
     }
 
-    if body.events.len() > MAX_EVENTS_PER_RUN {
-        return pg_error_response(
-            StatusCode::BAD_REQUEST,
-            "too_many_events",
-            &format!("Maximum {MAX_EVENTS_PER_RUN} events per run"),
-        );
-    }
-
     // Track session (auto-create if needed)
     {
         let mut pg = playground.write().await;
@@ -396,19 +378,31 @@ async fn handle_run(
 
     let start = Instant::now();
 
-    // Convert playground events to runtime events
-    let events: Vec<Event> = body
-        .events
-        .iter()
-        .map(|pe| {
-            let mut event = Event::new(pe.event_type.clone());
-            for (key, value) in &pe.fields {
-                let v = json_to_runtime_value(value);
-                event = event.with_field(key.as_str(), v);
-            }
-            event
-        })
-        .collect();
+    // Parse .evt format text into runtime events
+    let timed_events = match varpulis_runtime::event_file::EventFileParser::parse(&body.events) {
+        Ok(te) => te,
+        Err(e) => {
+            let resp = PlaygroundRunResponse {
+                ok: false,
+                events_processed: 0,
+                output_events: vec![],
+                latency_ms: 0,
+                diagnostics: vec![],
+                error: Some(format!("Event parse error: {e}")),
+            };
+            return (StatusCode::OK, Json(resp)).into_response();
+        }
+    };
+
+    if timed_events.len() > MAX_EVENTS_PER_RUN {
+        return pg_error_response(
+            StatusCode::BAD_REQUEST,
+            "too_many_events",
+            &format!("Maximum {MAX_EVENTS_PER_RUN} events per run"),
+        );
+    }
+
+    let events: Vec<Event> = timed_events.into_iter().map(|te| te.event).collect();
     let event_count = events.len();
 
     // Execute with timeout
@@ -582,34 +576,6 @@ fn pg_error_response(status: StatusCode, code: &str, message: &str) -> Response 
         code: code.to_string(),
     };
     (status, Json(body)).into_response()
-}
-
-fn json_to_runtime_value(v: &serde_json::Value) -> Value {
-    match v {
-        serde_json::Value::Null => Value::Null,
-        serde_json::Value::Bool(b) => Value::Bool(*b),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Value::Int(i)
-            } else if let Some(f) = n.as_f64() {
-                Value::Float(f)
-            } else {
-                Value::Null
-            }
-        }
-        serde_json::Value::String(s) => Value::Str(s.clone().into()),
-        serde_json::Value::Array(arr) => {
-            Value::array(arr.iter().map(json_to_runtime_value).collect())
-        }
-        serde_json::Value::Object(map) => {
-            let mut m: IndexMap<std::sync::Arc<str>, Value, FxBuildHasher> =
-                IndexMap::with_hasher(FxBuildHasher);
-            for (k, v) in map {
-                m.insert(k.as_str().into(), json_to_runtime_value(v));
-            }
-            Value::map(m)
-        }
-    }
 }
 
 fn parse_error_to_diagnostic(
@@ -800,6 +766,59 @@ stream HighTemp = SensorReading
                 assert!(!has_errors);
             }
             Err(e) => panic!("Parse failed: {e}"),
+        }
+    }
+
+    #[test]
+    fn test_evt_format_parsing() {
+        let evt_text = r#"sensor_reading { sensor_id: "S001", temperature: 65.3 }"#;
+        let timed = varpulis_runtime::event_file::EventFileParser::parse(evt_text).unwrap();
+        assert_eq!(timed.len(), 1);
+        assert_eq!(timed[0].event.event_type.as_ref(), "sensor_reading");
+    }
+
+    #[tokio::test]
+    async fn test_iot_anomaly_example_produces_matches() {
+        let examples = builtin_examples();
+        let iot = examples.iter().find(|e| e.id == "iot-anomaly").unwrap();
+
+        let timed = varpulis_runtime::event_file::EventFileParser::parse(&iot.events).unwrap();
+        let events: Vec<varpulis_runtime::event::Event> =
+            timed.into_iter().map(|te| te.event).collect();
+
+        let results = crate::simulate_from_source(&iot.vpl, events).await.unwrap();
+        assert_eq!(
+            results.len(),
+            iot.expected_output_count.unwrap(),
+            "IoT anomaly example should produce {} matches, got {}",
+            iot.expected_output_count.unwrap(),
+            results.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_all_examples_with_expected_count() {
+        for example in builtin_examples() {
+            let Some(expected) = example.expected_output_count else {
+                continue;
+            };
+
+            let timed = varpulis_runtime::event_file::EventFileParser::parse(&example.events)
+                .unwrap_or_else(|e| panic!("Event parse failed for '{}': {e}", example.id));
+            let events: Vec<varpulis_runtime::event::Event> =
+                timed.into_iter().map(|te| te.event).collect();
+
+            let results = crate::simulate_from_source(&example.vpl, events)
+                .await
+                .unwrap_or_else(|e| panic!("Run failed for '{}': {e}", example.id));
+            assert_eq!(
+                results.len(),
+                expected,
+                "Example '{}' expected {} matches, got {}",
+                example.id,
+                expected,
+                results.len()
+            );
         }
     }
 }

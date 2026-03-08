@@ -4,10 +4,20 @@ export default { name: 'LandingView' }
 
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
+import { useTheme } from 'vuetify'
+import { computed } from 'vue'
 
 const router = useRouter()
+const theme = useTheme()
+const isDark = computed(() => theme.global.current.value.dark)
 
-const heroVpl = `stream FraudAlert = login as l -> transfer as t .within(5m)
+function toggleTheme() {
+  theme.global.name.value = isDark.value ? 'light' : 'dark'
+}
+
+const heroVpl = `connector = stdin()
+
+stream FraudAlert = login as l -> transfer as t .within(5m)
     .where(l.user_id == t.user_id && t.amount > 5000)
     .emit(alert: "Suspicious transfer", user: l.user_id, amount: t.amount)`
 
@@ -48,43 +58,67 @@ const useCases = [
     icon: 'mdi-shield-alert',
     color: 'red',
     description: 'Detect multi-step fraud patterns in real-time with sequence matching and forecasting.',
-    example: 'fraud-detection',
+    route: '/scenarios/fraud-detection',
   },
   {
     title: 'IoT Monitoring',
     icon: 'mdi-thermometer-alert',
     color: 'blue',
     description: 'Monitor sensor data, detect anomalies, and trigger alerts with window aggregation.',
-    example: 'iot-anomaly',
+    route: '/scenarios/predictive-maintenance',
   },
   {
     title: 'Trading Signals',
     icon: 'mdi-chart-line',
     color: 'green',
     description: 'Identify market patterns, volume spikes, and trading signals at sub-millisecond latency.',
-    example: 'trading-signal',
+    route: '/scenarios/insider-trading',
   },
   {
     title: 'Cybersecurity',
     icon: 'mdi-shield-lock',
     color: 'purple',
     description: 'Detect kill chains, brute force attacks, and lateral movement with sequence patterns.',
-    example: 'cyber-killchain',
+    route: '/scenarios/cyber-threat',
   },
 ]
 
-function goToPlayground(exampleId?: string) {
-  if (exampleId) {
-    router.push({ path: '/playground', query: { example: exampleId } })
-  } else {
-    router.push('/playground')
-  }
-}
+const features = [
+  { icon: 'mdi-language-rust', title: 'Built in Rust', desc: 'Zero-copy parsing, minimal allocations, no garbage collection pauses.' },
+  { icon: 'mdi-connection', title: '11 Connectors', desc: 'Kafka, MQTT, NATS, Pulsar, Redis Streams, HTTP, WebSocket, and more.' },
+  { icon: 'mdi-crystal-ball', title: 'PST Forecasting', desc: 'Predict next events using Prediction Suffix Trees. Sub-microsecond latency.' },
+  { icon: 'mdi-server-network', title: 'Cluster Mode', desc: 'Distribute workloads across workers with coordinator-based orchestration.' },
+  { icon: 'mdi-code-tags', title: 'Full LSP Support', desc: 'VS Code extension with completions, hover docs, diagnostics, and semantic tokens.' },
+  { icon: 'mdi-monitor-dashboard', title: 'Web Dashboard', desc: 'Deploy, monitor, and manage pipelines through a modern web UI.' },
+  { icon: 'mdi-chip', title: 'Concurrent Processing', desc: 'Partition events across worker threads with .concurrent() for linear scaling.' },
+  { icon: 'mdi-brain', title: 'GPU ML Scoring', desc: 'Score events with ONNX models using GPU acceleration and batch inference.' },
+  { icon: 'mdi-earth', title: 'Multi-Region Federation', desc: 'Federate clusters across regions with catalog sync and cross-region routing.' },
+  { icon: 'mdi-domain', title: 'Multi-Tenant SaaS', desc: 'Hierarchical orgs, per-tenant isolation, RBAC, quotas, and pipeline inheritance.' },
+]
 
+function goToDemo(route: string) {
+  router.push(route)
+}
 </script>
 
 <template>
-  <v-app>
+  <div class="landing-page">
+    <!-- Top Nav -->
+    <v-app-bar flat color="transparent" class="landing-nav">
+      <v-app-bar-title class="font-weight-bold">
+        <v-icon color="primary" class="mr-1">mdi-shield-check</v-icon>
+        Varpulis
+      </v-app-bar-title>
+      <template #append>
+        <v-btn variant="text" to="/scenarios">Demos</v-btn>
+        <v-btn variant="text" to="/pricing">Pricing</v-btn>
+        <v-btn variant="text" to="/playground">Playground</v-btn>
+        <v-btn :icon="isDark ? 'mdi-weather-sunny' : 'mdi-weather-night'" variant="text" @click="toggleTheme" />
+        <v-btn variant="outlined" class="ml-2" to="/login">Sign In</v-btn>
+        <v-btn color="primary" class="ml-2" to="/signup">Get Started</v-btn>
+      </template>
+    </v-app-bar>
+
     <!-- Hero Section -->
     <section class="hero-section">
       <v-container class="text-center py-16">
@@ -98,34 +132,21 @@ function goToPlayground(exampleId?: string) {
           Define patterns, detect fraud, monitor IoT, and forecast events — all declaratively.
         </p>
 
-        <!-- Mini playground preview -->
-        <v-card
-          class="mx-auto mb-8 text-left"
-          max-width="800"
-          variant="outlined"
-        >
+        <v-card class="mx-auto mb-8 text-left" max-width="800" variant="outlined">
           <v-card-text class="pa-0">
             <pre class="hero-code pa-4">{{ heroVpl }}</pre>
           </v-card-text>
         </v-card>
 
-        <div class="d-flex justify-center ga-4">
-          <v-btn
-            color="primary"
-            size="large"
-            @click="goToPlayground()"
-            prepend-icon="mdi-play-circle"
-          >
+        <div class="d-flex justify-center ga-4 flex-wrap">
+          <v-btn color="primary" size="large" to="/signup" prepend-icon="mdi-rocket-launch">
+            Start Free Trial
+          </v-btn>
+          <v-btn variant="outlined" size="large" to="/playground" prepend-icon="mdi-play-circle">
             Try the Playground
           </v-btn>
-          <v-btn
-            variant="outlined"
-            size="large"
-            href="https://github.com/varpulis/varpulis"
-            target="_blank"
-            prepend-icon="mdi-star-outline"
-          >
-            Star on GitHub
+          <v-btn variant="outlined" size="large" to="/scenarios" prepend-icon="mdi-presentation-play">
+            Live Demos
           </v-btn>
         </div>
       </v-container>
@@ -188,19 +209,13 @@ function goToPlayground(exampleId?: string) {
             <v-card
               variant="outlined"
               class="pa-6 h-100 use-case-card"
-              @click="goToPlayground(uc.example)"
+              @click="goToDemo(uc.route)"
               style="cursor: pointer"
             >
               <v-icon size="36" :color="uc.color" class="mb-3">{{ uc.icon }}</v-icon>
               <h3 class="text-h6 mb-2">{{ uc.title }}</h3>
               <p class="text-body-2 text-medium-emphasis">{{ uc.description }}</p>
-              <v-btn
-                variant="text"
-                size="small"
-                color="primary"
-                class="mt-2 px-0"
-                append-icon="mdi-arrow-right"
-              >
+              <v-btn variant="text" size="small" color="primary" class="mt-2 px-0" append-icon="mdi-arrow-right">
                 Try it
               </v-btn>
             </v-card>
@@ -214,93 +229,12 @@ function goToPlayground(exampleId?: string) {
       <v-container>
         <h2 class="text-h4 font-weight-bold text-center mb-8">Everything you need</h2>
         <v-row>
-          <v-col cols="12" sm="6" md="4">
+          <v-col v-for="f in features" :key="f.title" cols="12" sm="6" md="4">
             <div class="d-flex mb-6">
-              <v-icon size="28" color="primary" class="mr-3 mt-1">mdi-language-rust</v-icon>
+              <v-icon size="28" color="primary" class="mr-3 mt-1">{{ f.icon }}</v-icon>
               <div>
-                <h4 class="text-subtitle-1 font-weight-bold">Built in Rust</h4>
-                <p class="text-body-2 text-medium-emphasis">Zero-copy parsing, minimal allocations, no garbage collection pauses.</p>
-              </div>
-            </div>
-          </v-col>
-          <v-col cols="12" sm="6" md="4">
-            <div class="d-flex mb-6">
-              <v-icon size="28" color="primary" class="mr-3 mt-1">mdi-connection</v-icon>
-              <div>
-                <h4 class="text-subtitle-1 font-weight-bold">11 Connectors</h4>
-                <p class="text-body-2 text-medium-emphasis">Kafka, MQTT, NATS, Pulsar, Redis Streams, HTTP, WebSocket, and more.</p>
-              </div>
-            </div>
-          </v-col>
-          <v-col cols="12" sm="6" md="4">
-            <div class="d-flex mb-6">
-              <v-icon size="28" color="primary" class="mr-3 mt-1">mdi-crystal-ball</v-icon>
-              <div>
-                <h4 class="text-subtitle-1 font-weight-bold">PST Forecasting</h4>
-                <p class="text-body-2 text-medium-emphasis">Predict next events using Prediction Suffix Trees. Sub-microsecond latency.</p>
-              </div>
-            </div>
-          </v-col>
-          <v-col cols="12" sm="6" md="4">
-            <div class="d-flex mb-6">
-              <v-icon size="28" color="primary" class="mr-3 mt-1">mdi-server-network</v-icon>
-              <div>
-                <h4 class="text-subtitle-1 font-weight-bold">Cluster Mode</h4>
-                <p class="text-body-2 text-medium-emphasis">Distribute workloads across workers with coordinator-based orchestration.</p>
-              </div>
-            </div>
-          </v-col>
-          <v-col cols="12" sm="6" md="4">
-            <div class="d-flex mb-6">
-              <v-icon size="28" color="primary" class="mr-3 mt-1">mdi-code-tags</v-icon>
-              <div>
-                <h4 class="text-subtitle-1 font-weight-bold">Full LSP Support</h4>
-                <p class="text-body-2 text-medium-emphasis">VS Code extension with completions, hover docs, diagnostics, and semantic tokens.</p>
-              </div>
-            </div>
-          </v-col>
-          <v-col cols="12" sm="6" md="4">
-            <div class="d-flex mb-6">
-              <v-icon size="28" color="primary" class="mr-3 mt-1">mdi-monitor-dashboard</v-icon>
-              <div>
-                <h4 class="text-subtitle-1 font-weight-bold">Web Dashboard</h4>
-                <p class="text-body-2 text-medium-emphasis">Deploy, monitor, and manage pipelines through a modern web UI.</p>
-              </div>
-            </div>
-          </v-col>
-          <v-col cols="12" sm="6" md="4">
-            <div class="d-flex mb-6">
-              <v-icon size="28" color="primary" class="mr-3 mt-1">mdi-chip</v-icon>
-              <div>
-                <h4 class="text-subtitle-1 font-weight-bold">Concurrent Processing</h4>
-                <p class="text-body-2 text-medium-emphasis">Partition events across worker threads with .concurrent() for linear throughput scaling.</p>
-              </div>
-            </div>
-          </v-col>
-          <v-col cols="12" sm="6" md="4">
-            <div class="d-flex mb-6">
-              <v-icon size="28" color="primary" class="mr-3 mt-1">mdi-brain</v-icon>
-              <div>
-                <h4 class="text-subtitle-1 font-weight-bold">GPU ML Scoring</h4>
-                <p class="text-body-2 text-medium-emphasis">Score events with ONNX models using GPU acceleration and batch inference.</p>
-              </div>
-            </div>
-          </v-col>
-          <v-col cols="12" sm="6" md="4">
-            <div class="d-flex mb-6">
-              <v-icon size="28" color="primary" class="mr-3 mt-1">mdi-earth</v-icon>
-              <div>
-                <h4 class="text-subtitle-1 font-weight-bold">Multi-Region Federation</h4>
-                <p class="text-body-2 text-medium-emphasis">Federate clusters across regions with catalog sync, health monitoring, and cross-region routing.</p>
-              </div>
-            </div>
-          </v-col>
-          <v-col cols="12" sm="6" md="4">
-            <div class="d-flex mb-6">
-              <v-icon size="28" color="primary" class="mr-3 mt-1">mdi-flash</v-icon>
-              <div>
-                <h4 class="text-subtitle-1 font-weight-bold">Pulsar &amp; Redis Streams</h4>
-                <p class="text-body-2 text-medium-emphasis">Native connectors for Apache Pulsar and Redis Streams with consumer group support.</p>
+                <h4 class="text-subtitle-1 font-weight-bold">{{ f.title }}</h4>
+                <p class="text-body-2 text-medium-emphasis">{{ f.desc }}</p>
               </div>
             </div>
           </v-col>
@@ -316,14 +250,11 @@ function goToPlayground(exampleId?: string) {
           Get started in seconds with the interactive playground, or install the CLI.
         </p>
         <div class="d-flex justify-center ga-4 flex-wrap">
-          <v-btn color="primary" size="large" href="/signup" prepend-icon="mdi-rocket-launch">
+          <v-btn color="primary" size="large" to="/signup" prepend-icon="mdi-rocket-launch">
             Start Free Trial
           </v-btn>
-          <v-btn variant="outlined" size="large" @click="goToPlayground()" prepend-icon="mdi-play-circle">
+          <v-btn variant="outlined" size="large" to="/playground" prepend-icon="mdi-play-circle">
             Try the Playground
-          </v-btn>
-          <v-btn variant="outlined" size="large" href="https://github.com/varpulis/varpulis" target="_blank" prepend-icon="mdi-star-outline">
-            Star on GitHub
           </v-btn>
         </div>
         <div class="mt-6">
@@ -331,15 +262,48 @@ function goToPlayground(exampleId?: string) {
         </div>
       </v-container>
     </section>
-  </v-app>
+
+    <!-- Footer -->
+    <v-footer class="py-6">
+      <v-container>
+        <v-row>
+          <v-col cols="12" sm="4">
+            <div class="text-subtitle-2 font-weight-bold mb-2">Product</div>
+            <div><router-link to="/scenarios" class="text-body-2 text-medium-emphasis text-decoration-none">Demos</router-link></div>
+            <div><router-link to="/playground" class="text-body-2 text-medium-emphasis text-decoration-none">Playground</router-link></div>
+            <div><router-link to="/pricing" class="text-body-2 text-medium-emphasis text-decoration-none">Pricing</router-link></div>
+          </v-col>
+          <v-col cols="12" sm="4">
+            <div class="text-subtitle-2 font-weight-bold mb-2">Resources</div>
+            <div class="text-body-2 text-medium-emphasis">Documentation</div>
+            <div class="text-body-2 text-medium-emphasis">API Reference</div>
+            <div class="text-body-2 text-medium-emphasis">VPL Language Guide</div>
+          </v-col>
+          <v-col cols="12" sm="4" class="text-sm-right">
+            <div class="text-body-2 text-medium-emphasis">&copy; {{ new Date().getFullYear() }} Varpulis</div>
+            <div class="text-body-2 text-medium-emphasis">Built with Rust</div>
+          </v-col>
+        </v-row>
+      </v-container>
+    </v-footer>
+  </div>
 </template>
 
 <style scoped>
+.landing-page {
+  min-height: 100vh;
+}
+
+.landing-nav {
+  backdrop-filter: blur(8px);
+}
+
 .hero-section {
   background: linear-gradient(135deg, rgba(var(--v-theme-primary), 0.05), rgba(var(--v-theme-primary), 0.02));
   min-height: 80vh;
   display: flex;
   align-items: center;
+  padding-top: 64px;
 }
 
 .hero-code {

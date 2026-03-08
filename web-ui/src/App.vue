@@ -20,7 +20,9 @@ const drawer = ref(true)
 const rail = ref(false)
 
 const isDark = computed(() => theme.global.current.value.dark)
-const isLoginPage = computed(() => route.name === 'login')
+const isFullScreenPage = computed(() =>
+  ['login', 'landing', 'signup', 'verify-email', 'pricing', 'playground'].includes(route.name as string)
+)
 
 // Start health checks and validate auth on mount
 onMounted(() => {
@@ -110,7 +112,7 @@ onMounted(() => {
 
 <template>
   <v-app>
-    <template v-if="!isLoginPage">
+    <template v-if="!isFullScreenPage">
       <AppBar
         :is-dark="isDark"
         :ws-connected="wsStore.connected"
@@ -128,7 +130,14 @@ onMounted(() => {
     </template>
 
     <v-main>
-      <v-container fluid class="pa-4">
+      <template v-if="isFullScreenPage">
+        <router-view v-slot="{ Component, route }">
+          <transition name="fade" mode="out-in">
+            <component :is="Component" :key="route.path" />
+          </transition>
+        </router-view>
+      </template>
+      <v-container v-else fluid class="pa-4">
         <v-breadcrumbs v-if="breadcrumbs.length > 1" :items="breadcrumbs" density="compact" class="px-0 pt-0 pb-2">
           <template #divider>
             <v-icon size="small">mdi-chevron-right</v-icon>
@@ -146,6 +155,7 @@ onMounted(() => {
 
     <!-- Chat FAB -->
     <v-btn
+      v-if="!isFullScreenPage"
       icon
       color="primary"
       size="large"

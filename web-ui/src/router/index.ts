@@ -217,14 +217,14 @@ router.beforeEach((to) => {
   const title = to.meta?.title as string | undefined
   document.title = title ? `${title} | Varpulis Control Plane` : 'Varpulis Control Plane'
 
-  // Auth guard: redirect to /login for protected routes when not authenticated
+  // Auth guard: redirect to /landing for protected routes when not authenticated
   const routeName = (to.name as string) ?? ''
   if (!PUBLIC_ROUTES.has(routeName)) {
     const token = localStorage.getItem('varpulis_token')
     const sessionAuth = localStorage.getItem('varpulis_authenticated')
     const apiKey = sessionStorage.getItem('varpulis_api_key')
     if (!token && !sessionAuth && !apiKey) {
-      return { name: 'login', query: { redirect: to.fullPath } }
+      return { name: 'landing' }
     }
   }
 })
