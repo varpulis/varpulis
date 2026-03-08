@@ -19,6 +19,13 @@ demo.varpulis-cep.com {
     @grafana path /grafana /grafana/*
     reverse_proxy @grafana grafana:3000
 
-    # Everything else → web UI (SPA handles client-side routes like /metrics)
-    reverse_proxy /* web-ui:8080
+    # Auth endpoints → coordinators (for login/signup)
+    reverse_proxy /auth/* coordinator-1:9100 coordinator-2:9100 coordinator-3:9100 {
+        lb_policy cookie
+        health_uri /health
+        health_interval 10s
+    }
+
+    # Everything else → public site (landing, playground, demos)
+    reverse_proxy /* public-site:8080
 }

@@ -27,6 +27,17 @@ const router = createRouter({
   routes: [
     {
       path: '/',
+      name: 'home',
+      redirect: () => {
+        // If authenticated, go to dashboard; otherwise go to landing page
+        const token = localStorage.getItem('varpulis_token')
+        const sessionAuth = localStorage.getItem('varpulis_authenticated')
+        const apiKey = sessionStorage.getItem('varpulis_api_key')
+        return (token || sessionAuth || apiKey) ? { name: 'dashboard' } : { name: 'landing' }
+      },
+    },
+    {
+      path: '/dashboard',
       name: 'dashboard',
       component: () => import('@/views/DashboardView.vue'),
       meta: { title: 'Dashboard' },
