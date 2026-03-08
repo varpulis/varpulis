@@ -26,7 +26,7 @@ services:
       - caddy-data:/data
       - caddy-config:/config
     depends_on:
-      web-ui:
+      public-site:
         condition: service_healthy
       coordinator-1:
         condition: service_healthy
@@ -34,14 +34,14 @@ services:
     networks:
       - varpulis-demo
 
-  # ─── Web UI (Vue SPA + Nginx) ─────────────────────────────
-  web-ui:
+  # ─── Public Site (landing, playground, demos — no auth) ────
+  public-site:
     build:
-      context: ../../web-ui
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: public-site/Dockerfile
       args:
         VITE_API_KEY: "${VARPULIS_API_KEY}"
-    container_name: demo-web-ui
+    container_name: demo-public-site
     expose:
       - "8080"
     depends_on:
