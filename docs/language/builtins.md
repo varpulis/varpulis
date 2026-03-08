@@ -145,6 +145,81 @@ The following functions are planned for future versions but are **not currently 
 
 ---
 
+## Sequence Pattern Built-in Variables (Implemented)
+
+These variables are available in `.where()` and `.emit()` after a sequence pattern match (`->` or `all` Kleene).
+
+| Variable | Type | Description |
+|----------|------|-------------|
+| `match_count` | `int` | Total events in the matched sequence |
+| `match_duration_ms` | `int` | Duration from first to last matched event (milliseconds) |
+| `match_rate` | `float` | Events per second within the match (`match_count / duration_seconds`) |
+
+### Sequence Pattern Example
+
+```varpulis
+# Detect brute force: 3+ failed logins then success
+stream BruteForce = failed_login -> all failed_login as f -> successful_login as s .within(5m)
+    .where(match_count >= 4)
+    .emit(user: s.user_id, failed_attempts: match_count - 1)
+
+# Detect high event rate (> 2 events/sec)
+stream HighRate = request -> all request as r .within(30s)
+    .where(match_count >= 3 and match_rate > 2.0)
+    .emit(endpoint: r.endpoint, rate: match_rate)
+```
+
+---
+
+## Kleene Aggregate Functions (Implemented)
+
+These functions operate on Kleene (`all`) captures in sequence patterns. They can be used in `.where()` and `.emit()` without needing `.trend_aggregate()`.
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `sum(alias.field)` | Sum of field values across Kleene matches | `sum(t.amount)` |
+| `avg(alias.field)` | Average of field values | `avg(t.temperature)` |
+| `min(alias.field)` | Minimum field value | `min(t.latency)` |
+| `max(alias.field)` | Maximum field value | `max(t.amount)` |
+| `count(alias)` | Number of events matched by alias | `count(t)` |
+| `distinct_count(alias.field)` | Number of unique values | `distinct_count(s.source_ip)` |
+| `first(alias).field` | Field from first matched event | `first(f).city` |
+| `last(alias).field` | Field from last matched event | `last(f).city` |
+
+### Kleene Aggregate Example
+
+```varpulis
+# Detect large cumulative transfers
+stream LargeTransfers = login as l -> all transfer as t .within(10m)
+    .where(sum(t.amount) > 5000)
+    .emit(user: l.user_id, total: sum(t.amount), avg: avg(t.amount))
+
+# Detect location changes: compare first and last login cities
+stream LocationChange = login -> all login as f .within(1h)
+    .where(match_count >= 2)
+    .emit(user: f.user_id, from: first(f).city, to: last(f).city)
+
+# Detect distributed attacks from many distinct IPs
+stream DDoS = scan -> all scan as s .within(1m)
+    .where(distinct_count(s.source_ip) >= 3)
+    .emit(target: s.target_ip, unique_ips: distinct_count(s.source_ip))
+```
+
+---
+
+## Absence / Negation (Implemented)
+
+The `.not(EventType)` operator invalidates active pattern runs if the forbidden event arrives. Use it for "A then B, but NOT C in between" patterns.
+
+```varpulis
+# Order followed by shipment, but NOT if cancellation arrives
+stream OrderShipped = order as o -> shipment as s .within(24h)
+    .not(cancellation)
+    .emit(order_id: o.order_id, status: s.status)
+```
+
+---
+
 ## Forecast Built-in Variables (Implemented)
 
 These variables are available in streams that use the `.forecast()` operator after a sequence pattern. They are populated by the PST-based pattern forecasting engine.
