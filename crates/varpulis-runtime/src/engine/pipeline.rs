@@ -647,16 +647,25 @@ fn execute_op_common(
                             .data
                             .insert("stream".into(), Value::str(stream_name.as_ref()));
                         let match_count = match_result.stack.len() as i64;
-                        let duration_ms = match_result.duration.as_millis() as i64;
+
+                        // Compute duration from event timestamps (not wall-clock)
+                        let event_duration_ms = if match_result.stack.len() >= 2 {
+                            let first_ts = match_result.stack.first().unwrap().event.timestamp;
+                            let last_ts = match_result.stack.last().unwrap().event.timestamp;
+                            (last_ts - first_ts).num_milliseconds().max(0)
+                        } else {
+                            0
+                        };
+
                         seq_event
                             .data
-                            .insert("match_duration_ms".into(), Value::Int(duration_ms));
+                            .insert("match_duration_ms".into(), Value::Int(event_duration_ms));
                         seq_event
                             .data
                             .insert("match_count".into(), Value::Int(match_count));
 
-                        // match_rate: events per second
-                        let duration_secs = match_result.duration.as_secs_f64();
+                        // match_rate: events per second (based on event timestamps)
+                        let duration_secs = event_duration_ms as f64 / 1000.0;
                         if duration_secs > 0.0 {
                             seq_event.data.insert(
                                 "match_rate".into(),
