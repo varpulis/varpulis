@@ -28,6 +28,12 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: VARPULIS_ADVERTISE_ADDRESS
+              value: "http://$(POD_IP):9000"
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
