@@ -1,13 +1,19 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::Result;
 use tokio::sync::mpsc;
 use tracing::info;
+use varpulis_connectors::credentials::CredentialsStore;
 use varpulis_parser::parse;
 use varpulis_runtime::engine::Engine;
 use varpulis_runtime::event::Event;
 
-pub async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()> {
+pub async fn run_program(
+    source: &str,
+    base_path: Option<&PathBuf>,
+    credentials_store: Option<Arc<CredentialsStore>>,
+) -> Result<()> {
     use varpulis_runtime::connector::ManagedConnectorRegistry;
     use varpulis_runtime::ContextOrchestrator;
 
@@ -22,8 +28,12 @@ pub async fn run_program(source: &str, base_path: Option<&PathBuf>) -> Result<()
     let (output_tx, mut output_rx) = mpsc::channel::<Event>(10_000);
     let output_tx_for_ctx = output_tx.clone();
 
-    // Create engine
-    let mut engine = Engine::new(output_tx);
+    // Create engine with credentials store if provided
+    let mut engine = Engine::builder().output(output_tx);
+    if let Some(store) = credentials_store {
+        engine = engine.credentials(store);
+    }
+    let mut engine = engine.build();
     engine
         .load_with_source(source, &program)
         .map_err(|e| anyhow::anyhow!("Load error:\n{e}"))?;

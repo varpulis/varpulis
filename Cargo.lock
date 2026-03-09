@@ -7925,6 +7925,7 @@ dependencies = [
  "chrono",
  "clap",
  "futures-util",
+ "getrandom 0.3.4",
  "hex",
  "hmac",
  "indexmap 2.13.0",
@@ -7955,6 +7956,7 @@ dependencies = [
  "urlencoding",
  "uuid",
  "varpulis-cluster",
+ "varpulis-connectors",
  "varpulis-core",
  "varpulis-datagen",
  "varpulis-db",
@@ -8001,12 +8003,14 @@ dependencies = [
 name = "varpulis-connectors"
 version = "0.6.1"
 dependencies = [
+ "aes-gcm",
  "async-nats",
  "async-trait",
  "aws-config",
  "aws-sdk-kinesis",
  "aws-sdk-s3",
  "axum",
+ "base64 0.22.1",
  "chrono",
  "elasticsearch",
  "futures-util",
@@ -8021,6 +8025,7 @@ dependencies = [
  "schemars 1.2.1",
  "serde",
  "serde_json",
+ "serde_yaml",
  "sqlx",
  "thiserror 2.0.18",
  "tokio",

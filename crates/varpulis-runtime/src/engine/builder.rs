@@ -17,6 +17,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use super::{Engine, OutputChannel};
+use crate::connector;
 use crate::dead_letter::DlqConfig;
 use crate::event::{Event, SharedEvent};
 use crate::metrics::Metrics;
@@ -60,6 +61,7 @@ pub struct EngineBuilder {
     dlq_path: Option<std::path::PathBuf>,
     dlq_config: DlqConfig,
     udf_registry: UdfRegistry,
+    credentials_store: Option<Arc<connector::credentials::CredentialsStore>>,
 }
 
 impl Default for EngineBuilder {
@@ -78,6 +80,7 @@ impl EngineBuilder {
             dlq_path: None,
             dlq_config: DlqConfig::default(),
             udf_registry: UdfRegistry::new(),
+            credentials_store: None,
         }
     }
 
@@ -129,6 +132,12 @@ impl EngineBuilder {
         self
     }
 
+    /// Set the connector credentials store for resolving `profile:` references in VPL.
+    pub fn credentials(mut self, store: Arc<connector::credentials::CredentialsStore>) -> Self {
+        self.credentials_store = Some(store);
+        self
+    }
+
     /// Build the engine. Returns the configured `Engine` ready for `load()`.
     ///
     /// After building, call [`Engine::load()`] or [`Engine::load_with_source()`]
@@ -142,6 +151,7 @@ impl EngineBuilder {
         engine.dlq_path = self.dlq_path;
         engine.dlq_config = self.dlq_config;
         engine.udf_registry = self.udf_registry;
+        engine.credentials_store = self.credentials_store;
         engine
     }
 }

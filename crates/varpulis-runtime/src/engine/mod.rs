@@ -103,6 +103,8 @@ pub struct Engine {
         Vec<std::sync::Arc<std::sync::Mutex<crate::hamlet::HamletAggregator>>>,
     /// Auto-checkpointing manager (None = checkpointing disabled)
     pub(super) checkpoint_manager: Option<crate::persistence::CheckpointManager>,
+    /// Connector credentials store for secure profile resolution
+    pub(super) credentials_store: Option<Arc<connector::credentials::CredentialsStore>>,
     /// Custom DLQ file path (defaults to "varpulis-dlq.jsonl")
     pub(super) dlq_path: Option<std::path::PathBuf>,
     /// DLQ configuration (rotation limits etc.)
@@ -174,6 +176,7 @@ impl Engine {
             topic_prefix: None,
             shared_hamlet_aggregators: Vec::new(),
             checkpoint_manager: None,
+            credentials_store: None,
             dlq_path: None,
             dlq_config: crate::dead_letter::DlqConfig::default(),
             dlq: None,
@@ -195,6 +198,11 @@ impl Engine {
     /// Create engine with zero-copy SharedEvent output channel (PERF: avoids cloning)
     pub fn new_shared(output_tx: mpsc::Sender<SharedEvent>) -> Self {
         Self::new_internal(Some(OutputChannel::Shared(output_tx)))
+    }
+
+    /// Set the connector credentials store for profile resolution.
+    pub fn set_credentials_store(&mut self, store: Arc<connector::credentials::CredentialsStore>) {
+        self.credentials_store = Some(store);
     }
 
     /// Internal constructor
@@ -222,6 +230,7 @@ impl Engine {
             topic_prefix: None,
             shared_hamlet_aggregators: Vec::new(),
             checkpoint_manager: None,
+            credentials_store: None,
             dlq_path: None,
             dlq_config: crate::dead_letter::DlqConfig::default(),
             dlq: None,
@@ -586,8 +595,35 @@ impl Engine {
                     connector_type,
                     params,
                 } => {
-                    let config = sink_factory::connector_params_to_config(connector_type, params);
-                    info!("Registered connector: {} (type: {})", name, connector_type);
+                    let mut config =
+                        sink_factory::connector_params_to_config(connector_type, params);
+
+                    // Resolve credentials profile if specified
+                    if let Some(profile_name) = config.properties.swap_remove("profile") {
+                        if let Some(ref store) = self.credentials_store {
+                            store
+                                .merge_profile(&profile_name, &mut config)
+                                .map_err(|e| {
+                                    error::EngineError::Compilation(format!(
+                                        "Failed to resolve credentials profile '{}' for connector '{}': {}",
+                                        profile_name, name, e
+                                    ))
+                                })?;
+                            info!(
+                                "Registered connector: {} (type: {}, profile: {})",
+                                name, connector_type, profile_name
+                            );
+                        } else {
+                            return Err(error::EngineError::Compilation(format!(
+                                "Connector '{}' references profile '{}' but no credentials file was provided. \
+                                 Use --credentials or set VARPULIS_CREDENTIALS.",
+                                name, profile_name
+                            )));
+                        }
+                    } else {
+                        info!("Registered connector: {} (type: {})", name, connector_type);
+                    }
+
                     self.connectors.insert(name.clone(), config);
                 }
                 _ => {
@@ -1077,6 +1113,7 @@ impl Engine {
         let old_streams: FxHashSet<String> = self.streams.keys().cloned().collect();
 
         let mut new_engine = Self::new_internal(self.clone_output_channel());
+        new_engine.credentials_store = self.credentials_store.clone();
         new_engine.load(program)?;
 
         let new_streams: FxHashSet<String> = new_engine.streams.keys().cloned().collect();
