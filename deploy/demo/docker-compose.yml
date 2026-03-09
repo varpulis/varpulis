@@ -28,8 +28,32 @@ services:
     depends_on:
       public-site:
         condition: service_healthy
+      web-ui:
+        condition: service_healthy
       coordinator-1:
         condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - varpulis-demo
+
+  # ─── Web UI (control plane — requires auth) ─────────────────
+  web-ui:
+    build:
+      context: ../../web-ui
+      args:
+        VITE_API_KEY: "${VARPULIS_API_KEY}"
+    container_name: demo-web-ui
+    expose:
+      - "8080"
+    depends_on:
+      coordinator-1:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
     networks:
       - varpulis-demo
