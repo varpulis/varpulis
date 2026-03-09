@@ -4,7 +4,7 @@ This tutorial will get you up and running with Varpulis in under 5 minutes. You'
 
 ## Prerequisites
 
-- **Rust 1.75+**: Install via [rustup](https://rustup.rs/)
+- **Rust 1.93+**: Install via [rustup](https://rustup.rs/)
 - **Git**: For cloning the repository
 - **Optional**: MQTT broker (Mosquitto) for real-time streaming
 
@@ -25,7 +25,7 @@ export PATH="$PATH:$(pwd)/target/release"
 
 # Verify installation
 varpulis --version
-# Output: varpulis 0.1.0
+# Output: varpulis 0.6.0
 ```
 
 ### Quick Build Check

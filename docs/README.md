@@ -140,7 +140,7 @@ See [`architecture/cluster.md`](architecture/cluster.md) for full documentation.
 
 ---
 
-**Version**: 0.1.0
+**Version**: 0.6.0
 **Parser**: Pest PEG
-**Tests**: 1068+
+**Tests**: 3,776+
 **License**: MIT
