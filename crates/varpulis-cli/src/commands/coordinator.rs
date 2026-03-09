@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use tracing::info;
-use varpulis_cli::{playground, websocket};
+use varpulis_cli::{audit, oauth, playground, users, websocket};
 
 // =============================================================================
 // Coordinator axum handler state types and handler functions
@@ -416,6 +416,128 @@ pub async fn run_coordinator(
     let coord_pg_routes = playground::playground_routes(coord_playground_state.clone());
     playground::spawn_session_reaper(coord_playground_state);
 
+    // -----------------------------------------------------------------------
+    // Auth / OAuth routes (login, register, JWT)
+    // -----------------------------------------------------------------------
+    let audit_logger: Option<audit::SharedAuditLogger> = {
+        let audit_path = std::path::PathBuf::from("data/audit.jsonl");
+        if let Some(parent) = audit_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match audit::AuditLogger::open(audit_path).await {
+            Ok(logger) => Some(logger),
+            Err(e) => {
+                tracing::warn!("Audit logging disabled: {}", e);
+                None
+            }
+        }
+    };
+    let audit_r = audit::audit_routes(audit_logger.clone());
+
+    let session_manager: Option<users::SharedSessionManager> = {
+        let session_config = users::SessionConfig::default();
+        let mgr = users::SessionManager::new(session_config);
+        Some(Arc::new(tokio::sync::RwLock::new(mgr)))
+    };
+
+    let oauth_state: Option<oauth::SharedOAuthState> = {
+        let github_config = oauth::OAuthConfig::from_env();
+        let has_github = github_config.is_some();
+        let has_local = session_manager.is_some();
+
+        if has_github || has_local {
+            let oauth_config = github_config.unwrap_or_else(|| {
+                let jwt_secret = std::env::var("JWT_SECRET")
+                    .unwrap_or_else(|_| varpulis_cli::auth::generate_api_key());
+                oauth::OAuthConfig {
+                    github_client_id: String::new(),
+                    github_client_secret: String::new(),
+                    jwt_secret,
+                    frontend_url: std::env::var("FRONTEND_URL")
+                        .unwrap_or_else(|_| "http://localhost:5173".to_string()),
+                    server_url: std::env::var("SERVER_URL")
+                        .unwrap_or_else(|_| format!("http://localhost:{port}")),
+                }
+            });
+
+            if has_github {
+                info!(
+                    "GitHub OAuth enabled (client_id: {}...)",
+                    &oauth_config.github_client_id[..8.min(oauth_config.github_client_id.len())]
+                );
+            }
+            if has_local {
+                info!("Local username/password authentication enabled");
+            }
+
+            #[allow(unused_mut)]
+            let mut oauth_st =
+                oauth::OAuthState::new(oauth_config).with_audit_logger(audit_logger.clone());
+
+            if let Some(ref mgr) = session_manager {
+                oauth_st = oauth_st.with_session_manager(mgr.clone());
+            }
+
+            #[cfg(feature = "saas")]
+            {
+                // Connect to SaaS DB if DATABASE_URL is set
+                if let Ok(database_url) = std::env::var("DATABASE_URL") {
+                    match varpulis_db::pool::create_pool(&database_url).await {
+                        Ok(pool) => {
+                            if let Err(e) = varpulis_db::pool::run_migrations(&pool).await {
+                                tracing::warn!("DB migrations failed: {e}");
+                            }
+                            oauth_st = oauth_st.with_db_pool(pool);
+                            info!("SaaS database connected for auth");
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "SaaS DB pool failed: {e} — auth will use in-memory only"
+                            );
+                        }
+                    }
+                }
+
+                let email_sender: Option<varpulis_cli::email::SharedEmailSender> =
+                    varpulis_cli::email::SmtpConfig::from_env().and_then(|smtp_config| {
+                        match varpulis_cli::email::EmailSender::new(smtp_config) {
+                            Ok(sender) => {
+                                info!("SMTP email sender configured");
+                                Some(std::sync::Arc::new(sender))
+                            }
+                            Err(e) => {
+                                tracing::warn!("SMTP configuration failed: {e}");
+                                None
+                            }
+                        }
+                    });
+                oauth_st = oauth_st.with_email_sender(email_sender);
+            }
+
+            let state = std::sync::Arc::new(oauth_st);
+            oauth::spawn_session_cleanup(state.clone());
+
+            if let Some(ref mgr) = session_manager {
+                let mgr_cleanup = mgr.clone();
+                tokio::spawn(async move {
+                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+                    loop {
+                        interval.tick().await;
+                        let removed = mgr_cleanup.write().await.cleanup_expired();
+                        if removed > 0 {
+                            tracing::debug!("Cleaned up {} expired sessions", removed);
+                        }
+                    }
+                });
+            }
+
+            Some(state)
+        } else {
+            None
+        }
+    };
+    let oauth_r = oauth::oauth_routes(oauth_state.clone());
+
     // Broadcast channel for relaying worker output events to WebSocket clients
     let (coord_broadcast_tx, _) = tokio::sync::broadcast::channel::<String>(1000);
     let coord_broadcast_tx = Arc::new(coord_broadcast_tx);
@@ -482,7 +604,11 @@ pub async fn run_coordinator(
                 coordinator_rate_limiter,
                 cors_origins,
             );
-            let app = coord_local_routes.merge(coord_pg_routes).merge(api_routes);
+            let app = coord_local_routes
+                .merge(coord_pg_routes)
+                .merge(oauth_r)
+                .merge(audit_r)
+                .merge(api_routes);
             serve_coordinator!(app);
         } else {
             let api_routes = varpulis_cluster::cluster_routes(
@@ -491,7 +617,11 @@ pub async fn run_coordinator(
                 coordinator_rate_limiter,
                 cors_origins,
             );
-            let app = coord_local_routes.merge(coord_pg_routes).merge(api_routes);
+            let app = coord_local_routes
+                .merge(coord_pg_routes)
+                .merge(oauth_r)
+                .merge(audit_r)
+                .merge(api_routes);
             serve_coordinator!(app);
         }
     }
@@ -504,7 +634,11 @@ pub async fn run_coordinator(
             coordinator_rate_limiter,
             cors_origins,
         );
-        let app = coord_local_routes.merge(coord_pg_routes).merge(api_routes);
+        let app = coord_local_routes
+            .merge(coord_pg_routes)
+            .merge(oauth_r)
+            .merge(audit_r)
+            .merge(api_routes);
         serve_coordinator!(app);
     }
 
