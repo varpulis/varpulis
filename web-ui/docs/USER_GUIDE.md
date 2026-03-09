@@ -110,22 +110,13 @@ Click a group to see detailed information:
 
 ### Deploying a New Group
 
-![Deploy Dialog](screenshots/pipelines-deploy.png)
+![Create Pipeline Group](screenshots/pipelines-create-group.png)
 
-Click "Deploy New Group" to open the deployment wizard:
+Click "Quick Deploy" to open the deployment dialog:
 
-#### Step 1: Basic Info
-- Enter a unique group name (lowercase, alphanumeric, hyphens)
-
-#### Step 2: Pipelines
-- Add one or more pipelines
-- Provide VPL source code for each
-- Configure affinity rules (any worker, specific worker, or by label)
-
-#### Step 3: Routes
-- Define event routing between pipelines
-- Specify event types to route
-- Add optional filter expressions
+1. **Group Name**: Enter a unique group name (lowercase, alphanumeric, hyphens)
+2. **VPL Sources**: Select saved VPL sources to include, or go to the Editor to create them first
+3. **Deploy Group**: Click to deploy the pipeline group to available workers
 
 ### Managing Groups
 
