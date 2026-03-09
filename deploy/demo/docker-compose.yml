@@ -144,6 +144,15 @@ services:
       - VARPULIS_LLM_PROVIDER=${VARPULIS_LLM_PROVIDER:-openai-compatible}
       - VARPULIS_S3_ENDPOINT=http://minio:9000
       - VARPULIS_S3_BUCKET=varpulis-models
+      - DATABASE_URL=${DATABASE_URL:-postgresql://varpulis:change-me@postgres:5432/varpulis}
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
+      - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in .env (min 32 chars)}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+      - STRIPE_PRO_PRICE_ID=${STRIPE_PRO_PRICE_ID:-}
+      - FRONTEND_URL=${FRONTEND_URL:-https://demo.varpulis-cep.com}
+      - SERVER_URL=${SERVER_URL:-https://demo.varpulis-cep.com}
     volumes:
       - coord2-data:/app/state
     healthcheck:
@@ -189,6 +198,15 @@ services:
       - VARPULIS_LLM_PROVIDER=${VARPULIS_LLM_PROVIDER:-openai-compatible}
       - VARPULIS_S3_ENDPOINT=http://minio:9000
       - VARPULIS_S3_BUCKET=varpulis-models
+      - DATABASE_URL=${DATABASE_URL:-postgresql://varpulis:change-me@postgres:5432/varpulis}
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
+      - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in .env (min 32 chars)}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+      - STRIPE_PRO_PRICE_ID=${STRIPE_PRO_PRICE_ID:-}
+      - FRONTEND_URL=${FRONTEND_URL:-https://demo.varpulis-cep.com}
+      - SERVER_URL=${SERVER_URL:-https://demo.varpulis-cep.com}
     volumes:
       - coord3-data:/app/state
     healthcheck:
