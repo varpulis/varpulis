@@ -34,7 +34,7 @@ demo.varpulis-cep.com, www.varpulis-cep.com {
 blog.varpulis-cep.com {
     tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin-key.pem
     @root path /
-    redir @root /blog permanent
+    redir @root https://blog.varpulis-cep.com/blog permanent
     reverse_proxy /* web-ui:8080
 }
 
@@ -42,7 +42,7 @@ blog.varpulis-cep.com {
 docs.varpulis-cep.com {
     tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin-key.pem
     @root path /
-    redir @root /docs permanent
+    redir @root https://docs.varpulis-cep.com/docs permanent
     reverse_proxy /* web-ui:8080
 }
 
@@ -50,6 +50,6 @@ docs.varpulis-cep.com {
 register.varpulis-cep.com {
     tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin-key.pem
     @root path /
-    redir @root /signup permanent
+    redir @root https://register.varpulis-cep.com/signup permanent
     reverse_proxy /* web-ui:8080
 }
