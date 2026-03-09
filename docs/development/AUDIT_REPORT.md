@@ -3,7 +3,7 @@
 > Comprehensive audit across security, testing, observability, API, data integrity, and code quality
 
 **Date:** 2026-02-17
-**Version:** 0.3.0
+**Version:** 0.6.0
 **Auditor:** Automated deep analysis (6 parallel audit passes)
 **Target:** 10/10 production readiness
 
@@ -27,7 +27,7 @@
 
 ## 1. Executive Summary
 
-Varpulis is a **production-grade Complex Event Processing engine** at v0.3.0. After six parallel audit passes covering security, testing, observability, API, data integrity, and architecture, followed by three implementation sprints addressing all 18 identified gaps, the project scores **10/10** for production readiness.
+Varpulis is a **production-grade Complex Event Processing engine** at v0.6.0. After six parallel audit passes covering security, testing, observability, API, data integrity, and architecture, followed by three implementation sprints addressing all 18 identified gaps, the project scores **10/10** for production readiness.
 
 **What's excellent:**
 - 86,789 lines of Rust across 8 crates — clean, well-structured
@@ -141,8 +141,8 @@ Varpulis is a **production-grade Complex Event Processing engine** at v0.3.0. Af
 | **Benchmark suites** | 7 (Criterion) |
 | **Documentation files** | 52 markdown |
 | **CI jobs** | 13 |
-| **Version** | 0.3.0 |
-| **Rust edition** | 2021 (MSRV 1.85) |
+| **Version** | 0.6.0 |
+| **Rust edition** | 2021 (MSRV 1.93) |
 | **License** | MIT OR Apache-2.0 |
 | **`unsafe` blocks** | 15 |
 | **`unwrap()` in src** | 867 |

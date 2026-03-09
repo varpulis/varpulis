@@ -101,7 +101,7 @@ curl -s http://localhost:9100/health | jq .
 {
   "role": "coordinator",
   "status": "healthy",
-  "version": "0.1.0"
+  "version": "0.6.0"
 }
 ```
 
