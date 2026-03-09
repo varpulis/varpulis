@@ -30,23 +30,26 @@ demo.varpulis-cep.com, www.varpulis-cep.com {
     reverse_proxy /* web-ui:8080
 }
 
-# Blog subdomain -> rewrite root to /blog, proxy to web-ui
+# Blog subdomain -> redirect root to /blog, proxy everything to web-ui
 blog.varpulis-cep.com {
     tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin-key.pem
-    rewrite / /blog
+    @root path /
+    redir @root https://blog.varpulis-cep.com/blog temporary
     reverse_proxy web-ui:8080
 }
 
-# Docs subdomain -> rewrite root to /docs, proxy to web-ui
+# Docs subdomain -> redirect root to /docs, proxy everything to web-ui
 docs.varpulis-cep.com {
     tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin-key.pem
-    rewrite / /docs
+    @root path /
+    redir @root https://docs.varpulis-cep.com/docs temporary
     reverse_proxy web-ui:8080
 }
 
-# Register subdomain -> rewrite root to /signup, proxy to web-ui
+# Register subdomain -> redirect root to /signup, proxy everything to web-ui
 register.varpulis-cep.com {
     tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin-key.pem
-    rewrite / /signup
+    @root path /
+    redir @root https://register.varpulis-cep.com/signup temporary
     reverse_proxy web-ui:8080
 }
