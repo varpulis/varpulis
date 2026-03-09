@@ -51,6 +51,8 @@ hmac = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 argon2 = "0.5"
+getrandom = "0.3"
+varpulis-connectors = { version = "0.6.1", path = "../varpulis-connectors" }
 
 # OIDC/SSO (optional, behind "oidc" feature)
 openidconnect = { version = "4", optional = true }
@@ -75,6 +77,7 @@ raft = ["varpulis-cluster/raft"]
 persistent = ["raft", "varpulis-cluster/persistent"]
 saas = ["varpulis-db", "lettre"]
 oidc = ["openidconnect"]
+encryption = ["varpulis-connectors/encryption"]
 otel = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "tracing-opentelemetry", "varpulis-cluster/otel"]
 
 [dev-dependencies]

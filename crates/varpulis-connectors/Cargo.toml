@@ -46,6 +46,13 @@ elasticsearch = { version = "9.1.0-alpha.1", optional = true }
 # Apache Pulsar
 pulsar = { version = "6", features = ["tokio-runtime"], optional = true }
 
+# Credentials encryption
+aes-gcm = { version = "0.10", optional = true }
+base64 = { version = "0.22", optional = true }
+
+# YAML parsing (for credentials files)
+serde_yaml = "0.9"
+
 [features]
 default = []
 mqtt = ["rumqttc"]
@@ -62,6 +69,7 @@ elasticsearch = ["dep:elasticsearch"]
 pulsar = ["dep:pulsar"]
 cdc = ["tokio-postgres"]
 csv-converter = []
+encryption = ["aes-gcm", "base64"]
 all-connectors = ["mqtt", "kafka", "nats", "database", "redis", "kinesis", "s3", "elasticsearch", "pulsar"]
 
 [dev-dependencies]
