@@ -1,14 +1,14 @@
-demo.varpulis-cep.com {
+demo.varpulis-cep.com, www.varpulis-cep.com {
     tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin-key.pem
 
-    # API requests → cookie-sticky across 3 coordinators
+    # API requests -> cookie-sticky across 3 coordinators
     reverse_proxy /api/* coordinator-1:9100 coordinator-2:9100 coordinator-3:9100 {
         lb_policy cookie
         health_uri /health
         health_interval 10s
     }
 
-    # WebSocket → cookie-sticky across 3 coordinators
+    # WebSocket -> cookie-sticky across 3 coordinators
     reverse_proxy /ws coordinator-1:9100 coordinator-2:9100 coordinator-3:9100 {
         lb_policy cookie
         health_uri /health
@@ -19,13 +19,37 @@ demo.varpulis-cep.com {
     @grafana path /grafana /grafana/*
     reverse_proxy @grafana grafana:3000
 
-    # Auth endpoints → coordinators (for login/signup)
+    # Auth endpoints -> coordinators (for login/signup)
     reverse_proxy /auth/* coordinator-1:9100 coordinator-2:9100 coordinator-3:9100 {
         lb_policy cookie
         health_uri /health
         health_interval 10s
     }
 
-    # Everything else → web-ui (SPA with all routes: landing, auth, control plane)
+    # Everything else -> web-ui (SPA with all routes: landing, auth, control plane)
+    reverse_proxy /* web-ui:8080
+}
+
+# Blog subdomain -> redirect root to /blog, proxy everything else to web-ui
+blog.varpulis-cep.com {
+    tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin-key.pem
+    @root path /
+    redir @root /blog permanent
+    reverse_proxy /* web-ui:8080
+}
+
+# Docs subdomain -> redirect root to /docs, proxy everything else to web-ui
+docs.varpulis-cep.com {
+    tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin-key.pem
+    @root path /
+    redir @root /docs permanent
+    reverse_proxy /* web-ui:8080
+}
+
+# Register subdomain -> redirect root to /signup, proxy everything else to web-ui
+register.varpulis-cep.com {
+    tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin-key.pem
+    @root path /
+    redir @root /signup permanent
     reverse_proxy /* web-ui:8080
 }
