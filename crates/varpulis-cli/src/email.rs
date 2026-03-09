@@ -104,6 +104,24 @@ impl EmailSender {
         self.transport.send(email).await?;
         Ok(())
     }
+
+    /// Send a campaign/announcement email.
+    pub async fn send_campaign_email(
+        &self,
+        to_email: &str,
+        subject: &str,
+        body: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let email = Message::builder()
+            .from(self.from.parse()?)
+            .to(to_email.parse()?)
+            .subject(subject)
+            .header(ContentType::TEXT_PLAIN)
+            .body(body.to_string())?;
+
+        self.transport.send(email).await?;
+        Ok(())
+    }
 }
 
 /// Generate a 64-character random alphanumeric verification token.

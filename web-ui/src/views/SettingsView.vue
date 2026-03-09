@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useWebSocketStore } from '@/stores/websocket'
 import { useOrgStore } from '@/stores/org'
+import { useAuthStore } from '@/stores/auth'
 import { useTheme } from 'vuetify'
 import { setApiKey, clearApiKey, getApiKey } from '@/api'
 import api from '@/api'
@@ -10,9 +11,48 @@ import api from '@/api'
 const settingsStore = useSettingsStore()
 const wsStore = useWebSocketStore()
 const orgStore = useOrgStore()
+const authStore = useAuthStore()
 const theme = useTheme()
 
 const hasJwtAuth = computed(() => !!localStorage.getItem('varpulis_token'))
+
+// ---- Password Change ----
+const passwordForm = ref({ current: '', newPass: '', confirm: '' })
+const passwordLoading = ref(false)
+const passwordError = ref<string | null>(null)
+const passwordSuccess = ref<string | null>(null)
+
+async function changePassword() {
+  passwordError.value = null
+  passwordSuccess.value = null
+
+  if (!passwordForm.value.current || !passwordForm.value.newPass) {
+    passwordError.value = 'Please fill in all fields'
+    return
+  }
+  if (passwordForm.value.newPass.length < 8) {
+    passwordError.value = 'New password must be at least 8 characters'
+    return
+  }
+  if (passwordForm.value.newPass !== passwordForm.value.confirm) {
+    passwordError.value = 'Passwords do not match'
+    return
+  }
+
+  passwordLoading.value = true
+  try {
+    await api.post('/auth/change-password', {
+      current_password: passwordForm.value.current,
+      new_password: passwordForm.value.newPass,
+    })
+    passwordSuccess.value = 'Password updated successfully'
+    passwordForm.value = { current: '', newPass: '', confirm: '' }
+  } catch (e: any) {
+    passwordError.value = e.response?.data?.error || e.message || 'Failed to change password'
+  } finally {
+    passwordLoading.value = false
+  }
+}
 
 // ---- API Key Management ----
 interface OrgApiKey {
@@ -483,6 +523,55 @@ onMounted(() => {
               thumb-label
               class="mt-4"
             />
+          </v-card-text>
+        </v-card>
+
+        <!-- Account / Password -->
+        <v-card v-if="authStore.isAuthenticated" class="mb-4">
+          <v-card-title>
+            <v-icon class="mr-2">mdi-account-lock</v-icon>
+            Change Password
+          </v-card-title>
+          <v-card-text>
+            <v-text-field
+              v-model="passwordForm.current"
+              label="Current Password"
+              type="password"
+              variant="outlined"
+              density="compact"
+              class="mb-2"
+            />
+            <v-text-field
+              v-model="passwordForm.newPass"
+              label="New Password"
+              type="password"
+              variant="outlined"
+              density="compact"
+              class="mb-2"
+              hint="Minimum 8 characters"
+            />
+            <v-text-field
+              v-model="passwordForm.confirm"
+              label="Confirm New Password"
+              type="password"
+              variant="outlined"
+              density="compact"
+              class="mb-2"
+            />
+            <v-alert v-if="passwordError" type="error" variant="tonal" density="compact" class="mb-2">
+              {{ passwordError }}
+            </v-alert>
+            <v-alert v-if="passwordSuccess" type="success" variant="tonal" density="compact" class="mb-2">
+              {{ passwordSuccess }}
+            </v-alert>
+            <v-btn
+              color="primary"
+              :loading="passwordLoading"
+              prepend-icon="mdi-lock-reset"
+              @click="changePassword"
+            >
+              Update Password
+            </v-btn>
           </v-card-text>
         </v-card>
 

@@ -204,6 +204,131 @@
       </v-col>
     </v-row>
 
+    <!-- Registered Users Table -->
+    <v-row class="mt-4">
+      <v-col cols="12">
+        <v-card>
+          <v-card-title class="d-flex align-center">
+            Registered Users
+            <v-chip class="ml-2" size="small" color="primary" variant="tonal">{{ users.length }}</v-chip>
+            <v-spacer />
+            <v-btn
+              color="secondary"
+              variant="flat"
+              prepend-icon="mdi-email-outline"
+              class="mr-4"
+              :disabled="selectedUsers.length === 0"
+              @click="campaignDialogOpen = true"
+            >
+              Send Campaign ({{ selectedUsers.length }})
+            </v-btn>
+            <v-text-field
+              v-model="userSearch"
+              density="compact"
+              variant="outlined"
+              label="Search users"
+              prepend-inner-icon="mdi-magnify"
+              hide-details
+              style="max-width: 300px"
+            />
+          </v-card-title>
+          <v-data-table
+            v-model="selectedUsers"
+            :headers="userHeaders"
+            :items="users"
+            :search="userSearch"
+            :loading="usersLoading"
+            item-value="id"
+            show-select
+            density="comfortable"
+          >
+            <template #item.role="{ item }">
+              <v-chip
+                :color="item.role === 'admin' ? 'error' : item.role === 'operator' ? 'primary' : 'default'"
+                size="small"
+                variant="tonal"
+              >
+                {{ item.role }}
+              </v-chip>
+            </template>
+
+            <template #item.email_verified="{ item }">
+              <v-icon :color="item.email_verified ? 'success' : 'grey'" size="small">
+                {{ item.email_verified ? 'mdi-check-circle' : 'mdi-close-circle' }}
+              </v-icon>
+            </template>
+
+            <template #item.disabled="{ item }">
+              <v-chip v-if="item.disabled" color="error" size="small">Disabled</v-chip>
+              <v-chip v-else color="success" size="small" variant="tonal">Active</v-chip>
+            </template>
+
+            <template #item.created_at="{ item }">
+              {{ formatDate(item.created_at) }}
+            </template>
+
+            <template #item.actions="{ item }">
+              <v-menu>
+                <template #activator="{ props }">
+                  <v-btn size="small" variant="text" icon="mdi-dots-vertical" v-bind="props" />
+                </template>
+                <v-list density="compact">
+                  <v-list-item @click="toggleUserRole(item)">
+                    <v-list-item-title>{{ item.role === 'admin' ? 'Demote to Operator' : 'Promote to Admin' }}</v-list-item-title>
+                  </v-list-item>
+                  <v-list-item @click="toggleUserDisabled(item)">
+                    <v-list-item-title :class="item.disabled ? '' : 'text-error'">{{ item.disabled ? 'Enable' : 'Disable' }}</v-list-item-title>
+                  </v-list-item>
+                </v-list>
+              </v-menu>
+            </template>
+          </v-data-table>
+        </v-card>
+      </v-col>
+    </v-row>
+
+    <!-- Campaign Dialog -->
+    <v-dialog v-model="campaignDialogOpen" max-width="600">
+      <v-card>
+        <v-card-title>Send Campaign Email</v-card-title>
+        <v-card-text>
+          <v-alert type="info" variant="tonal" density="compact" class="mb-4">
+            Sending to {{ selectedUsers.length }} selected user(s)
+          </v-alert>
+          <v-text-field
+            v-model="campaignSubject"
+            label="Subject"
+            variant="outlined"
+            class="mb-2"
+          />
+          <v-textarea
+            v-model="campaignBody"
+            label="Message body"
+            variant="outlined"
+            rows="8"
+          />
+          <v-alert v-if="campaignError" type="error" variant="tonal" density="compact" class="mt-2">
+            {{ campaignError }}
+          </v-alert>
+          <v-alert v-if="campaignSuccess" type="success" variant="tonal" density="compact" class="mt-2">
+            {{ campaignSuccess }}
+          </v-alert>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn @click="campaignDialogOpen = false">Cancel</v-btn>
+          <v-btn
+            color="primary"
+            variant="flat"
+            :loading="campaignLoading"
+            @click="sendCampaign"
+          >
+            Send
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- Deploy Global Pipeline Dialog -->
     <v-dialog v-model="globalDeployOpen" max-width="600">
       <v-card>
@@ -493,9 +618,11 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useAdminStore, type Tenant, type GlobalPipeline } from '@/stores/admin'
+import axios from 'axios'
 
 const adminStore = useAdminStore()
 const search = ref('')
+const userSearch = ref('')
 const detailOpen = ref(false)
 const tierDialogOpen = ref(false)
 const extendDialogOpen = ref(false)
@@ -699,9 +826,98 @@ async function confirmGlobalUndeploy(item: GlobalPipeline) {
   }
 }
 
+// --- Users ---
+interface UserRow {
+  id: string
+  username: string
+  display_name: string
+  email: string
+  role: string
+  disabled: boolean
+  email_verified: boolean
+  created_at: string
+}
+
+const users = ref<UserRow[]>([])
+const usersLoading = ref(false)
+const selectedUsers = ref<string[]>([])
+
+const userHeaders = [
+  { title: 'Username', key: 'username' },
+  { title: 'Email', key: 'email' },
+  { title: 'Role', key: 'role' },
+  { title: 'Verified', key: 'email_verified', sortable: true },
+  { title: 'Status', key: 'disabled' },
+  { title: 'Registered', key: 'created_at' },
+  { title: 'Actions', key: 'actions', sortable: false },
+]
+
+async function fetchUsers() {
+  usersLoading.value = true
+  try {
+    const res = await axios.get('/auth/users', { withCredentials: true })
+    users.value = res.data.users || []
+  } catch {
+    users.value = []
+  } finally {
+    usersLoading.value = false
+  }
+}
+
+async function toggleUserRole(item: UserRow) {
+  const newRole = item.role === 'admin' ? 'operator' : 'admin'
+  try {
+    await axios.put(`/api/v1/admin/users/${item.id}`, { role: newRole }, { withCredentials: true })
+    item.role = newRole
+  } catch (e) {
+    console.error('Failed to update role', e)
+  }
+}
+
+async function toggleUserDisabled(item: UserRow) {
+  try {
+    await axios.put(`/api/v1/admin/users/${item.id}`, { disabled: !item.disabled }, { withCredentials: true })
+    item.disabled = !item.disabled
+  } catch (e) {
+    console.error('Failed to toggle user', e)
+  }
+}
+
+// --- Campaign ---
+const campaignDialogOpen = ref(false)
+const campaignSubject = ref('')
+const campaignBody = ref('')
+const campaignLoading = ref(false)
+const campaignError = ref<string | null>(null)
+const campaignSuccess = ref<string | null>(null)
+
+async function sendCampaign() {
+  campaignError.value = null
+  campaignSuccess.value = null
+  campaignLoading.value = true
+  try {
+    const emails = users.value
+      .filter(u => selectedUsers.value.includes(u.id) && u.email)
+      .map(u => u.email)
+    const res = await axios.post('/api/v1/admin/campaign', {
+      emails,
+      subject: campaignSubject.value,
+      body: campaignBody.value,
+    }, { withCredentials: true })
+    campaignSuccess.value = res.data.message || `Sent to ${emails.length} recipients`
+    selectedUsers.value = []
+  } catch (e: unknown) {
+    const axiosErr = e as { response?: { data?: { error?: string } } }
+    campaignError.value = axiosErr.response?.data?.error || 'Failed to send campaign'
+  } finally {
+    campaignLoading.value = false
+  }
+}
+
 onMounted(() => {
   adminStore.fetchTenants()
   adminStore.fetchUsageSummary()
   adminStore.fetchGlobalPipelines()
+  fetchUsers()
 })
 </script>

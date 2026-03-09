@@ -110,7 +110,7 @@ Click a group to see detailed information:
 
 ### Deploying a New Group
 
-![Create Pipeline Group](screenshots/pipelines-create-group.png)
+![Create Pipeline Group](screenshots/pipelines-deploy.png)
 
 Click "Quick Deploy" to open the deployment dialog:
 
