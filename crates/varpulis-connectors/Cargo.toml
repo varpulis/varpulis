@@ -7,7 +7,7 @@ repository.workspace = true
 description = "Connector implementations for Varpulis (MQTT, Kafka, NATS, HTTP, etc.)"
 
 [dependencies]
-varpulis-core = { version = "0.6.0", path = "../varpulis-core" }
+varpulis-core = { version = "0.6.1", path = "../varpulis-core" }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
