@@ -1721,12 +1721,23 @@ async fn handle_register(
                 }
             }
             None => {
-                let frontend_url = &state.config.frontend_url;
-                tracing::info!(
-                    "Verification URL (SMTP not configured): {}/verify-email?token={}",
-                    frontend_url,
-                    token
-                );
+                // No SMTP configured — auto-verify the account
+                if let Some(pool) = &state.db_pool {
+                    match varpulis_db::repo::get_user_by_verification_token(pool, &token).await {
+                        Ok(Some(u)) => {
+                            if let Err(e) = varpulis_db::repo::verify_user_email(pool, u.id).await {
+                                tracing::warn!("Auto-verify failed: {}", e);
+                            } else {
+                                tracing::info!(
+                                    "Auto-verified user '{}' (SMTP not configured)",
+                                    body.username
+                                );
+                            }
+                        }
+                        Ok(None) => tracing::warn!("Auto-verify: token not found"),
+                        Err(e) => tracing::warn!("Auto-verify lookup failed: {}", e),
+                    }
+                }
             }
         }
 
@@ -1744,11 +1755,17 @@ async fn handle_register(
                 .await;
         }
 
+        let msg = if state.email_sender.is_some() {
+            "Check your email to verify your account"
+        } else {
+            "Account created successfully"
+        };
+
         (
             StatusCode::CREATED,
             Json(serde_json::json!({
                 "ok": true,
-                "message": "Check your email to verify your account",
+                "message": msg,
             })),
         )
             .into_response()
