@@ -26,10 +26,6 @@ demo.varpulis-cep.com {
         health_interval 10s
     }
 
-    # Control Plane (authenticated SPA routes) → web-ui
-    @controlplane path /dashboard /cluster /connectors /pipelines /editor /monitoring /metrics /models /settings /billing /usage /admin /login /signup /verify-email
-    reverse_proxy @controlplane web-ui:8080
-
-    # Everything else → public site (landing, playground, demos)
-    reverse_proxy /* public-site:8080
+    # Everything else → web-ui (SPA with all routes: landing, auth, control plane)
+    reverse_proxy /* web-ui:8080
 }
