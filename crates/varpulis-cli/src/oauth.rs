@@ -1525,6 +1525,151 @@ async fn extract_and_verify_claims(
 }
 
 // ---------------------------------------------------------------------------
+// Password change
+// ---------------------------------------------------------------------------
+
+/// Change password request body.
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct ChangePasswordRequest {
+    current_password: String,
+    new_password: String,
+}
+
+/// POST /auth/change-password — change password for the authenticated user.
+async fn handle_change_password(
+    State(state): State<Option<SharedOAuthState>>,
+    headers: HeaderMap,
+    Json(body): Json<ChangePasswordRequest>,
+) -> Response {
+    let state = match state {
+        Some(s) => s,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": "OAuth not configured"})),
+            )
+                .into_response();
+        }
+    };
+
+    let auth_header = headers.get("authorization").and_then(|v| v.to_str().ok());
+    let cookie_header = headers.get("cookie").and_then(|v| v.to_str().ok());
+
+    let claims = match extract_and_verify_claims(&state, auth_header, cookie_header).await {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+
+    #[cfg(feature = "saas")]
+    {
+        let pool = match &state.db_pool {
+            Some(p) => p,
+            None => {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(serde_json::json!({"error": "Database not configured"})),
+                )
+                    .into_response();
+            }
+        };
+
+        // Validate new password length
+        if body.new_password.len() < 8 {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "New password must be at least 8 characters"})),
+            )
+                .into_response();
+        }
+
+        // Look up user
+        let user_id = match claims.user_id.parse::<uuid::Uuid>() {
+            Ok(id) => id,
+            Err(_) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"error": "Invalid user ID"})),
+                )
+                    .into_response();
+            }
+        };
+
+        let db_user = match varpulis_db::repo::get_user_by_id(pool, user_id).await {
+            Ok(Some(u)) => u,
+            _ => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(serde_json::json!({"error": "User not found"})),
+                )
+                    .into_response();
+            }
+        };
+
+        // Verify current password
+        let password_hash = match &db_user.password_hash {
+            Some(h) => h.clone(),
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"error": "Account uses external authentication"})),
+                )
+                    .into_response();
+            }
+        };
+
+        match crate::users::verify_password(&body.current_password, &password_hash) {
+            Ok(true) => {}
+            _ => {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(serde_json::json!({"error": "Current password is incorrect"})),
+                )
+                    .into_response();
+            }
+        }
+
+        // Hash and update
+        let new_hash = match crate::users::hash_password(&body.new_password) {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::error!("Password hash failed: {}", e);
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": "Internal error"})),
+                )
+                    .into_response();
+            }
+        };
+
+        if let Err(e) = varpulis_db::repo::update_password_hash(pool, user_id, &new_hash).await {
+            tracing::error!("Failed to update password: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Failed to update password"})),
+            )
+                .into_response();
+        }
+
+        (
+            StatusCode::OK,
+            Json(serde_json::json!({"ok": true, "message": "Password changed successfully"})),
+        )
+            .into_response()
+    }
+
+    #[cfg(not(feature = "saas"))]
+    {
+        let _ = (&body, &claims);
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Password change requires saas feature"})),
+        )
+            .into_response()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Self-service registration
 // ---------------------------------------------------------------------------
 
@@ -1903,6 +2048,8 @@ pub fn oauth_routes(state: Option<SharedOAuthState>) -> Router {
         .route("/auth/register", post(handle_register))
         // GET /auth/verify?token=... (email verification)
         .route("/auth/verify", get(handle_verify_email))
+        // POST /auth/change-password
+        .route("/auth/change-password", post(handle_change_password))
         // POST /auth/renew
         .route("/auth/renew", post(handle_renew))
         // POST /auth/logout
