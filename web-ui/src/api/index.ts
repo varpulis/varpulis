@@ -90,8 +90,8 @@ api.interceptors.response.use(
           localStorage.removeItem('varpulis_token')
           localStorage.removeItem('varpulis_authenticated')
           delete axios.defaults.headers.common['Authorization']
-          const publicPaths = ['/login', '/signup', '/verify-email', '/landing', '/playground', '/pricing', '/scenarios']
-          const isPublicPage = publicPaths.some(p => window.location.pathname === p || window.location.pathname.startsWith('/scenarios/'))
+          const publicPaths = ['/login', '/signup', '/verify-email', '/landing', '/playground', '/pricing', '/scenarios', '/blog', '/docs', '/changelog']
+          const isPublicPage = publicPaths.some(p => window.location.pathname === p || window.location.pathname.startsWith(p + '/'))
           if (!isPublicPage) {
             window.location.href = '/login?redirect=' + encodeURIComponent(window.location.pathname)
           }
