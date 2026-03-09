@@ -321,6 +321,31 @@ impl TemplateBuilder {
     ) -> &mut Self {
         let type_idx = self.template.register_type(type_name);
 
+        // Check if a forward transition already exists for this (state, type).
+        // This happens when the Kleene type is the same as the next type in the
+        // sequence (e.g., `A -> all A`). In that case, the self-loop must take
+        // priority so events accumulate in the Kleene loop. The forward target's
+        // final status IS inherited by the Kleene state — each new Kleene event
+        // produces a result with the running trend count.
+        let key = (at_state, type_idx);
+        if let Some(existing) = self.template.transitions.get(&key) {
+            let existing_to = existing.to;
+            if existing_to != at_state {
+                // A forward transition exists to a different state — replace it
+                // with the Kleene self-loop and inherit final status.
+                self.template.transitions.remove(&key);
+                self.template
+                    .transitions_from
+                    .entry(at_state)
+                    .or_default()
+                    .retain(|t| *t != type_idx);
+
+                if self.template.is_final(query, existing_to) {
+                    self.template.add_final(query, at_state);
+                }
+            }
+        }
+
         // Add self-loop transition
         self.template.add_transition(at_state, at_state, type_idx);
         self.template

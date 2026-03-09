@@ -298,12 +298,39 @@ impl HamletAggregator {
             state.kleene_events = 0;
         }
 
-        // Note: Kleene event counting is done at graphlet level in
-        // process_closed_graphlet(), not per-event. Trend counting also
-        // uses the GRETA propagation algorithm at graphlet boundaries.
+        // For Kleene self-loops, update per-event counting (snapshot_value
+        // doubles for each Kleene event, reflecting 2^n - 1 sub-sequences).
+        // This is essential for same-type patterns (e.g., `A -> all A`) where
+        // graphlet boundaries never trigger process_closed_graphlet.
+        let is_kleene_self_loop = transition.is_kleene && transition.from == transition.to;
+        if is_kleene_self_loop && state.in_trend {
+            state.snapshot_value = state.snapshot_value.saturating_mul(2);
+            state.kleene_events += 1;
+            // Update running count: 2^n - 1 total sub-sequences
+            state.count = state.snapshot_value.saturating_sub(1);
+        }
 
-        // Check if we reached a final state
-        if self.template.is_final(query_id, transition.to) {
+        // Check if we reached a final state.
+        // Skip the final check when transitioning FROM the initial state — the
+        // pattern needs at least one Kleene event before producing results.
+        let just_started = transition.from == initial;
+        if self.template.is_final(query_id, transition.to) && !just_started {
+            // For Kleene self-loops that are also final (same-type patterns),
+            // emit running results without resetting the FSA
+            if is_kleene_self_loop && state.in_trend {
+                let trend_count = state.count.max(1);
+                let kleene_event_count = state.kleene_events;
+
+                let query = self.queries.iter().find(|q| q.id == query_id)?;
+                return Some(AggregationResult {
+                    query_id,
+                    aggregate: query.aggregate,
+                    trend_count,
+                    kleene_event_count,
+                    is_final: false,
+                });
+            }
+
             let trend_count;
             let kleene_event_count;
             if state.in_trend {
