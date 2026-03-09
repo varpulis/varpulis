@@ -112,6 +112,8 @@ function goToDemo(route: string) {
       <template #append>
         <v-btn variant="text" to="/scenarios">Demos</v-btn>
         <v-btn variant="text" to="/pricing">Pricing</v-btn>
+        <v-btn variant="text" to="/docs">Docs</v-btn>
+        <v-btn variant="text" to="/blog">Blog</v-btn>
         <v-btn variant="text" to="/playground">Playground</v-btn>
         <v-btn :icon="isDark ? 'mdi-weather-sunny' : 'mdi-weather-night'" variant="text" @click="toggleTheme" />
         <v-btn variant="outlined" class="ml-2" to="/login">Sign In</v-btn>
@@ -275,9 +277,9 @@ function goToDemo(route: string) {
           </v-col>
           <v-col cols="12" sm="4">
             <div class="text-subtitle-2 font-weight-bold mb-2">Resources</div>
-            <div class="text-body-2 text-medium-emphasis">Documentation</div>
-            <div class="text-body-2 text-medium-emphasis">API Reference</div>
-            <div class="text-body-2 text-medium-emphasis">VPL Language Guide</div>
+            <div><router-link to="/docs" class="text-body-2 text-medium-emphasis text-decoration-none">Documentation</router-link></div>
+            <div><router-link to="/blog" class="text-body-2 text-medium-emphasis text-decoration-none">Blog</router-link></div>
+            <div><router-link to="/changelog" class="text-body-2 text-medium-emphasis text-decoration-none">Changelog</router-link></div>
           </v-col>
           <v-col cols="12" sm="4" class="text-sm-right">
             <div class="text-body-2 text-medium-emphasis">&copy; {{ new Date().getFullYear() }} Varpulis</div>

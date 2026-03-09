@@ -39,7 +39,8 @@ services:
   # ─── Web UI (control plane — requires auth) ─────────────────
   web-ui:
     build:
-      context: ../../web-ui
+      context: ../../
+      dockerfile: web-ui/Dockerfile
       args:
         VITE_API_KEY: "${VARPULIS_API_KEY}"
     container_name: demo-web-ui

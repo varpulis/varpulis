@@ -21,7 +21,7 @@ const rail = ref(false)
 
 const isDark = computed(() => theme.global.current.value.dark)
 const isFullScreenPage = computed(() =>
-  ['login', 'landing', 'signup', 'verify-email', 'pricing', 'playground'].includes(route.name as string)
+  ['login', 'landing', 'signup', 'verify-email', 'pricing', 'playground', 'blog', 'blog-post', 'changelog', 'docs'].includes(route.name as string)
 )
 
 // Start health checks and validate auth on mount
