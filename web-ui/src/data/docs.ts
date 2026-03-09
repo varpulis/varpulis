@@ -62,7 +62,8 @@ export const docCategories: DocCategory[] = [
       { slug: 'guides/sase-patterns', title: 'SASE+ Pattern Matching', category: 'Guides', order: 1 },
       { slug: 'guides/contexts', title: 'Context-Based Execution', category: 'Guides', order: 2 },
       { slug: 'guides/performance-tuning', title: 'Performance Tuning', category: 'Guides', order: 3 },
-      { slug: 'guides/troubleshooting', title: 'Troubleshooting', category: 'Guides', order: 4 },
+      { slug: 'guides/connector-security', title: 'Connector Security', category: 'Guides', order: 4 },
+      { slug: 'guides/troubleshooting', title: 'Troubleshooting', category: 'Guides', order: 5 },
     ],
   },
   {
