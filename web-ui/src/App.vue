@@ -59,7 +59,7 @@ function toggleDrawer() {
 }
 
 const navItems = [
-  { title: 'Dashboard', icon: 'mdi-view-dashboard', to: '/' },
+  { title: 'Dashboard', icon: 'mdi-view-dashboard', to: '/dashboard' },
   { title: 'Cluster', icon: 'mdi-server-network', to: '/cluster' },
   { title: 'Connectors', icon: 'mdi-connection', to: '/connectors' },
   { title: 'Pipelines', icon: 'mdi-pipe', to: '/pipelines' },
@@ -75,7 +75,7 @@ const navItems = [
 
 const breadcrumbs = computed(() => {
   const path = route.path
-  if (path === '/' || path === '/login' || path === '/landing') return []
+  if (path === '/' || path === '/dashboard' || path === '/login' || path === '/landing') return []
   const items = [{ title: 'Home', to: '/' }]
   const segments = path.split('/').filter(Boolean)
   let current = ''
