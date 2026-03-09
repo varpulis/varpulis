@@ -6,6 +6,7 @@ use anyhow::Result;
 use rayon::prelude::*;
 use tokio::sync::{mpsc, RwLock};
 use tracing::info;
+use varpulis_connectors::credentials::CredentialsStore;
 use varpulis_parser::parse;
 use varpulis_runtime::engine::Engine;
 use varpulis_runtime::event::Event;
@@ -24,6 +25,7 @@ pub async fn run_simulation(
     quiet: bool,
     checkpoint_dir: Option<PathBuf>,
     checkpoint_interval: u64,
+    credentials_store: Option<Arc<CredentialsStore>>,
 ) -> Result<()> {
     // Determine number of workers
     let num_workers = workers.unwrap_or_else(|| {
@@ -82,9 +84,17 @@ pub async fn run_simulation(
     // In quiet mode, use benchmark engine to skip channel overhead entirely
     // PERF: Use new_shared() for zero-copy SharedEvent channel
     let mut engine = if quiet {
-        Engine::new_benchmark()
+        let mut b = Engine::builder();
+        if let Some(ref store) = credentials_store {
+            b = b.credentials(Arc::clone(store));
+        }
+        b.build()
     } else {
-        Engine::new_shared(output_tx.clone())
+        let mut b = Engine::builder().shared_output(output_tx.clone());
+        if let Some(ref store) = credentials_store {
+            b = b.credentials(Arc::clone(store));
+        }
+        b.build()
     };
     engine
         .load_with_source(&program_source, &program)
@@ -232,6 +242,7 @@ pub async fn run_simulation(
         let output_tx_arc = if quiet { None } else { Some(output_tx.clone()) };
         let total_counter = total_events_processed.clone();
         let output_counter = output_emitted_count.clone();
+        let creds_arc = credentials_store.clone();
 
         tokio::task::spawn_blocking(move || {
             partitions
@@ -241,10 +252,14 @@ pub async fn run_simulation(
                     if partition_events.is_empty() {
                         return;
                     }
-                    let mut worker_engine = match &output_tx_arc {
-                        Some(tx) => Engine::new_shared(tx.clone()),
-                        None => Engine::new_benchmark(),
+                    let mut b = match &output_tx_arc {
+                        Some(tx) => Engine::builder().shared_output(tx.clone()),
+                        None => Engine::builder(),
                     };
+                    if let Some(ref store) = creds_arc {
+                        b = b.credentials(Arc::clone(store));
+                    }
+                    let mut worker_engine = b.build();
                     if let Err(e) = worker_engine.load(&program_arc) {
                         eprintln!("Worker {worker_id}: Failed to load program: {e}");
                         return;
@@ -354,11 +369,15 @@ pub async fn run_simulation(
         use std::sync::Mutex;
         let worker_engines: Vec<Mutex<Engine>> = (0..num_workers)
             .map(|_| {
-                let mut w_engine = if quiet {
-                    Engine::new_benchmark()
+                let mut b = if quiet {
+                    Engine::builder()
                 } else {
-                    Engine::new_shared(output_tx.clone())
+                    Engine::builder().shared_output(output_tx.clone())
                 };
+                if let Some(ref store) = credentials_store {
+                    b = b.credentials(Arc::clone(store));
+                }
+                let mut w_engine = b.build();
                 if let Err(e) = w_engine.load(&program) {
                     eprintln!("Failed to load program: {e}");
                 }

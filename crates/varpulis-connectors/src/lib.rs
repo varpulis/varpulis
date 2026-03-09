@@ -15,6 +15,7 @@ pub mod circuit_breaker;
 pub mod component;
 mod console;
 pub mod converter;
+pub mod credentials;
 mod database;
 mod elasticsearch;
 pub mod helpers;

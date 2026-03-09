@@ -47,6 +47,55 @@ static KAFKA_PARAMS: &[ConfigParamInfo] = &[
         required: false,
         default_value: None,
     },
+    // Security
+    ConfigParamInfo {
+        name: "profile",
+        description: "Credentials profile name from external credentials file",
+        required: false,
+        default_value: None,
+    },
+    ConfigParamInfo {
+        name: "security_protocol",
+        description: "Protocol: PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL",
+        required: false,
+        default_value: Some("PLAINTEXT"),
+    },
+    ConfigParamInfo {
+        name: "sasl_mechanism",
+        description: "SASL mechanism: PLAIN, SCRAM-SHA-256, SCRAM-SHA-512, OAUTHBEARER",
+        required: false,
+        default_value: None,
+    },
+    ConfigParamInfo {
+        name: "sasl_username",
+        description: "SASL username (use credentials file for production)",
+        required: false,
+        default_value: None,
+    },
+    ConfigParamInfo {
+        name: "sasl_password",
+        description: "SASL password (use credentials file for production)",
+        required: false,
+        default_value: None,
+    },
+    ConfigParamInfo {
+        name: "ssl_ca_location",
+        description: "Path to CA certificate (PEM)",
+        required: false,
+        default_value: None,
+    },
+    ConfigParamInfo {
+        name: "ssl_certificate_location",
+        description: "Path to client certificate (PEM)",
+        required: false,
+        default_value: None,
+    },
+    ConfigParamInfo {
+        name: "ssl_key_location",
+        description: "Path to client private key (PEM)",
+        required: false,
+        default_value: None,
+    },
 ];
 
 static KAFKA_INFO: ConnectorComponentInfo = ConnectorComponentInfo {
@@ -289,17 +338,57 @@ mod kafka_impl {
     use super::*;
     use crate::helpers::json_to_event;
 
-    /// Apply user-provided properties to a ClientConfig, skipping keys
+    /// Translate VPL underscore-convention property names to rdkafka dot-notation.
+    ///
+    /// This mapping is shared across sources, sinks, and managed connectors so
+    /// that credential profiles work uniformly regardless of connector role.
+    static PARAM_MAPPING: &[(&str, &str)] = &[
+        ("batch_size", "batch.size"),
+        ("linger_ms", "linger.ms"),
+        ("compression_type", "compression.type"),
+        ("message_timeout_ms", "message.timeout.ms"),
+        // SASL/SCRAM authentication
+        ("security_protocol", "security.protocol"),
+        ("sasl_mechanism", "sasl.mechanism"),
+        ("sasl_username", "sasl.username"),
+        ("sasl_password", "sasl.password"),
+        // TLS / SSL
+        ("ssl_ca_location", "ssl.ca.location"),
+        ("ssl_certificate_location", "ssl.certificate.location"),
+        ("ssl_key_location", "ssl.key.location"),
+        ("ssl_key_password", "ssl.key.password"),
+        (
+            "ssl_endpoint_identification_algorithm",
+            "ssl.endpoint.identification.algorithm",
+        ),
+    ];
+
+    /// Apply user-provided properties to a ClientConfig, translating
+    /// VPL underscore names to rdkafka dot-notation and skipping keys
     /// that are already explicitly set by our code.
     fn apply_properties(client_config: &mut ClientConfig, props: &IndexMap<String, String>) {
+        // Build a quick lookup for underscore→dot translation
+        let mut translated = IndexMap::new();
         for (k, v) in props {
-            // Skip keys managed internally — users set these via dedicated config fields
+            // Skip keys managed internally
             match k.as_str() {
-                "bootstrap.servers" | "group.id" => continue,
-                _ => {
-                    client_config.set(k, v);
-                }
+                "bootstrap.servers" | "group.id" | "brokers" | "topic" | "group_id"
+                | "exactly_once" | "transactional_id" => continue,
+                _ => {}
             }
+
+            // Try underscore→dot translation
+            let rdkafka_key = PARAM_MAPPING
+                .iter()
+                .find(|(vpl, _)| *vpl == k.as_str())
+                .map(|(_, rdkafka)| *rdkafka)
+                .unwrap_or(k.as_str());
+
+            translated.insert(rdkafka_key.to_string(), v.clone());
+        }
+
+        for (k, v) in &translated {
+            client_config.set(k, v);
         }
     }
 

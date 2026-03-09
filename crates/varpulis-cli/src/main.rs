@@ -28,6 +28,10 @@ struct Cli {
     #[arg(long, global = true, env = "OTEL_EXPORTER_OTLP_ENDPOINT")]
     otel_endpoint: Option<String>,
 
+    /// Path to connector credentials file (YAML) for resolving security profiles
+    #[arg(long, global = true, env = "VARPULIS_CREDENTIALS")]
+    credentials: Option<PathBuf>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -499,6 +503,20 @@ enum Commands {
         #[arg(long, env = "VARPULIS_API_KEY")]
         api_key: Option<String>,
     },
+
+    /// Encrypt sensitive fields in a connector credentials file
+    EncryptCredentials {
+        /// Path to the credentials YAML file (will be overwritten with encrypted values)
+        #[arg(short, long)]
+        input: PathBuf,
+
+        /// Output path (default: overwrite input file)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+
+    /// Generate a random 256-bit master key for encrypting connector credentials
+    GenerateMasterKey,
 }
 
 #[tokio::main]
@@ -555,6 +573,15 @@ async fn main() -> Result<()> {
         tracing_subscriber::fmt().with_env_filter(env_filter).init();
     }
 
+    // Load credentials store if --credentials is provided
+    let credentials_store = if let Some(ref creds_path) = cli.credentials {
+        let store = varpulis_connectors::credentials::CredentialsStore::from_file(creds_path)
+            .map_err(|e| anyhow::anyhow!("Failed to load credentials file: {e}"))?;
+        Some(std::sync::Arc::new(store))
+    } else {
+        None
+    };
+
     match cli.command {
         Commands::Run { file, code } => {
             let (source, base_path) = if let Some(ref path) = file {
@@ -568,7 +595,7 @@ async fn main() -> Result<()> {
                 anyhow::bail!("Either --file or --code must be provided");
             };
 
-            commands::run::run_program(&source, base_path.as_ref()).await?;
+            commands::run::run_program(&source, base_path.as_ref(), credentials_store).await?;
         }
 
         Commands::Parse { file } => {
@@ -727,6 +754,7 @@ async fn main() -> Result<()> {
                 quiet,
                 checkpoint_dir,
                 checkpoint_interval,
+                credentials_store,
             )
             .await?;
         }
@@ -1094,6 +1122,73 @@ async fn main() -> Result<()> {
                 cors_origins,
             )
             .await?;
+        }
+
+        Commands::EncryptCredentials { input, output } => {
+            use varpulis_connectors::credentials;
+
+            let master_key = credentials::load_master_key()?
+                .ok_or_else(|| anyhow::anyhow!(
+                    "Master key required. Set VARPULIS_MASTER_KEY (hex) or VARPULIS_MASTER_KEY_FILE."
+                ))?;
+
+            let contents = std::fs::read_to_string(&input)?;
+            let mut creds: credentials::CredentialsFile = serde_yaml::from_str(&contents)
+                .map_err(|e| anyhow::anyhow!("Failed to parse {}: {}", input.display(), e))?;
+
+            #[allow(unused_mut)]
+            let mut encrypted_count = 0u32;
+            for (profile_name, profile) in &mut creds.profiles {
+                for (key, value) in &mut profile.properties {
+                    if credentials::is_sensitive_field(key) && !credentials::is_encrypted(value) {
+                        #[cfg(feature = "encryption")]
+                        {
+                            *value = credentials::encrypt_value(value, &master_key)?;
+                            encrypted_count += 1;
+                            println!("  Encrypted: {profile_name}.{key}");
+                        }
+                        #[cfg(not(feature = "encryption"))]
+                        {
+                            let _ = (master_key, &encrypted_count, &profile_name, &key);
+                            anyhow::bail!(
+                                "Encryption feature not enabled. Build with --features encryption"
+                            );
+                        }
+                    }
+                }
+            }
+
+            let output_path = output.as_ref().unwrap_or(&input);
+            let yaml = serde_yaml::to_string(&creds)?;
+            std::fs::write(output_path, &yaml)?;
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(output_path, std::fs::Permissions::from_mode(0o600))?;
+            }
+
+            if encrypted_count > 0 {
+                println!(
+                    "\nEncrypted {} sensitive field(s) in {}",
+                    encrypted_count,
+                    output_path.display()
+                );
+            } else {
+                println!("No unencrypted sensitive fields found.");
+            }
+        }
+
+        Commands::GenerateMasterKey => {
+            use std::fmt::Write;
+            let mut key = [0u8; 32];
+            getrandom::fill(&mut key)
+                .map_err(|e| anyhow::anyhow!("Failed to generate random key: {}", e))?;
+            let mut hex = String::with_capacity(64);
+            for byte in &key {
+                write!(hex, "{:02x}", byte)?;
+            }
+            println!("{}", hex);
         }
     }
 

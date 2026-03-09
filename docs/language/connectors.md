@@ -295,6 +295,52 @@ stream AlertsOut = ProcessedAlerts
 cargo build --release --features mqtt,kafka
 ```
 
+### Security
+
+Kafka supports multiple authentication and encryption methods. Security credentials should **not** be placed directly in VPL files. Instead, use an external credentials file with named security profiles.
+
+#### Security Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `security_protocol` | string | Protocol: `PLAINTEXT`, `SSL`, `SASL_SSL`, `SASL_PLAINTEXT` |
+| `sasl_mechanism` | string | SASL mechanism: `PLAIN`, `SCRAM-SHA-256`, `SCRAM-SHA-512`, `OAUTHBEARER` |
+| `sasl_username` | string | SASL username |
+| `sasl_password` | string | SASL password (use credentials file, not inline VPL) |
+| `ssl_ca_location` | string | Path to CA certificate (PEM) |
+| `ssl_certificate_location` | string | Path to client certificate (PEM) |
+| `ssl_key_location` | string | Path to client private key (PEM) |
+
+These parameters are defined in a credentials profile, not in the VPL connector declaration.
+
+#### Profile Usage
+
+Define security credentials in `~/.varpulis/credentials.yaml`:
+
+```yaml
+profiles:
+  production:
+    connector_type: kafka
+    properties:
+      security_protocol: SASL_SSL
+      sasl_mechanism: SCRAM-SHA-512
+      sasl_username: varpulis-app
+      sasl_password: "ENC[AES256-GCM,base64...]"
+      ssl_ca_location: /etc/varpulis/certs/ca.pem
+```
+
+Then reference the profile in VPL:
+
+```varpulis
+connector Kafka = kafka (
+    brokers: "kafka-1:9093,kafka-2:9093",
+    group_id: "varpulis-prod",
+    profile: "production"
+)
+```
+
+> For full details on credentials file format, master key setup, encryption, mTLS, SCRAM walkthroughs, and security best practices, see the [Connector Security Guide](../guides/connector-security.md).
+
 ---
 
 ## NATS Connector
@@ -588,3 +634,4 @@ stream DebugOutput = SomeStream
 - [NATS Transport Architecture](../architecture/nats-transport.md) - NATS cluster transport layer
 - [NATS Connector Tutorial](../tutorials/nats-connector.md) - Step-by-step NATS setup
 - [Configuration Guide](../guides/configuration.md) - CLI and server configuration
+- [Connector Security Guide](../guides/connector-security.md) - Credentials, encryption, TLS, and authentication
