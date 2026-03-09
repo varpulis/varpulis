@@ -1836,6 +1836,145 @@ async fn handle_remove_kafka(
     (StatusCode::OK, Json(serde_json::json!({"deleted": true}))).into_response()
 }
 
+// ---------------------------------------------------------------------------
+// User management
+// ---------------------------------------------------------------------------
+
+/// PUT /api/v1/admin/users/:id — update user role/disabled status.
+async fn handle_update_user(
+    State(state): State<AdminState>,
+    headers: HeaderMap,
+    Path(user_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let auth = headers.get("authorization").and_then(|v| v.to_str().ok());
+    if let Err(status) = extract_admin_claims(auth, &state.oauth_state).await {
+        return status.into_response();
+    }
+
+    let pool = match require_pool(&state) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+
+    let user_uuid = match user_id.parse::<uuid::Uuid>() {
+        Ok(id) => id,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "Invalid user ID"})),
+            )
+                .into_response();
+        }
+    };
+
+    let role = body.get("role").and_then(|v| v.as_str());
+    let disabled = body.get("disabled").and_then(|v| v.as_bool());
+
+    match varpulis_db::repo::update_user(&pool, user_uuid, None, None, role, disabled).await {
+        Ok(Some(u)) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"ok": true, "user": {"id": u.id.to_string(), "role": u.role, "disabled": u.disabled}})),
+        )
+            .into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "User not found"})),
+        )
+            .into_response(),
+        Err(e) => {
+            tracing::error!("Failed to update user: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Internal error"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// POST /api/v1/admin/campaign — send email campaign to selected users.
+async fn handle_send_campaign(
+    State(state): State<AdminState>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let auth = headers.get("authorization").and_then(|v| v.to_str().ok());
+    if let Err(status) = extract_admin_claims(auth, &state.oauth_state).await {
+        return status.into_response();
+    }
+
+    let emails: Vec<String> = body
+        .get("emails")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let subject = body
+        .get("subject")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Varpulis Update");
+    let message_body = body.get("body").and_then(|v| v.as_str()).unwrap_or("");
+
+    if emails.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "No recipients"})),
+        )
+            .into_response();
+    }
+
+    // Check if SMTP is configured via OAuth state
+    let oauth = match &state.oauth_state {
+        Some(s) => s,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": "Email not configured (no SMTP)"})),
+            )
+                .into_response();
+        }
+    };
+
+    let sender = match &oauth.email_sender {
+        Some(s) => s,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": "SMTP not configured. Configure SMTP_HOST, SMTP_USERNAME, SMTP_PASSWORD to send campaigns."})),
+            )
+                .into_response();
+        }
+    };
+
+    let mut sent = 0usize;
+    let mut failed = 0usize;
+    for email in &emails {
+        let body_text = format!("{message_body}\n\n- The Varpulis Team");
+        match sender.send_campaign_email(email, subject, &body_text).await {
+            Ok(()) => sent += 1,
+            Err(e) => {
+                tracing::warn!("Campaign email to {} failed: {}", email, e);
+                failed += 1;
+            }
+        }
+    }
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "ok": true,
+            "message": format!("Sent {} emails ({} failed)", sent, failed),
+            "sent": sent,
+            "failed": failed,
+        })),
+    )
+        .into_response()
+}
+
 /// Helper: check if a k8s namespace exists.
 async fn check_namespace_exists(namespace: &str) -> bool {
     match tokio::process::Command::new("kubectl")
@@ -1898,6 +2037,8 @@ pub fn admin_routes(
             "/api/v1/admin/global-pipelines/{id}",
             put(handle_update_global_pipeline).delete(handle_undeploy_global_pipeline),
         )
+        .route("/api/v1/admin/users/{user_id}", put(handle_update_user))
+        .route("/api/v1/admin/campaign", post(handle_send_campaign))
         .route(
             "/api/v1/admin/tenants/{org_id}/namespace",
             post(handle_provision_namespace)
