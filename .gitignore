@@ -70,3 +70,8 @@ tree-sitter-varpulis/src/
 tree-sitter-varpulis/bindings/
 tree-sitter-varpulis/binding.gyp
 tree-sitter-varpulis/package-lock.json
+
+# Docs (VitePress)
+docs/.vitepress/dist/
+docs/.vitepress/cache/
+docs/node_modules/

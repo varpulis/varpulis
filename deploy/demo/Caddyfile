@@ -38,12 +38,10 @@ blog.varpulis-cep.com {
     reverse_proxy web-ui:8080
 }
 
-# Docs subdomain -> redirect root to /docs, proxy everything to web-ui
+# Docs subdomain -> VitePress static site
 docs.varpulis-cep.com {
     tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin-key.pem
-    @root path /
-    redir @root https://docs.varpulis-cep.com/docs temporary
-    reverse_proxy web-ui:8080
+    reverse_proxy docs:80
 }
 
 # Register subdomain -> redirect root to /signup, proxy everything to web-ui

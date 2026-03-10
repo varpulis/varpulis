@@ -184,7 +184,7 @@ impl IncrementalSum {
 
 ## Memory Optimization
 
-### Arc<Event> Sharing
+### `Arc<Event>` Sharing
 
 Events are wrapped in `Arc` for efficient sharing:
 
