@@ -334,7 +334,7 @@ The Varpulis Control Plane provides a graphical interface for configuring connec
 
 Open the **Connectors** page and click **Add Connector**. After filling in the basic connection parameters, expand the **Security** section to configure authentication:
 
-![Kafka SASL_SSL security form](../web-ui/docs/screenshots/connectors-kafka-security.png)
+![Kafka SASL_SSL security form](../images/guides/connectors-kafka-security.png)
 
 The form adapts to the selected security protocol:
 - **SASL_SSL**: Shows SASL mechanism, username/password, and SSL certificate path fields
@@ -348,7 +348,7 @@ Passwords are masked by default with a visibility toggle.
 
 Configured connectors display security badges in the connector list, making it easy to audit security posture at a glance:
 
-![Connector list with security badges](../web-ui/docs/screenshots/connectors-list-mixed.png)
+![Connector list with security badges](../images/guides/connectors-list-mixed.png)
 
 Badge types:
 - **SASL_SSL** / **SSL** — Transport security protocol
@@ -361,7 +361,7 @@ Badge types:
 
 When editing an existing connector, the security section auto-expands if the connector has security parameters. All values are preserved:
 
-![Edit connector with security settings](../web-ui/docs/screenshots/connectors-edit-security.png)
+![Edit connector with security settings](../images/guides/connectors-edit-security.png)
 
 > **Tip:** For production deployments, use a **Credentials Profile** instead of inline secrets. The profile name references an entry in your `credentials.yaml` file, keeping secrets out of the control plane database.
 

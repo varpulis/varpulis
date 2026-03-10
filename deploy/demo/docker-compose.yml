@@ -30,6 +30,8 @@ services:
         condition: service_healthy
       web-ui:
         condition: service_healthy
+      docs:
+        condition: service_healthy
       coordinator-1:
         condition: service_healthy
     restart: unless-stopped
@@ -55,6 +57,24 @@ services:
       timeout: 3s
       retries: 3
       start_period: 10s
+    restart: unless-stopped
+    networks:
+      - varpulis-demo
+
+  # ─── Documentation (VitePress static site) ────────────────
+  docs:
+    build:
+      context: ../../docs
+      dockerfile: Dockerfile
+    container_name: demo-docs
+    expose:
+      - "80"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
     restart: unless-stopped
     networks:
       - varpulis-demo
