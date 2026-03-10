@@ -27,7 +27,7 @@ jobs:
         run: cargo +nightly fuzz run fuzz_parser -- -max_total_time=1800 -timeout=30
       - name: Upload crash artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: parser-crashes
           path: crates/varpulis-parser/fuzz/artifacts/
@@ -52,7 +52,7 @@ jobs:
         run: cargo +nightly fuzz run fuzz_json_event -- -max_total_time=1800
       - name: Upload crash artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: json-event-crashes
           path: crates/varpulis-runtime/fuzz/artifacts/
@@ -77,7 +77,7 @@ jobs:
         run: cargo +nightly fuzz run fuzz_mqtt_message -- -max_total_time=1800
       - name: Upload crash artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mqtt-message-crashes
           path: crates/varpulis-runtime/fuzz/artifacts/
