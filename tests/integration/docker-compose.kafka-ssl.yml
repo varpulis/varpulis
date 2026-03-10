@@ -1,0 +1,67 @@
+## Kafka SASL_SSL (SCRAM-SHA-512) integration test infrastructure.
+## Requires: tests/integration/kafka-ssl/generate-certs.sh to be run first.
+services:
+  zookeeper-ssl:
+    image: confluentinc/cp-zookeeper:7.5.0
+    hostname: zookeeper-ssl
+    container_name: varpulis-zookeeper-ssl
+    ports:
+      - "2182:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka-ssl:
+    image: confluentinc/cp-kafka:7.5.0
+    hostname: kafka
+    container_name: varpulis-kafka-ssl
+    depends_on:
+      zookeeper-ssl:
+        condition: service_healthy
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./kafka-ssl/secrets:/etc/kafka/secrets:ro
+      - ./kafka-ssl/kafka_jaas.conf:/etc/kafka/kafka_jaas.conf:ro
+      - ./kafka-ssl/server.properties:/etc/kafka/server.properties:ro
+    command: >
+      bash -c "
+        echo 'Starting Kafka with SASL_SSL...' &&
+        /usr/bin/kafka-server-start /etc/kafka/server.properties
+      "
+    environment:
+      KAFKA_OPTS: >-
+        -Djava.security.auth.login.config=/etc/kafka/kafka_jaas.conf
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server kafka:29093 --list 2>/dev/null || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 30s
+
+  # Create the 'varpulis' SCRAM user and test topics after broker is up
+  kafka-ssl-setup:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      kafka-ssl:
+        condition: service_healthy
+    entrypoint: ['/bin/bash', '-c']
+    command:
+      - |
+        echo "=== Creating SCRAM users ===" &&
+        kafka-configs --bootstrap-server kafka:29093 --alter --add-config "SCRAM-SHA-512=[iterations=8192,password=varpulis-secret]" --entity-type users --entity-name varpulis &&
+        echo "=== Creating test topics ===" &&
+        kafka-topics --bootstrap-server kafka:29093 --create --if-not-exists --topic varpulis-ssl-input --partitions 1 --replication-factor 1 &&
+        kafka-topics --bootstrap-server kafka:29093 --create --if-not-exists --topic varpulis-ssl-output --partitions 1 --replication-factor 1 &&
+        echo "=== Verifying ===" &&
+        kafka-topics --bootstrap-server kafka:29093 --list &&
+        echo "=== Setup complete ==="
+
+networks:
+  default:
+    driver: bridge
