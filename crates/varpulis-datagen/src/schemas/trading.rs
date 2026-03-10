@@ -25,7 +25,7 @@ pub struct TradingSchema {
 
 impl TradingSchema {
     pub fn new(seed: Option<u64>) -> Self {
-        let mut rng = seed.map_or_else(StdRng::from_os_rng, StdRng::seed_from_u64);
+        let mut rng = seed.map_or_else(rand::make_rng, StdRng::seed_from_u64);
         let prices: HashMap<String, f64> = SYMBOLS
             .iter()
             .map(|s| (s.to_string(), 100.0 + rng.random_range(0.0..400.0)))

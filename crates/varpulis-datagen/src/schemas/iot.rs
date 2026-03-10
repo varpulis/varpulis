@@ -32,7 +32,7 @@ const ZONES: &[&str] = &["zone_a", "zone_b", "zone_c", "zone_d"];
 
 impl IotSchema {
     pub fn new(seed: Option<u64>) -> Self {
-        let mut rng = seed.map_or_else(StdRng::from_os_rng, StdRng::seed_from_u64);
+        let mut rng = seed.map_or_else(rand::make_rng, StdRng::seed_from_u64);
         let sensors: Vec<SensorState> = (0..8)
             .map(|i| SensorState {
                 id: format!("sensor_{:03}", i + 1),

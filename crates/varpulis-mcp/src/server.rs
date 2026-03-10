@@ -27,25 +27,21 @@ impl VarpulisMcpServer {
 #[tool_handler]
 impl ServerHandler for VarpulisMcpServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            instructions: Some(
-                "Varpulis CEP Engine MCP server. Provides tools for deploying, monitoring, \
-                 and debugging real-time stream processing pipelines written in VPL \
-                 (Varpulis Processing Language)."
-                    .into(),
-            ),
-            capabilities: ServerCapabilities::builder()
+        let mut info = ServerInfo::new(
+            ServerCapabilities::builder()
                 .enable_tools()
                 .enable_resources()
                 .enable_prompts()
                 .build(),
-            server_info: Implementation {
-                name: "varpulis-mcp".into(),
-                version: env!("CARGO_PKG_VERSION").into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        }
+        );
+        info.instructions = Some(
+            "Varpulis CEP Engine MCP server. Provides tools for deploying, monitoring, \
+             and debugging real-time stream processing pipelines written in VPL \
+             (Varpulis Processing Language)."
+                .into(),
+        );
+        info.server_info = Implementation::new("varpulis-mcp", env!("CARGO_PKG_VERSION"));
+        info
     }
 
     // ─── Resources ───────────────────────────────────────────────────

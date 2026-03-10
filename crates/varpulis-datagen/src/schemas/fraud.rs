@@ -57,7 +57,7 @@ enum AnomalyState {
 impl FraudSchema {
     pub fn new(seed: Option<u64>) -> Self {
         Self {
-            rng: seed.map_or_else(StdRng::from_os_rng, StdRng::seed_from_u64),
+            rng: seed.map_or_else(rand::make_rng, StdRng::seed_from_u64),
             event_count: 0,
             anomaly_sequence: None,
         }

@@ -11,21 +11,16 @@ use tokio::process::Command;
 
 /// Build a `CallToolRequestParams` helper.
 fn call_tool_params(name: &str, arguments: serde_json::Value) -> CallToolRequestParams {
-    CallToolRequestParams {
-        meta: None,
-        name: name.to_string().into(),
-        arguments: Some(arguments.as_object().unwrap().clone()),
-        task: None,
-    }
+    let mut params = CallToolRequestParams::new(name.to_string());
+    params.arguments = Some(arguments.as_object().unwrap().clone());
+    params
 }
 
 /// Build a `GetPromptRequestParams` helper.
 fn get_prompt_params(name: &str, arguments: serde_json::Value) -> GetPromptRequestParams {
-    GetPromptRequestParams {
-        meta: None,
-        name: name.into(),
-        arguments: Some(arguments.as_object().unwrap().clone()),
-    }
+    let mut params = GetPromptRequestParams::new(name);
+    params.arguments = Some(arguments.as_object().unwrap().clone());
+    params
 }
 
 /// Extract text from the first Content item in a CallToolResult.
@@ -204,10 +199,9 @@ async fn mcp_server_e2e() -> anyhow::Result<()> {
 
     // 8. read_resource — VPL reference (static, no coordinator)
     let result = client
-        .read_resource(ReadResourceRequestParams {
-            meta: None,
-            uri: "varpulis://docs/vpl-reference".into(),
-        })
+        .read_resource(ReadResourceRequestParams::new(
+            "varpulis://docs/vpl-reference",
+        ))
         .await?;
     let text = resource_text(&result);
     assert!(!text.is_empty(), "VPL reference should be non-empty");
@@ -224,10 +218,7 @@ async fn mcp_server_e2e() -> anyhow::Result<()> {
 
     // 9. read_resource — cluster status (no coordinator → error)
     let result = client
-        .read_resource(ReadResourceRequestParams {
-            meta: None,
-            uri: "varpulis://cluster/status".into(),
-        })
+        .read_resource(ReadResourceRequestParams::new("varpulis://cluster/status"))
         .await;
     assert!(
         result.is_err(),
