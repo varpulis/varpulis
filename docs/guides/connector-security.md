@@ -326,6 +326,47 @@ Varpulis enforces strict file permissions on security-sensitive files. The proce
 
 ---
 
+## Control Plane UI
+
+The Varpulis Control Plane provides a graphical interface for configuring connector security. Security fields are context-sensitive — SASL and SSL fields appear only when the selected security protocol requires them.
+
+### Creating a Secured Connector
+
+Open the **Connectors** page and click **Add Connector**. After filling in the basic connection parameters, expand the **Security** section to configure authentication:
+
+![Kafka SASL_SSL security form](../web-ui/docs/screenshots/connectors-kafka-security.png)
+
+The form adapts to the selected security protocol:
+- **SASL_SSL**: Shows SASL mechanism, username/password, and SSL certificate path fields
+- **SSL**: Shows only SSL certificate fields (CA, client cert, client key)
+- **SASL_PLAINTEXT**: Shows only SASL mechanism and credentials
+- **PLAINTEXT**: Hides all security-specific fields
+
+Passwords are masked by default with a visibility toggle.
+
+### Security Badges
+
+Configured connectors display security badges in the connector list, making it easy to audit security posture at a glance:
+
+![Connector list with security badges](../web-ui/docs/screenshots/connectors-list-mixed.png)
+
+Badge types:
+- **SASL_SSL** / **SSL** — Transport security protocol
+- **SCRAM-SHA-512** / **SCRAM-SHA-256** / **PLAIN** — SASL mechanism
+- **mTLS** — Client certificate configured (mutual TLS)
+- **Auth** — Username/password authentication (MQTT, NATS)
+- **Profile: name** — References a credentials profile
+
+### Editing Security Settings
+
+When editing an existing connector, the security section auto-expands if the connector has security parameters. All values are preserved:
+
+![Edit connector with security settings](../web-ui/docs/screenshots/connectors-edit-security.png)
+
+> **Tip:** For production deployments, use a **Credentials Profile** instead of inline secrets. The profile name references an entry in your `credentials.yaml` file, keeping secrets out of the control plane database.
+
+---
+
 ## See Also
 
 - [Connectors Reference](../language/connectors.md) -- Connector declaration syntax and parameters
