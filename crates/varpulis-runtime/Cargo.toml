@@ -39,7 +39,7 @@ hex = { workspace = true }
 core_affinity = "0.8"
 
 # ONNX Runtime — no stable 2.x exists (all versions are RC); pinned for reproducibility
-ort = { version = "=2.0.0-rc.11", features = ["load-dynamic"], optional = true }
+ort = { version = "=2.0.0-rc.12", features = ["load-dynamic"], optional = true }
 
 # State persistence
 rocksdb = { version = "0.24", optional = true }
