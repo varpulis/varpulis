@@ -51,7 +51,7 @@ hmac = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 argon2 = "0.5"
-getrandom = "0.3"
+getrandom = "0.4"
 varpulis-connectors = { version = "0.6.1", path = "../varpulis-connectors" }
 
 # OIDC/SSO (optional, behind "oidc" feature)
