@@ -47,7 +47,7 @@ jobs:
       - name: Build & push web-ui image
         uses: docker/build-push-action@v5
         with:
-          context: web-ui
+          context: .
           file: web-ui/Dockerfile
           push: true
           tags: |
