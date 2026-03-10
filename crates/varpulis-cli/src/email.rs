@@ -126,7 +126,7 @@ impl EmailSender {
 
 /// Generate a 64-character random alphanumeric verification token.
 pub fn generate_verification_token() -> String {
-    use rand::Rng;
+    use rand::RngExt;
     const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     let mut rng = rand::rng();
     (0..64)

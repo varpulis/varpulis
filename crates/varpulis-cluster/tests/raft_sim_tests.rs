@@ -22,7 +22,7 @@ use openraft::raft::{
     VoteRequest, VoteResponse,
 };
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use tokio::sync::{mpsc, oneshot, RwLock};
 use varpulis_cluster::raft::store::SharedCoordinatorState;
 use varpulis_cluster::raft::{
