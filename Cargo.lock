@@ -5926,9 +5926,9 @@ dependencies = [
 
 [[package]]
 name = "rmcp"
-version = "0.17.0"
+version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a0ce46f9101dc911f07e1468084c057839d15b08040d110820c5513312ef56a"
+checksum = "ee4950422f87cf98fffc36946ad672c3024750b3c301491599715b7d6497dfbc"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -5950,9 +5950,9 @@ dependencies = [
 
 [[package]]
 name = "rmcp-macros"
-version = "0.17.0"
+version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "abad6f5f46e220e3bda2fc90fd1ad64c1c2a2bd716d52c845eb5c9c64cda7542"
+checksum = "2f9a2cbdcc704fa56c3fe79c681bd8f739d77c68ede3a670faeb6df50f836874"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -7937,7 +7937,7 @@ dependencies = [
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
- "rand 0.9.2",
+ "rand 0.10.0",
  "rayon",
  "reqwest",
  "rustc-hash",
@@ -7981,7 +7981,7 @@ dependencies = [
  "opentelemetry",
  "pretty_assertions",
  "prometheus",
- "rand 0.9.2",
+ "rand 0.10.0",
  "reqwest",
  "rocksdb",
  "serde",
@@ -8057,7 +8057,7 @@ name = "varpulis-datagen"
 version = "0.6.1"
 dependencies = [
  "chrono",
- "rand 0.9.2",
+ "rand 0.10.0",
  "serde",
  "serde_json",
 ]
@@ -8189,7 +8189,7 @@ dependencies = [
  "ort",
  "prometheus",
  "proptest",
- "rand 0.9.2",
+ "rand 0.10.0",
  "rayon",
  "reqwest",
  "rmp-serde",

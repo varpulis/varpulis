@@ -2,7 +2,7 @@
 
 use chrono::Utc;
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::RngExt;
 use tokio::sync::mpsc;
 use tokio::time;
 
@@ -93,7 +93,7 @@ impl Simulator {
             sender,
             tick_count: 0,
             degradation_factor: 1.0,
-            rng: StdRng::from_os_rng(),
+            rng: rand::make_rng(),
         }
     }
 

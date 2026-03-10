@@ -57,9 +57,10 @@ pub async fn read_resource(
     client: &CoordinatorClient,
 ) -> Result<ReadResourceResult, String> {
     match uri {
-        VPL_REFERENCE_URI => Ok(ReadResourceResult {
-            contents: vec![ResourceContents::text(VPL_REFERENCE, VPL_REFERENCE_URI)],
-        }),
+        VPL_REFERENCE_URI => Ok(ReadResourceResult::new(vec![ResourceContents::text(
+            VPL_REFERENCE,
+            VPL_REFERENCE_URI,
+        )])),
         CLUSTER_STATUS_URI => read_cluster_status(client).await,
         CLUSTER_METRICS_URI => read_cluster_metrics(client).await,
         _ => Err(format!("Unknown resource URI: {uri}")),
@@ -82,9 +83,10 @@ async fn read_cluster_status(client: &CoordinatorClient) -> Result<ReadResourceR
     });
 
     let text = serde_json::to_string_pretty(&merged).unwrap_or_default();
-    Ok(ReadResourceResult {
-        contents: vec![ResourceContents::text(text, CLUSTER_STATUS_URI)],
-    })
+    Ok(ReadResourceResult::new(vec![ResourceContents::text(
+        text,
+        CLUSTER_STATUS_URI,
+    )]))
 }
 
 async fn read_cluster_metrics(client: &CoordinatorClient) -> Result<ReadResourceResult, String> {
@@ -100,7 +102,8 @@ async fn read_cluster_metrics(client: &CoordinatorClient) -> Result<ReadResource
     });
 
     let text = serde_json::to_string_pretty(&merged).unwrap_or_default();
-    Ok(ReadResourceResult {
-        contents: vec![ResourceContents::text(text, CLUSTER_METRICS_URI)],
-    })
+    Ok(ReadResourceResult::new(vec![ResourceContents::text(
+        text,
+        CLUSTER_METRICS_URI,
+    )]))
 }

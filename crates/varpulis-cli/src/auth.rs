@@ -235,7 +235,7 @@ pub fn constant_time_compare(a: &str, b: &str) -> bool {
 /// Uses the OS CSPRNG (via `rand::rng`) to produce a 32-character
 /// alphanumeric key with ~190 bits of entropy.
 pub fn generate_api_key() -> String {
-    use rand::Rng;
+    use rand::RngExt;
 
     let mut rng = rand::rng();
     let mut key = String::with_capacity(32);

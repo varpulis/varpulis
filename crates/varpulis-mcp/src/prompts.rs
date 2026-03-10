@@ -11,18 +11,12 @@ pub fn list_prompts() -> Vec<Prompt> {
                 "Investigate an alert or anomaly in the Varpulis cluster with step-by-step root cause analysis."
             ),
             Some(vec![
-                PromptArgument {
-                    name: "alert".into(),
-                    title: None,
-                    description: Some("Description of the alert or anomaly to investigate".into()),
-                    required: Some(true),
-                },
-                PromptArgument {
-                    name: "pipeline_group".into(),
-                    title: None,
-                    description: Some("Pipeline group name or ID (optional)".into()),
-                    required: Some(false),
-                },
+                PromptArgument::new("alert")
+                    .with_description("Description of the alert or anomaly to investigate")
+                    .with_required(true),
+                PromptArgument::new("pipeline_group")
+                    .with_description("Pipeline group name or ID (optional)")
+                    .with_required(false),
             ]),
         ),
         Prompt::new(
@@ -31,26 +25,17 @@ pub fn list_prompts() -> Vec<Prompt> {
                 "Generate a VPL pipeline for fraud detection based on event types and fields."
             ),
             Some(vec![
-                PromptArgument {
-                    name: "event_type".into(),
-                    title: None,
-                    description: Some("Name of the event type to monitor (e.g., Transaction)".into()),
-                    required: Some(true),
-                },
-                PromptArgument {
-                    name: "fields".into(),
-                    title: None,
-                    description: Some(
-                        "Comma-separated fields to use (e.g., user_id, amount, status)".into(),
-                    ),
-                    required: Some(true),
-                },
-                PromptArgument {
-                    name: "time_window".into(),
-                    title: None,
-                    description: Some("Time window for pattern detection (e.g., 10m, 1h). Default: 10m".into()),
-                    required: Some(false),
-                },
+                PromptArgument::new("event_type")
+                    .with_description("Name of the event type to monitor (e.g., Transaction)")
+                    .with_required(true),
+                PromptArgument::new("fields")
+                    .with_description(
+                        "Comma-separated fields to use (e.g., user_id, amount, status)",
+                    )
+                    .with_required(true),
+                PromptArgument::new("time_window")
+                    .with_description("Time window for pattern detection (e.g., 10m, 1h). Default: 10m")
+                    .with_required(false),
             ]),
         ),
         Prompt::new(
@@ -59,20 +44,14 @@ pub fn list_prompts() -> Vec<Prompt> {
                 "Analyze a deployed pipeline and suggest performance optimizations."
             ),
             Some(vec![
-                PromptArgument {
-                    name: "pipeline_group".into(),
-                    title: None,
-                    description: Some("Pipeline group name or ID to optimize".into()),
-                    required: Some(true),
-                },
-                PromptArgument {
-                    name: "goal".into(),
-                    title: None,
-                    description: Some(
-                        "Optimization goal: throughput, latency, or memory (optional)".into(),
-                    ),
-                    required: Some(false),
-                },
+                PromptArgument::new("pipeline_group")
+                    .with_description("Pipeline group name or ID to optimize")
+                    .with_required(true),
+                PromptArgument::new("goal")
+                    .with_description(
+                        "Optimization goal: throughput, latency, or memory (optional)",
+                    )
+                    .with_required(false),
             ]),
         ),
     ]
@@ -120,10 +99,11 @@ After gathering data, provide:
 - **Prevention** — How to avoid this in the future"#
     );
 
-    GetPromptResult {
-        description: Some("Step-by-step alert investigation workflow".into()),
-        messages: vec![PromptMessage::new_text(PromptMessageRole::User, content)],
-    }
+    GetPromptResult::new(vec![PromptMessage::new_text(
+        PromptMessageRole::User,
+        content,
+    )])
+    .with_description("Step-by-step alert investigation workflow")
 }
 
 fn build_create_fraud_detection(
@@ -183,10 +163,11 @@ Adapt the template based on the actual fields and their types. Use your knowledg
             .join("\n")
     );
 
-    GetPromptResult {
-        description: Some("VPL fraud detection pipeline generator".into()),
-        messages: vec![PromptMessage::new_text(PromptMessageRole::User, content)],
-    }
+    GetPromptResult::new(vec![PromptMessage::new_text(
+        PromptMessageRole::User,
+        content,
+    )])
+    .with_description("VPL fraud detection pipeline generator")
 }
 
 fn build_optimize_stream(args: &serde_json::Map<String, serde_json::Value>) -> GetPromptResult {
@@ -230,8 +211,9 @@ After analysis, provide:
 - **Validation** — Use `validate_vpl` to verify the optimized VPL"#
     );
 
-    GetPromptResult {
-        description: Some("Pipeline performance optimization guide".into()),
-        messages: vec![PromptMessage::new_text(PromptMessageRole::User, content)],
-    }
+    GetPromptResult::new(vec![PromptMessage::new_text(
+        PromptMessageRole::User,
+        content,
+    )])
+    .with_description("Pipeline performance optimization guide")
 }
