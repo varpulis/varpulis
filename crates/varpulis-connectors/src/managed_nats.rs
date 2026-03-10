@@ -92,6 +92,22 @@ mod nats_managed_impl {
             if let Some(token) = &self.config.token {
                 opts = opts.token(token.expose().to_string());
             }
+            // TLS
+            if self.config.use_tls {
+                opts = opts.require_tls(true);
+            }
+            if let Some(ca_path) = &self.config.ssl_ca_location {
+                opts = opts.add_root_certificates(std::path::PathBuf::from(ca_path));
+            }
+            if let (Some(cert_path), Some(key_path)) = (
+                &self.config.ssl_certificate_location,
+                &self.config.ssl_key_location,
+            ) {
+                opts = opts.add_client_certificate(
+                    std::path::PathBuf::from(cert_path),
+                    std::path::PathBuf::from(key_path),
+                );
+            }
 
             let client = async_nats::connect_with_options(&self.config.servers, opts)
                 .await
