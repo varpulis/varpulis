@@ -49,6 +49,49 @@ static MQTT_PARAMS: &[ConfigParamInfo] = &[
         required: false,
         default_value: Some("0"),
     },
+    // Security
+    ConfigParamInfo {
+        name: "profile",
+        description: "Credentials profile name from external credentials file",
+        required: false,
+        default_value: None,
+    },
+    ConfigParamInfo {
+        name: "use_tls",
+        description: "Enable TLS (true/false)",
+        required: false,
+        default_value: Some("false"),
+    },
+    ConfigParamInfo {
+        name: "ssl_ca_location",
+        description: "Path to CA certificate (PEM)",
+        required: false,
+        default_value: None,
+    },
+    ConfigParamInfo {
+        name: "ssl_certificate_location",
+        description: "Path to client certificate (PEM)",
+        required: false,
+        default_value: None,
+    },
+    ConfigParamInfo {
+        name: "ssl_key_location",
+        description: "Path to client private key (PEM)",
+        required: false,
+        default_value: None,
+    },
+    ConfigParamInfo {
+        name: "username",
+        description: "MQTT username",
+        required: false,
+        default_value: None,
+    },
+    ConfigParamInfo {
+        name: "password",
+        description: "MQTT password (use credentials file for production)",
+        required: false,
+        default_value: None,
+    },
 ];
 
 static MQTT_INFO: ConnectorComponentInfo = ConnectorComponentInfo {
@@ -88,6 +131,28 @@ impl ConnectorFactory for MqttFactory {
                 mqtt_config = mqtt_config.with_qos(q);
             }
         }
+        // Security properties
+        if let Some(username) = config.properties.get("username") {
+            if let Some(password) = config.properties.get("password") {
+                mqtt_config = mqtt_config.with_credentials(username, password);
+            }
+        }
+        if config
+            .properties
+            .get("use_tls")
+            .is_some_and(|v| v == "true")
+        {
+            mqtt_config = mqtt_config.with_tls(true);
+        }
+        if let Some(ca) = config.properties.get("ssl_ca_location") {
+            mqtt_config = mqtt_config.with_ca_cert(ca);
+        }
+        if let (Some(cert), Some(key)) = (
+            config.properties.get("ssl_certificate_location"),
+            config.properties.get("ssl_key_location"),
+        ) {
+            mqtt_config = mqtt_config.with_client_cert(cert, key);
+        }
         Ok(Box::new(super::managed_mqtt::ManagedMqttConnector::new(
             name,
             mqtt_config,
@@ -99,10 +164,34 @@ impl ConnectorFactory for MqttFactory {
         config: &ConnectorConfig,
     ) -> Result<Box<dyn SinkConnector>, ConnectorError> {
         let topic = config.topic.clone().unwrap_or_else(|| "events".to_string());
-        Ok(Box::new(MqttSink::new(
-            "mqtt",
-            MqttConfig::new(&config.url, &topic),
-        )))
+        let mut mqtt_config = MqttConfig::new(&config.url, &topic);
+        if let Some(port) = config.properties.get("port") {
+            if let Ok(p) = port.parse::<u16>() {
+                mqtt_config = mqtt_config.with_port(p);
+            }
+        }
+        if let Some(username) = config.properties.get("username") {
+            if let Some(password) = config.properties.get("password") {
+                mqtt_config = mqtt_config.with_credentials(username, password);
+            }
+        }
+        if config
+            .properties
+            .get("use_tls")
+            .is_some_and(|v| v == "true")
+        {
+            mqtt_config = mqtt_config.with_tls(true);
+        }
+        if let Some(ca) = config.properties.get("ssl_ca_location") {
+            mqtt_config = mqtt_config.with_ca_cert(ca);
+        }
+        if let (Some(cert), Some(key)) = (
+            config.properties.get("ssl_certificate_location"),
+            config.properties.get("ssl_key_location"),
+        ) {
+            mqtt_config = mqtt_config.with_client_cert(cert, key);
+        }
+        Ok(Box::new(MqttSink::new("mqtt", mqtt_config)))
     }
 
     #[cfg(feature = "mqtt")]
@@ -132,9 +221,31 @@ impl ConnectorFactory for MqttFactory {
             Some(ctx) => format!("{base_id}-{ctx}"),
             None => base_id,
         };
-        let mqtt_config = MqttConfig::new(&broker, &topic)
+        let mut mqtt_config = MqttConfig::new(&broker, &topic)
             .with_port(port)
             .with_client_id(&client_id);
+        // Security
+        if let Some(username) = config.properties.get("username") {
+            if let Some(password) = config.properties.get("password") {
+                mqtt_config = mqtt_config.with_credentials(username, password);
+            }
+        }
+        if config
+            .properties
+            .get("use_tls")
+            .is_some_and(|v| v == "true")
+        {
+            mqtt_config = mqtt_config.with_tls(true);
+        }
+        if let Some(ca) = config.properties.get("ssl_ca_location") {
+            mqtt_config = mqtt_config.with_ca_cert(ca);
+        }
+        if let (Some(cert), Some(key)) = (
+            config.properties.get("ssl_certificate_location"),
+            config.properties.get("ssl_key_location"),
+        ) {
+            mqtt_config = mqtt_config.with_client_cert(cert, key);
+        }
         let sink = MqttSink::new(name, mqtt_config);
         Ok(std::sync::Arc::new(crate::sink::SinkConnectorAdapter::new(
             name,
@@ -166,6 +277,14 @@ pub struct MqttConfig {
     pub password: Option<SecretString>,
     /// Quality of Service level (0, 1, or 2).
     pub qos: u8,
+    /// Enable TLS (MQTTS). Default: false.
+    pub use_tls: bool,
+    /// Path to CA certificate file (PEM format).
+    pub ssl_ca_location: Option<String>,
+    /// Path to client certificate file (PEM format) for mTLS.
+    pub ssl_certificate_location: Option<String>,
+    /// Path to client private key file (PEM format) for mTLS.
+    pub ssl_key_location: Option<String>,
 }
 
 impl MqttConfig {
@@ -179,6 +298,10 @@ impl MqttConfig {
             username: None,
             password: None,
             qos: 0,
+            use_tls: false,
+            ssl_ca_location: None,
+            ssl_certificate_location: None,
+            ssl_key_location: None,
         }
     }
 
@@ -206,6 +329,25 @@ impl MqttConfig {
         self.qos = qos.min(2);
         self
     }
+
+    /// Enable TLS for the MQTT connection.
+    pub const fn with_tls(mut self, use_tls: bool) -> Self {
+        self.use_tls = use_tls;
+        self
+    }
+
+    /// Set the path to the CA certificate (PEM).
+    pub fn with_ca_cert(mut self, path: &str) -> Self {
+        self.ssl_ca_location = Some(path.to_string());
+        self
+    }
+
+    /// Set client certificate and key paths for mTLS.
+    pub fn with_client_cert(mut self, cert: &str, key: &str) -> Self {
+        self.ssl_certificate_location = Some(cert.to_string());
+        self.ssl_key_location = Some(key.to_string());
+        self
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -229,6 +371,44 @@ mod mqtt_impl {
             1 => QoS::AtLeastOnce,
             _ => QoS::ExactlyOnce,
         }
+    }
+
+    /// Apply TLS configuration to MqttOptions if enabled in the config.
+    fn apply_tls(mqtt_opts: &mut MqttOptions, config: &MqttConfig) {
+        if !config.use_tls {
+            return;
+        }
+        // Read CA cert if provided, otherwise use empty (system certs not supported in Simple mode)
+        let ca = config
+            .ssl_ca_location
+            .as_ref()
+            .map_or_else(Vec::new, |path| {
+                std::fs::read(path).unwrap_or_else(|e| {
+                    warn!("Failed to read CA cert '{}': {}", path, e);
+                    Vec::new()
+                })
+            });
+
+        let client_auth = match (&config.ssl_certificate_location, &config.ssl_key_location) {
+            (Some(cert_path), Some(key_path)) => {
+                let cert = std::fs::read(cert_path).unwrap_or_else(|e| {
+                    warn!("Failed to read client cert '{}': {}", cert_path, e);
+                    Vec::new()
+                });
+                let key = std::fs::read(key_path).unwrap_or_else(|e| {
+                    warn!("Failed to read client key '{}': {}", key_path, e);
+                    Vec::new()
+                });
+                Some((cert, key))
+            }
+            _ => None,
+        };
+
+        mqtt_opts.set_transport(rumqttc::Transport::Tls(rumqttc::TlsConfiguration::Simple {
+            ca,
+            alpn: None,
+            client_auth,
+        }));
     }
 
     /// MQTT source connector with rumqttc
@@ -296,6 +476,8 @@ mod mqtt_impl {
             if let (Some(user), Some(pass)) = (&self.config.username, &self.config.password) {
                 mqtt_opts.set_credentials(user, pass.expose());
             }
+
+            apply_tls(&mut mqtt_opts, &self.config);
 
             let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 10_000);
 
@@ -443,6 +625,8 @@ mod mqtt_impl {
             if let (Some(user), Some(pass)) = (&self.config.username, &self.config.password) {
                 mqtt_opts.set_credentials(user, pass.expose());
             }
+
+            apply_tls(&mut mqtt_opts, &self.config);
 
             let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 10_000);
             self.client = Some(client);

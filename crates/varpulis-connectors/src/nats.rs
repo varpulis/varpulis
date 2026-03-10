@@ -11,12 +11,82 @@ use tracing::{info, warn};
 use varpulis_core::security::SecretString;
 use varpulis_core::Event;
 
-use super::component::{ConnectorComponentInfo, ConnectorFactory};
+use super::component::{ConfigParamInfo, ConnectorComponentInfo, ConnectorFactory};
 use super::types::{ConnectorConfig, ConnectorError, SinkConnector, SourceConnector};
 
 // ---------------------------------------------------------------------------
 // Declarative registration
 // ---------------------------------------------------------------------------
+
+static NATS_PARAMS: &[ConfigParamInfo] = &[
+    ConfigParamInfo {
+        name: "servers",
+        description: "NATS server URL(s), comma-separated",
+        required: true,
+        default_value: None,
+    },
+    ConfigParamInfo {
+        name: "subject",
+        description: "NATS subject to subscribe/publish",
+        required: true,
+        default_value: None,
+    },
+    ConfigParamInfo {
+        name: "queue_group",
+        description: "Queue group for load-balanced consumption",
+        required: false,
+        default_value: None,
+    },
+    // Security
+    ConfigParamInfo {
+        name: "profile",
+        description: "Credentials profile name from external credentials file",
+        required: false,
+        default_value: None,
+    },
+    ConfigParamInfo {
+        name: "username",
+        description: "NATS username",
+        required: false,
+        default_value: None,
+    },
+    ConfigParamInfo {
+        name: "password",
+        description: "NATS password (use credentials file for production)",
+        required: false,
+        default_value: None,
+    },
+    ConfigParamInfo {
+        name: "token",
+        description: "NATS auth token (use credentials file for production)",
+        required: false,
+        default_value: None,
+    },
+    ConfigParamInfo {
+        name: "use_tls",
+        description: "Require TLS (true/false)",
+        required: false,
+        default_value: Some("false"),
+    },
+    ConfigParamInfo {
+        name: "ssl_ca_location",
+        description: "Path to CA certificate (PEM)",
+        required: false,
+        default_value: None,
+    },
+    ConfigParamInfo {
+        name: "ssl_certificate_location",
+        description: "Path to client certificate (PEM)",
+        required: false,
+        default_value: None,
+    },
+    ConfigParamInfo {
+        name: "ssl_key_location",
+        description: "Path to client private key (PEM)",
+        required: false,
+        default_value: None,
+    },
+];
 
 static NATS_INFO: ConnectorComponentInfo = ConnectorComponentInfo {
     connector_type: "nats",
@@ -26,7 +96,7 @@ static NATS_INFO: ConnectorComponentInfo = ConnectorComponentInfo {
     supports_source: true,
     supports_sink: true,
     supports_managed: true,
-    config_params: &[],
+    config_params: NATS_PARAMS,
 };
 
 struct NatsFactory;
@@ -55,6 +125,31 @@ impl ConnectorFactory for NatsFactory {
         if let Some(queue_group) = config.properties.get("queue_group") {
             nats_config = nats_config.with_queue_group(queue_group);
         }
+        // Security properties
+        if let Some(username) = config.properties.get("username") {
+            if let Some(password) = config.properties.get("password") {
+                nats_config = nats_config.with_credentials(username, password);
+            }
+        }
+        if let Some(token) = config.properties.get("token") {
+            nats_config = nats_config.with_token(token);
+        }
+        if config
+            .properties
+            .get("use_tls")
+            .is_some_and(|v| v == "true")
+        {
+            nats_config = nats_config.with_tls(true);
+        }
+        if let Some(ca) = config.properties.get("ssl_ca_location") {
+            nats_config = nats_config.with_ca_cert(ca);
+        }
+        if let (Some(cert), Some(key)) = (
+            config.properties.get("ssl_certificate_location"),
+            config.properties.get("ssl_key_location"),
+        ) {
+            nats_config = nats_config.with_client_cert(cert, key);
+        }
         Ok(Box::new(super::managed_nats::ManagedNatsConnector::new(
             name,
             nats_config,
@@ -75,10 +170,33 @@ impl ConnectorFactory for NatsFactory {
         } else {
             config.url.clone()
         };
-        Ok(Box::new(NatsSink::new(
-            "nats",
-            NatsConfig::new(&servers, &subject),
-        )))
+        let mut nats_config = NatsConfig::new(&servers, &subject);
+        // Security properties
+        if let Some(username) = config.properties.get("username") {
+            if let Some(password) = config.properties.get("password") {
+                nats_config = nats_config.with_credentials(username, password);
+            }
+        }
+        if let Some(token) = config.properties.get("token") {
+            nats_config = nats_config.with_token(token);
+        }
+        if config
+            .properties
+            .get("use_tls")
+            .is_some_and(|v| v == "true")
+        {
+            nats_config = nats_config.with_tls(true);
+        }
+        if let Some(ca) = config.properties.get("ssl_ca_location") {
+            nats_config = nats_config.with_ca_cert(ca);
+        }
+        if let (Some(cert), Some(key)) = (
+            config.properties.get("ssl_certificate_location"),
+            config.properties.get("ssl_key_location"),
+        ) {
+            nats_config = nats_config.with_client_cert(cert, key);
+        }
+        Ok(Box::new(NatsSink::new("nats", nats_config)))
     }
 }
 
@@ -103,6 +221,14 @@ pub struct NatsConfig {
     pub password: Option<SecretString>,
     /// Authentication token (zeroized on drop).
     pub token: Option<SecretString>,
+    /// Require TLS for the connection. Default: false.
+    pub use_tls: bool,
+    /// Path to CA certificate file (PEM format).
+    pub ssl_ca_location: Option<String>,
+    /// Path to client certificate file (PEM format) for mTLS.
+    pub ssl_certificate_location: Option<String>,
+    /// Path to client private key file (PEM format) for mTLS.
+    pub ssl_key_location: Option<String>,
 }
 
 impl NatsConfig {
@@ -115,6 +241,10 @@ impl NatsConfig {
             username: None,
             password: None,
             token: None,
+            use_tls: false,
+            ssl_ca_location: None,
+            ssl_certificate_location: None,
+            ssl_key_location: None,
         }
     }
 
@@ -134,6 +264,25 @@ impl NatsConfig {
     /// Set an authentication token.
     pub fn with_token(mut self, token: &str) -> Self {
         self.token = Some(SecretString::new(token));
+        self
+    }
+
+    /// Require TLS for the NATS connection.
+    pub const fn with_tls(mut self, use_tls: bool) -> Self {
+        self.use_tls = use_tls;
+        self
+    }
+
+    /// Set the path to the CA certificate (PEM).
+    pub fn with_ca_cert(mut self, path: &str) -> Self {
+        self.ssl_ca_location = Some(path.to_string());
+        self
+    }
+
+    /// Set client certificate and key paths for mTLS.
+    pub fn with_client_cert(mut self, cert: &str, key: &str) -> Self {
+        self.ssl_certificate_location = Some(cert.to_string());
+        self.ssl_key_location = Some(key.to_string());
         self
     }
 }
@@ -356,6 +505,21 @@ mod nats_impl {
         }
         if let Some(token) = &config.token {
             opts = opts.token(token.expose().to_string());
+        }
+        // TLS
+        if config.use_tls {
+            opts = opts.require_tls(true);
+        }
+        if let Some(ca_path) = &config.ssl_ca_location {
+            opts = opts.add_root_certificates(std::path::PathBuf::from(ca_path));
+        }
+        if let (Some(cert_path), Some(key_path)) =
+            (&config.ssl_certificate_location, &config.ssl_key_location)
+        {
+            opts = opts.add_client_certificate(
+                std::path::PathBuf::from(cert_path),
+                std::path::PathBuf::from(key_path),
+            );
         }
         opts
     }

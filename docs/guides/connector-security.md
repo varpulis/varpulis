@@ -58,6 +58,18 @@ profiles:
     properties:
       username: sensor-gateway
       password: "ENC[AES256-GCM,base64...]"
+      use_tls: "true"
+      ssl_ca_location: /etc/varpulis/certs/ca.pem
+
+  nats-tls:
+    connector_type: nats
+    properties:
+      username: nats-app
+      password: "ENC[AES256-GCM,base64...]"
+      use_tls: "true"
+      ssl_ca_location: /etc/varpulis/certs/ca.pem
+      ssl_certificate_location: /etc/varpulis/certs/client.pem
+      ssl_key_location: /etc/varpulis/certs/client-key.pem
 ```
 
 Each profile has:
@@ -284,6 +296,92 @@ With mTLS, the Kafka broker authenticates the client by verifying the client cer
 
 ---
 
+## MQTT TLS Example
+
+MQTT supports TLS encryption and optional mTLS via the `use_tls` parameter and certificate paths.
+
+### Credentials File
+
+```yaml
+version: 1
+
+profiles:
+  mqtt-secure:
+    connector_type: mqtt
+    properties:
+      username: sensor-gateway
+      password: "s3cureP@ss"
+      use_tls: "true"
+      ssl_ca_location: /etc/varpulis/certs/ca.pem
+```
+
+For mTLS (client certificate authentication):
+
+```yaml
+  mqtt-mtls:
+    connector_type: mqtt
+    properties:
+      use_tls: "true"
+      ssl_ca_location: /etc/varpulis/certs/ca.pem
+      ssl_certificate_location: /etc/varpulis/certs/client.pem
+      ssl_key_location: /etc/varpulis/certs/client-key.pem
+```
+
+### VPL
+
+```vpl
+connector MQTT = mqtt (
+    host: "mqtt-broker.example.com",
+    port: "8883",
+    topic: "sensors/temperature",
+    profile: "mqtt-secure"
+)
+
+stream Sensors = SensorReading
+    .from(MQTT, topic: "sensors/temperature")
+```
+
+Port `8883` is the standard MQTT-over-TLS port. The `use_tls: true` property activates TLS on the rumqttc client using the rustls backend.
+
+---
+
+## NATS TLS Example
+
+NATS supports TLS encryption and mTLS via the `use_tls` parameter. The async-nats client handles TLS negotiation automatically.
+
+### Credentials File
+
+```yaml
+version: 1
+
+profiles:
+  nats-secure:
+    connector_type: nats
+    properties:
+      username: nats-app
+      password: "s3cureP@ss"
+      use_tls: "true"
+      ssl_ca_location: /etc/varpulis/certs/ca.pem
+      ssl_certificate_location: /etc/varpulis/certs/client.pem
+      ssl_key_location: /etc/varpulis/certs/client-key.pem
+```
+
+### VPL
+
+```vpl
+connector NATS = nats (
+    servers: "tls://nats-1.example.com:4222,tls://nats-2.example.com:4222",
+    profile: "nats-secure"
+)
+
+stream Events = MyEvent
+    .from(NATS, subject: "events.>")
+```
+
+When `use_tls: true` is set, NATS will require TLS on the connection. If client certificates are provided, the NATS server can authenticate the client via mTLS.
+
+---
+
 ## File Permission Requirements
 
 Varpulis enforces strict file permissions on security-sensitive files. The process will exit with an error if permissions are too open.
@@ -300,6 +398,8 @@ Varpulis enforces strict file permissions on security-sensitive files. The proce
 
 ## Supported Authentication Methods
 
+### Kafka
+
 | Method | `security_protocol` | `sasl_mechanism` | Use Case |
 |--------|---------------------|------------------|----------|
 | Plaintext | `PLAINTEXT` | -- | Development only |
@@ -310,6 +410,25 @@ Varpulis enforces strict file permissions on security-sensitive files. The proce
 | SASL/OAUTHBEARER | `SASL_SSL` | `OAUTHBEARER` | Token-based (OAuth 2.0) |
 
 > **Never use SASL/PLAIN or SASL/SCRAM without TLS.** The `SASL_PLAINTEXT` protocol transmits credentials in cleartext and should not be used outside of isolated test networks.
+
+### MQTT
+
+| Method | Parameters | Use Case |
+|--------|-----------|----------|
+| Plaintext | -- | Development only |
+| Username/password | `username`, `password` | Basic auth (use TLS!) |
+| TLS encryption | `use_tls: true`, `ssl_ca_location` | Encrypt traffic |
+| mTLS | `use_tls: true`, `ssl_ca_location`, `ssl_certificate_location`, `ssl_key_location` | Certificate-based client auth |
+
+### NATS
+
+| Method | Parameters | Use Case |
+|--------|-----------|----------|
+| Plaintext | -- | Development only |
+| Username/password | `username`, `password` | Basic auth (use TLS!) |
+| Token auth | `token` | Token-based auth |
+| TLS encryption | `use_tls: true`, `ssl_ca_location` | Encrypt traffic |
+| mTLS | `use_tls: true`, `ssl_ca_location`, `ssl_certificate_location`, `ssl_key_location` | Certificate-based client auth |
 
 ---
 
@@ -336,11 +455,18 @@ Open the **Connectors** page and click **Add Connector**. After filling in the b
 
 ![Kafka SASL_SSL security form](../images/guides/connectors-kafka-security.png)
 
-The form adapts to the selected security protocol:
+The form adapts to the selected connector type and security settings:
+
+**Kafka:**
 - **SASL_SSL**: Shows SASL mechanism, username/password, and SSL certificate path fields
 - **SSL**: Shows only SSL certificate fields (CA, client cert, client key)
 - **SASL_PLAINTEXT**: Shows only SASL mechanism and credentials
 - **PLAINTEXT**: Hides all security-specific fields
+
+**MQTT / NATS:**
+- Shows username/password (and token for NATS) fields
+- **Enable TLS**: When set to `true`, shows CA certificate, client certificate, and client key path fields
+- All certificate fields are hidden when TLS is disabled
 
 Passwords are masked by default with a visibility toggle.
 
@@ -351,8 +477,9 @@ Configured connectors display security badges in the connector list, making it e
 ![Connector list with security badges](../images/guides/connectors-list-mixed.png)
 
 Badge types:
-- **SASL_SSL** / **SSL** — Transport security protocol
+- **SASL_SSL** / **SSL** — Kafka transport security protocol
 - **SCRAM-SHA-512** / **SCRAM-SHA-256** / **PLAIN** — SASL mechanism
+- **TLS** — TLS enabled (MQTT, NATS)
 - **mTLS** — Client certificate configured (mutual TLS)
 - **Auth** — Username/password authentication (MQTT, NATS)
 - **Profile: name** — References a credentials profile

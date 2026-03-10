@@ -71,6 +71,35 @@ const typeSecurityFields: Record<string, SecurityFieldDef[]> = {
   mqtt: [
     { key: 'username', label: 'Username', required: false, placeholder: 'mqtt-user' },
     { key: 'password', label: 'Password', required: false, placeholder: '', sensitive: true },
+    {
+      key: 'use_tls',
+      label: 'Enable TLS',
+      required: false,
+      placeholder: '',
+      type: 'select',
+      items: ['false', 'true'],
+    },
+    {
+      key: 'ssl_ca_location',
+      label: 'CA Certificate Path',
+      required: false,
+      placeholder: '/etc/varpulis/certs/ca.pem',
+      showWhen: (p) => p.use_tls === 'true',
+    },
+    {
+      key: 'ssl_certificate_location',
+      label: 'Client Certificate Path',
+      required: false,
+      placeholder: '/etc/varpulis/certs/client.pem',
+      showWhen: (p) => p.use_tls === 'true',
+    },
+    {
+      key: 'ssl_key_location',
+      label: 'Client Key Path',
+      required: false,
+      placeholder: '/etc/varpulis/certs/client.key',
+      showWhen: (p) => p.use_tls === 'true',
+    },
     { key: 'profile', label: 'Credentials Profile', required: false, placeholder: 'production-mqtt' },
   ],
   kafka: [
@@ -133,6 +162,35 @@ const typeSecurityFields: Record<string, SecurityFieldDef[]> = {
     { key: 'username', label: 'Username', required: false, placeholder: 'nats-user' },
     { key: 'password', label: 'Password', required: false, placeholder: '', sensitive: true },
     { key: 'token', label: 'Auth Token', required: false, placeholder: '', sensitive: true },
+    {
+      key: 'use_tls',
+      label: 'Require TLS',
+      required: false,
+      placeholder: '',
+      type: 'select',
+      items: ['false', 'true'],
+    },
+    {
+      key: 'ssl_ca_location',
+      label: 'CA Certificate Path',
+      required: false,
+      placeholder: '/etc/varpulis/certs/ca.pem',
+      showWhen: (p) => p.use_tls === 'true',
+    },
+    {
+      key: 'ssl_certificate_location',
+      label: 'Client Certificate Path',
+      required: false,
+      placeholder: '/etc/varpulis/certs/client.pem',
+      showWhen: (p) => p.use_tls === 'true',
+    },
+    {
+      key: 'ssl_key_location',
+      label: 'Client Key Path',
+      required: false,
+      placeholder: '/etc/varpulis/certs/client.key',
+      showWhen: (p) => p.use_tls === 'true',
+    },
     { key: 'profile', label: 'Credentials Profile', required: false, placeholder: 'production-nats' },
   ],
   http: [
@@ -219,6 +277,7 @@ function securityBadges(connector: ClusterConnector): SecurityBadge[] {
     badges.push({ icon: 'mdi-key-chain', color: 'purple', label: `Profile: ${p.profile}` })
   }
 
+  // Kafka security protocol badges
   const proto = p.security_protocol || ''
   if (proto.includes('SSL')) {
     badges.push({ icon: 'mdi-lock', color: 'green', label: proto })
@@ -228,6 +287,11 @@ function securityBadges(connector: ClusterConnector): SecurityBadge[] {
 
   if (p.sasl_mechanism) {
     badges.push({ icon: 'mdi-account-key', color: 'blue', label: p.sasl_mechanism })
+  }
+
+  // TLS badge for MQTT/NATS (use_tls field)
+  if (p.use_tls === 'true') {
+    badges.push({ icon: 'mdi-lock', color: 'green', label: 'TLS' })
   }
 
   if (p.ssl_certificate_location) {
@@ -361,6 +425,18 @@ watch(
       delete formParams.value.sasl_password
     }
     if (wasSSL && !isSSL) {
+      delete formParams.value.ssl_ca_location
+      delete formParams.value.ssl_certificate_location
+      delete formParams.value.ssl_key_location
+    }
+  },
+)
+
+// Clear TLS fields when use_tls is toggled off (MQTT/NATS)
+watch(
+  () => formParams.value.use_tls,
+  (newVal, oldVal) => {
+    if (oldVal === 'true' && newVal !== 'true') {
       delete formParams.value.ssl_ca_location
       delete formParams.value.ssl_certificate_location
       delete formParams.value.ssl_key_location

@@ -35,6 +35,41 @@ mod mqtt_managed_impl {
         }
     }
 
+    /// Apply TLS configuration to MqttOptions if enabled in the config.
+    fn apply_tls(mqtt_opts: &mut MqttOptions, config: &super::super::mqtt::MqttConfig) {
+        if !config.use_tls {
+            return;
+        }
+        let ca = config
+            .ssl_ca_location
+            .as_ref()
+            .map_or_else(Vec::new, |path| {
+                std::fs::read(path).unwrap_or_else(|e| {
+                    warn!("Failed to read CA cert '{}': {}", path, e);
+                    Vec::new()
+                })
+            });
+        let client_auth = match (&config.ssl_certificate_location, &config.ssl_key_location) {
+            (Some(cert_path), Some(key_path)) => {
+                let cert = std::fs::read(cert_path).unwrap_or_else(|e| {
+                    warn!("Failed to read client cert '{}': {}", cert_path, e);
+                    Vec::new()
+                });
+                let key = std::fs::read(key_path).unwrap_or_else(|e| {
+                    warn!("Failed to read client key '{}': {}", key_path, e);
+                    Vec::new()
+                });
+                Some((cert, key))
+            }
+            _ => None,
+        };
+        mqtt_opts.set_transport(rumqttc::Transport::Tls(rumqttc::TlsConfiguration::Simple {
+            ca,
+            alpn: None,
+            client_auth,
+        }));
+    }
+
     /// Managed MQTT connector with separate connections for source and sink.
     ///
     /// Uses two MQTT connections to avoid eventloop contention:
@@ -105,6 +140,8 @@ mod mqtt_managed_impl {
             if let (Some(user), Some(pass)) = (&self.config.username, &self.config.password) {
                 mqtt_opts.set_credentials(user, pass.expose());
             }
+
+            apply_tls(&mut mqtt_opts, &self.config);
 
             let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 10_000);
 
@@ -186,6 +223,8 @@ mod mqtt_managed_impl {
                 mqtt_opts.set_credentials(user, pass.expose());
             }
 
+            apply_tls(&mut mqtt_opts, &self.config);
+
             let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 10_000);
             self.dedicated_clients.push(client.clone());
             self.running.store(true, Ordering::SeqCst);
@@ -236,6 +275,8 @@ mod mqtt_managed_impl {
                 mqtt_opts.set_credentials(user, pass.expose());
             }
 
+            apply_tls(&mut mqtt_opts, &self.config);
+
             let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 10_000);
             self.dedicated_clients.push(client.clone());
 
@@ -283,6 +324,8 @@ mod mqtt_managed_impl {
             if let (Some(user), Some(pass)) = (&self.config.username, &self.config.password) {
                 mqtt_opts.set_credentials(user, pass.expose());
             }
+
+            apply_tls(&mut mqtt_opts, &self.config);
 
             let (client, mut eventloop) = AsyncClient::new(mqtt_opts, 10_000);
 

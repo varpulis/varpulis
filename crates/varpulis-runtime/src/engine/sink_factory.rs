@@ -377,9 +377,31 @@ pub fn create_sink_from_config(
                     Some(ctx) => format!("{base_id}-{ctx}"),
                     None => base_id,
                 };
-                let mqtt_config = connector::MqttConfig::new(&broker, &topic)
+                let mut mqtt_config = connector::MqttConfig::new(&broker, &topic)
                     .with_port(port)
                     .with_client_id(&client_id);
+                // Security
+                if let Some(username) = config.properties.get("username") {
+                    if let Some(password) = config.properties.get("password") {
+                        mqtt_config = mqtt_config.with_credentials(username, password);
+                    }
+                }
+                if config
+                    .properties
+                    .get("use_tls")
+                    .is_some_and(|v| v == "true")
+                {
+                    mqtt_config = mqtt_config.with_tls(true);
+                }
+                if let Some(ca) = config.properties.get("ssl_ca_location") {
+                    mqtt_config = mqtt_config.with_ca_cert(ca);
+                }
+                if let (Some(cert), Some(key)) = (
+                    config.properties.get("ssl_certificate_location"),
+                    config.properties.get("ssl_key_location"),
+                ) {
+                    mqtt_config = mqtt_config.with_client_cert(cert, key);
+                }
                 let sink = connector::MqttSink::new(name, mqtt_config);
                 Some(Arc::new(SinkConnectorAdapter {
                     name: name.to_string(),
@@ -412,7 +434,32 @@ pub fn create_sink_from_config(
                     Some(prefix) => format!("{prefix}.{base_subject}"),
                     None => base_subject,
                 };
-                let nats_config = connector::NatsConfig::new(&servers, &subject);
+                let mut nats_config = connector::NatsConfig::new(&servers, &subject);
+                // Security
+                if let Some(username) = config.properties.get("username") {
+                    if let Some(password) = config.properties.get("password") {
+                        nats_config = nats_config.with_credentials(username, password);
+                    }
+                }
+                if let Some(token) = config.properties.get("token") {
+                    nats_config = nats_config.with_token(token);
+                }
+                if config
+                    .properties
+                    .get("use_tls")
+                    .is_some_and(|v| v == "true")
+                {
+                    nats_config = nats_config.with_tls(true);
+                }
+                if let Some(ca) = config.properties.get("ssl_ca_location") {
+                    nats_config = nats_config.with_ca_cert(ca);
+                }
+                if let (Some(cert), Some(key)) = (
+                    config.properties.get("ssl_certificate_location"),
+                    config.properties.get("ssl_key_location"),
+                ) {
+                    nats_config = nats_config.with_client_cert(cert, key);
+                }
                 let sink = connector::NatsSink::new(name, nats_config);
                 Some(Arc::new(SinkConnectorAdapter {
                     name: name.to_string(),

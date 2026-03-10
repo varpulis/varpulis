@@ -10,6 +10,7 @@
 
 use async_trait::async_trait;
 use tokio::sync::mpsc;
+use varpulis_core::security::SecretString;
 use varpulis_core::Event;
 
 use super::types::{ConnectorError, SourceConnector};
@@ -29,14 +30,22 @@ pub struct PostgresCdcConfig {
     pub dbname: String,
     /// Username
     pub user: String,
-    /// Password
-    pub password: String,
+    /// Password (zeroized on drop).
+    pub password: SecretString,
     /// Replication slot name
     pub slot_name: String,
     /// Publication name (for pgoutput plugin)
     pub publication: String,
     /// Tables to subscribe to (empty = all tables in publication)
     pub tables: Vec<String>,
+    /// SSL mode: disable, prefer, require, verify-ca, verify-full
+    pub sslmode: String,
+    /// Path to CA certificate (PEM format).
+    pub ssl_ca_location: Option<String>,
+    /// Path to client certificate (PEM format) for mTLS.
+    pub ssl_certificate_location: Option<String>,
+    /// Path to client private key (PEM format) for mTLS.
+    pub ssl_key_location: Option<String>,
 }
 
 impl PostgresCdcConfig {
@@ -47,10 +56,14 @@ impl PostgresCdcConfig {
             port: 5432,
             dbname: dbname.to_string(),
             user: "postgres".to_string(),
-            password: String::new(),
+            password: SecretString::new(""),
             slot_name: "varpulis_slot".to_string(),
             publication: "varpulis_pub".to_string(),
             tables: Vec::new(),
+            sslmode: "prefer".to_string(),
+            ssl_ca_location: None,
+            ssl_certificate_location: None,
+            ssl_key_location: None,
         }
     }
 
@@ -63,7 +76,7 @@ impl PostgresCdcConfig {
     /// Set username and password for authentication.
     pub fn with_credentials(mut self, user: &str, password: &str) -> Self {
         self.user = user.to_string();
-        self.password = password.to_string();
+        self.password = SecretString::new(password);
         self
     }
 
@@ -82,6 +95,25 @@ impl PostgresCdcConfig {
     /// Set the list of tables to subscribe to (empty = all in publication).
     pub fn with_tables(mut self, tables: Vec<String>) -> Self {
         self.tables = tables;
+        self
+    }
+
+    /// Set the SSL mode (disable, prefer, require, verify-ca, verify-full).
+    pub fn with_sslmode(mut self, mode: &str) -> Self {
+        self.sslmode = mode.to_string();
+        self
+    }
+
+    /// Set the path to the CA certificate (PEM).
+    pub fn with_ca_cert(mut self, path: &str) -> Self {
+        self.ssl_ca_location = Some(path.to_string());
+        self
+    }
+
+    /// Set client certificate and key paths for mTLS.
+    pub fn with_client_cert(mut self, cert: &str, key: &str) -> Self {
+        self.ssl_certificate_location = Some(cert.to_string());
+        self.ssl_key_location = Some(key.to_string());
         self
     }
 }
@@ -207,14 +239,18 @@ impl SourceConnector for PostgresCdcSource {
         self.running.store(true, Ordering::SeqCst);
 
         let conn_string = format!(
-            "host={} port={} dbname={} user={} password={}",
+            "host={} port={} dbname={} user={} password={} sslmode={}",
             self.config.host,
             self.config.port,
             self.config.dbname,
             self.config.user,
-            self.config.password
+            self.config.password.expose(),
+            self.config.sslmode
         );
 
+        // TODO: For TLS support, add tokio-postgres-rustls dependency.
+        // Currently sslmode is passed in connection string but NoTls is used.
+        // sslmode=disable works; other modes require a TLS implementation.
         let (client, connection) = tokio_postgres::connect(&conn_string, NoTls)
             .await
             .map_err(|e| ConnectorError::ConnectionFailed(format!("PostgreSQL: {}", e)))?;
@@ -604,7 +640,7 @@ mod tests {
         assert_eq!(config.port, 5433);
         assert_eq!(config.dbname, "mydb");
         assert_eq!(config.user, "admin");
-        assert_eq!(config.password, "secret");
+        assert_eq!(config.password.expose(), "secret");
         assert_eq!(config.slot_name, "my_slot");
         assert_eq!(config.publication, "my_pub");
         assert_eq!(config.tables.len(), 2);
