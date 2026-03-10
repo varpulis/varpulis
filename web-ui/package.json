@@ -27,7 +27,7 @@
     "echarts": "^6.0.0",
     "pinia": "^3.0.4",
     "reconnecting-websocket": "^4.4.0",
-    "vue": "^3.5.13",
+    "vue": "^3.5.30",
     "vue-echarts": "^8.0.1",
     "vue-router": "^5.0.3",
     "vuetify": "^4.0.0"
