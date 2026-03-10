@@ -35,9 +35,10 @@
 //! - `VARPULIS_MASTER_KEY`: Hex-encoded 32-byte key (64 hex chars)
 //! - `VARPULIS_MASTER_KEY_FILE`: Path to a file containing the hex-encoded key
 
+use std::path::Path;
+
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 
 use crate::types::ConnectorConfig;
 
