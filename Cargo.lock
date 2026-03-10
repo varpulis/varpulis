@@ -7937,7 +7937,7 @@ dependencies = [
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
- "rand 0.9.2",
+ "rand 0.10.0",
  "rayon",
  "reqwest",
  "rustc-hash",
@@ -7981,7 +7981,7 @@ dependencies = [
  "opentelemetry",
  "pretty_assertions",
  "prometheus",
- "rand 0.9.2",
+ "rand 0.10.0",
  "reqwest",
  "rocksdb",
  "serde",
@@ -8057,7 +8057,7 @@ name = "varpulis-datagen"
 version = "0.6.1"
 dependencies = [
  "chrono",
- "rand 0.9.2",
+ "rand 0.10.0",
  "serde",
  "serde_json",
 ]
@@ -8189,7 +8189,7 @@ dependencies = [
  "ort",
  "prometheus",
  "proptest",
- "rand 0.9.2",
+ "rand 0.10.0",
  "rayon",
  "reqwest",
  "rmp-serde",

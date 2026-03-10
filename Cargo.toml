@@ -74,7 +74,7 @@ opentelemetry-otlp = { version = "0.31", features = ["tonic"] }
 tracing-opentelemetry = "0.32"
 
 # Random
-rand = "0.9"
+rand = "0.10"
 
 # HTTP client
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
