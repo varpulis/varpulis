@@ -26,7 +26,11 @@ demo.varpulis-cep.com, www.varpulis-cep.com {
         health_interval 10s
     }
 
-    # SEO files -> docs container (sitemap, robots.txt)
+    # Documentation -> docs container (VitePress static site under /docs/)
+    @docs path /docs /docs/*
+    reverse_proxy @docs docs:80
+
+    # SEO files -> docs container (sitemap, robots.txt at root)
     @seo path /sitemap.xml /robots.txt
     reverse_proxy @seo docs:80
 
@@ -42,10 +46,10 @@ blog.varpulis-cep.com {
     reverse_proxy web-ui:8080
 }
 
-# Docs subdomain -> VitePress static site
+# Docs subdomain -> redirect to main domain /docs/
 docs.varpulis-cep.com {
     tls /etc/caddy/certs/origin.pem /etc/caddy/certs/origin-key.pem
-    reverse_proxy docs:80
+    redir https://www.varpulis-cep.com/docs{uri} permanent
 }
 
 # Register subdomain -> redirect root to /signup, proxy everything to web-ui
