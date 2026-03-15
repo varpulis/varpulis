@@ -49,6 +49,8 @@ vscode-varpulis/node_modules/
 benchmarks/flink-comparison/results/
 benchmarks/flink-comparison/test-harness/dependency-reduced-pom.xml
 benchmarks/apama-comparison/results/
+benchmarks/apama-comparison/scenarios/**/data/*.evt
+benchmarks/connector-comparison/results/
 benchmarks/forecast-validation/
 apama-samples/
 benchmarks/apama-comparison/data/*.evt
