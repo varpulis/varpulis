@@ -9,7 +9,7 @@ documentation.workspace = true
 description = "Dead letter queue for events that fail sink delivery"
 
 [dependencies]
-varpulis-core = { version = "0.6.1", path = "../varpulis-core" }
+varpulis-core = { version = "0.6.2", path = "../varpulis-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
