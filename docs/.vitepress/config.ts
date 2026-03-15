@@ -12,8 +12,12 @@ const vplGrammar = JSON.parse(
 
 export default defineConfig({
   title: 'Varpulis',
-  description: 'Next-generation streaming analytics engine',
+  description: 'Next-generation streaming analytics engine for real-time complex event processing',
   lang: 'en-US',
+
+  sitemap: {
+    hostname: 'https://www.varpulis-cep.com',
+  },
 
   markdown: {
     languages: [
@@ -33,7 +37,31 @@ export default defineConfig({
   ],
 
   head: [
-    ['link', { rel: 'icon', href: '/favicon.ico' }]
+    ['link', { rel: 'icon', href: '/favicon.ico' }],
+
+    // Google Search Console verification (replace VERIFICATION_CODE with your actual code)
+    // ['meta', { name: 'google-site-verification', content: 'VERIFICATION_CODE' }],
+
+    // SEO meta tags
+    ['meta', { name: 'keywords', content: 'complex event processing, CEP, streaming analytics, pattern matching, real-time, Rust, SASE, event-driven, Kafka, MQTT, NATS' }],
+    ['meta', { name: 'author', content: 'Varpulis' }],
+
+    // Open Graph
+    ['meta', { property: 'og:type', content: 'website' }],
+    ['meta', { property: 'og:site_name', content: 'Varpulis' }],
+    ['meta', { property: 'og:title', content: 'Varpulis - Streaming Analytics Engine' }],
+    ['meta', { property: 'og:description', content: 'Next-generation streaming analytics engine for real-time complex event processing with pattern matching, trend aggregation, and forecasting.' }],
+    ['meta', { property: 'og:url', content: 'https://www.varpulis-cep.com' }],
+    // ['meta', { property: 'og:image', content: 'https://www.varpulis-cep.com/og-image.png' }],
+
+    // Twitter Card
+    ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
+    ['meta', { name: 'twitter:title', content: 'Varpulis - Streaming Analytics Engine' }],
+    ['meta', { name: 'twitter:description', content: 'Next-generation streaming analytics engine for real-time complex event processing.' }],
+    // ['meta', { name: 'twitter:image', content: 'https://www.varpulis-cep.com/og-image.png' }],
+
+    // Canonical
+    ['link', { rel: 'canonical', href: 'https://www.varpulis-cep.com' }],
   ],
 
   themeConfig: {
