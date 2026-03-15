@@ -15,8 +15,14 @@ export default defineConfig({
   description: 'Next-generation streaming analytics engine for real-time complex event processing',
   lang: 'en-US',
 
+  base: '/docs/',
+
   sitemap: {
     hostname: 'https://www.varpulis-cep.com',
+    transformItems: (items) => items.map(item => ({
+      ...item,
+      url: item.url.startsWith('docs/') ? item.url : `docs/${item.url}`,
+    })),
   },
 
   markdown: {
@@ -37,10 +43,7 @@ export default defineConfig({
   ],
 
   head: [
-    ['link', { rel: 'icon', href: '/favicon.ico' }],
-
-    // Google Search Console verification (replace VERIFICATION_CODE with your actual code)
-    // ['meta', { name: 'google-site-verification', content: 'VERIFICATION_CODE' }],
+    ['link', { rel: 'icon', href: '/docs/favicon.ico' }],
 
     // SEO meta tags
     ['meta', { name: 'keywords', content: 'complex event processing, CEP, streaming analytics, pattern matching, real-time, Rust, SASE, event-driven, Kafka, MQTT, NATS' }],
@@ -49,19 +52,14 @@ export default defineConfig({
     // Open Graph
     ['meta', { property: 'og:type', content: 'website' }],
     ['meta', { property: 'og:site_name', content: 'Varpulis' }],
-    ['meta', { property: 'og:title', content: 'Varpulis - Streaming Analytics Engine' }],
-    ['meta', { property: 'og:description', content: 'Next-generation streaming analytics engine for real-time complex event processing with pattern matching, trend aggregation, and forecasting.' }],
-    ['meta', { property: 'og:url', content: 'https://www.varpulis-cep.com' }],
-    // ['meta', { property: 'og:image', content: 'https://www.varpulis-cep.com/og-image.png' }],
+    ['meta', { property: 'og:title', content: 'Varpulis - Complex Event Processing Engine' }],
+    ['meta', { property: 'og:description', content: 'Open-source complex event processing (CEP) engine for real-time pattern matching, trend aggregation, and forecasting. Built in Rust.' }],
+    ['meta', { property: 'og:url', content: 'https://www.varpulis-cep.com/docs/' }],
 
     // Twitter Card
     ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
-    ['meta', { name: 'twitter:title', content: 'Varpulis - Streaming Analytics Engine' }],
-    ['meta', { name: 'twitter:description', content: 'Next-generation streaming analytics engine for real-time complex event processing.' }],
-    // ['meta', { name: 'twitter:image', content: 'https://www.varpulis-cep.com/og-image.png' }],
-
-    // Canonical
-    ['link', { rel: 'canonical', href: 'https://www.varpulis-cep.com' }],
+    ['meta', { name: 'twitter:title', content: 'Varpulis - Complex Event Processing Engine' }],
+    ['meta', { name: 'twitter:description', content: 'Open-source CEP engine for real-time pattern matching, trend aggregation, and forecasting. Built in Rust.' }],
   ],
 
   themeConfig: {
