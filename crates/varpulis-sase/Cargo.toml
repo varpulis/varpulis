@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
 description = "SASE+ pattern matching engine for Complex Event Processing"
 
 [dependencies]

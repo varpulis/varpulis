@@ -29,6 +29,8 @@ rust-version = "1.93"
 authors = ["Varpulis Contributors"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/varpulis/varpulis"
+homepage = "https://www.varpulis-cep.com"
+documentation = "https://docs.varpulis-cep.com"
 description = "A modern streaming analytics engine with advanced pattern detection"
 
 [workspace.dependencies]

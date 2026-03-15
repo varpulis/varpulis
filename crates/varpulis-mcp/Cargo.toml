@@ -5,6 +5,8 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
 description = "MCP server exposing Varpulis CEP engine to AI agents"
 
 [[bin]]
