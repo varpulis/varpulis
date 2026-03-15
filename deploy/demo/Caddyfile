@@ -26,6 +26,10 @@ demo.varpulis-cep.com, www.varpulis-cep.com {
         health_interval 10s
     }
 
+    # SEO files -> docs container (sitemap, robots.txt)
+    @seo path /sitemap.xml /robots.txt
+    reverse_proxy @seo docs:80
+
     # Everything else -> web-ui (SPA with all routes: landing, auth, control plane)
     reverse_proxy /* web-ui:8080
 }
