@@ -17,10 +17,11 @@ Thumbs.db
 *.dylib
 *.dll
 
-# Test artifacts
+# Test / coverage artifacts
 *.profraw
 *.profdata
 *-dlq.jsonl
+coverage-html/
 
 # Local configuration
 .env
