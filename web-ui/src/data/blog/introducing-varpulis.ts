@@ -28,7 +28,7 @@ stream FraudAlert = login as l -> transfer as t .within(5m)
 
 <ul>
 <li><strong>SASE+ pattern matching</strong> &mdash; Sequence detection with Kleene closures, negation, and temporal constraints</li>
-<li><strong>11 connectors</strong> &mdash; Kafka, MQTT, NATS, Pulsar, Redis, HTTP, WebSocket, S3, Kinesis, Elasticsearch, PostgreSQL CDC</li>
+<li><strong>14 connectors</strong> &mdash; Kafka, MQTT, NATS, Redis, PostgreSQL CDC, PostgreSQL, MySQL, SQLite, AWS Kinesis, AWS S3, Pulsar, Elasticsearch, HTTP/Webhooks, and Console</li>
 <li><strong>Hamlet trend aggregation</strong> &mdash; Compute aggregates over 2<sup>n</sup> Kleene match combinations in O(n) per event</li>
 <li><strong>PST forecasting</strong> &mdash; Predict pattern completions before they happen, with sub-microsecond latency</li>
 <li><strong>Distributed cluster mode</strong> &mdash; Coordinator + workers with automatic partitioning and Raft consensus</li>

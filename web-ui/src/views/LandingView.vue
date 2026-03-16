@@ -85,7 +85,7 @@ const useCases = [
 
 const features = [
   { icon: 'mdi-language-rust', title: 'Built in Rust', desc: 'Zero-copy parsing, minimal allocations, no garbage collection pauses.' },
-  { icon: 'mdi-connection', title: '11 Connectors', desc: 'Kafka, MQTT, NATS, Pulsar, Redis Streams, HTTP, WebSocket, and more.' },
+  { icon: 'mdi-connection', title: '14 Connectors', desc: 'Kafka, MQTT, NATS, Redis, PostgreSQL CDC, PostgreSQL, MySQL, SQLite, AWS Kinesis, AWS S3, Pulsar, Elasticsearch, HTTP/Webhooks, and Console.' },
   { icon: 'mdi-crystal-ball', title: 'PST Forecasting', desc: 'Predict next events using Prediction Suffix Trees. Sub-microsecond latency.' },
   { icon: 'mdi-server-network', title: 'Cluster Mode', desc: 'Distribute workloads across workers with coordinator-based orchestration.' },
   { icon: 'mdi-code-tags', title: 'Full LSP Support', desc: 'VS Code extension with completions, hover docs, diagnostics, and semantic tokens.' },

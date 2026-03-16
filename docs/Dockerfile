@@ -6,6 +6,8 @@ COPY . .
 RUN npm run build
 
 FROM nginx:alpine
+# Custom nginx config for VitePress clean URLs
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 # Docs content under /docs/ path
 COPY --from=build /app/.vitepress/dist /usr/share/nginx/html/docs
 # SEO files at root (served via www.varpulis-cep.com/sitemap.xml)
