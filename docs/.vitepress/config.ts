@@ -71,6 +71,7 @@ export default defineConfig({
       { text: 'Language', link: '/language/overview' },
       { text: 'Architecture', link: '/architecture/system' },
       { text: 'Scenarios', link: '/scenarios/' },
+      { text: 'Comparisons', link: '/comparisons/varpulis-vs-flink' },
       { text: 'GitHub', link: 'https://github.com/varpulis/varpulis' }
     ],
 
@@ -260,6 +261,17 @@ export default defineConfig({
             { text: 'Status', link: '/development/STATUS' },
             { text: 'MSRV Policy', link: '/development/MSRV_POLICY' },
             { text: 'Audit Report', link: '/development/AUDIT_REPORT' },
+          ]
+        },
+      ],
+
+      '/comparisons/': [
+        {
+          text: 'Comparisons',
+          items: [
+            { text: 'Varpulis vs Apache Flink CEP', link: '/comparisons/varpulis-vs-flink' },
+            { text: 'Varpulis vs Esper CEP', link: '/comparisons/varpulis-vs-esper' },
+            { text: 'Varpulis vs Kafka Streams / ksqlDB', link: '/comparisons/varpulis-vs-kafka-streams' },
           ]
         },
       ],

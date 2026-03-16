@@ -63,6 +63,19 @@ stream SuspiciousLogin = Login as a -> Login as b
 | Memory usage | 36-58 MB | 166-190 MB | **3-5x less** |
 | Kleene match accuracy | 99.6K matches | 20K matches | **5x more complete** |
 
+*Benchmarked on CPU-bound workloads (100K events, ramdisk, preloaded). See also the [Varpulis vs Flink CEP](/comparisons/varpulis-vs-flink) comparison.*
+
+## Key Capabilities
+
+- **14 production connectors** — MQTT, Kafka, NATS, Redis, PostgreSQL CDC, AWS Kinesis, S3, Pulsar, and more
+- **Helm chart for Kubernetes** — deploy coordinator/worker clusters with autoscaling
+- **RocksDB checkpointing** — durable state snapshots for exactly-once processing
+- **Prometheus metrics** — built-in `/metrics` endpoint for monitoring and alerting
+- **ONNX model scoring** — embed ML models directly in streaming pipelines
+- **AES-256 encryption at rest** — secure credentials and sensitive configuration
+- **OpenTelemetry tracing** — distributed trace propagation across pipeline stages
+- **Multi-cluster federation** — coordinate workloads across geographically distributed clusters
+
 ## Connectors
 
 | Connector | Input | Output | Status |
@@ -70,5 +83,14 @@ stream SuspiciousLogin = Login as a -> Login as b
 | **MQTT** | Yes | Yes | Production |
 | **Kafka** | Yes | Yes | Production |
 | **NATS** | Yes | Yes | Production |
+| **Redis** | Yes | Yes | Production |
 | **PostgreSQL CDC** | Yes | No | Production |
-| **HTTP** | No | Yes | Webhooks |
+| **PostgreSQL** | No | Yes | Production |
+| **MySQL** | No | Yes | Production |
+| **SQLite** | No | Yes | Production |
+| **AWS Kinesis** | Yes | Yes | Production |
+| **AWS S3** | Yes | Yes | Production |
+| **Apache Pulsar** | Yes | Yes | Production |
+| **Elasticsearch** | No | Yes | Production |
+| **HTTP/Webhooks** | No | Yes | Production |
+| **Console** | No | Yes | Debug |
