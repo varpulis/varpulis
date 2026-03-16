@@ -2,6 +2,8 @@
 
 Thank you for your interest in contributing to Varpulis. This guide covers the workflow and conventions you need to follow.
 
+Join our [Discord](https://discord.gg/nVyctE8vPz) to ask questions or discuss ideas.
+
 ## Getting Started
 
 1. Fork and clone the repository:

@@ -278,6 +278,7 @@ export default defineConfig({
     },
 
     socialLinks: [
+      { icon: 'discord', link: 'https://discord.gg/nVyctE8vPz' },
       { icon: 'github', link: 'https://github.com/varpulis/varpulis' }
     ],
 
