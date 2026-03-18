@@ -12,8 +12,18 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  # Gate job: skip entire CI for Dependabot PRs to conserve Actions minutes.
+  # Dependabot PRs are validated on merge to main instead.
+  gate:
+    name: CI Gate
+    runs-on: ubuntu-latest
+    if: github.actor != 'dependabot[bot]'
+    steps:
+      - run: echo "CI gate passed"
+
   msrv:
     name: MSRV (1.93)
+    needs: [gate]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -25,6 +35,7 @@ jobs:
 
   check:
     name: Check
+    needs: [gate]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -34,6 +45,7 @@ jobs:
 
   test:
     name: Test
+    needs: [gate]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -45,6 +57,7 @@ jobs:
 
   cross-platform:
     name: ${{ matrix.os }}
+    needs: [gate]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -61,6 +74,7 @@ jobs:
 
   fmt:
     name: Format
+    needs: [gate]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -71,6 +85,7 @@ jobs:
 
   clippy:
     name: Clippy
+    needs: [gate]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -82,6 +97,7 @@ jobs:
 
   deny:
     name: Deny (licenses & advisories)
+    needs: [gate]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -92,6 +108,7 @@ jobs:
 
   audit:
     name: Audit
+    needs: [gate]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -102,6 +119,7 @@ jobs:
 
   machete:
     name: Unused Dependencies
+    needs: [gate]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -112,6 +130,7 @@ jobs:
 
   semver:
     name: Semver Checks
+    needs: [gate]
     runs-on: ubuntu-latest
     # Only run on PRs (needs a baseline to compare against)
     if: github.event_name == 'pull_request'
@@ -130,6 +149,7 @@ jobs:
 
   feature-flags:
     name: Feature Flags (${{ matrix.features }})
+    needs: [gate]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -203,6 +223,7 @@ jobs:
 
   web-ui:
     name: Web UI
+    needs: [gate]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -218,6 +239,7 @@ jobs:
 
   coverage:
     name: Coverage
+    needs: [gate]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -236,6 +258,7 @@ jobs:
 
   doc:
     name: Documentation
+    needs: [gate]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
