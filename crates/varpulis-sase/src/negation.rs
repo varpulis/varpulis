@@ -1,6 +1,6 @@
 //! Temporal negation support (NEG-01)
 
-use std::time::Instant;
+use crate::clock::Timestamp;
 
 use chrono::{DateTime, Utc};
 use rustc_hash::FxHashMap;
@@ -18,7 +18,7 @@ pub struct NegationConstraint {
     /// Optional predicate for the forbidden event
     pub predicate: Option<Predicate>,
     /// Deadline after which negation is confirmed (processing time)
-    pub deadline: Option<Instant>,
+    pub deadline: Option<Timestamp>,
     /// Deadline in event-time (for watermark-based timeout)
     pub event_time_deadline: Option<DateTime<Utc>>,
     /// NFA state to transition to once negation is confirmed
@@ -45,7 +45,7 @@ impl NegationConstraint {
 
     /// Check if this negation constraint is confirmed (deadline passed without violation)
     pub fn is_confirmed_processing_time(&self) -> bool {
-        self.deadline.is_some_and(|d| Instant::now() > d)
+        self.deadline.is_some_and(|d| Timestamp::now() > d)
     }
 
     /// Check if this negation constraint is confirmed via watermark

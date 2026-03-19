@@ -1,7 +1,9 @@
 //! SASE+ Engine
 
 use std::sync::{Arc, LazyLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use crate::clock::Timestamp;
 
 use chrono::{DateTime, Utc};
 use rustc_hash::FxHashMap;
@@ -84,7 +86,7 @@ pub struct SaseEngine {
     /// Default: `MAX_ENUMERATION_RESULTS` (10 000).
     max_enumeration_results: usize,
     /// PERF(Opt5): Last time cleanup_timeouts() actually ran
-    last_cleanup: Instant,
+    last_cleanup: Timestamp,
     /// PERF(Opt5): Minimum interval between cleanup_timeouts() invocations
     cleanup_interval: Duration,
 }
@@ -144,7 +146,7 @@ impl SaseEngine {
             instrumentation_enabled: false,
             max_kleene_events: MAX_KLEENE_EVENTS,
             max_enumeration_results: MAX_ENUMERATION_RESULTS,
-            last_cleanup: Instant::now(),
+            last_cleanup: Timestamp::now(),
             cleanup_interval: Duration::from_millis(100),
             evaluator: None,
         }
@@ -375,7 +377,7 @@ impl SaseEngine {
     /// MET-01: Process an event with full instrumentation and metrics recording
     /// This version records detailed metrics including latency histograms
     pub fn process_instrumented(&mut self, event: &varpulis_core::Event) -> Vec<MatchResult> {
-        let start = Instant::now();
+        let start = Timestamp::now();
         let shared_event = Arc::new(event.clone());
 
         // Record event being processed
@@ -846,7 +848,7 @@ impl SaseEngine {
         let mut completed = Vec::with_capacity(4);
         let limits = self.kleene_limits();
         // PERF(Opt2): Capture time once per event instead of per-push
-        let now = Instant::now();
+        let now = Timestamp::now();
 
         if let Some(runs) = self.partitioned_runs.get_mut(partition_key) {
             let mut i = 0;
@@ -894,7 +896,7 @@ impl SaseEngine {
         let mut completed = Vec::with_capacity(4);
         let limits = self.kleene_limits();
         // PERF(Opt2): Capture time once per event instead of per-push
-        let now = Instant::now();
+        let now = Timestamp::now();
         let mut i = 0;
 
         while i < self.runs.len() {
@@ -999,7 +1001,7 @@ impl SaseEngine {
                 if let Some(timeout) = next_state.timeout {
                     match self.time_semantics {
                         TimeSemantics::ProcessingTime => {
-                            run.deadline = Some(Instant::now() + timeout);
+                            run.deadline = Some(Timestamp::now() + timeout);
                         }
                         TimeSemantics::EventTime => {
                             // Set event-time deadline based on first event's timestamp
@@ -1092,7 +1094,7 @@ impl SaseEngine {
         {
             return;
         }
-        self.last_cleanup = Instant::now();
+        self.last_cleanup = Timestamp::now();
 
         match self.time_semantics {
             TimeSemantics::ProcessingTime => {

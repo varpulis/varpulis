@@ -1,7 +1,9 @@
 //! Active pattern run (partial match in progress)
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use crate::clock::Timestamp;
 
 use chrono::{DateTime, Utc};
 use rustc_hash::FxHashMap;
@@ -22,9 +24,9 @@ pub struct Run {
     /// Captured events by alias (Arc for efficient sharing)
     pub captured: FxHashMap<String, SharedEvent>,
     /// When this run started (wall-clock time for metrics)
-    pub started_at: Instant,
+    pub started_at: Timestamp,
     /// Deadline for completion (from WITHIN) - wall-clock time (legacy)
-    pub deadline: Option<Instant>,
+    pub deadline: Option<Timestamp>,
     /// Event timestamp when this run started (for event-time processing)
     pub event_time_started_at: Option<DateTime<Utc>>,
     /// Deadline in event-time (for watermark-based timeout)
@@ -47,7 +49,7 @@ impl Default for Run {
             current_state: 0,
             stack: Vec::new(),
             captured: FxHashMap::default(),
-            started_at: Instant::now(),
+            started_at: Timestamp::now(),
             deadline: None,
             event_time_started_at: None,
             event_time_deadline: None,
@@ -67,7 +69,7 @@ impl Run {
             current_state: start_state,
             stack: Vec::new(),
             captured: FxHashMap::default(),
-            started_at: Instant::now(),
+            started_at: Timestamp::now(),
             deadline: None,
             event_time_started_at: None,
             event_time_deadline: None,
@@ -85,7 +87,7 @@ impl Run {
             current_state: start_state,
             stack: Vec::new(),
             captured: FxHashMap::default(),
-            started_at: Instant::now(),
+            started_at: Timestamp::now(),
             deadline: None,
             event_time_started_at: Some(event_timestamp),
             event_time_deadline: None,
@@ -104,7 +106,7 @@ impl Run {
     }
 
     /// Set the wall-clock deadline for this run's WITHIN constraint.
-    pub fn with_deadline(mut self, deadline: Instant) -> Self {
+    pub fn with_deadline(mut self, deadline: Timestamp) -> Self {
         self.deadline = Some(deadline);
         self
     }
@@ -126,13 +128,13 @@ impl Run {
         self.stack.push(StackEntry {
             event,
             alias,
-            timestamp: Instant::now(),
+            timestamp: Timestamp::now(),
         });
     }
 
-    /// PERF(Opt2): Push with a pre-captured timestamp to avoid per-event Instant::now()
+    /// PERF(Opt2): Push with a pre-captured timestamp to avoid per-event Timestamp::now()
     #[inline]
-    pub fn push_at(&mut self, event: SharedEvent, alias: Option<String>, ts: Instant) {
+    pub fn push_at(&mut self, event: SharedEvent, alias: Option<String>, ts: Timestamp) {
         if let Some(ref a) = alias {
             self.captured.insert(a.clone(), Arc::clone(&event));
         }
@@ -146,7 +148,7 @@ impl Run {
     /// PERF(Opt4): Push for Kleene self-loop where alias key already exists in captured.
     /// Updates existing captured value via get_mut (no key allocation) and borrows alias.
     #[inline]
-    pub fn push_at_kleene(&mut self, event: SharedEvent, alias: &Option<String>, ts: Instant) {
+    pub fn push_at_kleene(&mut self, event: SharedEvent, alias: &Option<String>, ts: Timestamp) {
         if let Some(ref a) = alias {
             if let Some(entry) = self.captured.get_mut(a.as_str()) {
                 *entry = Arc::clone(&event);
@@ -164,7 +166,7 @@ impl Run {
     /// Check if run has timed out based on wall-clock time (legacy mode)
     pub fn is_timed_out(&self) -> bool {
         if let Some(deadline) = self.deadline {
-            Instant::now() > deadline
+            Timestamp::now() > deadline
         } else {
             false
         }

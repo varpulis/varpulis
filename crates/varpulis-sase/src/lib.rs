@@ -24,6 +24,7 @@ mod advance;
 mod and_op;
 mod backpressure;
 mod builder;
+pub mod clock;
 mod engine;
 mod enumeration;
 mod event_index;
@@ -43,6 +44,7 @@ pub use backpressure::{
     SaseExtendedStats,
 };
 pub use builder::PatternBuilder;
+pub use clock::Timestamp;
 pub use engine::SaseEngine;
 pub use event_index::EventTypeIndex;
 pub use event_time::{EventTimeConfig, EventTimeManager, EventTimeResult};

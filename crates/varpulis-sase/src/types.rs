@@ -1,7 +1,9 @@
 //! Core SASE+ types and constants
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use crate::clock::Timestamp;
 
 use rustc_hash::FxHashMap;
 use varpulis_core::{Event, Value};
@@ -126,7 +128,7 @@ pub struct StackEntry {
     /// Alias for this capture
     pub alias: Option<String>,
     /// Timestamp of capture
-    pub timestamp: Instant,
+    pub timestamp: Timestamp,
 }
 
 /// Event selection strategy
