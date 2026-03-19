@@ -1,6 +1,6 @@
 {
   "name": "varpulis-control-plane",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "Varpulis Control Plane Web UI - Operational dashboard for pipeline monitoring and cluster management",
   "type": "module",
   "scripts": {

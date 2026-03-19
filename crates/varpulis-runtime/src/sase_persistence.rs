@@ -4,10 +4,8 @@
 //! using runtime persistence types.
 
 use std::sync::Arc;
-use std::time::Instant;
-
 use chrono::DateTime;
-use varpulis_sase::{KleeneCapture, Run, SaseEngine, SharedEvent, StackEntry};
+use varpulis_sase::{KleeneCapture, Run, SaseEngine, SharedEvent, StackEntry, Timestamp};
 
 use crate::persistence;
 
@@ -67,7 +65,7 @@ impl RunCheckpointExt for Run {
             .map(|se| StackEntry {
                 event: Arc::new(Event::from(se.event.clone())),
                 alias: se.alias.clone(),
-                timestamp: Instant::now(),
+                timestamp: Timestamp::now(),
             })
             .collect();
 
@@ -90,7 +88,7 @@ impl RunCheckpointExt for Run {
             current_state: rc.current_state,
             stack,
             captured,
-            started_at: Instant::now(),
+            started_at: Timestamp::now(),
             deadline: None,
             event_time_started_at: rc
                 .event_time_started_at_ms
