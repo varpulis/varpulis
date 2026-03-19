@@ -1,7 +1,7 @@
 //! ZDD-Kleene: Compact Kleene capture using ZDD
 
+use crate::clock::Timestamp;
 use std::sync::Arc;
-use std::time::Instant;
 
 use rustc_hash::FxHashMap;
 use varpulis_zdd::{ZddArena, ZddHandle};
@@ -111,7 +111,7 @@ impl KleeneCapture {
                     StackEntry {
                         event: Arc::clone(&self.events[idx]),
                         alias: self.aliases[idx].clone(),
-                        timestamp: Instant::now(),
+                        timestamp: Timestamp::now(),
                     }
                 })
                 .collect()

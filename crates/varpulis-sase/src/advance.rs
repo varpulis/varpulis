@@ -1,7 +1,7 @@
 //! Run advancement logic (hot path)
 
+use crate::clock::Timestamp;
 use std::sync::Arc;
-use std::time::Instant;
 
 use super::and_op::AndState;
 use super::enumeration::enumerate_with_filter;
@@ -42,7 +42,7 @@ pub(crate) fn advance_run(
         run,
         Arc::new(event.clone()),
         limits,
-        Instant::now(),
+        Timestamp::now(),
         evaluator,
     )
 }
@@ -76,7 +76,7 @@ pub(crate) fn advance_run_shared(
     run: &mut Run,
     event: SharedEvent,
     limits: KleeneLimits,
-    now: Instant,
+    now: Timestamp,
     evaluator: Option<&dyn ExprEvaluator>,
 ) -> RunAdvanceResult {
     let current_state = &nfa.states[run.current_state];
