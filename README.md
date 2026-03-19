@@ -7,7 +7,7 @@
 [![Tests](https://img.shields.io/badge/tests-4011%20passing-brightgreen)]()
 [![Coverage](https://img.shields.io/badge/coverage-%E2%89%A570%25-brightgreen)]()
 [![Rust](https://img.shields.io/badge/rust-1.93%2B-orange)]()
-[![Release](https://img.shields.io/badge/release-v0.6.2-blue)]()
+[![Release](https://img.shields.io/badge/release-v0.6.3-blue)]()
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-MIT)
 
 [Live Demo](https://demo.varpulis-cep.com/) | [Documentation](https://www.varpulis-cep.com/docs/) | [Discord](https://discord.gg/nVyctE8vPz) | [Quick Start](#quick-start) | [Benchmarks](#performance)
