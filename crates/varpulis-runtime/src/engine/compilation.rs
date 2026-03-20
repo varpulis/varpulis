@@ -881,10 +881,32 @@ impl Engine {
                     connector_name,
                     params,
                 } => {
-                    let topic_override = params
-                        .iter()
-                        .find(|p| p.name == "topic")
-                        .and_then(|p| p.value.as_string().map(|s| s.to_string()));
+                    let topic_param = params.iter().find(|p| p.name == "topic");
+                    let (topic_spec, sink_key) = if let Some(tp) = topic_param {
+                        match &tp.value {
+                            // Static string topic — current behavior
+                            varpulis_core::ast::ConfigValue::Str(s) => {
+                                let key = format!("{connector_name}::{s}");
+                                (Some(super::types::TopicSpec::Static(s.clone())), key)
+                            }
+                            // Bare identifier — dynamic field reference
+                            varpulis_core::ast::ConfigValue::Ident(field) => (
+                                Some(super::types::TopicSpec::Dynamic(Expr::Ident(field.clone()))),
+                                connector_name.clone(),
+                            ),
+                            // Concatenation — dynamic expression
+                            varpulis_core::ast::ConfigValue::Concat(parts) => {
+                                let expr = build_concat_expr(parts);
+                                (
+                                    Some(super::types::TopicSpec::Dynamic(expr)),
+                                    connector_name.clone(),
+                                )
+                            }
+                            _ => (None, connector_name.clone()),
+                        }
+                    } else {
+                        (None, connector_name.clone())
+                    };
                     let extra_params: HashMap<String, String> = params
                         .iter()
                         .filter(|p| p.name != "topic")
@@ -900,14 +922,9 @@ impl Engine {
                             Some((p.name.clone(), val))
                         })
                         .collect();
-                    let sink_key = if let Some(ref topic) = topic_override {
-                        format!("{connector_name}::{topic}")
-                    } else {
-                        connector_name.clone()
-                    };
                     runtime_ops.push(RuntimeOp::To(ToConfig {
                         connector_name: connector_name.clone(),
-                        topic_override,
+                        topic: topic_spec,
                         sink_key,
                         extra_params,
                     }));
@@ -1698,6 +1715,24 @@ impl Engine {
         // Default to 1 minute if no window specified
         Duration::minutes(1)
     }
+}
+
+/// Build an `Expr` from a `ConfigValue::Concat` parts list.
+///
+/// Converts `["prefix-", field, "-suffix"]` into nested
+/// `Expr::Binary { op: Add, left, right }` tree (left-associative).
+fn build_concat_expr(parts: &[varpulis_core::ast::ConfigValue]) -> Expr {
+    let mut iter = parts.iter().map(|p| match p {
+        varpulis_core::ast::ConfigValue::Str(s) => Expr::Str(s.clone()),
+        varpulis_core::ast::ConfigValue::Ident(f) => Expr::Ident(f.clone()),
+        _ => Expr::Str(String::new()),
+    });
+    let first = iter.next().unwrap_or(Expr::Str(String::new()));
+    iter.fold(first, |acc, part| Expr::Binary {
+        op: varpulis_core::ast::BinOp::Add,
+        left: Box::new(acc),
+        right: Box::new(part),
+    })
 }
 
 pub(super) const fn stream_op_name(op: &StreamOp) -> &'static str {

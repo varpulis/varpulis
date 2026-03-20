@@ -748,6 +748,44 @@ mod kafka_impl {
             Ok(())
         }
 
+        async fn send_to_topic(
+            &self,
+            events: &[std::sync::Arc<Event>],
+            topic: &str,
+        ) -> Result<(), ConnectorError> {
+            let mut futures = Vec::with_capacity(events.len());
+            for event in events {
+                let payload = event.to_sink_payload();
+                let record = FutureRecord::to(topic)
+                    .payload(&payload)
+                    .key(&*event.event_type);
+                match self.producer.send_result(record) {
+                    Ok(delivery_future) => futures.push(delivery_future),
+                    Err((e, _)) => {
+                        return Err(ConnectorError::SendFailed(format!("enqueue failed: {}", e)));
+                    }
+                }
+            }
+            let results = futures_util::future::join_all(futures).await;
+            for result in results {
+                match result {
+                    Ok(Ok(_)) => {}
+                    Ok(Err((e, _))) => {
+                        return Err(ConnectorError::SendFailed(format!(
+                            "delivery failed: {}",
+                            e
+                        )));
+                    }
+                    Err(_cancelled) => {
+                        return Err(ConnectorError::SendFailed(
+                            "delivery future cancelled".to_string(),
+                        ));
+                    }
+                }
+            }
+            Ok(())
+        }
+
         async fn flush(&self) -> Result<(), ConnectorError> {
             self.producer
                 .flush(Duration::from_secs(10))

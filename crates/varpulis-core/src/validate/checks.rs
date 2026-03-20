@@ -1335,7 +1335,9 @@ fn check_connector_params(
                 let type_ok = match def.param_type {
                     builtins::ParamType::Str => matches!(
                         param.value,
-                        crate::ast::ConfigValue::Str(_) | crate::ast::ConfigValue::Ident(_)
+                        crate::ast::ConfigValue::Str(_)
+                            | crate::ast::ConfigValue::Ident(_)
+                            | crate::ast::ConfigValue::Concat(_)
                     ),
                     builtins::ParamType::Int => {
                         matches!(param.value, crate::ast::ConfigValue::Int(_))

@@ -33,6 +33,7 @@ pub fn connector_params_to_config(
             varpulis_core::ast::ConfigValue::Duration(d) => format!("{d}ns"),
             varpulis_core::ast::ConfigValue::Array(_) => continue,
             varpulis_core::ast::ConfigValue::Map(_) => continue,
+            varpulis_core::ast::ConfigValue::Concat(_) => continue, // dynamic — resolved at runtime
         };
         match param.name.as_str() {
             "url" | "host" | "brokers" | "servers" => url = value_str,

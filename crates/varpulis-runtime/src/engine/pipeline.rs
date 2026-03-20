@@ -202,14 +202,54 @@ async fn execute_op(
     // Handle async-requiring ops here; everything else is sync.
     if let RuntimeOp::To(config) = op {
         if let Some(sink) = sinks.get(&config.sink_key) {
-            let batch_size = current_events.len() as u64;
-            if let Err(e) = sink.send_batch(current_events).await {
-                warn!(
-                    "Failed to send batch to connector '{}': {}",
-                    config.connector_name, e
-                );
-            } else {
-                *sink_sent += batch_size;
+            match &config.topic {
+                None | Some(super::types::TopicSpec::Static(_)) => {
+                    // Static topic or no topic override — use send_batch (current path)
+                    let batch_size = current_events.len() as u64;
+                    if let Err(e) = sink.send_batch(current_events).await {
+                        warn!(
+                            "Failed to send batch to connector '{}': {}",
+                            config.connector_name, e
+                        );
+                    } else {
+                        *sink_sent += batch_size;
+                    }
+                }
+                Some(super::types::TopicSpec::Dynamic(expr)) => {
+                    // Dynamic topic — evaluate expr per event, group by topic, send per-group
+                    let mut groups: rustc_hash::FxHashMap<String, Vec<SharedEvent>> =
+                        rustc_hash::FxHashMap::default();
+                    for event in current_events.iter() {
+                        let topic_val = evaluator::eval_expr_with_functions(
+                            expr,
+                            event.as_ref(),
+                            SequenceContext::empty(),
+                            functions,
+                            empty_vars(),
+                        )
+                        .unwrap_or(Value::Null);
+                        let topic_str = match topic_val {
+                            Value::Str(s) => s.to_string(),
+                            Value::Int(i) => i.to_string(),
+                            other => format!("{other}"),
+                        };
+                        groups.entry(topic_str).or_default().push(Arc::clone(event));
+                    }
+                    let total = current_events.len() as u64;
+                    let mut all_ok = true;
+                    for (topic, events) in &groups {
+                        if let Err(e) = sink.send_batch_to_topic(events, topic).await {
+                            warn!(
+                                "Failed to send batch to connector '{}' topic '{}': {}",
+                                config.connector_name, topic, e
+                            );
+                            all_ok = false;
+                        }
+                    }
+                    if all_ok {
+                        *sink_sent += total;
+                    }
+                }
             }
         } else {
             warn!("Connector '{}' not found for .to()", config.connector_name);

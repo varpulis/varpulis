@@ -629,6 +629,32 @@ impl Sink for ResilientSink {
         }
     }
 
+    async fn send_batch_to_topic(
+        &self,
+        events: &[Arc<Event>],
+        topic: &str,
+    ) -> Result<(), SinkError> {
+        if !self.cb.allow_request() {
+            self.send_to_dlq("circuit breaker open", events);
+            return Err(SinkError::other(format!(
+                "circuit breaker open for sink '{}'",
+                self.name()
+            )));
+        }
+
+        match self.inner.send_batch_to_topic(events, topic).await {
+            Ok(()) => {
+                self.cb.record_success();
+                Ok(())
+            }
+            Err(e) => {
+                self.cb.record_failure();
+                self.send_to_dlq(&e.to_string(), events);
+                Err(e)
+            }
+        }
+    }
+
     async fn flush(&self) -> Result<(), SinkError> {
         self.inner.flush().await
     }

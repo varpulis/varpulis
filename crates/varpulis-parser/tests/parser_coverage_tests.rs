@@ -3639,3 +3639,104 @@ fn suggest_fix_empty_string() {
     let fix = suggest_fix("");
     assert!(fix.is_none());
 }
+
+// ============================================================================
+// Dynamic Topic Routing in .to()
+// ============================================================================
+
+#[test]
+fn test_to_static_topic() {
+    let program = parse(
+        r#"connector Broker = kafka(brokers: "localhost:9092")
+stream Out = Input.to(Broker, topic: "static-topic")"#,
+    )
+    .unwrap();
+    let stream_stmt = &program.statements[1].node;
+    if let Stmt::StreamDecl { ops, .. } = stream_stmt {
+        assert_eq!(ops.len(), 1);
+        if let StreamOp::To { params, .. } = &ops[0] {
+            let topic = params.iter().find(|p| p.name == "topic").unwrap();
+            assert!(matches!(&topic.value, ConfigValue::Str(s) if s == "static-topic"));
+        } else {
+            panic!("Expected StreamOp::To");
+        }
+    } else {
+        panic!("Expected StreamDecl");
+    }
+}
+
+#[test]
+fn test_to_dynamic_topic_ident() {
+    let program = parse(
+        r#"connector Broker = kafka(brokers: "localhost:9092")
+stream Out = Input.to(Broker, topic: category)"#,
+    )
+    .unwrap();
+    let stream_stmt = &program.statements[1].node;
+    if let Stmt::StreamDecl { ops, .. } = stream_stmt {
+        if let StreamOp::To { params, .. } = &ops[0] {
+            let topic = params.iter().find(|p| p.name == "topic").unwrap();
+            assert!(matches!(&topic.value, ConfigValue::Ident(s) if s == "category"));
+        } else {
+            panic!("Expected StreamOp::To");
+        }
+    } else {
+        panic!("Expected StreamDecl");
+    }
+}
+
+#[test]
+fn test_to_dynamic_topic_concat_two_parts() {
+    let program = parse(
+        r#"connector Broker = kafka(brokers: "localhost:9092")
+stream Out = Input.to(Broker, topic: "events-" + region)"#,
+    )
+    .unwrap();
+    let stream_stmt = &program.statements[1].node;
+    if let Stmt::StreamDecl { ops, .. } = stream_stmt {
+        if let StreamOp::To { params, .. } = &ops[0] {
+            let topic = params.iter().find(|p| p.name == "topic").unwrap();
+            match &topic.value {
+                ConfigValue::Concat(parts) => {
+                    assert_eq!(parts.len(), 2);
+                    assert!(matches!(&parts[0], ConfigValue::Str(s) if s == "events-"));
+                    assert!(matches!(&parts[1], ConfigValue::Ident(s) if s == "region"));
+                }
+                other => panic!("Expected Concat, got {:?}", other),
+            }
+        } else {
+            panic!("Expected StreamOp::To");
+        }
+    } else {
+        panic!("Expected StreamDecl");
+    }
+}
+
+#[test]
+fn test_to_dynamic_topic_concat_three_parts() {
+    let program = parse(
+        r#"connector Broker = kafka(brokers: "localhost:9092")
+stream Out = Input.to(Broker, topic: "tenant." + tenant_id + "." + category)"#,
+    )
+    .unwrap();
+    let stream_stmt = &program.statements[1].node;
+    if let Stmt::StreamDecl { ops, .. } = stream_stmt {
+        if let StreamOp::To { params, .. } = &ops[0] {
+            let topic = params.iter().find(|p| p.name == "topic").unwrap();
+            match &topic.value {
+                ConfigValue::Concat(parts) => {
+                    assert_eq!(parts.len(), 4);
+                    assert!(matches!(&parts[0], ConfigValue::Str(s) if s == "tenant."));
+                    assert!(matches!(&parts[1], ConfigValue::Ident(s) if s == "tenant_id"));
+                    assert!(matches!(&parts[2], ConfigValue::Str(s) if s == "."));
+                    assert!(matches!(&parts[3], ConfigValue::Ident(s) if s == "category"));
+                }
+                other => panic!("Expected Concat, got {:?}", other),
+            }
+        } else {
+            panic!("Expected StreamOp::To");
+        }
+    } else {
+        panic!("Expected StreamDecl");
+    }
+}

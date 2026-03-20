@@ -69,6 +69,18 @@ pub trait Sink: Send + Sync {
         Ok(())
     }
 
+    /// Send a batch of events to a specific topic (for dynamic routing).
+    ///
+    /// Default implementation ignores the topic and delegates to `send_batch()`.
+    /// Connectors that support per-message topics (Kafka, MQTT) should override.
+    async fn send_batch_to_topic(
+        &self,
+        events: &[Arc<Event>],
+        _topic: &str,
+    ) -> Result<(), SinkError> {
+        self.send_batch(events).await
+    }
+
     /// Flush any buffered data
     async fn flush(&self) -> Result<(), SinkError>;
 
@@ -118,6 +130,17 @@ impl Sink for SinkConnectorAdapter {
             inner.send(event).await.map_err(SinkError::from)?;
         }
         Ok(())
+    }
+    async fn send_batch_to_topic(
+        &self,
+        events: &[Arc<Event>],
+        topic: &str,
+    ) -> Result<(), SinkError> {
+        let inner = self.inner.lock().await;
+        inner
+            .send_to_topic(events, topic)
+            .await
+            .map_err(SinkError::from)
     }
     async fn flush(&self) -> Result<(), SinkError> {
         let inner = self.inner.lock().await;

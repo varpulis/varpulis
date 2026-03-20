@@ -337,11 +337,19 @@ pub struct ScoreConfig {
     pub batch_size: usize,
 }
 
+/// Topic specification for `.to()` operations — static or dynamic
+pub enum TopicSpec {
+    /// Static topic string resolved at compile time (current behavior)
+    Static(String),
+    /// Dynamic topic resolved per event from an expression
+    Dynamic(varpulis_core::ast::Expr),
+}
+
 /// Configuration for .to() connector routing
 pub struct ToConfig {
     pub connector_name: String,
-    /// Topic override from .to() params (e.g., `.to(Conn, topic: "my-topic")`)
-    pub topic_override: Option<String>,
+    /// Topic specification: static string, dynamic expression, or None (use connector default)
+    pub topic: Option<TopicSpec>,
     /// Cache key for sink lookup (connector_name or connector_name::topic)
     pub sink_key: String,
     /// Extra parameters from .to() (e.g., client_id, qos) — excludes topic

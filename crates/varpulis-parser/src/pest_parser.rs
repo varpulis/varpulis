@@ -1729,6 +1729,24 @@ fn parse_config_value(pair: pest::iterators::Pair<Rule>) -> ParseResult<ConfigVa
     let inner = pair.into_inner().next().unwrap_or(cloned);
 
     match inner.as_rule() {
+        Rule::config_concat => {
+            let parts: Vec<ConfigValue> = inner
+                .into_inner()
+                .map(|atom| {
+                    // Each atom is a config_atom containing either string or identifier
+                    let inner_atom = atom.into_inner().next().expect("config_atom child");
+                    match inner_atom.as_rule() {
+                        Rule::string => {
+                            let s = inner_atom.as_str();
+                            Ok(ConfigValue::Str(s[1..s.len() - 1].to_string()))
+                        }
+                        Rule::identifier => Ok(ConfigValue::Ident(inner_atom.as_str().to_string())),
+                        _ => Ok(ConfigValue::Ident(inner_atom.as_str().to_string())),
+                    }
+                })
+                .collect::<ParseResult<Vec<_>>>()?;
+            Ok(ConfigValue::Concat(parts))
+        }
         Rule::config_array => {
             let values: Vec<ConfigValue> = inner
                 .into_inner()

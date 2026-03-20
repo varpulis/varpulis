@@ -639,12 +639,19 @@ impl Engine {
             for op in &stream.operations {
                 if let RuntimeOp::To(to_config) = op {
                     referenced_sink_keys.insert(to_config.sink_key.clone());
-                    if let Some(ref topic) = to_config.topic_override {
-                        topic_overrides.push((
-                            to_config.sink_key.clone(),
-                            to_config.connector_name.clone(),
-                            topic.clone(),
-                        ));
+                    match &to_config.topic {
+                        Some(types::TopicSpec::Static(topic)) => {
+                            topic_overrides.push((
+                                to_config.sink_key.clone(),
+                                to_config.connector_name.clone(),
+                                topic.clone(),
+                            ));
+                        }
+                        Some(types::TopicSpec::Dynamic(_)) => {
+                            // Dynamic topics use the base connector — ensure it's registered
+                            referenced_sink_keys.insert(to_config.connector_name.clone());
+                        }
+                        None => {}
                     }
                 }
             }
