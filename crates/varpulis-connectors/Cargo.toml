@@ -76,6 +76,7 @@ all-connectors = ["mqtt", "kafka", "nats", "database", "redis", "kinesis", "s3",
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+rustls = { workspace = true }
 
 [lints]
 workspace = true

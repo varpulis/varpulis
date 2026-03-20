@@ -871,3 +871,50 @@ mod mqtt_impl {
 }
 
 pub use mqtt_impl::{MqttSink, MqttSource};
+
+#[cfg(all(test, feature = "mqtt"))]
+mod tests {
+    use super::*;
+
+    /// Verify that creating an MQTT source with TLS enabled does not panic
+    /// due to a missing rustls crypto provider.
+    #[tokio::test]
+    async fn mqtt_tls_crypto_provider_installed() {
+        // Install the crypto provider (mirrors what main.rs does)
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        let config = MqttConfig::new("localhost", "test/topic")
+            .with_port(8883)
+            .with_tls(true);
+
+        // Creating the source must not panic — it configures TLS via rumqttc
+        let mut source = MqttSource::new("tls-test", config);
+
+        // start() will fail to connect (no broker), but must NOT panic on
+        // "no default CryptoProvider" — that's what we're testing.
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let result = source.start(tx).await;
+
+        // Connection refused is expected; a crypto provider panic is not.
+        // Either Ok (connected + eventloop spawned) or Err (connection refused) is fine.
+        drop(result);
+        let _ = source.stop().await;
+    }
+
+    /// Verify that creating an MQTT sink with TLS does not panic on connect.
+    #[tokio::test]
+    async fn mqtt_sink_tls_no_panic() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        let config = MqttConfig::new("localhost", "test/output")
+            .with_port(8883)
+            .with_tls(true);
+
+        let mut sink = MqttSink::new("tls-sink-test", config);
+
+        // connect() will fail (no broker) but must not panic on missing provider.
+        let result = sink.connect().await;
+        drop(result);
+        let _ = sink.close().await;
+    }
+}

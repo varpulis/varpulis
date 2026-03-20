@@ -8024,6 +8024,7 @@ dependencies = [
  "reqwest",
  "rumqttc",
  "rustc-hash",
+ "rustls 0.23.37",
  "schemars 1.2.1",
  "serde",
  "serde_json",

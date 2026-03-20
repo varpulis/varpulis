@@ -521,6 +521,12 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Install rustls crypto provider before any TLS connections (MQTT, HTTPS, etc.)
+    // rumqttc's `use-rustls` pulls in rustls without a provider, so we must install one.
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install rustls crypto provider");
+
     // Parse CLI first so we can check otel_endpoint before initializing tracing
     let cli = Cli::parse();
 
