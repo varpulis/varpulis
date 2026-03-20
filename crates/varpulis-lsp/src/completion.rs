@@ -316,9 +316,9 @@ fn get_stream_operation_completions() -> Vec<CompletionItem> {
         completion_item(
             "to",
             CompletionItemKind::METHOD,
-            "Output to sink",
-            "to(\"$1\")",
-            Some(".to(\"sink://...\")"),
+            "Output to sink. Supports dynamic topic: topic: field or topic: \"prefix-\" + field",
+            "to(${1:Connector}, topic: \"${2:topic}\")",
+            Some(".to(Connector, topic: \"topic\")"),
         ),
         completion_item(
             "join",

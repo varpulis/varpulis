@@ -879,6 +879,9 @@ pub enum ConfigValue {
     Array(Vec<Self>),
     /// Map of key-value pairs.
     Map(Vec<(String, Self)>),
+    /// String concatenation: `"prefix-" + field_name + "-suffix"`
+    /// Elements are `Str` or `Ident` only.
+    Concat(Vec<Self>),
 }
 
 impl ConfigValue {

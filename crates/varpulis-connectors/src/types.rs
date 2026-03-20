@@ -217,6 +217,21 @@ pub trait SinkConnector: Send + Sync {
     /// Returns `ConnectorError::NotConnected` if not connected.
     async fn send(&self, event: &Event) -> Result<(), ConnectorError>;
 
+    /// Send a batch of events to a specific topic (for dynamic routing).
+    ///
+    /// Default implementation sends each event via `send()`, ignoring the topic.
+    /// Connectors that support per-message topics (Kafka, MQTT) should override.
+    async fn send_to_topic(
+        &self,
+        events: &[std::sync::Arc<Event>],
+        _topic: &str,
+    ) -> Result<(), ConnectorError> {
+        for event in events {
+            self.send(event).await?;
+        }
+        Ok(())
+    }
+
     /// Flush any internally buffered events.
     ///
     /// Call this to ensure all events have been transmitted before shutdown.

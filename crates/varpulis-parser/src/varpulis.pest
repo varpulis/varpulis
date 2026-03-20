@@ -383,7 +383,9 @@ config_block = {
 }
 config_item = { identifier ~ ":" ~ config_value ~ ","? }
 // Duration before integer for PEG ordering
-config_value = { config_array | float | duration | integer | string | boolean | identifier }
+config_value = { config_concat | config_array | float | duration | integer | string | boolean | identifier }
+config_concat = { config_atom ~ ("+" ~ config_atom)+ }
+config_atom  = { string | identifier }
 config_array = { "[" ~ (config_value ~ ("," ~ config_value)*)? ~ "]" }
 
 // ============================================================================
