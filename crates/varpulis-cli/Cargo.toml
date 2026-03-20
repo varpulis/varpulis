@@ -73,6 +73,7 @@ tracing-opentelemetry = { workspace = true, optional = true }
 [features]
 default = []
 kafka = ["varpulis-runtime/kafka"]
+nats = ["varpulis-runtime/nats"]
 nats-transport = ["varpulis-cluster/nats-transport"]
 onnx = ["varpulis-runtime/onnx"]
 k8s = ["varpulis-cluster/k8s"]

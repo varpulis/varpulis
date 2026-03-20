@@ -481,6 +481,23 @@ mod nats_impl {
             Ok(())
         }
 
+        async fn send_to_topic(
+            &self,
+            events: &[std::sync::Arc<Event>],
+            subject: &str,
+        ) -> Result<(), ConnectorError> {
+            let client = self.client.as_ref().ok_or(ConnectorError::NotConnected)?;
+            let subject: async_nats::Subject = subject.into();
+            for event in events {
+                let buf = event.to_sink_payload();
+                client
+                    .publish(subject.clone(), buf.into())
+                    .await
+                    .map_err(|e| ConnectorError::SendFailed(e.to_string()))?;
+            }
+            Ok(())
+        }
+
         async fn flush(&self) -> Result<(), ConnectorError> {
             if let Some(client) = &self.client {
                 client
