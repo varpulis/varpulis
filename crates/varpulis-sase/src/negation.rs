@@ -1,13 +1,12 @@
 //! Temporal negation support (NEG-01)
 
-use crate::clock::Timestamp;
-
 use chrono::{DateTime, Utc};
 use rustc_hash::FxHashMap;
 use varpulis_core::Event;
 
 use super::predicate::eval_predicate;
 use super::types::{Predicate, SharedEvent};
+use crate::clock::Timestamp;
 use crate::ExprEvaluator;
 
 /// Constraint for temporal negation that must be confirmed via timeout

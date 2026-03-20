@@ -3,8 +3,9 @@
 //! Extension traits that add checkpoint/restore to varpulis-sase types
 //! using runtime persistence types.
 
-use chrono::DateTime;
 use std::sync::Arc;
+
+use chrono::DateTime;
 use varpulis_sase::{KleeneCapture, Run, SaseEngine, SharedEvent, StackEntry, Timestamp};
 
 use crate::persistence;
