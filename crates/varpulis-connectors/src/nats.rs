@@ -608,30 +608,8 @@ mod nats_impl {
     }
 
     #[inline]
-    fn json_value_to_native(v: &serde_json::Value, depth: usize) -> varpulis_core::Value {
-        if depth == 0 {
-            return varpulis_core::Value::Null;
-        }
-        match v {
-            serde_json::Value::Bool(b) => varpulis_core::Value::Bool(*b),
-            serde_json::Value::Number(n) => {
-                if let Some(i) = n.as_i64() {
-                    varpulis_core::Value::Int(i)
-                } else {
-                    varpulis_core::Value::Float(n.as_f64().unwrap_or(0.0))
-                }
-            }
-            serde_json::Value::String(s) => {
-                if s.len() > crate::limits::MAX_STRING_VALUE_BYTES {
-                    let truncated =
-                        &s[..s.floor_char_boundary(crate::limits::MAX_STRING_VALUE_BYTES)];
-                    varpulis_core::Value::Str(truncated.into())
-                } else {
-                    varpulis_core::Value::Str(s.clone().into())
-                }
-            }
-            _ => varpulis_core::Value::Null,
-        }
+    fn json_value_to_native(v: &serde_json::Value, _depth: usize) -> varpulis_core::Value {
+        crate::helpers::json_to_value(v).unwrap_or(varpulis_core::Value::Null)
     }
 }
 
