@@ -375,18 +375,7 @@ mod nats_managed_impl {
 
     #[inline]
     fn json_value_to_native(v: &serde_json::Value) -> varpulis_core::Value {
-        match v {
-            serde_json::Value::Bool(b) => varpulis_core::Value::Bool(*b),
-            serde_json::Value::Number(n) => {
-                if let Some(i) = n.as_i64() {
-                    varpulis_core::Value::Int(i)
-                } else {
-                    varpulis_core::Value::Float(n.as_f64().unwrap_or(0.0))
-                }
-            }
-            serde_json::Value::String(s) => varpulis_core::Value::Str(s.clone().into()),
-            _ => varpulis_core::Value::Null,
-        }
+        crate::helpers::json_to_value(v).unwrap_or(varpulis_core::Value::Null)
     }
 }
 
