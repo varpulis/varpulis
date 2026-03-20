@@ -1,6 +1,5 @@
 //! Run advancement logic (hot path)
 
-use crate::clock::Timestamp;
 use std::sync::Arc;
 
 use super::and_op::AndState;
@@ -10,6 +9,7 @@ use super::nfa::{Nfa, State, StateType};
 use super::predicate::{eval_predicate, event_matches_state};
 use super::run::Run;
 use super::types::{MatchResult, SelectionStrategy, SharedEvent};
+use crate::clock::Timestamp;
 use crate::ExprEvaluator;
 
 #[derive(Debug)]

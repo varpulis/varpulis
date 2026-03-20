@@ -3,10 +3,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::clock::Timestamp;
-
 use rustc_hash::FxHashMap;
 use varpulis_core::{Event, Value};
+
+use crate::clock::Timestamp;
 
 /// Shared event reference for efficient cloning in pattern matching.
 /// Using Arc allows multiple pattern runs to share the same event data

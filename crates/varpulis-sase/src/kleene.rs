@@ -1,6 +1,5 @@
 //! ZDD-Kleene: Compact Kleene capture using ZDD
 
-use crate::clock::Timestamp;
 use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
@@ -9,6 +8,7 @@ use varpulis_zdd::{ZddArena, ZddHandle};
 use super::types::{
     Predicate, SharedEvent, StackEntry, MAX_ENUMERATION_RESULTS, MAX_KLEENE_EVENTS,
 };
+use crate::clock::Timestamp;
 
 /// Compact representation of Kleene captures using Zero-suppressed Decision Diagrams.
 ///

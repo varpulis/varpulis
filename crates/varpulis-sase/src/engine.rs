@@ -3,8 +3,6 @@
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
-use crate::clock::Timestamp;
-
 use chrono::{DateTime, Utc};
 use rustc_hash::FxHashMap;
 
@@ -24,6 +22,7 @@ use super::types::{
     GlobalNegation, MatchResult, Predicate, SasePattern, SaseStats, SelectionStrategy, SharedEvent,
     TimeSemantics, MAX_ENUMERATION_RESULTS, MAX_KLEENE_EVENTS,
 };
+use crate::clock::Timestamp;
 use crate::ExprEvaluator;
 
 /// PERF: Static empty captured map to avoid allocations in try_start_run
