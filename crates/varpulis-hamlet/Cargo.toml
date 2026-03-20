@@ -9,7 +9,7 @@ documentation.workspace = true
 description = "Hamlet shared online event trend aggregation (SIGMOD 2021)"
 
 [dependencies]
-varpulis-core = { version = "0.6.3", path = "../varpulis-core" }
+varpulis-core = { version = "0.6.4", path = "../varpulis-core" }
 rustc-hash = { workspace = true }
 smallvec = "1.13"
 tracing = { workspace = true }
