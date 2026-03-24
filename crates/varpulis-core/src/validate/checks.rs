@@ -160,7 +160,7 @@ pub fn pass1_declarations(v: &mut Validator, program: &Program) {
                     },
                 );
             }
-            Stmt::TypeDecl { name, .. } => {
+            Stmt::TypeDecl { name, fields, .. } => {
                 if let Some(prev) = v.symbols.types.get(name) {
                     v.emit_with_related(
                         Severity::Error,
@@ -173,7 +173,16 @@ pub fn pass1_declarations(v: &mut Validator, program: &Program) {
                         }],
                     );
                 } else {
-                    v.symbols.types.insert(name.clone(), TypeInfo { span });
+                    v.symbols.types.insert(
+                        name.clone(),
+                        TypeInfo {
+                            span,
+                            fields: fields
+                                .iter()
+                                .map(|f| (f.name.clone(), f.ty.clone()))
+                                .collect(),
+                        },
+                    );
                 }
             }
             _ => {}
@@ -867,6 +876,27 @@ const fn is_sequence_source(source: &StreamSource) -> bool {
 // Field reference validation
 // ---------------------------------------------------------------------------
 
+/// Collect a member chain from nested `Expr::Member` expressions.
+/// Returns `Some(("alias", ["field1", "field2", ...]))` for `alias.field1.field2`.
+fn collect_member_chain(expr: &Expr) -> Option<(String, Vec<String>)> {
+    match expr {
+        Expr::Member {
+            expr: inner,
+            member,
+        } => {
+            if let Expr::Ident(root) = inner.as_ref() {
+                Some((root.clone(), vec![member.clone()]))
+            } else if let Some((root, mut chain)) = collect_member_chain(inner) {
+                chain.push(member.clone());
+                Some((root, chain))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 /// Walk an expression tree and warn about references to undeclared fields on known events.
 fn check_expr_field_refs(
     v: &mut Validator,
@@ -879,7 +909,103 @@ fn check_expr_field_refs(
             expr: inner,
             member,
         } => {
-            if let Expr::Ident(name) = inner.as_ref() {
+            // Try to resolve the full member chain (e.g., alias.customer.address.city)
+            if let Some((root, chain)) = collect_member_chain(expr) {
+                if let Some(event_name) = alias_to_event.get(&root) {
+                    // Validate the first field against the event
+                    if let Some(fields) = v.symbols.event_field_names(event_name) {
+                        if !fields.is_empty() && !fields.iter().any(|f| f == &chain[0]) {
+                            let suggestion = did_you_mean(
+                                &chain[0],
+                                &fields.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+                            );
+                            v.emit_with_hint(
+                                Severity::Warning,
+                                span,
+                                "W034",
+                                format!(
+                                    "reference to undeclared field '{}' on event '{event_name}'",
+                                    chain[0]
+                                ),
+                                format!("declared fields: {}{}", fields.join(", "), suggestion),
+                            );
+                        }
+                    }
+
+                    // Validate deeper fields through struct type chain
+                    // Find the type of the first field from the event declaration
+                    let mut current_type_name: Option<String> = None;
+                    if let Some(event_info) = v.symbols.events.get(event_name) {
+                        // We only have field names in EventInfo, not types.
+                        // Check if the event also has a matching struct type.
+                        let _ = event_info;
+                    }
+                    // Also check if the event name itself is used as a type with fields
+                    if let Some(type_info) = v.symbols.types.get(event_name) {
+                        for (fname, fty) in &type_info.fields {
+                            if fname == &chain[0] {
+                                if let crate::types::Type::Named(ref n) = fty {
+                                    current_type_name = Some(n.clone());
+                                }
+                                break;
+                            }
+                        }
+                    }
+
+                    // Walk remaining chain through struct types
+                    for field in chain.iter().skip(1) {
+                        let type_name = match current_type_name.take() {
+                            Some(n) => n,
+                            None => break,
+                        };
+                        // Clone the fields we need so we can call v.emit_with_hint later
+                        let resolved = v.symbols.types.get(&type_name).map(|ti| {
+                            let names: Vec<String> =
+                                ti.fields.iter().map(|(n, _)| n.clone()).collect();
+                            let next = ti.fields.iter().find_map(|(n, t)| {
+                                if n == field {
+                                    if let crate::types::Type::Named(ref tn) = t {
+                                        Some(tn.clone())
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                }
+                            });
+                            (names, next)
+                        });
+                        match resolved {
+                            Some((type_fields, next_type)) => {
+                                if !type_fields.is_empty()
+                                    && !type_fields.iter().any(|f| f == field)
+                                {
+                                    let suggestion = did_you_mean(
+                                        field,
+                                        &type_fields.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+                                    );
+                                    v.emit_with_hint(
+                                        Severity::Warning,
+                                        span,
+                                        "W034",
+                                        format!(
+                                            "reference to undeclared field '{field}' on type '{type_name}'"
+                                        ),
+                                        format!(
+                                            "declared fields: {}{}",
+                                            type_fields.join(", "),
+                                            suggestion
+                                        ),
+                                    );
+                                }
+                                current_type_name = next_type;
+                            }
+                            None => break, // Type not found — skip
+                        }
+                    }
+                }
+            } else if let Expr::Ident(name) = inner.as_ref() {
+                // Simple one-level access (fallback for non-chain expressions)
                 if let Some(event_name) = alias_to_event.get(name) {
                     if let Some(fields) = v.symbols.event_field_names(event_name) {
                         if !fields.is_empty() && !fields.iter().any(|f| f == member) {
@@ -900,7 +1026,7 @@ fn check_expr_field_refs(
                     }
                 }
             }
-            // Also recurse into inner expression
+            // Also recurse into inner expression for nested checks
             check_expr_field_refs(v, inner, alias_to_event, span);
         }
         Expr::Binary { left, right, .. } => {

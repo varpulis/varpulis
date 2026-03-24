@@ -145,3 +145,93 @@ event Order:
     amount: Price
     location: Coordinates
 ```
+
+## Struct Types
+
+Struct types define reusable, named object structures with typed fields. They use the
+same `type` keyword but with a colon and field list instead of `=`:
+
+```varpulis
+type Address:
+    street: str
+    city: str
+    zip: str
+    country: str?
+
+type Customer:
+    name: str
+    email: str
+    address: Address       # nested struct type
+
+type LineItem:
+    product: str
+    price: float
+    quantity: int
+```
+
+Use struct types as field types in events:
+
+```varpulis
+event Order:
+    id: str
+    customer: Customer
+    items: [LineItem]
+    total: float
+    ts: timestamp
+```
+
+### Nested Field Access
+
+Access nested fields using chained dot notation:
+
+```varpulis
+stream HighValue = Order as o
+    .where(o.customer.address.city == "NYC" and o.total > 1000)
+    .emit(
+        order_id: o.id,
+        name: o.customer.name,
+        city: o.customer.address.city,
+        item_count: o.items.len()
+    )
+```
+
+At runtime, nested structures are represented as maps. JSON payloads with nested
+objects are automatically converted to the correct structure.
+
+### Method Calls
+
+Values support method-call syntax for built-in operations. Any built-in function
+can be called as a method on its first argument:
+
+```varpulis
+# String methods
+name.upper()                    # "ALICE"
+name.lower()                    # "alice"
+name.trim()                     # strip whitespace
+name.contains("search")         # true/false
+name.starts_with("A")           # true/false
+name.replace("old", "new")      # string replacement
+name.split(",")                 # split into array
+name.len()                      # character count
+
+# Array methods
+items.len()                     # element count
+items.first()                   # first element
+items.last()                    # last element
+items.contains(x)               # membership test
+items.sort()                    # sorted copy
+items.reverse()                 # reversed copy
+items.sum()                     # numeric sum
+items.avg()                     # numeric average
+items.filter(x => x.price > 10)   # filter with lambda
+items.map(x => x.name)            # transform with lambda
+
+# Map / object methods
+obj.keys()                      # array of keys
+obj.values()                    # array of values
+obj.len()                       # number of entries
+
+# Chaining
+text.trim().upper().contains("HELLO")
+items.filter(i => i.active).map(i => i.name).join(", ")
+```

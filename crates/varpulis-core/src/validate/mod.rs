@@ -769,11 +769,13 @@ mod tests {
         let prog = make_program(vec![
             Stmt::TypeDecl {
                 name: "MyType".to_string(),
-                ty: crate::types::Type::Int,
+                ty: Some(crate::types::Type::Int),
+                fields: vec![],
             },
             Stmt::TypeDecl {
                 name: "MyType".to_string(),
-                ty: crate::types::Type::Float,
+                ty: Some(crate::types::Type::Float),
+                fields: vec![],
             },
         ]);
         let result = validate("type MyType = int\ntype MyType = float", &prog);

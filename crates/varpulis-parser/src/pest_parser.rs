@@ -1552,8 +1552,27 @@ fn parse_field(pair: pest::iterators::Pair<Rule>) -> ParseResult<Field> {
 fn parse_type_decl(pair: pest::iterators::Pair<Rule>) -> ParseResult<Stmt> {
     let mut inner = pair.into_inner();
     let name = inner.expect_next("type name")?.as_str().to_string();
-    let ty = parse_type(inner.expect_next("type definition")?)?;
-    Ok(Stmt::TypeDecl { name, ty })
+    let next = inner.expect_next("type body")?;
+    match next.as_rule() {
+        Rule::field => {
+            let mut fields = vec![parse_field(next)?];
+            for p in inner {
+                if p.as_rule() == Rule::field {
+                    fields.push(parse_field(p)?);
+                }
+            }
+            Ok(Stmt::TypeDecl {
+                name,
+                ty: None,
+                fields,
+            })
+        }
+        _ => Ok(Stmt::TypeDecl {
+            name,
+            ty: Some(parse_type(next)?),
+            fields: vec![],
+        }),
+    }
 }
 
 fn parse_type(pair: pest::iterators::Pair<Rule>) -> ParseResult<Type> {

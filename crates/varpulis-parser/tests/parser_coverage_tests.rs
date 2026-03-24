@@ -28,9 +28,9 @@ fn parse_first_stmt(source: &str) -> Stmt {
 fn test_type_decl_float() {
     let stmt = parse_first_stmt("type Temperature = float");
     match stmt {
-        Stmt::TypeDecl { name, ty } => {
+        Stmt::TypeDecl { name, ty, .. } => {
             assert_eq!(name, "Temperature");
-            assert_eq!(ty, Type::Float);
+            assert_eq!(ty, Some(Type::Float));
         }
         other => panic!("Expected TypeDecl, got {other:?}"),
     }
@@ -40,9 +40,9 @@ fn test_type_decl_float() {
 fn test_type_decl_int() {
     let stmt = parse_first_stmt("type Counter = int");
     match stmt {
-        Stmt::TypeDecl { name, ty } => {
+        Stmt::TypeDecl { name, ty, .. } => {
             assert_eq!(name, "Counter");
-            assert_eq!(ty, Type::Int);
+            assert_eq!(ty, Some(Type::Int));
         }
         other => panic!("Expected TypeDecl, got {other:?}"),
     }
@@ -52,9 +52,9 @@ fn test_type_decl_int() {
 fn test_type_decl_bool() {
     let stmt = parse_first_stmt("type Flag = bool");
     match stmt {
-        Stmt::TypeDecl { name, ty } => {
+        Stmt::TypeDecl { name, ty, .. } => {
             assert_eq!(name, "Flag");
-            assert_eq!(ty, Type::Bool);
+            assert_eq!(ty, Some(Type::Bool));
         }
         other => panic!("Expected TypeDecl, got {other:?}"),
     }
@@ -64,9 +64,9 @@ fn test_type_decl_bool() {
 fn test_type_decl_str() {
     let stmt = parse_first_stmt("type Label = str");
     match stmt {
-        Stmt::TypeDecl { name, ty } => {
+        Stmt::TypeDecl { name, ty, .. } => {
             assert_eq!(name, "Label");
-            assert_eq!(ty, Type::Str);
+            assert_eq!(ty, Some(Type::Str));
         }
         other => panic!("Expected TypeDecl, got {other:?}"),
     }
@@ -76,9 +76,9 @@ fn test_type_decl_str() {
 fn test_type_decl_timestamp() {
     let stmt = parse_first_stmt("type EventTime = timestamp");
     match stmt {
-        Stmt::TypeDecl { name, ty } => {
+        Stmt::TypeDecl { name, ty, .. } => {
             assert_eq!(name, "EventTime");
-            assert_eq!(ty, Type::Timestamp);
+            assert_eq!(ty, Some(Type::Timestamp));
         }
         other => panic!("Expected TypeDecl, got {other:?}"),
     }
@@ -88,9 +88,9 @@ fn test_type_decl_timestamp() {
 fn test_type_decl_duration() {
     let stmt = parse_first_stmt("type Interval = duration");
     match stmt {
-        Stmt::TypeDecl { name, ty } => {
+        Stmt::TypeDecl { name, ty, .. } => {
             assert_eq!(name, "Interval");
-            assert_eq!(ty, Type::Duration);
+            assert_eq!(ty, Some(Type::Duration));
         }
         other => panic!("Expected TypeDecl, got {other:?}"),
     }
@@ -100,9 +100,9 @@ fn test_type_decl_duration() {
 fn test_type_decl_array() {
     let stmt = parse_first_stmt("type IntList = [int]");
     match stmt {
-        Stmt::TypeDecl { name, ty } => {
+        Stmt::TypeDecl { name, ty, .. } => {
             assert_eq!(name, "IntList");
-            assert_eq!(ty, Type::Array(Box::new(Type::Int)));
+            assert_eq!(ty, Some(Type::Array(Box::new(Type::Int))));
         }
         other => panic!("Expected TypeDecl, got {other:?}"),
     }
@@ -112,9 +112,12 @@ fn test_type_decl_array() {
 fn test_type_decl_map() {
     let stmt = parse_first_stmt("type Lookup = {str: int}");
     match stmt {
-        Stmt::TypeDecl { name, ty } => {
+        Stmt::TypeDecl { name, ty, .. } => {
             assert_eq!(name, "Lookup");
-            assert_eq!(ty, Type::Map(Box::new(Type::Str), Box::new(Type::Int)));
+            assert_eq!(
+                ty,
+                Some(Type::Map(Box::new(Type::Str), Box::new(Type::Int)))
+            );
         }
         other => panic!("Expected TypeDecl, got {other:?}"),
     }
@@ -124,9 +127,9 @@ fn test_type_decl_map() {
 fn test_type_decl_tuple() {
     let stmt = parse_first_stmt("type Pair = (int, float)");
     match stmt {
-        Stmt::TypeDecl { name, ty } => {
+        Stmt::TypeDecl { name, ty, .. } => {
             assert_eq!(name, "Pair");
-            assert_eq!(ty, Type::Tuple(vec![Type::Int, Type::Float]));
+            assert_eq!(ty, Some(Type::Tuple(vec![Type::Int, Type::Float])));
         }
         other => panic!("Expected TypeDecl, got {other:?}"),
     }
@@ -136,9 +139,9 @@ fn test_type_decl_tuple() {
 fn test_type_decl_stream_type() {
     let stmt = parse_first_stmt("type EventStream = Stream<float>");
     match stmt {
-        Stmt::TypeDecl { name, ty } => {
+        Stmt::TypeDecl { name, ty, .. } => {
             assert_eq!(name, "EventStream");
-            assert_eq!(ty, Type::Stream(Box::new(Type::Float)));
+            assert_eq!(ty, Some(Type::Stream(Box::new(Type::Float))));
         }
         other => panic!("Expected TypeDecl, got {other:?}"),
     }
@@ -148,9 +151,9 @@ fn test_type_decl_stream_type() {
 fn test_type_decl_optional() {
     let stmt = parse_first_stmt("type MaybeInt = int?");
     match stmt {
-        Stmt::TypeDecl { name, ty } => {
+        Stmt::TypeDecl { name, ty, .. } => {
             assert_eq!(name, "MaybeInt");
-            assert_eq!(ty, Type::Optional(Box::new(Type::Int)));
+            assert_eq!(ty, Some(Type::Optional(Box::new(Type::Int))));
         }
         other => panic!("Expected TypeDecl, got {other:?}"),
     }
@@ -160,9 +163,86 @@ fn test_type_decl_optional() {
 fn test_type_decl_named_type() {
     let stmt = parse_first_stmt("type Alias = SensorReading");
     match stmt {
-        Stmt::TypeDecl { name, ty } => {
+        Stmt::TypeDecl { name, ty, .. } => {
             assert_eq!(name, "Alias");
-            assert_eq!(ty, Type::Named("SensorReading".to_string()));
+            assert_eq!(ty, Some(Type::Named("SensorReading".to_string())));
+        }
+        other => panic!("Expected TypeDecl, got {other:?}"),
+    }
+}
+
+// ============================================================================
+// 1b. Struct Type Declarations
+// ============================================================================
+
+#[test]
+fn test_type_decl_struct_basic() {
+    let stmt = parse_first_stmt("type Address:\n    street: str\n    city: str\n    zip: str");
+    match stmt {
+        Stmt::TypeDecl { name, ty, fields } => {
+            assert_eq!(name, "Address");
+            assert!(ty.is_none());
+            assert_eq!(fields.len(), 3);
+            assert_eq!(fields[0].name, "street");
+            assert_eq!(fields[0].ty, Type::Str);
+            assert_eq!(fields[1].name, "city");
+            assert_eq!(fields[1].ty, Type::Str);
+            assert_eq!(fields[2].name, "zip");
+            assert_eq!(fields[2].ty, Type::Str);
+        }
+        other => panic!("Expected TypeDecl, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_type_decl_struct_with_named_type() {
+    let stmt = parse_first_stmt("type Customer:\n    name: str\n    address: Address");
+    match stmt {
+        Stmt::TypeDecl { name, ty, fields } => {
+            assert_eq!(name, "Customer");
+            assert!(ty.is_none());
+            assert_eq!(fields.len(), 2);
+            assert_eq!(fields[0].name, "name");
+            assert_eq!(fields[0].ty, Type::Str);
+            assert_eq!(fields[1].name, "address");
+            assert_eq!(fields[1].ty, Type::Named("Address".to_string()));
+        }
+        other => panic!("Expected TypeDecl, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_type_decl_struct_with_array() {
+    let stmt = parse_first_stmt("type Order:\n    items: [LineItem]\n    total: float");
+    match stmt {
+        Stmt::TypeDecl { name, ty, fields } => {
+            assert_eq!(name, "Order");
+            assert!(ty.is_none());
+            assert_eq!(fields.len(), 2);
+            assert_eq!(fields[0].name, "items");
+            assert_eq!(
+                fields[0].ty,
+                Type::Array(Box::new(Type::Named("LineItem".to_string())))
+            );
+            assert_eq!(fields[1].name, "total");
+            assert_eq!(fields[1].ty, Type::Float);
+        }
+        other => panic!("Expected TypeDecl, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_type_decl_struct_with_optional() {
+    let stmt = parse_first_stmt("type Config:\n    timeout: duration?\n    retries: int");
+    match stmt {
+        Stmt::TypeDecl { name, ty, fields } => {
+            assert_eq!(name, "Config");
+            assert!(ty.is_none());
+            assert_eq!(fields.len(), 2);
+            assert_eq!(fields[0].name, "timeout");
+            assert_eq!(fields[0].ty, Type::Optional(Box::new(Type::Duration)));
+            assert_eq!(fields[1].name, "retries");
+            assert_eq!(fields[1].ty, Type::Int);
         }
         other => panic!("Expected TypeDecl, got {other:?}"),
     }
