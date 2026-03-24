@@ -61,11 +61,13 @@ pub struct VarInfo {
     pub mutable: bool,
 }
 
-/// Information about a declared type alias.
+/// Information about a declared type (alias or struct).
 #[derive(Debug, Clone)]
 pub struct TypeInfo {
-    /// Source span of the type alias declaration.
+    /// Source span of the type declaration.
     pub span: Span,
+    /// Struct fields: `(field_name, field_type)`. Empty for type aliases.
+    pub fields: Vec<(String, crate::types::Type)>,
 }
 
 /// Symbol table built during Pass 1.

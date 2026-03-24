@@ -316,7 +316,7 @@ field = { identifier ~ ":" ~ type_expr ~ "?"? }
 // Type Declaration
 // ============================================================================
 
-type_decl = { "type" ~ identifier ~ "=" ~ type_expr }
+type_decl = { "type" ~ identifier ~ ("=" ~ type_expr | ":" ~ (INDENT ~ field+ ~ DEDENT | field+)) }
 
 type_annotation = { ":" ~ type_expr }
 

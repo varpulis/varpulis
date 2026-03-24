@@ -798,6 +798,74 @@ fn eval_builtin_function(func_name: &str, args: &[Value]) -> Option<Value> {
     }
 }
 
+/// Evaluate a method call on a value: `receiver.method(args)`.
+///
+/// For simple methods (no lambdas), prepends the receiver to the argument list
+/// and delegates to `eval_builtin_function`. For `filter` and `map` with
+/// lambda arguments, evaluates the lambda body with bound variables.
+#[allow(clippy::too_many_arguments)]
+fn eval_method_call(
+    method: &str,
+    receiver: Value,
+    raw_args: &[varpulis_core::ast::Arg],
+    arg_values: &[Value],
+    event: &Event,
+    ctx: &SequenceContext,
+    functions: &FxHashMap<String, UserFunction>,
+    bindings: &FxHashMap<String, Value>,
+) -> Option<Value> {
+    match method {
+        // Lambda methods on arrays — need special handling
+        "filter" => {
+            if let Value::Array(arr) = receiver {
+                if let Some(varpulis_core::ast::Arg::Positional(Expr::Lambda { params, body })) =
+                    raw_args.first()
+                {
+                    let param_name = params.first().cloned().unwrap_or_else(|| "x".to_string());
+                    let filtered: Vec<Value> = arr
+                        .into_iter()
+                        .filter(|item| {
+                            let mut local = bindings.clone();
+                            local.insert(param_name.clone(), item.clone());
+                            eval_expr_with_functions(body, event, ctx, functions, &local)
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false)
+                        })
+                        .collect();
+                    return Some(Value::array(filtered));
+                }
+            }
+            None
+        }
+        "map" => {
+            if let Value::Array(arr) = receiver {
+                if let Some(varpulis_core::ast::Arg::Positional(Expr::Lambda { params, body })) =
+                    raw_args.first()
+                {
+                    let param_name = params.first().cloned().unwrap_or_else(|| "x".to_string());
+                    let mapped: Vec<Value> = arr
+                        .iter()
+                        .cloned()
+                        .filter_map(|item| {
+                            let mut local = bindings.clone();
+                            local.insert(param_name.clone(), item);
+                            eval_expr_with_functions(body, event, ctx, functions, &local)
+                        })
+                        .collect();
+                    return Some(Value::array(mapped));
+                }
+            }
+            None
+        }
+        // All other methods — delegate to eval_builtin_function with receiver as first arg
+        _ => {
+            let mut full_args = vec![receiver];
+            full_args.extend_from_slice(arg_values);
+            eval_builtin_function(method, &full_args)
+        }
+    }
+}
+
 // =============================================================================
 // Expression Evaluation
 // =============================================================================
@@ -1116,6 +1184,35 @@ pub fn eval_expr_with_functions(
 
                 // Delegate to centralized built-in function evaluator
                 eval_builtin_function(func_name, &arg_values)
+            } else if let Expr::Member {
+                expr: receiver,
+                member,
+            } = func.as_ref()
+            {
+                // Method call: receiver.method(args)
+                let receiver_val =
+                    eval_expr_with_functions(receiver, event, ctx, functions, bindings)?;
+                let arg_values: Vec<Value> = args
+                    .iter()
+                    .filter_map(|arg| match arg {
+                        varpulis_core::ast::Arg::Positional(e) => {
+                            eval_expr_with_functions(e, event, ctx, functions, bindings)
+                        }
+                        varpulis_core::ast::Arg::Named(_, e) => {
+                            eval_expr_with_functions(e, event, ctx, functions, bindings)
+                        }
+                    })
+                    .collect();
+                eval_method_call(
+                    member,
+                    receiver_val,
+                    args,
+                    &arg_values,
+                    event,
+                    ctx,
+                    functions,
+                    bindings,
+                )
             } else {
                 None
             }

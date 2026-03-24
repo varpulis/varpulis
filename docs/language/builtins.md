@@ -108,40 +108,88 @@ The following functions are planned for future versions but are **not currently 
 | `lag(expr, n)` | Value n positions before |
 | `lead(expr, n)` | Value n positions after |
 
-### Planned String Functions
-| Function | Description |
-|----------|-------------|
-| `len(s)` | String length |
-| `upper(s)` / `lower(s)` | Case conversion |
-| `trim(s)` | Remove whitespace |
-| `contains(s, sub)` | Substring check |
-| `starts_with(s, pre)` / `ends_with(s, suf)` | Prefix/suffix check |
-| `split(s, sep)` / `join(arr, sep)` | Split/join strings |
-| `replace(s, old, new)` | String replacement |
-| `regex_match(s, pat)` | Regex matching |
+### String Functions (Implemented)
 
-### Planned Math Functions
+Available as both functions and methods: `len(s)` or `s.len()`.
+
+| Function / Method | Description |
+|----------|-------------|
+| `len(s)` / `s.len()` | String length |
+| `upper(s)` / `s.upper()` | Convert to uppercase |
+| `lower(s)` / `s.lower()` | Convert to lowercase |
+| `trim(s)` / `s.trim()` | Remove leading/trailing whitespace |
+| `contains(s, sub)` / `s.contains(sub)` | Substring check |
+| `starts_with(s, pre)` / `s.starts_with(pre)` | Prefix check |
+| `ends_with(s, suf)` / `s.ends_with(suf)` | Suffix check |
+| `split(s, sep)` / `s.split(sep)` | Split into array |
+| `join(arr, sep)` / `arr.join(sep)` | Join array into string |
+| `replace(s, old, new)` / `s.replace(old, new)` | String replacement |
+| `substring(s, start, end?)` / `s.substring(start, end?)` | Extract substring |
+| `reverse(s)` / `s.reverse()` | Reverse string |
+
+### Array/Collection Functions (Implemented)
+
+| Function / Method | Description |
+|----------|-------------|
+| `len(arr)` / `arr.len()` | Element count |
+| `first(arr)` / `arr.first()` | First element |
+| `last(arr)` / `arr.last()` | Last element |
+| `sort(arr)` / `arr.sort()` | Sorted copy |
+| `reverse(arr)` / `arr.reverse()` | Reversed copy |
+| `unique(arr)` / `arr.unique()` | Deduplicated copy |
+| `flatten(arr)` / `arr.flatten()` | Flatten nested arrays |
+| `contains(arr, val)` / `arr.contains(val)` | Membership test |
+| `arr.filter(x => cond)` | Filter with lambda |
+| `arr.map(x => expr)` | Transform with lambda |
+| `arr.sum()` | Numeric sum |
+| `arr.avg()` | Numeric average |
+| `arr.min()` / `arr.max()` | Numeric min/max |
+
+### Map/Object Functions (Implemented)
+
+| Function / Method | Description |
+|----------|-------------|
+| `keys(m)` / `m.keys()` | Array of keys |
+| `values(m)` / `m.values()` | Array of values |
+| `len(m)` / `m.len()` | Number of entries |
+
+### Math Functions (Implemented)
+
 | Function | Description |
 |----------|-------------|
 | `abs(x)` | Absolute value |
-| `round(x, n)` / `floor(x)` / `ceil(x)` | Rounding |
+| `round(x, n?)` / `floor(x)` / `ceil(x)` | Rounding |
 | `sqrt(x)` / `pow(x, y)` | Power functions |
 | `log(x)` / `exp(x)` | Logarithm/exponential |
+| `min(a, b)` / `max(a, b)` | Min/max of two values |
+| `clamp(x, lo, hi)` | Clamp to range |
 
-### Planned Timestamp Functions
+### Type Functions (Implemented)
+
 | Function | Description |
 |----------|-------------|
-| `now()` | Current timestamp |
-| `year(ts)` / `month(ts)` / `day(ts)` | Date extraction |
-| `hour(ts)` / `minute(ts)` / `second(ts)` | Time extraction |
-| `duration_between(t1, t2)` | Time difference |
+| `type_of(x)` | Type name as string |
+| `to_string(x)` / `to_int(x)` / `to_float(x)` | Type conversions |
+| `is_null(x)` / `is_int(x)` / `is_float(x)` | Type checks |
+| `is_string(x)` / `is_bool(x)` / `is_array(x)` / `is_map(x)` | Type checks |
 
-### Planned Utility Functions
+### Utility Functions (Implemented)
+
 | Function | Description |
 |----------|-------------|
 | `coalesce(a, b, ...)` | First non-null value |
+| `now()` | Current timestamp |
+| `range(n)` / `range(start, end)` | Generate integer range |
+
+### Planned Functions (Not Yet Implemented)
+
+| Function | Description |
+|----------|-------------|
+| `regex_match(s, pat)` | Regex matching |
 | `uuid()` | Generate UUID |
 | `random()` | Random number |
+| `year(ts)` / `month(ts)` / `day(ts)` | Date extraction |
+| `hour(ts)` / `minute(ts)` / `second(ts)` | Time extraction |
 
 ---
 

@@ -47,12 +47,14 @@ pub enum Stmt {
         /// Fields declared on this event type.
         fields: Vec<Field>,
     },
-    /// Type alias: `type X = Y`
+    /// Type declaration: alias (`type X = Y`) or struct (`type X: field: T`).
     TypeDecl {
-        /// Alias name.
+        /// Type name.
         name: String,
-        /// The aliased type.
-        ty: Type,
+        /// The aliased type (alias form only).
+        ty: Option<Type>,
+        /// Struct fields (struct form only).
+        fields: Vec<Field>,
     },
     /// Variable declaration: `let x = ...` or `var x = ...`
     VarDecl {

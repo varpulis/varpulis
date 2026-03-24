@@ -1727,3 +1727,101 @@ async fn for_with_nested_break() {
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].data.get("val"), Some(&Value::Int(4)));
 }
+
+// =============================================================================
+// Method calls on values
+// =============================================================================
+
+#[tokio::test]
+async fn method_call_string_to_upper() {
+    let code = r"
+        event Msg:
+            text: str
+
+        stream S = Msg
+            .emit(result: text.upper())
+    ";
+    let evt = Event::new("Msg").with_field("text", Value::Str("hello".into()));
+    let out = run(code, evt).await;
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].data.get("result"), Some(&Value::Str("HELLO".into())));
+}
+
+#[tokio::test]
+async fn method_call_string_contains() {
+    let code = r#"
+        event Msg:
+            text: str
+
+        stream S = Msg
+            .where(text.contains("world"))
+            .emit(matched: text)
+    "#;
+    let evt = Event::new("Msg").with_field("text", Value::Str("hello world".into()));
+    let out = run(code, evt).await;
+    assert_eq!(out.len(), 1);
+
+    let evt2 = Event::new("Msg").with_field("text", Value::Str("nope".into()));
+    let out2 = run(code, evt2).await;
+    assert_eq!(out2.len(), 0);
+}
+
+#[tokio::test]
+async fn method_call_array_len() {
+    let code = r"
+        event Data:
+            items: [int]
+
+        stream S = Data
+            .emit(count: items.len())
+    ";
+    let evt = Event::new("Data").with_field(
+        "items",
+        Value::array(vec![Value::Int(1), Value::Int(2), Value::Int(3)]),
+    );
+    let out = run(code, evt).await;
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].data.get("count"), Some(&Value::Int(3)));
+}
+
+#[tokio::test]
+async fn method_call_string_trim() {
+    let code = r"
+        event Msg:
+            text: str
+
+        stream S = Msg
+            .emit(result: text.trim())
+    ";
+    let evt = Event::new("Msg").with_field("text", Value::Str("  hello  ".into()));
+    let out = run(code, evt).await;
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].data.get("result"), Some(&Value::Str("hello".into())));
+}
+
+#[tokio::test]
+async fn method_call_nested_field_access() {
+    // Simulate nested object via Value::Map
+    use indexmap::IndexMap;
+    use rustc_hash::FxBuildHasher;
+    use std::sync::Arc;
+    let mut addr_map: IndexMap<Arc<str>, Value, FxBuildHasher> =
+        IndexMap::with_hasher(FxBuildHasher);
+    addr_map.insert("city".into(), Value::Str("NYC".into()));
+    let mut cust_map: IndexMap<Arc<str>, Value, FxBuildHasher> =
+        IndexMap::with_hasher(FxBuildHasher);
+    cust_map.insert("name".into(), Value::Str("Alice".into()));
+    cust_map.insert("address".into(), Value::map(addr_map));
+
+    let code = r"
+        event Order:
+            customer: str
+
+        stream S = Order
+            .emit(city: customer.address.city)
+    ";
+    let evt = Event::new("Order").with_field("customer", Value::map(cust_map));
+    let out = run(code, evt).await;
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].data.get("city"), Some(&Value::Str("NYC".into())));
+}

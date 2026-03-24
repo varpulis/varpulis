@@ -80,6 +80,7 @@ stream_decl     ::= 'stream' IDENTIFIER (':' type)? '=' stream_expr
 event_decl      ::= 'event' IDENTIFIER ('extends' IDENTIFIER)? ':' NEWLINE INDENT field_decl+ DEDENT
 
 type_decl       ::= 'type' IDENTIFIER '=' type
+                  | 'type' IDENTIFIER ':' NEWLINE INDENT field_decl+ DEDENT
 
 var_decl        ::= ('let' | 'var' | 'const') IDENTIFIER (':' type)? '=' expr
 
