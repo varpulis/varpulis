@@ -39,19 +39,17 @@ This guide covers deploying Varpulis CEP engine in production environments.
 
 ### Building the Image
 
+The default image includes all connectors. Each connector is an independent crate
+that self-registers when linked — no feature flags needed for the default build.
+
 ```bash
-# Build from the project root
+# Build from the project root (all connectors included)
 docker build -f deploy/docker/Dockerfile -t varpulis/varpulis:latest .
 
-# Build with Kafka support
+# Build with specific connectors only (feature-flag style, for minimal images)
 docker build -f deploy/docker/Dockerfile \
-  --build-arg FEATURES="kafka" \
-  -t varpulis/varpulis:latest-kafka .
-
-# Build with all connectors
-docker build -f deploy/docker/Dockerfile \
-  --build-arg FEATURES="all-connectors" \
-  -t varpulis/varpulis:latest-full .
+  --build-arg FEATURES="mqtt,kafka" \
+  -t varpulis/varpulis:latest-minimal .
 ```
 
 ### Running with Docker
