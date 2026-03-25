@@ -4,33 +4,63 @@ This document describes how to connect Varpulis to external systems for both eve
 
 ## Overview
 
-| Connector | Input | Output | Status | Feature Flag |
-|-----------|-------|--------|--------|--------------|
-| **MQTT**  | Yes | Yes | Production | `mqtt` |
-| **NATS**  | Yes | Yes | Production | `nats` |
-| **HTTP**  | No | Yes | Output only (webhooks) | default |
-| **Kafka** | Yes | Yes | Available | `kafka` |
-| **Console** | No | Yes | Debug | default |
-| **PostgreSQL CDC** | Yes | No | Available | `cdc` |
+| Connector | Crate | Input | Output | Status |
+|-----------|-------|-------|--------|--------|
+| **MQTT** | `varpulis-connector-mqtt` | Yes | Yes | Production |
+| **Kafka** | `varpulis-connector-kafka` | Yes | Yes | Production |
+| **NATS** | `varpulis-connector-nats` | Yes | Yes | Production |
+| **HTTP** | `varpulis-connector-http` | Yes | Yes | Production |
+| **Redis** | `varpulis-connector-redis` | Yes | Yes | Available |
+| **PostgreSQL/MySQL/SQLite** | `varpulis-connector-database` | Yes | Yes | Available |
+| **Elasticsearch** | `varpulis-connector-elasticsearch` | No | Yes | Available |
+| **AWS Kinesis** | `varpulis-connector-kinesis` | Yes | Yes | Available |
+| **AWS S3** | `varpulis-connector-s3` | No | Yes | Available |
+| **Apache Pulsar** | `varpulis-connector-pulsar` | Yes | Yes | Available |
+| **PostgreSQL CDC** | `varpulis-connector-cdc` | Yes | No | Available |
+| **Console** | built-in | No | Yes | Debug |
 
-### Feature Flags
+### Modular Architecture
 
-Connectors are compiled via Cargo feature flags:
+Each connector is an independent crate on [crates.io](https://crates.io), depending only on
+`varpulis-connector-api` and its own I/O library. Connectors self-register via the `inventory`
+crate — linking a connector crate automatically makes it available to the engine.
 
-```bash
-# Build with MQTT only
-cargo build --release --features mqtt
+**Default binary**: includes all connectors. No feature flags needed.
 
-# Build with all connectors
-cargo build --release --features all-connectors
+**Custom binary**: create a minimal binary with only the connectors you need:
 
-# Docker build with Kafka support
-docker build -f deploy/docker/Dockerfile \
-  --build-arg FEATURES="mqtt,kafka" \
-  -t varpulis/varpulis:latest .
+```toml
+# my-varpulis/Cargo.toml
+[package]
+name = "my-varpulis"
+
+[dependencies]
+varpulis-cli = "0.7"
+varpulis-connector-mqtt = "0.7"
+varpulis-connector-kafka = "0.7"
+# Only MQTT and Kafka — no other connector dependencies compiled
 ```
 
-Available features: `mqtt`, `kafka`, `nats`, `postgres`, `mysql`, `sqlite`, `database`, `redis`, `persistence`, `cdc`, `encryption`, `all-connectors`.
+```rust
+// my-varpulis/src/main.rs
+use varpulis_connector_mqtt as _;
+use varpulis_connector_kafka as _;
+
+fn main() {
+    varpulis_cli::main();
+}
+```
+
+**Feature flags** are still supported for backward compatibility via the `varpulis-connectors`
+convenience crate:
+
+```bash
+# Build with specific connectors (feature-flag style)
+cargo build --release --features mqtt,kafka
+
+# Build with all connectors (default)
+cargo build --release --features all-connectors
+```
 
 ---
 

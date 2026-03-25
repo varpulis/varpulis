@@ -91,11 +91,21 @@ stream Alert = Events
 
 ## Connector Status
 
-| Connector | Input | Output | Status |
-|-----------|-------|--------|--------|
-| **MQTT** | Yes | Yes | Production |
-| **HTTP** | No | Yes | Webhooks |
-| **Kafka** | Yes | Yes | Connector framework |
+Each connector is an independent crate — install only what you need.
+
+| Connector | Crate | Input | Output | Status |
+|-----------|-------|-------|--------|--------|
+| **MQTT** | `varpulis-connector-mqtt` | Yes | Yes | Production |
+| **Kafka** | `varpulis-connector-kafka` | Yes | Yes | Production |
+| **NATS** | `varpulis-connector-nats` | Yes | Yes | Production |
+| **HTTP** | `varpulis-connector-http` | Yes | Yes | Production |
+| **Redis** | `varpulis-connector-redis` | Yes | Yes | Available |
+| **Database** | `varpulis-connector-database` | Yes | Yes | Available |
+| **Elasticsearch** | `varpulis-connector-elasticsearch` | No | Yes | Available |
+| **Kinesis** | `varpulis-connector-kinesis` | Yes | Yes | Available |
+| **S3** | `varpulis-connector-s3` | No | Yes | Available |
+| **Pulsar** | `varpulis-connector-pulsar` | Yes | Yes | Available |
+| **CDC** | `varpulis-connector-cdc` | Yes | No | Available |
 
 See [`language/connectors.md`](language/connectors.md) for details.
 

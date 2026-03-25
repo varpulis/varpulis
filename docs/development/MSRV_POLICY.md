@@ -27,7 +27,19 @@ MSRV toolchain to ensure tests (not just compilation) pass.
 | `varpulis-actors` | Actor framework with supervision |
 | `varpulis-cli` | Command-line interface and REST API |
 | `varpulis-cluster` | Distributed execution (Raft, K8s) |
-| `varpulis-connectors` | Source/sink connector implementations |
+| `varpulis-connector-api` | Shared connector traits and types |
+| `varpulis-connector-mqtt` | MQTT connector |
+| `varpulis-connector-kafka` | Apache Kafka connector |
+| `varpulis-connector-nats` | NATS connector |
+| `varpulis-connector-redis` | Redis connector |
+| `varpulis-connector-database` | SQL database connector (PG/MySQL/SQLite) |
+| `varpulis-connector-elasticsearch` | Elasticsearch connector |
+| `varpulis-connector-pulsar` | Apache Pulsar connector |
+| `varpulis-connector-kinesis` | AWS Kinesis connector |
+| `varpulis-connector-s3` | AWS S3 connector |
+| `varpulis-connector-http` | HTTP webhook connector |
+| `varpulis-connector-cdc` | PostgreSQL CDC connector |
+| `varpulis-connectors` | Convenience crate (re-exports all connectors) |
 | `varpulis-core` | Core types, AST, validation |
 | `varpulis-datagen` | Synthetic event generator |
 | `varpulis-db` | PostgreSQL persistence layer |
@@ -42,28 +54,29 @@ MSRV toolchain to ensure tests (not just compilation) pass.
 
 Features are **disabled by default**. Enable them via `--features <flag>`.
 
-### Connector Features
+### Connector Crates
 
-These features add I/O connectors for external systems. They are defined in
-`varpulis-connectors` and re-exported through `varpulis-runtime` and `varpulis-cli`.
+Each connector is an **independent crate** with its own dependencies. They
+self-register via the `inventory` crate — linking a connector crate automatically
+makes it available to the engine. The `varpulis-connectors` crate re-exports all
+connectors via feature flags for backward compatibility.
 
-| Feature | System | Key Dependency | System Packages |
-|---------|--------|---------------|-----------------|
-| `mqtt` | MQTT broker | `rumqttc 0.25` | - |
-| `kafka` | Apache Kafka | `rdkafka 0.39` | `libcurl4-openssl-dev` |
-| `nats` | NATS messaging | `async-nats 0.38` | - |
-| `redis` | Redis | `redis 0.25` | - |
-| `database` | SQL (Postgres + MySQL + SQLite) | `sqlx 0.8` | - |
-| `postgres` | PostgreSQL only | `sqlx 0.8` | - |
-| `mysql` | MySQL only | `sqlx 0.8` | - |
-| `sqlite` | SQLite only | `sqlx 0.8` | - |
-| `elasticsearch` | Elasticsearch | `elasticsearch 8.15` | `libssl-dev` |
-| `pulsar` | Apache Pulsar | `pulsar 6.x` | `protobuf-compiler` |
-| `s3` | AWS S3 | `aws-sdk-s3` | - |
-| `kinesis` | AWS Kinesis | `aws-sdk-kinesis` | - |
-| `cdc` | PostgreSQL CDC | `tokio-postgres 0.7` | - |
-| `csv-converter` | CSV codec | `csv 1.x` | - |
-| `all-connectors` | All of the above | - | All of the above |
+| Crate | System | Key Dependency | Feature Flag |
+|-------|--------|---------------|--------------|
+| `varpulis-connector-mqtt` | MQTT broker | `rumqttc-v4-next 0.28` | `mqtt` |
+| `varpulis-connector-kafka` | Apache Kafka | `rdkafka 0.39` | `kafka` |
+| `varpulis-connector-nats` | NATS messaging | `async-nats 0.46` | `nats` |
+| `varpulis-connector-redis` | Redis | `redis 1.x` | `redis` |
+| `varpulis-connector-database` | SQL (PG + MySQL + SQLite) | `sqlx 0.8` | `database` |
+| `varpulis-connector-elasticsearch` | Elasticsearch | `elasticsearch 9.x` | `elasticsearch` |
+| `varpulis-connector-pulsar` | Apache Pulsar | `pulsar 6.x` | `pulsar` |
+| `varpulis-connector-s3` | AWS S3 | `aws-sdk-s3` | `s3` |
+| `varpulis-connector-kinesis` | AWS Kinesis | `aws-sdk-kinesis` | `kinesis` |
+| `varpulis-connector-http` | HTTP webhooks | `axum`, `reqwest` | `http` |
+| `varpulis-connector-cdc` | PostgreSQL CDC | `tokio-postgres 0.7` | `cdc` |
+
+All connector crates share `varpulis-connector-api` for the `ConnectorFactory`,
+`Sink`, `ManagedConnector`, and related traits.
 
 ### Engine Features
 

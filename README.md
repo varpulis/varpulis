@@ -211,25 +211,28 @@ cargo bench -p varpulis-runtime
 
 ## Connectors
 
-| Connector | Direction | Feature Flag | Status |
-|-----------|-----------|-------------|--------|
-| MQTT | In/Out | `mqtt` (default) | Production |
-| Kafka | In/Out | `kafka` | Production |
-| NATS | In/Out | `nats` | Production |
-| PostgreSQL/MySQL/SQLite | Out | `database` | Available |
-| Redis | Out | `redis` | Available |
-| AWS Kinesis | In/Out | `kinesis` | Available |
-| AWS S3 | In/Out | `s3` | Available |
-| Elasticsearch | Out | `elasticsearch` | Available |
-| PostgreSQL CDC | In | `cdc` | Available |
-| HTTP Webhooks | Out | default | Production |
+Each connector is an **independent crate** — install only what you need, or use the default binary with everything included.
+
+| Connector | Crate | Direction | Status |
+|-----------|-------|-----------|--------|
+| MQTT | `varpulis-connector-mqtt` | In/Out | Production |
+| Kafka | `varpulis-connector-kafka` | In/Out | Production |
+| NATS | `varpulis-connector-nats` | In/Out | Production |
+| HTTP | `varpulis-connector-http` | In/Out | Production |
+| PostgreSQL/MySQL/SQLite | `varpulis-connector-database` | In/Out | Available |
+| Redis | `varpulis-connector-redis` | In/Out | Available |
+| AWS Kinesis | `varpulis-connector-kinesis` | In/Out | Available |
+| AWS S3 | `varpulis-connector-s3` | Out | Available |
+| Elasticsearch | `varpulis-connector-elasticsearch` | Out | Available |
+| Apache Pulsar | `varpulis-connector-pulsar` | In/Out | Available |
+| PostgreSQL CDC | `varpulis-connector-cdc` | In | Available |
 
 ```bash
-# Build with specific connectors
-cargo build --release --features kafka,database
+# Default binary includes all connectors
+cargo install varpulis
 
-# Build with all connectors
-cargo build --release --features all-connectors
+# Or build a custom binary with only what you need:
+# Add connector crates to your Cargo.toml dependencies
 ```
 
 ## REST API
