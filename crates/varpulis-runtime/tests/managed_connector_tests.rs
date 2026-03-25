@@ -49,7 +49,7 @@ fn make_mqtt_connector_config(
 async fn publish_json(port: u16, topic: &str, json: &serde_json::Value) {
     let client_id = format!("e2e-pub-{}", uuid());
     let mut opts = MqttOptions::new(&client_id, "localhost", port);
-    opts.set_keep_alive(Duration::from_secs(5));
+    opts.set_keep_alive(5);
 
     let (client, mut eventloop) = AsyncClient::new(opts, 100);
 
@@ -81,7 +81,7 @@ async fn subscribe_and_collect(
 ) -> Vec<serde_json::Value> {
     let client_id = format!("e2e-sub-{}", uuid());
     let mut opts = MqttOptions::new(&client_id, "localhost", port);
-    opts.set_keep_alive(Duration::from_secs(5));
+    opts.set_keep_alive(5);
 
     let (client, mut eventloop) = AsyncClient::new(opts, 100);
     client
@@ -126,7 +126,7 @@ fn uuid() -> String {
 async fn mqtt_is_available(port: u16) -> bool {
     let client_id = format!("e2e-probe-{}", uuid());
     let mut opts = MqttOptions::new(&client_id, "localhost", port);
-    opts.set_keep_alive(Duration::from_secs(5));
+    opts.set_keep_alive(5);
 
     let (_client, mut eventloop) = AsyncClient::new(opts, 10);
     matches!(

@@ -28,10 +28,9 @@ ignore = [
     # We don't use MySQL TLS with RSA keys in production; PostgreSQL is primary.
     { id = "RUSTSEC-2023-0071", reason = "transitive via sqlx-mysql, not used in production" },
 
-    # rustls-webpki 0.102.x: CRL distributionPoint check bypass. Transitive via rumqttc 0.25.
-    # rumqttc pins to rustls-webpki 0.102 which has no patch; 0.103.10 fixes it but requires
-    # a new major of rumqttc. CRL revocation checking is not used in our MQTT setup.
-    { id = "RUSTSEC-2026-0049", reason = "transitive via rumqttc 0.25, no upstream fix yet" },
+    # rustls-webpki 0.102.x: CRL distributionPoint bypass. Transitive via async-nats 0.46.
+    # async-nats pins rustls-webpki 0.102; fix requires >=0.103.10. No upstream fix yet.
+    { id = "RUSTSEC-2026-0049", reason = "transitive via async-nats 0.46, no upstream fix yet" },
 ]
 
 # ---------------------------------------------------------------------------

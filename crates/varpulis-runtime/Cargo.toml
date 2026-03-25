@@ -81,7 +81,7 @@ tempfile = "3"
 criterion = { version = "0.8", features = ["html_reports"] }
 proptest = "1.10"
 async-nats = "0.46"
-rumqttc = "0.25"
+rumqttc = { package = "rumqttc-v4-next", version = "0.28" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 tokio-postgres = { version = "0.7" }
 uuid = { version = "1", features = ["v4"] }

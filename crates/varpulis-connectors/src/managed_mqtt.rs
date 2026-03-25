@@ -135,7 +135,7 @@ mod mqtt_managed_impl {
             });
 
             let mut mqtt_opts = MqttOptions::new(&client_id, &self.config.broker, self.config.port);
-            mqtt_opts.set_keep_alive(Duration::from_secs(60));
+            mqtt_opts.set_keep_alive(60);
 
             if let (Some(user), Some(pass)) = (&self.config.username, &self.config.password) {
                 mqtt_opts.set_credentials(user, pass.expose());
@@ -174,7 +174,8 @@ mod mqtt_managed_impl {
                             msg_counter.fetch_add(1, Ordering::Relaxed);
                             *last_msg_time.lock().await = Some(Instant::now());
                             if let Ok(payload) = std::str::from_utf8(&publish.payload) {
-                                if let Some(event) = parse_mqtt_payload(payload, &publish.topic) {
+                                let topic = std::str::from_utf8(&publish.topic).unwrap_or("");
+                                if let Some(event) = parse_mqtt_payload(payload, topic) {
                                     if tx.send(event).await.is_err() {
                                         warn!("Managed MQTT {} source channel closed", name);
                                         break;
@@ -217,7 +218,7 @@ mod mqtt_managed_impl {
             tx: mpsc::Sender<Event>,
         ) -> Result<AsyncClient, ConnectorError> {
             let mut mqtt_opts = MqttOptions::new(client_id, &self.config.broker, self.config.port);
-            mqtt_opts.set_keep_alive(Duration::from_secs(60));
+            mqtt_opts.set_keep_alive(60);
 
             if let (Some(user), Some(pass)) = (&self.config.username, &self.config.password) {
                 mqtt_opts.set_credentials(user, pass.expose());
@@ -237,7 +238,8 @@ mod mqtt_managed_impl {
                     match eventloop.poll().await {
                         Ok(rumqttc::Event::Incoming(rumqttc::Packet::Publish(publish))) => {
                             if let Ok(payload) = std::str::from_utf8(&publish.payload) {
-                                if let Some(event) = parse_mqtt_payload(payload, &publish.topic) {
+                                let topic = std::str::from_utf8(&publish.topic).unwrap_or("");
+                                if let Some(event) = parse_mqtt_payload(payload, topic) {
                                     if tx.send(event).await.is_err() {
                                         break;
                                     }
@@ -269,7 +271,7 @@ mod mqtt_managed_impl {
         ) -> Result<AsyncClient, ConnectorError> {
             let sink_id = format!("{client_id}-sink");
             let mut mqtt_opts = MqttOptions::new(&sink_id, &self.config.broker, self.config.port);
-            mqtt_opts.set_keep_alive(Duration::from_secs(60));
+            mqtt_opts.set_keep_alive(60);
 
             if let (Some(user), Some(pass)) = (&self.config.username, &self.config.password) {
                 mqtt_opts.set_credentials(user, pass.expose());
@@ -319,7 +321,7 @@ mod mqtt_managed_impl {
             let client_id = format!("{base_id}-sink");
 
             let mut mqtt_opts = MqttOptions::new(&client_id, &self.config.broker, self.config.port);
-            mqtt_opts.set_keep_alive(Duration::from_secs(60));
+            mqtt_opts.set_keep_alive(60);
 
             if let (Some(user), Some(pass)) = (&self.config.username, &self.config.password) {
                 mqtt_opts.set_credentials(user, pass.expose());
