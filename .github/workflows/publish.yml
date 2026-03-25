@@ -22,6 +22,18 @@ on:
           - varpulis-simd
           - varpulis-hamlet
           - varpulis-dead-letter
+          - varpulis-connector-api
+          - varpulis-connector-mqtt
+          - varpulis-connector-kafka
+          - varpulis-connector-nats
+          - varpulis-connector-redis
+          - varpulis-connector-elasticsearch
+          - varpulis-connector-pulsar
+          - varpulis-connector-kinesis
+          - varpulis-connector-s3
+          - varpulis-connector-database
+          - varpulis-connector-http
+          - varpulis-connector-cdc
           - varpulis-connectors
           - varpulis-sase
           - varpulis-enrichment
@@ -50,6 +62,9 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Install connector system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev libssl-dev protobuf-compiler
 
       - name: Verify workspace builds
         run: cargo check --workspace
@@ -85,6 +100,7 @@ jobs:
           # Note: varpulis-core has a dev-dep on varpulis-parser (cycle),
           # so we use --no-verify and rely on the workspace check above.
           CRATES=(
+            # Level 0: no internal deps
             "varpulis-core"
             "varpulis-actors"
             "varpulis-zdd"
@@ -95,6 +111,21 @@ jobs:
             "varpulis-simd"
             "varpulis-hamlet"
             "varpulis-dead-letter"
+            # Level 1: connector API (depends on varpulis-core)
+            "varpulis-connector-api"
+            # Level 2: individual connectors (depend on connector-api + core)
+            "varpulis-connector-mqtt"
+            "varpulis-connector-kafka"
+            "varpulis-connector-nats"
+            "varpulis-connector-redis"
+            "varpulis-connector-elasticsearch"
+            "varpulis-connector-pulsar"
+            "varpulis-connector-kinesis"
+            "varpulis-connector-s3"
+            "varpulis-connector-database"
+            "varpulis-connector-http"
+            "varpulis-connector-cdc"
+            # Level 3: convenience re-export crate (depends on all connectors)
             "varpulis-connectors"
             "varpulis-sase"
             "varpulis-enrichment"
