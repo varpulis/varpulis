@@ -11,6 +11,16 @@ description = "Connector implementations for Varpulis (MQTT, Kafka, NATS, HTTP, 
 [dependencies]
 varpulis-connector-api = { version = "0.6.4", path = "../varpulis-connector-api" }
 varpulis-connector-mqtt = { version = "0.6.4", path = "../varpulis-connector-mqtt", optional = true }
+varpulis-connector-kafka = { version = "0.6.4", path = "../varpulis-connector-kafka", optional = true }
+varpulis-connector-nats = { version = "0.6.4", path = "../varpulis-connector-nats", optional = true }
+varpulis-connector-redis = { version = "0.6.4", path = "../varpulis-connector-redis", optional = true }
+varpulis-connector-elasticsearch = { version = "0.6.4", path = "../varpulis-connector-elasticsearch", optional = true }
+varpulis-connector-pulsar = { version = "0.6.4", path = "../varpulis-connector-pulsar", optional = true }
+varpulis-connector-kinesis = { version = "0.6.4", path = "../varpulis-connector-kinesis", optional = true }
+varpulis-connector-s3 = { version = "0.6.4", path = "../varpulis-connector-s3", optional = true }
+varpulis-connector-database = { version = "0.6.4", path = "../varpulis-connector-database", optional = true }
+varpulis-connector-http = { version = "0.6.4", path = "../varpulis-connector-http" }
+varpulis-connector-cdc = { version = "0.6.4", path = "../varpulis-connector-cdc", optional = true }
 varpulis-core = { version = "0.6.4", path = "../varpulis-core" }
 tokio = { workspace = true }
 serde = { workspace = true }
@@ -25,27 +35,7 @@ inventory = { workspace = true }
 async-trait = "0.1"
 futures-util = { workspace = true }
 reqwest = { workspace = true }
-axum = { workspace = true }
-tower-http = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
-rdkafka = { version = "0.39", features = ["cmake-build", "ssl"], optional = true }
-sqlx = { version = "0.8", features = ["runtime-tokio", "any", "postgres", "mysql", "sqlite"], optional = true }
-redis = { version = "1", features = ["tokio-comp", "connection-manager"], optional = true }
-async-nats = { version = "0.46", optional = true }
-
-# AWS connectors
-aws-config = { version = "1.8", optional = true }
-aws-sdk-kinesis = { version = "1.101", optional = true }
-aws-sdk-s3 = { version = "1.124", optional = true }
-
-# PostgreSQL CDC (logical replication)
-tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-serde_json-1"], optional = true }
-
-# Elasticsearch
-elasticsearch = { version = "9.1.0-alpha.1", optional = true }
-
-# Apache Pulsar
-pulsar = { version = "6", features = ["tokio-runtime"], optional = true }
 
 # Credentials encryption
 aes-gcm = { version = "0.10", optional = true }
@@ -57,21 +47,22 @@ serde_yaml = "0.9"
 [features]
 default = []
 mqtt = ["varpulis-connector-mqtt"]
-kafka = ["rdkafka"]
-postgres = ["sqlx"]
-mysql = ["sqlx"]
-sqlite = ["sqlx"]
-database = ["sqlx"]
-redis = ["dep:redis"]
-kinesis = ["aws-config", "aws-sdk-kinesis"]
-s3 = ["aws-config", "aws-sdk-s3"]
-nats = ["async-nats"]
-elasticsearch = ["dep:elasticsearch"]
-pulsar = ["dep:pulsar"]
-cdc = ["tokio-postgres"]
+kafka = ["varpulis-connector-kafka"]
+nats = ["varpulis-connector-nats"]
+redis = ["varpulis-connector-redis"]
+elasticsearch = ["varpulis-connector-elasticsearch"]
+pulsar = ["varpulis-connector-pulsar"]
+kinesis = ["varpulis-connector-kinesis"]
+s3 = ["varpulis-connector-s3"]
+database = ["varpulis-connector-database"]
+postgres = ["varpulis-connector-database"]
+mysql = ["varpulis-connector-database"]
+sqlite = ["varpulis-connector-database"]
+http = []
+cdc = ["varpulis-connector-cdc"]
 csv-converter = []
 encryption = ["aes-gcm", "base64"]
-all-connectors = ["mqtt", "kafka", "nats", "database", "redis", "kinesis", "s3", "elasticsearch", "pulsar"]
+all-connectors = ["mqtt", "kafka", "nats", "database", "redis", "kinesis", "s3", "elasticsearch", "pulsar", "http", "cdc"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }

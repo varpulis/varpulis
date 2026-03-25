@@ -1,4 +1,4 @@
-//! Managed Kafka connector — shares a single producer across all sinks
+//! Managed Kafka connector -- shares a single producer across all sinks
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -11,13 +11,13 @@ use rdkafka::producer::{FutureProducer, FutureRecord, Producer};
 use rdkafka::Message;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
+use varpulis_connector_api::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
+use varpulis_connector_api::helpers::json_to_event;
+use varpulis_connector_api::sink::{Sink, SinkError};
+use varpulis_connector_api::{ConnectorError, ManagedConnector};
 use varpulis_core::Event;
 
-use super::helpers::json_to_event;
-use super::kafka::KafkaConfig;
-use super::managed::ManagedConnector;
-use super::types::ConnectorError;
-use crate::sink::{Sink, SinkError};
+use crate::KafkaConfig;
 
 /// Managed Kafka connector that owns a single producer connection.
 ///
@@ -103,8 +103,6 @@ impl ManagedConnector for ManagedKafkaConnector {
         tx: mpsc::Sender<Event>,
         params: &std::collections::HashMap<String, String>,
     ) -> Result<(), ConnectorError> {
-        // Each source gets its own consumer (consumers are not Clone)
-        // Allow per-stream group_id override
         let group_id = params
             .get("group_id")
             .cloned()
@@ -118,7 +116,6 @@ impl ManagedConnector for ManagedKafkaConnector {
             .set("enable.auto.commit", "false")
             .set("auto.offset.reset", "latest");
 
-        // Apply user-provided properties
         for (k, v) in &self.config.properties {
             if k != "bootstrap.servers" && k != "group.id" {
                 client_config.set(k, v);
@@ -141,7 +138,6 @@ impl ManagedConnector for ManagedKafkaConnector {
         tokio::spawn(async move {
             use futures_util::StreamExt;
 
-            use crate::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
             info!(
                 "Managed Kafka {} consumer started on topic {}",
                 name, topic_owned
@@ -179,7 +175,6 @@ impl ManagedConnector for ManagedKafkaConnector {
                             }
                         }
 
-                        // Commit offset after successful processing
                         if let Err(e) = consumer.commit_message(&msg, CommitMode::Async) {
                             warn!("Managed Kafka {} offset commit failed: {}", name, e);
                         }
@@ -253,7 +248,6 @@ impl Sink for KafkaSharedSink {
             .payload(&payload)
             .key(&*event.event_type);
 
-        // Fire-and-forget: enqueue into librdkafka's internal batch buffer
         self.producer
             .send(record, Duration::ZERO)
             .await

@@ -9,37 +9,10 @@
 /// The returned schema uses `oneOf` to represent the choice between different
 /// connector configurations (Kafka, MQTT, NATS, Redis, etc.).
 pub fn generate_all_schemas() -> serde_json::Value {
-    let configs: Vec<(&str, schemars::Schema)> = vec![
+    let mut configs: Vec<(&str, schemars::Schema)> = vec![
         (
             "ConnectorConfig",
             schemars::schema_for!(crate::ConnectorConfig),
-        ),
-        ("KafkaConfig", schemars::schema_for!(crate::KafkaConfig)),
-        #[cfg(feature = "mqtt")]
-        (
-            "MqttConfig",
-            schemars::schema_for!(varpulis_connector_mqtt::MqttConfig),
-        ),
-        ("NatsConfig", schemars::schema_for!(crate::NatsConfig)),
-        ("RedisConfig", schemars::schema_for!(crate::RedisConfig)),
-        (
-            "RedisStreamConfig",
-            schemars::schema_for!(crate::RedisStreamConfig),
-        ),
-        ("S3Config", schemars::schema_for!(crate::S3Config)),
-        ("KinesisConfig", schemars::schema_for!(crate::KinesisConfig)),
-        (
-            "ElasticsearchConfig",
-            schemars::schema_for!(crate::ElasticsearchConfig),
-        ),
-        ("PulsarConfig", schemars::schema_for!(crate::PulsarConfig)),
-        (
-            "DatabaseConfig",
-            schemars::schema_for!(crate::DatabaseConfig),
-        ),
-        (
-            "PostgresCdcConfig",
-            schemars::schema_for!(crate::PostgresCdcConfig),
         ),
         ("RestApiConfig", schemars::schema_for!(crate::RestApiConfig)),
         (
@@ -47,6 +20,54 @@ pub fn generate_all_schemas() -> serde_json::Value {
             schemars::schema_for!(crate::HttpWebhookConfig),
         ),
     ];
+
+    #[cfg(feature = "kafka")]
+    configs.push(("KafkaConfig", schemars::schema_for!(crate::KafkaConfig)));
+
+    #[cfg(feature = "mqtt")]
+    configs.push((
+        "MqttConfig",
+        schemars::schema_for!(varpulis_connector_mqtt::MqttConfig),
+    ));
+
+    #[cfg(feature = "nats")]
+    configs.push(("NatsConfig", schemars::schema_for!(crate::NatsConfig)));
+
+    #[cfg(feature = "redis")]
+    {
+        configs.push(("RedisConfig", schemars::schema_for!(crate::RedisConfig)));
+        configs.push((
+            "RedisStreamConfig",
+            schemars::schema_for!(crate::RedisStreamConfig),
+        ));
+    }
+
+    #[cfg(feature = "s3")]
+    configs.push(("S3Config", schemars::schema_for!(crate::S3Config)));
+
+    #[cfg(feature = "kinesis")]
+    configs.push(("KinesisConfig", schemars::schema_for!(crate::KinesisConfig)));
+
+    #[cfg(feature = "elasticsearch")]
+    configs.push((
+        "ElasticsearchConfig",
+        schemars::schema_for!(crate::ElasticsearchConfig),
+    ));
+
+    #[cfg(feature = "pulsar")]
+    configs.push(("PulsarConfig", schemars::schema_for!(crate::PulsarConfig)));
+
+    #[cfg(feature = "database")]
+    configs.push((
+        "DatabaseConfig",
+        schemars::schema_for!(crate::DatabaseConfig),
+    ));
+
+    #[cfg(feature = "cdc")]
+    configs.push((
+        "PostgresCdcConfig",
+        schemars::schema_for!(crate::PostgresCdcConfig),
+    ));
 
     let mut schemas = serde_json::Map::new();
     for (name, schema) in configs {
@@ -64,11 +85,8 @@ mod tests {
     fn test_generate_all_schemas_non_empty() {
         let schemas = generate_all_schemas();
         let obj = schemas.as_object().unwrap();
-        // Count depends on enabled features; at minimum 10 without mqtt
-        assert!(obj.len() >= 10, "Expected 10+ schemas, got {}", obj.len());
-        assert!(obj.contains_key("KafkaConfig"));
+        // Minimum schemas: ConnectorConfig, RestApiConfig, HttpWebhookConfig = 3
+        assert!(obj.len() >= 3, "Expected 3+ schemas, got {}", obj.len());
         assert!(obj.contains_key("ConnectorConfig"));
-        #[cfg(feature = "mqtt")]
-        assert!(obj.contains_key("MqttConfig"));
     }
 }

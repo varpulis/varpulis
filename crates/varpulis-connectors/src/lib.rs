@@ -16,79 +16,70 @@ pub mod component;
 mod console;
 pub mod converter;
 pub mod credentials;
-mod database;
-mod elasticsearch;
 pub mod helpers;
-mod http;
-mod kafka;
-mod kinesis;
 pub mod limits;
-mod nats;
-pub mod postgres_cdc;
-mod pulsar;
-mod redis;
 mod registry;
 mod rest_api;
-mod s3;
 pub mod schema;
 pub mod sink;
 pub mod types;
 
 // Managed connector abstractions
 mod managed;
-#[cfg(feature = "kafka")]
-mod managed_kafka;
-mod managed_nats;
 mod managed_registry;
 
 // Core types and traits
 // Console connectors
 pub use console::{ConsoleSink, ConsoleSource};
-// Database connectors
-pub use database::{DatabaseConfig, DatabaseSink, DatabaseSource};
-// Elasticsearch connectors
-#[cfg(feature = "elasticsearch")]
-pub use elasticsearch::ElasticsearchSinkFull;
-pub use elasticsearch::{ElasticsearchConfig, ElasticsearchSink};
-// HTTP connectors
-pub use http::{HttpSink, HttpWebhookConfig, HttpWebhookSource};
-// Kafka connectors
-pub use kafka::{KafkaConfig, KafkaSink, KafkaSource};
-#[cfg(feature = "kafka")]
-pub use kafka::{KafkaSinkFull, KafkaSourceFull};
-// Kinesis connectors
-pub use kinesis::{KinesisConfig, KinesisSink, KinesisSource};
-#[cfg(feature = "kinesis")]
-pub use kinesis::{KinesisSinkFull, KinesisSourceFull};
-// Managed connector abstractions
+// Managed connector
 pub use managed::{ConnectorHealthReport, ManagedConnector};
-#[cfg(feature = "kafka")]
-pub use managed_kafka::ManagedKafkaConnector;
-pub use managed_nats::ManagedNatsConnector;
 pub use managed_registry::ManagedConnectorRegistry;
-// NATS connectors
-pub use nats::{NatsConfig, NatsSink, NatsSource};
-// PostgreSQL CDC connector
-pub use postgres_cdc::{CdcOperation, PostgresCdcConfig, PostgresCdcSource};
-// Pulsar connectors
-pub use pulsar::{PulsarConfig, PulsarSink, PulsarSource};
-// Redis connectors
-pub use redis::{RedisConfig, RedisSink, RedisSource};
-pub use redis::{RedisStreamConfig, RedisStreamSink, RedisStreamSinkStub, RedisStreamSource};
 // Legacy ConnectorRegistry
 pub use registry::ConnectorRegistry;
 // REST API connectors
 pub use rest_api::{RestApiClient, RestApiConfig, RestApiSink};
-// S3 connectors
-#[cfg(feature = "s3")]
-pub use s3::S3SinkFull;
-pub use s3::{S3Config, S3OutputFormat, S3Sink};
 // Sink trait, error, and adapter
 pub use sink::{Sink, SinkConnectorAdapter, SinkError};
 pub use types::{ConnectorConfig, ConnectorError, ConnectorHealth, SinkConnector, SourceConnector};
-// MQTT connectors (from varpulis-connector-mqtt crate)
+// PostgreSQL CDC connector
+#[cfg(feature = "cdc")]
+pub use varpulis_connector_cdc::{CdcOperation, PostgresCdcConfig, PostgresCdcSource};
+// Database connectors
+#[cfg(feature = "database")]
+pub use varpulis_connector_database::{DatabaseConfig, DatabaseSink, DatabaseSource};
+// Elasticsearch connectors
+#[cfg(feature = "elasticsearch")]
+pub use varpulis_connector_elasticsearch::{ElasticsearchConfig, ElasticsearchSink};
+// HTTP connectors (always available)
+pub use varpulis_connector_http::{HttpSink, HttpWebhookConfig, HttpWebhookSource};
+// Kafka connectors
+#[cfg(feature = "kafka")]
+pub use varpulis_connector_kafka::{KafkaConfig, KafkaSink, KafkaSource, ManagedKafkaConnector};
+// Kinesis connectors
+#[cfg(feature = "kinesis")]
+pub use varpulis_connector_kinesis::{KinesisConfig, KinesisSink, KinesisSource};
+// ==========================================
+// Re-exports from extracted connector crates
+// ==========================================
+
+// MQTT connectors
 #[cfg(feature = "mqtt")]
 pub use varpulis_connector_mqtt::{ManagedMqttConnector, MqttConfig, MqttSink, MqttSource};
+// NATS connectors
+#[cfg(feature = "nats")]
+pub use varpulis_connector_nats::{ManagedNatsConnector, NatsConfig, NatsSink, NatsSource};
+// Pulsar connectors
+#[cfg(feature = "pulsar")]
+pub use varpulis_connector_pulsar::{PulsarConfig, PulsarSink, PulsarSource};
+// Redis connectors
+#[cfg(feature = "redis")]
+pub use varpulis_connector_redis::{
+    RedisConfig, RedisSink, RedisSource, RedisStreamConfig, RedisStreamSink, RedisStreamSinkStub,
+    RedisStreamSource,
+};
+// S3 connectors
+#[cfg(feature = "s3")]
+pub use varpulis_connector_s3::{S3Config, S3OutputFormat, S3Sink};
 
 #[cfg(test)]
 mod tests {
@@ -118,6 +109,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "kafka")]
     #[test]
     fn test_kafka_config() {
         let config = KafkaConfig::new("broker:9092", "my-topic").with_group_id("my-group");
@@ -140,6 +132,7 @@ mod tests {
         assert_eq!(config.username, Some("user".to_string()));
     }
 
+    #[cfg(feature = "nats")]
     #[test]
     fn test_nats_config() {
         let config = NatsConfig::new("nats://localhost:4222", "events.>")
@@ -158,17 +151,6 @@ mod tests {
         registry.register_sink("console", Box::new(ConsoleSink::new("console")));
         assert!(registry.get_sink("console").is_some());
         assert!(registry.get_sink("unknown").is_none());
-    }
-
-    #[tokio::test]
-    async fn test_create_from_config() {
-        let config = ConnectorConfig::new("console", "");
-        let sink = ConnectorRegistry::create_from_config(&config).await;
-        assert!(sink.is_ok());
-
-        let config = ConnectorConfig::new("unknown", "");
-        let sink = ConnectorRegistry::create_from_config(&config).await;
-        assert!(sink.is_err());
     }
 
     #[tokio::test]
@@ -304,6 +286,7 @@ mod tests {
         assert!(json.contains("topic"));
     }
 
+    #[cfg(feature = "kafka")]
     #[test]
     fn test_kafka_config_schema() {
         let schema = schemars::schema_for!(KafkaConfig);

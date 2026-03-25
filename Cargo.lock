@@ -8095,6 +8095,109 @@ dependencies = [
 ]
 
 [[package]]
+name = "varpulis-connector-cdc"
+version = "0.6.4"
+dependencies = [
+ "async-trait",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-postgres",
+ "tracing",
+ "varpulis-connector-api",
+ "varpulis-core",
+]
+
+[[package]]
+name = "varpulis-connector-database"
+version = "0.6.4"
+dependencies = [
+ "async-trait",
+ "inventory",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "varpulis-connector-api",
+ "varpulis-core",
+]
+
+[[package]]
+name = "varpulis-connector-elasticsearch"
+version = "0.6.4"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "elasticsearch",
+ "inventory",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "varpulis-connector-api",
+ "varpulis-core",
+]
+
+[[package]]
+name = "varpulis-connector-http"
+version = "0.6.4"
+dependencies = [
+ "async-trait",
+ "axum",
+ "indexmap 2.13.0",
+ "inventory",
+ "reqwest",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower-http",
+ "tracing",
+ "varpulis-connector-api",
+ "varpulis-core",
+]
+
+[[package]]
+name = "varpulis-connector-kafka"
+version = "0.6.4"
+dependencies = [
+ "async-trait",
+ "futures-util",
+ "indexmap 2.13.0",
+ "inventory",
+ "rdkafka",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "varpulis-connector-api",
+ "varpulis-core",
+]
+
+[[package]]
+name = "varpulis-connector-kinesis"
+version = "0.6.4"
+dependencies = [
+ "async-trait",
+ "aws-config",
+ "aws-sdk-kinesis",
+ "inventory",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
+ "varpulis-connector-api",
+ "varpulis-core",
+]
+
+[[package]]
 name = "varpulis-connector-mqtt"
 version = "0.6.4"
 dependencies = [
@@ -8114,25 +8217,86 @@ dependencies = [
 ]
 
 [[package]]
+name = "varpulis-connector-nats"
+version = "0.6.4"
+dependencies = [
+ "async-nats",
+ "async-trait",
+ "futures-util",
+ "indexmap 2.13.0",
+ "inventory",
+ "rustc-hash",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "varpulis-connector-api",
+ "varpulis-core",
+]
+
+[[package]]
+name = "varpulis-connector-pulsar"
+version = "0.6.4"
+dependencies = [
+ "async-trait",
+ "futures-util",
+ "inventory",
+ "pulsar",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "varpulis-connector-api",
+ "varpulis-core",
+]
+
+[[package]]
+name = "varpulis-connector-redis"
+version = "0.6.4"
+dependencies = [
+ "async-trait",
+ "futures-util",
+ "inventory",
+ "redis",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "varpulis-connector-api",
+ "varpulis-core",
+]
+
+[[package]]
+name = "varpulis-connector-s3"
+version = "0.6.4"
+dependencies = [
+ "async-trait",
+ "aws-config",
+ "aws-sdk-s3",
+ "inventory",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "varpulis-connector-api",
+ "varpulis-core",
+]
+
+[[package]]
 name = "varpulis-connectors"
 version = "0.6.4"
 dependencies = [
  "aes-gcm",
- "async-nats",
  "async-trait",
- "aws-config",
- "aws-sdk-kinesis",
- "aws-sdk-s3",
- "axum",
  "base64 0.22.1",
  "chrono",
- "elasticsearch",
  "futures-util",
  "indexmap 2.13.0",
  "inventory",
- "pulsar",
- "rdkafka",
- "redis",
  "reqwest",
  "rustc-hash",
  "rustls 0.23.37",
@@ -8140,15 +8304,22 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
- "sqlx",
  "thiserror 2.0.18",
  "tokio",
- "tokio-postgres",
- "tower-http",
  "tracing",
  "uuid",
  "varpulis-connector-api",
+ "varpulis-connector-cdc",
+ "varpulis-connector-database",
+ "varpulis-connector-elasticsearch",
+ "varpulis-connector-http",
+ "varpulis-connector-kafka",
+ "varpulis-connector-kinesis",
  "varpulis-connector-mqtt",
+ "varpulis-connector-nats",
+ "varpulis-connector-pulsar",
+ "varpulis-connector-redis",
+ "varpulis-connector-s3",
  "varpulis-core",
 ]
 

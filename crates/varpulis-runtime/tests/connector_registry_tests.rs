@@ -9,16 +9,23 @@
 //!   - ConnectorHealthReport: Default impl
 
 use rustc_hash::FxHashMap;
+#[cfg(feature = "elasticsearch")]
+use varpulis_runtime::connector::ElasticsearchConfig;
+#[cfg(feature = "kafka")]
+use varpulis_runtime::connector::KafkaConfig;
+#[cfg(feature = "kinesis")]
+use varpulis_runtime::connector::KinesisConfig;
+#[cfg(feature = "redis")]
+use varpulis_runtime::connector::RedisConfig;
+#[cfg(feature = "s3")]
+use varpulis_runtime::connector::S3Config;
 use varpulis_runtime::connector::{
     ConnectorConfig, ConnectorError, ConnectorHealthReport, ConnectorRegistry, ConsoleSink,
-    ConsoleSource, ElasticsearchConfig, ElasticsearchSink, HttpSink, KafkaConfig, KafkaSource,
-    KinesisConfig, KinesisSink, ManagedConnectorRegistry, RedisConfig, RestApiConfig, RestApiSink,
-    S3Config, S3Sink, SinkConnector, SourceConnector,
+    ConsoleSource, HttpSink, ManagedConnectorRegistry, RestApiConfig, RestApiSink, SinkConnector,
+    SourceConnector,
 };
 #[cfg(feature = "mqtt")]
 use varpulis_runtime::connector::{MqttConfig, MqttSink, MqttSource};
-#[cfg(not(feature = "redis"))]
-use varpulis_runtime::connector::{RedisSink, RedisSource};
 use varpulis_runtime::event::Event;
 
 // ==========================================================================
@@ -96,6 +103,7 @@ fn test_get_source_missing_returns_none() {
     assert!(registry.get_source("nope").is_none());
 }
 
+#[cfg(feature = "kafka")]
 #[test]
 fn test_register_multiple_sources() {
     let mut registry = ConnectorRegistry::new();
@@ -569,6 +577,7 @@ async fn test_http_sink_flush_and_close() {
 // KafkaSource and KafkaSink stubs
 // ==========================================================================
 
+#[cfg(feature = "kafka")]
 #[test]
 fn test_kafka_source_name() {
     let config = KafkaConfig::new("broker:9092", "events");
@@ -577,6 +586,7 @@ fn test_kafka_source_name() {
     assert!(!source.is_running());
 }
 
+#[cfg(feature = "kafka")]
 #[test]
 fn test_kafka_config_builders() {
     let config = KafkaConfig::new("broker:9092", "events")
@@ -685,6 +695,7 @@ fn test_rest_api_sink_construction() {
 // RedisConfig builders
 // ==========================================================================
 
+#[cfg(feature = "redis")]
 #[test]
 fn test_redis_config_defaults() {
     let config = RedisConfig::new("redis://localhost:6379", "events");
@@ -693,6 +704,7 @@ fn test_redis_config_defaults() {
     assert!(config.key_prefix.is_none());
 }
 
+#[cfg(feature = "redis")]
 #[test]
 fn test_redis_config_with_key_prefix() {
     let config = RedisConfig::new("redis://localhost", "ch").with_key_prefix("myapp");
@@ -703,6 +715,7 @@ fn test_redis_config_with_key_prefix() {
 // KinesisConfig builders
 // ==========================================================================
 
+#[cfg(feature = "kinesis")]
 #[test]
 fn test_kinesis_config_defaults() {
     let config = KinesisConfig::new("my-stream", "us-east-1");
@@ -716,6 +729,7 @@ fn test_kinesis_config_defaults() {
     assert!(config.profile.is_none());
 }
 
+#[cfg(feature = "kinesis")]
 #[test]
 fn test_kinesis_config_all_builders() {
     let config = KinesisConfig::new("my-stream", "eu-west-1")
@@ -734,6 +748,7 @@ fn test_kinesis_config_all_builders() {
     assert_eq!(config.profile, Some("production".to_string()));
 }
 
+#[cfg(feature = "kinesis")]
 #[test]
 fn test_kinesis_config_batch_size_clamped() {
     let config = KinesisConfig::new("s", "r").with_batch_size(20000);
@@ -747,6 +762,7 @@ fn test_kinesis_config_batch_size_clamped() {
 // S3Config builders
 // ==========================================================================
 
+#[cfg(feature = "s3")]
 #[test]
 fn test_s3_config_defaults() {
     let config = S3Config::new("my-bucket", "events/", "us-east-1");
@@ -759,6 +775,7 @@ fn test_s3_config_defaults() {
     assert!(config.profile.is_none());
 }
 
+#[cfg(feature = "s3")]
 #[test]
 fn test_s3_config_all_builders() {
     use varpulis_runtime::connector::S3OutputFormat;
@@ -780,6 +797,7 @@ fn test_s3_config_all_builders() {
 // ElasticsearchConfig builders
 // ==========================================================================
 
+#[cfg(feature = "elasticsearch")]
 #[test]
 fn test_elasticsearch_config_defaults() {
     let config = ElasticsearchConfig::new("http://localhost:9200", "events");
@@ -793,6 +811,7 @@ fn test_elasticsearch_config_defaults() {
     assert!(config.api_key.is_none());
 }
 
+#[cfg(feature = "elasticsearch")]
 #[test]
 fn test_elasticsearch_config_all_builders() {
     let config = ElasticsearchConfig::new("http://es:9200", "logs")
@@ -815,6 +834,7 @@ fn test_elasticsearch_config_all_builders() {
     );
 }
 
+#[cfg(feature = "elasticsearch")]
 #[test]
 fn test_elasticsearch_config_batch_size_minimum() {
     let config = ElasticsearchConfig::new("http://es:9200", "idx").with_batch_size(0);
@@ -825,6 +845,7 @@ fn test_elasticsearch_config_batch_size_minimum() {
 // DatabaseConfig builders
 // ==========================================================================
 
+#[cfg(feature = "database")]
 #[test]
 fn test_database_config_defaults() {
     use varpulis_runtime::connector::DatabaseConfig;
@@ -837,6 +858,7 @@ fn test_database_config_defaults() {
     assert_eq!(config.max_connections, 5);
 }
 
+#[cfg(feature = "database")]
 #[test]
 fn test_database_config_with_max_connections() {
     use varpulis_runtime::connector::DatabaseConfig;
@@ -846,6 +868,7 @@ fn test_database_config_with_max_connections() {
     assert_eq!(config.max_connections, 20);
 }
 
+#[cfg(feature = "database")]
 #[test]
 fn test_database_config_valid_table_names() {
     use varpulis_runtime::connector::DatabaseConfig;
@@ -859,6 +882,7 @@ fn test_database_config_valid_table_names() {
     assert!(DatabaseConfig::new("postgres://localhost/test", "MyTable_123").is_ok());
 }
 
+#[cfg(feature = "database")]
 #[test]
 fn test_database_config_invalid_table_names() {
     use varpulis_runtime::connector::DatabaseConfig;
@@ -880,6 +904,7 @@ fn test_database_config_invalid_table_names() {
 // Stub connectors: send returns NotAvailable errors
 // ==========================================================================
 
+#[cfg(feature = "s3")]
 #[tokio::test]
 async fn test_s3_sink_stub_send_returns_not_available() {
     let config = S3Config::new("bucket", "prefix", "us-east-1");
@@ -893,6 +918,7 @@ async fn test_s3_sink_stub_send_returns_not_available() {
     assert!(msg.contains("S3") || msg.contains("s3"));
 }
 
+#[cfg(feature = "s3")]
 #[tokio::test]
 async fn test_s3_sink_stub_flush_and_close_ok() {
     let config = S3Config::new("bucket", "prefix", "us-east-1");
@@ -901,6 +927,7 @@ async fn test_s3_sink_stub_flush_and_close_ok() {
     assert!(sink.close().await.is_ok());
 }
 
+#[cfg(feature = "elasticsearch")]
 #[tokio::test]
 async fn test_elasticsearch_sink_stub_send_returns_not_available() {
     let config = ElasticsearchConfig::new("http://localhost:9200", "events");
@@ -914,6 +941,7 @@ async fn test_elasticsearch_sink_stub_send_returns_not_available() {
     assert!(msg.contains("elasticsearch") || msg.contains("Elasticsearch"));
 }
 
+#[cfg(feature = "elasticsearch")]
 #[tokio::test]
 async fn test_elasticsearch_sink_stub_flush_and_close_ok() {
     let config = ElasticsearchConfig::new("http://localhost:9200", "events");
@@ -922,6 +950,7 @@ async fn test_elasticsearch_sink_stub_flush_and_close_ok() {
     assert!(sink.close().await.is_ok());
 }
 
+#[cfg(feature = "kinesis")]
 #[tokio::test]
 async fn test_kinesis_sink_stub_send_returns_not_available() {
     let config = KinesisConfig::new("stream", "us-east-1");
@@ -935,6 +964,7 @@ async fn test_kinesis_sink_stub_send_returns_not_available() {
     assert!(msg.contains("kinesis") || msg.contains("Kinesis"));
 }
 
+#[cfg(feature = "kinesis")]
 #[tokio::test]
 async fn test_kinesis_sink_stub_flush_and_close_ok() {
     let config = KinesisConfig::new("stream", "us-east-1");
@@ -1193,7 +1223,7 @@ fn test_connector_health_report_clone() {
 // Stub source connectors: behavior tests
 // ==========================================================================
 
-#[cfg(not(feature = "redis"))]
+#[cfg(feature = "redis")]
 #[tokio::test]
 async fn test_redis_source_stub_is_not_running() {
     let config = RedisConfig::new("redis://localhost", "ch");
@@ -1202,6 +1232,7 @@ async fn test_redis_source_stub_is_not_running() {
     assert!(!source.is_running());
 }
 
+#[cfg(feature = "kinesis")]
 #[tokio::test]
 async fn test_kinesis_source_stub_name() {
     use varpulis_runtime::connector::KinesisSource;
@@ -1235,6 +1266,7 @@ fn test_mqtt_sink_stub_name() {
 // DatabaseSource and DatabaseSink stubs
 // ==========================================================================
 
+#[cfg(feature = "database")]
 #[test]
 fn test_database_source_stub_name() {
     use varpulis_runtime::connector::{DatabaseConfig, DatabaseSource};
@@ -1243,6 +1275,7 @@ fn test_database_source_stub_name() {
     assert_eq!(source.name(), "db-src");
 }
 
+#[cfg(feature = "database")]
 #[tokio::test]
 async fn test_database_sink_stub_construction() {
     use varpulis_runtime::connector::{DatabaseConfig, DatabaseSink};
@@ -1256,7 +1289,7 @@ async fn test_database_sink_stub_construction() {
 // RedisSink stub
 // ==========================================================================
 
-#[cfg(not(feature = "redis"))]
+#[cfg(feature = "redis")]
 #[test]
 fn test_redis_sink_stub_name() {
     let config = RedisConfig::new("redis://localhost", "ch");
@@ -1268,6 +1301,7 @@ fn test_redis_sink_stub_name() {
 // PulsarConfig builder tests
 // ==========================================================================
 
+#[cfg(feature = "pulsar")]
 #[test]
 fn test_pulsar_config_builder() {
     use varpulis_runtime::connector::PulsarConfig;
@@ -1289,6 +1323,7 @@ fn test_pulsar_config_builder() {
     assert_eq!(config.batch_size, 200);
 }
 
+#[cfg(feature = "pulsar")]
 #[test]
 fn test_pulsar_config_batch_size_default() {
     use varpulis_runtime::connector::PulsarConfig;
@@ -1307,6 +1342,7 @@ fn test_pulsar_config_batch_size_default() {
 // RedisStreamConfig builder tests
 // ==========================================================================
 
+#[cfg(feature = "redis")]
 #[test]
 fn test_redis_stream_config_defaults() {
     use varpulis_runtime::connector::RedisStreamConfig;
@@ -1323,6 +1359,7 @@ fn test_redis_stream_config_defaults() {
     assert!(config.max_len.is_none(), "max_len default should be None");
 }
 
+#[cfg(feature = "redis")]
 #[test]
 fn test_redis_stream_config_builder_chain() {
     use varpulis_runtime::connector::RedisStreamConfig;
@@ -1372,7 +1409,7 @@ async fn test_create_from_config_redis_stream() {
 // Pulsar stub connector tests (feature off)
 // ==========================================================================
 
-#[cfg(not(feature = "pulsar"))]
+#[cfg(feature = "pulsar")]
 #[tokio::test]
 async fn test_pulsar_source_stub_not_available() {
     use tokio::sync::mpsc;
@@ -1393,7 +1430,7 @@ async fn test_pulsar_source_stub_not_available() {
     );
 }
 
-#[cfg(not(feature = "pulsar"))]
+#[cfg(feature = "pulsar")]
 #[tokio::test]
 async fn test_pulsar_sink_stub_not_available() {
     use varpulis_runtime::connector::{PulsarConfig, PulsarSink, SinkConnector};
@@ -1416,7 +1453,7 @@ async fn test_pulsar_sink_stub_not_available() {
 // Redis Streams stub connector tests (feature off)
 // ==========================================================================
 
-#[cfg(not(feature = "redis"))]
+#[cfg(feature = "redis")]
 #[tokio::test]
 async fn test_redis_stream_source_stub_not_available() {
     use tokio::sync::mpsc;
@@ -1437,7 +1474,7 @@ async fn test_redis_stream_source_stub_not_available() {
     );
 }
 
-#[cfg(not(feature = "redis"))]
+#[cfg(feature = "redis")]
 #[tokio::test]
 async fn test_redis_stream_sink_stub_not_available() {
     use varpulis_runtime::connector::{RedisStreamConfig, RedisStreamSinkStub, SinkConnector};
