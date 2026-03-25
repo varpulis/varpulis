@@ -272,10 +272,12 @@ impl SessionStore {
 
     /// Remove entries older than 24 hours (tokens expire anyway).
     pub fn cleanup(&mut self) {
-        let cutoff = std::time::Instant::now()
+        if let Some(cutoff) = std::time::Instant::now()
             .checked_sub(std::time::Duration::from_secs(86400))
-            .unwrap();
-        self.revoked.retain(|_, instant| *instant > cutoff);
+        {
+            self.revoked.retain(|_, instant| *instant > cutoff);
+        }
+        // If checked_sub returns None (system uptime < 24h), nothing to clean up
     }
 }
 
