@@ -967,6 +967,49 @@ fn test_check_syntax_multiple_connectors() {
 }
 
 // =============================================================================
+// Duration parsing
+// =============================================================================
+
+#[test]
+fn test_parse_duration_seconds() {
+    assert_eq!(varpulis_cli::parse_duration_str("60s").unwrap(), 60);
+    assert_eq!(varpulis_cli::parse_duration_str("1s").unwrap(), 1);
+    assert_eq!(varpulis_cli::parse_duration_str("0s").unwrap(), 0);
+}
+
+#[test]
+fn test_parse_duration_minutes() {
+    assert_eq!(varpulis_cli::parse_duration_str("5m").unwrap(), 300);
+    assert_eq!(varpulis_cli::parse_duration_str("1m").unwrap(), 60);
+}
+
+#[test]
+fn test_parse_duration_hours() {
+    assert_eq!(varpulis_cli::parse_duration_str("1h").unwrap(), 3600);
+    assert_eq!(varpulis_cli::parse_duration_str("2h").unwrap(), 7200);
+}
+
+#[test]
+fn test_parse_duration_no_suffix() {
+    assert_eq!(varpulis_cli::parse_duration_str("120").unwrap(), 120);
+}
+
+#[test]
+fn test_parse_duration_with_whitespace() {
+    assert_eq!(varpulis_cli::parse_duration_str("  30s  ").unwrap(), 30);
+}
+
+#[test]
+fn test_parse_duration_empty() {
+    assert!(varpulis_cli::parse_duration_str("").is_err());
+}
+
+#[test]
+fn test_parse_duration_invalid_number() {
+    assert!(varpulis_cli::parse_duration_str("abcs").is_err());
+}
+
+// =============================================================================
 // Config utilities
 // =============================================================================
 

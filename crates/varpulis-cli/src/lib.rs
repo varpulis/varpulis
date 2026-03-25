@@ -184,6 +184,35 @@ pub async fn simulate_from_source(
     Ok(results)
 }
 
+/// Parse a duration string like "60s", "5m", "1h" into seconds.
+///
+/// Supports suffixes: `s` (seconds), `m` (minutes), `h` (hours).
+/// If no suffix is provided, assumes seconds.
+pub fn parse_duration_str(s: &str) -> Result<u64> {
+    let s = s.trim();
+    if s.is_empty() {
+        anyhow::bail!("Empty duration string");
+    }
+    let (num_part, suffix) = if let Some(stripped) = s.strip_suffix('s') {
+        (stripped, "s")
+    } else if let Some(stripped) = s.strip_suffix('m') {
+        (stripped, "m")
+    } else if let Some(stripped) = s.strip_suffix('h') {
+        (stripped, "h")
+    } else {
+        (s, "s")
+    };
+    let value: u64 = num_part
+        .parse()
+        .map_err(|_| anyhow::anyhow!("Invalid duration number: '{num_part}'"))?;
+    match suffix {
+        "s" => Ok(value),
+        "m" => Ok(value * 60),
+        "h" => Ok(value * 3600),
+        _ => anyhow::bail!("Unknown duration suffix: '{suffix}'"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
