@@ -17,9 +17,9 @@ name = "varpulis"
 path = "src/main.rs"
 
 [dependencies]
-varpulis-core = { version = "0.6.4", path = "../varpulis-core" }
-varpulis-parser = { version = "0.6.4", path = "../varpulis-parser" }
-varpulis-runtime = { version = "0.6.4", path = "../varpulis-runtime", features = ["mqtt"] }
+varpulis-core = { version = "0.7.0", path = "../varpulis-core" }
+varpulis-parser = { version = "0.7.0", path = "../varpulis-parser" }
+varpulis-runtime = { version = "0.7.0", path = "../varpulis-runtime", features = ["mqtt"] }
 tokio = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
@@ -45,8 +45,8 @@ thiserror = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
 reqwest = { workspace = true }
 async-trait = "0.1"
-varpulis-cluster = { version = "0.6.4", path = "../varpulis-cluster" }
-varpulis-datagen = { version = "0.6.4", path = "../varpulis-datagen" }
+varpulis-cluster = { version = "0.7.0", path = "../varpulis-cluster" }
+varpulis-datagen = { version = "0.7.0", path = "../varpulis-datagen" }
 jsonwebtoken = { workspace = true }
 urlencoding = "2"
 bytes = "1"
@@ -55,13 +55,13 @@ sha2 = { workspace = true }
 hex = { workspace = true }
 argon2 = "0.5"
 getrandom = "0.4"
-varpulis-connectors = { version = "0.6.4", path = "../varpulis-connectors" }
+varpulis-connectors = { version = "0.7.0", path = "../varpulis-connectors" }
 
 # OIDC/SSO (optional, behind "oidc" feature)
 openidconnect = { version = "4", optional = true }
 
 # SaaS layer (optional, behind "saas" feature)
-varpulis-db = { version = "0.6.4", path = "../varpulis-db", optional = true }
+varpulis-db = { version = "0.7.0", path = "../varpulis-db", optional = true }
 lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "tokio1-rustls-tls", "builder"], optional = true }
 
 # OpenTelemetry (optional, behind "otel" feature)

@@ -9,8 +9,8 @@ documentation.workspace = true
 description = "MQTT connector for Varpulis CEP engine"
 
 [dependencies]
-varpulis-connector-api = { version = "0.6.4", path = "../varpulis-connector-api" }
-varpulis-core = { version = "0.6.4", path = "../varpulis-core" }
+varpulis-connector-api = { version = "0.7.0", path = "../varpulis-connector-api" }
+varpulis-core = { version = "0.7.0", path = "../varpulis-core" }
 rumqttc = { package = "rumqttc-v4-next", version = "0.28" }
 tokio = { workspace = true }
 serde = { workspace = true }

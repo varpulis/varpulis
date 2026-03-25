@@ -7977,7 +7977,7 @@ checksum = "7ba6f5989077681266825251a52748b8c1d8a4ad098cc37e440103d0ea717fc0"
 
 [[package]]
 name = "varpulis-actors"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "serde",
@@ -7990,7 +7990,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-cli"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "argon2",
@@ -8043,7 +8043,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-cluster"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "async-nats",
  "axum",
@@ -8078,7 +8078,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-connector-api"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "indexmap 2.13.0",
@@ -8096,12 +8096,11 @@ dependencies = [
 
 [[package]]
 name = "varpulis-connector-cdc"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "schemars 1.2.1",
  "serde",
- "serde_json",
  "tokio",
  "tokio-postgres",
  "tracing",
@@ -8111,7 +8110,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-connector-database"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "inventory",
@@ -8127,7 +8126,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-connector-elasticsearch"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -8144,7 +8143,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-connector-http"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -8163,7 +8162,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-connector-kafka"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -8181,7 +8180,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-connector-kinesis"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -8199,7 +8198,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-connector-mqtt"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "indexmap 2.13.0",
@@ -8218,7 +8217,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-connector-nats"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "async-nats",
  "async-trait",
@@ -8237,7 +8236,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-connector-pulsar"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -8254,7 +8253,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-connector-redis"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -8271,7 +8270,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-connector-s3"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -8279,7 +8278,6 @@ dependencies = [
  "inventory",
  "schemars 1.2.1",
  "serde",
- "serde_json",
  "tokio",
  "tracing",
  "varpulis-connector-api",
@@ -8288,13 +8286,11 @@ dependencies = [
 
 [[package]]
 name = "varpulis-connectors"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "aes-gcm",
  "async-trait",
  "base64 0.22.1",
- "chrono",
- "futures-util",
  "indexmap 2.13.0",
  "inventory",
  "reqwest",
@@ -8307,7 +8303,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
- "uuid",
  "varpulis-connector-api",
  "varpulis-connector-cdc",
  "varpulis-connector-database",
@@ -8325,7 +8320,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-core"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "indexmap 2.13.0",
@@ -8340,7 +8335,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-datagen"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "rand 0.10.0",
@@ -8350,7 +8345,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-db"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "serde",
@@ -8363,7 +8358,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-dead-letter"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "serde",
@@ -8374,7 +8369,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-enrichment"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "async-trait",
  "redis",
@@ -8389,7 +8384,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-hamlet"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "proptest",
  "rustc-hash",
@@ -8400,7 +8395,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-lsp"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "dashmap 6.1.0",
  "tokio",
@@ -8413,7 +8408,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-mcp"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -8433,7 +8428,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-parser"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "insta",
  "logos",
@@ -8448,7 +8443,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-pst"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "hashlink 0.11.0",
  "proptest",
@@ -8458,7 +8453,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-runtime"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -8506,7 +8501,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-sase"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "iai-callgrind",
@@ -8517,14 +8512,14 @@ dependencies = [
 
 [[package]]
 name = "varpulis-simd"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "varpulis-core",
 ]
 
 [[package]]
 name = "varpulis-wasm"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -8538,7 +8533,7 @@ dependencies = [
 
 [[package]]
 name = "varpulis-zdd"
-version = "0.6.4"
+version = "0.7.0"
 dependencies = [
  "criterion",
  "rustc-hash",
