@@ -74,6 +74,10 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
+      - name: Install connector system dependencies (Linux)
+        if: runner.os == 'Linux' && !matrix.use_cross
+        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev libssl-dev protobuf-compiler
+
       - name: Build (cross)
         if: matrix.use_cross
         run: |
