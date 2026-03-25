@@ -186,19 +186,6 @@ jobs:
           - oidc
           - smartmodule
           - all-connectors
-        include:
-          - features: kafka
-            apt-packages: libcurl4-openssl-dev
-          - features: elasticsearch
-            apt-packages: libssl-dev
-          - features: onnx
-            apt-packages: libssl-dev
-          - features: gpu
-            apt-packages: libssl-dev
-          - features: pulsar
-            apt-packages: protobuf-compiler
-          - features: all-connectors
-            apt-packages: libcurl4-openssl-dev libssl-dev protobuf-compiler
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -207,9 +194,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: features-${{ matrix.features }}
-      - name: Install system dependencies
-        if: matrix.apt-packages
-        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.apt-packages }}
+      - name: Install connector system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev libssl-dev protobuf-compiler
       - run: cargo check --workspace --features ${{ matrix.features }}
       - run: cargo clippy --workspace --all-targets --features ${{ matrix.features }} -- -D warnings
 
