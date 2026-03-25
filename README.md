@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="web-ui/logo.png" width="320" alt="Varpulis">
+  <img src="docs/assets/logo.png" width="320" alt="Varpulis">
 </p>
 
 <p align="center"><strong>A modern Complex Event Processing engine.</strong> Rust performance. Pipeline syntax. SASE+ pattern matching.</p>
@@ -279,7 +279,7 @@ crates/
 ├── varpulis-lsp/       # Language Server Protocol implementation
 ├── varpulis-mcp/       # Model Context Protocol server
 └── varpulis-zdd/       # Zero-suppressed Decision Diagrams (research)
-web-ui/                 # Vue 3 + Vuetify control plane dashboard
+# Web UI: https://github.com/varpulis/varpulis-web-ui
 design/decisions/       # Architecture Decision Records (ADRs)
 deploy/                 # Docker, Kubernetes, Helm, Prometheus, Grafana
 ```

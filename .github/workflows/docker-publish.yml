@@ -44,14 +44,4 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Build & push web-ui image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: web-ui/Dockerfile
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository }}-web-ui:${{ steps.version.outputs.tag }}
-            ghcr.io/${{ github.repository }}-web-ui:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      # Web UI moved to https://github.com/varpulis/varpulis-web-ui
