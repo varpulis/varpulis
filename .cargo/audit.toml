@@ -20,12 +20,11 @@ ignore = [
     "RUSTSEC-2025-0141",
 
     # RUSTSEC-2025-0134: rustls-pemfile is unmaintained
-    # Still pulled by rumqttc 0.25.x (latest available) and async-nats 0.38.x.
-    # No upstream fix for these consumers yet.
+    # Still pulled by async-nats 0.46.x. No upstream fix yet.
     "RUSTSEC-2025-0134",
 
     # RUSTSEC-2026-0049: rustls-webpki CRL distributionPoint bypass
-    # Transitive via rumqttc 0.25 which pins rustls-webpki 0.102.x.
-    # Fix requires >=0.103.10 (different major line). No upstream fix for rumqttc.
+    # Transitive via async-nats 0.46 which pins rustls-webpki 0.102.x.
+    # Fix requires >=0.103.10. No upstream fix for async-nats yet.
     "RUSTSEC-2026-0049",
 ]

@@ -471,7 +471,7 @@ mod mqtt_impl {
                 .unwrap_or_else(|| format!("varpulis-src-{}", std::process::id()));
 
             let mut mqtt_opts = MqttOptions::new(client_id, &self.config.broker, self.config.port);
-            mqtt_opts.set_keep_alive(Duration::from_secs(60));
+            mqtt_opts.set_keep_alive(60);
 
             if let (Some(user), Some(pass)) = (&self.config.username, &self.config.password) {
                 mqtt_opts.set_credentials(user, pass.expose());
@@ -524,7 +524,8 @@ mod mqtt_impl {
                                     crate::limits::MAX_EVENT_PAYLOAD_BYTES
                                 );
                             } else if let Ok(payload) = std::str::from_utf8(&publish.payload) {
-                                if let Some(event) = parse_mqtt_payload(payload, &publish.topic) {
+                                let topic = std::str::from_utf8(&publish.topic).unwrap_or("");
+                                if let Some(event) = parse_mqtt_payload(payload, topic) {
                                     if tx.send(event).await.is_err() {
                                         warn!("MQTT source {} channel closed", name);
                                         break;
@@ -620,7 +621,7 @@ mod mqtt_impl {
                 .unwrap_or_else(|| format!("varpulis-sink-{}", std::process::id()));
 
             let mut mqtt_opts = MqttOptions::new(client_id, &self.config.broker, self.config.port);
-            mqtt_opts.set_keep_alive(Duration::from_secs(60));
+            mqtt_opts.set_keep_alive(60);
 
             if let (Some(user), Some(pass)) = (&self.config.username, &self.config.password) {
                 mqtt_opts.set_credentials(user, pass.expose());
