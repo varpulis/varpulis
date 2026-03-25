@@ -28,14 +28,11 @@ serde_json = { workspace = true }
 schemars = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
-chrono = { workspace = true }
 indexmap = { workspace = true }
 rustc-hash = { workspace = true }
 inventory = { workspace = true }
 async-trait = "0.1"
-futures-util = { workspace = true }
 reqwest = { workspace = true }
-uuid = { version = "1", features = ["v4"] }
 
 # Credentials encryption
 aes-gcm = { version = "0.10", optional = true }

@@ -15,7 +15,6 @@ aws-config = "1.8"
 aws-sdk-s3 = "1.124"
 tokio = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
 schemars = { workspace = true }
 tracing = { workspace = true }
 inventory = { workspace = true }
