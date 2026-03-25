@@ -9,7 +9,7 @@ documentation.workspace = true
 description = "SIMD-optimized operations for high-performance event processing"
 
 [dependencies]
-varpulis-core = { version = "0.6.4", path = "../varpulis-core" }
+varpulis-core = { version = "0.7.0", path = "../varpulis-core" }
 
 [lints]
 workspace = true
