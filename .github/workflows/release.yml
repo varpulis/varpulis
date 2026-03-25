@@ -335,5 +335,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/varpulis.rb
-          git commit -m "Update varpulis to ${{ steps.version.outputs.version }}"
-          git push
+          git diff --cached --quiet && echo "No changes to formula" || {
+            git commit -m "Update varpulis to ${{ steps.version.outputs.version }}"
+            git push
+          }
