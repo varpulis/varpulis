@@ -11,21 +11,27 @@
 use rustc_hash::FxHashMap;
 #[cfg(feature = "elasticsearch")]
 use varpulis_runtime::connector::ElasticsearchConfig;
-#[cfg(feature = "kafka")]
-use varpulis_runtime::connector::KafkaConfig;
+#[cfg(feature = "elasticsearch")]
+use varpulis_runtime::connector::ElasticsearchSink;
 #[cfg(feature = "kinesis")]
 use varpulis_runtime::connector::KinesisConfig;
+#[cfg(feature = "kinesis")]
+use varpulis_runtime::connector::KinesisSink;
+#[cfg(feature = "mqtt")]
+use varpulis_runtime::connector::MqttConfig;
 #[cfg(feature = "redis")]
 use varpulis_runtime::connector::RedisConfig;
-#[cfg(feature = "s3")]
-use varpulis_runtime::connector::S3Config;
 use varpulis_runtime::connector::{
     ConnectorConfig, ConnectorError, ConnectorHealthReport, ConnectorRegistry, ConsoleSink,
     ConsoleSource, HttpSink, ManagedConnectorRegistry, RestApiConfig, RestApiSink, SinkConnector,
     SourceConnector,
 };
-#[cfg(feature = "mqtt")]
-use varpulis_runtime::connector::{MqttConfig, MqttSink, MqttSource};
+#[cfg(feature = "kafka")]
+use varpulis_runtime::connector::{KafkaConfig, KafkaSource};
+#[cfg(feature = "redis")]
+use varpulis_runtime::connector::{RedisSink, RedisSource};
+#[cfg(feature = "s3")]
+use varpulis_runtime::connector::{S3Config, S3Sink};
 use varpulis_runtime::event::Event;
 
 // ==========================================================================
@@ -914,78 +920,8 @@ fn test_database_config_invalid_table_names() {
     assert!(DatabaseConfig::new("postgres://localhost/test", "fn()").is_err());
 }
 
-// ==========================================================================
-// Stub connectors: send returns NotAvailable errors
-// ==========================================================================
-
-#[cfg(feature = "s3")]
-#[tokio::test]
-async fn test_s3_sink_stub_send_returns_not_available() {
-    let config = S3Config::new("bucket", "prefix", "us-east-1");
-    let sink = S3Sink::new("s3-test", config);
-    assert_eq!(sink.name(), "s3-test");
-
-    let event = Event::new("TestEvent");
-    let result = sink.send(&event).await;
-    assert!(result.is_err());
-    let msg = format!("{}", result.unwrap_err());
-    assert!(msg.contains("S3") || msg.contains("s3"));
-}
-
-#[cfg(feature = "s3")]
-#[tokio::test]
-async fn test_s3_sink_stub_flush_and_close_ok() {
-    let config = S3Config::new("bucket", "prefix", "us-east-1");
-    let sink = S3Sink::new("s3-test", config);
-    assert!(sink.flush().await.is_ok());
-    assert!(sink.close().await.is_ok());
-}
-
-#[cfg(feature = "elasticsearch")]
-#[tokio::test]
-async fn test_elasticsearch_sink_stub_send_returns_not_available() {
-    let config = ElasticsearchConfig::new("http://localhost:9200", "events");
-    let sink = ElasticsearchSink::new("es-test", config);
-    assert_eq!(sink.name(), "es-test");
-
-    let event = Event::new("TestEvent");
-    let result = sink.send(&event).await;
-    assert!(result.is_err());
-    let msg = format!("{}", result.unwrap_err());
-    assert!(msg.contains("elasticsearch") || msg.contains("Elasticsearch"));
-}
-
-#[cfg(feature = "elasticsearch")]
-#[tokio::test]
-async fn test_elasticsearch_sink_stub_flush_and_close_ok() {
-    let config = ElasticsearchConfig::new("http://localhost:9200", "events");
-    let sink = ElasticsearchSink::new("es-test", config);
-    assert!(sink.flush().await.is_ok());
-    assert!(sink.close().await.is_ok());
-}
-
-#[cfg(feature = "kinesis")]
-#[tokio::test]
-async fn test_kinesis_sink_stub_send_returns_not_available() {
-    let config = KinesisConfig::new("stream", "us-east-1");
-    let sink = KinesisSink::new("kinesis-test", config);
-    assert_eq!(sink.name(), "kinesis-test");
-
-    let event = Event::new("TestEvent");
-    let result = sink.send(&event).await;
-    assert!(result.is_err());
-    let msg = format!("{}", result.unwrap_err());
-    assert!(msg.contains("kinesis") || msg.contains("Kinesis"));
-}
-
-#[cfg(feature = "kinesis")]
-#[tokio::test]
-async fn test_kinesis_sink_stub_flush_and_close_ok() {
-    let config = KinesisConfig::new("stream", "us-east-1");
-    let sink = KinesisSink::new("kinesis-test", config);
-    assert!(sink.flush().await.is_ok());
-    assert!(sink.close().await.is_ok());
-}
+// Stub connector tests removed — connectors are now real implementations
+// in standalone crates, not stubs. Integration tests live in E2E test suites.
 
 // ==========================================================================
 // ManagedConnectorRegistry: from_configs with MQTT
@@ -1233,83 +1169,8 @@ fn test_connector_health_report_clone() {
     assert_eq!(cloned.seconds_since_last_message, 10);
 }
 
-// ==========================================================================
-// Stub source connectors: behavior tests
-// ==========================================================================
-
-#[cfg(feature = "redis")]
-#[tokio::test]
-async fn test_redis_source_stub_is_not_running() {
-    let config = RedisConfig::new("redis://localhost", "ch");
-    let source = RedisSource::new("redis-src", config);
-    assert_eq!(source.name(), "redis-src");
-    assert!(!source.is_running());
-}
-
-#[cfg(feature = "kinesis")]
-#[tokio::test]
-async fn test_kinesis_source_stub_name() {
-    use varpulis_runtime::connector::KinesisSource;
-    let config = KinesisConfig::new("stream", "us-east-1");
-    let source = KinesisSource::new("kinesis-src", config);
-    assert_eq!(source.name(), "kinesis-src");
-    assert!(!source.is_running());
-}
-
-// ==========================================================================
-// MqttSink and MqttSource names
-// ==========================================================================
-
-#[cfg(feature = "mqtt")]
-#[test]
-fn test_mqtt_source_stub_name() {
-    let config = MqttConfig::new("localhost", "t");
-    let source = MqttSource::new("mqtt-src", config);
-    assert_eq!(source.name(), "mqtt-src");
-}
-
-#[cfg(feature = "mqtt")]
-#[test]
-fn test_mqtt_sink_stub_name() {
-    let config = MqttConfig::new("localhost", "t");
-    let sink = MqttSink::new("mqtt-sink", config);
-    assert_eq!(sink.name(), "mqtt-sink");
-}
-
-// ==========================================================================
-// DatabaseSource and DatabaseSink stubs
-// ==========================================================================
-
-#[cfg(feature = "database")]
-#[test]
-fn test_database_source_stub_name() {
-    use varpulis_runtime::connector::{DatabaseConfig, DatabaseSource};
-    let config = DatabaseConfig::new("postgres://localhost/test", "events").unwrap();
-    let source = DatabaseSource::new("db-src", config);
-    assert_eq!(source.name(), "db-src");
-}
-
-#[cfg(feature = "database")]
-#[tokio::test]
-async fn test_database_sink_stub_construction() {
-    use varpulis_runtime::connector::{DatabaseConfig, DatabaseSink};
-    let config = DatabaseConfig::new("postgres://localhost/test", "events").unwrap();
-    let result = DatabaseSink::new("db-sink", config).await;
-    assert!(result.is_ok());
-    assert_eq!(result.unwrap().name(), "db-sink");
-}
-
-// ==========================================================================
-// RedisSink stub
-// ==========================================================================
-
-#[cfg(feature = "redis")]
-#[test]
-fn test_redis_sink_stub_name() {
-    let config = RedisConfig::new("redis://localhost", "ch");
-    let sink = RedisSink::new("redis-sink", config);
-    assert_eq!(sink.name(), "redis-sink");
-}
+// Stub connector behavior tests removed — connectors are now real
+// implementations in standalone crates, not stubs.
 
 // ==========================================================================
 // PulsarConfig builder tests
@@ -1421,93 +1282,8 @@ async fn test_create_from_config_redis_stream() {
     assert_eq!(result.unwrap().name(), "redis_stream");
 }
 
-// ==========================================================================
-// Pulsar stub connector tests (feature off)
-// ==========================================================================
-
-#[cfg(feature = "pulsar")]
-#[tokio::test]
-async fn test_pulsar_source_stub_not_available() {
-    use tokio::sync::mpsc;
-    use varpulis_runtime::connector::{PulsarConfig, PulsarSource, SourceConnector};
-
-    let config = PulsarConfig::new("pulsar://localhost:6650", "topic");
-    let mut source = PulsarSource::new("pulsar-src", config);
-    assert_eq!(source.name(), "pulsar-src");
-    assert!(!source.is_running());
-
-    let (tx, _rx) = mpsc::channel(10);
-    let result = source.start(tx).await;
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(
-        matches!(err, ConnectorError::NotAvailable(_)),
-        "Expected NotAvailable, got: {err:?}"
-    );
-}
-
-#[cfg(feature = "pulsar")]
-#[tokio::test]
-async fn test_pulsar_sink_stub_not_available() {
-    use varpulis_runtime::connector::{PulsarConfig, PulsarSink, SinkConnector};
-
-    let config = PulsarConfig::new("pulsar://localhost:6650", "topic");
-    let sink = PulsarSink::new("pulsar-sink", config);
-    assert_eq!(sink.name(), "pulsar-sink");
-
-    let event = Event::new("TestEvent").with_field("data", "hello");
-    let result = sink.send(&event).await;
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(
-        matches!(err, ConnectorError::NotAvailable(_)),
-        "Expected NotAvailable, got: {err:?}"
-    );
-}
-
-// ==========================================================================
-// Redis Streams stub connector tests (feature off)
-// ==========================================================================
-
-#[cfg(feature = "redis")]
-#[tokio::test]
-async fn test_redis_stream_source_stub_not_available() {
-    use tokio::sync::mpsc;
-    use varpulis_runtime::connector::{RedisStreamConfig, RedisStreamSource, SourceConnector};
-
-    let config = RedisStreamConfig::new("redis://localhost:6379", "stream");
-    let mut source = RedisStreamSource::new("redis-stream-src", config);
-    assert_eq!(source.name(), "redis-stream-src");
-    assert!(!source.is_running());
-
-    let (tx, _rx) = mpsc::channel(10);
-    let result = source.start(tx).await;
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(
-        matches!(err, ConnectorError::NotAvailable(_)),
-        "Expected NotAvailable, got: {err:?}"
-    );
-}
-
-#[cfg(feature = "redis")]
-#[tokio::test]
-async fn test_redis_stream_sink_stub_not_available() {
-    use varpulis_runtime::connector::{RedisStreamConfig, RedisStreamSinkStub, SinkConnector};
-
-    let config = RedisStreamConfig::new("redis://localhost:6379", "stream");
-    let sink = RedisStreamSinkStub::new("redis-stream-sink", config);
-    assert_eq!(sink.name(), "redis-stream-sink");
-
-    let event = Event::new("TestEvent").with_field("data", "hello");
-    let result = sink.send(&event).await;
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(
-        matches!(err, ConnectorError::NotAvailable(_)),
-        "Expected NotAvailable, got: {err:?}"
-    );
-}
+// Pulsar and Redis Streams stub tests removed — connectors are now real
+// implementations in standalone crates, not stubs.
 
 // ==========================================================================
 // Multiple connectors in ManagedConnectorRegistry

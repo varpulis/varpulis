@@ -43,6 +43,8 @@ pub use sink::{Sink, SinkConnectorAdapter, SinkError};
 pub use types::{ConnectorConfig, ConnectorError, ConnectorHealth, SinkConnector, SourceConnector};
 // PostgreSQL CDC connector
 #[cfg(feature = "cdc")]
+pub use varpulis_connector_cdc as postgres_cdc;
+#[cfg(feature = "cdc")]
 pub use varpulis_connector_cdc::{CdcOperation, PostgresCdcConfig, PostgresCdcSource};
 // Database connectors
 #[cfg(feature = "database")]
