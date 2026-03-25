@@ -1,0 +1,31 @@
+[package]
+name = "varpulis-connector-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+description = "Connector API traits and types for Varpulis"
+
+[dependencies]
+varpulis-core = { version = "0.6.4", path = "../varpulis-core" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+indexmap = { workspace = true }
+rustc-hash = { workspace = true }
+inventory = { workspace = true }
+async-trait = "0.1"
+reqwest = { workspace = true }
+
+[features]
+default = []
+csv-converter = []
+
+[lints]
+workspace = true

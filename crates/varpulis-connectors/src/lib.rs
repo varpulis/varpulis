@@ -10,19 +10,24 @@
 //!   (MQTT broker)          (MqttSource)                        (HttpSink)           (Webhook)
 //! ```
 
-// Core modules
-pub mod circuit_breaker;
-pub mod component;
+// Re-export core API modules from varpulis-connector-api
+pub use varpulis_connector_api::circuit_breaker;
+pub use varpulis_connector_api::component;
+pub use varpulis_connector_api::converter;
+pub use varpulis_connector_api::helpers;
+pub use varpulis_connector_api::limits;
+pub use varpulis_connector_api::managed;
+pub use varpulis_connector_api::sink;
+pub use varpulis_connector_api::types;
+
+// Connector-specific modules (remain in this crate)
 mod console;
-pub mod converter;
 pub mod credentials;
 mod database;
 mod elasticsearch;
-pub mod helpers;
 mod http;
 mod kafka;
 mod kinesis;
-pub mod limits;
 mod mqtt;
 mod nats;
 pub mod postgres_cdc;
@@ -32,18 +37,24 @@ mod registry;
 mod rest_api;
 mod s3;
 pub mod schema;
-pub mod sink;
-pub mod types;
 
-// Managed connector abstractions
-mod managed;
+// Managed connector implementations
 #[cfg(feature = "kafka")]
 mod managed_kafka;
 mod managed_mqtt;
 mod managed_nats;
 mod managed_registry;
 
-// Core types and traits
+// Re-export core API types and traits
+pub use varpulis_connector_api::{
+    find_factory, list_components, ConfigParamInfo, ConnectorComponentInfo, ConnectorFactory,
+};
+pub use varpulis_connector_api::{ConnectorConfig, ConnectorError, SinkConnector, SourceConnector};
+pub use varpulis_connector_api::{ConnectorHealthReport, ManagedConnector};
+pub use varpulis_connector_api::{Sink, SinkConnectorAdapter, SinkError};
+// ConnectorHealth is in the types module
+pub use varpulis_connector_api::types::ConnectorHealth;
+
 // Console connectors
 pub use console::{ConsoleSink, ConsoleSource};
 // Database connectors
@@ -63,7 +74,6 @@ pub use kinesis::{KinesisConfig, KinesisSink, KinesisSource};
 #[cfg(feature = "kinesis")]
 pub use kinesis::{KinesisSinkFull, KinesisSourceFull};
 // Managed connector abstractions
-pub use managed::{ConnectorHealthReport, ManagedConnector};
 #[cfg(feature = "kafka")]
 pub use managed_kafka::ManagedKafkaConnector;
 pub use managed_mqtt::ManagedMqttConnector;
@@ -88,9 +98,6 @@ pub use rest_api::{RestApiClient, RestApiConfig, RestApiSink};
 #[cfg(feature = "s3")]
 pub use s3::S3SinkFull;
 pub use s3::{S3Config, S3OutputFormat, S3Sink};
-// Sink trait, error, and adapter
-pub use sink::{Sink, SinkConnectorAdapter, SinkError};
-pub use types::{ConnectorConfig, ConnectorError, ConnectorHealth, SinkConnector, SourceConnector};
 
 #[cfg(test)]
 mod tests {
