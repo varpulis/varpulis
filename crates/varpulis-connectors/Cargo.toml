@@ -10,6 +10,7 @@ description = "Connector implementations for Varpulis (MQTT, Kafka, NATS, HTTP, 
 
 [dependencies]
 varpulis-core = { version = "0.6.4", path = "../varpulis-core" }
+varpulis-connector-api = { version = "0.6.4", path = "../varpulis-connector-api" }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

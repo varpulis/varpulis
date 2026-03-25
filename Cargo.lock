@@ -8077,6 +8077,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "varpulis-connector-api"
+version = "0.6.4"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "indexmap 2.13.0",
+ "inventory",
+ "reqwest",
+ "rustc-hash",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "varpulis-core",
+]
+
+[[package]]
 name = "varpulis-connectors"
 version = "0.6.4"
 dependencies = [
@@ -8111,6 +8130,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "uuid",
+ "varpulis-connector-api",
  "varpulis-core",
 ]
 
