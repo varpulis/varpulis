@@ -166,9 +166,10 @@ async fn test_create_from_config_http() {
 }
 
 // ==========================================================================
-// ConnectorRegistry::create_from_config — kafka (stub)
+// ConnectorRegistry::create_from_config — kafka
 // ==========================================================================
 
+#[cfg(feature = "kafka")]
 #[tokio::test]
 async fn test_create_from_config_kafka_default_topic() {
     let config = ConnectorConfig::new("kafka", "broker:9092");
@@ -177,6 +178,7 @@ async fn test_create_from_config_kafka_default_topic() {
     assert_eq!(sink.unwrap().name(), "kafka");
 }
 
+#[cfg(feature = "kafka")]
 #[tokio::test]
 async fn test_create_from_config_kafka_custom_topic() {
     let config = ConnectorConfig::new("kafka", "broker:9092").with_topic("my-topic");
@@ -227,9 +229,10 @@ async fn test_create_from_config_api_alias() {
 }
 
 // ==========================================================================
-// ConnectorRegistry::create_from_config — redis (stub)
+// ConnectorRegistry::create_from_config — redis
 // ==========================================================================
 
+#[cfg(feature = "redis")]
 #[tokio::test]
 async fn test_create_from_config_redis_default_topic() {
     let config = ConnectorConfig::new("redis", "redis://localhost:6379");
@@ -238,6 +241,7 @@ async fn test_create_from_config_redis_default_topic() {
     assert_eq!(sink.unwrap().name(), "redis");
 }
 
+#[cfg(feature = "redis")]
 #[tokio::test]
 async fn test_create_from_config_redis_custom_topic() {
     let config = ConnectorConfig::new("redis", "redis://localhost:6379").with_topic("my-channel");
@@ -246,9 +250,10 @@ async fn test_create_from_config_redis_custom_topic() {
 }
 
 // ==========================================================================
-// ConnectorRegistry::create_from_config — database (stub)
+// ConnectorRegistry::create_from_config — database
 // ==========================================================================
 
+#[cfg(feature = "database")]
 #[tokio::test]
 async fn test_create_from_config_database() {
     let config =
@@ -258,6 +263,7 @@ async fn test_create_from_config_database() {
     assert_eq!(sink.unwrap().name(), "database");
 }
 
+#[cfg(feature = "database")]
 #[tokio::test]
 async fn test_create_from_config_postgres_alias() {
     let config = ConnectorConfig::new("postgres", "postgres://localhost/test");
@@ -265,6 +271,7 @@ async fn test_create_from_config_postgres_alias() {
     assert!(sink.is_ok());
 }
 
+#[cfg(feature = "database")]
 #[tokio::test]
 async fn test_create_from_config_mysql_alias() {
     let config = ConnectorConfig::new("mysql", "mysql://localhost/test");
@@ -272,6 +279,7 @@ async fn test_create_from_config_mysql_alias() {
     assert!(sink.is_ok());
 }
 
+#[cfg(feature = "database")]
 #[tokio::test]
 async fn test_create_from_config_sqlite_alias() {
     let config = ConnectorConfig::new("sqlite", "sqlite::memory:");
@@ -280,9 +288,10 @@ async fn test_create_from_config_sqlite_alias() {
 }
 
 // ==========================================================================
-// ConnectorRegistry::create_from_config — kinesis (stub)
+// ConnectorRegistry::create_from_config — kinesis
 // ==========================================================================
 
+#[cfg(feature = "kinesis")]
 #[tokio::test]
 async fn test_create_from_config_kinesis_default() {
     let config = ConnectorConfig::new("kinesis", "my-stream");
@@ -291,6 +300,7 @@ async fn test_create_from_config_kinesis_default() {
     assert_eq!(sink.unwrap().name(), "kinesis");
 }
 
+#[cfg(feature = "kinesis")]
 #[tokio::test]
 async fn test_create_from_config_kinesis_custom_region() {
     let config = ConnectorConfig::new("kinesis", "my-stream")
@@ -301,9 +311,10 @@ async fn test_create_from_config_kinesis_custom_region() {
 }
 
 // ==========================================================================
-// ConnectorRegistry::create_from_config — s3 (stub)
+// ConnectorRegistry::create_from_config — s3
 // ==========================================================================
 
+#[cfg(feature = "s3")]
 #[tokio::test]
 async fn test_create_from_config_s3_default() {
     let config = ConnectorConfig::new("s3", "my-bucket");
@@ -312,6 +323,7 @@ async fn test_create_from_config_s3_default() {
     assert_eq!(sink.unwrap().name(), "s3");
 }
 
+#[cfg(feature = "s3")]
 #[tokio::test]
 async fn test_create_from_config_s3_custom_prefix_and_region() {
     let config = ConnectorConfig::new("s3", "my-bucket")
@@ -322,9 +334,10 @@ async fn test_create_from_config_s3_custom_prefix_and_region() {
 }
 
 // ==========================================================================
-// ConnectorRegistry::create_from_config — elasticsearch / es (stub)
+// ConnectorRegistry::create_from_config — elasticsearch / es
 // ==========================================================================
 
+#[cfg(feature = "elasticsearch")]
 #[tokio::test]
 async fn test_create_from_config_elasticsearch() {
     let config = ConnectorConfig::new("elasticsearch", "http://localhost:9200");
@@ -333,6 +346,7 @@ async fn test_create_from_config_elasticsearch() {
     assert_eq!(sink.unwrap().name(), "elasticsearch");
 }
 
+#[cfg(feature = "elasticsearch")]
 #[tokio::test]
 async fn test_create_from_config_es_alias() {
     let config = ConnectorConfig::new("es", "http://localhost:9200").with_topic("my-index");
@@ -1382,6 +1396,7 @@ fn test_redis_stream_config_builder_chain() {
 // ConnectorRegistry::create_from_config — Pulsar and Redis Streams
 // ==========================================================================
 
+#[cfg(feature = "pulsar")]
 #[tokio::test]
 async fn test_create_from_config_pulsar() {
     let config = ConnectorConfig::new("pulsar", "pulsar://localhost:6650").with_topic("events");
@@ -1393,6 +1408,7 @@ async fn test_create_from_config_pulsar() {
     assert_eq!(result.unwrap().name(), "pulsar");
 }
 
+#[cfg(feature = "redis")]
 #[tokio::test]
 async fn test_create_from_config_redis_stream() {
     let config =
