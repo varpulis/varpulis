@@ -47,13 +47,9 @@ docker build -t ghcr.io/varpulis/varpulis:main \
 END=$(date +%s)
 echo "  Image built in $((END - START))s"
 
-# ─── Step 3: Build web-ui image ────────────────────────────────────────────
-step "Building web-ui Docker image..."
-START=$(date +%s)
-docker build -t ghcr.io/varpulis/varpulis-web-ui:main \
-    -f web-ui/Dockerfile web-ui/ 2>&1 | tail -3
-END=$(date +%s)
-echo "  Image built in $((END - START))s"
+# ─── Step 3: Web UI ───────────────────────────────────────────────────────
+# Web UI is now in a separate repo: https://github.com/varpulis/varpulis-web-ui
+# Build and push it from that repo, or pull the pre-built image.
 
 # ─── Step 4: Push to GHCR ──────────────────────────────────────────────────
 step "Pushing images to GHCR..."
@@ -62,9 +58,7 @@ step "Pushing images to GHCR..."
 echo "$(gh auth token)" | docker login ghcr.io -u varpulis --password-stdin 2>/dev/null
 
 START=$(date +%s)
-docker push ghcr.io/varpulis/varpulis:main 2>&1 | tail -3 &
-docker push ghcr.io/varpulis/varpulis-web-ui:main 2>&1 | tail -3 &
-wait
+docker push ghcr.io/varpulis/varpulis:main 2>&1 | tail -3
 END=$(date +%s)
 echo "  Pushed in $((END - START))s"
 

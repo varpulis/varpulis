@@ -39,12 +39,9 @@ services:
       - varpulis-demo
 
   # ─── Web UI (control plane — requires auth) ─────────────────
+  # Source: https://github.com/varpulis/varpulis-web-ui
   web-ui:
-    build:
-      context: ../../
-      dockerfile: web-ui/Dockerfile
-      args:
-        VITE_API_KEY: "${VARPULIS_API_KEY}"
+    image: ghcr.io/varpulis/varpulis-web-ui:main
     container_name: demo-web-ui
     expose:
       - "8080"

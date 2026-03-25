@@ -231,21 +231,7 @@ jobs:
         env:
           VARPULIS_BIN: ${{ github.workspace }}/target/release/varpulis
 
-  web-ui:
-    name: Web UI
-    needs: [gate]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: web-ui/package-lock.json
-      - run: cd web-ui && npm ci
-      - run: cd web-ui && npm audit --audit-level=high
-      - run: cd web-ui && npm run type-check
-      - run: cd web-ui && npm run test:unit
+  # Web UI moved to https://github.com/varpulis/varpulis-web-ui
 
   coverage:
     name: Coverage
