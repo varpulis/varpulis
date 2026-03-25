@@ -55,6 +55,12 @@ pub use varpulis_connector_http::{HttpSink, HttpWebhookConfig, HttpWebhookSource
 // Kafka connectors
 #[cfg(feature = "kafka")]
 pub use varpulis_connector_kafka::{KafkaConfig, KafkaSink, KafkaSource, ManagedKafkaConnector};
+/// Backward-compatible alias for `KafkaSink` (was `KafkaSinkImpl` in the old monolithic module).
+#[cfg(feature = "kafka")]
+pub type KafkaSinkFull = varpulis_connector_kafka::KafkaSink;
+/// Backward-compatible alias for `KafkaSource` (was `KafkaSourceImpl` in the old monolithic module).
+#[cfg(feature = "kafka")]
+pub type KafkaSourceFull = varpulis_connector_kafka::KafkaSource;
 // Kinesis connectors
 #[cfg(feature = "kinesis")]
 pub use varpulis_connector_kinesis::{KinesisConfig, KinesisSink, KinesisSource};

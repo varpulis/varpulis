@@ -675,3 +675,8 @@ impl SinkConnector for KafkaSink {
         self.flush().await
     }
 }
+
+/// Backward-compatible alias for [`KafkaSink`].
+pub type KafkaSinkFull = KafkaSink;
+/// Backward-compatible alias for [`KafkaSource`].
+pub type KafkaSourceFull = KafkaSource;
