@@ -11,16 +11,14 @@
 use rustc_hash::FxHashMap;
 #[cfg(feature = "elasticsearch")]
 use varpulis_runtime::connector::ElasticsearchConfig;
-#[cfg(feature = "elasticsearch")]
-use varpulis_runtime::connector::ElasticsearchSink;
 #[cfg(feature = "kinesis")]
 use varpulis_runtime::connector::KinesisConfig;
-#[cfg(feature = "kinesis")]
-use varpulis_runtime::connector::KinesisSink;
 #[cfg(feature = "mqtt")]
 use varpulis_runtime::connector::MqttConfig;
 #[cfg(feature = "redis")]
 use varpulis_runtime::connector::RedisConfig;
+#[cfg(feature = "s3")]
+use varpulis_runtime::connector::S3Config;
 use varpulis_runtime::connector::{
     ConnectorConfig, ConnectorError, ConnectorHealthReport, ConnectorRegistry, ConsoleSink,
     ConsoleSource, HttpSink, ManagedConnectorRegistry, RestApiConfig, RestApiSink, SinkConnector,
@@ -28,10 +26,6 @@ use varpulis_runtime::connector::{
 };
 #[cfg(feature = "kafka")]
 use varpulis_runtime::connector::{KafkaConfig, KafkaSource};
-#[cfg(feature = "redis")]
-use varpulis_runtime::connector::{RedisSink, RedisSource};
-#[cfg(feature = "s3")]
-use varpulis_runtime::connector::{S3Config, S3Sink};
 use varpulis_runtime::event::Event;
 
 // ==========================================================================
