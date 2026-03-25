@@ -12,9 +12,11 @@ use rustc_hash::FxHashMap;
 use varpulis_runtime::connector::{
     ConnectorConfig, ConnectorError, ConnectorHealthReport, ConnectorRegistry, ConsoleSink,
     ConsoleSource, ElasticsearchConfig, ElasticsearchSink, HttpSink, KafkaConfig, KafkaSource,
-    KinesisConfig, KinesisSink, ManagedConnectorRegistry, MqttConfig, MqttSink, MqttSource,
-    RedisConfig, RestApiConfig, RestApiSink, S3Config, S3Sink, SinkConnector, SourceConnector,
+    KinesisConfig, KinesisSink, ManagedConnectorRegistry, RedisConfig, RestApiConfig, RestApiSink,
+    S3Config, S3Sink, SinkConnector, SourceConnector,
 };
+#[cfg(feature = "mqtt")]
+use varpulis_runtime::connector::{MqttConfig, MqttSink, MqttSource};
 #[cfg(not(feature = "redis"))]
 use varpulis_runtime::connector::{RedisSink, RedisSource};
 use varpulis_runtime::event::Event;
@@ -179,6 +181,7 @@ async fn test_create_from_config_kafka_custom_topic() {
 // ConnectorRegistry::create_from_config — mqtt (stub)
 // ==========================================================================
 
+#[cfg(feature = "mqtt")]
 #[tokio::test]
 async fn test_create_from_config_mqtt_default_topic() {
     let config = ConnectorConfig::new("mqtt", "localhost");
@@ -187,6 +190,7 @@ async fn test_create_from_config_mqtt_default_topic() {
     assert_eq!(sink.unwrap().name(), "mqtt");
 }
 
+#[cfg(feature = "mqtt")]
 #[tokio::test]
 async fn test_create_from_config_mqtt_custom_topic() {
     let config = ConnectorConfig::new("mqtt", "localhost").with_topic("sensors/#");
@@ -588,6 +592,7 @@ fn test_kafka_config_builders() {
 // MqttConfig builders
 // ==========================================================================
 
+#[cfg(feature = "mqtt")]
 #[test]
 fn test_mqtt_config_defaults() {
     let config = MqttConfig::new("localhost", "test/#");
@@ -600,6 +605,7 @@ fn test_mqtt_config_defaults() {
     assert_eq!(config.qos, 0);
 }
 
+#[cfg(feature = "mqtt")]
 #[test]
 fn test_mqtt_config_all_builders() {
     let config = MqttConfig::new("broker.example.com", "sensors/#")
@@ -615,6 +621,7 @@ fn test_mqtt_config_all_builders() {
     assert_eq!(config.qos, 2);
 }
 
+#[cfg(feature = "mqtt")]
 #[test]
 fn test_mqtt_config_qos_clamped() {
     let config = MqttConfig::new("localhost", "t").with_qos(5);
@@ -940,6 +947,7 @@ async fn test_kinesis_sink_stub_flush_and_close_ok() {
 // ManagedConnectorRegistry: from_configs with MQTT
 // ==========================================================================
 
+#[cfg(feature = "mqtt")]
 #[test]
 fn test_managed_registry_from_configs_mqtt() {
     let mut configs = FxHashMap::default();
@@ -1046,6 +1054,7 @@ fn test_managed_registry_health_reports_empty() {
 // ManagedConnectorRegistry: health_reports with a connector
 // ==========================================================================
 
+#[cfg(feature = "mqtt")]
 #[test]
 fn test_managed_registry_health_reports_with_connector() {
     let mut configs = FxHashMap::default();
@@ -1081,6 +1090,7 @@ async fn test_managed_registry_shutdown_empty() {
 // ManagedConnectorRegistry: shutdown with a connector
 // ==========================================================================
 
+#[cfg(feature = "mqtt")]
 #[tokio::test]
 async fn test_managed_registry_shutdown_with_connector() {
     let mut configs = FxHashMap::default();
@@ -1098,6 +1108,7 @@ async fn test_managed_registry_shutdown_with_connector() {
 // ManagedConnectorRegistry: from_configs with MQTT properties
 // ==========================================================================
 
+#[cfg(feature = "mqtt")]
 #[test]
 fn test_managed_registry_mqtt_properties_propagation() {
     let mut configs = FxHashMap::default();
@@ -1113,6 +1124,7 @@ fn test_managed_registry_mqtt_properties_propagation() {
     assert!(registry.is_ok());
 }
 
+#[cfg(feature = "mqtt")]
 #[test]
 fn test_managed_registry_mqtt_invalid_port_ignored() {
     let mut configs = FxHashMap::default();
@@ -1126,6 +1138,7 @@ fn test_managed_registry_mqtt_invalid_port_ignored() {
     assert!(registry.is_ok());
 }
 
+#[cfg(feature = "mqtt")]
 #[test]
 fn test_managed_registry_mqtt_invalid_qos_ignored() {
     let mut configs = FxHashMap::default();
@@ -1199,9 +1212,10 @@ async fn test_kinesis_source_stub_name() {
 }
 
 // ==========================================================================
-// MqttSink and MqttSource stub names
+// MqttSink and MqttSource names
 // ==========================================================================
 
+#[cfg(feature = "mqtt")]
 #[test]
 fn test_mqtt_source_stub_name() {
     let config = MqttConfig::new("localhost", "t");
@@ -1209,6 +1223,7 @@ fn test_mqtt_source_stub_name() {
     assert_eq!(source.name(), "mqtt-src");
 }
 
+#[cfg(feature = "mqtt")]
 #[test]
 fn test_mqtt_sink_stub_name() {
     let config = MqttConfig::new("localhost", "t");
@@ -1445,6 +1460,7 @@ async fn test_redis_stream_sink_stub_not_available() {
 // Multiple connectors in ManagedConnectorRegistry
 // ==========================================================================
 
+#[cfg(feature = "mqtt")]
 #[test]
 fn test_managed_registry_multiple_mqtt_connectors() {
     let mut configs = FxHashMap::default();

@@ -15,7 +15,11 @@ pub fn generate_all_schemas() -> serde_json::Value {
             schemars::schema_for!(crate::ConnectorConfig),
         ),
         ("KafkaConfig", schemars::schema_for!(crate::KafkaConfig)),
-        ("MqttConfig", schemars::schema_for!(crate::MqttConfig)),
+        #[cfg(feature = "mqtt")]
+        (
+            "MqttConfig",
+            schemars::schema_for!(varpulis_connector_mqtt::MqttConfig),
+        ),
         ("NatsConfig", schemars::schema_for!(crate::NatsConfig)),
         ("RedisConfig", schemars::schema_for!(crate::RedisConfig)),
         (
@@ -60,9 +64,11 @@ mod tests {
     fn test_generate_all_schemas_non_empty() {
         let schemas = generate_all_schemas();
         let obj = schemas.as_object().unwrap();
+        // Count depends on enabled features; at minimum 10 without mqtt
         assert!(obj.len() >= 10, "Expected 10+ schemas, got {}", obj.len());
         assert!(obj.contains_key("KafkaConfig"));
-        assert!(obj.contains_key("MqttConfig"));
         assert!(obj.contains_key("ConnectorConfig"));
+        #[cfg(feature = "mqtt")]
+        assert!(obj.contains_key("MqttConfig"));
     }
 }

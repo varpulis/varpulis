@@ -3,24 +3,6 @@
 //! Uses the `inventory` crate to provide zero-boilerplate global static
 //! registration. Each connector module conditionally submits its factory via
 //! `inventory::submit!`, which works naturally with `#[cfg(feature = ...)]`.
-//!
-//! # Adding a new connector
-//!
-//! 1. Implement [`ConnectorFactory`] in your connector module
-//! 2. Call `inventory::submit!` to register it
-//! 3. Done -- no match arms to edit anywhere
-//!
-//! ```rust,ignore
-//! struct MyConnectorFactory;
-//!
-//! impl ConnectorFactory for MyConnectorFactory {
-//!     fn info(&self) -> &ConnectorComponentInfo { &INFO }
-//!     fn create_sink_connector(&self, config: &ConnectorConfig)
-//!         -> Result<Box<dyn SinkConnector>, ConnectorError> { ... }
-//! }
-//!
-//! inventory::submit! { &MyConnectorFactory as &dyn ConnectorFactory }
-//! ```
 
 use std::sync::Arc;
 
@@ -71,8 +53,6 @@ pub trait ConnectorFactory: Send + Sync {
     fn info(&self) -> &ConnectorComponentInfo;
 
     /// Create a managed connector instance.
-    ///
-    /// Returns `Err(NotAvailable)` if this connector does not support managed mode.
     fn create_managed(
         &self,
         name: &str,
@@ -86,8 +66,6 @@ pub trait ConnectorFactory: Send + Sync {
     }
 
     /// Create a sink connector instance (legacy registry path).
-    ///
-    /// Returns `Err(NotAvailable)` if this connector does not support sink mode.
     fn create_sink_connector(
         &self,
         config: &ConnectorConfig,
@@ -100,9 +78,6 @@ pub trait ConnectorFactory: Send + Sync {
     }
 
     /// Create an engine sink (`Arc<dyn Sink>`) for use in the sink registry.
-    ///
-    /// This is the primary sink creation path used by `sink_factory.rs`.
-    /// Returns `Err(NotAvailable)` if this connector does not support sink mode.
     fn create_engine_sink(
         &self,
         name: &str,
@@ -121,9 +96,6 @@ pub trait ConnectorFactory: Send + Sync {
 inventory::collect!(&'static dyn ConnectorFactory);
 
 /// Find a registered factory by connector type identifier.
-///
-/// Scans all factories registered via `inventory::submit!` and returns
-/// the first one whose `info().connector_type` matches.
 pub fn find_factory(connector_type: &str) -> Option<&'static dyn ConnectorFactory> {
     inventory::iter::<&'static dyn ConnectorFactory>
         .into_iter()

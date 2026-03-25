@@ -10,39 +10,9 @@ use varpulis_runtime::connector::*;
 // Feature-disabled stub error returns
 // =============================================================================
 
-#[tokio::test]
-async fn test_mqtt_source_stub_returns_not_available() {
-    // Only runs when the `mqtt` feature is disabled (default CI build)
-    if cfg!(feature = "mqtt") {
-        return; // Skip — real implementation doesn't return NotAvailable
-    }
-    let config = MqttConfig::new("localhost", "test/topic");
-    let mut source = MqttSource::new("test", config);
-    let (tx, _rx) = tokio::sync::mpsc::channel(1);
-    let result = source.start(tx).await;
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    assert!(
-        matches!(&err, ConnectorError::NotAvailable(_)),
-        "Expected NotAvailable, got: {err}"
-    );
-}
-
-#[tokio::test]
-async fn test_mqtt_sink_stub_returns_not_available() {
-    if cfg!(feature = "mqtt") {
-        return;
-    }
-    let config = MqttConfig::new("localhost", "test/topic");
-    let sink = MqttSink::new("test", config);
-    let event = varpulis_runtime::event::Event::new("TestEvent");
-    let result = sink.send(&event).await;
-    assert!(result.is_err());
-    assert!(matches!(
-        result.unwrap_err(),
-        ConnectorError::NotAvailable(_)
-    ));
-}
+// MQTT stub tests removed: MqttConfig/MqttSource/MqttSink types are only
+// available when the `mqtt` feature is enabled (via varpulis-connector-mqtt).
+// There are no stub types to test without the feature.
 
 #[tokio::test]
 async fn test_kafka_source_stub_returns_not_available() {

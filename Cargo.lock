@@ -8081,7 +8081,6 @@ name = "varpulis-connector-api"
 version = "0.6.4"
 dependencies = [
  "async-trait",
- "chrono",
  "indexmap 2.13.0",
  "inventory",
  "reqwest",
@@ -8092,6 +8091,25 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "varpulis-core",
+]
+
+[[package]]
+name = "varpulis-connector-mqtt"
+version = "0.6.4"
+dependencies = [
+ "async-trait",
+ "indexmap 2.13.0",
+ "inventory",
+ "rumqttc-v4-next",
+ "rustc-hash",
+ "rustls 0.23.37",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "varpulis-connector-api",
  "varpulis-core",
 ]
 
@@ -8116,7 +8134,6 @@ dependencies = [
  "rdkafka",
  "redis",
  "reqwest",
- "rumqttc-v4-next",
  "rustc-hash",
  "rustls 0.23.37",
  "schemars 1.2.1",
@@ -8131,6 +8148,7 @@ dependencies = [
  "tracing",
  "uuid",
  "varpulis-connector-api",
+ "varpulis-connector-mqtt",
  "varpulis-core",
 ]
 

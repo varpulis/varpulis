@@ -34,7 +34,7 @@ pub fn json_to_event(event_type: &str, json: &serde_json::Value) -> Event {
     event
 }
 
-/// Convert serde_json::Value to varpulis Value with depth and size limits.
+/// Convert `serde_json::Value` to varpulis `Value` with depth and size limits.
 pub fn json_to_value(json: &serde_json::Value) -> Option<varpulis_core::Value> {
     json_to_value_bounded(json, limits::MAX_JSON_DEPTH)
 }
@@ -61,7 +61,6 @@ fn json_to_value_bounded(json: &serde_json::Value, depth: usize) -> Option<varpu
                     "String value exceeds max size ({}), truncated",
                     limits::MAX_STRING_VALUE_BYTES
                 );
-                // Truncate at char boundary
                 let truncated = &s[..s.floor_char_boundary(limits::MAX_STRING_VALUE_BYTES)];
                 Some(Value::Str(truncated.into()))
             } else {

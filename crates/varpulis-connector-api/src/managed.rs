@@ -2,9 +2,6 @@
 //!
 //! A `ManagedConnector` owns a single connection to an external system and
 //! hands out shared source/sink handles through a uniform interface.
-//!
-//! Connectors now integrate with the actor framework via [`ConnectorObservableState`],
-//! enabling health observation through the supervisor infrastructure.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -18,9 +15,6 @@ use crate::sink::Sink;
 use crate::types::ConnectorError;
 
 /// Health report from a managed connector.
-///
-/// This type also serves as the `Actor::ObservableState` for connector actors,
-/// enabling health monitoring through the actor framework's observation API.
 #[derive(Debug, Clone, Serialize)]
 pub struct ConnectorHealthReport {
     /// Whether the connector is currently connected.
@@ -54,11 +48,6 @@ impl Default for ConnectorHealthReport {
 }
 
 /// A connector that manages a single shared connection.
-///
-/// First call to [`start_source`](Self::start_source) or
-/// [`create_sink`](Self::create_sink) establishes the connection; subsequent
-/// calls add subscriptions or create additional sink handles that share the
-/// same underlying transport.
 #[async_trait]
 pub trait ManagedConnector: Send + Sync {
     /// Connector instance name (matches the VPL `connector` declaration).
@@ -68,11 +57,6 @@ pub trait ManagedConnector: Send + Sync {
     fn connector_type(&self) -> &str;
 
     /// Start receiving events on `topic`, forwarding them to `tx`.
-    ///
-    /// The first call establishes the connection; subsequent calls add
-    /// subscriptions on the existing connection.
-    ///
-    /// `params` contains extra per-stream parameters (e.g., `client_id`, `qos`).
     async fn start_source(
         &mut self,
         topic: &str,
@@ -81,11 +65,6 @@ pub trait ManagedConnector: Send + Sync {
     ) -> Result<(), ConnectorError>;
 
     /// Create a sink that publishes to `topic` using the shared connection.
-    ///
-    /// If no source has been started yet, the connection is established lazily
-    /// (supports sink-only connectors).
-    ///
-    /// `params` contains extra per-stream parameters (e.g., `client_id`, `qos`).
     fn create_sink(
         &mut self,
         topic: &str,
@@ -98,8 +77,6 @@ pub trait ManagedConnector: Send + Sync {
     }
 
     /// Return the converter used for (de)serializing events.
-    ///
-    /// Defaults to [`JsonConverter`](crate::converter::json::JsonConverter).
     fn converter(&self) -> Box<dyn crate::converter::Converter> {
         Box::new(crate::converter::json::JsonConverter)
     }
