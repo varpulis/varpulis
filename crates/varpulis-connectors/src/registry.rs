@@ -16,7 +16,6 @@ use super::kinesis::KinesisConfig;
 use super::kinesis::KinesisSink;
 #[cfg(feature = "kinesis")]
 use super::kinesis::KinesisSinkFull;
-use super::mqtt::{MqttConfig, MqttSink};
 use super::redis::RedisConfig;
 #[cfg(not(feature = "redis"))]
 use super::redis::RedisSink;
@@ -100,7 +99,9 @@ impl ConnectorRegistry {
                     KafkaConfig::new(&config.url, &topic),
                 )))
             }
+            #[cfg(feature = "mqtt")]
             "mqtt" => {
+                use varpulis_connector_mqtt::{MqttConfig, MqttSink};
                 let topic = config.topic.clone().unwrap_or_else(|| "events".to_string());
                 Ok(Box::new(MqttSink::new(
                     "mqtt",

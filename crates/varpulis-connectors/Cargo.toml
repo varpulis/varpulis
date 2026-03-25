@@ -9,8 +9,9 @@ documentation.workspace = true
 description = "Connector implementations for Varpulis (MQTT, Kafka, NATS, HTTP, etc.)"
 
 [dependencies]
-varpulis-core = { version = "0.6.4", path = "../varpulis-core" }
 varpulis-connector-api = { version = "0.6.4", path = "../varpulis-connector-api" }
+varpulis-connector-mqtt = { version = "0.6.4", path = "../varpulis-connector-mqtt", optional = true }
+varpulis-core = { version = "0.6.4", path = "../varpulis-core" }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -27,9 +28,6 @@ reqwest = { workspace = true }
 axum = { workspace = true }
 tower-http = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
-
-# Optional connectors
-rumqttc = { package = "rumqttc-v4-next", version = "0.28", optional = true }
 rdkafka = { version = "0.39", features = ["cmake-build", "ssl"], optional = true }
 sqlx = { version = "0.8", features = ["runtime-tokio", "any", "postgres", "mysql", "sqlite"], optional = true }
 redis = { version = "1", features = ["tokio-comp", "connection-manager"], optional = true }
@@ -58,7 +56,7 @@ serde_yaml = "0.9"
 
 [features]
 default = []
-mqtt = ["rumqttc"]
+mqtt = ["varpulis-connector-mqtt"]
 kafka = ["rdkafka"]
 postgres = ["sqlx"]
 mysql = ["sqlx"]

@@ -63,7 +63,7 @@ impl Converter for JsonConverter {
     }
 }
 
-/// Convert a varpulis Value to serde_json::Value.
+/// Convert a varpulis Value to `serde_json::Value`.
 fn value_to_json(value: &varpulis_core::Value) -> Option<serde_json::Value> {
     match value {
         varpulis_core::Value::Null => Some(serde_json::Value::Null),
@@ -86,64 +86,5 @@ fn value_to_json(value: &varpulis_core::Value) -> Option<serde_json::Value> {
                 .collect();
             Some(serde_json::Value::Object(obj))
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_json_deserialize_single() {
-        let converter = JsonConverter;
-        let payload = br#"{"event_type": "Temp", "value": 42}"#;
-        let events = converter.deserialize("Default", payload).unwrap();
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event_type.as_ref(), "Temp");
-    }
-
-    #[test]
-    fn test_json_deserialize_array() {
-        let converter = JsonConverter;
-        let payload = br#"[{"event_type": "A"}, {"event_type": "B"}]"#;
-        let events = converter.deserialize("Default", payload).unwrap();
-        assert_eq!(events.len(), 2);
-        assert_eq!(events[0].event_type.as_ref(), "A");
-        assert_eq!(events[1].event_type.as_ref(), "B");
-    }
-
-    #[test]
-    fn test_json_deserialize_uses_fallback_type() {
-        let converter = JsonConverter;
-        let payload = br#"{"value": 42}"#;
-        let events = converter.deserialize("Fallback", payload).unwrap();
-        assert_eq!(events[0].event_type.as_ref(), "Fallback");
-    }
-
-    #[test]
-    fn test_json_serialize_roundtrip() {
-        let converter = JsonConverter;
-        let event = Event::new("Test")
-            .with_field("x", 42)
-            .with_field("name", "hello");
-        let bytes = converter.serialize(&event).unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(json["event_type"], "Test");
-        assert_eq!(json["x"], 42);
-        assert_eq!(json["name"], "hello");
-    }
-
-    #[test]
-    fn test_json_deserialize_invalid_utf8() {
-        let converter = JsonConverter;
-        let payload = &[0xFF, 0xFE];
-        assert!(converter.deserialize("Test", payload).is_err());
-    }
-
-    #[test]
-    fn test_json_deserialize_invalid_json() {
-        let converter = JsonConverter;
-        let payload = b"not json at all";
-        assert!(converter.deserialize("Test", payload).is_err());
     }
 }

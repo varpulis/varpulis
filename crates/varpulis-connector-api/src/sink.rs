@@ -1,7 +1,4 @@
 //! Sink trait and error types for outputting processed events
-//!
-//! This module defines the core `Sink` trait that all event output destinations
-//! must implement, along with the `SinkError` error type.
 
 use std::sync::Arc;
 
@@ -48,9 +45,6 @@ pub trait Sink: Send + Sync {
     fn name(&self) -> &str;
 
     /// Establish connection to the external system.
-    ///
-    /// Called once after sink creation to establish any necessary connections.
-    /// The default implementation is a no-op for sinks that connect eagerly.
     async fn connect(&self) -> Result<(), SinkError> {
         Ok(())
     }
@@ -59,9 +53,6 @@ pub trait Sink: Send + Sync {
     async fn send(&self, event: &Event) -> Result<(), SinkError>;
 
     /// Send a batch of events to this sink.
-    ///
-    /// Default implementation calls `send()` for each event.
-    /// Connectors should override this to amortize lock/syscall overhead.
     async fn send_batch(&self, events: &[Arc<Event>]) -> Result<(), SinkError> {
         for event in events {
             self.send(event).await?;
@@ -70,9 +61,6 @@ pub trait Sink: Send + Sync {
     }
 
     /// Send a batch of events to a specific topic (for dynamic routing).
-    ///
-    /// Default implementation ignores the topic and delegates to `send_batch()`.
-    /// Connectors that support per-message topics (Kafka, MQTT) should override.
     async fn send_batch_to_topic(
         &self,
         events: &[Arc<Event>],
@@ -88,10 +76,12 @@ pub trait Sink: Send + Sync {
     async fn close(&self) -> Result<(), SinkError>;
 }
 
-/// Adapter: wraps a SinkConnector as a Sink for use in the sink registry.
+/// Adapter: wraps a `SinkConnector` as a `Sink` for use in the sink registry.
 pub struct SinkConnectorAdapter {
-    name: String,
-    inner: tokio::sync::Mutex<Box<dyn crate::types::SinkConnector>>,
+    /// The name of this adapter.
+    pub name: String,
+    /// The inner sink connector.
+    pub inner: tokio::sync::Mutex<Box<dyn crate::types::SinkConnector>>,
 }
 
 impl std::fmt::Debug for SinkConnectorAdapter {
@@ -102,7 +92,7 @@ impl std::fmt::Debug for SinkConnectorAdapter {
 }
 
 impl SinkConnectorAdapter {
-    /// Create a new adapter wrapping a SinkConnector.
+    /// Create a new adapter wrapping a `SinkConnector`.
     pub fn new(name: &str, connector: Box<dyn crate::types::SinkConnector>) -> Self {
         Self {
             name: name.to_string(),

@@ -12,9 +12,7 @@ use tracing::{info, warn};
 use varpulis_core::Event;
 
 use super::managed::{ConnectorHealthReport, ManagedConnector};
-use super::managed_mqtt::ManagedMqttConnector;
 use super::managed_nats::ManagedNatsConnector;
-use super::mqtt::MqttConfig;
 use super::nats::NatsConfig;
 use super::types::{ConnectorConfig, ConnectorError};
 use crate::sink::Sink;
@@ -126,7 +124,10 @@ fn create_managed(
 
     // Fallback to match-arm dispatch
     match config.connector_type.as_str() {
+        #[cfg(feature = "mqtt")]
         "mqtt" => {
+            use varpulis_connector_mqtt::{ManagedMqttConnector, MqttConfig};
+
             let mut mqtt_config =
                 MqttConfig::new(&config.url, config.topic.as_deref().unwrap_or("#"));
 

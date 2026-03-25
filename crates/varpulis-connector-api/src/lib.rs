@@ -1,12 +1,16 @@
-//! Connector API traits and types for Varpulis
+//! Shared traits and types for Varpulis connector crates.
 //!
-//! This crate defines the shared interfaces that all Varpulis connectors implement.
-//! It contains the core traits (`Sink`, `SourceConnector`, `SinkConnector`,
-//! `ManagedConnector`), configuration types, and utility modules (circuit breaker,
-//! converters, helpers, resource limits).
+//! This crate defines the public API that individual connector crates
+//! (e.g., `varpulis-connector-mqtt`) implement against. It contains:
 //!
-//! Individual connector implementations (MQTT, Kafka, NATS, etc.) live in
-//! separate crates and depend on this API crate.
+//! - Core connector traits ([`SourceConnector`], [`SinkConnector`])
+//! - Managed connector trait ([`ManagedConnector`])
+//! - Sink trait and adapter ([`Sink`], [`SinkConnectorAdapter`])
+//! - Circuit breaker ([`circuit_breaker`])
+//! - Resource limits ([`limits`])
+//! - Helper functions ([`helpers`])
+//! - Declarative component registration ([`ConnectorFactory`])
+//! - Converter trait ([`converter`])
 
 pub mod circuit_breaker;
 pub mod component;
@@ -17,10 +21,8 @@ pub mod managed;
 pub mod sink;
 pub mod types;
 
-// Re-export key types at crate root for convenience
-pub use component::{
-    find_factory, list_components, ConfigParamInfo, ConnectorComponentInfo, ConnectorFactory,
-};
+// Re-export commonly used items at top level
+pub use component::{ConfigParamInfo, ConnectorComponentInfo, ConnectorFactory};
 pub use managed::{ConnectorHealthReport, ManagedConnector};
 pub use sink::{Sink, SinkConnectorAdapter, SinkError};
-pub use types::{ConnectorConfig, ConnectorError, SinkConnector, SourceConnector};
+pub use types::{ConnectorConfig, ConnectorError, ConnectorHealth, SinkConnector, SourceConnector};

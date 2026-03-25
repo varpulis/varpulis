@@ -6,29 +6,23 @@
 //! # Architecture
 //!
 //! ```text
-//! External System ─────> SourceConnector ─────> Engine ─────> SinkConnector ─────> External System
+//! External System -----> SourceConnector -----> Engine -----> SinkConnector -----> External System
 //!   (MQTT broker)          (MqttSource)                        (HttpSink)           (Webhook)
 //! ```
 
-// Re-export core API modules from varpulis-connector-api
-pub use varpulis_connector_api::circuit_breaker;
-pub use varpulis_connector_api::component;
-pub use varpulis_connector_api::converter;
-pub use varpulis_connector_api::helpers;
-pub use varpulis_connector_api::limits;
-pub use varpulis_connector_api::managed;
-pub use varpulis_connector_api::sink;
-pub use varpulis_connector_api::types;
-
-// Connector-specific modules (remain in this crate)
+// Core modules (kept in this crate for backward compatibility)
+pub mod circuit_breaker;
+pub mod component;
 mod console;
+pub mod converter;
 pub mod credentials;
 mod database;
 mod elasticsearch;
+pub mod helpers;
 mod http;
 mod kafka;
 mod kinesis;
-mod mqtt;
+pub mod limits;
 mod nats;
 pub mod postgres_cdc;
 mod pulsar;
@@ -37,24 +31,17 @@ mod registry;
 mod rest_api;
 mod s3;
 pub mod schema;
+pub mod sink;
+pub mod types;
 
-// Managed connector implementations
+// Managed connector abstractions
+mod managed;
 #[cfg(feature = "kafka")]
 mod managed_kafka;
-mod managed_mqtt;
 mod managed_nats;
 mod managed_registry;
 
-// Re-export core API types and traits
-pub use varpulis_connector_api::{
-    find_factory, list_components, ConfigParamInfo, ConnectorComponentInfo, ConnectorFactory,
-};
-pub use varpulis_connector_api::{ConnectorConfig, ConnectorError, SinkConnector, SourceConnector};
-pub use varpulis_connector_api::{ConnectorHealthReport, ManagedConnector};
-pub use varpulis_connector_api::{Sink, SinkConnectorAdapter, SinkError};
-// ConnectorHealth is in the types module
-pub use varpulis_connector_api::types::ConnectorHealth;
-
+// Core types and traits
 // Console connectors
 pub use console::{ConsoleSink, ConsoleSource};
 // Database connectors
@@ -74,13 +61,11 @@ pub use kinesis::{KinesisConfig, KinesisSink, KinesisSource};
 #[cfg(feature = "kinesis")]
 pub use kinesis::{KinesisSinkFull, KinesisSourceFull};
 // Managed connector abstractions
+pub use managed::{ConnectorHealthReport, ManagedConnector};
 #[cfg(feature = "kafka")]
 pub use managed_kafka::ManagedKafkaConnector;
-pub use managed_mqtt::ManagedMqttConnector;
 pub use managed_nats::ManagedNatsConnector;
 pub use managed_registry::ManagedConnectorRegistry;
-// MQTT connectors
-pub use mqtt::{MqttConfig, MqttSink, MqttSource};
 // NATS connectors
 pub use nats::{NatsConfig, NatsSink, NatsSource};
 // PostgreSQL CDC connector
@@ -98,6 +83,12 @@ pub use rest_api::{RestApiClient, RestApiConfig, RestApiSink};
 #[cfg(feature = "s3")]
 pub use s3::S3SinkFull;
 pub use s3::{S3Config, S3OutputFormat, S3Sink};
+// Sink trait, error, and adapter
+pub use sink::{Sink, SinkConnectorAdapter, SinkError};
+pub use types::{ConnectorConfig, ConnectorError, ConnectorHealth, SinkConnector, SourceConnector};
+// MQTT connectors (from varpulis-connector-mqtt crate)
+#[cfg(feature = "mqtt")]
+pub use varpulis_connector_mqtt::{ManagedMqttConnector, MqttConfig, MqttSink, MqttSource};
 
 #[cfg(test)]
 mod tests {
@@ -136,6 +127,7 @@ mod tests {
         assert_eq!(config.group_id, Some("my-group".to_string()));
     }
 
+    #[cfg(feature = "mqtt")]
     #[test]
     fn test_mqtt_config() {
         let config = MqttConfig::new("mqtt.example.com", "sensors/#")
@@ -320,6 +312,7 @@ mod tests {
         assert!(json.contains("topic"));
     }
 
+    #[cfg(feature = "mqtt")]
     #[test]
     fn test_mqtt_config_schema() {
         let schema = schemars::schema_for!(MqttConfig);

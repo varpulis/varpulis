@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/varpulis-actors",
     "crates/varpulis-connector-api",
+    "crates/varpulis-connector-mqtt",
     "crates/varpulis-connectors",
     "crates/varpulis-core",
     "crates/varpulis-parser",
