@@ -3,30 +3,7 @@
 use indexmap::IndexMap;
 
 use super::console::ConsoleSink;
-use super::database::{DatabaseConfig, DatabaseSink};
-use super::elasticsearch::ElasticsearchConfig;
-#[cfg(not(feature = "elasticsearch"))]
-use super::elasticsearch::ElasticsearchSink;
-#[cfg(feature = "elasticsearch")]
-use super::elasticsearch::ElasticsearchSinkFull;
-use super::http::HttpSink;
-use super::kafka::{KafkaConfig, KafkaSink};
-use super::kinesis::KinesisConfig;
-#[cfg(not(feature = "kinesis"))]
-use super::kinesis::KinesisSink;
-#[cfg(feature = "kinesis")]
-use super::kinesis::KinesisSinkFull;
-use super::redis::RedisConfig;
-#[cfg(not(feature = "redis"))]
-use super::redis::RedisSink;
-#[cfg(feature = "redis")]
-use super::redis::RedisSink as RedisSinkReal;
 use super::rest_api::{RestApiConfig, RestApiSink};
-use super::s3::S3Config;
-#[cfg(not(feature = "s3"))]
-use super::s3::S3Sink;
-#[cfg(feature = "s3")]
-use super::s3::S3SinkFull;
 use super::types::{ConnectorConfig, ConnectorError, SinkConnector, SourceConnector};
 
 /// Registry of available connectors
@@ -88,26 +65,9 @@ impl ConnectorRegistry {
             }
         }
 
-        // Fallback to match-arm dispatch
+        // Fallback to match-arm dispatch for legacy types
         match config.connector_type.as_str() {
             "console" => Ok(Box::new(ConsoleSink::new("console"))),
-            "http" => Ok(Box::new(HttpSink::new("http", &config.url))),
-            "kafka" => {
-                let topic = config.topic.clone().unwrap_or_else(|| "events".to_string());
-                Ok(Box::new(KafkaSink::new(
-                    "kafka",
-                    KafkaConfig::new(&config.url, &topic),
-                )))
-            }
-            #[cfg(feature = "mqtt")]
-            "mqtt" => {
-                use varpulis_connector_mqtt::{MqttConfig, MqttSink};
-                let topic = config.topic.clone().unwrap_or_else(|| "events".to_string());
-                Ok(Box::new(MqttSink::new(
-                    "mqtt",
-                    MqttConfig::new(&config.url, &topic),
-                )))
-            }
             "rest" | "api" => {
                 let path = config
                     .topic
@@ -116,28 +76,25 @@ impl ConnectorRegistry {
                 let api_config = RestApiConfig::new(&config.url);
                 Ok(Box::new(RestApiSink::new("rest", api_config, &path)?))
             }
+            #[cfg(feature = "redis")]
             "redis" => {
                 let channel = config.topic.clone().unwrap_or_else(|| "events".to_string());
-                #[cfg(feature = "redis")]
-                {
-                    let sink = RedisSinkReal::new("redis", RedisConfig::new(&config.url, &channel))
+                let sink =
+                    crate::RedisSink::new("redis", crate::RedisConfig::new(&config.url, &channel))
                         .await?;
-                    Ok(Box::new(sink))
-                }
-                #[cfg(not(feature = "redis"))]
-                {
-                    Ok(Box::new(RedisSink::new(
-                        "redis",
-                        RedisConfig::new(&config.url, &channel),
-                    )))
-                }
-            }
-            "database" | "postgres" | "mysql" | "sqlite" => {
-                let table = config.topic.clone().unwrap_or_else(|| "events".to_string());
-                let sink = DatabaseSink::new("database", DatabaseConfig::new(&config.url, &table)?)
-                    .await?;
                 Ok(Box::new(sink))
             }
+            #[cfg(feature = "database")]
+            "database" | "postgres" | "mysql" | "sqlite" => {
+                let table = config.topic.clone().unwrap_or_else(|| "events".to_string());
+                let sink = crate::DatabaseSink::new(
+                    "database",
+                    crate::DatabaseConfig::new(&config.url, &table)?,
+                )
+                .await?;
+                Ok(Box::new(sink))
+            }
+            #[cfg(feature = "kinesis")]
             "kinesis" => {
                 let stream = config.topic.clone().unwrap_or_else(|| "events".to_string());
                 let region = config
@@ -145,21 +102,12 @@ impl ConnectorRegistry {
                     .get("region")
                     .cloned()
                     .unwrap_or_else(|| "us-east-1".to_string());
-                #[cfg(feature = "kinesis")]
-                {
-                    let sink =
-                        KinesisSinkFull::new("kinesis", KinesisConfig::new(&stream, &region))
-                            .await?;
-                    Ok(Box::new(sink))
-                }
-                #[cfg(not(feature = "kinesis"))]
-                {
-                    Ok(Box::new(KinesisSink::new(
-                        "kinesis",
-                        KinesisConfig::new(&stream, &region),
-                    )))
-                }
+                let sink =
+                    crate::KinesisSink::new("kinesis", crate::KinesisConfig::new(&stream, &region))
+                        .await?;
+                Ok(Box::new(sink))
             }
+            #[cfg(feature = "s3")]
             "s3" => {
                 let prefix = config
                     .topic
@@ -170,63 +118,20 @@ impl ConnectorRegistry {
                     .get("region")
                     .cloned()
                     .unwrap_or_else(|| "us-east-1".to_string());
-                #[cfg(feature = "s3")]
-                {
-                    let sink =
-                        S3SinkFull::new("s3", S3Config::new(&config.url, &prefix, &region)).await?;
-                    Ok(Box::new(sink))
-                }
-                #[cfg(not(feature = "s3"))]
-                {
-                    Ok(Box::new(S3Sink::new(
-                        "s3",
-                        S3Config::new(&config.url, &prefix, &region),
-                    )))
-                }
+                let sink =
+                    crate::S3Sink::new("s3", crate::S3Config::new(&config.url, &prefix, &region))
+                        .await?;
+                Ok(Box::new(sink))
             }
-            "elasticsearch" | "es" => {
-                let index = config.topic.clone().unwrap_or_else(|| "events".to_string());
-                #[cfg(feature = "elasticsearch")]
-                {
-                    let sink = ElasticsearchSinkFull::new(
-                        "elasticsearch",
-                        ElasticsearchConfig::new(&config.url, &index),
-                    )?;
-                    Ok(Box::new(sink))
-                }
-                #[cfg(not(feature = "elasticsearch"))]
-                {
-                    Ok(Box::new(ElasticsearchSink::new(
-                        "elasticsearch",
-                        ElasticsearchConfig::new(&config.url, &index),
-                    )))
-                }
-            }
+            #[cfg(feature = "redis")]
             "redis_stream" => {
                 let stream_key = config.topic.clone().unwrap_or_else(|| "events".to_string());
-                #[cfg(feature = "redis")]
-                {
-                    let sink = super::redis::RedisStreamSink::new(
-                        "redis_stream",
-                        super::redis::RedisStreamConfig::new(&config.url, &stream_key),
-                    )
-                    .await?;
-                    Ok(Box::new(sink))
-                }
-                #[cfg(not(feature = "redis"))]
-                {
-                    Ok(Box::new(super::redis::RedisStreamSink::new(
-                        "redis_stream",
-                        super::redis::RedisStreamConfig::new(&config.url, &stream_key),
-                    )))
-                }
-            }
-            "pulsar" => {
-                let topic = config.topic.clone().unwrap_or_else(|| "events".to_string());
-                Ok(Box::new(super::pulsar::PulsarSink::new(
-                    "pulsar",
-                    super::pulsar::PulsarConfig::new(&config.url, &topic),
-                )))
+                let sink = crate::RedisStreamSink::new(
+                    "redis_stream",
+                    crate::RedisStreamConfig::new(&config.url, &stream_key),
+                )
+                .await?;
+                Ok(Box::new(sink))
             }
             _ => Err(ConnectorError::ConfigError(format!(
                 "Unknown connector type: {}",

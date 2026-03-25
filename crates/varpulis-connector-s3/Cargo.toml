@@ -1,0 +1,28 @@
+[package]
+name = "varpulis-connector-s3"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+description = "AWS S3 connector for Varpulis CEP engine"
+
+[dependencies]
+varpulis-connector-api = { version = "0.6.4", path = "../varpulis-connector-api" }
+varpulis-core = { version = "0.6.4", path = "../varpulis-core" }
+aws-config = "1.8"
+aws-sdk-s3 = "1.124"
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+tracing = { workspace = true }
+inventory = { workspace = true }
+async-trait = "0.1"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+
+[lints]
+workspace = true

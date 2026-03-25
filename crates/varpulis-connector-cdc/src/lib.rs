@@ -3,17 +3,12 @@
 //! Uses PostgreSQL logical replication protocol to stream WAL changes
 //! as Varpulis events. Converts INSERT/UPDATE/DELETE operations into
 //! typed events for stream processing.
-//!
-//! When the `cdc` feature is enabled, this module provides full
-//! PostgreSQL logical replication via `tokio-postgres`. When disabled,
-//! stub implementations return `ConnectorError::NotAvailable`.
 
 use async_trait::async_trait;
 use tokio::sync::mpsc;
+use varpulis_connector_api::{ConnectorError, SourceConnector};
 use varpulis_core::security::SecretString;
 use varpulis_core::Event;
-
-use super::types::{ConnectorError, SourceConnector};
 
 // =============================================================================
 // PostgreSQL CDC Configuration (always available, not feature-gated)
@@ -147,7 +142,6 @@ impl std::fmt::Display for CdcOperation {
 }
 
 /// Create a Varpulis Event from a CDC change.
-#[cfg(any(feature = "cdc", test))]
 pub fn cdc_event(
     table: &str,
     operation: CdcOperation,
@@ -173,15 +167,10 @@ pub fn cdc_event(
 // =============================================================================
 
 /// PostgreSQL CDC source connector.
-///
-/// When the `cdc` feature is not enabled, this returns `ConnectorError::NotAvailable`.
-/// Enable with: `cargo build --features cdc`
 #[derive(Debug)]
 pub struct PostgresCdcSource {
     name: String,
-    #[allow(dead_code)]
     config: PostgresCdcConfig,
-    #[cfg(feature = "cdc")]
     running: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -191,39 +180,11 @@ impl PostgresCdcSource {
         Self {
             name: name.to_string(),
             config,
-            #[cfg(feature = "cdc")]
             running: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 }
 
-#[cfg(not(feature = "cdc"))]
-#[async_trait]
-impl SourceConnector for PostgresCdcSource {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    async fn start(&mut self, _tx: mpsc::Sender<Event>) -> Result<(), ConnectorError> {
-        Err(ConnectorError::NotAvailable(
-            "PostgreSQL CDC connector requires 'cdc' feature. Enable with: cargo build --features cdc".to_string(),
-        ))
-    }
-
-    async fn stop(&mut self) -> Result<(), ConnectorError> {
-        Ok(())
-    }
-
-    fn is_running(&self) -> bool {
-        false
-    }
-}
-
-// =============================================================================
-// Full CDC source (with tokio-postgres)
-// =============================================================================
-
-#[cfg(feature = "cdc")]
 #[async_trait]
 impl SourceConnector for PostgresCdcSource {
     fn name(&self) -> &str {
@@ -381,7 +342,6 @@ impl SourceConnector for PostgresCdcSource {
 ///   "table public.orders: INSERT: id[integer]:1 amount[numeric]:99.99"
 ///   "table public.orders: UPDATE: id[integer]:1 amount[numeric]:199.99"
 ///   "table public.orders: DELETE: id[integer]:1"
-#[cfg(feature = "cdc")]
 fn parse_change_text(data: &str) -> Option<Event> {
     // Format: "table <schema>.<table>: <OP>: <col>[<type>]:<value> ..."
     let data = data.trim();
@@ -503,8 +463,7 @@ fn parse_change_text(data: &str) -> Option<Event> {
 /// - 'D': Delete
 /// - 'B': Begin transaction
 /// - 'C': Commit transaction
-#[cfg(feature = "cdc")]
-#[allow(dead_code)] // Binary pgoutput path — used in tests, will be wired for streaming replication
+#[allow(dead_code)] // Binary pgoutput path -- used in tests, will be wired for streaming replication
 fn parse_pgoutput_message(data: &[u8]) -> Option<Event> {
     if data.is_empty() {
         return None;
@@ -552,8 +511,7 @@ fn parse_pgoutput_message(data: &[u8]) -> Option<Event> {
 ///
 /// Tuple format: num_columns(2) + for each column: type(1) + data
 /// Type: 'n' = null, 't' = text, 'b' = binary
-#[cfg(feature = "cdc")]
-#[allow(dead_code)] // Binary pgoutput path — used in tests, will be wired for streaming replication
+#[allow(dead_code)] // Binary pgoutput path -- used in tests, will be wired for streaming replication
 fn parse_tuple_data(data: &[u8]) -> Vec<(String, varpulis_core::Value)> {
     let mut fields = Vec::new();
     if data.len() < 2 {
@@ -733,23 +691,6 @@ mod tests {
         assert_eq!(source.name(), "pg-cdc");
     }
 
-    #[cfg(not(feature = "cdc"))]
-    #[tokio::test]
-    async fn test_postgres_cdc_source_not_available() {
-        let config = PostgresCdcConfig::new("localhost", "mydb");
-        let mut source = PostgresCdcSource::new("pg-cdc", config);
-        let (tx, _rx) = mpsc::channel(10);
-
-        let result = source.start(tx).await;
-        assert!(result.is_err());
-        if let Err(ConnectorError::NotAvailable(msg)) = result {
-            assert!(msg.contains("cdc"));
-        } else {
-            panic!("Expected NotAvailable error");
-        }
-    }
-
-    #[cfg(feature = "cdc")]
     #[test]
     fn test_parse_tuple_data_text_columns() {
         // Build a tuple with 2 text columns:
@@ -773,7 +714,6 @@ mod tests {
         assert_eq!(fields[1].1, Value::Str("hello".into()));
     }
 
-    #[cfg(feature = "cdc")]
     #[test]
     fn test_parse_tuple_data_null_column() {
         let mut data = Vec::new();
@@ -785,14 +725,12 @@ mod tests {
         assert_eq!(fields[0].1, Value::Null);
     }
 
-    #[cfg(feature = "cdc")]
     #[test]
     fn test_parse_tuple_data_empty() {
         let fields = parse_tuple_data(&[]);
         assert!(fields.is_empty());
     }
 
-    #[cfg(feature = "cdc")]
     #[test]
     fn test_parse_change_text_insert() {
         let data = "table public.orders: INSERT: id[integer]:42 amount[numeric]:99.99 customer[text]:'alice'";
@@ -805,7 +743,6 @@ mod tests {
         assert_eq!(event.get("customer"), Some(&Value::Str("alice".into())));
     }
 
-    #[cfg(feature = "cdc")]
     #[test]
     fn test_parse_change_text_update() {
         let data = "table public.users: UPDATE: id[integer]:1 email[text]:'new@example.com'";
@@ -816,7 +753,6 @@ mod tests {
         assert_eq!(event.get("_op"), Some(&Value::Str("UPDATE".into())));
     }
 
-    #[cfg(feature = "cdc")]
     #[test]
     fn test_parse_change_text_delete() {
         let data = "table public.orders: DELETE: id[integer]:7";
@@ -827,7 +763,6 @@ mod tests {
         assert_eq!(event.get("id"), Some(&Value::Int(7)));
     }
 
-    #[cfg(feature = "cdc")]
     #[test]
     fn test_parse_change_text_multiword_type() {
         // test_decoding outputs "double precision" (with space) for FLOAT8/DOUBLE PRECISION columns
@@ -845,7 +780,6 @@ mod tests {
         assert_eq!(event.get("status"), Some(&Value::Str("pending".into())));
     }
 
-    #[cfg(feature = "cdc")]
     #[test]
     fn test_parse_change_text_invalid() {
         assert!(parse_change_text("BEGIN").is_none());

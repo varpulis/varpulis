@@ -1,87 +1,16 @@
 //! Connector error-path tests.
 //!
-//! All tests run without live services or feature flags. CI-safe.
-//! Tests cover: stub error returns, database config validation,
-//! REST API header validation, and managed registry error paths.
+//! Tests cover: database config validation, REST API header validation,
+//! and managed registry error paths. Stub tests for feature-gated connectors
+//! are only compiled when the corresponding feature is enabled.
 
 use varpulis_runtime::connector::*;
-
-// =============================================================================
-// Feature-disabled stub error returns
-// =============================================================================
-
-// MQTT stub tests removed: MqttConfig/MqttSource/MqttSink types are only
-// available when the `mqtt` feature is enabled (via varpulis-connector-mqtt).
-// There are no stub types to test without the feature.
-
-#[tokio::test]
-async fn test_kafka_source_stub_returns_not_available() {
-    if cfg!(feature = "kafka") {
-        return;
-    }
-    let config = KafkaConfig::new("localhost:9092", "test-topic");
-    let mut source = KafkaSource::new("test", config);
-    let (tx, _rx) = tokio::sync::mpsc::channel(1);
-    let result = source.start(tx).await;
-    assert!(result.is_err());
-    assert!(matches!(
-        result.unwrap_err(),
-        ConnectorError::NotAvailable(_)
-    ));
-}
-
-#[tokio::test]
-async fn test_kafka_sink_stub_returns_not_available() {
-    if cfg!(feature = "kafka") {
-        return;
-    }
-    let config = KafkaConfig::new("localhost:9092", "test-topic");
-    let sink = KafkaSink::new("test", config);
-    let event = varpulis_runtime::event::Event::new("TestEvent");
-    let result = sink.send(&event).await;
-    assert!(result.is_err());
-    assert!(matches!(
-        result.unwrap_err(),
-        ConnectorError::NotAvailable(_)
-    ));
-}
-
-#[tokio::test]
-async fn test_nats_source_stub_returns_not_available() {
-    if cfg!(feature = "nats") {
-        return;
-    }
-    let config = NatsConfig::new("nats://localhost:4222", "test.subject");
-    let mut source = NatsSource::new("test", config);
-    let (tx, _rx) = tokio::sync::mpsc::channel(1);
-    let result = source.start(tx).await;
-    assert!(result.is_err());
-    assert!(matches!(
-        result.unwrap_err(),
-        ConnectorError::NotAvailable(_)
-    ));
-}
-
-#[tokio::test]
-async fn test_nats_sink_stub_returns_not_available() {
-    if cfg!(feature = "nats") {
-        return;
-    }
-    let config = NatsConfig::new("nats://localhost:4222", "test.subject");
-    let sink = NatsSink::new("test", config);
-    let event = varpulis_runtime::event::Event::new("TestEvent");
-    let result = sink.send(&event).await;
-    assert!(result.is_err());
-    assert!(matches!(
-        result.unwrap_err(),
-        ConnectorError::NotAvailable(_)
-    ));
-}
 
 // =============================================================================
 // Database config validation (validate_table_name is called in DatabaseConfig::new)
 // =============================================================================
 
+#[cfg(feature = "database")]
 #[test]
 fn test_database_config_empty_table_name() {
     let result = DatabaseConfig::new("postgres://localhost/test", "");
@@ -93,6 +22,7 @@ fn test_database_config_empty_table_name() {
     );
 }
 
+#[cfg(feature = "database")]
 #[test]
 fn test_database_config_sql_injection_attempt() {
     // Classic SQL injection: DROP TABLE via semicolon
@@ -112,6 +42,7 @@ fn test_database_config_sql_injection_attempt() {
     ));
 }
 
+#[cfg(feature = "database")]
 #[test]
 fn test_database_config_spaces_rejected() {
     let result = DatabaseConfig::new("postgres://localhost/test", "my table");
@@ -122,6 +53,7 @@ fn test_database_config_spaces_rejected() {
     ));
 }
 
+#[cfg(feature = "database")]
 #[test]
 fn test_database_config_leading_digit_rejected() {
     let result = DatabaseConfig::new("postgres://localhost/test", "123events");
@@ -132,6 +64,7 @@ fn test_database_config_leading_digit_rejected() {
     ));
 }
 
+#[cfg(feature = "database")]
 #[test]
 fn test_database_config_schema_qualified_name_ok() {
     // Schema-qualified names like "public.events" are valid
@@ -239,40 +172,4 @@ fn test_managed_registry_unsupported_connector_type() {
         Err(other) => panic!("Expected NotAvailable, got: {other}"),
         Ok(_) => panic!("Expected error for unsupported connector type"),
     }
-}
-
-// =============================================================================
-// Database source/sink stubs (when database feature disabled)
-// =============================================================================
-
-#[tokio::test]
-async fn test_database_source_stub_returns_not_available() {
-    if cfg!(feature = "database") {
-        return;
-    }
-    let config = DatabaseConfig::new("postgres://localhost/test", "events").unwrap();
-    let mut source = DatabaseSource::new("test", config);
-    let (tx, _rx) = tokio::sync::mpsc::channel(1);
-    let result = source.start(tx).await;
-    assert!(result.is_err());
-    assert!(matches!(
-        result.unwrap_err(),
-        ConnectorError::NotAvailable(_)
-    ));
-}
-
-#[tokio::test]
-async fn test_database_sink_stub_returns_not_available() {
-    if cfg!(feature = "database") {
-        return;
-    }
-    let config = DatabaseConfig::new("postgres://localhost/test", "events").unwrap();
-    let sink = DatabaseSink::new("test", config).await.unwrap();
-    let event = varpulis_runtime::event::Event::new("TestEvent");
-    let result = sink.send(&event).await;
-    assert!(result.is_err());
-    assert!(matches!(
-        result.unwrap_err(),
-        ConnectorError::NotAvailable(_)
-    ));
 }

@@ -1,0 +1,26 @@
+[package]
+name = "varpulis-connector-cdc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+description = "PostgreSQL CDC (Change Data Capture) connector for Varpulis CEP engine"
+
+[dependencies]
+varpulis-connector-api = { version = "0.6.4", path = "../varpulis-connector-api" }
+varpulis-core = { version = "0.6.4", path = "../varpulis-core" }
+tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-serde_json-1"] }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+tracing = { workspace = true }
+async-trait = "0.1"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+
+[lints]
+workspace = true

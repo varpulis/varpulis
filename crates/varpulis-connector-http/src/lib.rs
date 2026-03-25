@@ -12,11 +12,12 @@ use indexmap::IndexMap;
 use tokio::sync::mpsc;
 use tower_http::limit::RequestBodyLimitLayer;
 use tracing::{error, info, warn};
+use varpulis_connector_api::helpers::json_to_value;
+use varpulis_connector_api::{
+    ConnectorComponentInfo, ConnectorConfig, ConnectorError, ConnectorFactory, Sink, SinkConnector,
+    SinkConnectorAdapter, SourceConnector,
+};
 use varpulis_core::Event;
-
-use super::component::{ConnectorComponentInfo, ConnectorFactory};
-use super::helpers::json_to_value;
-use super::types::{ConnectorConfig, ConnectorError, SinkConnector, SourceConnector};
 
 // ---------------------------------------------------------------------------
 // Declarative registration
@@ -53,13 +54,13 @@ impl ConnectorFactory for HttpFactory {
         config: &ConnectorConfig,
         _topic_override: Option<&str>,
         _context_name: Option<&str>,
-    ) -> Result<Arc<dyn crate::sink::Sink>, ConnectorError> {
+    ) -> Result<Arc<dyn Sink>, ConnectorError> {
         if config.url.is_empty() {
             return Err(ConnectorError::ConfigError(format!(
                 "HTTP connector '{name}' has no URL configured"
             )));
         }
-        Ok(Arc::new(crate::sink::SinkConnectorAdapter::new(
+        Ok(Arc::new(SinkConnectorAdapter::new(
             name,
             Box::new(HttpSink::new(name, &config.url)),
         )))
@@ -400,8 +401,9 @@ impl SourceConnector for HttpWebhookSource {
         let batch_path = config.batch_path.trim_start_matches('/').to_string();
 
         // Body size limits
-        let single_body_limit = crate::limits::MAX_EVENT_PAYLOAD_BYTES;
-        let batch_body_limit = config.max_batch_size * crate::limits::MAX_EVENT_PAYLOAD_BYTES;
+        let single_body_limit = varpulis_connector_api::limits::MAX_EVENT_PAYLOAD_BYTES;
+        let batch_body_limit =
+            config.max_batch_size * varpulis_connector_api::limits::MAX_EVENT_PAYLOAD_BYTES;
 
         let state = HttpState {
             tx,
@@ -535,7 +537,7 @@ fn json_to_event_from_json(json: &serde_json::Value) -> Event {
         let mut count = 0;
         for (key, value) in obj {
             if key != "event_type" && key != "type" {
-                if count >= crate::limits::MAX_FIELDS_PER_EVENT {
+                if count >= varpulis_connector_api::limits::MAX_FIELDS_PER_EVENT {
                     break;
                 }
                 if let Some(v) = json_to_value(value) {

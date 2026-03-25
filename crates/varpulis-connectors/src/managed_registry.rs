@@ -1,4 +1,4 @@
-//! Managed connector registry — owns one connection per declared connector
+//! Managed connector registry -- owns one connection per declared connector
 //!
 //! The registry wraps each connector with the actor framework's supervision
 //! infrastructure, providing automatic health observation and restart policies.
@@ -12,8 +12,6 @@ use tracing::{info, warn};
 use varpulis_core::Event;
 
 use super::managed::{ConnectorHealthReport, ManagedConnector};
-use super::managed_nats::ManagedNatsConnector;
-use super::nats::NatsConfig;
 use super::types::{ConnectorConfig, ConnectorError};
 use crate::sink::Sink;
 
@@ -53,9 +51,6 @@ impl ManagedConnectorRegistry {
     }
 
     /// Start a source subscription on the named connector.
-    ///
-    /// The first call per connector establishes the connection; subsequent
-    /// calls add subscriptions on the existing connection.
     pub async fn start_source(
         &mut self,
         connector_name: &str,
@@ -71,8 +66,6 @@ impl ManagedConnectorRegistry {
     }
 
     /// Create a shared sink for the named connector.
-    ///
-    /// If no source has been started yet, the connection is established lazily.
     pub fn create_sink(
         &mut self,
         connector_name: &str,
@@ -87,9 +80,6 @@ impl ManagedConnectorRegistry {
     }
 
     /// Collect health reports from all managed connectors.
-    ///
-    /// Returns a vector of (name, type, health) tuples suitable for
-    /// aggregation into a system health response or actor observable state.
     pub fn health_reports(&self) -> Vec<(&str, &str, ConnectorHealthReport)> {
         self.connectors
             .iter()
@@ -108,9 +98,6 @@ impl ManagedConnectorRegistry {
 }
 
 /// Factory: create the right `ManagedConnector` for a given config.
-///
-/// Tries the inventory-based `find_factory()` first, then falls back to the
-/// match-arm dispatch for connectors that haven't been migrated yet.
 fn create_managed(
     name: &str,
     config: &ConnectorConfig,
@@ -122,83 +109,9 @@ fn create_managed(
         }
     }
 
-    // Fallback to match-arm dispatch
-    match config.connector_type.as_str() {
-        #[cfg(feature = "mqtt")]
-        "mqtt" => {
-            use varpulis_connector_mqtt::{ManagedMqttConnector, MqttConfig};
-
-            let mut mqtt_config =
-                MqttConfig::new(&config.url, config.topic.as_deref().unwrap_or("#"));
-
-            // Apply properties from ConnectorConfig
-            if let Some(port) = config.properties.get("port") {
-                if let Ok(p) = port.parse::<u16>() {
-                    mqtt_config = mqtt_config.with_port(p);
-                }
-            }
-            if let Some(client_id) = config.properties.get("client_id") {
-                mqtt_config = mqtt_config.with_client_id(client_id);
-            }
-            if let Some(qos) = config.properties.get("qos") {
-                if let Ok(q) = qos.parse::<u8>() {
-                    mqtt_config = mqtt_config.with_qos(q);
-                }
-            }
-
-            Ok(Box::new(ManagedMqttConnector::new(name, mqtt_config)))
-        }
-        #[cfg(feature = "kafka")]
-        "kafka" => {
-            use super::kafka::KafkaConfig;
-            use super::managed_kafka::ManagedKafkaConnector;
-
-            let topic = config.topic.as_deref().unwrap_or("events");
-            let brokers = if config.url.is_empty() {
-                config
-                    .properties
-                    .get("brokers")
-                    .cloned()
-                    .unwrap_or_default()
-            } else {
-                config.url.clone()
-            };
-            let mut kafka_config =
-                KafkaConfig::new(&brokers, topic).with_properties(config.properties.clone());
-
-            if let Some(group_id) = config.properties.get("group_id") {
-                kafka_config = kafka_config.with_group_id(group_id);
-            }
-
-            Ok(Box::new(ManagedKafkaConnector::new(name, kafka_config)))
-        }
-        "nats" => {
-            let servers = if config.url.is_empty() {
-                config
-                    .properties
-                    .get("servers")
-                    .cloned()
-                    .unwrap_or_else(|| "nats://localhost:4222".to_string())
-            } else {
-                config.url.clone()
-            };
-            let subject = config.topic.as_deref().unwrap_or(">");
-            let mut nats_config = NatsConfig::new(&servers, subject);
-
-            if let Some(queue_group) = config.properties.get("queue_group") {
-                nats_config = nats_config.with_queue_group(queue_group);
-            }
-
-            Ok(Box::new(ManagedNatsConnector::new(name, nats_config)))
-        }
-        other => Err(ConnectorError::NotAvailable(format!(
-            "No managed connector for type '{}'. Supported: mqtt, nats{}",
-            other,
-            if cfg!(feature = "kafka") {
-                ", kafka"
-            } else {
-                ""
-            },
-        ))),
-    }
+    // No fallback needed -- all managed connectors are now registered via inventory
+    Err(ConnectorError::NotAvailable(format!(
+        "No managed connector for type '{}'. Supported: mqtt, nats, kafka",
+        config.connector_type,
+    )))
 }
