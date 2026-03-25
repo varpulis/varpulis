@@ -1802,9 +1802,10 @@ async fn method_call_string_trim() {
 #[tokio::test]
 async fn method_call_nested_field_access() {
     // Simulate nested object via Value::Map
+    use std::sync::Arc;
+
     use indexmap::IndexMap;
     use rustc_hash::FxBuildHasher;
-    use std::sync::Arc;
     let mut addr_map: IndexMap<Arc<str>, Value, FxBuildHasher> =
         IndexMap::with_hasher(FxBuildHasher);
     addr_map.insert("city".into(), Value::Str("NYC".into()));
