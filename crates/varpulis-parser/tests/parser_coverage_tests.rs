@@ -1995,6 +1995,60 @@ fn test_log_op() {
 }
 
 #[test]
+fn test_alert_op() {
+    let result = parse(
+        r#"stream S = E.alert(webhook: "https://hooks.slack.com/xxx", message: "Alert: {field}")"#,
+    );
+    assert!(result.is_ok(), "Failed: {:?}", result.err());
+    let program = result.unwrap();
+    if let Stmt::StreamDecl { ops, .. } = &program.statements[0].node {
+        if let StreamOp::Alert(args) = &ops[0] {
+            assert_eq!(args.len(), 2);
+            assert_eq!(args[0].name, "webhook");
+            assert_eq!(args[1].name, "message");
+        } else {
+            panic!("Expected Alert op, got {:?}", ops[0]);
+        }
+    } else {
+        panic!("Expected StreamDecl");
+    }
+}
+
+#[test]
+fn test_alert_op_webhook_only() {
+    let result = parse(r#"stream S = E.alert(webhook: "https://example.com/hook")"#);
+    assert!(result.is_ok(), "Failed: {:?}", result.err());
+    let program = result.unwrap();
+    if let Stmt::StreamDecl { ops, .. } = &program.statements[0].node {
+        if let StreamOp::Alert(args) = &ops[0] {
+            assert_eq!(args.len(), 1);
+            assert_eq!(args[0].name, "webhook");
+        } else {
+            panic!("Expected Alert op, got {:?}", ops[0]);
+        }
+    } else {
+        panic!("Expected StreamDecl");
+    }
+}
+
+#[test]
+fn test_alert_in_pipeline() {
+    let result = parse(
+        r#"stream S = E.where(amount > 10000).alert(webhook: "https://example.com", message: "High amount").emit(amount: amount)"#,
+    );
+    assert!(result.is_ok(), "Failed: {:?}", result.err());
+    let program = result.unwrap();
+    if let Stmt::StreamDecl { ops, .. } = &program.statements[0].node {
+        assert_eq!(ops.len(), 3);
+        assert!(matches!(&ops[0], StreamOp::Where(_)));
+        assert!(matches!(&ops[1], StreamOp::Alert(_)));
+        assert!(matches!(&ops[2], StreamOp::Emit { .. }));
+    } else {
+        panic!("Expected StreamDecl");
+    }
+}
+
+#[test]
 fn test_on_error_op() {
     let result = parse("stream S = E.on_error(handle_error)");
     assert!(result.is_ok(), "Failed: {:?}", result.err());

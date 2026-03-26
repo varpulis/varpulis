@@ -172,6 +172,7 @@ fn match_token_ctx(s: &str, after_dot: bool) -> Option<(usize, u32)> {
             "merge",
             "join",
             "on",
+            "alert",
             "forecast",
             "trend_aggregate",
             "enrich",

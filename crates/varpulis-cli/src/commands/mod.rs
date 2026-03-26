@@ -1,7 +1,11 @@
+pub mod connector;
 pub mod coordinator;
 pub mod demo;
 pub mod federation;
 pub mod generate;
+pub mod infer;
+#[cfg(feature = "repl")]
+pub mod repl;
 pub mod run;
 pub mod server;
 pub mod simulate;

@@ -3668,3 +3668,96 @@ async fn test_transaction_monitoring_multi_query_sharing() {
     // All 3 events processed without panics across both shared streams
     assert_eq!(engine.metrics().events_processed, 3);
 }
+
+// =============================================================================
+// Alert Operator Tests
+// =============================================================================
+
+#[tokio::test]
+async fn test_alert_parses_and_loads() {
+    let source = r#"
+        stream Alerts = Event
+            .where(amount > 10000)
+            .alert(webhook: "https://example.com/hook", message: "High amount: {amount}")
+            .emit(amount: amount)
+    "#;
+
+    let program = parse_program(source);
+    let (tx, _rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+}
+
+#[tokio::test]
+async fn test_alert_does_not_consume_events() {
+    // Alert should be a side-effect: events must continue downstream to .emit()
+    let source = r#"
+        stream Alerts = Event
+            .alert(webhook: "https://example.com/hook", message: "Alert: {value}")
+            .emit(value: value)
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    let event = Event::new("Event").with_field("value", 42i64);
+    engine.process(event).await.unwrap();
+
+    // Event should have passed through the alert and been emitted
+    let output = rx.try_recv().expect("Alert should not consume events");
+    assert_eq!(&*output.event_type, "Alerts");
+    assert_eq!(output.get("value"), Some(&Value::Int(42)));
+}
+
+#[tokio::test]
+async fn test_alert_without_webhook_still_passes_events() {
+    // Alert with no webhook URL should still let events through
+    let source = r#"
+        stream Alerts = Event
+            .alert(message: "Something happened: {name}")
+            .emit(name: name)
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    let event = Event::new("Event").with_field("name", "test_event");
+    engine.process(event).await.unwrap();
+
+    let output = rx.try_recv().expect("Event should pass through alert");
+    assert_eq!(&*output.event_type, "Alerts");
+}
+
+#[tokio::test]
+async fn test_alert_in_sequence_pipeline() {
+    // Alert should work in a sequence pattern pipeline
+    let source = r#"
+        stream FraudAlerts = Login as l
+            -> LargeTransfer as t
+            .within(10s)
+            .alert(webhook: "https://example.com/fraud", message: "Fraud by {user}")
+            .emit(user: l.user_id, amount: t.amount)
+    "#;
+
+    let program = parse_program(source);
+    let (tx, mut rx) = mpsc::channel(100);
+    let mut engine = Engine::new(tx);
+    engine.load(&program).unwrap();
+
+    // Send Login
+    let login = Event::new("Login").with_field("user_id", "alice");
+    engine.process(login).await.unwrap();
+    assert!(rx.try_recv().is_err(), "No output yet");
+
+    // Send LargeTransfer
+    let transfer = Event::new("LargeTransfer").with_field("amount", 50000i64);
+    engine.process(transfer).await.unwrap();
+
+    // Should get output from the sequence match
+    let output = rx.try_recv().expect("Should emit after sequence completes");
+    assert_eq!(&*output.event_type, "FraudAlerts");
+}

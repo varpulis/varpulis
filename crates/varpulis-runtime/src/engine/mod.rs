@@ -9,6 +9,7 @@ pub mod compiler;
 mod dispatch;
 pub mod error;
 pub mod evaluator;
+pub mod graph;
 mod pattern_analyzer;
 pub mod physical_plan;
 mod pipeline;
@@ -17,6 +18,7 @@ mod router;
 mod sink_factory;
 pub mod topology;
 pub mod topology_builder;
+pub mod trace;
 mod types;
 
 // Re-export public types
@@ -115,6 +117,8 @@ pub struct Engine {
     pub(super) physical_plan: Option<physical_plan::PhysicalPlan>,
     /// Registry for native Rust UDFs (scalar + aggregate)
     pub(super) udf_registry: UdfRegistry,
+    /// Pipeline trace collector (zero-cost when disabled)
+    pub(super) trace_collector: trace::TraceCollector,
 }
 
 impl std::fmt::Debug for Engine {
@@ -182,6 +186,7 @@ impl Engine {
             dlq: None,
             physical_plan: None,
             udf_registry: UdfRegistry::new(),
+            trace_collector: trace::TraceCollector::new(),
         }
     }
 
@@ -236,6 +241,7 @@ impl Engine {
             dlq: None,
             physical_plan: None,
             udf_registry: UdfRegistry::new(),
+            trace_collector: trace::TraceCollector::new(),
         }
     }
 
@@ -306,6 +312,26 @@ impl Engine {
     /// `{prefix}.` to enforce per-tenant topic isolation.
     pub fn set_topic_prefix(&mut self, prefix: &str) {
         self.topic_prefix = Some(prefix.to_string());
+    }
+
+    /// Enable or disable pipeline trace collection.
+    ///
+    /// When enabled, the engine records which streams each event is routed to,
+    /// which operators pass or block the event, SASE pattern state, and emitted
+    /// output events. Use [`drain_trace`](Self::drain_trace) to retrieve entries.
+    pub fn set_trace_enabled(&mut self, enabled: bool) {
+        self.trace_collector.set_enabled(enabled);
+    }
+
+    /// Whether pipeline trace collection is currently enabled.
+    #[inline]
+    pub fn is_trace_enabled(&self) -> bool {
+        self.trace_collector.is_enabled()
+    }
+
+    /// Drain all collected trace entries since the last drain.
+    pub fn drain_trace(&mut self) -> Vec<trace::TraceEntry> {
+        self.trace_collector.drain()
     }
 
     /// Set a custom DLQ file path (call before `load()`).

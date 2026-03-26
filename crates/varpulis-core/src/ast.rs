@@ -429,6 +429,8 @@ pub enum StreamOp {
     Forecast(ForecastSpec),
     /// External connector enrichment: `.enrich(WeatherAPI, key: t.city, fields: [forecast, humidity], cache_ttl: 5m)`
     Enrich(EnrichSpec),
+    /// Alert notification: `.alert(webhook: "https://...", message: "Alert: {field}")`
+    Alert(Vec<NamedArg>),
 }
 
 /// A path in a fork construct

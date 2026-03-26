@@ -11,6 +11,7 @@ use chrono::{DateTime, Utc};
 use rustc_hash::FxHashMap;
 use tracing::debug;
 
+use super::trace::TraceEntry;
 use super::types::{
     RuntimeOp, RuntimeSource, StreamDefinition, StreamProcessResult, UserFunction, WindowType,
 };
@@ -133,6 +134,14 @@ impl Engine {
 
             for stream_name in stream_names.iter() {
                 if let Some(stream) = self.streams.get_mut(stream_name) {
+                    // Record trace: event routed to stream
+                    if self.trace_collector.is_enabled() {
+                        self.trace_collector.record(TraceEntry::StreamMatched {
+                            stream_name: stream_name.clone(),
+                            event_type: current_event.event_type.to_string(),
+                        });
+                    }
+
                     let start = std::time::Instant::now();
                     let result = Self::process_stream_with_functions(
                         stream,
@@ -141,6 +150,16 @@ impl Engine {
                         self.sinks.cache(),
                     )
                     .await?;
+
+                    // Record trace: pipeline result
+                    if self.trace_collector.is_enabled() {
+                        Self::record_trace_for_result(
+                            &mut self.trace_collector,
+                            stream_name,
+                            stream,
+                            &result,
+                        );
+                    }
 
                     // Record per-stream processing metrics
                     if let Some(ref m) = self.metrics {
@@ -264,6 +283,14 @@ impl Engine {
 
             for stream_name in stream_names.iter() {
                 if let Some(stream) = self.streams.get_mut(stream_name) {
+                    // Record trace: event routed to stream
+                    if self.trace_collector.is_enabled() {
+                        self.trace_collector.record(TraceEntry::StreamMatched {
+                            stream_name: stream_name.clone(),
+                            event_type: current_event.event_type.to_string(),
+                        });
+                    }
+
                     let start = std::time::Instant::now();
                     let result = Self::process_stream_with_functions(
                         stream,
@@ -272,6 +299,16 @@ impl Engine {
                         self.sinks.cache(),
                     )
                     .await?;
+
+                    // Record trace: pipeline result
+                    if self.trace_collector.is_enabled() {
+                        Self::record_trace_for_result(
+                            &mut self.trace_collector,
+                            stream_name,
+                            stream,
+                            &result,
+                        );
+                    }
 
                     // Record per-stream processing in Prometheus
                     if let Some(ref m) = self.metrics {
@@ -373,6 +410,14 @@ impl Engine {
 
             for stream_name in stream_names.iter() {
                 if let Some(stream) = self.streams.get_mut(stream_name) {
+                    // Record trace: event routed to stream
+                    if self.trace_collector.is_enabled() {
+                        self.trace_collector.record(TraceEntry::StreamMatched {
+                            stream_name: stream_name.clone(),
+                            event_type: current_event.event_type.to_string(),
+                        });
+                    }
+
                     // Skip output clone+rename when stream has no downstream routes
                     let skip_rename = self.router.get_routes(stream_name).is_none();
                     let result = Self::process_stream_sync(
@@ -381,6 +426,16 @@ impl Engine {
                         &self.functions,
                         skip_rename,
                     )?;
+
+                    // Record trace: pipeline result
+                    if self.trace_collector.is_enabled() {
+                        Self::record_trace_for_result(
+                            &mut self.trace_collector,
+                            stream_name,
+                            stream,
+                            &result,
+                        );
+                    }
 
                     // Collect emitted events for batch sending
                     self.output_events_emitted += result.emitted_events.len() as u64;
@@ -909,5 +964,86 @@ impl Engine {
         }
 
         Ok(())
+    }
+
+    /// Record trace entries for a pipeline result.
+    ///
+    /// Inspects the stream's operations and the result to produce per-operator
+    /// trace entries and, for SASE streams, pattern-state entries.
+    fn record_trace_for_result(
+        trace: &mut super::trace::TraceCollector,
+        stream_name: &str,
+        stream: &StreamDefinition,
+        result: &StreamProcessResult,
+    ) {
+        // Record per-operator summary based on the stream's operations
+        for op in &stream.operations {
+            let op_name = op.summary_name();
+            match op {
+                RuntimeOp::WhereExpr(_) | RuntimeOp::WhereClosure(_) | RuntimeOp::Having(_) => {
+                    // For filter-type ops, report whether events survived
+                    let passed =
+                        !result.output_events.is_empty() || !result.emitted_events.is_empty();
+                    trace.record(TraceEntry::OperatorResult {
+                        stream_name: stream_name.to_string(),
+                        op_name: op_name.to_string(),
+                        passed,
+                        detail: None,
+                    });
+                }
+                RuntimeOp::Aggregate(_) | RuntimeOp::PartitionedAggregate(_) => {
+                    let passed =
+                        !result.output_events.is_empty() || !result.emitted_events.is_empty();
+                    trace.record(TraceEntry::OperatorResult {
+                        stream_name: stream_name.to_string(),
+                        op_name: op_name.to_string(),
+                        passed,
+                        detail: None,
+                    });
+                }
+                RuntimeOp::Window(_)
+                | RuntimeOp::PartitionedWindow(_)
+                | RuntimeOp::PartitionedSlidingCountWindow(_) => {
+                    let passed =
+                        !result.output_events.is_empty() || !result.emitted_events.is_empty();
+                    trace.record(TraceEntry::OperatorResult {
+                        stream_name: stream_name.to_string(),
+                        op_name: op_name.to_string(),
+                        passed,
+                        detail: if passed {
+                            None
+                        } else {
+                            Some("window not yet full".to_string())
+                        },
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        // Record SASE pattern state
+        if let Some(ref sase) = stream.sase_engine {
+            let active_runs =
+                sase.runs.len() + sase.partitioned_runs.values().map(Vec::len).sum::<usize>();
+            let completed = result.emitted_events.len().max(result.output_events.len());
+            trace.record(TraceEntry::PatternState {
+                stream_name: stream_name.to_string(),
+                active_runs,
+                completed,
+            });
+        }
+
+        // Record emitted output events
+        for emitted in &result.emitted_events {
+            let fields: Vec<(String, String)> = emitted
+                .data
+                .iter()
+                .map(|(k, v)| (k.to_string(), format!("{v}")))
+                .collect();
+            trace.record(TraceEntry::EventEmitted {
+                stream_name: stream_name.to_string(),
+                fields,
+            });
+        }
     }
 }

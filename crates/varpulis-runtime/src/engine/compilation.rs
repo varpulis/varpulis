@@ -13,11 +13,11 @@ use tracing::{debug, info, warn};
 use varpulis_core::ast::{Expr, StreamOp, StreamSource};
 
 use super::types::{
-    ConcurrentConfig, DistinctState, EmitConfig, EmitExprConfig, EnrichConfig, FieldAggregateInfo,
-    ForecastConfig, LimitState, LogConfig, MergeSource, PartitionedAggregatorState,
-    PartitionedSlidingCountWindowState, PartitionedWindowState, PatternConfig, PrintConfig,
-    RuntimeOp, RuntimeSource, SelectConfig, SourceBinding, StreamDefinition, TimerConfig, ToConfig,
-    TrendAggregateConfig, WindowType,
+    AlertConfig, ConcurrentConfig, DistinctState, EmitConfig, EmitExprConfig, EnrichConfig,
+    FieldAggregateInfo, ForecastConfig, LimitState, LogConfig, MergeSource,
+    PartitionedAggregatorState, PartitionedSlidingCountWindowState, PartitionedWindowState,
+    PatternConfig, PrintConfig, RuntimeOp, RuntimeSource, SelectConfig, SourceBinding,
+    StreamDefinition, TimerConfig, ToConfig, TrendAggregateConfig, WindowType,
 };
 use super::{compiler, pattern_analyzer, Engine};
 use crate::aggregation::Aggregator;
@@ -861,6 +861,31 @@ impl Engine {
                         level,
                         message,
                         data_field,
+                    }));
+                }
+                StreamOp::Alert(args) => {
+                    let mut webhook_url = None;
+                    let mut message_template = None;
+
+                    for arg in args {
+                        match arg.name.as_str() {
+                            "webhook" => {
+                                if let varpulis_core::ast::Expr::Str(s) = &arg.value {
+                                    webhook_url = Some(s.clone());
+                                }
+                            }
+                            "message" => {
+                                if let varpulis_core::ast::Expr::Str(s) = &arg.value {
+                                    message_template = Some(s.clone());
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    runtime_ops.push(RuntimeOp::Alert(AlertConfig {
+                        webhook_url,
+                        message_template,
                     }));
                 }
                 StreamOp::Where(expr) => {
@@ -1850,6 +1875,7 @@ pub(super) const fn stream_op_name(op: &StreamOp) -> &'static str {
         StreamOp::Score(_) => ".score()",
         StreamOp::Forecast(_) => ".forecast()",
         StreamOp::Enrich(_) => ".enrich()",
+        StreamOp::Alert(_) => ".alert()",
     }
 }
 
