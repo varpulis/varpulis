@@ -61,6 +61,28 @@ pub struct SearchEventsParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ListModelsParams {}
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct StartInteractiveSessionParams {
+    /// Optional VPL source code to load into the session immediately
+    pub vpl: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SendInteractiveCommandParams {
+    /// Session ID returned by start_interactive_session
+    pub session_id: String,
+    /// Command object using the JSON-line protocol format (e.g. {"cmd":"inject","event_type":"Tick","data":{"price":42}})
+    pub command: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetInteractiveEventsParams {
+    /// Session ID returned by start_interactive_session
+    pub session_id: String,
+    /// Maximum number of buffered events to return (default: 100)
+    pub limit: Option<usize>,
+}
+
 // ─── Tool implementations ────────────────────────────────────────────
 
 #[tool_router]
@@ -140,6 +162,39 @@ impl VarpulisMcpServer {
         #[allow(unused)] params: Parameters<ListModelsParams>,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
         Ok(list_models_impl(&self.client).await)
+    }
+
+    /// Start a new interactive Varpulis session.
+    #[tool(
+        description = "Start a new interactive Varpulis session. Optionally load VPL source code immediately. Returns a session_id for subsequent commands. Sessions expire after 10 minutes of inactivity."
+    )]
+    async fn start_interactive_session(
+        &self,
+        params: Parameters<StartInteractiveSessionParams>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        Ok(start_interactive_session_impl(&self.session_manager, params.0).await)
+    }
+
+    /// Send a command to an interactive session.
+    #[tool(
+        description = "Send a command to an interactive Varpulis session. The command object follows the JSON-line protocol: {\"cmd\":\"inject\",\"event_type\":\"Tick\",\"data\":{\"price\":42}}. Supported commands: load_vpl, load_file, inject, inject_file, generate, stop_generate, subscribe, unsubscribe, get_streams, get_metrics, get_topology, set_trace, quit."
+    )]
+    async fn send_interactive_command(
+        &self,
+        params: Parameters<SendInteractiveCommandParams>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        Ok(send_interactive_command_impl(&self.session_manager, params.0).await)
+    }
+
+    /// Get buffered output events from an interactive session.
+    #[tool(
+        description = "Retrieve buffered output events from an interactive session. Use after injecting events or running a generator. Returns up to `limit` events (default 100)."
+    )]
+    async fn get_interactive_events(
+        &self,
+        params: Parameters<GetInteractiveEventsParams>,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        Ok(get_interactive_events_impl(&self.session_manager, params.0).await)
     }
 }
 
@@ -512,6 +567,108 @@ pub async fn list_models_impl(client: &crate::client::CoordinatorClient) -> Call
             success_text(serde_json::to_string_pretty(&resp).unwrap_or_else(|_| resp.to_string()))
         }
         Err(e) => e.into_tool_result(),
+    }
+}
+
+pub async fn start_interactive_session_impl(
+    manager: &crate::interactive::SharedSessionManager,
+    params: StartInteractiveSessionParams,
+) -> CallToolResult {
+    let mut mgr = manager.write().await;
+    let (session_id, responses) = mgr.start_session(params.vpl);
+
+    // Determine stream names and loaded status from responses.
+    let mut streams = Vec::new();
+    let mut loaded = false;
+    let mut error_msg = None;
+
+    for resp in &responses {
+        match resp {
+            varpulis_runtime::interactive::SessionResponse::Loaded { streams: s, .. } => {
+                streams = s.clone();
+                loaded = true;
+            }
+            varpulis_runtime::interactive::SessionResponse::Error { message } => {
+                error_msg = Some(message.clone());
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(msg) = error_msg {
+        return error_text(format!(
+            "Session created ({session_id}) but VPL load failed: {msg}"
+        ));
+    }
+
+    let result = serde_json::json!({
+        "session_id": session_id,
+        "streams": streams,
+        "loaded": loaded,
+    });
+
+    success_text(serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string()))
+}
+
+pub async fn send_interactive_command_impl(
+    manager: &crate::interactive::SharedSessionManager,
+    params: SendInteractiveCommandParams,
+) -> CallToolResult {
+    // Deserialize the command from the JSON value.
+    let command: varpulis_runtime::interactive::SessionCommand = match serde_json::from_value(
+        params.command.clone(),
+    ) {
+        Ok(cmd) => cmd,
+        Err(e) => {
+            return error_text(format!(
+                    "Invalid command format: {e}. Expected JSON with \"cmd\" field, e.g. {{\"cmd\":\"get_streams\"}}"
+                ));
+        }
+    };
+
+    let mut mgr = manager.write().await;
+    match mgr.send_command(&params.session_id, command) {
+        Ok(responses) => {
+            let json_responses: Vec<serde_json::Value> = responses
+                .iter()
+                .map(|r| serde_json::to_value(r).unwrap_or_default())
+                .collect();
+
+            let result = serde_json::json!({
+                "responses": json_responses,
+            });
+
+            success_text(
+                serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string()),
+            )
+        }
+        Err(e) => error_text(e),
+    }
+}
+
+pub async fn get_interactive_events_impl(
+    manager: &crate::interactive::SharedSessionManager,
+    params: GetInteractiveEventsParams,
+) -> CallToolResult {
+    let limit = params.limit.unwrap_or(100);
+
+    let mut mgr = manager.write().await;
+    match mgr.get_events(&params.session_id, limit) {
+        Ok(events) => {
+            let json_events: Vec<serde_json::Value> = events
+                .iter()
+                .map(|e| serde_json::to_value(e).unwrap_or_default())
+                .collect();
+
+            let result = serde_json::json!({
+                "events": json_events,
+            });
+
+            success_text(
+                serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string()),
+            )
+        }
+        Err(e) => error_text(e),
     }
 }
 

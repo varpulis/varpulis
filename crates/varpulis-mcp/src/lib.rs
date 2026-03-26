@@ -7,10 +7,12 @@
 
 pub mod client;
 pub mod error;
+pub mod interactive;
 pub mod prompts;
 pub mod resources;
 pub mod server;
 pub mod tools;
 
 pub use client::CoordinatorClient;
+pub use interactive::McpSessionManager;
 pub use server::VarpulisMcpServer;

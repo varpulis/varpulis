@@ -9,8 +9,8 @@ documentation.workspace = true
 description = "HTTP connector for Varpulis CEP engine"
 
 [dependencies]
-varpulis-connector-api = { version = "0.7.0", path = "../varpulis-connector-api" }
-varpulis-core = { version = "0.7.0", path = "../varpulis-core" }
+varpulis-connector-api = { version = "0.8.0", path = "../varpulis-connector-api" }
+varpulis-core = { version = "0.8.0", path = "../varpulis-core" }
 reqwest = { workspace = true }
 axum = { workspace = true }
 tower-http = { workspace = true }

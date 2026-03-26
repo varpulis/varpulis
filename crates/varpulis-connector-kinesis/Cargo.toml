@@ -9,8 +9,8 @@ documentation.workspace = true
 description = "AWS Kinesis connector for Varpulis CEP engine"
 
 [dependencies]
-varpulis-connector-api = { version = "0.7.0", path = "../varpulis-connector-api" }
-varpulis-core = { version = "0.7.0", path = "../varpulis-core" }
+varpulis-connector-api = { version = "0.8.0", path = "../varpulis-connector-api" }
+varpulis-core = { version = "0.8.0", path = "../varpulis-core" }
 aws-config = "1.8"
 aws-sdk-kinesis = "1.101"
 tokio = { workspace = true }

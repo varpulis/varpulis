@@ -111,6 +111,7 @@ pub mod columnar;
 pub mod context;
 pub use varpulis_dead_letter as dead_letter;
 pub mod engine;
+pub mod interactive;
 pub use varpulis_enrichment as enrichment;
 pub mod event;
 pub mod event_file;

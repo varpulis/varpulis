@@ -556,6 +556,29 @@ enum Commands {
         #[arg(short, long)]
         file: Option<PathBuf>,
     },
+
+    /// Interactive streaming session (JSON-line or TUI)
+    Interactive {
+        /// Use JSON-line protocol on stdin/stdout (for agents/MCP)
+        #[arg(long)]
+        json: bool,
+
+        /// VPL program file to auto-load
+        #[arg(short, long)]
+        file: Option<PathBuf>,
+
+        /// Start datagen on launch with given schema (fraud, iot, trading)
+        #[arg(long)]
+        generate: Option<String>,
+
+        /// Datagen rate (events/sec)
+        #[arg(long, default_value = "1000")]
+        rate: u64,
+
+        /// Enable trace mode
+        #[arg(long)]
+        trace: bool,
+    },
 }
 
 #[tokio::main]
@@ -1304,6 +1327,47 @@ async fn main() -> Result<()> {
         #[cfg(feature = "repl")]
         Commands::Repl { file } => {
             commands::repl::run_repl(file.as_deref())?;
+        }
+
+        Commands::Interactive {
+            json,
+            file,
+            generate,
+            rate,
+            trace,
+        } => {
+            if json {
+                commands::interactive::jsonl::run_jsonl_session(
+                    file.as_deref(),
+                    generate.as_deref(),
+                    rate,
+                    trace,
+                )
+                .await?;
+            } else {
+                #[cfg(feature = "tui")]
+                {
+                    commands::interactive::tui::run_tui_session(
+                        file.as_deref(),
+                        generate.as_deref(),
+                        rate,
+                        trace,
+                    )
+                    .await?;
+                }
+                #[cfg(not(feature = "tui"))]
+                {
+                    eprintln!("TUI mode requires the 'tui' feature. Using JSON-line mode.");
+                    eprintln!("Rebuild with: cargo build --features tui");
+                    commands::interactive::jsonl::run_jsonl_session(
+                        file.as_deref(),
+                        generate.as_deref(),
+                        rate,
+                        trace,
+                    )
+                    .await?;
+                }
+            }
         }
     }
 
