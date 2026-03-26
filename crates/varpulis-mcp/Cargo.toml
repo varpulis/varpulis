@@ -25,8 +25,11 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 reqwest = { workspace = true }
 schemars = "1"
-varpulis-parser = { version = "0.7.0", path = "../varpulis-parser" }
-varpulis-core = { version = "0.7.0", path = "../varpulis-core" }
+uuid = { version = "1", features = ["v4"] }
+varpulis-parser = { version = "0.8.0", path = "../varpulis-parser" }
+varpulis-core = { version = "0.8.0", path = "../varpulis-core" }
+varpulis-runtime = { version = "0.8.0", path = "../varpulis-runtime", features = ["interactive"] }
+varpulis-datagen = { version = "0.8.0", path = "../varpulis-datagen" }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

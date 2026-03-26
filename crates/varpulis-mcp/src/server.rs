@@ -6,6 +6,7 @@ use rmcp::service::RequestContext;
 use rmcp::{tool_handler, ErrorData as McpError, RoleServer, ServerHandler};
 
 use crate::client::CoordinatorClient;
+use crate::interactive::{McpSessionManager, SharedSessionManager};
 use crate::{prompts, resources};
 
 /// The Varpulis MCP server.
@@ -13,6 +14,7 @@ use crate::{prompts, resources};
 pub struct VarpulisMcpServer {
     pub(crate) client: CoordinatorClient,
     pub(crate) tool_router: ToolRouter<Self>,
+    pub(crate) session_manager: SharedSessionManager,
 }
 
 impl VarpulisMcpServer {
@@ -20,6 +22,9 @@ impl VarpulisMcpServer {
         Self {
             client,
             tool_router: Self::create_tool_router(),
+            session_manager: std::sync::Arc::new(
+                tokio::sync::RwLock::new(McpSessionManager::new()),
+            ),
         }
     }
 }

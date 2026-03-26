@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-03-26
+
+### Added
+
+- **`varpulis interactive --json`** — Agent-friendly JSON-line protocol on
+  stdin/stdout for driving streaming sessions programmatically. Commands:
+  `load_vpl`, `inject`, `generate`, `subscribe`, `get_topology`, `set_trace`,
+  and more. Responses stream as one JSON per line.
+- **`varpulis interactive` (TUI mode)** — Split-pane terminal UI with ratatui:
+  topology graph (top-left), scrolling event stream (top-right), VPL input
+  (bottom-left), live metrics dashboard (bottom-right). Behind `tui` feature.
+  Key bindings: Tab to switch panes, Ctrl+G toggle datagen, Ctrl+T toggle trace.
+- **Interactive session core** (`varpulis-runtime::interactive`) — Protocol-first
+  architecture with `InteractiveSession`, `SessionCommand`, `SessionResponse`.
+  Supports engine hot-reload, embedded datagen, trace integration, subscription
+  filtering, and pipeline topology.
+- **MCP interactive tools** — 3 new Model Context Protocol tools:
+  `start_interactive_session`, `send_interactive_command`, `get_interactive_events`.
+  AI agents can create sessions, send commands, and retrieve streaming events.
+  Sessions auto-expire after 10 minutes idle.
+
 ## [0.8.0] - 2026-03-26
 
 ### Added

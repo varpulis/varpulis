@@ -9,6 +9,7 @@
 /// The returned schema uses `oneOf` to represent the choice between different
 /// connector configurations (Kafka, MQTT, NATS, Redis, etc.).
 pub fn generate_all_schemas() -> serde_json::Value {
+    #[allow(unused_mut)]
     let mut configs: Vec<(&str, schemars::Schema)> = vec![
         (
             "ConnectorConfig",

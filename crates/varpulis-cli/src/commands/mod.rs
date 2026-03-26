@@ -4,6 +4,7 @@ pub mod demo;
 pub mod federation;
 pub mod generate;
 pub mod infer;
+pub mod interactive;
 #[cfg(feature = "repl")]
 pub mod repl;
 pub mod run;
